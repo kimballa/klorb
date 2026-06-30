@@ -43,7 +43,8 @@ paths or calling `logging.basicConfig` itself.
 * `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `load_dotenv()` first, so a `.env`
   file can supply `KLORB_STATE_DIR` (or the other `KLORB_*` directory env vars) before
   logging is set up. It then parses CLI arguments, determines whether it's entering the
-  REPL (`args.prompt is None`) or running a one-shot prompt, and calls
+  REPL (`args.prompt is None`, i.e. no `-m`/`--message` flag given) or running a one-shot
+  prompt, and calls
   `configure_logging(repl_mode=..., session_log=...)` accordingly. `session_log` defaults
   to True in the REPL and False for a one-shot prompt; the `--session-log` /
   `--no-session-log` flags (an `argparse.BooleanOptionalAction`) override that default in

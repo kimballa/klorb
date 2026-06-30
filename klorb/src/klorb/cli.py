@@ -18,8 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the klorb CLI."""
     parser = argparse.ArgumentParser(prog="klorb", description="Send a prompt to a model via OpenRouter.")
     parser.add_argument(
-        "prompt",
-        nargs="?",
+        "-m",
+        "--message",
+        dest="prompt",
         default=None,
         help="The prompt to send to the model. If omitted, starts the interactive REPL.",
     )
