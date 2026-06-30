@@ -30,3 +30,6 @@ klorb                                       # starts the interactive REPL
 klorb -m "What is the capital of France?"   # single-shot prompt/response, no REPL
 klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
 ```
+
+See [`usage.md`](usage.md) for the full command reference, including the
+`--session-log`/`--no-session-log` flags and supported environment variables.
