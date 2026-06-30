@@ -14,6 +14,14 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# Claude Code's cloud/remote harness does not surface this hook's stdout/stderr back to
+# Claude, which makes failures here very difficult to debug. Capture all output to
+# well-defined log files instead. Override these env vars on the CLI invocation to choose
+# different paths.
+CLAUDE_SESSION_START_STDOUT="${CLAUDE_SESSION_START_STDOUT:-/tmp/claude-session-start.stdout.log}"
+CLAUDE_SESSION_START_STDERR="${CLAUDE_SESSION_START_STDERR:-/tmp/claude-session-start.stderr.log}"
+exec >"$CLAUDE_SESSION_START_STDOUT" 2>"$CLAUDE_SESSION_START_STDERR"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=== Claude session start (cloud setup) ==="
