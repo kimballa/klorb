@@ -1,6 +1,17 @@
 
 # klorb
 
+```
+  ,_/\_
+   .--.
+  ( () )
+ (      )
+(   ~~   )
+ (      )
+  `----'
+   )  (
+```
+
 klorb is your friendly neighborhood agent.
 
 ## Setup
