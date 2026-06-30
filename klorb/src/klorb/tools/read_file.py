@@ -1,11 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that reads a range of lines from a text file for a model."""
 
+import logging
 from typing import Any
 
 from klorb.tools.tool import Tool
 
 MAX_LINES = 200
+
+logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
@@ -52,6 +55,7 @@ class ReadFileTool(Tool):
         filename = args["filename"]
         start_line = args.get("start_line")
         end_line = args.get("end_line")
+        logger.debug("ReadFile %s (start_line=%s, end_line=%s)", filename, start_line, end_line)
 
         if start_line is not None and start_line < 0:
             raise ValueError(f"start_line must be >= 0, got {start_line}")
@@ -77,6 +81,10 @@ class ReadFileTool(Tool):
             selected_lines = []
         content = "\n".join(f"{effective_start + i}|{line}" for i, line in enumerate(selected_lines))
         returned_end = effective_start + len(selected_lines) - 1 if selected_lines else effective_start - 1
+        logger.debug(
+            "ReadFile %s returned lines %d-%d of %d (truncated=%s)",
+            filename, effective_start, returned_end, total_lines, returned_end < total_lines,
+        )
 
         return {
             "filename": filename,

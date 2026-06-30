@@ -17,6 +17,8 @@
     "python-dotenv >= 1.0.0, < 2.0.0",
     "openai >= 2.0.0, < 3.0.0",
     "pydantic >= 2.0.0, < 3.0.0",
+    "textual >= 0.60.0, < 7.0.0",
+    "coolname >= 2.0.0, < 6.0.0",
   ]
 
 [project.scripts]
