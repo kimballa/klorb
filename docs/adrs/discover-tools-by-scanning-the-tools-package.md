@@ -1,5 +1,6 @@
 # Discover tools by scanning the tools package, not a manual registry list
 
+* Date: 2026-06-29 23:00
 * Question: How does `ToolRegistry` learn which `Tool` implementations exist — an explicit
   list maintained somewhere, or automatic discovery?
 * Answer: `ToolRegistry` walks the modules of a package (the `klorb.tools` package by

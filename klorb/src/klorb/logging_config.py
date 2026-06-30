@@ -25,16 +25,23 @@ def _build_session_log_path() -> Path:
     return SESSION_LOGS_DIR / f"{timestamp}-{nonce}.log"
 
 
-def configure_logging() -> Path:
-    """Configure the root logger with a TextualHandler and a per-session log file.
+def configure_logging(*, repl_mode: bool, session_log: bool) -> Path | None:
+    """Configure the root logger.
 
-    Returns the path of the session log file that was created.
+    In the REPL (`repl_mode=True`), logs go to a `TextualHandler` (the active Textual
+    app's console, or stderr when none is running). Otherwise, for a one-shot prompt,
+    logs go directly to stderr. In either mode, a per-session log file is also created
+    when `session_log` is True.
+
+    Returns the path of the session log file that was created, or None if `session_log`
+    was False.
     """
-    log_path = _build_session_log_path()
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    logging.basicConfig(
-        level="NOTSET",
-        handlers=[TextualHandler(), file_handler],
-        force=True,
-    )
+    handlers: list[logging.Handler] = [TextualHandler()] if repl_mode else [logging.StreamHandler()]
+
+    log_path: Path | None = None
+    if session_log:
+        log_path = _build_session_log_path()
+        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+
+    logging.basicConfig(level="NOTSET", handlers=handlers, force=True)
     return log_path

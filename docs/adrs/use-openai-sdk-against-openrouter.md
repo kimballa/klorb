@@ -1,5 +1,6 @@
 # Use the OpenAI SDK, pointed at OpenRouter, as the model client
 
+* Date: 2026-06-29 23:00
 * Question: How should klorb send prompts to LLMs and get responses back?
 * Answer: Use the `openai` Python SDK, configured with `base_url` set to OpenRouter's
   `https://openrouter.ai/api/v1` endpoint and an `OPENROUTER_API_KEY`, rather than a

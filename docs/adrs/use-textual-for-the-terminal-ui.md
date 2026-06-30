@@ -1,5 +1,6 @@
 # Use Textual for klorb's terminal UI
 
+* Date: 2026-06-29 23:00
 * Question: What library should klorb use to build its interactive terminal REPL?
 * Answer: [Textual](https://github.com/Textualize/textual), the widget-based TUI framework
   built on top of Rich.
