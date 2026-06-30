@@ -68,7 +68,9 @@ pycodestyle==2.14.0
     #   klorb (pyproject.toml)
     #   flake8
 pydantic==2.13.4
-    # via openai
+    # via
+    #   klorb (pyproject.toml)
+    #   openai
 pydantic-core==2.46.4
     # via pydantic
 pyflakes==3.4.0

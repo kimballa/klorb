@@ -27,7 +27,9 @@ jiter==0.16.0
 openai==2.44.0
     # via klorb (pyproject.toml)
 pydantic==2.13.4
-    # via openai
+    # via
+    #   klorb (pyproject.toml)
+    #   openai
 pydantic-core==2.46.4
     # via pydantic
 python-dotenv==1.2.2

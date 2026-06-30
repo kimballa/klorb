@@ -1,0 +1,5 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/klorb/venv",
+  "python.envFile": "${workspaceFolder}/klorb/.python-env",
+  "python.testing.cwd": "${workspaceFolder}/klorb",
+}
