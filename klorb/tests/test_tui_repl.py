@@ -69,3 +69,22 @@ async def test_provider_error_is_shown_in_history() -> None:
 
         assert "boom" in str(error_widget.content)
         assert prompt_input.disabled is False
+
+
+async def test_select_model_updates_active_model_and_subtitle() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = "ok"
+    app = ReplApp(provider=mock_provider, model="some/model")
+
+    async with app.run_test() as pilot:
+        app.select_model("other/model")
+        await pilot.pause()
+        assert app.sub_title == "other/model"
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input.value = "hi"
+        await prompt_input.action_submit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    mock_provider.send_prompt.assert_called_once_with("hi", model="other/model")

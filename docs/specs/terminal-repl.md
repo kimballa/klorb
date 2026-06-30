@@ -14,13 +14,19 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 
 * `klorb.tui.repl` (`klorb/src/klorb/tui/repl.py`) defines `ReplApp`, a `textual.app.App`
   subclass, and `run_repl(model)`, a thin function that constructs and runs it.
-* `ReplApp.compose()` lays out three widgets top-to-bottom: a `VerticalScroll` (id
-  `history`) that holds the conversation so far, an `Input` (id `prompt-input`) for typing
-  the next prompt, and a `Footer` showing key bindings. The history container is styled
-  `height: 1fr` so it fills all available vertical space above the input box, which is why
-  the history scrolls "up" as content is added while the input box stays pinned to the
-  bottom of the screen.
-* On mount, focus is placed on the input box so the user can start typing immediately.
+* `ReplApp.compose()` lays out four widgets top-to-bottom: a `Header` showing the app title
+  and the active model as its subtitle, a `VerticalScroll` (id `history`) that holds the
+  conversation so far, an `Input` (id `prompt-input`) for typing the next prompt, and a
+  `Footer` showing key bindings. The history container is styled `height: 1fr` so it fills
+  all available vertical space above the input box, which is why the history scrolls "up"
+  as content is added while the input box stays pinned to the bottom of the screen.
+* The input box's default full box border is overridden (`border: none; border-top: solid
+  $accent;`) so only a single horizontal rule separates it from the history, with no side
+  or bottom borders. This keeps the input looking like a plain line of text rather than a
+  boxed-in widget, and avoids visually implying that the surrounding text isn't selectable.
+  `border_title` is set to `"message"`, which Textual renders embedded in that top rule
+  (left-aligned by default), e.g. `─message────────────────`.
+* On mount, the input box is labeled and focused so the user can start typing immediately.
 * When the user presses enter in the input box (`Input.Submitted`), `ReplApp`:
   1. Ignores the event if the trimmed value is empty.
   2. Clears the input box and disables it (so a second prompt can't be submitted while one
@@ -36,7 +42,9 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
      `.error` CSS class).
   6. Either way, scrolls the history to the end again, re-enables the input box, and
      refocuses it.
-* `Ctrl+C` and `Ctrl+Q` quit the REPL.
+* `Ctrl+C` and `Ctrl+Q` quit the REPL. `Ctrl+P` opens Textual's command palette, which
+  includes `ModelCommandProvider` for switching the active model — see
+  [[model-framework]].
 * `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `prompt` positional
   argument optional (`nargs="?"`, default `None`). `klorb.cli.main()` calls
   `run_repl(model=args.model)` when `args.prompt` is `None`, and otherwise follows the

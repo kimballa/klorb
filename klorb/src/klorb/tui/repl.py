@@ -8,6 +8,7 @@ from textual.app import App
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Footer
+from textual.widgets import Header
 from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import Static
@@ -15,6 +16,7 @@ from textual.widgets import Static
 from klorb.api_provider import ApiProvider
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
+from klorb.tui.model_commands import ModelCommandProvider
 
 HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
@@ -26,6 +28,13 @@ class ReplApp(App[None]):
     CSS = """
     #history {
         height: 1fr;
+    }
+
+    #prompt-input, #prompt-input:focus {
+        border: none;
+        border-top: solid $accent;
+        height: 2;
+        padding: 0 1;
     }
 
     .prompt {
@@ -41,20 +50,32 @@ class ReplApp(App[None]):
     """
 
     BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
+    COMMANDS = App.COMMANDS | {ModelCommandProvider}
 
     def __init__(self, provider: ApiProvider | None = None, model: str = DEFAULT_MODEL) -> None:
         super().__init__()
         self._provider = provider or OpenRouterApiProvider()
         self._model = model
+        self.title = "klorb"
+        self.sub_title = self._model
 
     def compose(self) -> ComposeResult:
+        yield Header()
         yield VerticalScroll(id=HISTORY_ID)
         yield Input(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         yield Footer()
 
+    def select_model(self, name: str) -> None:
+        """Make `name` the active model used for subsequent prompts."""
+        self._model = name
+        self.sub_title = name
+        self.notify(f"Model set to {name}.")
+
     def on_mount(self) -> None:
-        """Focus the input box so the user can start typing immediately."""
-        self.query_one(f"#{PROMPT_INPUT_ID}", Input).focus()
+        """Label the input box and focus it so the user can start typing immediately."""
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        input_widget.border_title = "message"
+        input_widget.focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model."""
