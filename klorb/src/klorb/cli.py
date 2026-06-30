@@ -2,11 +2,15 @@
 """Command-line entry point for klorb."""
 
 import argparse
+import logging
 
 from dotenv import load_dotenv
 
+from klorb.logging_config import configure_logging
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
+
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,9 +24,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Parse CLI arguments, send the prompt, and print the model's response to stdout."""
     load_dotenv()
+    log_path = configure_logging()
+    logger.debug("Logging to %s", log_path)
+
     args = build_parser().parse_args()
+    logger.info("Sending prompt to model=%s", args.model)
     provider = OpenRouterApiProvider()
-    print(provider.send_prompt(args.prompt, model=args.model))
+    response = provider.send_prompt(args.prompt, model=args.model)
+    logger.info("Received response of %d characters from model=%s", len(response), args.model)
+    print(response)
 
 
 if __name__ == "__main__":

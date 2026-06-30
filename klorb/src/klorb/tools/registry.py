@@ -3,6 +3,7 @@
 
 import importlib
 import inspect
+import logging
 import pkgutil
 from types import ModuleType
 from typing import Any
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 
 import klorb.tools as default_tools_package
 from klorb.tools.tool import Tool
+
+logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
@@ -25,6 +28,7 @@ class ToolRegistry:
         self._discover_tools(package)
 
     def _discover_tools(self, package: ModuleType) -> None:
+        logger.debug("Discovering tools in package %s", package.__name__)
         prefix = f"{package.__name__}."
         for module_info in pkgutil.iter_modules(package.__path__, prefix):
             module = importlib.import_module(module_info.name)
@@ -34,7 +38,9 @@ class ToolRegistry:
                 if inspect.isabstract(candidate) or candidate.__module__ != module.__name__:
                     continue
                 tool = candidate()
+                logger.debug("Registered tool %r from %s", tool.name(), module.__name__)
                 self._tools[tool.name()] = tool
+        logger.info("Discovered %d tool(s) in %s", len(self._tools), package.__name__)
 
     def get(self, name: str) -> Tool:
         """Return the registered tool with the given name, raising KeyError if absent."""
