@@ -23,8 +23,8 @@ mechanism the rest of the harness will build on to talk to models.
     (default `openai/gpt-4o-mini`, an OpenRouter model identifier) and returns the text of
     the first response choice.
 * `klorb.cli` (`klorb/src/klorb/cli.py`) is the CLI entry point, registered as the `klorb`
-  console script in `pyproject.toml`. It loads `.env` via `python-dotenv`, parses a single
-  positional `prompt` argument and an optional `--model` flag, constructs an
+  console script in `pyproject.toml`. It loads `.env` via `python-dotenv`, parses a
+  `-m`/`--message` flag holding the prompt and an optional `--model` flag, constructs an
   `OpenRouterApiProvider`, calls `send_prompt`, and prints the result to stdout.
 
 ## Configuration
@@ -35,8 +35,8 @@ mechanism the rest of the harness will build on to talk to models.
 ## Usage
 
 ```
-klorb "What is the capital of France?"
-klorb --model anthropic/claude-3.5-sonnet "Summarize this repo."
+klorb -m "What is the capital of France?"
+klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
 ```
 
 ## Out of scope

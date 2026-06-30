@@ -2,7 +2,7 @@
 
 ## Summary
 
-Running `klorb` with no positional `prompt` argument starts an interactive, full-screen
+Running `klorb` with no `-m`/`--message` argument starts an interactive, full-screen
 terminal REPL instead of the single-shot prompt/response path. The REPL shows a vertically
 scrolling history of prompts and responses, with a text input box pinned to the bottom of the
 screen. The user types a prompt, hits enter, and it is submitted: the prompt scrolls up into
@@ -45,17 +45,17 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 * `Ctrl+C` and `Ctrl+Q` quit the REPL. `Ctrl+P` opens Textual's command palette, which
   includes `ModelCommandProvider` for switching the active model — see
   [[model-framework]].
-* `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `prompt` positional
-  argument optional (`nargs="?"`, default `None`). `klorb.cli.main()` calls
-  `run_repl(model=args.model)` when `args.prompt` is `None`, and otherwise follows the
-  existing single-shot path described in [[openrouter-prompt-client]].
+* `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `-m`/`--message` flag
+  optional (default `None`). `klorb.cli.main()` calls `run_repl(model=args.model)` when
+  `args.prompt` is `None`, and otherwise follows the existing single-shot path described in
+  [[openrouter-prompt-client]].
 
 ## Usage
 
 ```
 klorb                  # starts the interactive REPL using the default model
 klorb --model anthropic/claude-3.5-sonnet   # starts the REPL with a specific model
-klorb "What is 2+2?"   # unchanged: single-shot prompt/response, no REPL
+klorb -m "What is 2+2?"   # unchanged: single-shot prompt/response, no REPL
 ```
 
 ## Out of scope
