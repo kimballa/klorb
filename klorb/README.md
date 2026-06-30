@@ -22,3 +22,11 @@ make install_dev_deps
   regenerate `dev-requirements.txt` and `release-requirements.txt`, then
   `make install_dev_deps` to install the updated lock.
 * `make lint typecheck test` runs the full local CI suite. See `make help` for all targets.
+
+## Usage
+
+```
+klorb                                       # starts the interactive REPL
+klorb -m "What is the capital of France?"   # single-shot prompt/response, no REPL
+klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
+```
