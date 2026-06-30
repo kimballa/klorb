@@ -8,15 +8,21 @@ from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import Static
 
+from klorb.session import Session
+from klorb.session import SessionConfig
 from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import ReplApp
 
 
+def _session(provider: MagicMock, model: str = "some/model") -> Session:
+    return Session(SessionConfig(model=model), provider=provider)
+
+
 async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = "model reply"
-    app = ReplApp(provider=mock_provider, model="some/model")
+    app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
@@ -38,7 +44,7 @@ async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
 
 async def test_submitting_an_empty_prompt_does_nothing() -> None:
     mock_provider = MagicMock()
-    app = ReplApp(provider=mock_provider)
+    app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
@@ -55,7 +61,7 @@ async def test_submitting_an_empty_prompt_does_nothing() -> None:
 async def test_provider_error_is_shown_in_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")
-    app = ReplApp(provider=mock_provider)
+    app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
@@ -74,7 +80,7 @@ async def test_provider_error_is_shown_in_history() -> None:
 async def test_select_model_updates_active_model_and_subtitle() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = "ok"
-    app = ReplApp(provider=mock_provider, model="some/model")
+    app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
         app.select_model("other/model")
@@ -88,3 +94,25 @@ async def test_select_model_updates_active_model_and_subtitle() -> None:
         await pilot.pause()
 
     mock_provider.send_prompt.assert_called_once_with("hi", model="other/model")
+
+
+async def test_initial_message_is_submitted_as_first_turn() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = "model reply"
+    app = ReplApp(session=_session(mock_provider), initial_message="what is 2+2?")
+
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        prompt_widget = history.query_one(Static)
+        response_widget = history.query_one(Markdown)
+
+        assert prompt_widget.content == "what is 2+2?"
+        assert response_widget.source == "model reply"
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        assert prompt_input.disabled is False
+
+    mock_provider.send_prompt.assert_called_once_with("what is 2+2?", model="some/model")

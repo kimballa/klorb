@@ -25,7 +25,9 @@ mechanism the rest of the harness will build on to talk to models.
 * `klorb.cli` (`klorb/src/klorb/cli.py`) is the CLI entry point, registered as the `klorb`
   console script in `pyproject.toml`. It loads `.env` via `python-dotenv`, parses a
   `-m`/`--message` flag holding the prompt and an optional `--model` flag, constructs an
-  `OpenRouterApiProvider`, calls `send_prompt`, and prints the result to stdout.
+  `OpenRouterApiProvider`, and hands both to a [[session-and-turns]] `Session`. For a
+  one-shot prompt it calls `Session.run_one_shot(prompt)` (which calls `send_prompt`
+  internally) and prints the result to stdout.
 
 ## Configuration
 

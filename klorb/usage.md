@@ -7,14 +7,16 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 ## SYNOPSIS
 
 `klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*]
-[`--session-log` | `--no-session-log`]
+[`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
 
 ## DESCRIPTION
 
-klorb is an agent harness. Invoked with `-m`/`--message`, it sends a single
-prompt to a model via OpenRouter and prints the response to stdout. Invoked
-with no `-m`/`--message` flag, it starts an interactive, full-screen terminal
-REPL instead.
+klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
+`--interactive` flag, it sends a single prompt to a model via OpenRouter and
+prints the response to stdout. Invoked with no `-m`/`--message` flag, it
+starts an interactive, full-screen terminal REPL instead. Passing
+`--interactive` together with `-m`/`--message` starts the REPL with that
+message submitted as the first turn, then keeps the REPL open for more.
 
 ## OPTIONS
 
@@ -28,12 +30,21 @@ REPL instead.
   OpenRouter model identifier to use (e.g. `anthropic/claude-3.5-sonnet`).
   Defaults to `openai/gpt-4o-mini`.
 
+* `--interactive`, `--no-interactive`
+
+  Stay in the interactive REPL, submitting `-m`/`--message`'s prompt as the
+  first turn if one was given. Defaults to true; defaults to false when
+  `-m`/`--message` is given without an explicit `--interactive`/
+  `--no-interactive` flag (preserving the one-shot behavior above).
+  `--no-interactive` without `-m`/`--message` is a usage error, since there
+  would be nothing to send.
+
 * `--session-log`, `--no-session-log`
 
   Write (or skip) a per-session log file under `$KLORB_STATE_DIR/session-logs/`.
-  Defaults to on in the REPL and off for a one-shot prompt (see ENVIRONMENT
-  below for `KLORB_STATE_DIR`); use `--no-session-log` to disable it in the
-  REPL, or `--session-log` to enable it for a one-shot prompt.
+  Defaults to on when interactive and off for a one-shot prompt (see
+  ENVIRONMENT below for `KLORB_STATE_DIR`); use `--no-session-log` to disable
+  it in the REPL, or `--session-log` to enable it for a one-shot prompt.
 
 ## ENVIRONMENT
 
@@ -89,7 +100,13 @@ Send a one-shot prompt and also write a session log:
 klorb --session-log -m "What is 2+2?"
 ```
 
+Start the REPL with a starting message, then keep chatting:
+
+```
+klorb -m "What is 2+2?" --interactive
+```
+
 ## SEE ALSO
 
 `docs/specs/openrouter-prompt-client.md`, `docs/specs/terminal-repl.md`,
-`docs/specs/paths-and-logging.md`
+`docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`
