@@ -42,15 +42,15 @@ paths or calling `logging.basicConfig` itself.
     one-shot prompts default to neither.
 * `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `load_dotenv()` first, so a `.env`
   file can supply `KLORB_STATE_DIR` (or the other `KLORB_*` directory env vars) before
-  logging is set up. It then parses CLI arguments, determines whether it's entering the
-  REPL (`args.prompt is None`, i.e. no `-m`/`--message` flag given) or running a one-shot
-  prompt, and calls
-  `configure_logging(repl_mode=..., session_log=...)` accordingly. `session_log` defaults
-  to True in the REPL and False for a one-shot prompt; the `--session-log` /
-  `--no-session-log` flags (an `argparse.BooleanOptionalAction`) override that default in
-  either mode. Modules across the codebase obtain a `logging.Logger` the standard way
-  (`logging.getLogger(__name__)`) and log through it; no module other than
-  `klorb.logging_config` calls `logging.basicConfig`.
+  logging is set up. It then parses CLI arguments, resolves whether the session is
+  interactive (see [[session-and-turns]] for the `--interactive` flag's defaulting rules),
+  and calls `configure_logging(repl_mode=interactive, session_log=...)` accordingly.
+  `session_log` defaults to True when interactive and False for a one-shot prompt; the
+  `--session-log` / `--no-session-log` flags (an `argparse.BooleanOptionalAction`) override
+  that default in either mode. The resulting log path is stored on `SessionConfig.log_filename`
+  (or `None` when no session log was written). Modules across the codebase obtain a
+  `logging.Logger` the standard way (`logging.getLogger(__name__)`) and log through it; no
+  module other than `klorb.logging_config` calls `logging.basicConfig`.
 
 ## Configuration
 

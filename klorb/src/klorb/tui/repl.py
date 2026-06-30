@@ -13,9 +13,8 @@ from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import Static
 
-from klorb.api_provider import ApiProvider
-from klorb.openrouter import DEFAULT_MODEL
-from klorb.openrouter import OpenRouterApiProvider
+from klorb.session import Session
+from klorb.session import SessionConfig
 from klorb.tui.model_commands import ModelCommandProvider
 
 HISTORY_ID = "history"
@@ -52,12 +51,12 @@ class ReplApp(App[None]):
     BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
     COMMANDS = App.COMMANDS | {ModelCommandProvider}
 
-    def __init__(self, provider: ApiProvider | None = None, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, session: Session | None = None, initial_message: str | None = None) -> None:
         super().__init__()
-        self._provider = provider or OpenRouterApiProvider()
-        self._model = model
+        self._session = session or Session(SessionConfig())
+        self._initial_message = initial_message
         self.title = "klorb"
-        self.sub_title = self._model
+        self.sub_title = self._session.config.model
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -67,15 +66,18 @@ class ReplApp(App[None]):
 
     def select_model(self, name: str) -> None:
         """Make `name` the active model used for subsequent prompts."""
-        self._model = name
+        self._session.config.model = name
         self.sub_title = name
         self.notify(f"Model set to {name}.")
 
     def on_mount(self) -> None:
-        """Label the input box and focus it so the user can start typing immediately."""
+        """Label and focus the input box, then submit any initial message as the first turn."""
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
         input_widget.border_title = "message"
         input_widget.focus()
+
+        if self._initial_message:
+            self._submit_prompt(self._initial_message)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model."""
@@ -83,8 +85,12 @@ class ReplApp(App[None]):
         if not prompt_text:
             return
 
-        input_widget = event.input
-        input_widget.value = ""
+        event.input.value = ""
+        self._submit_prompt(prompt_text)
+
+    def _submit_prompt(self, prompt_text: str) -> None:
+        """Echo `prompt_text` into the history, disable the input, and dispatch it."""
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
         input_widget.disabled = True
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -97,7 +103,7 @@ class ReplApp(App[None]):
     def _send_prompt(self, prompt_text: str) -> None:
         """Send `prompt_text` to the model on a worker thread so the UI stays responsive."""
         try:
-            response_text = self._provider.send_prompt(prompt_text, model=self._model)
+            response_text = self._session.send_turn(prompt_text)
         except Exception as exc:
             self.call_from_thread(self._show_error, str(exc))
         else:
@@ -123,6 +129,6 @@ class ReplApp(App[None]):
         input_widget.focus()
 
 
-def run_repl(model: str = DEFAULT_MODEL) -> None:
-    """Launch the interactive klorb REPL."""
-    ReplApp(model=model).run()
+def run_repl(session: Session | None = None, initial_message: str | None = None) -> None:
+    """Launch the interactive klorb REPL, optionally submitting `initial_message` first."""
+    ReplApp(session=session, initial_message=initial_message).run()

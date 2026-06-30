@@ -13,7 +13,10 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 ## How it works
 
 * `klorb.tui.repl` (`klorb/src/klorb/tui/repl.py`) defines `ReplApp`, a `textual.app.App`
-  subclass, and `run_repl(model)`, a thin function that constructs and runs it.
+  subclass, and `run_repl(session, initial_message)`, a thin function that constructs and
+  runs it. `ReplApp` takes a [[session-and-turns]] `Session` (constructing a default one if
+  none is given) rather than a raw `ApiProvider`/model pair, so the REPL sends every turn
+  through the same `Session.send_turn()` path a one-shot prompt uses.
 * `ReplApp.compose()` lays out four widgets top-to-bottom: a `Header` showing the app title
   and the active model as its subtitle, a `VerticalScroll` (id `history`) that holds the
   conversation so far, an `Input` (id `prompt-input`) for typing the next prompt, and a
@@ -27,35 +30,43 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `border_title` is set to `"message"`, which Textual renders embedded in that top rule
   (left-aligned by default), e.g. `─message────────────────`.
 * On mount, the input box is labeled and focused so the user can start typing immediately.
-* When the user presses enter in the input box (`Input.Submitted`), `ReplApp`:
-  1. Ignores the event if the trimmed value is empty.
-  2. Clears the input box and disables it (so a second prompt can't be submitted while one
-     is in flight).
-  3. Mounts a `Static` widget showing the prompt text (styled via the `.prompt` CSS class)
+  If `ReplApp` was constructed with `initial_message`, it's then submitted automatically as
+  the first turn, exactly as if the user had typed and entered it — this is how `klorb -m
+  "..." --interactive` makes a starting message "the first thing the user said" while
+  staying in the REPL afterward.
+* `ReplApp._submit_prompt()` is the shared path for both user-typed and initial-message
+  turns:
+  1. Disables the input box (so a second prompt can't be submitted while one is in flight).
+  2. Mounts a `Static` widget showing the prompt text (styled via the `.prompt` CSS class)
      at the bottom of the history, and scrolls the history to the end.
-  4. Dispatches the prompt to the configured `ApiProvider` (see
-     [[openrouter-prompt-client]]) on a background thread, via a `@work(thread=True)`
-     worker, so the UI event loop stays responsive while waiting on the network call.
-  5. On success, mounts a `Markdown` widget with the model's response (rendered with
-     Textual's built-in markdown renderer, since model output is frequently markdown);
-     on failure, mounts a `Static` widget with the exception message (styled via the
-     `.error` CSS class).
-  6. Either way, scrolls the history to the end again, re-enables the input box, and
-     refocuses it.
+  3. Dispatches the prompt to `Session.send_turn()` (see [[session-and-turns]]) on a
+     background thread, via a `@work(thread=True)` worker, so the UI event loop stays
+     responsive while waiting on the network call.
+  When the user presses enter in the input box (`Input.Submitted`), `ReplApp` ignores the
+  event if the trimmed value is empty, otherwise clears the input box and calls
+  `_submit_prompt()`.
+  On success, `_submit_prompt`'s worker mounts a `Markdown` widget with the model's
+  response (rendered with Textual's built-in markdown renderer, since model output is
+  frequently markdown); on failure, it mounts a `Static` widget with the exception message
+  (styled via the `.error` CSS class). Either way, the history is scrolled to the end
+  again, and the input box is re-enabled and refocused.
 * `Ctrl+C` and `Ctrl+Q` quit the REPL. `Ctrl+P` opens Textual's command palette, which
   includes `ModelCommandProvider` for switching the active model — see
-  [[model-framework]].
+  [[model-framework]]. Selecting a model updates `Session.config.model` directly.
 * `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `-m`/`--message` flag
-  optional (default `None`). `klorb.cli.main()` calls `run_repl(model=args.model)` when
-  `args.prompt` is `None`, and otherwise follows the existing single-shot path described in
-  [[openrouter-prompt-client]].
+  optional (default `None`) and adds an `--interactive`/`--no-interactive` flag (see
+  [[session-and-turns]] for its defaulting rules). `klorb.cli.main()` builds a `Session`
+  and calls `run_repl(session, initial_message=args.prompt)` when the session is
+  interactive, and otherwise follows the single-shot path described in
+  [[openrouter-prompt-client]] via `Session.run_one_shot()`.
 
 ## Usage
 
 ```
-klorb                  # starts the interactive REPL using the default model
+klorb                          # starts the interactive REPL using the default model
 klorb --model anthropic/claude-3.5-sonnet   # starts the REPL with a specific model
-klorb -m "What is 2+2?"   # unchanged: single-shot prompt/response, no REPL
+klorb -m "What is 2+2?"        # single-shot prompt/response, no REPL
+klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first turn
 ```
 
 ## Out of scope
