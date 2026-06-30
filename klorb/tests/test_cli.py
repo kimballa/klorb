@@ -28,3 +28,11 @@ def test_main_passes_custom_model() -> None:
             cli.main()
 
     mock_provider.send_prompt.assert_called_once_with("hi", model="some/model")
+
+
+def test_main_starts_repl_when_no_prompt_given() -> None:
+    with patch("klorb.cli.run_repl") as mock_run_repl:
+        with patch("sys.argv", ["klorb"]):
+            cli.main()
+
+    mock_run_repl.assert_called_once_with(model=cli.DEFAULT_MODEL)
