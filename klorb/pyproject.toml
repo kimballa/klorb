@@ -1,0 +1,43 @@
+# (c) Copyright 2026 Aaron Kimball
+
+[build-system]
+  requires = ["setuptools>=82.0.1"]
+  build-backend = "setuptools.build_meta"
+
+[project]
+  name = "klorb"
+  description = "Your friendly neighborhood agent"
+  readme = "README.md"
+  version = "1.0.0" # Not really used by our system.
+  authors = [{ name = "Aaron Kimball", email = "akimball83@gmail.com" }]
+  maintainers = [{ name = "Aaron Kimball", email = "akimball83@gmail.com" }]
+  requires-python = ">= 3.12"
+  dependencies = [
+    # Primary library requirements:
+    "python-dotenv >= 1.0.0, < 2.0.0",
+    "openai >= 2.0.0, < 3.0.0",
+  ]
+
+[project.scripts]
+  klorb = "klorb.cli:main"
+
+[project.optional-dependencies]
+  # Development environment-specific dependencies.
+  dev = [
+    "pip>=26.1.2",
+    "uv>=0.11.25",
+    "flake8>=6.0.0,<8.0.0",
+    "flake8-noqa >= 1.3.1, < 2.0.0",
+    "flake8-plugin-utils >= 1.3.2, < 2.0.0",
+    "flake8-pytest-style>=1.7.2,<3.0.0",
+    "mypy>=2.0.0,<3.0.0",
+    "packaging>=26.2",
+    "pep8-naming >= 0.13.3, < 2.0.0",
+    "pycodestyle >= 2.10.0, < 3.0.0",
+    "pyflakes >= 3.0.1, < 4.0.0",
+    "pytest>=9.1.1,<10.0.0",
+  ]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+]

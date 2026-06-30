@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show *)",
+      "Bash(make venv *)",
+      "Bash(make sync_deps)",
+      "Bash(make install_dev_deps)",
+      "Bash(make test *)",
+      "Bash(make lint *)",
+      "Bash(make typecheck *)",
+      "Bash(venv/bin/pip install *)",
+      "Bash(venv/bin/klorb --model openai/gpt-4o-mini \"Reply with exactly the word: pong\")"
+    ]
+  }
+}

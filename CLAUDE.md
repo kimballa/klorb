@@ -26,11 +26,15 @@ filler words (`should-we-do-foo.md`); try to include the answer.
 
 The Klorb project is organized as a collection of subprojects:
 
-* libklorb - python library that is the actual harness itself. Everything that the system can "do",
-  is done here.
-* cli - command-line interface. Includes both a TUI for interactive use as well as the
-  ability to run a prompt in headless mode.
-* vscode-plugin - Plugin for VSCode to use the Klorb harness.
+* `klorb/` - python library that is the actual harness itself. Everything that the system can
+  "do", is done here. Also includes the command-line interface.  Includes both a
+  TUI for interactive use as well as the ability to run a prompt in headless
+  mode. Written in python. The CLI code should have a strict firewall where the
+  actual agentic logic is all in "library" code that can be invoked without any CLI / UI
+  whatsoever (so that the VSCode plugin, or other mechanisms, can use it too). The CLI is
+  included in the same python packages as the library logic for convenience and harmonized
+  dependencies, but none of the agentic stuff should be directly intertwined in the CLI side.
+* `vscode-plugin` - Plugin for VSCode to use the Klorb harness.
 
 # rules for development
 
@@ -61,6 +65,9 @@ The Klorb project is organized as a collection of subprojects:
   * It is less likely that the test should be modified to pass given the updated application
     source. Only make such a change after careful consideration, and be explicit in your
     output to me when you have modified tests in this way.
+* use `make lint` for linting.
+* use `make typecheck` for typechecking.
+* use `make test` to invoke test suites.
 
 ## Import Rules
 
@@ -109,6 +116,10 @@ The following are **critical** instructions for invoking shell commands:
 * Do not pipe commands into `tail` in order to save tokens. Commands required for
   SDLC verification generally produce minimal output beyond what you would otherwise need
   to read anyway.
+
+Examples of GOOD bash commands:
+* `make lint typecheck test`
+* `make test`
 
 Examples of BAD bash commands:
 * `make test | tail -30`
