@@ -24,17 +24,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="The prompt to send to the model. If omitted, starts the interactive REPL.",
     )
     parser.add_argument("--model", default=DEFAULT_MODEL, help="OpenRouter model identifier to use.")
+    parser.add_argument(
+        "--session-log",
+        dest="session_log",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Write a per-session log file. Defaults to on in the REPL and off for a "
+            "one-shot prompt; use --no-session-log to disable it in the REPL."
+        ),
+    )
     return parser
 
 
 def main() -> None:
     """Parse CLI arguments and either run a single prompt or start the interactive REPL."""
     load_dotenv()
-    log_path = configure_logging()
-    logger.debug("Logging to %s", log_path)
 
     args = build_parser().parse_args()
-    if args.prompt is None:
+    repl_mode = args.prompt is None
+    session_log = repl_mode if args.session_log is None else args.session_log
+    log_path = configure_logging(repl_mode=repl_mode, session_log=session_log)
+    logger.debug("Logging to %s", log_path)
+
+    if repl_mode:
         run_repl(model=args.model)
         return
     logger.info("Sending prompt to model=%s", args.model)

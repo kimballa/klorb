@@ -22,23 +22,34 @@ paths or calling `logging.basicConfig` itself.
     ../adrs/use-xdg-style-dirs-overridable-by-klorb-env-vars.md) for why these are
     klorb-specific env vars rather than the shared `XDG_*` ones.
 * `klorb.logging_config` (`klorb/src/klorb/logging_config.py`) exposes
-  `configure_logging() -> Path`, which:
-  * Creates `SESSION_LOGS_DIR` if it doesn't already exist.
-  * Builds a session log file path of the form `yyyy-mm-dd-hh-mm-<nonce>.log`, where
-    `<nonce>` is a two-word kebab-case slug from `coolname.generate_slug(2)` (e.g.
-    `2026-06-30-15-38-festive-frog.log`).
-  * Calls `logging.basicConfig(level="NOTSET", handlers=[TextualHandler(), FileHandler(...)],
-    force=True)`, so every log record (at every level) reaches both the Textual console (or
-    stderr, when no Textual app is running) and the session log file.
-  * Returns the session log file's path, so callers can report it (e.g. for users debugging a
-    run). See [the logging handler ADR](
+  `configure_logging(*, repl_mode: bool, session_log: bool) -> Path | None`, which:
+  * Attaches a `TextualHandler` (the active Textual app's console, or stderr when none is
+    running) when `repl_mode` is True; otherwise attaches a plain `logging.StreamHandler`
+    (stderr) for a one-shot prompt.
+  * When `session_log` is True, also creates `SESSION_LOGS_DIR` (if it doesn't already
+    exist), builds a session log file path of the form `yyyy-mm-dd-hh-mm-<nonce>.log`,
+    where `<nonce>` is a two-word kebab-case slug from `coolname.generate_slug(2)` (e.g.
+    `2026-06-30-15-38-festive-frog.log`), and attaches a `FileHandler` for it. When
+    `session_log` is False, no file is created and no `FileHandler` is attached.
+  * Calls `logging.basicConfig(level="NOTSET", handlers=[...], force=True)` with whichever
+    handlers were selected above.
+  * Returns the session log file's path when one was created, so callers can report it
+    (e.g. for users debugging a run), or `None` otherwise. See [the logging handler ADR](
     ../adrs/log-via-textualhandler-and-session-file-with-coolname-nonce.md) for why this
-    combination of handlers and naming scheme was chosen.
-* `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `configure_logging()` immediately after
-  `load_dotenv()`, so a `.env` file can supply `KLORB_STATE_DIR` (or the other `KLORB_*`
-  directory env vars) before logging is set up. Modules across the codebase obtain a
-  `logging.Logger` the standard way (`logging.getLogger(__name__)`) and log through it; no
-  module other than `klorb.logging_config` calls `logging.basicConfig`.
+    combination of handlers and naming scheme was chosen, and [the one-shot logging
+    defaults ADR](
+    ../adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md) for why
+    one-shot prompts default to neither.
+* `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `load_dotenv()` first, so a `.env`
+  file can supply `KLORB_STATE_DIR` (or the other `KLORB_*` directory env vars) before
+  logging is set up. It then parses CLI arguments, determines whether it's entering the
+  REPL (`args.prompt is None`) or running a one-shot prompt, and calls
+  `configure_logging(repl_mode=..., session_log=...)` accordingly. `session_log` defaults
+  to True in the REPL and False for a one-shot prompt; the `--session-log` /
+  `--no-session-log` flags (an `argparse.BooleanOptionalAction`) override that default in
+  either mode. Modules across the codebase obtain a `logging.Logger` the standard way
+  (`logging.getLogger(__name__)`) and log through it; no module other than
+  `klorb.logging_config` calls `logging.basicConfig`.
 
 ## Configuration
 
