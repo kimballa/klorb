@@ -12,6 +12,7 @@ features that other features are built upon.
 Key architecture decisions are captured in architecture decision records (ADRs). ADRs
 are short documents that record a decision, with the format: 
 
+* date and time
 * question
 * answer
 * reasoning
