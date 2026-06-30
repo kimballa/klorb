@@ -1,5 +1,6 @@
 # Use Textual's built-in command palette for model selection
 
+* Date: 2026-06-29 23:00
 * Question: How should the REPL let the user switch which model their prompts are sent to?
 * Answer: Register a `klorb.tui.model_commands.ModelCommandProvider`, a Textual
   `command.Provider`, in `ReplApp.COMMANDS`, rather than building a bespoke model-picker

@@ -1,5 +1,6 @@
 # Use XDG-style config/data/state directories, overridable by KLORB_* env vars
 
+* Date: 2026-06-29 23:00
 * Question: Where should klorb store its configuration, persistent data, and runtime state
   (e.g. session logs) on disk?
 * Answer: Follow the XDG base directory convention's shape — `~/.config/klorb` for config,

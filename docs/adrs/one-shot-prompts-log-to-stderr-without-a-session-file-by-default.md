@@ -1,5 +1,6 @@
 # One-shot prompts log to stderr without a session file by default
 
+* Date: 2026-06-29 23:00
 * Question: Should a one-shot `klorb <prompt>` invocation configure logging the same way as
   the interactive REPL — `TextualHandler` plus an always-created session log file under
   `KLORB_STATE_DIR/session-logs/`?

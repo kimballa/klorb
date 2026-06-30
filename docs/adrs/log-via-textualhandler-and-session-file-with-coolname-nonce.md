@@ -1,5 +1,6 @@
 # Log via stdlib logging with TextualHandler plus a per-session file, named with a coolname nonce
 
+* Date: 2026-06-29 23:00
 * Question: How should klorb configure logging so the same log statements work whether
   klorb is run headless (CLI) or inside a Textual TUI, while also leaving a durable record
   of each run?
