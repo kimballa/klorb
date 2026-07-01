@@ -77,7 +77,7 @@ def main() -> None:
     logger.debug("Logging to %s", log_path)
 
     if interactive:
-        run_repl(session, initial_message=args.prompt)
+        run_repl(session, initial_message=args.prompt, session_log_enabled=session_log)
     else:
         logger.info("Sending prompt to model=%s", args.model)
         response = session.run_one_shot(args.prompt)

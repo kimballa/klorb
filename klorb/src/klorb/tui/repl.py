@@ -3,6 +3,8 @@
 box pinned to the bottom of the screen.
 """
 
+import logging
+
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
@@ -13,12 +15,17 @@ from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import Static
 
+from klorb.logging_config import configure_logging
+from klorb.logging_config import session_log_path
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tui.model_commands import ModelCommandProvider
 
+logger = logging.getLogger(__name__)
+
 HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
+CLEAR_COMMAND = "/clear"
 
 
 class ReplApp(App[None]):
@@ -51,10 +58,16 @@ class ReplApp(App[None]):
     BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
     COMMANDS = App.COMMANDS | {ModelCommandProvider}
 
-    def __init__(self, session: Session | None = None, initial_message: str | None = None) -> None:
+    def __init__(
+        self,
+        session: Session | None = None,
+        initial_message: str | None = None,
+        session_log_enabled: bool = True,
+    ) -> None:
         super().__init__()
         self._session = session or Session(SessionConfig())
         self._initial_message = initial_message
+        self._session_log_enabled = session_log_enabled
         self.title = "klorb"
         self.sub_title = self._session.config.model
 
@@ -80,13 +93,40 @@ class ReplApp(App[None]):
             self._submit_prompt(self._initial_message)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Echo the submitted prompt into the history and dispatch it to the model."""
+        """Echo the submitted prompt into the history and dispatch it to the model, or
+        handle a slash command (currently only `/clear`) synchronously.
+        """
         prompt_text = event.value.strip()
         if not prompt_text:
             return
 
         event.input.value = ""
+        if prompt_text == CLEAR_COMMAND:
+            self._clear_session()
+            return
+
         self._submit_prompt(prompt_text)
+
+    def _clear_session(self) -> None:
+        """Replace the active Session with a fresh one (same model, new id), reset the
+        visible history, and roll over the per-session log file if session logging is
+        enabled for this REPL invocation.
+        """
+        new_config = SessionConfig(
+            model=self._session.config.model, interactive=self._session.config.interactive)
+        self._session = Session(
+            new_config, provider=self._session.provider, model_registry=self._session.model_registry)
+
+        if self._session_log_enabled:
+            log_path = session_log_path(self._session.id)
+            configure_logging(repl_mode=True, log_path=log_path)
+            logger.debug("Cleared session; now logging to %s", log_path)
+
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.remove_children()
+
+        self.query_one(f"#{PROMPT_INPUT_ID}", Input).focus()
+        self.notify("Session cleared.")
 
     def _submit_prompt(self, prompt_text: str) -> None:
         """Echo `prompt_text` into the history, disable the input, and dispatch it."""
@@ -129,6 +169,10 @@ class ReplApp(App[None]):
         input_widget.focus()
 
 
-def run_repl(session: Session | None = None, initial_message: str | None = None) -> None:
+def run_repl(
+    session: Session | None = None,
+    initial_message: str | None = None,
+    session_log_enabled: bool = True,
+) -> None:
     """Launch the interactive klorb REPL, optionally submitting `initial_message` first."""
-    ReplApp(session=session, initial_message=initial_message).run()
+    ReplApp(session=session, initial_message=initial_message, session_log_enabled=session_log_enabled).run()

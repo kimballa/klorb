@@ -5,6 +5,22 @@ from abc import ABC
 from abc import abstractmethod
 from typing import Any
 
+from pydantic import BaseModel
+
+from klorb.message import Message
+
+
+class ProviderResponse(BaseModel):
+    """The result of one `ApiProvider.send_prompt()` call: the reply plus request-level usage."""
+
+    message: Message
+    """The assistant's reply. `message.num_tokens` is the completion-token count for this
+    response; `message.finish_reason` is the provider's reported stop reason."""
+
+    prompt_tokens: int
+    """Total input tokens billed for this request (covers the full message list sent,
+    including the system prompt), as reported by the provider's usage stats."""
+
 
 class ApiProvider(ABC):
     """Base class for clients that send prompts to a hosted LLM API."""
@@ -18,5 +34,12 @@ class ApiProvider(ABC):
         """Construct and return the underlying SDK client for this provider."""
 
     @abstractmethod
-    def send_prompt(self, prompt: str, model: str | None = None, session_id: str | None = None) -> str:
-        """Send a single prompt to a model and return its text response."""
+    def send_prompt(
+        self,
+        messages: list[Message],
+        system_prompt: str | None = None,
+        model: str | None = None,
+        session_id: str | None = None,
+    ) -> ProviderResponse:
+        """Send the given conversation history (plus an optional system prompt) to a model
+        and return its reply along with request-level token usage."""

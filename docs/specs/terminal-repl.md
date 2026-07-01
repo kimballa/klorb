@@ -13,10 +13,12 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 ## How it works
 
 * `klorb.tui.repl` (`klorb/src/klorb/tui/repl.py`) defines `ReplApp`, a `textual.app.App`
-  subclass, and `run_repl(session, initial_message)`, a thin function that constructs and
-  runs it. `ReplApp` takes a [[session-and-turns]] `Session` (constructing a default one if
-  none is given) rather than a raw `ApiProvider`/model pair, so the REPL sends every turn
-  through the same `Session.send_turn()` path a one-shot prompt uses.
+  subclass, and `run_repl(session, initial_message, session_log_enabled)`, a thin function
+  that constructs and runs it. `ReplApp` takes a [[session-and-turns]] `Session`
+  (constructing a default one if none is given) rather than a raw `ApiProvider`/model pair,
+  so the REPL sends every turn through the same `Session.send_turn()` path a one-shot
+  prompt uses. `session_log_enabled` records whether `cli.main()` turned on per-session
+  logging for this invocation, so `/clear` (below) knows whether to roll the log file over.
 * `ReplApp.compose()` lays out four widgets top-to-bottom: a `Header` showing the app title
   and the active model as its subtitle, a `VerticalScroll` (id `history`) that holds the
   conversation so far, an `Input` (id `prompt-input`) for typing the next prompt, and a
@@ -50,6 +52,17 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   frequently markdown); on failure, it mounts a `Static` widget with the exception message
   (styled via the `.error` CSS class). Either way, the history is scrolled to the end
   again, and the input box is re-enabled and refocused.
+* Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
+  `Session` with a new one: same `SessionConfig` (model carries over) and the same
+  `provider`/`model_registry` instances (via `Session`'s read-only properties, so the
+  OpenAI client and model discovery aren't rebuilt), but a fresh `generate_session_id()`
+  and an empty message history. This runs synchronously in `on_input_submitted` — no
+  worker thread, no disabling the input box, since no model call is involved. The visible
+  history's children are removed, and if `session_log_enabled` is `True`,
+  `configure_logging()` is called again with a new `session_log_path()` for the new
+  session id (relying on `configure_logging`'s `force=True` behavior to safely repoint the
+  root logger's file handler mid-process). See
+  [[clear-command-starts-a-new-session-and-log-file]].
 * `Ctrl+C` and `Ctrl+Q` quit the REPL. `Ctrl+P` opens Textual's command palette, which
   includes `ModelCommandProvider` for switching the active model — see
   [[model-framework]]. Selecting a model updates `Session.config.model` directly.
@@ -71,8 +84,6 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
 
 ## Out of scope
 
-* Multi-turn conversation history is not sent back to the model — each submitted prompt is
-  still a single, independent `send_prompt` call with no prior turns included in the
-  request. The REPL only gives the *visual* appearance of a conversation.
-* Tool/function calling, slash commands, input history (up-arrow to recall a previous
-  prompt), and streaming token-by-token responses are not implemented yet.
+* `/clear` is the only slash command implemented. Tool/function calling, input history
+  (up-arrow to recall a previous prompt), and streaming token-by-token responses are not
+  implemented yet.

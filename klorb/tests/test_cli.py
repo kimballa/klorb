@@ -63,7 +63,7 @@ def test_main_starts_repl_when_no_prompt_given() -> None:
 
     config = mock_session_cls.call_args.args[0]
     assert config.interactive is True
-    mock_run_repl.assert_called_once_with(mock_session, initial_message=None)
+    mock_run_repl.assert_called_once_with(mock_session, initial_message=None, session_log_enabled=True)
 
 
 def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -> None:
@@ -75,7 +75,7 @@ def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -
 
     config = mock_session_cls.call_args.args[0]
     assert config.interactive is True
-    mock_run_repl.assert_called_once_with(mock_session, initial_message="hi")
+    mock_run_repl.assert_called_once_with(mock_session, initial_message="hi", session_log_enabled=True)
 
 
 def test_main_no_message_and_explicit_no_interactive_errors() -> None:
@@ -130,3 +130,13 @@ def test_main_repl_skips_session_log_when_disabled() -> None:
                     cli.main()
 
     mock_configure_logging.assert_called_once_with(repl_mode=True, log_path=None)
+
+
+def test_main_repl_passes_session_log_enabled_false_when_disabled() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl") as mock_run_repl:
+            with patch("sys.argv", ["klorb", "--no-session-log"]):
+                cli.main()
+
+    mock_run_repl.assert_called_once_with(mock_session, initial_message=None, session_log_enabled=False)
