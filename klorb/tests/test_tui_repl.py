@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 import fixtures.sample_models as sample_models_package
 from textual.containers import VerticalScroll
-from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import Static
 
@@ -21,6 +20,7 @@ from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import STATUS_BAR_ID
 from klorb.tui.repl import THINKING_LABEL
+from klorb.tui.repl import PromptInput
 from klorb.tui.repl import ReplApp
 from klorb.tui.repl import format_token_count
 
@@ -84,9 +84,9 @@ async def test_status_bar_updates_after_a_turn_completes() -> None:
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -109,9 +109,9 @@ async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "what is 2+2?"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "what is 2+2?"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -121,7 +121,7 @@ async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
 
         assert prompt_widget.content == "what is 2+2?"
         assert response_widget.source == "model reply"
-        assert prompt_input.value == ""
+        assert prompt_input.text == ""
 
     _, kwargs = mock_provider.send_prompt.call_args
     assert kwargs["model"] == "some/model"
@@ -133,9 +133,9 @@ async def test_submitting_an_empty_prompt_does_nothing() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "   "
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "   "
+        await pilot.press("enter")
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -150,9 +150,9 @@ async def test_provider_error_is_shown_in_history() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -173,9 +173,9 @@ async def test_select_model_updates_active_model_and_subtitle() -> None:
         await pilot.pause()
         assert app.sub_title == "other/model"
 
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -229,7 +229,7 @@ async def test_initial_message_is_submitted_as_first_turn() -> None:
         assert prompt_widget.content == "what is 2+2?"
         assert response_widget.source == "model reply"
 
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         assert prompt_input.disabled is False
 
     _, kwargs = mock_provider.send_prompt.call_args
@@ -243,16 +243,16 @@ async def test_clear_replaces_session_and_resets_history() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         original_session_id = app._session.id
 
-        prompt_input.value = "/clear"
-        await prompt_input.action_submit()
+        prompt_input.text = "/clear"
+        await pilot.press("enter")
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -267,9 +267,9 @@ async def test_clear_does_not_disable_input_or_send_to_provider() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "/clear"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "/clear"
+        await pilot.press("enter")
         await pilot.pause()
 
         assert prompt_input.disabled is False
@@ -283,9 +283,9 @@ async def test_clear_rotates_log_file_when_session_log_enabled() -> None:
 
     with patch("klorb.tui.repl.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-            prompt_input.value = "/clear"
-            await prompt_input.action_submit()
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            prompt_input.text = "/clear"
+            await pilot.press("enter")
             await pilot.pause()
 
     mock_configure_logging.assert_called_once_with(
@@ -298,9 +298,9 @@ async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
 
     with patch("klorb.tui.repl.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-            prompt_input.value = "/clear"
-            await prompt_input.action_submit()
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            prompt_input.text = "/clear"
+            await pilot.press("enter")
             await pilot.pause()
 
     mock_configure_logging.assert_not_called()
@@ -321,9 +321,9 @@ async def test_streaming_response_updates_widget_progressively() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -350,9 +350,9 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -383,9 +383,9 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -411,9 +411,9 @@ async def test_thinking_chunks_escape_literal_brackets() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
-        prompt_input.value = "hi"
-        await prompt_input.action_submit()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
 

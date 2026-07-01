@@ -6,16 +6,18 @@ box pinned to the bottom of the screen.
 import logging
 
 from rich.markup import escape
+from textual import events
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.widgets import Footer
 from textual.widgets import Header
-from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import Static
+from textual.widgets import TextArea
 
 from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
@@ -33,6 +35,10 @@ HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
 STATUS_BAR_ID = "status-bar"
 THINKING_LABEL = "<Thinking>"
+
+# Maximum height, in soft-wrapped lines, that the prompt input box grows to before it
+# starts scrolling instead of growing further. TODO: expose as a user config setting.
+PROMPT_INPUT_MAX_LINES = 12
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -78,6 +84,50 @@ def _italicized(text: str) -> str:
     return f"[italic]{escape(text)}[/italic]"
 
 
+class PromptInput(TextArea):
+    """A multi-line prompt box that soft-wraps long input and grows with it.
+
+    Enter submits the current text, mirroring the single-line `Input` widget this replaces.
+    Ctrl+Enter inserts a literal newline instead. Shift+Enter and Alt+Enter aren't usable for
+    this: Shift+Enter is indistinguishable from plain Enter on terminals without kitty
+    keyboard protocol support (confirmed by testing: both report as plain `"enter"`), and
+    Alt+Enter is claimed by Windows/many terminal emulators for toggling fullscreen before it
+    ever reaches the app. Ctrl+Enter itself commonly arrives as `"ctrl+j"` rather than
+    `"ctrl+enter"`, since terminals typically send the same linefeed control byte for both
+    Ctrl+Enter and Ctrl+J; both spellings are handled here.
+    """
+
+    NEWLINE_KEYS = ("ctrl+j", "ctrl+enter")
+
+    class Submitted(Message):
+        """Posted when the user presses Enter to submit the current text."""
+
+        def __init__(self, prompt_input: "PromptInput", value: str) -> None:
+            self.prompt_input = prompt_input
+            self.value = value
+            super().__init__()
+
+        @property
+        def control(self) -> "PromptInput":
+            return self.prompt_input
+
+    async def _on_key(self, event: events.Key) -> None:
+        """Submit on Enter; insert a newline on Ctrl+Enter; defer everything else (typing,
+        navigation, selection) to `TextArea`'s own handling.
+        """
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self, self.text))
+            return
+        if event.key in self.NEWLINE_KEYS:
+            event.stop()
+            event.prevent_default()
+            self.replace("\n", *self.selection)
+            return
+        await super()._on_key(event)
+
+
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
@@ -89,7 +139,8 @@ class ReplApp(App[None]):
     #prompt-input, #prompt-input:focus {
         border: none;
         border-top: solid $accent;
-        height: 2;
+        height: auto;
+        max-height: __PROMPT_INPUT_MAX_HEIGHT__;
         padding: 0 1;
     }
 
@@ -131,7 +182,7 @@ class ReplApp(App[None]):
         color: $text-muted;
         padding: 0 2;
     }
-    """
+    """.replace("__PROMPT_INPUT_MAX_HEIGHT__", str(PROMPT_INPUT_MAX_LINES + 1))
 
     BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
     COMMANDS = App.COMMANDS | {ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider}
@@ -152,7 +203,7 @@ class ReplApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id=HISTORY_ID)
-        yield Input(placeholder="Send a message...", id=PROMPT_INPUT_ID)
+        yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         with Horizontal(id="status-row"):
             yield Footer()
             yield Static(id=STATUS_BAR_ID)
@@ -186,7 +237,7 @@ class ReplApp(App[None]):
 
     def on_mount(self) -> None:
         """Label and focus the input box, then submit any initial message as the first turn."""
-        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
         input_widget.focus()
         self._update_status_bar()
@@ -201,7 +252,7 @@ class ReplApp(App[None]):
         limit = self._session.max_context_window()
         status_bar.update(used if limit is None else f"{used} / {format_token_count(limit)}")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model, or
         handle a slash command (currently only `/clear`) synchronously.
         """
@@ -209,7 +260,7 @@ class ReplApp(App[None]):
         if not prompt_text:
             return
 
-        event.input.value = ""
+        event.prompt_input.text = ""
         if prompt_text == CLEAR_SESSION_COMMAND:
             self.clear_session()
             return
@@ -234,13 +285,13 @@ class ReplApp(App[None]):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
 
-        self.query_one(f"#{PROMPT_INPUT_ID}", Input).focus()
+        self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).focus()
         self._update_status_bar()
         self.notify("Session cleared.")
 
     def _submit_prompt(self, prompt_text: str) -> None:
         """Echo `prompt_text` into the history, disable the input, and dispatch it."""
-        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = True
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -333,7 +384,7 @@ class ReplApp(App[None]):
         """Scroll the history into view, refresh the token tally, and hand focus back to the input box."""
         history.scroll_end(animate=False)
         self._update_status_bar()
-        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = False
         input_widget.focus()
 

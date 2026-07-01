@@ -1,7 +1,17 @@
 
 
-* the input prompt should linewrap at the edge of the screen and the input area should expand upward to a maximum of 12 lines.
-* enable and disable thinking palette commands should not both be present at the same time.
+# Bugs:
+
+* ctrl-enter and shift-enter don't actually insert a newline in the current text.
+
+# Feature backlog
+
+* add a `bin/klorb` at the top level that invokes the `venv/...` thing.
+
+* mouse-based select/copy/paste doesn't work.
+* If we are streaming a response back from the agent, the ESC key should abort the
+  response generation, and also put the most recent user prompt back in the textbox for editing. 
+
 * send_one_shot should actually run a whole session (non-interactively) until it gets a 'finished'
   state rather than just sending a single msg turn for a single response.
 * Need a ProviderFactory
