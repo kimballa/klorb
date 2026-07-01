@@ -15,15 +15,20 @@ or slicing a superset.
 ## How it works
 
 * `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus
-  four process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
+  six process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
   prompt textarea's max grow height, applied via `input_widget.styles.max_height` in
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
   looks `config.thinking_effort` up in for `"tokens"`-style models), `read_file_max_lines`
   (int, default `DEFAULT_READ_FILE_MAX_LINES`, `200` — `ReadFileTool`'s per-call page size;
-  see "Out of scope" below), and `openrouter_base_url` (str, default
-  `openrouter.OPENROUTER_BASE_URL` — passed to `OpenRouterApiProvider(base_url=...)`, for
-  pointing at a self-hosted or corporate OpenRouter-compatible gateway).
+  see "Out of scope" below), `max_tool_calls_per_turn` and `max_tool_calls_per_session` (int,
+  defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` —
+  `5`/`25` — safety caps `Session._run_tool_calls()` enforces on individual tool-call
+  dispatches, see [[session-and-turns]] and
+  [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md)), and
+  `openrouter_base_url` (str, default `openrouter.OPENROUTER_BASE_URL` — passed to
+  `OpenRouterApiProvider(base_url=...)`, for pointing at a self-hosted or corporate
+  OpenRouter-compatible gateway).
 
   `session` is a *template*, not a shared instance — every `Session` created in the process
   (at startup, or via `/clear`) gets `process_config.session.model_copy()`, an independent
@@ -107,6 +112,8 @@ sit as flat keys alongside it at the top level:
   "thinking.tokenBudgets": {"low": 4096, "medium": 16384, "high": 32768},
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
+  "tools.maxCallsPerTurn": 5,
+  "tools.maxCallsPerSession": 25,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
 }
 ```
@@ -140,8 +147,9 @@ field. A reference file with every recognized key at its current default lives a
   precedence, and "On-disk key naming" above for the file's shape and key style. Every entry
   in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`) can be set inside
   `sessionDefaults`; every entry in `PROCESS_KEY_MAP` (`thinking.tokenBudgets`,
-  `terminal.input.maxLines`, `tools.readFile.maxLines`, `providers.openrouter.baseUrl`) can
-  be set at the top level. `thinking.tokenBudgets`, being a nested object (`{"low": ...,
+  `terminal.input.maxLines`, `tools.readFile.maxLines`, `tools.maxCallsPerTurn`,
+  `tools.maxCallsPerSession`, `providers.openrouter.baseUrl`) can be set at the top level.
+  `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`
   key it wants to keep. `interactive` cannot be set from a config file at all: it's always

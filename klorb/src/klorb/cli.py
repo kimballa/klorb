@@ -92,6 +92,8 @@ def main() -> None:
         provider=provider,
         thinking_token_budgets=process_config.thinking_token_budgets,
         tool_registry=ToolRegistry(process_config, session_config),
+        max_tool_calls_per_turn=process_config.max_tool_calls_per_turn,
+        max_tool_calls_per_session=process_config.max_tool_calls_per_session,
     )
 
     log_path = session_log_path(session.id) if session_log else None

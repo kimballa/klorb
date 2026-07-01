@@ -17,5 +17,7 @@
   },
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
+  "tools.maxCallsPerTurn": 5,
+  "tools.maxCallsPerSession": 25,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
 }

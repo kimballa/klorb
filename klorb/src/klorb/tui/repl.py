@@ -205,6 +205,8 @@ class ReplApp(App[None]):
                 new_config,
                 thinking_token_budgets=self._process_config.thinking_token_budgets,
                 tool_registry=ToolRegistry(self._process_config, new_config),
+                max_tool_calls_per_turn=self._process_config.max_tool_calls_per_turn,
+                max_tool_calls_per_session=self._process_config.max_tool_calls_per_session,
             )
         self._session = session
         self._initial_message = initial_message
@@ -318,6 +320,8 @@ class ReplApp(App[None]):
             model_registry=self._session.model_registry,
             thinking_token_budgets=self._process_config.thinking_token_budgets,
             tool_registry=ToolRegistry(self._process_config, new_config),
+            max_tool_calls_per_turn=self._process_config.max_tool_calls_per_turn,
+            max_tool_calls_per_session=self._process_config.max_tool_calls_per_session,
         )
 
         if self._session_log_enabled:

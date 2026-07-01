@@ -25,10 +25,13 @@ config) has one place to live.
     for why these are the defaults.
 * `klorb.session.Session` is constructed with a `SessionConfig` (saved as `self.config`),
   and optionally an `ApiProvider` (defaults to a fresh `OpenRouterApiProvider`), a
-  `ModelRegistry` (defaults to a fresh `ModelRegistry()`), and a
+  `ModelRegistry` (defaults to a fresh `ModelRegistry()`), a
   `klorb.tools.registry.ToolRegistry` (`tool_registry`, defaults to `None`, meaning
   tool-calling is off for this session — see [[tool-framework]] and
-  [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md)).
+  [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md)), and
+  `max_tool_calls_per_turn`/`max_tool_calls_per_session` (each defaulting to `None`, meaning
+  fall back to `DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` — see
+  below).
   It also holds `self._messages: list[[[message-model]]]`, exposed read-only via the
   `messages` property, plus read-only `provider`/`model_registry`/`tool_registry` properties
   so callers (e.g. [[terminal-repl]]'s `/clear`) can build a new `Session` that reuses the
@@ -98,10 +101,22 @@ config) has one place to live.
     `Message` per call (feeding back `f"Error: {exc}"` as that call's result if lookup or
     execution failed, rather than failing the turn), and `_dispatch_turn()` sends another
     round with the updated history. This repeats until a plain `"assistant"` reply comes
-    back, or `MAX_TOOL_CALL_ROUNDS` (10) round trips are exceeded, which raises
-    `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
-    `processing_state="error"`). See
-    [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md).
+    back, or one of three safety caps is exceeded, which raises `ToolCallLimitExceeded`
+    (handled like any other mid-turn failure: `user_message` marked
+    `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (10, a module constant) model-to-tool
+    round trips; `max_tool_calls_per_turn` (`Session` constructor arg, defaulting to
+    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 5) individual tool calls dispatched by
+    `_run_tool_calls()` in this turn — reset to `0` at the start of every `_dispatch_turn()`
+    call, including retries; or `max_tool_calls_per_session` (defaulting to
+    `DEFAULT_MAX_TOOL_CALLS_PER_SESSION`, 25) individual tool calls dispatched across this
+    `Session`'s entire lifetime — never reset. Both are checked, and the running counts
+    logged, before each individual call within `_run_tool_calls()` (not just once per round),
+    so a round requesting several parallel tool calls can be cut off partway through; calls
+    already dispatched earlier in that same round stay in history. `ProcessConfig` (see
+    [[process-and-session-config]]) is the source of the two configurable caps' values, which
+    `cli.py`/`repl.py` pass into `Session`'s constructor alongside `tool_registry`. See
+    [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md) and
+    [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
     `user_message.num_tokens` is set from the *last* round's `prompt_tokens` delta, folding
     every round's cost (tool definitions and results included) into the one turn, the same
     way the system prompt's cost is folded into the first turn (see "Out of scope" below).

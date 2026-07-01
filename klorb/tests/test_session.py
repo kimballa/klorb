@@ -15,6 +15,7 @@ from klorb.message import Message
 from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import ProcessConfig
+from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import MAX_TOOL_CALL_ROUNDS
 from klorb.session import Session
@@ -628,12 +629,14 @@ def test_unknown_tool_call_reports_error_to_model() -> None:
     assert tool_response_message.content.startswith("Error:")
 
 
-def test_tool_call_limit_exceeded_raises_and_marks_user_message_error() -> None:
+def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
     config = SessionConfig(model="some/model")
     tool_registry = _sample_tool_registry(config)
-    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    session = Session(
+        config, provider=mock_provider, tool_registry=tool_registry,
+        max_tool_calls_per_turn=1_000, max_tool_calls_per_session=1_000)
 
     with pytest.raises(ToolCallLimitExceeded):
         session.send_turn("loop forever")
@@ -642,3 +645,77 @@ def test_tool_call_limit_exceeded_raises_and_marks_user_message_error() -> None:
     user_message = session.messages[1]
     assert user_message.processing_state == "error"
     assert "10" in (user_message.last_error or "")
+
+
+def test_per_turn_tool_call_limit_defaults_to_five() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    with pytest.raises(ToolCallLimitExceeded, match="5 tool call"):
+        session.send_turn("loop forever")
+
+    tool_response_messages = [m for m in session.messages if m.role == "tool_response"]
+    assert len(tool_response_messages) == DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    user_message = session.messages[1]
+    assert user_message.processing_state == "error"
+
+
+def test_per_turn_tool_call_limit_is_configurable() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(
+        config, provider=mock_provider, tool_registry=tool_registry, max_tool_calls_per_turn=2)
+
+    with pytest.raises(ToolCallLimitExceeded, match="2 tool call"):
+        session.send_turn("loop forever")
+
+    tool_response_messages = [m for m in session.messages if m.role == "tool_response"]
+    assert len(tool_response_messages) == 2
+
+
+def test_per_turn_tool_call_limit_resets_between_turns() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
+        _reply("first done"),
+        _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
+        _reply("second done"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(
+        config, provider=mock_provider, tool_registry=tool_registry, max_tool_calls_per_turn=1)
+
+    response1 = session.send_turn("first")
+    response2 = session.send_turn("second")
+
+    assert response1 == "first done"
+    assert response2 == "second done"
+
+
+def test_per_session_tool_call_limit_accumulates_across_turns() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
+        _reply("first done"),
+        _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(
+        config, provider=mock_provider, tool_registry=tool_registry,
+        max_tool_calls_per_turn=1_000, max_tool_calls_per_session=1)
+
+    response1 = session.send_turn("first")
+    assert response1 == "first done"
+
+    with pytest.raises(ToolCallLimitExceeded, match="1 tool call"):
+        session.send_turn("second")
+
+    second_user_message = next(m for m in session.messages if m.role == "user" and m.content == "second")
+    assert second_user_message.processing_state == "error"
