@@ -2,11 +2,7 @@
 
 # Bugs:
 
-* ctrl-enter and shift-enter don't actually insert a newline in the current text.
-
 # Feature backlog
-
-* add a `bin/klorb` at the top level that invokes the `venv/...` thing.
 
 * mouse-based select/copy/paste doesn't work.
 * If we are streaming a response back from the agent, the ESC key should abort the

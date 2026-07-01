@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# © Copyright 2026 Aaron Kimball
+#
+# Thin wrapper so `klorb` can be run directly from the repo root without
+# activating the venv. Delegates to the venv-installed entry point.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+exec "$REPO_ROOT/klorb/venv/bin/klorb" "$@"
