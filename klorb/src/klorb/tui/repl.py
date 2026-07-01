@@ -8,6 +8,7 @@ import logging
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.containers import VerticalScroll
 from textual.widgets import Footer
 from textual.widgets import Header
@@ -25,7 +26,44 @@ logger = logging.getLogger(__name__)
 
 HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
+STATUS_BAR_ID = "status-bar"
 CLEAR_COMMAND = "/clear"
+
+_SI_SUFFIXES = ("", "k", "M", "B")
+
+
+def _round_to_2_sig_figs(value: float) -> float:
+    """Round `value` (>= 1) to 2 significant figures, e.g. `1.43` -> `1.4`, `423` -> `420`."""
+    if value < 10:
+        return round(value, 1)
+    if value < 100:
+        return float(round(value))
+    return float(round(value / 10) * 10)
+
+
+def format_token_count(count: int) -> str:
+    """Render `count` using SI-style suffixes at 2 significant figures once >= 1000, e.g.
+    `1400` -> `"1.4k"`, `23000` -> `"23k"`, `423000` -> `"420k"`. Counts under 1000 are
+    shown as a literal integer.
+    """
+    if count < 1000:
+        return str(count)
+
+    magnitude = 0
+    value = float(count)
+    while value >= 1000 and magnitude < len(_SI_SUFFIXES) - 1:
+        value /= 1000
+        magnitude += 1
+
+    value = _round_to_2_sig_figs(value)
+    if value >= 1000 and magnitude < len(_SI_SUFFIXES) - 1:
+        value /= 1000
+        magnitude += 1
+
+    suffix = _SI_SUFFIXES[magnitude]
+    if value == int(value):
+        return f"{int(value)}{suffix}"
+    return f"{value}{suffix}"
 
 
 class ReplApp(App[None]):
@@ -40,6 +78,24 @@ class ReplApp(App[None]):
         border: none;
         border-top: solid $accent;
         height: 2;
+        padding: 0 1;
+    }
+
+    #status-row {
+        dock: bottom;
+        height: 1;
+    }
+
+    #status-row Footer {
+        dock: none;
+        width: 1fr;
+        height: 1;
+    }
+
+    #status-bar {
+        width: auto;
+        color: $footer-description-foreground;
+        background: $footer-description-background;
         padding: 0 1;
     }
 
@@ -75,12 +131,15 @@ class ReplApp(App[None]):
         yield Header()
         yield VerticalScroll(id=HISTORY_ID)
         yield Input(placeholder="Send a message...", id=PROMPT_INPUT_ID)
-        yield Footer()
+        with Horizontal(id="status-row"):
+            yield Footer()
+            yield Static(id=STATUS_BAR_ID)
 
     def select_model(self, name: str) -> None:
         """Make `name` the active model used for subsequent prompts."""
         self._session.config.model = name
         self.sub_title = name
+        self._update_status_bar()
         self.notify(f"Model set to {name}.")
 
     def on_mount(self) -> None:
@@ -88,9 +147,17 @@ class ReplApp(App[None]):
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
         input_widget.border_title = "message"
         input_widget.focus()
+        self._update_status_bar()
 
         if self._initial_message:
             self._submit_prompt(self._initial_message)
+
+    def _update_status_bar(self) -> None:
+        """Refresh the status bar's running token tally against the active model's context window."""
+        status_bar = self.query_one(f"#{STATUS_BAR_ID}", Static)
+        used = format_token_count(self._session.total_tokens_used())
+        limit = self._session.max_context_window()
+        status_bar.update(used if limit is None else f"{used} / {format_token_count(limit)}")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model, or
@@ -126,6 +193,7 @@ class ReplApp(App[None]):
         history.remove_children()
 
         self.query_one(f"#{PROMPT_INPUT_ID}", Input).focus()
+        self._update_status_bar()
         self.notify("Session cleared.")
 
     def _submit_prompt(self, prompt_text: str) -> None:
@@ -193,8 +261,9 @@ class ReplApp(App[None]):
         self._finish_turn(history)
 
     def _finish_turn(self, history: VerticalScroll) -> None:
-        """Scroll the history into view and hand focus back to the input box."""
+        """Scroll the history into view, refresh the token tally, and hand focus back to the input box."""
         history.scroll_end(animate=False)
+        self._update_status_bar()
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
         input_widget.disabled = False
         input_widget.focus()

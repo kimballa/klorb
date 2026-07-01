@@ -5,6 +5,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import fixtures.sample_models as sample_models_package
 from textual.containers import VerticalScroll
 from textual.widgets import Input
 from textual.widgets import Markdown
@@ -13,11 +14,14 @@ from textual.widgets import Static
 from klorb.api_provider import ProviderResponse
 from klorb.logging_config import session_log_path
 from klorb.message import Message
+from klorb.models.registry import ModelRegistry
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
+from klorb.tui.repl import STATUS_BAR_ID
 from klorb.tui.repl import ReplApp
+from klorb.tui.repl import format_token_count
 
 
 TEST_SESSION_ID = "test-session-id"
@@ -38,6 +42,64 @@ def _reply(content: str = "model reply") -> ProviderResponse:
         ),
         prompt_tokens=1,
     )
+
+
+def test_format_token_count_examples() -> None:
+    assert format_token_count(0) == "0"
+    assert format_token_count(500) == "500"
+    assert format_token_count(999) == "999"
+    assert format_token_count(1000) == "1k"
+    assert format_token_count(1400) == "1.4k"
+    assert format_token_count(23000) == "23k"
+    assert format_token_count(24000) == "24k"
+    assert format_token_count(25000) == "25k"
+    assert format_token_count(200000) == "200k"
+    assert format_token_count(210000) == "210k"
+    assert format_token_count(220000) == "220k"
+    assert format_token_count(423000) == "420k"
+    assert format_token_count(1_000_000) == "1M"
+
+
+async def test_status_bar_shows_zero_tokens_against_model_context_window_on_mount() -> None:
+    mock_provider = MagicMock()
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(
+        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
+        assert status_bar.content == "0 / 8k"
+
+
+async def test_status_bar_updates_after_a_turn_completes() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(
+        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input.value = "hi"
+        await prompt_input.action_submit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
+        assert status_bar.content == f"{session.total_tokens_used()} / 8k"
+
+
+async def test_status_bar_omits_limit_when_model_unregistered() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
+        assert status_bar.content == "0"
 
 
 async def test_submitting_a_prompt_shows_it_and_the_response() -> None:

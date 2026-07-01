@@ -68,6 +68,31 @@ def test_session_uses_explicitly_given_id() -> None:
     assert session.id == "my-custom-id"
 
 
+def test_total_tokens_used_sums_recorded_message_tokens() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply(num_tokens=5, prompt_tokens=10)
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert session.total_tokens_used() == 10 + 5
+
+
+def test_max_context_window_reads_registered_model_capabilities() -> None:
+    config = SessionConfig(model="alpha")
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(config, provider=MagicMock(), model_registry=registry)
+
+    assert session.max_context_window() == 8_000
+
+
+def test_max_context_window_none_when_model_unregistered() -> None:
+    config = SessionConfig(model="some/unregistered-model")
+    session = Session(config, provider=MagicMock())
+
+    assert session.max_context_window() is None
+
+
 def test_active_model_name_falls_back_to_config_model_when_unregistered() -> None:
     config = SessionConfig(model="some/unregistered-model")
     session = Session(config, provider=MagicMock())

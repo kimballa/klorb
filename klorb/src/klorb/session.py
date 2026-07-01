@@ -96,6 +96,19 @@ class Session:
         """Sum of `num_tokens` across all messages currently in the buffer."""
         return sum(message.num_tokens for message in self._messages)
 
+    def total_tokens_used(self) -> int:
+        """Return the running total of tokens consumed by the conversation so far."""
+        return self._tokens_recorded_so_far()
+
+    def max_context_window(self) -> int | None:
+        """Return the active model's max context window in tokens, or `None` if the
+        active model isn't registered or doesn't report one.
+        """
+        model = self._active_model()
+        if model is None:
+            return None
+        return model.capabilities().get("max_context_window")
+
     def _dispatch_turn(
         self,
         user_message: Message,

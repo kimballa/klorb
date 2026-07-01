@@ -19,12 +19,34 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   so the REPL sends every turn through the same `Session.send_turn()` path a one-shot
   prompt uses. `session_log_enabled` records whether `cli.main()` turned on per-session
   logging for this invocation, so `/clear` (below) knows whether to roll the log file over.
-* `ReplApp.compose()` lays out four widgets top-to-bottom: a `Header` showing the app title
-  and the active model as its subtitle, a `VerticalScroll` (id `history`) that holds the
-  conversation so far, an `Input` (id `prompt-input`) for typing the next prompt, and a
-  `Footer` showing key bindings. The history container is styled `height: 1fr` so it fills
+* `ReplApp.compose()` lays out four widgets/regions top-to-bottom: a `Header` showing the
+  app title and the active model as its subtitle, a `VerticalScroll` (id `history`) that
+  holds the conversation so far, an `Input` (id `prompt-input`) for typing the next prompt,
+  and a `Horizontal` (id `status-row`) docked to the bottom of the screen that holds the
+  `Footer` (key bindings) side by side with a `Static` token-tally widget (id `status-bar`)
+  in the same row — so the tally reads like one more item alongside `^q Quit`/`^p palette`
+  rather than a separate line. The history container is styled `height: 1fr` so it fills
   all available vertical space above the input box, which is why the history scrolls "up"
   as content is added while the input box stays pinned to the bottom of the screen.
+* `Footer`'s own `dock: bottom` CSS rule is overridden to `dock: none; width: 1fr` when
+  nested inside `#status-row`, since Textual resolves a docked widget's position against
+  its immediate parent: left docked, `Footer` would claim the entire row's height for
+  itself (its dock arrangement is computed independently of siblings) and collide with
+  `#status-bar` instead of sharing the row. With the dock removed, `Footer` behaves as a
+  normal flex child that takes up the remaining space next to the fixed-width tally.
+* The status bar shows a running token tally as `"<used> / <limit>"` (e.g. `"1.4k / 128k"`),
+  where `<used>` is `Session.total_tokens_used()` (the sum of `num_tokens` across every
+  message recorded so far — see [[session-and-turns]]) and `<limit>` is
+  `Session.max_context_window()`, read from the active model's
+  `Model.capabilities()["max_context_window"]` (see [[model-framework]]). If the active
+  model isn't registered (so its context window is unknown), the bar shows just `<used>`
+  with no `" / <limit>"` suffix. Both numbers are rendered by `format_token_count()`, which
+  shows raw integers under 1000 and otherwise an SI suffix (`k`/`M`/`B`) rounded to 2
+  significant figures — e.g. `1400` -> `"1.4k"`, `423000` -> `"420k"` — so the bar stays
+  short and doesn't imply more precision than the token accounting actually has (see
+  [[derive-user-turn-token-counts-from-a-prompt-token-delta]]). `ReplApp._update_status_bar()`
+  recomputes and redraws the bar on mount, after switching models, after `/clear`, and at
+  the end of every turn (success or error).
 * The input box's default full box border is overridden (`border: none; border-top: solid
   $accent;`) so only a single horizontal rule separates it from the history, with no side
   or bottom borders. This keeps the input looking like a plain line of text rather than a
