@@ -6,7 +6,7 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 ## SYNOPSIS
 
-`klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*]
+`klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*] [`--config` *FILE*]
 [`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
 
 ## DESCRIPTION
@@ -28,7 +28,15 @@ message submitted as the first turn, then keeps the REPL open for more.
 * `--model` *MODEL*
 
   OpenRouter model identifier to use (e.g. `anthropic/claude-3.5-sonnet`).
-  Defaults to `openai/gpt-4o-mini`.
+  Defaults to `openai/gpt-4o-mini`, unless overridden by a `klorb-config.json`
+  file (see `docs/specs/process-and-session-config.md`).
+
+* `--config` *FILE*
+
+  Path to an additional `klorb-config.json`-shaped file, layered on top of
+  the `/etc`, per-user, and per-project config files described in
+  `docs/specs/process-and-session-config.md`. Not required; klorb runs fine
+  with no config files at all.
 
 * `--interactive`, `--no-interactive`
 
@@ -106,7 +114,16 @@ Start the REPL with a starting message, then keep chatting:
 klorb -m "What is 2+2?" --interactive
 ```
 
+Start the REPL with settings from an extra config file, on top of the usual
+`/etc`, per-user, and per-project `klorb-config.json` files:
+
+```
+klorb --config ./ci-defaults.json
+```
+
 ## SEE ALSO
 
 `docs/specs/openrouter-prompt-client.md`, `docs/specs/terminal-repl.md`,
-`docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`
+`docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`,
+`docs/specs/process-and-session-config.md`,
+`docs/specs/persisted-json-schema-versioning.md`

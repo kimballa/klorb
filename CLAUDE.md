@@ -23,6 +23,17 @@ ADR filenames should have a reasonable slug (`do-foo-by-doing-bar.md`) so that u
 ADRs can be quickly accessed by agents just by the filename. Don't waste filename on
 filler words (`should-we-do-foo.md`); try to include the answer.
 
+Any JSON file klorb writes to disk that's meant to be read back later (config, saved
+session state, etc.) must include a `schema: {name, version}` envelope so a later klorb
+version can detect and upgrade an old file instead of misreading it. See
+`docs/specs/persisted-json-schema-versioning.md` for the convention and the shared helper
+that implements it.
+
+User-facing, hand-authored config file keys (`klorb-config.json`) use dot-delineated,
+lowerCamelCase namespacing (`thinking.effort`, `terminal.input.maxLines`) — the same vibe as
+VSCode's and Claude Code's own settings files — not the snake_case used for internal Python
+identifiers. See `docs/specs/process-and-session-config.md`'s "On-disk key naming" section.
+
 ## subprojects
 
 The Klorb project is organized as a collection of subprojects:

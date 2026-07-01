@@ -29,10 +29,12 @@ class OpenRouterApiProvider(ApiProvider):
         self,
         api_key: str | None = None,
         model: str = DEFAULT_MODEL,
+        base_url: str = OPENROUTER_BASE_URL,
         client: OpenAI | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
+        self._base_url = base_url
         self._client = client
 
     def get_api_key(self) -> str:
@@ -47,8 +49,8 @@ class OpenRouterApiProvider(ApiProvider):
     def build_client(self) -> OpenAI:
         """Construct (and cache) an OpenAI SDK client pointed at the OpenRouter API."""
         if self._client is None:
-            logger.debug("Building OpenAI client for OpenRouter at %s", OPENROUTER_BASE_URL)
-            self._client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=self.get_api_key())
+            logger.debug("Building OpenAI client for OpenRouter at %s", self._base_url)
+            self._client = OpenAI(base_url=self._base_url, api_key=self.get_api_key())
         return self._client
 
     def send_prompt(

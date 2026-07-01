@@ -3,6 +3,7 @@
 
 from datetime import datetime
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -55,6 +56,23 @@ def test_get_api_key_raises_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = openrouter.OpenRouterApiProvider()
     with pytest.raises(RuntimeError):
         provider.get_api_key()
+
+
+def test_build_client_uses_default_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(openrouter.OPENROUTER_API_KEY_ENV_VAR, "test-key")
+    provider = openrouter.OpenRouterApiProvider()
+    with patch("klorb.openrouter.OpenAI") as mock_openai_cls:
+        provider.build_client()
+    mock_openai_cls.assert_called_once_with(base_url=openrouter.OPENROUTER_BASE_URL, api_key="test-key")
+
+
+def test_build_client_honors_custom_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(openrouter.OPENROUTER_API_KEY_ENV_VAR, "test-key")
+    provider = openrouter.OpenRouterApiProvider(base_url="https://gateway.example.com/v1")
+    with patch("klorb.openrouter.OpenAI") as mock_openai_cls:
+        provider.build_client()
+    mock_openai_cls.assert_called_once_with(
+        base_url="https://gateway.example.com/v1", api_key="test-key")
 
 
 def test_send_prompt_returns_model_response() -> None:

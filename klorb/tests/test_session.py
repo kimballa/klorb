@@ -15,6 +15,7 @@ from klorb.models.registry import ModelRegistry
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import Session
 from klorb.session import SessionConfig
+from klorb.session import ThinkingEffort
 from klorb.session import generate_session_id
 
 SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-[a-z]+-[a-z]+$")
@@ -188,6 +189,22 @@ def test_reasoning_uses_token_budget_for_tokens_style_thinking_model() -> None:
 
     _, kwargs = mock_provider.send_prompt.call_args
     assert kwargs["reasoning"] == {"max_tokens": THINKING_EFFORT_TOKEN_BUDGETS["high"]}
+
+
+def test_reasoning_uses_custom_token_budgets_when_given() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    custom_budgets: dict[ThinkingEffort, int] = {"low": 1_000, "medium": 2_000, "high": 3_000}
+    session = Session(
+        SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry,
+        thinking_token_budgets=custom_budgets)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] == {"max_tokens": 3_000}
+    assert session.thinking_token_budgets == custom_budgets
 
 
 def test_reasoning_none_when_thinking_disabled() -> None:

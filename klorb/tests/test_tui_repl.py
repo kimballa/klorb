@@ -14,6 +14,7 @@ from klorb.api_provider import ProviderResponse
 from klorb.logging_config import session_log_path
 from klorb.message import Message
 from klorb.models.registry import ModelRegistry
+from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tui.repl import HISTORY_ID
@@ -204,6 +205,45 @@ async def test_set_thinking_effort_updates_session_config() -> None:
         assert app._session.config.thinking_effort == "low"
 
 
+async def test_prompt_input_max_height_comes_from_process_config() -> None:
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(prompt_input_max_lines=3)
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test():
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        max_height = prompt_input.styles.max_height
+        assert max_height is not None
+        assert int(max_height.value) == 4
+
+
+async def test_select_model_also_updates_process_config_template() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.select_model("other/model")
+        assert app._process_config.session.model == "other/model"
+
+
+async def test_set_thinking_enabled_also_updates_process_config_template() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.set_thinking_enabled(False)
+        assert app._process_config.session.thinking_enabled is False
+
+
+async def test_set_thinking_effort_also_updates_process_config_template() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.set_thinking_effort("low")
+        assert app._process_config.session.thinking_effort == "low"
+
+
 async def test_get_thinking_effort_reflects_session_config() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
@@ -240,7 +280,8 @@ async def test_initial_message_is_submitted_as_first_turn() -> None:
 async def test_clear_replaces_session_and_resets_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    process_config = ProcessConfig(session=SessionConfig(model="some/model"))
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -260,6 +301,28 @@ async def test_clear_replaces_session_and_resets_history() -> None:
         assert app._session.id != original_session_id
         assert app._session.config.model == "some/model"
         assert app._session.messages == []
+
+
+async def test_clear_carries_over_thinking_settings_from_process_config() -> None:
+    """Regression test: `/clear` used to hand-pick `model`/`interactive` onto the new
+    `SessionConfig`, silently dropping `thinking_enabled`/`thinking_effort` back to their
+    defaults. It now copies the full `ProcessConfig.session` template, which the thinking
+    commands keep in sync, so a `/clear` after changing thinking settings preserves them.
+    """
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.set_thinking_enabled(False)
+        app.set_thinking_effort("low")
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "/clear"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app._session.config.thinking_enabled is False
+        assert app._session.config.thinking_effort == "low"
 
 
 async def test_clear_does_not_disable_input_or_send_to_provider() -> None:

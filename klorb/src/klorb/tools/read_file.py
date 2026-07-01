@@ -12,16 +12,19 @@ logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
-    """Reads up to MAX_LINES lines from a text file, prefixed with 1-indexed line numbers."""
+    """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers."""
+
+    def __init__(self, max_lines: int = MAX_LINES) -> None:
+        self._max_lines = max_lines
 
     def name(self) -> str:
         return "ReadFile"
 
     def description(self) -> str:
         return (
-            f"Reads a text file and returns up to {MAX_LINES} of its lines, each prefixed "
-            "with its 1-indexed line number. Use start_line and end_line to page through "
-            "files larger than the per-call limit."
+            f"Reads a text file and returns up to {self._max_lines} of its lines, each "
+            "prefixed with its 1-indexed line number. Use start_line and end_line to page "
+            "through files larger than the per-call limit."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -43,7 +46,7 @@ class ReadFileTool(Tool):
                     "type": "integer",
                     "description": (
                         "1-indexed, inclusive line to stop reading at. Omitted means read "
-                        f"up to {MAX_LINES} lines from start_line."
+                        f"up to {self._max_lines} lines from start_line."
                     ),
                 },
             },
@@ -72,8 +75,8 @@ class ReadFileTool(Tool):
             all_lines = file.read().splitlines()
         total_lines = len(all_lines)
 
-        requested_end = end_line if end_line is not None else effective_start + MAX_LINES - 1
-        capped_end = min(requested_end, effective_start + MAX_LINES - 1, total_lines)
+        requested_end = end_line if end_line is not None else effective_start + self._max_lines - 1
+        capped_end = min(requested_end, effective_start + self._max_lines - 1, total_lines)
 
         if capped_end >= effective_start:
             selected_lines = all_lines[effective_start - 1:capped_end]

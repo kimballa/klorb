@@ -80,3 +80,19 @@ def test_name_and_parameters() -> None:
 
     assert tool.name() == "ReadFile"
     assert tool.parameters()["required"] == ["filename"]
+
+
+def test_custom_max_lines_caps_request(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 50)
+
+    result = ReadFileTool(max_lines=5).apply({"filename": str(file_path), "start_line": 1, "end_line": 50})
+
+    assert result["end_line"] == 5
+    assert len(result["content"].splitlines()) == 5
+    assert result["truncated"] is True
+
+
+def test_custom_max_lines_reflected_in_description() -> None:
+    tool = ReadFileTool(max_lines=5)
+
+    assert "up to 5" in tool.description()

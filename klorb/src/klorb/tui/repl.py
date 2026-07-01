@@ -21,8 +21,8 @@ from textual.widgets import TextArea
 
 from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
+from klorb.process_config import ProcessConfig
 from klorb.session import Session
-from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
@@ -35,10 +35,6 @@ HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
 STATUS_BAR_ID = "status-bar"
 THINKING_LABEL = "<Thinking>"
-
-# Maximum height, in soft-wrapped lines, that the prompt input box grows to before it
-# starts scrolling instead of growing further. TODO: expose as a user config setting.
-PROMPT_INPUT_MAX_LINES = 12
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -140,7 +136,6 @@ class ReplApp(App[None]):
         border: none;
         border-top: solid $accent;
         height: auto;
-        max-height: __PROMPT_INPUT_MAX_HEIGHT__;
         padding: 0 1;
     }
 
@@ -182,7 +177,7 @@ class ReplApp(App[None]):
         color: $text-muted;
         padding: 0 2;
     }
-    """.replace("__PROMPT_INPUT_MAX_HEIGHT__", str(PROMPT_INPUT_MAX_LINES + 1))
+    """
 
     BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
     COMMANDS = App.COMMANDS | {ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider}
@@ -190,11 +185,16 @@ class ReplApp(App[None]):
     def __init__(
         self,
         session: Session | None = None,
+        process_config: ProcessConfig | None = None,
         initial_message: str | None = None,
         session_log_enabled: bool = True,
     ) -> None:
         super().__init__()
-        self._session = session or Session(SessionConfig())
+        self._process_config = process_config or ProcessConfig()
+        self._session = session or Session(
+            self._process_config.session.model_copy(),
+            thinking_token_budgets=self._process_config.thinking_token_budgets,
+        )
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
         self.title = "klorb"
@@ -209,8 +209,11 @@ class ReplApp(App[None]):
             yield Static(id=STATUS_BAR_ID)
 
     def select_model(self, name: str) -> None:
-        """Make `name` the active model used for subsequent prompts."""
+        """Make `name` the active model used for subsequent prompts, and the default model
+        for any future session started in this process.
+        """
         self._session.config.model = name
+        self._process_config.session.model = name
         self.sub_title = name
         self._update_status_bar()
         self.notify(f"Model set to {name}.")
@@ -224,21 +227,29 @@ class ReplApp(App[None]):
         return self._session.config.thinking_enabled
 
     def set_thinking_enabled(self, enabled: bool) -> None:
-        """Enable or disable extended-thinking requests for subsequent prompts."""
+        """Enable or disable extended-thinking requests for subsequent prompts, and for any
+        future session started in this process.
+        """
         self._session.config.thinking_enabled = enabled
+        self._process_config.session.thinking_enabled = enabled
         self.notify(f"Thinking {'enabled' if enabled else 'disabled'}.")
 
     def set_thinking_effort(self, effort: ThinkingEffort) -> None:
         """Set the reasoning effort level used for subsequent prompts, when thinking is
-        enabled and the active model supports it.
+        enabled and the active model supports it. Also becomes the default effort level for
+        any future session started in this process.
         """
         self._session.config.thinking_effort = effort
+        self._process_config.session.thinking_effort = effort
         self.notify(f"Thinking effort set to {effort}.")
 
     def on_mount(self) -> None:
-        """Label and focus the input box, then submit any initial message as the first turn."""
+        """Label and focus the input box, cap its growth at the configured max height, then
+        submit any initial message as the first turn.
+        """
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
+        input_widget.styles.max_height = self._process_config.prompt_input_max_lines + 1
         input_widget.focus()
         self._update_status_bar()
 
@@ -268,14 +279,17 @@ class ReplApp(App[None]):
         self._submit_prompt(prompt_text)
 
     def clear_session(self) -> None:
-        """Replace the active Session with a fresh one (same model, new id), reset the
-        visible history, and roll over the per-session log file if session logging is
-        enabled for this REPL invocation.
+        """Replace the active Session with a fresh one (new id, config reset to the current
+        process-level template), reset the visible history, and roll over the per-session
+        log file if session logging is enabled for this REPL invocation.
         """
-        new_config = SessionConfig(
-            model=self._session.config.model, interactive=self._session.config.interactive)
+        new_config = self._process_config.session.model_copy()
         self._session = Session(
-            new_config, provider=self._session.provider, model_registry=self._session.model_registry)
+            new_config,
+            provider=self._session.provider,
+            model_registry=self._session.model_registry,
+            thinking_token_budgets=self._process_config.thinking_token_budgets,
+        )
 
         if self._session_log_enabled:
             log_path = session_log_path(self._session.id)
@@ -391,8 +405,14 @@ class ReplApp(App[None]):
 
 def run_repl(
     session: Session | None = None,
+    process_config: ProcessConfig | None = None,
     initial_message: str | None = None,
     session_log_enabled: bool = True,
 ) -> None:
     """Launch the interactive klorb REPL, optionally submitting `initial_message` first."""
-    ReplApp(session=session, initial_message=initial_message, session_log_enabled=session_log_enabled).run()
+    ReplApp(
+        session=session,
+        process_config=process_config,
+        initial_message=initial_message,
+        session_log_enabled=session_log_enabled,
+    ).run()

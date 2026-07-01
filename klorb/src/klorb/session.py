@@ -34,9 +34,12 @@ THINKING_EFFORT_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
     "medium": 16_384,
     "high": 32_768,
 }
-"""Reasoning token budgets used for `ThinkingBudgetStyle == "tokens"` models, keyed by the
-same `ThinkingEffort` levels offered for `"effort"`-style models, so both kinds of model
-share one user-facing knob. See [[map-thinking-effort-levels-to-fixed-token-budgets]]."""
+"""Default reasoning token budgets used for `ThinkingBudgetStyle == "tokens"` models, keyed
+by the same `ThinkingEffort` levels offered for `"effort"`-style models, so both kinds of
+model share one user-facing knob. See [[map-thinking-effort-levels-to-fixed-token-budgets]].
+Overridable per process via `ProcessConfig.thinking_token_budgets`
+(see [[process-and-session-config]]); `Session` falls back to this default when none is
+given."""
 
 
 def generate_session_id() -> str:
@@ -69,11 +72,13 @@ class Session:
         provider: ApiProvider | None = None,
         model_registry: ModelRegistry | None = None,
         session_id: str | None = None,
+        thinking_token_budgets: dict[ThinkingEffort, int] | None = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
+        self._thinking_token_budgets = thinking_token_budgets or THINKING_EFFORT_TOKEN_BUDGETS
         self._messages: list[Message] = []
 
     @property
@@ -85,6 +90,13 @@ class Session:
     def model_registry(self) -> ModelRegistry:
         """Return the `ModelRegistry` this session resolves model names against."""
         return self._model_registry
+
+    @property
+    def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:
+        """Return the reasoning token budgets this session looks up `config.thinking_effort`
+        in for `"tokens"`-style models (see `_reasoning_params`).
+        """
+        return self._thinking_token_budgets
 
     @property
     def messages(self) -> list[Message]:
@@ -141,7 +153,7 @@ class Session:
             return None
         budget_style = model.capabilities().get("thinking_budget_style", "effort")
         if budget_style == "tokens":
-            return {"max_tokens": THINKING_EFFORT_TOKEN_BUDGETS[self.config.thinking_effort]}
+            return {"max_tokens": self._thinking_token_budgets[self.config.thinking_effort]}
         return {"effort": self.config.thinking_effort}
 
     def _dispatch_turn(

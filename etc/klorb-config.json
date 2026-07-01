@@ -1,0 +1,21 @@
+{
+  "schema": {
+    "name": "klorb-config",
+    "version": "1.0.0"
+  },
+
+  "sessionDefaults": {
+    "model": "openai/gpt-4o-mini",
+    "thinking.enabled": true,
+    "thinking.effort": "high"
+  },
+
+  "thinking.tokenBudgets": {
+    "low": 4096,
+    "medium": 16384,
+    "high": 32768
+  },
+  "terminal.input.maxLines": 12,
+  "tools.readFile.maxLines": 200,
+  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
+}
