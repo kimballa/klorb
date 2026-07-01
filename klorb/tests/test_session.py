@@ -123,7 +123,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY)
+        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
     assert [m.content for m in session.messages] == ["hi", "model reply"]
 
 
@@ -138,7 +138,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY)
+        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
@@ -316,7 +316,7 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("Hel")
         on_chunk("lo")
@@ -340,7 +340,7 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("Hel")
         on_chunk("lo")
@@ -360,7 +360,7 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
@@ -389,7 +389,7 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
@@ -409,7 +409,7 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
 
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("partial")
         raise RuntimeError("boom")
@@ -433,7 +433,7 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
 
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("partial thought")
         raise RuntimeError("boom")
@@ -456,7 +456,7 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
 
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("partial")
         raise RuntimeError("boom")

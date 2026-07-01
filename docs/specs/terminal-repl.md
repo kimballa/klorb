@@ -101,6 +101,16 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   There's no non-streaming fallback for the thinking block (unlike the response): if
   nothing ever streamed as reasoning, no thinking block is shown, since there'd be no text
   to show.
+* Pressing Escape while a response is streaming in aborts it: `ReplApp` creates a fresh
+  `threading.Event` per submitted prompt and passes it as `Session.send_turn()`'s
+  `cancel_event`, and Escape (bound to `action_abort_response`, shown in the footer only
+  while a turn is in flight via `check_action`) sets it. `_send_prompt`'s worker thread
+  catches the `ResponseAborted` this raises, tears down every widget mounted for that turn
+  (the echoed prompt, and any partial response/thinking widgets), and writes the original
+  prompt text back into the now-re-enabled input box so the user can edit and resend it.
+  `Session` has already discarded the turn from `self.messages` by this point — it's as if
+  it never happened, not a new errored turn — see
+  [[escape-aborts-streaming-turn-and-discards-it-from-history]].
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
   (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
   thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry

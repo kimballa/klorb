@@ -3,6 +3,7 @@
 
 import logging
 import os
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from klorb.api_provider import ApiProvider
 from klorb.api_provider import ProviderResponse
+from klorb.api_provider import ResponseAborted
 from klorb.message import Message
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -62,10 +64,14 @@ class OpenRouterApiProvider(ApiProvider):
         reasoning: dict[str, Any] | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history to a model via OpenRouter, streaming the
         reply and invoking `on_chunk` per text delta and `on_thinking_chunk` per
         reasoning/thinking delta, and return the fully-assembled reply.
+
+        If `cancel_event` is given and set while the stream is being consumed, the
+        underlying HTTP stream is closed and `ResponseAborted` is raised.
         """
         resolved_model = model or self._model
         api_messages = self._build_api_messages(messages, system_prompt)
@@ -91,6 +97,10 @@ class OpenRouterApiProvider(ApiProvider):
         completion_tokens = 0
         prompt_tokens = 0
         for chunk in stream:
+            if cancel_event is not None and cancel_event.is_set():
+                stream.close()
+                logger.info("Aborted streamed response from %s", resolved_model)
+                raise ResponseAborted()
             if chunk.choices:
                 choice = chunk.choices[0]
                 delta_text = choice.delta.content or ""

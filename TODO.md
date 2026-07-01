@@ -7,8 +7,6 @@
 # Feature backlog
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
-* If we are streaming a response back from the agent, the ESC key should abort the
-  response generation, and also put the most recent user prompt back in the textbox for editing. 
 
 * When we quit, ask if we should save the session state.
   If yes, then write a file that goes in `cwd`/.klorb/last-session.json

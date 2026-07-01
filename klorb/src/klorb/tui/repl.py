@@ -4,6 +4,7 @@ box pinned to the bottom of the screen.
 """
 
 import logging
+import threading
 
 from rich.markup import escape
 from textual import events
@@ -13,12 +14,14 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import VerticalScroll
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Footer
 from textual.widgets import Header
 from textual.widgets import Markdown
 from textual.widgets import Static
 from textual.widgets import TextArea
 
+from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
 from klorb.process_config import ProcessConfig
@@ -179,7 +182,11 @@ class ReplApp(App[None]):
     }
     """
 
-    BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
+    BINDINGS = [
+        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
+        ("escape", "abort_response", "Abort"),
+    ]
     COMMANDS = App.COMMANDS | {ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider}
 
     def __init__(
@@ -197,6 +204,9 @@ class ReplApp(App[None]):
         )
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
+        self._cancel_event: threading.Event | None = None
+        self._pending_prompt_text: str | None = None
+        self._pending_prompt_widget: Static | None = None
         self.title = "klorb"
         self.sub_title = self._session.config.model
 
@@ -242,6 +252,19 @@ class ReplApp(App[None]):
         self._session.config.thinking_effort = effort
         self._process_config.session.thinking_effort = effort
         self.notify(f"Thinking effort set to {effort}.")
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide the `abort_response` binding from the footer unless a response is currently
+        streaming in, since there's nothing for Escape to abort otherwise.
+        """
+        if action == "abort_response":
+            return self._cancel_event is not None
+        return True
+
+    def action_abort_response(self) -> None:
+        """Signal the in-flight turn's worker thread to stop consuming the response stream."""
+        if self._cancel_event is not None:
+            self._cancel_event.set()
 
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, then
@@ -309,13 +332,18 @@ class ReplApp(App[None]):
         input_widget.disabled = True
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(prompt_text, classes="prompt"))
+        prompt_widget = Static(prompt_text, classes="prompt")
+        history.mount(prompt_widget)
         history.scroll_end(animate=False)
 
-        self._send_prompt(prompt_text)
+        self._pending_prompt_text = prompt_text
+        self._pending_prompt_widget = prompt_widget
+        self._cancel_event = threading.Event()
+        self.refresh_bindings()
+        self._send_prompt(prompt_text, self._cancel_event)
 
     @work(thread=True)
-    def _send_prompt(self, prompt_text: str) -> None:
+    def _send_prompt(self, prompt_text: str, cancel_event: threading.Event) -> None:
         """Send `prompt_text` to the model on a worker thread so the UI stays responsive.
 
         Renders the response progressively as chunks stream in: a `Markdown` widget is
@@ -325,17 +353,23 @@ class ReplApp(App[None]):
         commonly spans multiple paragraphs, and Markdown's `*...*` emphasis syntax doesn't
         apply across blank-line-separated blocks, whereas Rich's `[italic]...[/italic]`
         console markup styles every line regardless).
+
+        If `cancel_event` is set (via Escape / `action_abort_response`) before the response
+        finishes, `Session.send_turn()` raises `ResponseAborted`; any widgets mounted for
+        this turn's partial response are torn down and the prompt is handed back for editing.
         """
         response_widget: Markdown | None = None
         accumulated = ""
         thinking_widget: Static | None = None
         thinking_accumulated = ""
+        mounted_widgets: list[Widget] = []
 
         def handle_chunk(delta_text: str) -> None:
             nonlocal accumulated, response_widget
             accumulated += delta_text
             if response_widget is None:
                 response_widget = self.call_from_thread(self._mount_response_widget, accumulated)
+                mounted_widgets.append(response_widget)
             else:
                 self.call_from_thread(response_widget.update, accumulated)
 
@@ -343,13 +377,19 @@ class ReplApp(App[None]):
             nonlocal thinking_accumulated, thinking_widget
             thinking_accumulated += delta_text
             if thinking_widget is None:
-                thinking_widget = self.call_from_thread(self._mount_thinking_widget, thinking_accumulated)
+                thinking_widget, thinking_label = self.call_from_thread(
+                    self._mount_thinking_widget, thinking_accumulated)
+                mounted_widgets.append(thinking_label)
+                mounted_widgets.append(thinking_widget)
             else:
                 self.call_from_thread(thinking_widget.update, _italicized(thinking_accumulated))
 
         try:
             response_text = self._session.send_turn(
-                prompt_text, on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk)
+                prompt_text, on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
+                cancel_event=cancel_event)
+        except ResponseAborted:
+            self.call_from_thread(self._handle_aborted_response, mounted_widgets)
         except Exception as exc:
             self.call_from_thread(self._show_error, str(exc))
         else:
@@ -366,16 +406,17 @@ class ReplApp(App[None]):
         history.scroll_end(animate=False)
         return widget
 
-    def _mount_thinking_widget(self, initial_text: str) -> Static:
+    def _mount_thinking_widget(self, initial_text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Thinking>` label followed by an italicized `Static`
-        widget for a streaming thinking block, and return that `Static` widget.
+        widget for a streaming thinking block, and return `(body_widget, label_widget)`.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(THINKING_LABEL, classes="thinking-label"))
+        label_widget = Static(THINKING_LABEL, classes="thinking-label")
+        history.mount(label_widget)
         widget = Static(_italicized(initial_text), classes="thinking-body")
         history.mount(widget)
         history.scroll_end(animate=False)
-        return widget
+        return widget, label_widget
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""
@@ -394,13 +435,38 @@ class ReplApp(App[None]):
         history.mount(Static(f"Error: {message}", classes="error"))
         self._finish_turn(history)
 
+    def _handle_aborted_response(self, mounted_widgets: list[Widget]) -> None:
+        """Tear down everything mounted for an aborted turn (the echoed prompt plus any
+        partial response/thinking widgets) and hand the prompt text back to the input box
+        for editing, since `Session` has already discarded the turn from history.
+        """
+        if self._pending_prompt_widget is not None:
+            self._pending_prompt_widget.remove()
+        for widget in mounted_widgets:
+            widget.remove()
+        restored_text = self._pending_prompt_text or ""
+
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        self._finish_turn(history)
+
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        input_widget.text = restored_text
+
     def _finish_turn(self, history: VerticalScroll) -> None:
-        """Scroll the history into view, refresh the token tally, and hand focus back to the input box."""
+        """Scroll the history into view, refresh the token tally, and hand focus back to the
+        input box. Also clears the in-flight turn's cancel event and pending-prompt tracking,
+        since Escape has nothing left to abort once a turn is done (successfully, in error, or
+        aborted).
+        """
         history.scroll_end(animate=False)
         self._update_status_bar()
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = False
         input_widget.focus()
+        self._cancel_event = None
+        self._pending_prompt_text = None
+        self._pending_prompt_widget = None
+        self.refresh_bindings()
 
 
 def run_repl(

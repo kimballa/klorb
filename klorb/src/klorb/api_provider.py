@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Abstract interface for LLM API providers."""
 
+import threading
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Callable
@@ -21,6 +22,11 @@ class ProviderResponse(BaseModel):
     prompt_tokens: int
     """Total input tokens billed for this request (covers the full message list sent,
     including the system prompt), as reported by the provider's usage stats."""
+
+
+class ResponseAborted(Exception):
+    """Raised by `ApiProvider.send_prompt()` when `cancel_event` is set while a response is
+    streaming in, instead of returning a `ProviderResponse`."""
 
 
 class ApiProvider(ABC):
@@ -44,6 +50,7 @@ class ApiProvider(ABC):
         reasoning: dict[str, Any] | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history (plus an optional system prompt) to a model
         and return its reply along with request-level token usage.
@@ -56,4 +63,8 @@ class ApiProvider(ABC):
         streams in, in addition to the final reply being returned as usual. If
         `on_thinking_chunk` is given, it is invoked once per non-empty reasoning/thinking
         text delta, separately from `on_chunk`.
+
+        If `cancel_event` is given and becomes set while the response is streaming in, the
+        provider stops consuming the stream and raises `ResponseAborted` instead of
+        returning normally.
         """
