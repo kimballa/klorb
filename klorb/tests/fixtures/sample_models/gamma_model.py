@@ -6,14 +6,14 @@ from typing import Any
 from klorb.models.model import Model
 
 
-class BetaModel(Model):
-    """A model with thinking support. Used only in tests."""
+class GammaModel(Model):
+    """A model with token-budget-style thinking support. Used only in tests."""
 
     def name(self) -> str:
-        return "beta"
+        return "gamma"
 
     def system_prompt(self) -> str:
-        return "You are Beta."
+        return "You are Gamma."
 
     def settings(self) -> dict[str, Any]:
         return {"temperature": 0.0}
@@ -22,6 +22,6 @@ class BetaModel(Model):
         return {
             "vision": False,
             "thinking": True,
-            "thinking_budget_style": "effort",
-            "max_context_window": 200_000,
+            "thinking_budget_style": "tokens",
+            "max_context_window": 100_000,
         }

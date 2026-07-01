@@ -11,7 +11,7 @@ def test_discovers_models_in_package() -> None:
 
     names = {model.name() for model in registry.models()}
 
-    assert names == {"alpha", "beta"}
+    assert names == {"alpha", "beta", "gamma"}
 
 
 def test_get_returns_model_by_name() -> None:

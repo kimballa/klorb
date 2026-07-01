@@ -24,10 +24,12 @@ def _chunk(
     content: str | None = None,
     finish_reason: str | None = None,
     usage: MagicMock | None = None,
+    reasoning: str | None = None,
 ) -> MagicMock:
     return MagicMock(
-        choices=[MagicMock(delta=MagicMock(content=content), finish_reason=finish_reason)] if (
-            content is not None or finish_reason is not None) else [],
+        choices=[
+            MagicMock(delta=MagicMock(content=content, reasoning=reasoning), finish_reason=finish_reason),
+        ] if (content is not None or finish_reason is not None or reasoning is not None) else [],
         usage=usage,
     )
 
@@ -193,3 +195,94 @@ def test_send_prompt_works_without_on_chunk() -> None:
     result = provider.send_prompt([_user_message()])
 
     assert result.message.content == "hi"
+
+
+def test_send_prompt_includes_reasoning_in_request_body() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    provider.send_prompt([_user_message()], model="some/model", reasoning={"effort": "high"})
+
+    mock_client.chat.completions.create.assert_called_once_with(
+        model="some/model",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+        stream_options={"include_usage": True},
+        extra_body={"reasoning": {"effort": "high"}},
+    )
+
+
+def test_send_prompt_merges_reasoning_and_session_id_in_request_body() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    provider.send_prompt(
+        [_user_message()], model="some/model", session_id="my-session-id",
+        reasoning={"max_tokens": 32_768})
+
+    mock_client.chat.completions.create.assert_called_once_with(
+        model="some/model",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+        stream_options={"include_usage": True},
+        extra_body={"session_id": "my-session-id", "reasoning": {"max_tokens": 32_768}},
+    )
+
+
+def test_send_prompt_forwards_thinking_deltas_via_on_thinking_chunk() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(reasoning="Let "),
+        _chunk(reasoning="me think."),
+        _chunk(content="Hello", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    on_thinking_chunk = MagicMock()
+
+    result = provider.send_prompt([_user_message()], on_thinking_chunk=on_thinking_chunk)
+
+    assert result.message.content == "Hello"
+    assert [call.args[0] for call in on_thinking_chunk.call_args_list] == ["Let ", "me think."]
+
+
+def test_send_prompt_skips_on_thinking_chunk_for_empty_reasoning_deltas() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(reasoning=""),
+        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    on_thinking_chunk = MagicMock()
+
+    provider.send_prompt([_user_message()], on_thinking_chunk=on_thinking_chunk)
+
+    on_thinking_chunk.assert_not_called()
+
+
+def test_send_prompt_works_without_on_thinking_chunk() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(reasoning="thinking..."),
+        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    assert result.message.content == "hi"
+
+
+def test_build_api_messages_excludes_thinking_role_messages() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    thinking_message = Message(
+        content="reasoning...", role="thinking", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now())
+
+    provider.send_prompt([_user_message(), thinking_message], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]

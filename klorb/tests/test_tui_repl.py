@@ -20,6 +20,7 @@ from klorb.session import SessionConfig
 from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import STATUS_BAR_ID
+from klorb.tui.repl import THINKING_LABEL
 from klorb.tui.repl import ReplApp
 from klorb.tui.repl import format_token_count
 
@@ -182,6 +183,27 @@ async def test_select_model_updates_active_model_and_subtitle() -> None:
     assert kwargs["model"] == "other/model"
 
 
+async def test_set_thinking_enabled_updates_session_config() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.set_thinking_enabled(False)
+        assert app._session.config.thinking_enabled is False
+
+        app.set_thinking_enabled(True)
+        assert app._session.config.thinking_enabled is True
+
+
+async def test_set_thinking_effort_updates_session_config() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.set_thinking_effort("low")
+        assert app._session.config.thinking_effort == "low"
+
+
 async def test_initial_message_is_submitted_as_first_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
@@ -278,7 +300,10 @@ async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
 async def test_streaming_response_updates_widget_progressively() -> None:
     mock_provider = MagicMock()
 
-    def fake_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
         on_chunk("Hel")
         on_chunk("lo")
         return _reply("Hello")
@@ -298,3 +323,35 @@ async def test_streaming_response_updates_widget_progressively() -> None:
 
         assert len(response_widgets) == 1
         assert response_widgets[0].source == "Hello"
+
+
+async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_response() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
+        on_thinking_chunk("Let ")
+        on_thinking_chunk("me think.")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input.value = "hi"
+        await prompt_input.action_submit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        thinking_label = history.query_one(".thinking-label", Static)
+        response_widgets = list(history.query(Markdown))
+
+        assert thinking_label.content == THINKING_LABEL
+        assert len(response_widgets) == 2
+        assert response_widgets[0].source == "*Let me think.*"
+        assert response_widgets[1].source == "Hello"

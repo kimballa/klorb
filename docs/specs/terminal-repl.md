@@ -79,6 +79,28 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   full response instead. On failure, `_show_error` mounts a `Static` widget with the
   exception message (styled via the `.error` CSS class). Either way, the history is
   scrolled to the end again, and the input box is re-enabled and refocused.
+* If the model streams reasoning/thinking deltas (see [[openrouter-prompt-client]] and
+  [[session-and-turns]]'s `_reasoning_params()`), `_send_prompt` passes a second
+  `on_thinking_chunk` callback into `Session.send_turn()` that mirrors the content-chunk
+  handling but on its own accumulator: on the first thinking chunk, `_mount_thinking_widget`
+  mounts a `Static` labeled `THINKING_LABEL` (`"<Thinking>"`, styled via the `.thinking-label`
+  CSS class — left-justified above the block, not indented, like `.prompt`/`.error`)
+  followed by a `Markdown` widget whose source is the accumulated text wrapped in `*...*`
+  so it renders in italics; later chunks re-wrap the growing accumulated text the same way
+  and call `.update()` on that same `Markdown` widget. Since it's a normal `Markdown`
+  widget, it picks up the same default indentation as the eventual response's `Markdown`
+  widget below it — only the `<Thinking>` label itself sits flush left. There's no
+  non-streaming fallback for the thinking block (unlike the response): if nothing ever
+  streamed as reasoning, no thinking block is shown, since there'd be no text to show.
+* `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
+  (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
+  thinking"`, and one `"Thinking effort: <level>"` command per `ThinkingEffort` level
+  (`"low"`/`"medium"`/`"high"`). Selecting one calls `ReplApp.set_thinking_enabled(bool)` or
+  `ReplApp.set_thinking_effort(level)`, which mutate `Session.config.thinking_enabled`/
+  `thinking_effort` directly (same pattern as `select_model()`) and show a toast
+  confirming the change. These are always-on/off pairs and a fixed effort list, mirroring
+  how `ModelCommandProvider` always lists every model rather than showing dynamic
+  toggle-state labels.
 * Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
   `Session` with a new one: same `SessionConfig` (model carries over) and the same
   `provider`/`model_registry` instances (via `Session`'s read-only properties, so the
@@ -113,3 +135,7 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
 
 * `/clear` is the only slash command implemented. Tool/function calling and input history
   (up-arrow to recall a previous prompt) are not implemented yet.
+* Thinking text is wrapped in `*...*` without escaping; a reasoning delta containing its
+  own unescaped `*` could render with unbalanced/unintended emphasis. Accepted as a v1
+  limitation, consistent with the response `Markdown` widget's existing unescaped handling
+  of arbitrary model output.

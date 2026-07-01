@@ -20,14 +20,18 @@ from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
 from klorb.session import Session
 from klorb.session import SessionConfig
+from klorb.session import ThinkingEffort
 from klorb.tui.model_commands import ModelCommandProvider
+from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
+from klorb.tui.session_commands import SessionCommandProvider
+from klorb.tui.thinking_commands import ThinkingCommandProvider
 
 logger = logging.getLogger(__name__)
 
 HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
 STATUS_BAR_ID = "status-bar"
-CLEAR_COMMAND = "/clear"
+THINKING_LABEL = "<Thinking>"
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -109,10 +113,15 @@ class ReplApp(App[None]):
         color: $error;
         margin: 0 0 1 0;
     }
+
+    .thinking-label {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
     """
 
     BINDINGS = [("ctrl+c", "quit", "Quit"), ("ctrl+q", "quit", "Quit")]
-    COMMANDS = App.COMMANDS | {ModelCommandProvider}
+    COMMANDS = App.COMMANDS | {ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider}
 
     def __init__(
         self,
@@ -142,6 +151,18 @@ class ReplApp(App[None]):
         self._update_status_bar()
         self.notify(f"Model set to {name}.")
 
+    def set_thinking_enabled(self, enabled: bool) -> None:
+        """Enable or disable extended-thinking requests for subsequent prompts."""
+        self._session.config.thinking_enabled = enabled
+        self.notify(f"Thinking {'enabled' if enabled else 'disabled'}.")
+
+    def set_thinking_effort(self, effort: ThinkingEffort) -> None:
+        """Set the reasoning effort level used for subsequent prompts, when thinking is
+        enabled and the active model supports it.
+        """
+        self._session.config.thinking_effort = effort
+        self.notify(f"Thinking effort set to {effort}.")
+
     def on_mount(self) -> None:
         """Label and focus the input box, then submit any initial message as the first turn."""
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", Input)
@@ -168,13 +189,13 @@ class ReplApp(App[None]):
             return
 
         event.input.value = ""
-        if prompt_text == CLEAR_COMMAND:
-            self._clear_session()
+        if prompt_text == CLEAR_SESSION_COMMAND:
+            self.clear_session()
             return
 
         self._submit_prompt(prompt_text)
 
-    def _clear_session(self) -> None:
+    def clear_session(self) -> None:
         """Replace the active Session with a fresh one (same model, new id), reset the
         visible history, and roll over the per-session log file if session logging is
         enabled for this REPL invocation.
@@ -212,10 +233,14 @@ class ReplApp(App[None]):
         """Send `prompt_text` to the model on a worker thread so the UI stays responsive.
 
         Renders the response progressively as chunks stream in: a `Markdown` widget is
-        mounted on the first chunk and updated on each subsequent one.
+        mounted on the first chunk and updated on each subsequent one. Reasoning/thinking
+        chunks, if the model sends any, are rendered the same way but behind a `<Thinking>`
+        label and in italics, via a separate `Markdown` widget.
         """
         response_widget: Markdown | None = None
         accumulated = ""
+        thinking_widget: Markdown | None = None
+        thinking_accumulated = ""
 
         def handle_chunk(delta_text: str) -> None:
             nonlocal accumulated, response_widget
@@ -225,8 +250,17 @@ class ReplApp(App[None]):
             else:
                 self.call_from_thread(response_widget.update, accumulated)
 
+        def handle_thinking_chunk(delta_text: str) -> None:
+            nonlocal thinking_accumulated, thinking_widget
+            thinking_accumulated += delta_text
+            if thinking_widget is None:
+                thinking_widget = self.call_from_thread(self._mount_thinking_widget, thinking_accumulated)
+            else:
+                self.call_from_thread(thinking_widget.update, f"*{thinking_accumulated}*")
+
         try:
-            response_text = self._session.send_turn(prompt_text, on_chunk=handle_chunk)
+            response_text = self._session.send_turn(
+                prompt_text, on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk)
         except Exception as exc:
             self.call_from_thread(self._show_error, str(exc))
         else:
@@ -239,6 +273,17 @@ class ReplApp(App[None]):
         """Mount a new `Markdown` widget for a streaming response and return it."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         widget = Markdown(initial_text)
+        history.mount(widget)
+        history.scroll_end(animate=False)
+        return widget
+
+    def _mount_thinking_widget(self, initial_text: str) -> Markdown:
+        """Mount a left-justified `<Thinking>` label followed by an italicized `Markdown`
+        widget for a streaming thinking block, and return that `Markdown` widget.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(THINKING_LABEL, classes="thinking-label"))
+        widget = Markdown(f"*{initial_text}*")
         history.mount(widget)
         history.scroll_end(animate=False)
         return widget

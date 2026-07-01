@@ -12,6 +12,7 @@ import pytest
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message
 from klorb.models.registry import ModelRegistry
+from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.session import generate_session_id
@@ -37,6 +38,8 @@ def test_session_config_defaults() -> None:
     config = SessionConfig()
 
     assert config.interactive is True
+    assert config.thinking_enabled is True
+    assert config.thinking_effort == "high"
 
 
 def test_session_saves_config() -> None:
@@ -119,7 +122,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        on_chunk=mock.ANY)
+        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY)
     assert [m.content for m in session.messages] == ["hi", "model reply"]
 
 
@@ -134,7 +137,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        on_chunk=mock.ANY)
+        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
@@ -148,6 +151,79 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
 
     _, kwargs = mock_provider.send_prompt.call_args
     assert kwargs["system_prompt"] == "You are Alpha."
+
+
+def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(SessionConfig(model="beta"), provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] == {"effort": "high"}
+
+
+def test_reasoning_respects_configured_effort_level() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    config = SessionConfig(model="beta", thinking_effort="low")
+    session = Session(config, provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] == {"effort": "low"}
+
+
+def test_reasoning_uses_token_budget_for_tokens_style_thinking_model() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] == {"max_tokens": THINKING_EFFORT_TOKEN_BUDGETS["high"]}
+
+
+def test_reasoning_none_when_thinking_disabled() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    config = SessionConfig(model="beta", thinking_enabled=False)
+    session = Session(config, provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] is None
+
+
+def test_reasoning_none_when_model_does_not_support_thinking() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] is None
+
+
+def test_reasoning_none_when_model_unregistered() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["reasoning"] is None
 
 
 def test_send_turn_sends_full_history_to_provider() -> None:
@@ -221,7 +297,10 @@ def test_retry_last_turn_raises_when_nothing_errored() -> None:
 def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
     mock_provider = MagicMock()
 
-    def fake_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
         on_chunk("Hel")
         on_chunk("lo")
         return _reply("Hello", num_tokens=2, prompt_tokens=10)
@@ -242,7 +321,10 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
 def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     mock_provider = MagicMock()
 
-    def fake_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
         on_chunk("Hel")
         on_chunk("lo")
         return _reply("Hello")
@@ -256,10 +338,62 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     assert [call.args[0] for call in spy.call_args_list] == ["Hel", "lo"]
 
 
+def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_message() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
+        on_thinking_chunk("Let ")
+        on_thinking_chunk("me think.")
+        on_chunk("Hello")
+        return _reply("Hello", num_tokens=2, prompt_tokens=10)
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert len(session.messages) == 3
+    user_message, thinking_message, assistant_message = session.messages
+    assert user_message.role == "user"
+    assert thinking_message.role == "thinking"
+    assert thinking_message.content == "Let me think."
+    assert thinking_message.streaming_content is None
+    assert thinking_message.processing_state == "complete"
+    assert thinking_message.num_tokens == 0
+    assert assistant_message.role == "assistant"
+    assert assistant_message.content == "Hello"
+
+
+def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
+        on_thinking_chunk("Let ")
+        on_thinking_chunk("me think.")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    spy = MagicMock()
+
+    session.send_turn("hi", on_thinking_chunk=spy)
+
+    assert [call.args[0] for call in spy.call_args_list] == ["Let ", "me think."]
+
+
 def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> None:
     mock_provider = MagicMock()
 
-    def failing_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+    def failing_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
         on_chunk("partial")
         raise RuntimeError("boom")
 
@@ -277,10 +411,36 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     assert assistant_message.streaming_content == ["partial"]
 
 
+def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
+    mock_provider = MagicMock()
+
+    def failing_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
+        on_thinking_chunk("partial thought")
+        raise RuntimeError("boom")
+
+    mock_provider.send_prompt.side_effect = failing_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    with pytest.raises(RuntimeError):
+        session.send_turn("hi")
+
+    user_message, thinking_message = session.messages
+    assert user_message.processing_state == "error"
+    assert thinking_message.processing_state == "error"
+    assert thinking_message.last_error == "boom"
+    assert thinking_message.streaming_content == ["partial thought"]
+
+
 def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> None:
     mock_provider = MagicMock()
 
-    def failing_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+    def failing_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
         on_chunk("partial")
         raise RuntimeError("boom")
 

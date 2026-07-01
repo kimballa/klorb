@@ -4,6 +4,11 @@
 from abc import ABC
 from abc import abstractmethod
 from typing import Any
+from typing import Literal
+
+ThinkingBudgetStyle = Literal["effort", "tokens"]
+"""How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a
+low/medium/high keyword, or `"tokens"` for a numeric reasoning token budget."""
 
 
 class Model(ABC):
@@ -25,7 +30,8 @@ class Model(ABC):
     def capabilities(self) -> dict[str, Any]:
         """Return a dict describing this model's capabilities.
 
-        Standard keys include `vision` (bool), `thinking` (bool), and `max_context_window`
-        (int, in tokens), though implementations may include additional provider-specific
-        keys.
+        Standard keys include `vision` (bool), `thinking` (bool), `thinking_budget_style`
+        (a `ThinkingBudgetStyle`, meaningful only when `thinking` is `True`), and
+        `max_context_window` (int, in tokens), though implementations may include
+        additional provider-specific keys.
         """

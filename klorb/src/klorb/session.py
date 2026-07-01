@@ -4,6 +4,8 @@
 import logging
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
+from typing import Literal
 
 from coolname import generate_slug
 from pydantic import BaseModel
@@ -23,6 +25,19 @@ NONCE_WORD_COUNT = 2
 
 SESSION_ID_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M"
 
+ThinkingEffort = Literal["low", "medium", "high"]
+"""User-facing thinking depth knob, independent of whether the active model wants an
+effort keyword or a numeric token budget (see `klorb.models.model.ThinkingBudgetStyle`)."""
+
+THINKING_EFFORT_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
+    "low": 4_096,
+    "medium": 16_384,
+    "high": 32_768,
+}
+"""Reasoning token budgets used for `ThinkingBudgetStyle == "tokens"` models, keyed by the
+same `ThinkingEffort` levels offered for `"effort"`-style models, so both kinds of model
+share one user-facing knob. See [[map-thinking-effort-levels-to-fixed-token-budgets]]."""
+
 
 def generate_session_id() -> str:
     """Generate a session id: yyyy-mm-dd-hh-mm-<nonce>, e.g. '2026-06-30-10-00-happy-otter'."""
@@ -36,6 +51,8 @@ class SessionConfig(BaseModel):
 
     model: str = DEFAULT_MODEL
     interactive: bool = True
+    thinking_enabled: bool = True
+    thinking_effort: ThinkingEffort = "high"
 
 
 class Session:
@@ -109,11 +126,30 @@ class Session:
             return None
         return model.capabilities().get("max_context_window")
 
+    def _reasoning_params(self) -> dict[str, Any] | None:
+        """Return the provider-shaped `reasoning` request body for the active turn, or
+        `None` if thinking shouldn't be requested (disabled in config, or the active model
+        isn't registered or doesn't report `thinking` support). Translates
+        `config.thinking_effort` into whichever shape the active model's
+        `thinking_budget_style` wants: an `"effort"` keyword, or a numeric `"max_tokens"`
+        budget looked up from `THINKING_EFFORT_TOKEN_BUDGETS`.
+        """
+        if not self.config.thinking_enabled:
+            return None
+        model = self._active_model()
+        if model is None or not model.capabilities().get("thinking", False):
+            return None
+        budget_style = model.capabilities().get("thinking_budget_style", "effort")
+        if budget_style == "tokens":
+            return {"max_tokens": THINKING_EFFORT_TOKEN_BUDGETS[self.config.thinking_effort]}
+        return {"effort": self.config.thinking_effort}
+
     def _dispatch_turn(
         self,
         user_message: Message,
         tokens_before: int,
         on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
     ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
 
@@ -125,20 +161,29 @@ class Session:
         second, duplicate assistant `Message`; if no placeholder was ever created (e.g. a
         non-streaming test double), the provider's reply is appended fresh instead.
 
+        Reasoning/thinking deltas (requested via `_reasoning_params()`) are handled the same
+        way, but as a separate `role="thinking"` placeholder appended ahead of the assistant
+        one, so the two can be told apart and rendered separately. Its `num_tokens` is left
+        at `0`: reasoning tokens are already folded into the assistant message's
+        `num_tokens` via `result.message.num_tokens`, so giving the thinking message its own
+        count would double-count them.
+
         On success, `user_message.num_tokens` is set to the delta between this request's
         total `prompt_tokens` and `tokens_before` (the tokens already recorded prior to this
         turn), `processing_state` becomes `"complete"`, and `last_error` is cleared. On
         failure, `user_message` is mutated to `processing_state="error"` with `last_error`
-        set; if a placeholder was created before the failure, it is also marked
-        `processing_state="error"`/`last_error` (its partial `streaming_content` is left
-        intact), and the exception is re-raised.
+        set; if a placeholder was created before the failure, it (and the thinking
+        placeholder, if any) is also marked `processing_state="error"`/`last_error` (its
+        partial `streaming_content` is left intact), and the exception is re-raised.
         """
         model_name = self.active_model_name()
         model = self._active_model()
         system_prompt = model.system_prompt() if model is not None else None
+        reasoning = self._reasoning_params()
         message_snapshot = list(self._messages)
 
         placeholder: Message | None = None
+        thinking_placeholder: Message | None = None
 
         def handle_chunk(delta_text: str) -> None:
             nonlocal placeholder
@@ -157,22 +202,48 @@ class Session:
             if on_chunk is not None:
                 on_chunk(delta_text)
 
+        def handle_thinking_chunk(delta_text: str) -> None:
+            nonlocal thinking_placeholder
+            if thinking_placeholder is None:
+                thinking_placeholder = Message(
+                    content="",
+                    role="thinking",
+                    num_tokens=0,
+                    processing_state="started_receipt",
+                    timestamp=datetime.now(),
+                    streaming_content=[],
+                )
+                self._messages.append(thinking_placeholder)
+            assert thinking_placeholder.streaming_content is not None
+            thinking_placeholder.streaming_content.append(delta_text)
+            if on_thinking_chunk is not None:
+                on_thinking_chunk(delta_text)
+
         try:
             result = self._provider.send_prompt(
                 message_snapshot, system_prompt=system_prompt, model=model_name,
-                session_id=self.id, on_chunk=handle_chunk)
+                session_id=self.id, reasoning=reasoning, on_chunk=handle_chunk,
+                on_thinking_chunk=handle_thinking_chunk)
         except Exception as exc:
             user_message.processing_state = "error"
             user_message.last_error = str(exc)
             if placeholder is not None:
                 placeholder.processing_state = "error"
                 placeholder.last_error = str(exc)
+            if thinking_placeholder is not None:
+                thinking_placeholder.processing_state = "error"
+                thinking_placeholder.last_error = str(exc)
             logger.error("Turn failed for %s: %s", model_name, exc)
             raise
 
         user_message.num_tokens = result.prompt_tokens - tokens_before
         user_message.processing_state = "complete"
         user_message.last_error = None
+        if thinking_placeholder is not None:
+            thinking_placeholder.content = "".join(thinking_placeholder.streaming_content or [])
+            thinking_placeholder.streaming_content = None
+            thinking_placeholder.processing_state = "complete"
+            thinking_placeholder.last_error = None
         if placeholder is not None:
             placeholder.content = result.message.content
             placeholder.streaming_content = None
@@ -188,13 +259,19 @@ class Session:
         )
         return result.message.content
 
-    def send_turn(self, prompt: str, on_chunk: Callable[[str], None] | None = None) -> str:
+    def send_turn(
+        self,
+        prompt: str,
+        on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
+    ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
         Appends a new user `Message` to the session's history, sends the full history (plus
         the active model's system prompt, if registered) to the provider, and mutates that
         same `Message` in place to reflect the outcome (see `_dispatch_turn`). If `on_chunk`
-        is given, it is invoked with each text delta as the response streams in.
+        is given, it is invoked with each text delta as the response streams in; if
+        `on_thinking_chunk` is given, it is invoked with each reasoning/thinking text delta.
         """
         tokens_before = self._tokens_recorded_so_far()
         user_message = Message(
@@ -207,9 +284,14 @@ class Session:
         self._messages.append(user_message)
         logger.info(
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
-        return self._dispatch_turn(user_message, tokens_before, on_chunk=on_chunk)
+        return self._dispatch_turn(
+            user_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)
 
-    def retry_last_turn(self, on_chunk: Callable[[str], None] | None = None) -> str:
+    def retry_last_turn(
+        self,
+        on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
+    ) -> str:
         """Resend the most recently errored user turn's content, mutating that same `Message`.
 
         Scans from the end of the history for the last user-role `Message`; if none exists
@@ -228,8 +310,14 @@ class Session:
         tokens_before = self._tokens_recorded_so_far() - errored_message.num_tokens
         errored_message.processing_state = "pending"
         logger.info("Retrying errored turn for %s", self.active_model_name())
-        return self._dispatch_turn(errored_message, tokens_before, on_chunk=on_chunk)
+        return self._dispatch_turn(
+            errored_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)
 
-    def run_one_shot(self, prompt: str, on_chunk: Callable[[str], None] | None = None) -> str:
+    def run_one_shot(
+        self,
+        prompt: str,
+        on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
+    ) -> str:
         """Run a single, non-interactive turn and return the model's text response."""
-        return self.send_turn(prompt, on_chunk=on_chunk)
+        return self.send_turn(prompt, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)

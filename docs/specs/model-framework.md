@@ -20,8 +20,12 @@ instead of a bespoke picker widget.
   * `settings() -> dict[str, Any]` — provider-specific settings/flags to send alongside
     requests to this model (e.g. `temperature`).
   * `capabilities() -> dict[str, Any]` — a dict describing the model's capabilities.
-    Standard keys include `vision` (bool), `thinking` (bool), and `max_context_window`
-    (int, in tokens); implementations may add further provider-specific keys.
+    Standard keys include `vision` (bool), `thinking` (bool), `thinking_budget_style`
+    (a `klorb.models.model.ThinkingBudgetStyle`: `"effort"` or `"tokens"`, meaningful only
+    when `thinking` is `True` — whether the model's reasoning depth is tuned via a
+    low/medium/high effort keyword or a numeric reasoning token budget; defaults to
+    `"effort"` if omitted, see [[session-and-turns]]), and `max_context_window` (int, in
+    tokens); implementations may add further provider-specific keys.
 * `klorb.models.registry.ModelRegistry` (`klorb/src/klorb/models/registry.py`) discovers
   `Model` subclasses by walking a package's modules with `pkgutil.iter_modules`, importing
   each, and collecting concrete (non-abstract) `Model` subclasses defined directly in that

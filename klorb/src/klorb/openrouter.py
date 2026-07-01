@@ -5,6 +5,7 @@ import logging
 import os
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 from typing import cast
 
 from openai import OpenAI
@@ -56,16 +57,25 @@ class OpenRouterApiProvider(ApiProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         session_id: str | None = None,
+        reasoning: dict[str, Any] | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history to a model via OpenRouter, streaming the
-        reply and invoking `on_chunk` per text delta, and return the fully-assembled reply.
+        reply and invoking `on_chunk` per text delta and `on_thinking_chunk` per
+        reasoning/thinking delta, and return the fully-assembled reply.
         """
         resolved_model = model or self._model
         api_messages = self._build_api_messages(messages, system_prompt)
         logger.info("Sending %d-message turn to %s", len(api_messages), resolved_model)
         client = self.build_client()
-        extra_body: dict[str, str] | None = {"session_id": session_id} if session_id is not None else None
+        extra_body: dict[str, Any] | None = None
+        if session_id is not None or reasoning is not None:
+            extra_body = {}
+            if session_id is not None:
+                extra_body["session_id"] = session_id
+            if reasoning is not None:
+                extra_body["reasoning"] = reasoning
         stream = client.chat.completions.create(
             model=resolved_model,
             messages=api_messages,
@@ -86,6 +96,9 @@ class OpenRouterApiProvider(ApiProvider):
                     content_parts.append(delta_text)
                     if on_chunk is not None:
                         on_chunk(delta_text)
+                thinking_delta_text = getattr(choice.delta, "reasoning", None) or ""
+                if thinking_delta_text and on_thinking_chunk is not None:
+                    on_thinking_chunk(thinking_delta_text)
                 if choice.finish_reason is not None:
                     finish_reason = choice.finish_reason
             if chunk.usage is not None:
@@ -112,7 +125,10 @@ class OpenRouterApiProvider(ApiProvider):
     def _build_api_messages(
         messages: list[Message], system_prompt: str | None
     ) -> list[ChatCompletionMessageParam]:
-        """Convert session history (plus an optional system prompt) into OpenAI SDK message dicts."""
+        """Convert session history (plus an optional system prompt) into OpenAI SDK message
+        dicts. `"thinking"`-role messages are omitted: they aren't a role the OpenAI-compatible
+        API accepts, and reasoning content isn't meant to be replayed as conversation history.
+        """
         api_messages: list[ChatCompletionMessageParam] = []
         if system_prompt is not None:
             system_message = {"role": "system", "content": system_prompt}
@@ -120,5 +136,6 @@ class OpenRouterApiProvider(ApiProvider):
         api_messages.extend(
             cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content})
             for message in messages
+            if message.role != "thinking"
         )
         return api_messages

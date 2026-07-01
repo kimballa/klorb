@@ -41,11 +41,19 @@ class ApiProvider(ABC):
         system_prompt: str | None = None,
         model: str | None = None,
         session_id: str | None = None,
+        reasoning: dict[str, Any] | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history (plus an optional system prompt) to a model
         and return its reply along with request-level token usage.
 
+        `reasoning`, if given, is a provider-shaped request body requesting extended
+        thinking (e.g. `{"effort": "high"}` or `{"max_tokens": 32_768}` for OpenRouter);
+        omitted or `None` means no reasoning is requested.
+
         If `on_chunk` is given, it is invoked once per non-empty text delta as the response
-        streams in, in addition to the final reply being returned as usual.
+        streams in, in addition to the final reply being returned as usual. If
+        `on_thinking_chunk` is given, it is invoked once per non-empty reasoning/thinking
+        text delta, separately from `on_chunk`.
         """
