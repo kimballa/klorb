@@ -66,6 +66,14 @@ The Klorb project is organized as a collection of subprojects:
   * It is less likely that the test should be modified to pass given the updated application
     source. Only make such a change after careful consideration, and be explicit in your
     output to me when you have modified tests in this way.
+
+## Important SDLC CI/CD commands
+
+Always run lint, typecheck, and test through the Makefile. Don't freelance with pyflakes
+or pytest.
+
+Here are the officially-sanctioned CI commands:
+
 * use `make lint` for linting.
 * use `make typecheck` for typechecking.
 * use `make test` to invoke test suites.
