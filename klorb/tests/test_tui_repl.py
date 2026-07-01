@@ -339,6 +339,29 @@ async def test_initial_message_is_submitted_as_first_turn() -> None:
     assert kwargs["session_id"] == TEST_SESSION_ID
 
 
+async def test_default_session_gets_a_tool_registry_discovering_built_in_tools() -> None:
+    app = ReplApp()
+
+    async with app.run_test():
+        assert app._session.tool_registry is not None
+        assert "ReadFile" in {tool.name() for tool in app._session.tool_registry.tools()}
+
+
+async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "/clear"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app._session.tool_registry is not None
+        assert "ReadFile" in {tool.name() for tool in app._session.tool_registry.tools()}
+
+
 async def test_clear_replaces_session_and_resets_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
@@ -435,7 +458,7 @@ async def test_streaming_response_updates_widget_progressively() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("Hel")
@@ -463,7 +486,7 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("Let ")
@@ -497,7 +520,7 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("First paragraph.\n\nSecond paragraph.")
@@ -525,7 +548,7 @@ async def test_thinking_chunks_escape_literal_brackets() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("check [status]")

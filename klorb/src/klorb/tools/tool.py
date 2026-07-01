@@ -7,9 +7,26 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from klorb.tools.setup_context import ToolSetupContext
+
 
 class Tool(ABC):
-    """Base class for a tool that a model can be offered, and asked to invoke, by name."""
+    """Base class for a tool that a model can be offered, and asked to invoke, by name.
+
+    Every concrete `Tool` is constructed with a single `ToolSetupContext` argument, never
+    tool-specific constructor arguments, so `ToolRegistry` can instantiate any `Tool`
+    subclass uniformly (see `ToolRegistry.instantiate_tool`). A subclass that needs to
+    configure itself (e.g. a per-call line limit) pulls the relevant setting out of
+    `context` in its own `__init__`.
+    """
+
+    def __init__(self, context: ToolSetupContext) -> None:
+        self._context = context
+
+    @property
+    def context(self) -> ToolSetupContext:
+        """Return the `ToolSetupContext` this tool was constructed with."""
+        return self._context
 
     @abstractmethod
     def name(self) -> str:

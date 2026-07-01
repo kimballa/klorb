@@ -1,10 +1,12 @@
 # © Copyright 2026 Aaron Kimball
 """Session state shared by the one-shot prompt path and the interactive REPL."""
 
+import json
 import logging
 import threading
 from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
@@ -12,6 +14,7 @@ from coolname import generate_slug
 from pydantic import BaseModel
 
 from klorb.api_provider import ApiProvider
+from klorb.api_provider import ProviderResponse
 from klorb.api_provider import ResponseAborted
 from klorb.message import Message
 from klorb.models.model import Model
@@ -19,7 +22,26 @@ from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
 
+if TYPE_CHECKING:
+    # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
+    # depends on `SessionConfig` from this module — importing it for real here would be
+    # circular. Session only stores and calls methods on a `ToolRegistry` it's handed, so a
+    # type-checking-only import is enough (see
+    # docs/adrs/tool-setup-context-carries-process-and-session-config.md).
+    from klorb.tools.registry import ToolRegistry
+
 logger = logging.getLogger(__name__)
+
+MAX_TOOL_CALL_ROUNDS = 10
+"""Safety cap on how many model-to-tool round trips one turn will run before giving up, in
+case a model gets stuck repeatedly requesting tool calls without ever returning a final
+answer."""
+
+
+class ToolCallLimitExceeded(Exception):
+    """Raised when a turn requests more than `MAX_TOOL_CALL_ROUNDS` tool-call round trips
+    without the model returning a final answer."""
+
 
 # Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids
 # created within the same minute.
@@ -75,12 +97,14 @@ class Session:
         model_registry: ModelRegistry | None = None,
         session_id: str | None = None,
         thinking_token_budgets: dict[ThinkingEffort, int] | None = None,
+        tool_registry: "ToolRegistry | None" = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
         self._thinking_token_budgets = thinking_token_budgets or THINKING_EFFORT_TOKEN_BUDGETS
+        self._tool_registry = tool_registry
         self._messages: list[Message] = []
 
     @property
@@ -92,6 +116,12 @@ class Session:
     def model_registry(self) -> ModelRegistry:
         """Return the `ModelRegistry` this session resolves model names against."""
         return self._model_registry
+
+    @property
+    def tool_registry(self) -> "ToolRegistry | None":
+        """Return the `ToolRegistry` this session dispatches model tool-call requests
+        through, or `None` if tool-calling isn't enabled for this session."""
+        return self._tool_registry
 
     @property
     def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:
@@ -158,51 +188,94 @@ class Session:
             return {"max_tokens": self._thinking_token_budgets[self.config.thinking_effort]}
         return {"effort": self.config.thinking_effort}
 
-    def _dispatch_turn(
-        self,
-        user_message: Message,
-        tokens_before: int,
-        on_chunk: Callable[[str], None] | None = None,
-        on_thinking_chunk: Callable[[str], None] | None = None,
-        cancel_event: threading.Event | None = None,
-    ) -> str:
-        """Send `user_message` (already present in `self._messages`) and mutate it in place.
+    def _ensure_tool_defs_message(self) -> None:
+        """Insert a `role="tool_defs"` `Message` at the very front of `self._messages` —
+        conceptually right after the system prompt, which (per `_dispatch_turn`) is never
+        itself a stored `Message` — recording the tool definitions offered for this session,
+        the first time a turn is dispatched with a non-empty `tool_registry`. A no-op if
+        `tool_registry` is unset/empty, or if one is already present (so retries and later
+        turns don't insert a duplicate). This message is bookkeeping only: it's never sent to
+        the model as a chat message (see `OpenRouterApiProvider._build_api_messages`) — the
+        live tool definitions are sent via `send_prompt(tools=...)` on every turn instead, so
+        this doesn't need to be kept in sync with config changes after it's first inserted.
+        """
+        if self._tool_registry is None:
+            return
+        if any(message.role == "tool_defs" for message in self._messages):
+            return
+        definitions = self._tool_registry.tool_definitions()
+        if not definitions:
+            return
+        self._messages.insert(0, Message(
+            content=json.dumps(definitions),
+            role="tool_defs",
+            num_tokens=0,
+            processing_state="complete",
+            timestamp=datetime.now(),
+        ))
 
-        Streams the assistant's reply: on the first chunk, a placeholder `Message`
+    def _run_tool_calls(self, tool_use_message: Message) -> None:
+        """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
+        via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
+        per call — carrying that call's result, or a description of the error if the tool
+        was unknown or raised — so the next round can send it back to the model.
+        """
+        assert self._tool_registry is not None
+        assert tool_use_message.tool_calls is not None
+        for call in tool_use_message.tool_calls:
+            try:
+                tool = self._tool_registry.instantiate_tool(call.name)
+                args = json.loads(call.arguments) if call.arguments else {}
+                tool_result = tool.apply(args)
+                content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
+            except Exception as exc:
+                logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
+                content = f"Error: {exc}"
+            self._messages.append(Message(
+                content=content,
+                role="tool_response",
+                num_tokens=0,
+                processing_state="complete",
+                timestamp=datetime.now(),
+                tool_call_id=call.id,
+            ))
+
+    def _send_and_receive(
+        self,
+        message_snapshot: list[Message],
+        system_prompt: str | None,
+        model_name: str,
+        reasoning: dict[str, Any] | None,
+        tools: list[dict[str, Any]] | None,
+        on_chunk: Callable[[str], None] | None,
+        on_thinking_chunk: Callable[[str], None] | None,
+        cancel_event: threading.Event | None,
+    ) -> tuple[Message, ProviderResponse]:
+        """Send one request to the active model and return `(reply, result)`.
+
+        Streams the reply: on the first chunk, a placeholder `Message`
         (`processing_state="started_receipt"`, `streaming_content=[]`) is appended to
         `self._messages`, and each chunk's text is appended to it. On success, that same
         placeholder is finalized in place (`content`, `streaming_content=None`,
         `processing_state="complete"`, `num_tokens`, `finish_reason`) rather than appending a
-        second, duplicate assistant `Message`; if no placeholder was ever created (e.g. a
-        non-streaming test double), the provider's reply is appended fresh instead.
+        second, duplicate `Message`; if no placeholder was ever created (e.g. a non-streaming
+        test double), the provider's reply is appended fresh instead. The finalized message's
+        `role` is `"tool_use"` (with `tool_calls` populated) if the model asked to call
+        tools, or `"assistant"` otherwise.
 
-        Reasoning/thinking deltas (requested via `_reasoning_params()`) are handled the same
-        way, but as a separate `role="thinking"` placeholder appended ahead of the assistant
-        one, so the two can be told apart and rendered separately. Its `num_tokens` is left
-        at `0`: reasoning tokens are already folded into the assistant message's
-        `num_tokens` via `result.message.num_tokens`, so giving the thinking message its own
-        count would double-count them.
+        Reasoning/thinking deltas are handled the same way, but as a separate
+        `role="thinking"` placeholder appended ahead of the reply one, so the two can be told
+        apart and rendered separately. Its `num_tokens` is left at `0`: reasoning tokens are
+        already folded into the reply message's `num_tokens` via `result.message.num_tokens`,
+        so giving the thinking message its own count would double-count them.
 
-        On success, `user_message.num_tokens` is set to the delta between this request's
-        total `prompt_tokens` and `tokens_before` (the tokens already recorded prior to this
-        turn), `processing_state` becomes `"complete"`, and `last_error` is cleared. On
-        failure, `user_message` is mutated to `processing_state="error"` with `last_error`
-        set; if a placeholder was created before the failure, it (and the thinking
-        placeholder, if any) is also marked `processing_state="error"`/`last_error` (its
-        partial `streaming_content` is left intact), and the exception is re-raised.
-
-        If `cancel_event` is given and the provider raises `ResponseAborted` (because it was
-        set mid-stream), this turn never happened as far as history is concerned:
-        `user_message` and any placeholder(s) created for it are removed from
-        `self._messages` entirely, rather than left behind in `"error"` state, and the
-        exception is re-raised so the caller can offer the prompt back up for editing.
+        On any exception other than `ResponseAborted`, whichever placeholder(s) were created
+        are mutated to `processing_state="error"`/`last_error` (partial `streaming_content`
+        left intact) before re-raising, mirroring how the caller is expected to mark the
+        turn's own anchor message (a user message, or a prior round's `tool_response`). On
+        `ResponseAborted`, those placeholder(s) are instead removed from `self._messages`
+        entirely before re-raising, since an aborted round leaves nothing worth keeping.
         """
-        model_name = self.active_model_name()
-        model = self._active_model()
-        system_prompt = model.system_prompt() if model is not None else None
-        reasoning = self._reasoning_params()
-        message_snapshot = list(self._messages)
-
         placeholder: Message | None = None
         thinking_placeholder: Message | None = None
 
@@ -243,36 +316,29 @@ class Session:
         try:
             result = self._provider.send_prompt(
                 message_snapshot, system_prompt=system_prompt, model=model_name,
-                session_id=self.id, reasoning=reasoning, on_chunk=handle_chunk,
+                session_id=self.id, reasoning=reasoning, tools=tools, on_chunk=handle_chunk,
                 on_thinking_chunk=handle_thinking_chunk, cancel_event=cancel_event)
         except ResponseAborted:
-            self._messages.remove(user_message)
             if thinking_placeholder is not None:
                 self._messages.remove(thinking_placeholder)
             if placeholder is not None:
                 self._messages.remove(placeholder)
-            logger.info("Turn aborted for %s", model_name)
             raise
         except Exception as exc:
-            user_message.processing_state = "error"
-            user_message.last_error = str(exc)
             if placeholder is not None:
                 placeholder.processing_state = "error"
                 placeholder.last_error = str(exc)
             if thinking_placeholder is not None:
                 thinking_placeholder.processing_state = "error"
                 thinking_placeholder.last_error = str(exc)
-            logger.error("Turn failed for %s: %s", model_name, exc)
             raise
 
-        user_message.num_tokens = result.prompt_tokens - tokens_before
-        user_message.processing_state = "complete"
-        user_message.last_error = None
         if thinking_placeholder is not None:
             thinking_placeholder.content = "".join(thinking_placeholder.streaming_content or [])
             thinking_placeholder.streaming_content = None
             thinking_placeholder.processing_state = "complete"
             thinking_placeholder.last_error = None
+
         if placeholder is not None:
             placeholder.content = result.message.content
             placeholder.streaming_content = None
@@ -280,13 +346,91 @@ class Session:
             placeholder.last_error = None
             placeholder.num_tokens = result.message.num_tokens
             placeholder.finish_reason = result.message.finish_reason
+            placeholder.tool_calls = result.message.tool_calls
         else:
-            self._messages.append(result.message)
+            placeholder = result.message
+            self._messages.append(placeholder)
+
+        if placeholder.tool_calls:
+            placeholder.role = "tool_use"
+
+        return placeholder, result
+
+    def _dispatch_turn(
+        self,
+        user_message: Message,
+        tokens_before: int,
+        on_chunk: Callable[[str], None] | None = None,
+        on_thinking_chunk: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """Send `user_message` (already present in `self._messages`) and mutate it in place.
+
+        Delegates the actual request/response streaming to `_send_and_receive()`. If the
+        model's reply requests tool calls (`reply.role == "tool_use"`), `_run_tool_calls()`
+        dispatches them via `tool_registry` and appends their results as `tool_response`
+        messages, then `_send_and_receive()` is called again with the updated history — this
+        repeats until the model returns a plain `"assistant"` reply, or `ToolCallLimitExceeded`
+        is raised after `MAX_TOOL_CALL_ROUNDS` round trips.
+
+        On success, `user_message.num_tokens` is set to the delta between the *last* round's
+        total `prompt_tokens` and `tokens_before` (the tokens already recorded prior to this
+        turn) — folding every round's prompt cost, including any tool definitions/results
+        sent along the way, into this one turn, the same way the system prompt's cost is
+        folded into the first turn (see docs/specs/session-and-turns.md) —
+        `processing_state` becomes `"complete"`, and `last_error` is cleared. On failure,
+        `user_message` is mutated to `processing_state="error"` with `last_error` set (the
+        failing round's own placeholder(s) are already marked the same way by
+        `_send_and_receive`), and the exception is re-raised.
+
+        If `cancel_event` is given and the provider raises `ResponseAborted` (because it was
+        set mid-stream), this turn never happened as far as history is concerned: every
+        message appended since `user_message` — it, any earlier round's `tool_use`/
+        `tool_response` messages, and the aborted round's placeholder(s) — is removed from
+        `self._messages` entirely, rather than left behind in `"error"` state, and the
+        exception is re-raised so the caller can offer the prompt back up for editing.
+        """
+        self._ensure_tool_defs_message()
+        turn_start_index = self._messages.index(user_message)
+        model_name = self.active_model_name()
+        model = self._active_model()
+        system_prompt = model.system_prompt() if model is not None else None
+        reasoning = self._reasoning_params()
+        tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
+
+        try:
+            reply, result = self._send_and_receive(
+                list(self._messages), system_prompt, model_name, reasoning, tools,
+                on_chunk, on_thinking_chunk, cancel_event)
+
+            rounds = 0
+            while reply.role == "tool_use":
+                rounds += 1
+                if rounds > MAX_TOOL_CALL_ROUNDS:
+                    raise ToolCallLimitExceeded(
+                        f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
+                self._run_tool_calls(reply)
+                reply, result = self._send_and_receive(
+                    list(self._messages), system_prompt, model_name, reasoning, tools,
+                    on_chunk, on_thinking_chunk, cancel_event)
+        except ResponseAborted:
+            del self._messages[turn_start_index:]
+            logger.info("Turn aborted for %s", model_name)
+            raise
+        except Exception as exc:
+            user_message.processing_state = "error"
+            user_message.last_error = str(exc)
+            logger.error("Turn failed for %s: %s", model_name, exc)
+            raise
+
+        user_message.num_tokens = result.prompt_tokens - tokens_before
+        user_message.processing_state = "complete"
+        user_message.last_error = None
         logger.debug(
             "Turn complete for %s: user num_tokens=%d, assistant num_tokens=%d, finish_reason=%s",
-            model_name, user_message.num_tokens, result.message.num_tokens, result.message.finish_reason,
+            model_name, user_message.num_tokens, reply.num_tokens, reply.finish_reason,
         )
-        return result.message.content
+        return reply.content
 
     def send_turn(
         self,

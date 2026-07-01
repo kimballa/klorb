@@ -20,8 +20,8 @@ or slicing a superset.
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
   looks `config.thinking_effort` up in for `"tokens"`-style models), `read_file_max_lines`
-  (int, default `tools.read_file.MAX_LINES` — `ReadFileTool`'s per-call page size; see "Out
-  of scope" below), and `openrouter_base_url` (str, default
+  (int, default `DEFAULT_READ_FILE_MAX_LINES`, `200` — `ReadFileTool`'s per-call page size;
+  see "Out of scope" below), and `openrouter_base_url` (str, default
   `openrouter.OPENROUTER_BASE_URL` — passed to `OpenRouterApiProvider(base_url=...)`, for
   pointing at a self-hosted or corporate OpenRouter-compatible gateway).
 
@@ -159,12 +159,13 @@ field. A reference file with every recognized key at its current default lives a
 * Adding another process-only field requires adding it to `ProcessConfig` and adding its
   on-disk key to `PROCESS_KEY_MAP` (or `SESSION_KEY_MAP`, for a new `SessionConfig` field) —
   the two aren't inferred from each other by design (see "On-disk key naming" above).
-* `read_file_max_lines` (`tools.readFile.maxLines`) has no live consumer yet:
-  `ReadFileTool.__init__` now accepts a `max_lines` parameter, but nothing in
-  `cli.py`/`session.py` constructs a `ReadFileTool` from a `ProcessConfig` today, since
-  tool-calling isn't wired into `Session` at all yet (see `TODO.md`'s
-  `EditFileTool`/`CreateFileTool`/etc. backlog items). The field exists so the value is
-  already there to consume once that wiring lands.
+* `read_file_max_lines` (`tools.readFile.maxLines`) is consumed by `ReadFileTool` via
+  `context.process_config.read_file_max_lines`, where `context` is the `ToolSetupContext`
+  every `Tool` (`klorb.tools.tool.Tool`) is constructed with — see [[tool-framework]]. Its
+  default (`DEFAULT_READ_FILE_MAX_LINES` in `process_config.py`) is a literal duplicating
+  `klorb.tools.read_file.MAX_LINES`, not imported from it, to avoid a circular import between
+  `klorb.process_config` and `klorb.tools` — see
+  [the ToolSetupContext ADR](../adrs/tool-setup-context-carries-process-and-session-config.md).
 * `last-session.json` (`TODO.md`) doesn't exist yet; `_load_last_session_overrides()` is a
   placeholder that always returns no overrides.
 * Provider selection isn't implemented (no command exists to change it), so there's nothing

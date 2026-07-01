@@ -3,27 +3,39 @@
 
 import fixtures.sample_tools as sample_tools_package
 
+from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.tools.registry import ToolRegistry
 
 
+def _registry(package=sample_tools_package) -> ToolRegistry:
+    return ToolRegistry(ProcessConfig(), SessionConfig(), package=package)
+
+
 def test_discovers_tools_in_package() -> None:
-    registry = ToolRegistry(package=sample_tools_package)
+    registry = _registry()
 
     names = {tool.name() for tool in registry.tools()}
 
     assert names == {"echo", "add"}
 
 
-def test_get_returns_tool_by_name() -> None:
-    registry = ToolRegistry(package=sample_tools_package)
+def test_instantiate_tool_returns_tool_by_name() -> None:
+    registry = _registry()
 
-    echo_tool = registry.get("echo")
+    echo_tool = registry.instantiate_tool("echo")
 
     assert echo_tool.apply({"message": "hi"}) == "hi"
 
 
+def test_instantiate_tool_builds_a_fresh_instance_each_call() -> None:
+    registry = _registry()
+
+    assert registry.instantiate_tool("echo") is not registry.instantiate_tool("echo")
+
+
 def test_tool_definitions_handles_json_schema_parameters() -> None:
-    registry = ToolRegistry(package=sample_tools_package)
+    registry = _registry()
 
     definitions = {d["function"]["name"]: d for d in registry.tool_definitions()}
 
@@ -34,7 +46,7 @@ def test_tool_definitions_handles_json_schema_parameters() -> None:
 
 
 def test_tool_definitions_handles_pydantic_parameters() -> None:
-    registry = ToolRegistry(package=sample_tools_package)
+    registry = _registry()
 
     definitions = {d["function"]["name"]: d for d in registry.tool_definitions()}
 
@@ -43,7 +55,7 @@ def test_tool_definitions_handles_pydantic_parameters() -> None:
 
 
 def test_default_registry_discovers_production_tools() -> None:
-    registry = ToolRegistry()
+    registry = ToolRegistry(ProcessConfig(), SessionConfig())
 
     names = {tool.name() for tool in registry.tools()}
 

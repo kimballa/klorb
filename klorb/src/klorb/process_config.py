@@ -17,9 +17,15 @@ from klorb.schema_envelope import read_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
-from klorb.tools.read_file import MAX_LINES as DEFAULT_READ_FILE_MAX_LINES
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_READ_FILE_MAX_LINES = 200
+"""Mirrors `klorb.tools.read_file.MAX_LINES`. Duplicated rather than imported so
+`ProcessConfig` doesn't depend on a specific tool module: `klorb.tools.setup_context`
+(which every `Tool` implementation, including `ReadFileTool`, is built from) holds a
+`ProcessConfig` reference, so the reverse import would be circular. See
+docs/adrs/tool-setup-context-carries-process-and-session-config.md."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_FILENAME = "klorb-config.json"

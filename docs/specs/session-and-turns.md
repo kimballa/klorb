@@ -24,11 +24,16 @@ config) has one place to live.
     reasoning depth knob, defaulting to `"high"`. See [[default-thinking-on-and-high-effort]]
     for why these are the defaults.
 * `klorb.session.Session` is constructed with a `SessionConfig` (saved as `self.config`),
-  and optionally an `ApiProvider` (defaults to a fresh `OpenRouterApiProvider`) and a
-  `ModelRegistry` (defaults to a fresh `ModelRegistry()`). It also holds `self._messages:
-  list[[[message-model]]]`, exposed read-only via the `messages` property, plus read-only
-  `provider`/`model_registry` properties so callers (e.g. [[terminal-repl]]'s `/clear`) can
-  build a new `Session` that reuses the same provider/registry instances.
+  and optionally an `ApiProvider` (defaults to a fresh `OpenRouterApiProvider`), a
+  `ModelRegistry` (defaults to a fresh `ModelRegistry()`), and a
+  `klorb.tools.registry.ToolRegistry` (`tool_registry`, defaults to `None`, meaning
+  tool-calling is off for this session — see [[tool-framework]] and
+  [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md)).
+  It also holds `self._messages: list[[[message-model]]]`, exposed read-only via the
+  `messages` property, plus read-only `provider`/`model_registry`/`tool_registry` properties
+  so callers (e.g. [[terminal-repl]]'s `/clear`) can build a new `Session` that reuses the
+  same provider/registry instances (`tool_registry` is the one exception: `/clear` builds a
+  fresh one, tied to the new session's config — see [[tool-framework]]).
   * `active_model_name() -> str` resolves `config.model` against the `ModelRegistry`: if
     it's a registered [[model-framework]] `Model`, its `name()` is returned (invoking the
     `Model`); otherwise `config.model` is returned unchanged, so an arbitrary OpenRouter
@@ -76,7 +81,30 @@ config) has one place to live.
     (the turn is discarded, not marked errored) before re-raising, since the caller is
     handing the prompt back to the user rather than treating this as a failed attempt to
     retry — see [[escape-aborts-streaming-turn-and-discards-it-from-history]]. Both a
-    one-shot prompt and every REPL submission are exactly one call to `send_turn()`.
+    one-shot prompt and every REPL submission are exactly one call to `send_turn()`. The
+    streaming/placeholder mechanics above live in `Session._send_and_receive()`, one call per
+    model round trip; `_dispatch_turn()` calls it in a loop when `tool_registry` is set (see
+    below), so they apply to every round, not just the first.
+  * When `tool_registry` is set and non-empty, `_dispatch_turn()` passes
+    `tool_registry.tool_definitions()` as `send_prompt(tools=...)` on every round, and — the
+    first time a turn is dispatched — inserts a `role="tool_defs"` `Message` at the very
+    front of history (`_ensure_tool_defs_message()`; a no-op on later turns, since it checks
+    for one first) recording what was offered. That message is bookkeeping only: it's never
+    sent to the model as a chat message, since `tools=` is what actually offers them (see
+    [[tool-framework]] and [[message-model]]). If a round's reply requests tool calls, it's
+    stored with `role="tool_use"` (instead of `"assistant"`) and `Message.tool_calls`
+    populated; `_run_tool_calls()` dispatches each one via
+    `tool_registry.instantiate_tool(name).apply(...)`, appending a `role="tool_response"`
+    `Message` per call (feeding back `f"Error: {exc}"` as that call's result if lookup or
+    execution failed, rather than failing the turn), and `_dispatch_turn()` sends another
+    round with the updated history. This repeats until a plain `"assistant"` reply comes
+    back, or `MAX_TOOL_CALL_ROUNDS` (10) round trips are exceeded, which raises
+    `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
+    `processing_state="error"`). See
+    [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md).
+    `user_message.num_tokens` is set from the *last* round's `prompt_tokens` delta, folding
+    every round's cost (tool definitions and results included) into the one turn, the same
+    way the system prompt's cost is folded into the first turn (see "Out of scope" below).
   * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None) -> str` scans
     backward for the last `role == "user"` `Message`; if it isn't in `"error"` state (or
     none exists), raises `ValueError`. Otherwise it discards everything after that message
@@ -124,8 +152,11 @@ klorb                                    # REPL, no initial message (default)
   rather than tracked as its own `Message` — an intentional v1 approximation, since there's
   no per-message tokenizer to attribute tokens precisely without a round trip to the model.
 * `retry_last_turn()` exists on `Session` but isn't yet exposed through the TUI or CLI.
-* Tool/function calling and persisting `SessionConfig` across invocations are not
-  implemented yet.
+* Persisting `SessionConfig` across invocations is not implemented yet.
+* `retry_last_turn()` restarts a tool-calling turn from scratch (resending the original user
+  message) rather than resuming mid-round-trip: it discards everything after the last user
+  message, including any `tool_use`/`tool_response` messages from earlier rounds of the
+  failed attempt.
 * `thinking_enabled`/`thinking_effort` have no `--thinking`/`--thinking-effort` CLI flags
   yet; they're only reachable via [[terminal-repl]]'s command palette, so a one-shot
   `klorb -m ...` invocation always uses the `SessionConfig` defaults (thinking on, `"high"`

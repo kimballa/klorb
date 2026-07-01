@@ -27,6 +27,7 @@ from klorb.logging_config import session_log_path
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import ThinkingEffort
+from klorb.tools.registry import ToolRegistry
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
 from klorb.tui.session_commands import SessionCommandProvider
@@ -198,10 +199,14 @@ class ReplApp(App[None]):
     ) -> None:
         super().__init__()
         self._process_config = process_config or ProcessConfig()
-        self._session = session or Session(
-            self._process_config.session.model_copy(),
-            thinking_token_budgets=self._process_config.thinking_token_budgets,
-        )
+        if session is None:
+            new_config = self._process_config.session.model_copy()
+            session = Session(
+                new_config,
+                thinking_token_budgets=self._process_config.thinking_token_budgets,
+                tool_registry=ToolRegistry(self._process_config, new_config),
+            )
+        self._session = session
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
         self._cancel_event: threading.Event | None = None
@@ -312,6 +317,7 @@ class ReplApp(App[None]):
             provider=self._session.provider,
             model_registry=self._session.model_registry,
             thinking_token_budgets=self._process_config.thinking_token_budgets,
+            tool_registry=ToolRegistry(self._process_config, new_config),
         )
 
         if self._session_log_enabled:

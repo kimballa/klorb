@@ -7,16 +7,22 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import fixtures.sample_models as sample_models_package
+import fixtures.sample_tools as sample_tools_package
 import pytest
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message
+from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
+from klorb.process_config import ProcessConfig
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
+from klorb.session import MAX_TOOL_CALL_ROUNDS
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
+from klorb.session import ToolCallLimitExceeded
 from klorb.session import generate_session_id
+from klorb.tools.registry import ToolRegistry
 
 SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-[a-z]+-[a-z]+$")
 
@@ -33,6 +39,27 @@ def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int
         ),
         prompt_tokens=prompt_tokens,
     )
+
+
+def _tool_call_reply(
+    calls: list[tuple[str, str, str]], num_tokens: int = 3, prompt_tokens: int = 10,
+) -> ProviderResponse:
+    return ProviderResponse(
+        message=Message(
+            content="",
+            role="assistant",
+            num_tokens=num_tokens,
+            processing_state="complete",
+            timestamp=datetime.now(),
+            finish_reason="tool_calls",
+            tool_calls=[ToolCallRequest(id=id_, name=name, arguments=args) for id_, name, args in calls],
+        ),
+        prompt_tokens=prompt_tokens,
+    )
+
+
+def _sample_tool_registry(config: SessionConfig) -> ToolRegistry:
+    return ToolRegistry(ProcessConfig(), config, package=sample_tools_package)
 
 
 def test_session_config_defaults() -> None:
@@ -123,7 +150,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
+        reasoning=None, tools=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
     assert [m.content for m in session.messages] == ["hi", "model reply"]
 
 
@@ -138,7 +165,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        reasoning=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
+        reasoning=None, tools=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
@@ -315,7 +342,7 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("Hel")
@@ -339,7 +366,7 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("Hel")
@@ -359,7 +386,7 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("Let ")
@@ -388,7 +415,7 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("Let ")
@@ -408,7 +435,7 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     mock_provider = MagicMock()
 
     def failing_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("partial")
@@ -432,7 +459,7 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     mock_provider = MagicMock()
 
     def failing_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("partial thought")
@@ -455,7 +482,7 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     mock_provider = MagicMock()
 
     def failing_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("partial")
@@ -478,3 +505,140 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     assert len(session.messages) == 2
     assert session.messages[0].processing_state == "complete"
     assert session.messages[1].content == "recovered"
+
+
+def test_no_tools_offered_when_tool_registry_unset() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["tools"] is None
+
+
+def test_tool_definitions_offered_to_provider_when_tool_registry_set() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert {d["function"]["name"] for d in kwargs["tools"]} == {"echo", "add"}
+
+
+def test_tool_defs_message_inserted_before_first_turn() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("hi")
+
+    assert session.messages[0].role == "tool_defs"
+    assert [m.role for m in session.messages] == ["tool_defs", "user", "assistant"]
+
+
+def test_tool_defs_message_not_duplicated_across_turns() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("first")
+    session.send_turn("second")
+
+    assert sum(1 for m in session.messages if m.role == "tool_defs") == 1
+
+
+def test_no_tool_defs_message_when_tool_registry_unset() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert all(m.role != "tool_defs" for m in session.messages)
+
+
+def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
+        _reply("final answer", num_tokens=4, prompt_tokens=20),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    response = session.send_turn("please echo")
+
+    assert response == "final answer"
+    roles = [m.role for m in session.messages]
+    assert roles == ["tool_defs", "user", "tool_use", "tool_response", "assistant"]
+    tool_use_message = session.messages[2]
+    assert tool_use_message.tool_calls == [
+        ToolCallRequest(id="call_1", name="echo", arguments='{"message": "hi there"}')]
+    tool_response_message = session.messages[3]
+    assert tool_response_message.tool_call_id == "call_1"
+    assert tool_response_message.content == "hi there"
+    user_message = session.messages[1]
+    assert user_message.processing_state == "complete"
+    assert user_message.num_tokens == 20
+    assert mock_provider.send_prompt.call_count == 2
+
+
+def test_tool_call_round_trip_forwards_tool_calls_to_second_request() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
+    assert [m.role for m in second_call_messages] == ["tool_defs", "user", "tool_use", "tool_response"]
+
+
+def test_unknown_tool_call_reports_error_to_model() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "NoSuchTool", "{}")]),
+        _reply("recovered"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    response = session.send_turn("call a bogus tool")
+
+    assert response == "recovered"
+    tool_response_message = session.messages[3]
+    assert tool_response_message.role == "tool_response"
+    assert tool_response_message.content.startswith("Error:")
+
+
+def test_tool_call_limit_exceeded_raises_and_marks_user_message_error() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    with pytest.raises(ToolCallLimitExceeded):
+        session.send_turn("loop forever")
+
+    assert mock_provider.send_prompt.call_count == MAX_TOOL_CALL_ROUNDS + 1
+    user_message = session.messages[1]
+    assert user_message.processing_state == "error"
+    assert "10" in (user_message.last_error or "")

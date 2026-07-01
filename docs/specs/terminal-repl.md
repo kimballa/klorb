@@ -130,7 +130,10 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 * Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
   `Session` with a new one: same `SessionConfig` (model carries over) and the same
   `provider`/`model_registry` instances (via `Session`'s read-only properties, so the
-  OpenAI client and model discovery aren't rebuilt), but a fresh `generate_session_id()`
+  OpenAI client and model discovery aren't rebuilt), but a fresh `generate_session_id()`,
+  a fresh [[tool-framework]] `ToolRegistry` built from `ReplApp._process_config` and the new
+  session's `SessionConfig` (unlike `provider`/`model_registry`, not reused — see
+  [the fresh-instance-per-call ADR](../adrs/tool-registry-instantiates-a-fresh-tool-per-call.md)),
   and an empty message history. This runs synchronously in `on_input_submitted` — no
   worker thread, no disabling the input box, since no model call is involved. The visible
   history's children are removed, and if `session_log_enabled` is `True`,

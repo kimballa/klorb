@@ -3,7 +3,7 @@
 ## Summary
 
 `klorb.message.Message` (`klorb/src/klorb/message.py`) is the unit of conversation history
-in klorb: one message exchanged between the user, the model, or (in the future) tools. A
+in klorb: one message exchanged between the user, the model, or a tool. A
 [[session-and-turns]] `Session` builds up a `list[Message]` as its conversation history, and
 `ApiProvider` implementations (see [[openrouter-prompt-client]]) consume and produce
 `Message`s. This is framework-level: any future feature that needs to inspect or render a
@@ -14,11 +14,25 @@ this one shape.
 
 * `Message` is a `pydantic.BaseModel` with:
   * `content: str` — the message's text. For a streaming response, this is only final once
-    `streaming_content` has been condensed into it.
+    `streaming_content` has been condensed into it. On a `role="tool_use"` message it's
+    whatever text (often empty) accompanied the tool call request; on a `role="tool_response"`
+    message it's the tool's result, stringified (`Tool.apply()`'s return value as-is if it's
+    already a `str`, otherwise `json.dumps()`'d), or `f"Error: {exc}"` if the call failed.
   * `role: Role` — a `Literal["system", "user", "assistant", "thinking", "tool_defs",
-    "tool_use", "tool_response"]`. Only `"user"` and `"assistant"` are produced today (see
-    [[session-and-turns]]); the rest are reserved for tool-calling and reasoning-trace
-    features that aren't implemented yet.
+    "tool_use", "tool_response"]`. `"tool_defs"` is a bookkeeping message
+    (`Session._ensure_tool_defs_message()`) recording the tool definitions offered for a
+    session, inserted once at the front of history; the model itself is offered tools via
+    `ApiProvider.send_prompt(tools=...)`, not this message (see [[tool-framework]] and
+    [[session-and-turns]]). `"tool_use"` is a model reply that requested one or more tool
+    calls (`tool_calls` populated) in place of a plain `"assistant"` reply. `"tool_response"`
+    is the result of one dispatched call (`tool_call_id` populated). See
+    [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md).
+  * `tool_calls: list[ToolCallRequest] | None` — populated on a `role="tool_use"` `Message`:
+    the tool call(s) the model requested. `ToolCallRequest` (also in `klorb/src/klorb/message.py`)
+    has `id: str`, `name: str`, and `arguments: str` (the model's raw, not-yet-parsed
+    JSON-encoded arguments).
+  * `tool_call_id: str | None` — populated on a `role="tool_response"` `Message`: the
+    `ToolCallRequest.id` (from the preceding `tool_use` message) this is the result of.
   * `num_tokens: int` — the token count attributed to this message. For an assistant reply,
     this comes directly from the provider's reported completion tokens; for a user message,
     it's derived after the fact (see [[derive-user-turn-token-counts-from-a-prompt-token-delta]]).
@@ -39,5 +53,6 @@ this one shape.
 
 ## Out of scope
 
-* Tool calling (`tool_defs`, `tool_use`, `tool_response`, `thinking` roles are defined but
-  not yet produced or consumed by any code path) is not implemented yet.
+* `tool_calls`/`tool_call_id` are only meaningful in combination with their matching role
+  (`tool_use`/`tool_response` respectively); nothing enforces that at the type level, since
+  `Message` is one shape shared by every role rather than a role-specific subtype.

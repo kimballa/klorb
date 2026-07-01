@@ -21,16 +21,30 @@ def _user_message(content: str = "hi") -> Message:
     )
 
 
+def _tool_call_delta(
+    index: int, id: str | None = None, name: str | None = None, arguments: str | None = None,
+) -> MagicMock:
+    # `name` is a reserved MagicMock constructor kwarg (controls its repr), so it has to be
+    # set as a plain attribute afterward rather than passed into the constructor.
+    function = MagicMock(arguments=arguments)
+    function.name = name
+    return MagicMock(index=index, id=id, function=function)
+
+
 def _chunk(
     content: str | None = None,
     finish_reason: str | None = None,
     usage: MagicMock | None = None,
     reasoning: str | None = None,
+    tool_calls: list[MagicMock] | None = None,
 ) -> MagicMock:
+    has_choice = content is not None or finish_reason is not None or reasoning is not None or tool_calls
     return MagicMock(
         choices=[
-            MagicMock(delta=MagicMock(content=content, reasoning=reasoning), finish_reason=finish_reason),
-        ] if (content is not None or finish_reason is not None or reasoning is not None) else [],
+            MagicMock(
+                delta=MagicMock(content=content, reasoning=reasoning, tool_calls=tool_calls),
+                finish_reason=finish_reason),
+        ] if has_choice else [],
         usage=usage,
     )
 
@@ -304,3 +318,126 @@ def test_build_api_messages_excludes_thinking_role_messages() -> None:
 
     _, kwargs = mock_client.chat.completions.create.call_args
     assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_send_prompt_omits_tools_when_not_given() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    provider.send_prompt([_user_message()], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert "tools" not in kwargs
+
+
+def test_send_prompt_includes_tools_when_given() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    tool_defs = [{"type": "function", "function": {"name": "ReadFile", "parameters": {}}}]
+
+    provider.send_prompt([_user_message()], model="some/model", tools=tool_defs)
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["tools"] == tool_defs
+
+
+def test_send_prompt_reassembles_streamed_tool_call_fragments() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(tool_calls=[_tool_call_delta(0, id="call_1", name="ReadFile", arguments="")]),
+        _chunk(tool_calls=[_tool_call_delta(0, arguments='{"filename": ')]),
+        _chunk(tool_calls=[_tool_call_delta(0, arguments='"f.txt"}')]),
+        _chunk(finish_reason="tool_calls", usage=MagicMock(completion_tokens=3, prompt_tokens=5)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()], model="some/model")
+
+    assert result.message.finish_reason == "tool_calls"
+    assert result.message.tool_calls == [
+        openrouter.ToolCallRequest(id="call_1", name="ReadFile", arguments='{"filename": "f.txt"}'),
+    ]
+
+
+def test_send_prompt_reassembles_multiple_parallel_tool_calls_by_index() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(tool_calls=[
+            _tool_call_delta(0, id="call_1", name="ReadFile", arguments='{"filename": "a"}'),
+            _tool_call_delta(1, id="call_2", name="ReadFile", arguments='{"filename": "b"}'),
+        ]),
+        _chunk(finish_reason="tool_calls", usage=MagicMock(completion_tokens=3, prompt_tokens=5)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()], model="some/model")
+
+    assert result.message.tool_calls == [
+        openrouter.ToolCallRequest(id="call_1", name="ReadFile", arguments='{"filename": "a"}'),
+        openrouter.ToolCallRequest(id="call_2", name="ReadFile", arguments='{"filename": "b"}'),
+    ]
+
+
+def test_send_prompt_leaves_tool_calls_none_when_none_requested() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    assert result.message.tool_calls is None
+
+
+def test_build_api_messages_excludes_tool_defs_role_messages() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    tool_defs_message = Message(
+        content="[...]", role="tool_defs", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now())
+
+    provider.send_prompt([tool_defs_message, _user_message()], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_build_api_messages_translates_tool_use_role_to_assistant_with_tool_calls() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    tool_use_message = Message(
+        content="", role="tool_use", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now(),
+        tool_calls=[openrouter.ToolCallRequest(id="call_1", name="ReadFile", arguments='{"filename": "f"}')])
+
+    provider.send_prompt([_user_message(), tool_use_message], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"][1] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "ReadFile", "arguments": '{"filename": "f"}'},
+            },
+        ],
+    }
+
+
+def test_build_api_messages_translates_tool_response_role_to_tool() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    tool_response_message = Message(
+        content="42", role="tool_response", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now(), tool_call_id="call_1")
+
+    provider.send_prompt([_user_message(), tool_response_message], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"][1] == {"role": "tool", "content": "42", "tool_call_id": "call_1"}

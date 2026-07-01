@@ -4,6 +4,7 @@
 import logging
 from typing import Any
 
+from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 
 MAX_LINES = 200
@@ -14,8 +15,9 @@ logger = logging.getLogger(__name__)
 class ReadFileTool(Tool):
     """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers."""
 
-    def __init__(self, max_lines: int = MAX_LINES) -> None:
-        self._max_lines = max_lines
+    def __init__(self, context: ToolSetupContext) -> None:
+        super().__init__(context)
+        self._max_lines = context.process_config.read_file_max_lines
 
     def name(self) -> str:
         return "ReadFile"
