@@ -1,4 +1,29 @@
 {
+  "autopep8.args": [
+    "--max-line-length",
+    "105",
+    "--ignore",
+    "E114,E116,E128,E201,E202,E227,E261,E266,E303,N802,W391"
+  ],
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/*~": true,
+    "**/venv": true,
+    "**/*.swp": true,
+    "**/*.pyc": true,
+    "**/*.pyo": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true,
+    "**/__pycache__": true,
+    "**/.mypy_cache": true,
+    "**/.pytest_cache": true,
+    "**/*.egg-info": true
+  },
+  "evenBetterToml.formatter.allowedBlankLines": 3,
+  "evenBetterToml.formatter.indentEntries": true,
+  "evenBetterToml.formatter.indentString": "  ",  
   "python.defaultInterpreterPath": "${workspaceFolder}/klorb/venv",
   "python.envFile": "${workspaceFolder}/klorb/.python-env",
   "python.testing.cwd": "${workspaceFolder}/klorb",

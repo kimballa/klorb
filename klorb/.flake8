@@ -1,3 +1,24 @@
 [flake8]
+per-file-ignores =
+  # module __init__ files may use `from X import *` to re-export their submodule contents.
+  __init__.py:F401,F403
+  # test functions may have args that shadow outer scope; necessary for use of imported fixtures.
+  tests/*:F811
 max-line-length = 110
-extend-select = NQA
+indent-size = 4
+# Ignore the following issues:
+# E114    comment indent not a multiple of 4    # Allow continuation comment lines
+# E116    unexpected indent (comment)           # to occur at any comment-specific
+#                                               # indent level that makes sense.
+# E128    flake8 and I drastically disagree on what counts as 'under-indented for visual indent'
+# E201    Whitespace before '{'
+# E202    Whitespace after '}'
+# E227    Missing whitespace around bitwise operator (typedefs use 'None|X' style)
+# E261    At least two spaces before inline comment.
+# E266    Too many leading '#' in block comment
+# E303    Too many blank lines
+# N802    camelCaseNames are allowed for functions.
+# W391    Blank line at end of file
+extend-ignore = E114,E116,E128,E201,E202,E227,E261,E266,E303,N802,W391
+
+# NOTE(aaron): If you change the above, also configure autopep8 in the .vscode/settings.json file.
