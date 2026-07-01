@@ -349,9 +349,66 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         thinking_label = history.query_one(".thinking-label", Static)
+        thinking_widgets = list(history.query(".thinking-body").results(Static))
         response_widgets = list(history.query(Markdown))
 
         assert thinking_label.content == THINKING_LABEL
-        assert len(response_widgets) == 2
-        assert response_widgets[0].source == "*Let me think.*"
-        assert response_widgets[1].source == "Hello"
+        assert len(thinking_widgets) == 1
+        assert thinking_widgets[0].content == "[italic]Let me think.[/italic]"
+        assert len(response_widgets) == 1
+        assert response_widgets[0].source == "Hello"
+
+
+async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_italicized() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
+        on_thinking_chunk("First paragraph.\n\nSecond paragraph.")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input.value = "hi"
+        await prompt_input.action_submit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        thinking_widgets = list(history.query(".thinking-body").results(Static))
+
+        assert len(thinking_widgets) == 1
+        assert thinking_widgets[0].content == "[italic]First paragraph.\n\nSecond paragraph.[/italic]"
+
+
+async def test_thinking_chunks_escape_literal_brackets() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
+        on_thinking_chunk=None,
+    ):
+        on_thinking_chunk("check [status]")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input.value = "hi"
+        await prompt_input.action_submit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        thinking_widgets = list(history.query(".thinking-body").results(Static))
+
+        assert thinking_widgets[0].content == r"[italic]check \[status][/italic]"

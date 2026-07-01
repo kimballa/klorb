@@ -11,3 +11,4 @@
 * CreateFileTool
 * ListDirTool
 * AskUserQuestionsTool
+* WebSearchTool

@@ -85,13 +85,22 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   handling but on its own accumulator: on the first thinking chunk, `_mount_thinking_widget`
   mounts a `Static` labeled `THINKING_LABEL` (`"<Thinking>"`, styled via the `.thinking-label`
   CSS class — left-justified above the block, not indented, like `.prompt`/`.error`)
-  followed by a `Markdown` widget whose source is the accumulated text wrapped in `*...*`
-  so it renders in italics; later chunks re-wrap the growing accumulated text the same way
-  and call `.update()` on that same `Markdown` widget. Since it's a normal `Markdown`
-  widget, it picks up the same default indentation as the eventual response's `Markdown`
-  widget below it — only the `<Thinking>` label itself sits flush left. There's no
-  non-streaming fallback for the thinking block (unlike the response): if nothing ever
-  streamed as reasoning, no thinking block is shown, since there'd be no text to show.
+  followed by a second `Static` (styled via the `.thinking-body` CSS class — `color:
+  $text-muted` to match the dim `<Thinking>` label, and `padding: 0 2` to match the same
+  2-column left indent the response gets for free from the `Markdown` widget's own default
+  CSS, since a plain `Static` has none) whose content is the accumulated text run through
+  `klorb.tui.repl._italicized()`; later chunks re-wrap the growing accumulated text the
+  same way and call `.update()` on that same `Static`. `_italicized()` escapes any literal
+  `[`/`]` in the text (via `rich.markup.escape`, so reasoning text containing brackets
+  can't be misread as markup) and wraps the result in `[italic]...[/italic]` Rich console
+  markup rather than Markdown's `*...*` emphasis syntax — deliberately, since reasoning
+  text commonly spans multiple paragraphs and Markdown emphasis doesn't apply across
+  blank-line-separated blocks the way Rich's per-line style markup does (a `Markdown`
+  widget was tried first and silently failed to italicize multi-paragraph reasoning; see
+  [[render-thinking-body-as-rich-markup-not-markdown]]).
+  There's no non-streaming fallback for the thinking block (unlike the response): if
+  nothing ever streamed as reasoning, no thinking block is shown, since there'd be no text
+  to show.
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
   (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
   thinking"`, and one `"Thinking effort: <level>"` command per `ThinkingEffort` level

@@ -38,6 +38,13 @@ instead of a bespoke picker widget.
 * `klorb.models.gpt_4o_mini.Gpt4oMiniModel` (`klorb/src/klorb/models/gpt_4o_mini.py`) is the
   built-in `Model` for `openai/gpt-4o-mini`, klorb's current default model
   (`klorb.openrouter.DEFAULT_MODEL`).
+* `klorb.models.laguna_m1.LagunaM1Model` (`klorb/src/klorb/models/laguna_m1.py`) is a
+  built-in `Model` for `poolside/laguna-m.1:free`, a free OpenRouter coding-agent model.
+  `capabilities()` reports `thinking: True` with `thinking_budget_style: "effort"`,
+  assumed rather than confirmed against OpenRouter's parameter schema for this model (its
+  docs describe "tool calling and reasoning" support but don't spell out the request
+  parameter shape) — worth double-checking against a real response if thinking output
+  doesn't show up for this model in practice.
 * `klorb.tui.model_commands.ModelCommandProvider`
   (`klorb/src/klorb/tui/model_commands.py`) is a Textual `command.Provider`. It builds a
   fresh `ModelRegistry()` per search, lists a `"Select model: <name>"` command per
@@ -62,5 +69,4 @@ instead of a bespoke picker widget.
   `ApiProvider.send_prompt()` call is future work — today only `name()` is used (as the
   `model` argument), mirroring [[openrouter-prompt-client]]'s single-shot, no-system-prompt
   request shape.
-* Recursive discovery into subpackages of `klorb.models`, and additional built-in `Model`
-  implementations beyond `openai/gpt-4o-mini`, are not implemented yet.
+* Recursive discovery into subpackages of `klorb.models` is not implemented yet.

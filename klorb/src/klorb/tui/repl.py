@@ -5,6 +5,7 @@ box pinned to the bottom of the screen.
 
 import logging
 
+from rich.markup import escape
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
@@ -70,6 +71,13 @@ def format_token_count(count: int) -> str:
     return f"{value}{suffix}"
 
 
+def _italicized(text: str) -> str:
+    """Wrap `text` in Rich console markup for italics, escaping any literal `[`/`]` in
+    `text` first so it can't be misread as markup by the `Static` widget it's rendered in.
+    """
+    return f"[italic]{escape(text)}[/italic]"
+
+
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
@@ -117,6 +125,11 @@ class ReplApp(App[None]):
     .thinking-label {
         color: $text-muted;
         margin: 1 0 0 0;
+    }
+
+    .thinking-body {
+        color: $text-muted;
+        padding: 0 2;
     }
     """
 
@@ -235,11 +248,14 @@ class ReplApp(App[None]):
         Renders the response progressively as chunks stream in: a `Markdown` widget is
         mounted on the first chunk and updated on each subsequent one. Reasoning/thinking
         chunks, if the model sends any, are rendered the same way but behind a `<Thinking>`
-        label and in italics, via a separate `Markdown` widget.
+        label and in italics, via a separate `Static` widget (not `Markdown`: reasoning text
+        commonly spans multiple paragraphs, and Markdown's `*...*` emphasis syntax doesn't
+        apply across blank-line-separated blocks, whereas Rich's `[italic]...[/italic]`
+        console markup styles every line regardless).
         """
         response_widget: Markdown | None = None
         accumulated = ""
-        thinking_widget: Markdown | None = None
+        thinking_widget: Static | None = None
         thinking_accumulated = ""
 
         def handle_chunk(delta_text: str) -> None:
@@ -256,7 +272,7 @@ class ReplApp(App[None]):
             if thinking_widget is None:
                 thinking_widget = self.call_from_thread(self._mount_thinking_widget, thinking_accumulated)
             else:
-                self.call_from_thread(thinking_widget.update, f"*{thinking_accumulated}*")
+                self.call_from_thread(thinking_widget.update, _italicized(thinking_accumulated))
 
         try:
             response_text = self._session.send_turn(
@@ -277,13 +293,13 @@ class ReplApp(App[None]):
         history.scroll_end(animate=False)
         return widget
 
-    def _mount_thinking_widget(self, initial_text: str) -> Markdown:
-        """Mount a left-justified `<Thinking>` label followed by an italicized `Markdown`
-        widget for a streaming thinking block, and return that `Markdown` widget.
+    def _mount_thinking_widget(self, initial_text: str) -> Static:
+        """Mount a left-justified `<Thinking>` label followed by an italicized `Static`
+        widget for a streaming thinking block, and return that `Static` widget.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(THINKING_LABEL, classes="thinking-label"))
-        widget = Markdown(f"*{initial_text}*")
+        widget = Static(_italicized(initial_text), classes="thinking-body")
         history.mount(widget)
         history.scroll_end(animate=False)
         return widget
