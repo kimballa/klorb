@@ -2,6 +2,7 @@
 """Session state shared by the one-shot prompt path and the interactive REPL."""
 
 import logging
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -11,6 +12,7 @@ from coolname import generate_slug
 from pydantic import BaseModel
 
 from klorb.api_provider import ApiProvider
+from klorb.api_provider import ResponseAborted
 from klorb.message import Message
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
@@ -162,6 +164,7 @@ class Session:
         tokens_before: int,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
 
@@ -187,6 +190,12 @@ class Session:
         set; if a placeholder was created before the failure, it (and the thinking
         placeholder, if any) is also marked `processing_state="error"`/`last_error` (its
         partial `streaming_content` is left intact), and the exception is re-raised.
+
+        If `cancel_event` is given and the provider raises `ResponseAborted` (because it was
+        set mid-stream), this turn never happened as far as history is concerned:
+        `user_message` and any placeholder(s) created for it are removed from
+        `self._messages` entirely, rather than left behind in `"error"` state, and the
+        exception is re-raised so the caller can offer the prompt back up for editing.
         """
         model_name = self.active_model_name()
         model = self._active_model()
@@ -235,7 +244,15 @@ class Session:
             result = self._provider.send_prompt(
                 message_snapshot, system_prompt=system_prompt, model=model_name,
                 session_id=self.id, reasoning=reasoning, on_chunk=handle_chunk,
-                on_thinking_chunk=handle_thinking_chunk)
+                on_thinking_chunk=handle_thinking_chunk, cancel_event=cancel_event)
+        except ResponseAborted:
+            self._messages.remove(user_message)
+            if thinking_placeholder is not None:
+                self._messages.remove(thinking_placeholder)
+            if placeholder is not None:
+                self._messages.remove(placeholder)
+            logger.info("Turn aborted for %s", model_name)
+            raise
         except Exception as exc:
             user_message.processing_state = "error"
             user_message.last_error = str(exc)
@@ -276,6 +293,7 @@ class Session:
         prompt: str,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
@@ -284,6 +302,9 @@ class Session:
         same `Message` in place to reflect the outcome (see `_dispatch_turn`). If `on_chunk`
         is given, it is invoked with each text delta as the response streams in; if
         `on_thinking_chunk` is given, it is invoked with each reasoning/thinking text delta.
+        If `cancel_event` is given and set while the response is streaming in, the turn is
+        aborted: `ResponseAborted` is raised and the user `Message` appended here is removed
+        from history again (see `_dispatch_turn`).
         """
         tokens_before = self._tokens_recorded_so_far()
         user_message = Message(
@@ -297,7 +318,8 @@ class Session:
         logger.info(
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
         return self._dispatch_turn(
-            user_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)
+            user_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
+            cancel_event=cancel_event)
 
     def retry_last_turn(
         self,

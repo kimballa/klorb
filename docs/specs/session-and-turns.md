@@ -42,9 +42,10 @@ config) has one place to live.
     `THINKING_EFFORT_TOKEN_BUDGETS[config.thinking_effort]` (see
     [[map-thinking-effort-levels-to-fixed-token-budgets]]). Recomputed fresh on every turn,
     like `system_prompt`, so palette changes to thinking config take effect immediately.
-  * `send_turn(prompt: str, on_chunk: ... = None, on_thinking_chunk: ... = None) -> str` is
-    the turn-based loop's unit of work. It appends a new `Message` (`role="user"`,
-    `processing_state="pending"`) to the history, then sends the *entire* history plus the
+  * `send_turn(prompt: str, on_chunk: ... = None, on_thinking_chunk: ... = None,
+    cancel_event: threading.Event | None = None) -> str` is the turn-based loop's unit of
+    work. It appends a new `Message` (`role="user"`, `processing_state="pending"`) to the
+    history, then sends the *entire* history plus the
     active model's system prompt (re-derived fresh from `Model.system_prompt()` on every
     call — not itself stored as a `Message`) and `_reasoning_params()`'s result via
     `ApiProvider.send_prompt(messages, system_prompt=, model=, session_id=, reasoning=,
@@ -68,7 +69,13 @@ config) has one place to live.
     [[derive-user-turn-token-counts-from-a-prompt-token-delta]]), `processing_state`
     becomes `"complete"`, `last_error` is cleared. On failure, it mutates the user `Message`
     to `processing_state="error"`/`last_error=str(exc)` (and both placeholders too, if
-    created, leaving their partial `streaming_content` intact) and re-raises. Both a
+    created, leaving their partial `streaming_content` intact) and re-raises. If
+    `cancel_event` is given and becomes set while the response is streaming in, the
+    provider raises `ResponseAborted` instead of a normal failure; unlike a real error, the
+    user `Message` and any placeholder(s) are removed from `self._messages` entirely
+    (the turn is discarded, not marked errored) before re-raising, since the caller is
+    handing the prompt back to the user rather than treating this as a failed attempt to
+    retry — see [[escape-aborts-streaming-turn-and-discards-it-from-history]]. Both a
     one-shot prompt and every REPL submission are exactly one call to `send_turn()`.
   * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None) -> str` scans
     backward for the last `role == "user"` `Message`; if it isn't in `"error"` state (or

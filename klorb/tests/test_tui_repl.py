@@ -1,7 +1,10 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.repl."""
 
+import asyncio
+import threading
 from datetime import datetime
+from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -11,6 +14,7 @@ from textual.widgets import Markdown
 from textual.widgets import Static
 
 from klorb.api_provider import ProviderResponse
+from klorb.api_provider import ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.message import Message
 from klorb.models.registry import ModelRegistry
@@ -162,6 +166,64 @@ async def test_provider_error_is_shown_in_history() -> None:
 
         assert "boom" in str(error_widget.content)
         assert prompt_input.disabled is False
+
+
+async def test_aborted_response_restores_prompt_and_clears_history() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = ResponseAborted()
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "what is 2+2?"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.children) == 0
+        assert prompt_input.text == "what is 2+2?"
+        assert prompt_input.disabled is False
+
+    assert session.messages == []
+
+
+async def test_escape_aborts_a_streaming_response() -> None:
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        assert cancel_event is not None
+        streaming_started.set()
+        cancel_event.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "what is 2+2?"
+        await pilot.press("enter")
+
+        while not streaming_started.is_set():
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert app.check_action("abort_response", ()) is True
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.children) == 0
+        assert prompt_input.text == "what is 2+2?"
+        assert prompt_input.disabled is False
+        assert app.check_action("abort_response", ()) is False
+
+    assert session.messages == []
 
 
 async def test_select_model_updates_active_model_and_subtitle() -> None:
@@ -374,7 +436,7 @@ async def test_streaming_response_updates_widget_progressively() -> None:
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_chunk("Hel")
         on_chunk("lo")
@@ -402,7 +464,7 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
@@ -436,7 +498,7 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("First paragraph.\n\nSecond paragraph.")
         on_chunk("Hello")
@@ -464,7 +526,7 @@ async def test_thinking_chunks_escape_literal_brackets() -> None:
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, on_chunk=None,
-        on_thinking_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
     ):
         on_thinking_chunk("check [status]")
         on_chunk("Hello")
