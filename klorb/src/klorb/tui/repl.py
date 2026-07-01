@@ -168,6 +168,10 @@ class ReplApp(App[None]):
         """Return the reasoning effort level currently configured for subsequent prompts."""
         return self._session.config.thinking_effort
 
+    def get_thinking_enabled(self) -> bool:
+        """Return whether extended-thinking requests are currently enabled."""
+        return self._session.config.thinking_enabled
+
     def set_thinking_enabled(self, enabled: bool) -> None:
         """Enable or disable extended-thinking requests for subsequent prompts."""
         self._session.config.thinking_enabled = enabled

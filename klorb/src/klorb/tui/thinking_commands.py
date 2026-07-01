@@ -33,6 +33,9 @@ class SupportsThinkingConfig(Protocol):
     def get_thinking_effort(self) -> ThinkingEffort:
         """Return the reasoning effort level currently configured for subsequent prompts."""
 
+    def get_thinking_enabled(self) -> bool:
+        """Return whether extended-thinking requests are currently enabled."""
+
     def set_thinking_enabled(self, enabled: bool) -> None:
         """Enable or disable extended-thinking requests for subsequent prompts."""
 
@@ -105,10 +108,14 @@ class ThinkingCommandProvider(Provider):
             yield DiscoveryHit(label, callback)
 
     def _commands(self) -> dict[str, Callable[[], None]]:
-        """Return a mapping of command palette display text to its callback."""
+        """Return a mapping of command palette display text to its callback. Only the
+        toggle command that reflects a valid state transition is offered: `Enable
+        thinking` when thinking is currently off, `Disable thinking` when it's on.
+        """
+        thinking_enabled = cast(SupportsThinkingConfig, self.app).get_thinking_enabled()
+        toggle_label = DISABLE_THINKING_LABEL if thinking_enabled else ENABLE_THINKING_LABEL
         return {
-            ENABLE_THINKING_LABEL: partial(self._set_thinking_enabled, True),
-            DISABLE_THINKING_LABEL: partial(self._set_thinking_enabled, False),
+            toggle_label: partial(self._set_thinking_enabled, not thinking_enabled),
             SET_THINKING_EFFORT_LABEL: self._show_thinking_effort_screen,
         }
 

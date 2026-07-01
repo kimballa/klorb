@@ -14,17 +14,28 @@ from klorb.tui.thinking_commands import ThinkingCommandProvider
 from klorb.tui.thinking_commands import ThinkingEffortScreen
 
 
-def test_commands_lists_enable_disable_and_set_effort() -> None:
-    provider = ThinkingCommandProvider(MagicMock())
+def test_commands_lists_disable_and_set_effort_when_thinking_enabled() -> None:
+    mock_screen = MagicMock()
+    mock_screen.app.get_thinking_enabled.return_value = True
+    provider = ThinkingCommandProvider(mock_screen)
+
+    commands = provider._commands()
+
+    assert "Enable thinking" not in commands
+    assert "Disable thinking" in commands
+    assert "Set thinking effort" in commands
+
+
+def test_commands_lists_enable_and_set_effort_when_thinking_disabled() -> None:
+    mock_screen = MagicMock()
+    mock_screen.app.get_thinking_enabled.return_value = False
+    provider = ThinkingCommandProvider(mock_screen)
 
     commands = provider._commands()
 
     assert "Enable thinking" in commands
-    assert "Disable thinking" in commands
+    assert "Disable thinking" not in commands
     assert "Set thinking effort" in commands
-    assert "Thinking effort: low" not in commands
-    assert "Thinking effort: medium" not in commands
-    assert "Thinking effort: high" not in commands
 
 
 def test_set_thinking_enabled_calls_app() -> None:
@@ -49,12 +60,14 @@ def test_show_thinking_effort_screen_pushes_modal_with_current_effort() -> None:
 
 
 async def test_discover_yields_a_hit_per_command() -> None:
-    provider = ThinkingCommandProvider(MagicMock())
+    mock_screen = MagicMock()
+    mock_screen.app.get_thinking_enabled.return_value = True
+    provider = ThinkingCommandProvider(mock_screen)
 
     hits = [hit async for hit in provider.discover()]
 
     labels = {str(hit.text) for hit in hits}
-    assert "Enable thinking" in labels
+    assert "Enable thinking" not in labels
     assert "Disable thinking" in labels
     assert "Set thinking effort" in labels
 
