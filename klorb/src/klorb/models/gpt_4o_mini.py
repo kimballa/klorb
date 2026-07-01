@@ -17,7 +17,7 @@ class Gpt4oMiniModel(Model):
         return "You are klorb, a helpful coding and software engineering assistant."
 
     def settings(self) -> dict[str, Any]:
-        return {"temperature": 1.0}
+        return {"temperature": 0.2}
 
     def capabilities(self) -> dict[str, Any]:
         return {

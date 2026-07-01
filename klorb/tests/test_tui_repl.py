@@ -15,8 +15,11 @@ from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import ReplApp
 
 
+TEST_SESSION_ID = "test-session-id"
+
+
 def _session(provider: MagicMock, model: str = "some/model") -> Session:
-    return Session(SessionConfig(model=model), provider=provider)
+    return Session(SessionConfig(model=model), provider=provider, session_id=TEST_SESSION_ID)
 
 
 async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
@@ -39,7 +42,8 @@ async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
         assert response_widget.source == "model reply"
         assert prompt_input.value == ""
 
-    mock_provider.send_prompt.assert_called_once_with("what is 2+2?", model="some/model")
+    mock_provider.send_prompt.assert_called_once_with(
+        "what is 2+2?", model="some/model", session_id=TEST_SESSION_ID)
 
 
 async def test_submitting_an_empty_prompt_does_nothing() -> None:
@@ -93,7 +97,7 @@ async def test_select_model_updates_active_model_and_subtitle() -> None:
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-    mock_provider.send_prompt.assert_called_once_with("hi", model="other/model")
+    mock_provider.send_prompt.assert_called_once_with("hi", model="other/model", session_id=TEST_SESSION_ID)
 
 
 async def test_initial_message_is_submitted_as_first_turn() -> None:
@@ -115,4 +119,5 @@ async def test_initial_message_is_submitted_as_first_turn() -> None:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
         assert prompt_input.disabled is False
 
-    mock_provider.send_prompt.assert_called_once_with("what is 2+2?", model="some/model")
+    mock_provider.send_prompt.assert_called_once_with(
+        "what is 2+2?", model="some/model", session_id=TEST_SESSION_ID)

@@ -2,7 +2,9 @@
 """Session state shared by the one-shot prompt path and the interactive REPL."""
 
 import logging
+from datetime import datetime
 
+from coolname import generate_slug
 from pydantic import BaseModel
 
 from klorb.api_provider import ApiProvider
@@ -12,13 +14,25 @@ from klorb.openrouter import OpenRouterApiProvider
 
 logger = logging.getLogger(__name__)
 
+# Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids
+# created within the same minute.
+NONCE_WORD_COUNT = 2
+
+SESSION_ID_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M"
+
+
+def generate_session_id() -> str:
+    """Generate a session id: yyyy-mm-dd-hh-mm-<nonce>, e.g. '2026-06-30-10-00-happy-otter'."""
+    timestamp = datetime.now().strftime(SESSION_ID_TIMESTAMP_FORMAT)
+    nonce = generate_slug(NONCE_WORD_COUNT)
+    return f"{timestamp}-{nonce}"
+
 
 class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
 
     model: str = DEFAULT_MODEL
     interactive: bool = True
-    log_filename: str | None = None
 
 
 class Session:
@@ -34,8 +48,10 @@ class Session:
         config: SessionConfig,
         provider: ApiProvider | None = None,
         model_registry: ModelRegistry | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.config = config
+        self.id = session_id or generate_session_id()
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
 
@@ -57,7 +73,7 @@ class Session:
         """Send one turn of the conversation to the active model and return its response."""
         model_name = self.active_model_name()
         logger.info("Sending turn to %s (%d characters)", model_name, len(prompt))
-        response = self._provider.send_prompt(prompt, model=model_name)
+        response = self._provider.send_prompt(prompt, model=model_name, session_id=self.id)
         logger.debug("Received %d-character response from %s", len(response), model_name)
         return response
 

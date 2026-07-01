@@ -39,6 +39,7 @@ def test_send_prompt_returns_model_response() -> None:
     mock_client.chat.completions.create.assert_called_once_with(
         model="some/model",
         messages=[{"role": "user", "content": "hi"}],
+        extra_body=None,
     )
 
 
@@ -54,4 +55,22 @@ def test_send_prompt_uses_default_model_when_unspecified() -> None:
     mock_client.chat.completions.create.assert_called_once_with(
         model=openrouter.DEFAULT_MODEL,
         messages=[{"role": "user", "content": "hi"}],
+        extra_body=None,
+    )
+
+
+def test_send_prompt_includes_session_id_in_request_body() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=MagicMock(content="hello there")),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt("hi", model="some/model", session_id="2026-06-30-10-00-happy-otter")
+
+    assert result == "hello there"
+    mock_client.chat.completions.create.assert_called_once_with(
+        model="some/model",
+        messages=[{"role": "user", "content": "hi"}],
+        extra_body={"session_id": "2026-06-30-10-00-happy-otter"},
     )

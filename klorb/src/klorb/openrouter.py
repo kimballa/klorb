@@ -44,14 +44,16 @@ class OpenRouterApiProvider(ApiProvider):
             self._client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=self.get_api_key())
         return self._client
 
-    def send_prompt(self, prompt: str, model: str | None = None) -> str:
+    def send_prompt(self, prompt: str, model: str | None = None, session_id: str | None = None) -> str:
         """Send a single user prompt to a model via OpenRouter and return its text response."""
         resolved_model = model or self._model
         logger.info("Sending prompt to %s (%d characters)", resolved_model, len(prompt))
         client = self.build_client()
+        extra_body: dict[str, str] | None = {"session_id": session_id} if session_id is not None else None
         response = client.chat.completions.create(
             model=resolved_model,
             messages=[{"role": "user", "content": prompt}],
+            extra_body=extra_body,
         )
         content = response.choices[0].message.content or ""
         logger.debug("Received %d-character response from %s", len(content), resolved_model)

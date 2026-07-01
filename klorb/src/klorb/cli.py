@@ -7,6 +7,7 @@ import logging
 from dotenv import load_dotenv
 
 from klorb.logging_config import configure_logging
+from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.session import Session
@@ -63,24 +64,25 @@ def main() -> None:
         parser.error("--message is required when --no-interactive is set.")
 
     session_log = interactive if args.session_log is None else args.session_log
-    log_path = configure_logging(repl_mode=interactive, session_log=session_log)
-    logger.debug("Logging to %s", log_path)
 
     config = SessionConfig(
         model=args.model,
         interactive=interactive,
-        log_filename=str(log_path) if log_path else None,
     )
     provider = OpenRouterApiProvider()
     session = Session(config, provider=provider)
 
+    log_path = session_log_path(session.id) if session_log else None
+    configure_logging(repl_mode=interactive, log_path=log_path)
+    logger.debug("Logging to %s", log_path)
+
     if interactive:
         run_repl(session, initial_message=args.prompt)
-        return
-    logger.info("Sending prompt to model=%s", args.model)
-    response = session.run_one_shot(args.prompt)
-    logger.info("Received response of %d characters from model=%s", len(response), args.model)
-    print(response)
+    else:
+        logger.info("Sending prompt to model=%s", args.model)
+        response = session.run_one_shot(args.prompt)
+        logger.info("Received response of %d characters from model=%s", len(response), args.model)
+        print(response)
 
 
 if __name__ == "__main__":

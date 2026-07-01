@@ -18,5 +18,5 @@ class ApiProvider(ABC):
         """Construct and return the underlying SDK client for this provider."""
 
     @abstractmethod
-    def send_prompt(self, prompt: str, model: str | None = None) -> str:
+    def send_prompt(self, prompt: str, model: str | None = None, session_id: str | None = None) -> str:
         """Send a single prompt to a model and return its text response."""
