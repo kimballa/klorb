@@ -204,6 +204,15 @@ async def test_set_thinking_effort_updates_session_config() -> None:
         assert app._session.config.thinking_effort == "low"
 
 
+async def test_get_thinking_effort_reflects_session_config() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.set_thinking_effort("low")
+        assert app.get_thinking_effort() == "low"
+
+
 async def test_initial_message_is_submitted_as_first_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()

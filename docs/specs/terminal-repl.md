@@ -103,13 +103,20 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   to show.
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
   (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
-  thinking"`, and one `"Thinking effort: <level>"` command per `ThinkingEffort` level
-  (`"low"`/`"medium"`/`"high"`). Selecting one calls `ReplApp.set_thinking_enabled(bool)` or
-  `ReplApp.set_thinking_effort(level)`, which mutate `Session.config.thinking_enabled`/
-  `thinking_effort` directly (same pattern as `select_model()`) and show a toast
-  confirming the change. These are always-on/off pairs and a fixed effort list, mirroring
-  how `ModelCommandProvider` always lists every model rather than showing dynamic
-  toggle-state labels.
+  thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry
+  per `ThinkingEffort` level, which cluttered the palette). Selecting `"Enable
+  thinking"`/`"Disable thinking"` calls `ReplApp.set_thinking_enabled(bool)` directly, which
+  mutates `Session.config.thinking_enabled` (same pattern as `select_model()`) and shows a
+  toast confirming the change. Selecting `"Set thinking effort"` instead reads the current
+  level via the new `ReplApp.get_thinking_effort()` getter and pushes `ThinkingEffortScreen`,
+  a `ModalScreen` with a `"Thinking effort level:"` header `Static` above the three
+  `ThinkingEffort` levels (`"low"`/`"medium"`/`"high"`) listed vertically in an `OptionList`,
+  with the currently-active level's entry suffixed with `" *"`; the up/down arrow keys move
+  the selection and Enter confirms it (`OptionList`'s built-in bindings), calling
+  `ReplApp.set_thinking_effort(level)` and dismissing the modal, while Escape dismisses
+  without changing anything. `"Enable thinking"`/`"Disable thinking"` remain an always-on/off
+  pair, mirroring how `ModelCommandProvider` always lists every model rather than showing
+  dynamic toggle-state labels.
 * Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
   `Session` with a new one: same `SessionConfig` (model carries over) and the same
   `provider`/`model_registry` instances (via `Session`'s read-only properties, so the

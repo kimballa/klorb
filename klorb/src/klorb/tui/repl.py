@@ -164,6 +164,10 @@ class ReplApp(App[None]):
         self._update_status_bar()
         self.notify(f"Model set to {name}.")
 
+    def get_thinking_effort(self) -> ThinkingEffort:
+        """Return the reasoning effort level currently configured for subsequent prompts."""
+        return self._session.config.thinking_effort
+
     def set_thinking_enabled(self, enabled: bool) -> None:
         """Enable or disable extended-thinking requests for subsequent prompts."""
         self._session.config.thinking_enabled = enabled

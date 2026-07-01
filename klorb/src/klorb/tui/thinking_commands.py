@@ -2,29 +2,92 @@
 """Command palette provider for toggling thinking on/off and choosing its effort level."""
 
 from functools import partial
+from typing import Callable
 from typing import Protocol
 from typing import cast
 
+from textual.app import ComposeResult
 from textual.command import DiscoveryHit
 from textual.command import Hit
 from textual.command import Hits
 from textual.command import Provider
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import OptionList
+from textual.widgets import Static
 
 from klorb.session import ThinkingEffort
 
 ENABLE_THINKING_LABEL = "Enable thinking"
 DISABLE_THINKING_LABEL = "Disable thinking"
+SET_THINKING_EFFORT_LABEL = "Set thinking effort"
 THINKING_EFFORT_LEVELS: tuple[ThinkingEffort, ...] = ("low", "medium", "high")
+THINKING_EFFORT_HEADER_TEXT = "Thinking effort level:"
+THINKING_EFFORT_OPTION_LIST_ID = "thinking-effort-options"
+CURRENT_THINKING_EFFORT_MARKER = " *"
 
 
 class SupportsThinkingConfig(Protocol):
     """Structural interface for an App that can have its thinking config changed."""
+
+    def get_thinking_effort(self) -> ThinkingEffort:
+        """Return the reasoning effort level currently configured for subsequent prompts."""
 
     def set_thinking_enabled(self, enabled: bool) -> None:
         """Enable or disable extended-thinking requests for subsequent prompts."""
 
     def set_thinking_effort(self, effort: ThinkingEffort) -> None:
         """Set the reasoning effort level used for subsequent prompts."""
+
+
+class ThinkingEffortScreen(ModalScreen[None]):
+    """Modal listing the three `ThinkingEffort` levels, stacked vertically in an
+    `OptionList` under a header, so the user can move between them with the up/down
+    arrow keys and confirm with Enter. The currently-active level is marked with a
+    trailing `*`. Escape dismisses without making a selection.
+    """
+
+    CSS = """
+    ThinkingEffortScreen {
+        align: center middle;
+    }
+
+    ThinkingEffortScreen Vertical {
+        width: auto;
+        height: auto;
+        border: round $accent;
+    }
+
+    #thinking-effort-header {
+        padding: 0 1;
+        text-style: bold;
+    }
+
+    ThinkingEffortScreen OptionList {
+        border: none;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss", "Cancel")]
+
+    def __init__(self, current_effort: ThinkingEffort) -> None:
+        super().__init__()
+        self._current_effort = current_effort
+
+    def compose(self) -> ComposeResult:
+        options = (
+            f"{level}{CURRENT_THINKING_EFFORT_MARKER}" if level == self._current_effort else level
+            for level in THINKING_EFFORT_LEVELS
+        )
+        yield Vertical(
+            Static(THINKING_EFFORT_HEADER_TEXT, id="thinking-effort-header"),
+            OptionList(*options, id=THINKING_EFFORT_OPTION_LIST_ID),
+        )
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        cast(SupportsThinkingConfig, self.app).set_thinking_effort(
+            THINKING_EFFORT_LEVELS[event.option_index])
+        self.dismiss()
 
 
 class ThinkingCommandProvider(Provider):
@@ -41,18 +104,17 @@ class ThinkingCommandProvider(Provider):
         for label, callback in self._commands().items():
             yield DiscoveryHit(label, callback)
 
-    def _commands(self) -> dict[str, partial[None]]:
+    def _commands(self) -> dict[str, Callable[[], None]]:
         """Return a mapping of command palette display text to its callback."""
-        commands: dict[str, partial[None]] = {
+        return {
             ENABLE_THINKING_LABEL: partial(self._set_thinking_enabled, True),
             DISABLE_THINKING_LABEL: partial(self._set_thinking_enabled, False),
+            SET_THINKING_EFFORT_LABEL: self._show_thinking_effort_screen,
         }
-        for effort in THINKING_EFFORT_LEVELS:
-            commands[f"Thinking effort: {effort}"] = partial(self._set_thinking_effort, effort)
-        return commands
 
     def _set_thinking_enabled(self, enabled: bool) -> None:
         cast(SupportsThinkingConfig, self.app).set_thinking_enabled(enabled)
 
-    def _set_thinking_effort(self, effort: ThinkingEffort) -> None:
-        cast(SupportsThinkingConfig, self.app).set_thinking_effort(effort)
+    def _show_thinking_effort_screen(self) -> None:
+        app = cast(SupportsThinkingConfig, self.app)
+        self.app.push_screen(ThinkingEffortScreen(app.get_thinking_effort()))

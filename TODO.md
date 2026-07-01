@@ -1,4 +1,7 @@
 
+
+* the input prompt should linewrap at the edge of the screen and the input area should expand upward to a maximum of 12 lines.
+* enable and disable thinking palette commands should not both be present at the same time.
 * send_one_shot should actually run a whole session (non-interactively) until it gets a 'finished'
   state rather than just sending a single msg turn for a single response.
 * Need a ProviderFactory
