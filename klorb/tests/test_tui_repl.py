@@ -211,3 +211,28 @@ async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
             await pilot.pause()
 
     mock_configure_logging.assert_not_called()
+
+
+async def test_streaming_response_updates_widget_progressively() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+        on_chunk("Hel")
+        on_chunk("lo")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", Input)
+        prompt_input.value = "hi"
+        await prompt_input.action_submit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        response_widgets = list(history.query(Markdown))
+
+        assert len(response_widgets) == 1
+        assert response_widgets[0].source == "Hello"

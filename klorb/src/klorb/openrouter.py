@@ -3,6 +3,7 @@
 
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime
 from typing import cast
 
@@ -55,27 +56,47 @@ class OpenRouterApiProvider(ApiProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         session_id: str | None = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> ProviderResponse:
-        """Send the given conversation history to a model via OpenRouter and return its reply."""
+        """Send the given conversation history to a model via OpenRouter, streaming the
+        reply and invoking `on_chunk` per text delta, and return the fully-assembled reply.
+        """
         resolved_model = model or self._model
         api_messages = self._build_api_messages(messages, system_prompt)
         logger.info("Sending %d-message turn to %s", len(api_messages), resolved_model)
         client = self.build_client()
         extra_body: dict[str, str] | None = {"session_id": session_id} if session_id is not None else None
-        response = client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=resolved_model,
             messages=api_messages,
+            stream=True,
+            stream_options={"include_usage": True},
             extra_body=extra_body,
         )
-        choice = response.choices[0]
-        content = choice.message.content or ""
-        usage = response.usage
-        completion_tokens = usage.completion_tokens if usage is not None else 0
-        prompt_tokens = usage.prompt_tokens if usage is not None else 0
+
+        content_parts: list[str] = []
+        finish_reason: str | None = None
+        completion_tokens = 0
+        prompt_tokens = 0
+        for chunk in stream:
+            if chunk.choices:
+                choice = chunk.choices[0]
+                delta_text = choice.delta.content or ""
+                if delta_text:
+                    content_parts.append(delta_text)
+                    if on_chunk is not None:
+                        on_chunk(delta_text)
+                if choice.finish_reason is not None:
+                    finish_reason = choice.finish_reason
+            if chunk.usage is not None:
+                completion_tokens = chunk.usage.completion_tokens
+                prompt_tokens = chunk.usage.prompt_tokens
+
+        content = "".join(content_parts)
         logger.debug(
             "Received %d-character response from %s (finish_reason=%s, completion_tokens=%d, "
             "prompt_tokens=%d)",
-            len(content), resolved_model, choice.finish_reason, completion_tokens, prompt_tokens,
+            len(content), resolved_model, finish_reason, completion_tokens, prompt_tokens,
         )
         reply = Message(
             content=content,
@@ -83,7 +104,7 @@ class OpenRouterApiProvider(ApiProvider):
             num_tokens=completion_tokens,
             processing_state="complete",
             timestamp=datetime.now(),
-            finish_reason=choice.finish_reason,
+            finish_reason=finish_reason,
         )
         return ProviderResponse(message=reply, prompt_tokens=prompt_tokens)
 

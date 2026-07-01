@@ -80,9 +80,19 @@ def main() -> None:
         run_repl(session, initial_message=args.prompt, session_log_enabled=session_log)
     else:
         logger.info("Sending prompt to model=%s", args.model)
-        response = session.run_one_shot(args.prompt)
+        streamed_any = False
+
+        def on_chunk(delta_text: str) -> None:
+            nonlocal streamed_any
+            streamed_any = True
+            print(delta_text, end="", flush=True)
+
+        response = session.run_one_shot(args.prompt, on_chunk=on_chunk)
         logger.info("Received response of %d characters from model=%s", len(response), args.model)
-        print(response)
+        if streamed_any:
+            print()
+        else:
+            print(response)
 
 
 if __name__ == "__main__":

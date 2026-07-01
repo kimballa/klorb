@@ -32,11 +32,12 @@ this one shape.
   * `finish_reason: str | None` — the provider's reported stop reason, set on assistant
     replies.
   * `streaming_content: list[str] | None` — chunks of a streaming response as they arrive;
-    condensed into `content` once complete, and reset to `None`.
+    condensed into `content` once complete, and reset to `None`. `Session` is the layer
+    that populates and condenses this (see [[session-and-turns]] and
+    [[session-owns-in-progress-assistant-message-during-streaming]]) — `ApiProvider`
+    implementations only emit raw text deltas, they don't touch `Message` state directly.
 
 ## Out of scope
 
-* Streaming (`streaming_content` is defined but nothing populates it yet — see
-  [[openrouter-prompt-client]]'s out-of-scope note) and tool calling (`tool_defs`,
-  `tool_use`, `tool_response`, `thinking` roles are defined but not yet produced or
-  consumed by any code path) are not implemented yet.
+* Tool calling (`tool_defs`, `tool_use`, `tool_response`, `thinking` roles are defined but
+  not yet produced or consumed by any code path) is not implemented yet.

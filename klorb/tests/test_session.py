@@ -3,6 +3,7 @@
 
 import re
 from datetime import datetime
+from unittest import mock
 from unittest.mock import MagicMock
 
 import fixtures.sample_models as sample_models_package
@@ -92,7 +93,8 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id")
+        session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
+        on_chunk=mock.ANY)
     assert [m.content for m in session.messages] == ["hi", "model reply"]
 
 
@@ -106,7 +108,8 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id")
+        session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
+        on_chunk=mock.ANY)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
@@ -188,3 +191,88 @@ def test_retry_last_turn_raises_when_nothing_errored() -> None:
 
     with pytest.raises(ValueError, match="No errored turn to retry."):
         session.retry_last_turn()
+
+
+def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+        on_chunk("Hel")
+        on_chunk("lo")
+        return _reply("Hello", num_tokens=2, prompt_tokens=10)
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert len(session.messages) == 2
+    assistant_message = session.messages[-1]
+    assert assistant_message.content == "Hello"
+    assert assistant_message.streaming_content is None
+    assert assistant_message.processing_state == "complete"
+    assert assistant_message.num_tokens == 2
+
+
+def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+        on_chunk("Hel")
+        on_chunk("lo")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    spy = MagicMock()
+
+    session.send_turn("hi", on_chunk=spy)
+
+    assert [call.args[0] for call in spy.call_args_list] == ["Hel", "lo"]
+
+
+def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> None:
+    mock_provider = MagicMock()
+
+    def failing_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+        on_chunk("partial")
+        raise RuntimeError("boom")
+
+    mock_provider.send_prompt.side_effect = failing_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    with pytest.raises(RuntimeError):
+        session.send_turn("hi")
+
+    user_message, assistant_message = session.messages
+    assert user_message.processing_state == "error"
+    assert user_message.last_error == "boom"
+    assert assistant_message.processing_state == "error"
+    assert assistant_message.last_error == "boom"
+    assert assistant_message.streaming_content == ["partial"]
+
+
+def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> None:
+    mock_provider = MagicMock()
+
+    def failing_send_prompt(messages, system_prompt=None, model=None, session_id=None, on_chunk=None):
+        on_chunk("partial")
+        raise RuntimeError("boom")
+
+    mock_provider.send_prompt.side_effect = failing_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    with pytest.raises(RuntimeError):
+        session.send_turn("hi")
+
+    assert len(session.messages) == 2
+
+    mock_provider.send_prompt.side_effect = None
+    mock_provider.send_prompt.return_value = _reply("recovered")
+
+    response = session.retry_last_turn()
+
+    assert response == "recovered"
+    assert len(session.messages) == 2
+    assert session.messages[0].processing_state == "complete"
+    assert session.messages[1].content == "recovered"

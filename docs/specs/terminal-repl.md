@@ -47,11 +47,16 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   When the user presses enter in the input box (`Input.Submitted`), `ReplApp` ignores the
   event if the trimmed value is empty, otherwise clears the input box and calls
   `_submit_prompt()`.
-  On success, `_submit_prompt`'s worker mounts a `Markdown` widget with the model's
-  response (rendered with Textual's built-in markdown renderer, since model output is
-  frequently markdown); on failure, it mounts a `Static` widget with the exception message
-  (styled via the `.error` CSS class). Either way, the history is scrolled to the end
-  again, and the input box is re-enabled and refocused.
+  The response renders progressively as it streams: `_send_prompt`'s worker passes an
+  `on_chunk` callback into `Session.send_turn()` that accumulates the text seen so far and,
+  via `call_from_thread`, mounts a `Markdown` widget on the first chunk (capturing the
+  widget reference so later chunks call `.update()` on the same widget instead of mounting
+  new ones). Once `send_turn()` returns, the widget gets one final `.update()` with the
+  complete response text and the turn finishes; if nothing ever streamed (e.g. a
+  non-streaming test double), it falls back to mounting a fresh `Markdown` widget with the
+  full response instead. On failure, `_show_error` mounts a `Static` widget with the
+  exception message (styled via the `.error` CSS class). Either way, the history is
+  scrolled to the end again, and the input box is re-enabled and refocused.
 * Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
   `Session` with a new one: same `SessionConfig` (model carries over) and the same
   `provider`/`model_registry` instances (via `Session`'s read-only properties, so the
@@ -84,6 +89,5 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
 
 ## Out of scope
 
-* `/clear` is the only slash command implemented. Tool/function calling, input history
-  (up-arrow to recall a previous prompt), and streaming token-by-token responses are not
-  implemented yet.
+* `/clear` is the only slash command implemented. Tool/function calling and input history
+  (up-arrow to recall a previous prompt) are not implemented yet.

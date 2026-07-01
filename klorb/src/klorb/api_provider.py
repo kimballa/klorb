@@ -3,6 +3,7 @@
 
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -40,6 +41,11 @@ class ApiProvider(ABC):
         system_prompt: str | None = None,
         model: str | None = None,
         session_id: str | None = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history (plus an optional system prompt) to a model
-        and return its reply along with request-level token usage."""
+        and return its reply along with request-level token usage.
+
+        If `on_chunk` is given, it is invoked once per non-empty text delta as the response
+        streams in, in addition to the final reply being returned as usual.
+        """

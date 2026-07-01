@@ -2,6 +2,7 @@
 """Session state shared by the one-shot prompt path and the interactive REPL."""
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 
 from coolname import generate_slug
@@ -95,44 +96,92 @@ class Session:
         """Sum of `num_tokens` across all messages currently in the buffer."""
         return sum(message.num_tokens for message in self._messages)
 
-    def _dispatch_turn(self, user_message: Message, tokens_before: int) -> str:
+    def _dispatch_turn(
+        self,
+        user_message: Message,
+        tokens_before: int,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
+
+        Streams the assistant's reply: on the first chunk, a placeholder `Message`
+        (`processing_state="started_receipt"`, `streaming_content=[]`) is appended to
+        `self._messages`, and each chunk's text is appended to it. On success, that same
+        placeholder is finalized in place (`content`, `streaming_content=None`,
+        `processing_state="complete"`, `num_tokens`, `finish_reason`) rather than appending a
+        second, duplicate assistant `Message`; if no placeholder was ever created (e.g. a
+        non-streaming test double), the provider's reply is appended fresh instead.
 
         On success, `user_message.num_tokens` is set to the delta between this request's
         total `prompt_tokens` and `tokens_before` (the tokens already recorded prior to this
-        turn), `processing_state` becomes `"complete"`, `last_error` is cleared, and the
-        assistant's reply is appended as a new `Message`. On failure, `user_message` is
-        mutated to `processing_state="error"` with `last_error` set, and the exception is
-        re-raised.
+        turn), `processing_state` becomes `"complete"`, and `last_error` is cleared. On
+        failure, `user_message` is mutated to `processing_state="error"` with `last_error`
+        set; if a placeholder was created before the failure, it is also marked
+        `processing_state="error"`/`last_error` (its partial `streaming_content` is left
+        intact), and the exception is re-raised.
         """
         model_name = self.active_model_name()
         model = self._active_model()
         system_prompt = model.system_prompt() if model is not None else None
+        message_snapshot = list(self._messages)
+
+        placeholder: Message | None = None
+
+        def handle_chunk(delta_text: str) -> None:
+            nonlocal placeholder
+            if placeholder is None:
+                placeholder = Message(
+                    content="",
+                    role="assistant",
+                    num_tokens=0,
+                    processing_state="started_receipt",
+                    timestamp=datetime.now(),
+                    streaming_content=[],
+                )
+                self._messages.append(placeholder)
+            assert placeholder.streaming_content is not None
+            placeholder.streaming_content.append(delta_text)
+            if on_chunk is not None:
+                on_chunk(delta_text)
+
         try:
             result = self._provider.send_prompt(
-                list(self._messages), system_prompt=system_prompt, model=model_name, session_id=self.id)
+                message_snapshot, system_prompt=system_prompt, model=model_name,
+                session_id=self.id, on_chunk=handle_chunk)
         except Exception as exc:
             user_message.processing_state = "error"
             user_message.last_error = str(exc)
+            if placeholder is not None:
+                placeholder.processing_state = "error"
+                placeholder.last_error = str(exc)
             logger.error("Turn failed for %s: %s", model_name, exc)
             raise
 
         user_message.num_tokens = result.prompt_tokens - tokens_before
         user_message.processing_state = "complete"
         user_message.last_error = None
-        self._messages.append(result.message)
+        if placeholder is not None:
+            placeholder.content = result.message.content
+            placeholder.streaming_content = None
+            placeholder.processing_state = "complete"
+            placeholder.last_error = None
+            placeholder.num_tokens = result.message.num_tokens
+            placeholder.finish_reason = result.message.finish_reason
+        else:
+            self._messages.append(result.message)
         logger.debug(
             "Turn complete for %s: user num_tokens=%d, assistant num_tokens=%d, finish_reason=%s",
             model_name, user_message.num_tokens, result.message.num_tokens, result.message.finish_reason,
         )
         return result.message.content
 
-    def send_turn(self, prompt: str) -> str:
+    def send_turn(self, prompt: str, on_chunk: Callable[[str], None] | None = None) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
         Appends a new user `Message` to the session's history, sends the full history (plus
         the active model's system prompt, if registered) to the provider, and mutates that
-        same `Message` in place to reflect the outcome (see `_dispatch_turn`).
+        same `Message` in place to reflect the outcome (see `_dispatch_turn`). If `on_chunk`
+        is given, it is invoked with each text delta as the response streams in.
         """
         tokens_before = self._tokens_recorded_so_far()
         user_message = Message(
@@ -145,23 +194,29 @@ class Session:
         self._messages.append(user_message)
         logger.info(
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
-        return self._dispatch_turn(user_message, tokens_before)
+        return self._dispatch_turn(user_message, tokens_before, on_chunk=on_chunk)
 
-    def retry_last_turn(self) -> str:
+    def retry_last_turn(self, on_chunk: Callable[[str], None] | None = None) -> str:
         """Resend the most recently errored user turn's content, mutating that same `Message`.
 
-        Raises `ValueError` if the most recent message isn't a user turn in `"error"` state.
+        Scans from the end of the history for the last user-role `Message`; if none exists
+        or it isn't in `"error"` state, raises `ValueError`. Any messages after it (e.g. a
+        partial assistant placeholder left behind by a failed stream) are discarded before
+        resending, since they belong to the failed attempt, not the conversation.
         """
-        if not self._messages or self._messages[-1].role != "user" or (
-                self._messages[-1].processing_state != "error"):
+        index = len(self._messages) - 1
+        while index >= 0 and self._messages[index].role != "user":
+            index -= 1
+        if index < 0 or self._messages[index].processing_state != "error":
             raise ValueError("No errored turn to retry.")
 
-        errored_message = self._messages[-1]
+        del self._messages[index + 1:]
+        errored_message = self._messages[index]
         tokens_before = self._tokens_recorded_so_far() - errored_message.num_tokens
         errored_message.processing_state = "pending"
         logger.info("Retrying errored turn for %s", self.active_model_name())
-        return self._dispatch_turn(errored_message, tokens_before)
+        return self._dispatch_turn(errored_message, tokens_before, on_chunk=on_chunk)
 
-    def run_one_shot(self, prompt: str) -> str:
+    def run_one_shot(self, prompt: str, on_chunk: Callable[[str], None] | None = None) -> str:
         """Run a single, non-interactive turn and return the model's text response."""
-        return self.send_turn(prompt)
+        return self.send_turn(prompt, on_chunk=on_chunk)

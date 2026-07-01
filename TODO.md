@@ -11,4 +11,4 @@
 * CreateFileTool
 * ListDirTool
 * AskUserQuestionsTool
-* 
+* add mypy and flake8 config files to project.

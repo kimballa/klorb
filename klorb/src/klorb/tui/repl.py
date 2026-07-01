@@ -141,13 +141,44 @@ class ReplApp(App[None]):
 
     @work(thread=True)
     def _send_prompt(self, prompt_text: str) -> None:
-        """Send `prompt_text` to the model on a worker thread so the UI stays responsive."""
+        """Send `prompt_text` to the model on a worker thread so the UI stays responsive.
+
+        Renders the response progressively as chunks stream in: a `Markdown` widget is
+        mounted on the first chunk and updated on each subsequent one.
+        """
+        response_widget: Markdown | None = None
+        accumulated = ""
+
+        def handle_chunk(delta_text: str) -> None:
+            nonlocal accumulated, response_widget
+            accumulated += delta_text
+            if response_widget is None:
+                response_widget = self.call_from_thread(self._mount_response_widget, accumulated)
+            else:
+                self.call_from_thread(response_widget.update, accumulated)
+
         try:
-            response_text = self._session.send_turn(prompt_text)
+            response_text = self._session.send_turn(prompt_text, on_chunk=handle_chunk)
         except Exception as exc:
             self.call_from_thread(self._show_error, str(exc))
         else:
-            self.call_from_thread(self._show_response, response_text)
+            if response_widget is not None:
+                self.call_from_thread(self._finalize_streamed_response, response_widget, response_text)
+            else:
+                self.call_from_thread(self._show_response, response_text)
+
+    def _mount_response_widget(self, initial_text: str) -> Markdown:
+        """Mount a new `Markdown` widget for a streaming response and return it."""
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        widget = Markdown(initial_text)
+        history.mount(widget)
+        history.scroll_end(animate=False)
+        return widget
+
+    def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
+        """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""
+        widget.update(response_text)
+        self._finish_turn(self.query_one(f"#{HISTORY_ID}", VerticalScroll))
 
     def _show_response(self, response_text: str) -> None:
         """Append a model response to the history and re-enable the input box."""

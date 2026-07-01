@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.cli."""
 
+from unittest import mock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ def test_main_prints_prompt_response(capsys: pytest.CaptureFixture[str]) -> None
         with patch("sys.argv", ["klorb", "-m", "what is 2+2?"]):
             cli.main()
 
-    mock_session.run_one_shot.assert_called_once_with("what is 2+2?")
+    mock_session.run_one_shot.assert_called_once_with("what is 2+2?", on_chunk=mock.ANY)
     assert capsys.readouterr().out == "model reply\n"
 
 
@@ -28,7 +29,7 @@ def test_main_accepts_long_message_flag() -> None:
         with patch("sys.argv", ["klorb", "--message", "what is 2+2?"]):
             cli.main()
 
-    mock_session.run_one_shot.assert_called_once_with("what is 2+2?")
+    mock_session.run_one_shot.assert_called_once_with("what is 2+2?", on_chunk=mock.ANY)
 
 
 def test_main_passes_custom_model() -> None:
@@ -40,7 +41,7 @@ def test_main_passes_custom_model() -> None:
 
     config = mock_session_cls.call_args.args[0]
     assert config.model == "some/model"
-    mock_session.run_one_shot.assert_called_once_with("hi")
+    mock_session.run_one_shot.assert_called_once_with("hi", on_chunk=mock.ANY)
 
 
 def test_main_one_shot_config_is_not_interactive() -> None:
@@ -140,3 +141,21 @@ def test_main_repl_passes_session_log_enabled_false_when_disabled() -> None:
                 cli.main()
 
     mock_run_repl.assert_called_once_with(mock_session, initial_message=None, session_log_enabled=False)
+
+
+def test_main_one_shot_streams_incrementally_with_single_trailing_newline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    mock_session = MagicMock()
+
+    def fake_run_one_shot(prompt, on_chunk=None):
+        on_chunk("Hel")
+        on_chunk("lo")
+        return "Hello"
+
+    mock_session.run_one_shot.side_effect = fake_run_one_shot
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("sys.argv", ["klorb", "-m", "hi"]):
+            cli.main()
+
+    assert capsys.readouterr().out == "Hello\n"
