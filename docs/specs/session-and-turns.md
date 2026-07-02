@@ -25,7 +25,7 @@ config) has one place to live.
     for why these are the defaults.
   * `max_tool_calls_per_turn`/`max_tool_calls_per_session: int` — safety caps
     `Session._run_tool_calls()` enforces on individual tool-call dispatches, defaulting to
-    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` (`5`/`25`).
+    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` (`50`/`200`).
     Unlike the other fields, `Session` mutates these itself (doubling one in place when the
     user approves continuing past it — see below), so they live on `SessionConfig` rather
     than the process-wide `ProcessConfig`; see
@@ -118,12 +118,12 @@ config) has one place to live.
     round with the updated history. This repeats until a plain `"assistant"` reply comes
     back, or one of three safety caps is exceeded and not raised past, which raises
     `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
-    `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (10, a hard module constant, never
+    `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (200, a hard module constant, never
     raisable) model-to-tool round trips; `config.max_tool_calls_per_turn` (default
-    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 5) individual tool calls dispatched by
+    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 50) individual tool calls dispatched by
     `_run_tool_calls()` in this turn — `self._tool_calls_this_turn` resets to `0` at the
     start of every `_dispatch_turn()` call, including retries; or `config.max_tool_calls_per_session`
-    (default `DEFAULT_MAX_TOOL_CALLS_PER_SESSION`, 25) individual tool calls dispatched
+    (default `DEFAULT_MAX_TOOL_CALLS_PER_SESSION`, 200) individual tool calls dispatched
     across this `Session`'s entire lifetime — `self._tool_calls_this_session` is never reset.
     Both are checked, and the running counts logged, before each individual call within
     `_run_tool_calls()` (not just once per round), so a round requesting several parallel
