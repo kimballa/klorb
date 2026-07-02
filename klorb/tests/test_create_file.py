@@ -137,6 +137,23 @@ def test_hard_workspace_boundary_wins_even_if_writedirs_allow_covers_outside(tmp
     assert not outside.exists()
 
 
+def test_writedirs_allow_alone_does_not_grant_write_without_readdirs_allow(tmp_path: Path) -> None:
+    """The write-only-directory bug this write/read merge exists to fix: writeDirs.allow must
+    not grant write access to a path readDirs is silent on -- see
+    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md. An integration-level guard
+    on top of test_permissions.py's unit-level
+    test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent, since this file's
+    other permission tests all use the (allow, allow) default context."""
+    file_path = tmp_path / "new.txt"
+
+    with pytest.raises(PermissionAskRequired):
+        CreateFileTool(_context(
+            tmp_path, read_dirs=DirRules(), write_dirs=DirRules(allow=[tmp_path]),
+        )).apply({"filename": str(file_path), "content": "x\n"})
+
+    assert not file_path.exists()
+
+
 def test_klorb_dir_write_implicitly_denied_even_with_no_config(tmp_path: Path) -> None:
     """${workspace_root}/.klorb/ is implicitly write-denied regardless of writeDirs config —
     the agent must not be able to rewrite its own permission grants. See TODO.md."""

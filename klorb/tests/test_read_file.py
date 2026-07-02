@@ -183,15 +183,20 @@ def test_readdirs_ask_raises_permission_ask_required(tmp_path: Path) -> None:
             {"filename": str(file_path)})
 
 
-def test_falls_through_to_writedirs_when_readdirs_silent(tmp_path: Path) -> None:
-    """readDirs.allow beating a matching writeDirs.deny for the same path, and the reverse:
-    an empty readDirs table falls through to writeDirs."""
+def test_writedirs_never_affects_read(tmp_path: Path) -> None:
+    """writeDirs no longer participates in a read verdict at all (unlike the old six-step chain,
+    which fell through to writeDirs when readDirs matched nothing) -- a writeDirs.deny does not
+    block a read, and a writeDirs.allow does not grant one, regardless of readDirs."""
     file_path = _write_lines(tmp_path, 3)
 
-    result = ReadFileTool(_context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))).apply(
+    denied_by_write = ReadFileTool(_context(tmp_path, write_dirs=DirRules(deny=[tmp_path]))).apply(
         {"filename": str(file_path)})
+    assert denied_by_write["total_lines"] == 3
 
-    assert result["total_lines"] == 3
+    with pytest.raises(PermissionError):
+        ReadFileTool(_context(
+            tmp_path, read_dirs=DirRules(deny=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]),
+        )).apply({"filename": str(file_path)})
 
 
 def test_readdirs_allow_wins_over_matching_writedirs_deny(tmp_path: Path) -> None:
