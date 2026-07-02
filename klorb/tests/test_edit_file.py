@@ -308,6 +308,26 @@ def test_hard_workspace_boundary_wins_even_if_writedirs_allow_covers_outside(tmp
     assert outside.read_text() == "a\n"
 
 
+def test_writedirs_allow_alone_does_not_grant_write_without_readdirs_allow(tmp_path: Path) -> None:
+    """The write-only-directory bug this write/read merge exists to fix: writeDirs.allow must
+    not grant write access to a path readDirs is silent on -- see
+    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md. An integration-level guard
+    on top of test_permissions.py's unit-level
+    test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent, since this file's
+    other permission tests all use the (allow, allow) default context."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(PermissionAskRequired):
+        EditFileTool(_context(
+            tmp_path, read_dirs=DirRules(), write_dirs=DirRules(allow=[tmp_path]),
+        )).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 1,
+            "start_text": "a", "end_text": "a", "new_text": "A",
+        })
+
+    assert file_path.read_text() == "a\nb\nc\n"
+
+
 def test_klorb_dir_write_implicitly_denied_even_with_no_config(tmp_path: Path) -> None:
     klorb_dir = tmp_path / ".klorb"
     klorb_dir.mkdir()

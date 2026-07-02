@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ReadFileTool(Tool):
     """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers.
 
-    `filename` is resolved and checked against `readDirs`/`writeDirs` (see
+    `filename` is resolved and checked against `readDirs` (see
     `klorb.permissions.workspace.resolve_and_evaluate_read`) before the file is opened —
     confined to `SessionConfig.workspace_root` unless `ProcessConfig.is_workspace_trusted`.
     """
