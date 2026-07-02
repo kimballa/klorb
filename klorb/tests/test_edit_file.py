@@ -17,7 +17,7 @@ def _context(
     workspace_root: Path, *, read_dirs: DirRules | None = None, write_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     """Defaults both `readDirs`/`writeDirs` to allowing all of `workspace_root`, since
-    `evaluate_write()` now requires an explicit allow in *both* tables (see
+    `evaluate_write()` requires an explicit allow in *both* tables (see
     docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md) and most tests here are
     about EditFile's own logic, not the permission system -- only the "Permission-table
     integration" tests below pass an explicit override to narrow that default."""
@@ -309,10 +309,10 @@ def test_hard_workspace_boundary_wins_even_if_writedirs_allow_covers_outside(tmp
 
 
 def test_writedirs_allow_alone_does_not_grant_write_without_readdirs_allow(tmp_path: Path) -> None:
-    """The write-only-directory bug this write/read merge exists to fix: writeDirs.allow must
-    not grant write access to a path readDirs is silent on -- see
-    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md. An integration-level guard
-    on top of test_permissions.py's unit-level
+    """writeDirs.allow alone does not grant write access to a path readDirs is silent on --
+    write access is never more permissive than read access for the same path; see
+    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md. An integration-level
+    counterpart to test_permissions.py's unit-level
     test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent, since this file's
     other permission tests all use the (allow, allow) default context."""
     file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")

@@ -103,8 +103,8 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   table's raw result (`"deny"`/`"ask"`/`"allow"`, or `None` if none of its three lists match at
   all) is normalized via `_normalize_for_write()` before comparing: `None` becomes `"ask"`, not
   a permissive default, so write is `"allow"` only when *both* tables explicitly say `allow`.
-  This deliberately regresses the write tools' old zero-config default (`"allow"` everywhere in
-  the workspace) to `"ask"` everywhere — an accepted tradeoff; see the ADR.
+  With both tables empty, this normalizes to `"ask"` everywhere in the workspace — see the ADR
+  for the reasoning behind that default.
 * `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — evaluates `path` against
   `readDirs` alone; `writeDirs` is never consulted for a read (a write grant does not imply a
   read grant — see `evaluate_write()` for the converse relationship). Branches on
@@ -112,8 +112,9 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   * **Untrusted (default; the only state reachable by any production code path today)**:
     resolves via `resolve_within_workspace()` (same hard boundary as the write tools), then
     evaluates `readDirs` on that already-in-workspace path, falling back to `"allow"` if nothing
-    matches (mirroring the write tools' old default, since the hard boundary already confines
-    the candidate).
+    matches — a permissive default that's safe here because the hard boundary already confines
+    the candidate, and because this fallback plays no part in `evaluate_write()`'s
+    stricter-of-read-and-write computation (`writeDirs` still requires its own explicit grant).
   * **Trusted (reserved for a future "trust this workspace" flow — not reachable today outside
     tests)**: resolves via `canonicalize_candidate()`, no boundary raise — so `readDirs.allow`
     can reach outside `workspace_root`. Falls back to `"deny"` if nothing matches: no implicit

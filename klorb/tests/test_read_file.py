@@ -184,9 +184,8 @@ def test_readdirs_ask_raises_permission_ask_required(tmp_path: Path) -> None:
 
 
 def test_writedirs_never_affects_read(tmp_path: Path) -> None:
-    """writeDirs no longer participates in a read verdict at all (unlike the old six-step chain,
-    which fell through to writeDirs when readDirs matched nothing) -- a writeDirs.deny does not
-    block a read, and a writeDirs.allow does not grant one, regardless of readDirs."""
+    """writeDirs does not participate in a read verdict at all: a writeDirs.deny does not block
+    a read, and a writeDirs.allow does not grant one, regardless of readDirs."""
     file_path = _write_lines(tmp_path, 3)
 
     denied_by_write = ReadFileTool(_context(tmp_path, write_dirs=DirRules(deny=[tmp_path]))).apply(
