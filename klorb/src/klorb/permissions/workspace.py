@@ -22,7 +22,7 @@ than re-resolving a path string. Not implemented — see TODO.md's "Permissions"
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirectoryAccessTable
+from klorb.permissions.directory_access import DirectoryAccessTable, is_privileged_path
 from klorb.permissions.table import Verdict
 
 if TYPE_CHECKING:
@@ -67,18 +67,18 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     """Evaluate a write to the already-workspace-confined `path` (the caller must already have
     called `resolve_within_workspace()` to obtain it) against `writeDirs`.
 
-    Checks the hardcoded `${workspace_root}/.klorb/` implicit deny first — unconditional, not
+    Checks `klorb.permissions.directory_access.is_privileged_path()` first — unconditional, not
     part of the `writeDirs` table, so no `writeDirs.allow` entry (even one covering the whole
-    workspace) can re-enable it. Writing there is where klorb's own config/session state lives;
-    letting the agent freely rewrite its own permission grants would let it silently escalate
-    its own access. TODO: unlock path is a future `EscalatePrivileges` tool (see TODO.md).
+    workspace) can re-enable access. Writing there is where klorb's own config/session state
+    lives; letting the agent freely rewrite its own permission grants would let it silently
+    escalate its own access. TODO: unlock path is a future `EscalatePrivileges` tool (see
+    TODO.md).
 
     Falls back to `"allow"` when nothing in `writeDirs` matches, preserving the pre-existing,
     already-shipped write-tool default that anything inside the workspace is writable.
     """
     workspace_root = context.session_config.workspace_root.resolve()
-    klorb_dir = workspace_root / KLORB_PROJECT_DIR_NAME
-    if path == klorb_dir or path.is_relative_to(klorb_dir):
+    if is_privileged_path(path, workspace_root):
         return "deny"
 
     write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
@@ -102,7 +102,12 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
       from an explicit `readDirs.allow` entry a future project-bootstrap flow writes into
       `.klorb/klorb-config.json`, not from a rule baked into this evaluator.
 
-    In both modes, the six-step chain is: `readDirs.deny -> readDirs.ask -> readDirs.allow ->
+    In both modes, `klorb.permissions.directory_access.is_privileged_path()` is checked next,
+    unconditionally, before either table — mirroring `evaluate_write()`'s hard deny — so no
+    `readDirs.allow` entry can grant access to `${workspace_root}/.klorb/` or the process-wide
+    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations.
+
+    Then the six-step chain: `readDirs.deny -> readDirs.ask -> readDirs.allow ->
     writeDirs.deny -> writeDirs.ask -> writeDirs.allow` (the `readDirs` table is evaluated
     first; `writeDirs` is only consulted if `readDirs` doesn't match at all, so `readDirs.allow`
     can grant read-only access to something `writeDirs` denies).
@@ -117,6 +122,9 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     else:
         path = resolve_within_workspace(context, filename)
         fallback = "allow"
+
+    if is_privileged_path(path, workspace_root):
+        return path, "deny"
 
     read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
     write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)

@@ -100,8 +100,6 @@
     (O_NOFOLLOW/O_DIRECTORY), not path-string re-resolution. See docs/specs/permissions.md.
   * The global klorb-config.json should include r/w denylist entries for "~/.ssh", "~/.aws",
     ... and probably a few other well-known secrets-oriented places, too?
-  * the well-defined config/state dirs (see paths.py) should also be hard-blocked without
-    EscalatePrivileges.
 
 * BashTool
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)

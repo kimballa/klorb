@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.table import PermissionsTable
 
 KLORB_PROJECT_DIR_NAME = ".klorb"
@@ -53,6 +54,34 @@ def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
     if not path.is_absolute():
         path = workspace_root.resolve(strict=False) / path
     return path.resolve(strict=False)
+
+
+def privileged_dirs(workspace_root: Path) -> list[Path]:
+    """Canonicalized list of every directory klorb's file tools must never read from or write to
+    without a future `EscalatePrivileges` grant (see TODO.md's "Permissions" item): the
+    workspace's own `${workspace_root}/.klorb/` project dir, plus the process-wide
+    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` from `klorb.paths` (resolved here,
+    not cached at import time, so an env-var override picked up by `klorb.paths` is honored).
+
+    This is the single source of truth `klorb.permissions.workspace.evaluate_write` and
+    `resolve_and_evaluate_read` both check against, unconditionally, ahead of the
+    `writeDirs`/`readDirs` tables — no `allow` entry in either table can re-enable access to
+    anything this list contains.
+    """
+    root = workspace_root.resolve(strict=False)
+    return [
+        root / KLORB_PROJECT_DIR_NAME,
+        KLORB_CONFIG_DIR.resolve(strict=False),
+        KLORB_DATA_DIR.resolve(strict=False),
+        KLORB_STATE_DIR.resolve(strict=False),
+    ]
+
+
+def is_privileged_path(path: Path, workspace_root: Path) -> bool:
+    """Return whether `path` (already canonicalized by the caller) is one of, or falls beneath,
+    any directory in `privileged_dirs(workspace_root)` — the same equal-or-descendant
+    containment semantics `DirectoryAccessTable._matches` uses for ordinary rules."""
+    return any(path == d or path.is_relative_to(d) for d in privileged_dirs(workspace_root))
 
 
 class DirectoryAccessTable(PermissionsTable[Path]):

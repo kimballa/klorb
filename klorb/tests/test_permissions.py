@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from klorb.permissions.directory_access import DirectoryAccessTable, DirRules, find_workspace_root
+from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
+from klorb.permissions.directory_access import (
+    DirectoryAccessTable, DirRules, find_workspace_root, is_privileged_path, privileged_dirs,
+)
 from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
 from klorb.permissions.workspace import canonicalize_candidate, evaluate_write
 from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_within_workspace
@@ -156,6 +159,24 @@ def test_relative_dotdot_rule_path_escapes_workspace_root(tmp_path: Path) -> Non
     assert table.evaluate(tmp_path / "sibling" / "f.txt") == "allow"
 
 
+# --- privileged_dirs / is_privileged_path ---
+
+
+def test_privileged_dirs_includes_klorb_dir_and_paths_dirs(tmp_path: Path) -> None:
+    dirs = privileged_dirs(tmp_path)
+    assert tmp_path / ".klorb" in dirs
+    assert KLORB_CONFIG_DIR.resolve(strict=False) in dirs
+    assert KLORB_DATA_DIR.resolve(strict=False) in dirs
+    assert KLORB_STATE_DIR.resolve(strict=False) in dirs
+
+
+def test_is_privileged_path_matches_descendants_not_unrelated_paths(tmp_path: Path) -> None:
+    assert is_privileged_path(tmp_path / ".klorb" / "klorb-config.json", tmp_path)
+    assert is_privileged_path(
+        (KLORB_STATE_DIR / "session-logs" / "a.log").resolve(strict=False), tmp_path)
+    assert not is_privileged_path(tmp_path / "src" / "main.py", tmp_path)
+
+
 # --- evaluate_write ---
 
 
@@ -181,6 +202,12 @@ def test_evaluate_write_denies_klorb_dir_even_with_writedirs_allow_covering_work
 ) -> None:
     context = _context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))
     path = resolve_within_workspace(context, ".klorb/klorb-config.json")
+    assert evaluate_write(context, path) == "deny"
+
+
+def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_path: Path) -> None:
+    context = _context(tmp_path, write_dirs=DirRules(allow=[KLORB_STATE_DIR]))
+    path = (KLORB_STATE_DIR / "session-logs" / "a.log").resolve(strict=False)
     assert evaluate_write(context, path) == "deny"
 
 
@@ -226,6 +253,14 @@ def test_readdirs_allow_wins_over_matching_writedirs_deny_for_same_path(tmp_path
     assert verdict == "allow"
 
 
+def test_untrusted_read_denies_klorb_dir_even_with_readdirs_allow_covering_workspace(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, read_dirs=DirRules(allow=[tmp_path]))
+    _, verdict = resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
+    assert verdict == "deny"
+
+
 # --- resolve_and_evaluate_read: trusted (not reachable by production code paths today) ---
 
 
@@ -244,6 +279,14 @@ def test_trusted_read_does_not_raise_merely_for_being_outside_workspace(tmp_path
 def test_trusted_read_fallback_denies_when_nothing_matches(tmp_path: Path) -> None:
     context = _context(tmp_path, is_workspace_trusted=True)
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
+    assert verdict == "deny"
+
+
+def test_trusted_read_denies_klorb_config_dir_even_with_readdirs_allow(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, is_workspace_trusted=True, read_dirs=DirRules(allow=[KLORB_CONFIG_DIR]))
+    target = str((KLORB_CONFIG_DIR / "klorb-config.json").resolve(strict=False))
+    _, verdict = resolve_and_evaluate_read(context, target)
     assert verdict == "deny"
 
 
