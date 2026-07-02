@@ -1,14 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 #
-# CI workflow: runs the klorb lint, typecheck, and test suites on every push and
-# pull request. Mirrors the local dev loop documented in klorb/README.md.
+# CI workflow: runs the klorb lint, typecheck, and test suites on every pull request,
+# and on demand via workflow_dispatch. Mirrors the local dev loop documented in
+# klorb/README.md.
 
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
