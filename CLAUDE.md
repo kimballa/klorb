@@ -98,6 +98,16 @@ The Klorb project is organized as a collection of subprojects:
   * Don't use a bare `TODO:` (no owner) for this — always `TODO(aaron): ...`.
   * This doesn't apply to docs/specs/ or docs/adrs/ files, which are expected to narrate how a
     feature relates to backlog items as part of explaining the design.
+* Docstrings and comments must describe the code as a static snapshot: how and why it currently
+  works, never how it changed. Don't write "the old six-step chain", "previously", "no longer",
+  "this replaces/fixes/regresses X", "unlike before", or similar diff-against-history framing —
+  that phrasing is accurate only until the *next* change, at which point nothing updates it and
+  it goes stale and misleading. This applies to docs/specs/ too: a spec may explain why a
+  feature exists (including its relationship to a backlog item, per the TODO.md rule above),
+  but should describe the resulting behavior as current fact, not narrate the diff from a prior
+  version. Record change history — what changed, why, and what alternatives were rejected — in
+  an ADR (docs/adrs/) instead; cross-reference it by name from the docstring/comment/spec if the
+  current behavior's rationale needs a pointer.
 
 ## Important SDLC CI/CD commands
 

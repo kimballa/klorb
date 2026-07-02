@@ -220,9 +220,9 @@ def test_evaluate_write_allows_only_when_both_tables_explicitly_allow(tmp_path: 
 
 
 def test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent(tmp_path: Path) -> None:
-    """The specific bug this write-merge logic exists to fix: a writeDirs.allow entry alone must
-    not grant write access to a path readDirs never mentions -- that would make the directory
-    write-only, which is backwards (write should never be more permissive than read)."""
+    """A writeDirs.allow entry alone does not grant write access to a path readDirs never
+    mentions -- that would make the directory write-only, which is backwards: write access is
+    never more permissive than read access for the same path."""
     context = _context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))
     path = resolve_within_workspace(context, "f.txt")
     assert evaluate_write(context, path) == "ask"
@@ -317,9 +317,9 @@ def test_read_uses_only_readdirs(tmp_path: Path) -> None:
 
 
 def test_read_ignores_writedirs_entirely(tmp_path: Path) -> None:
-    """writeDirs must never widen or narrow a read verdict -- unlike the old six-step chain,
-    readDirs.evaluate() returning None (no match at all) now falls straight through to read's
-    own fallback, never consulting writeDirs."""
+    """writeDirs never widens or narrows a read verdict: readDirs.evaluate() returning None
+    (no match at all) falls straight through to read's own fallback, never consulting
+    writeDirs."""
     denied_by_write = _context(tmp_path, write_dirs=DirRules(deny=[tmp_path]))
     _, verdict = resolve_and_evaluate_read(denied_by_write, "f.txt")
     assert verdict == "allow"
