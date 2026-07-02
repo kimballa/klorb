@@ -182,6 +182,55 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
     assert kwargs["system_prompt"] == "You are Alpha."
 
 
+def test_system_message_inserted_before_first_turn_for_registered_model() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="alpha")
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(config, provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    assert [m.role for m in session.messages] == ["system", "user", "assistant"]
+    assert session.messages[0].content == "You are Alpha."
+
+
+def test_system_message_not_duplicated_across_turns() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
+    config = SessionConfig(model="alpha")
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(config, provider=mock_provider, model_registry=registry)
+
+    session.send_turn("first")
+    session.send_turn("second")
+
+    assert sum(1 for m in session.messages if m.role == "system") == 1
+
+
+def test_no_system_message_when_model_unregistered() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert all(m.role != "system" for m in session.messages)
+
+
+def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="alpha")
+    registry = ModelRegistry(package=sample_models_package)
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, model_registry=registry, tool_registry=tool_registry)
+
+    session.send_turn("hi")
+
+    assert [m.role for m in session.messages] == ["system", "tool_defs", "user", "assistant"]
+
+
 def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()

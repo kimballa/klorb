@@ -19,9 +19,16 @@ this one shape.
     message it's the tool's result, stringified (`Tool.apply()`'s return value as-is if it's
     already a `str`, otherwise `json.dumps()`'d), or `f"Error: {exc}"` if the call failed.
   * `role: Role` — a `Literal["system", "user", "assistant", "thinking", "tool_defs",
-    "tool_use", "tool_response"]`. `"tool_defs"` is a bookkeeping message
+    "tool_use", "tool_response"]`. `"system"` is a bookkeeping message
+    (`Session._ensure_system_message()`) recording the active model's system prompt,
+    inserted once at the very front of history; the model itself is sent the (freshly
+    re-derived) system prompt via `ApiProvider.send_prompt(system_prompt=...)`, not this
+    message (see
+    [the system-prompt bookkeeping ADR](../adrs/store-system-prompt-as-a-bookkeeping-message.md)).
+    `"tool_defs"` is a bookkeeping message
     (`Session._ensure_tool_defs_message()`) recording the tool definitions offered for a
-    session, inserted once at the front of history; the model itself is offered tools via
+    session, inserted once right after the `"system"` message (or at the front of history if
+    there isn't one); the model itself is offered tools via
     `ApiProvider.send_prompt(tools=...)`, not this message (see [[tool-framework]] and
     [[session-and-turns]]). `"tool_use"` is a model reply that requested one or more tool
     calls (`tool_calls` populated) in place of a plain `"assistant"` reply. `"tool_response"`

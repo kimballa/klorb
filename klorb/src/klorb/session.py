@@ -205,16 +205,42 @@ class Session:
             return {"max_tokens": self._thinking_token_budgets[self.config.thinking_effort]}
         return {"effort": self.config.thinking_effort}
 
+    def _ensure_system_message(self) -> None:
+        """Insert a `role="system"` `Message` at the very front of `self._messages`,
+        recording the active model's system prompt, the first time a turn is dispatched. A
+        no-op if the active model isn't registered or its `system_prompt()` is empty, or if
+        one is already present (so retries and later turns don't insert a duplicate). This
+        message is bookkeeping only: it's never replayed to the model as a chat message (see
+        `OpenRouterApiProvider._build_api_messages`) — the live system prompt is sent via
+        `send_prompt(system_prompt=...)` on every turn instead (re-derived fresh from
+        `Model.system_prompt()` each time, so it reflects the *current* active model even if
+        the session's `config.model` changes after this message was inserted), so this
+        doesn't need to be kept in sync with such changes after it's first inserted.
+        """
+        if any(message.role == "system" for message in self._messages):
+            return
+        model = self._active_model()
+        system_prompt = model.system_prompt() if model is not None else None
+        if not system_prompt:
+            return
+        self._messages.insert(0, Message(
+            content=system_prompt,
+            role="system",
+            num_tokens=0,
+            processing_state="complete",
+            timestamp=datetime.now(),
+        ))
+
     def _ensure_tool_defs_message(self) -> None:
-        """Insert a `role="tool_defs"` `Message` at the very front of `self._messages` —
-        conceptually right after the system prompt, which (per `_dispatch_turn`) is never
-        itself a stored `Message` — recording the tool definitions offered for this session,
-        the first time a turn is dispatched with a non-empty `tool_registry`. A no-op if
-        `tool_registry` is unset/empty, or if one is already present (so retries and later
-        turns don't insert a duplicate). This message is bookkeeping only: it's never sent to
-        the model as a chat message (see `OpenRouterApiProvider._build_api_messages`) — the
-        live tool definitions are sent via `send_prompt(tools=...)` on every turn instead, so
-        this doesn't need to be kept in sync with config changes after it's first inserted.
+        """Insert a `role="tool_defs"` `Message` recording the tool definitions offered for
+        this session — right after the `role="system"` message if `_ensure_system_message()`
+        inserted one, otherwise at the very front of `self._messages` — the first time a turn
+        is dispatched with a non-empty `tool_registry`. A no-op if `tool_registry` is
+        unset/empty, or if one is already present (so retries and later turns don't insert a
+        duplicate). This message is bookkeeping only: it's never sent to the model as a chat
+        message (see `OpenRouterApiProvider._build_api_messages`) — the live tool definitions
+        are sent via `send_prompt(tools=...)` on every turn instead, so this doesn't need to
+        be kept in sync with config changes after it's first inserted.
         """
         if self._tool_registry is None:
             return
@@ -223,7 +249,8 @@ class Session:
         definitions = self._tool_registry.tool_definitions()
         if not definitions:
             return
-        self._messages.insert(0, Message(
+        insert_index = 1 if self._messages and self._messages[0].role == "system" else 0
+        self._messages.insert(insert_index, Message(
             content=json.dumps(definitions),
             role="tool_defs",
             num_tokens=0,
@@ -495,6 +522,7 @@ class Session:
         `self._messages` entirely, rather than left behind in `"error"` state, and the
         exception is re-raised so the caller can offer the prompt back up for editing.
         """
+        self._ensure_system_message()
         self._ensure_tool_defs_message()
         self._tool_calls_this_turn = 0
         turn_start_index = self._messages.index(user_message)

@@ -60,7 +60,7 @@ config) has one place to live.
     work. It appends a new `Message` (`role="user"`, `processing_state="pending"`) to the
     history, then sends the *entire* history plus the
     active model's system prompt (re-derived fresh from `Model.system_prompt()` on every
-    call — not itself stored as a `Message`) and `_reasoning_params()`'s result via
+    call) and `_reasoning_params()`'s result via
     `ApiProvider.send_prompt(messages, system_prompt=, model=, session_id=, reasoning=,
     on_chunk=, on_thinking_chunk=)`. As chunks arrive, `Session` (not the provider) owns the
     in-progress assistant `Message`: on the first content chunk it appends a placeholder
@@ -93,11 +93,21 @@ config) has one place to live.
     streaming/placeholder mechanics above live in `Session._send_and_receive()`, one call per
     model round trip; `_dispatch_turn()` calls it in a loop when `tool_registry` is set (see
     below), so they apply to every round, not just the first.
+  * The first time a turn is dispatched, `_dispatch_turn()` also inserts a `role="system"`
+    `Message` at the very front of history (`_ensure_system_message()`; a no-op on later
+    turns, or if the active model isn't registered or its `system_prompt()` is empty)
+    recording the active model's system prompt at that point. Like the `tool_defs` message
+    below, this is bookkeeping only — it's dropped by
+    `OpenRouterApiProvider._build_api_messages` and never kept in sync with a later
+    `config.model` change; the live system prompt sent to the model is always the one
+    re-derived fresh from `Model.system_prompt()` for the *current* active model (see
+    [the system-prompt bookkeeping ADR](../adrs/store-system-prompt-as-a-bookkeeping-message.md)).
   * When `tool_registry` is set and non-empty, `_dispatch_turn()` passes
     `tool_registry.tool_definitions()` as `send_prompt(tools=...)` on every round, and — the
-    first time a turn is dispatched — inserts a `role="tool_defs"` `Message` at the very
-    front of history (`_ensure_tool_defs_message()`; a no-op on later turns, since it checks
-    for one first) recording what was offered. That message is bookkeeping only: it's never
+    first time a turn is dispatched — inserts a `role="tool_defs"` `Message` right after the
+    `role="system"` message, if one was inserted, or at the very front of history otherwise
+    (`_ensure_tool_defs_message()`; a no-op on later turns, since it checks for one first)
+    recording what was offered. That message is bookkeeping only: it's never
     sent to the model as a chat message, since `tools=` is what actually offers them (see
     [[tool-framework]] and [[message-model]]). If a round's reply requests tool calls, it's
     stored with `role="tool_use"` (instead of `"assistant"`) and `Message.tool_calls`
@@ -185,8 +195,9 @@ klorb                                    # REPL, no initial message (default)
 ## Out of scope
 
 * The system prompt's token cost is folded into the first user turn's `num_tokens` delta
-  rather than tracked as its own `Message` — an intentional v1 approximation, since there's
-  no per-message tokenizer to attribute tokens precisely without a round trip to the model.
+  rather than given its own count on the bookkeeping `role="system"` `Message` (which always
+  has `num_tokens=0`) — an intentional v1 approximation, since there's no per-message
+  tokenizer to attribute tokens precisely without a round trip to the model.
 * `retry_last_turn()` exists on `Session` but isn't yet exposed through the TUI or CLI.
 * Persisting `SessionConfig` across invocations is not implemented yet.
 * `retry_last_turn()` restarts a tool-calling turn from scratch (resending the original user

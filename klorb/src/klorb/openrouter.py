@@ -167,10 +167,14 @@ class OpenRouterApiProvider(ApiProvider):
         messages: list[Message], system_prompt: str | None
     ) -> list[ChatCompletionMessageParam]:
         """Convert session history (plus an optional system prompt) into OpenAI SDK message
-        dicts. `"thinking"`- and `"tool_defs"`-role messages are omitted: neither is a role
-        the OpenAI-compatible chat API accepts — reasoning content isn't meant to be replayed
-        as conversation history, and tool definitions are offered via the request's separate
-        `tools` array (see `send_prompt`), not as a chat message. `"tool_use"` and
+        dicts. `"thinking"`-, `"tool_defs"`-, and `"system"`-role messages are omitted: none
+        is replayed as-is here — reasoning content isn't meant to be replayed as conversation
+        history, tool definitions are offered via the request's separate `tools` array (see
+        `send_prompt`) rather than as a chat message, and a stored `"system"` message is only
+        `klorb.session.Session`'s bookkeeping record of what was sent on the first turn (see
+        `Session._ensure_system_message`) — the live system prompt is supplied fresh via the
+        `system_prompt` argument below instead, so it reflects the current active model even
+        if it's changed since that bookkeeping message was inserted. `"tool_use"` and
         `"tool_response"` are translated into the shapes the API expects for a tool-calling
         round trip: an `assistant` message carrying `tool_calls`, and a `tool` message
         carrying `tool_call_id`, respectively.
@@ -180,7 +184,7 @@ class OpenRouterApiProvider(ApiProvider):
             system_message = {"role": "system", "content": system_prompt}
             api_messages.append(cast(ChatCompletionMessageParam, system_message))
         for message in messages:
-            if message.role in ("thinking", "tool_defs"):
+            if message.role in ("thinking", "tool_defs", "system"):
                 continue
             if message.role == "tool_use":
                 assistant_message: dict[str, Any] = {"role": "assistant", "content": message.content or None}

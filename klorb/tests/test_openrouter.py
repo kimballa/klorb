@@ -390,6 +390,38 @@ def test_send_prompt_leaves_tool_calls_none_when_none_requested() -> None:
     assert result.message.tool_calls is None
 
 
+def test_build_api_messages_excludes_stored_system_role_messages() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    system_message = Message(
+        content="You are Alpha.", role="system", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now())
+
+    provider.send_prompt([system_message, _user_message()], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_build_api_messages_does_not_duplicate_system_message_from_history() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    system_message = Message(
+        content="You are Alpha.", role="system", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now())
+
+    provider.send_prompt(
+        [system_message, _user_message()], system_prompt="You are Alpha.", model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"] == [
+        {"role": "system", "content": "You are Alpha."},
+        {"role": "user", "content": "hi"},
+    ]
+
+
 def test_build_api_messages_excludes_tool_defs_role_messages() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _reply_chunks("hi there")

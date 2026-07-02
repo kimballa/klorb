@@ -14,7 +14,9 @@
     is offered tools. Separately, the first time a turn is dispatched with a non-empty
     `tool_registry`, a `role="tool_defs"` `Message` is inserted at the very front of
     `self._messages` (`_ensure_tool_defs_message`) — conceptually right after the system
-    prompt, since the system prompt itself is never a stored `Message`. That message is
+    prompt. (At the time of this decision the system prompt itself was never a stored
+    `Message`; it later gained its own bookkeeping message too, inserted just ahead of
+    `tool_defs` — see [[store-system-prompt-as-a-bookkeeping-message]].) That message is
     bookkeeping only: `OpenRouterApiProvider._build_api_messages` drops `tool_defs` (and
     `thinking`) before building the request, since OpenAI's chat API has no such role.
   * A model reply that requests tool calls is stored as `role="tool_use"` (not `"assistant"`)
