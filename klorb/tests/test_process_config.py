@@ -338,5 +338,5 @@ def test_stricter_layer_always_wins_end_to_end(tmp_path: Path) -> None:
         {"sessionDefaults": {"writeDirs": {"allow": [str(tmp_path)]}}})
 
     process_config = load_process_config(cwd=tmp_path)
-    table = DirectoryAccessTable(process_config.session.write_dirs)
+    table = DirectoryAccessTable(process_config.session.write_dirs, process_config.session.workspace_root)
     assert table.evaluate(sensitive / "key.txt") == "deny"

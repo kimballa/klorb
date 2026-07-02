@@ -46,8 +46,11 @@ behind the two most consequential decisions here.
   place, so `SessionConfig.model_copy()`'s shallow copy sharing the underlying list objects
   between a template and its cloned sessions is harmless.
 * `DirectoryAccessTable(PermissionsTable[Path])` canonicalizes every rule path at construction
-  time (`Path.resolve(strict=False)` — symlink- and `..`-resolved, same algorithm
-  `resolve_within_workspace` uses) and matches a candidate (which the caller must have already
+  time via `canonicalize_dir(path, workspace_root)`: a relative rule path is joined onto
+  `workspace_root` first (so `Allow("..")` means the same thing as
+  `Allow("<workspace_root>/..")`, not the process's current working directory), then the result
+  is symlink- and `..`-resolved (`Path.resolve(strict=False)`, same algorithm
+  `resolve_within_workspace` uses). It matches a candidate (which the caller must have already
   canonicalized the same way) via ancestor-or-equal containment:
   `candidate == rule or candidate.is_relative_to(rule)`. This is why
   `/home/the_project` allowed + `/home/the_project/private` denied correctly resolves
@@ -174,8 +177,5 @@ Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are m
   item; not built here. `find_workspace_root()`'s ancestor-search algorithm is written to match
   what that flow will need (step one of "project bootstrapping" is literally "attempts to
   identify the workspace root").
-* Whether a *relative* `readDirs`/`writeDirs` rule path (none of this doc's examples use one)
-  resolves against `workspace_root` or something else isn't specified or implemented — every
-  example on disk today uses absolute paths.
 * `EscalatePrivileges` — the future tool that would grant a temporary, user-confirmed exception
   to the `${workspace_root}/.klorb/` write-deny — is `TODO.md`'s item, not built here.

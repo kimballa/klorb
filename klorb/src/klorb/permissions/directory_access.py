@@ -38,14 +38,20 @@ class DirRules(BaseModel):
     allow: list[Path] = Field(default_factory=list)
 
 
-def canonicalize_dir(path: Path) -> Path:
+def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
     """Resolve `path` to an absolute, symlink- and `..`-canonicalized form, matching
-    `resolve_within_workspace`'s canonicalization algorithm but with no boundary check.
+    `canonicalize_candidate`'s algorithm: a relative `path` is joined onto `workspace_root`
+    first, so a rule like `Allow("..")` means the same thing as
+    `Allow("<workspace_root>/..")`, not whatever the process's current working directory
+    happens to be. `workspace_root` itself is resolved first, so this is well-defined even if
+    the caller passes it unresolved.
 
     Note (TOCTOU): the returned path is canonical as of this call, not guaranteed to still
     point at the same target by the time a caller actually performs I/O on it — see
     `klorb.permissions.workspace.canonicalize_candidate`'s docstring.
     """
+    if not path.is_absolute():
+        path = workspace_root.resolve(strict=False) / path
     return path.resolve(strict=False)
 
 
@@ -53,11 +59,11 @@ class DirectoryAccessTable(PermissionsTable[Path]):
     """A `PermissionsTable` over canonicalized directory paths: a rule matches a candidate if
     the rule's directory is the candidate itself or an ancestor of it (containment)."""
 
-    def __init__(self, rules: DirRules) -> None:
+    def __init__(self, rules: DirRules, workspace_root: Path) -> None:
         super().__init__(
-            deny=[canonicalize_dir(path) for path in rules.deny],
-            ask=[canonicalize_dir(path) for path in rules.ask],
-            allow=[canonicalize_dir(path) for path in rules.allow],
+            deny=[canonicalize_dir(path, workspace_root) for path in rules.deny],
+            ask=[canonicalize_dir(path, workspace_root) for path in rules.ask],
+            allow=[canonicalize_dir(path, workspace_root) for path in rules.allow],
         )
 
     def _matches(self, rule: Path, candidate: Path) -> bool:
