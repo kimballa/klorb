@@ -71,8 +71,7 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     part of the `writeDirs` table, so no `writeDirs.allow` entry (even one covering the whole
     workspace) can re-enable access. Writing there is where klorb's own config/session state
     lives; letting the agent freely rewrite its own permission grants would let it silently
-    escalate its own access. TODO: unlock path is a future `EscalatePrivileges` tool (see
-    TODO.md).
+    escalate its own access.
 
     Falls back to `"allow"` when nothing in `writeDirs` matches, preserving the pre-existing,
     already-shipped write-tool default that anything inside the workspace is writable.

@@ -57,9 +57,8 @@ def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
 
 
 def privileged_dirs(workspace_root: Path) -> list[Path]:
-    """Canonicalized list of every directory klorb's file tools must never read from or write to
-    without a future `EscalatePrivileges` grant (see TODO.md's "Permissions" item): the
-    workspace's own `${workspace_root}/.klorb/` project dir, plus the process-wide
+    """Canonicalized list of every directory klorb's file tools must never read from or write to:
+    the workspace's own `${workspace_root}/.klorb/` project dir, plus the process-wide
     `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` from `klorb.paths` (resolved here,
     not cached at import time, so an env-var override picked up by `klorb.paths` is honored).
 
@@ -67,6 +66,10 @@ def privileged_dirs(workspace_root: Path) -> list[Path]:
     `resolve_and_evaluate_read` both check against, unconditionally, ahead of the
     `writeDirs`/`readDirs` tables — no `allow` entry in either table can re-enable access to
     anything this list contains.
+
+    TODO(aaron): there is no way to grant a temporary, user-confirmed exception to this deny yet
+    (e.g. for an agent that legitimately needs to inspect its own session state); every match
+    here is an unconditional, permanent "deny" until such a mechanism is built.
     """
     root = workspace_root.resolve(strict=False)
     return [
