@@ -36,7 +36,7 @@ jobs:
           cache-dependency-glob: "klorb/dev-requirements.txt"
 
       - name: Cloud setup
-        run: PYTHON=python3.12 make cloud_setup
+        run: make cloud_setup
 
       - name: Lint, typecheck, and test
         working-directory: klorb
