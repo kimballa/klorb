@@ -10,7 +10,8 @@ import pytest
 
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.directory_access import (
-    DirectoryAccessTable, DirRules, find_workspace_root, is_privileged_path, privileged_dirs,
+    DirectoryAccessTable, DirRules, canonicalize_dir, find_workspace_root, is_privileged_path,
+    privileged_dirs,
 )
 from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
 from klorb.permissions.workspace import canonicalize_candidate, evaluate_write
@@ -177,6 +178,29 @@ def test_is_privileged_path_matches_descendants_not_unrelated_paths(tmp_path: Pa
     assert not is_privileged_path(tmp_path / "src" / "main.py", tmp_path)
 
 
+def test_canonicalize_dir_expands_home_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    assert canonicalize_dir(Path("~/.ssh"), workspace) == home / ".ssh"
+
+
+def test_directory_access_table_deny_rule_with_tilde_matches_home_relative_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    table = DirectoryAccessTable(DirRules(deny=[Path("~/.ssh")]), workspace)
+    assert table.evaluate(home / ".ssh" / "id_rsa") == "deny"
+
+
 # --- evaluate_write ---
 
 
@@ -310,6 +334,36 @@ def test_canonicalize_candidate_does_not_raise_for_outside_workspace_paths(tmp_p
 
     with pytest.raises(PermissionError):
         resolve_within_workspace(context, str(outside))
+
+
+def test_canonicalize_candidate_expands_home_tilde_for_llm_supplied_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model-supplied `filename` of `"~/.ssh/id_rsa"` must resolve to the real home directory
+    (so a readDirs/writeDirs deny on `~/.ssh` actually catches it), not a literal `~`
+    subdirectory joined onto workspace_root — see canonicalize_dir's docstring."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    context = _context(workspace)
+    assert canonicalize_candidate(context, "~/.ssh/id_rsa") == home / ".ssh" / "id_rsa"
+
+
+def test_resolve_within_workspace_raises_for_tilde_path_outside_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    context = _context(workspace)
+    with pytest.raises(PermissionError):
+        resolve_within_workspace(context, "~/.ssh/id_rsa")
 
 
 # --- find_workspace_root ---

@@ -24,6 +24,20 @@
     ~/.share/klorb/ or ~/.config/klorb/ or something external to the workspace itself.
     ("Trust" is its own whole thing that will need a dedicated plan, basically.)
 
+* `klorb init` bootstrap command
+  * Packaging can't place `/etc/klorb/klorb-config.json` or `~/.config/klorb/klorb-config.json`
+    at install time on its own — modern wheels don't reliably support `data_files`-style
+    absolute install destinations, and neither `pip install` nor `uv install` has any notion of
+    "was this a sudo, site-wide install vs. a per-user one" to branch on anyway. `etc/klorb-
+    config.json` in the repo stays an uninstalled reference file for now.
+  * Add a `klorb init` CLI command instead: `klorb init --system` copies the reference config to
+    `/etc/klorb/klorb-config.json`, refusing loudly if not running as root; `klorb init --user`
+    copies it to `$KLORB_CONFIG_DIR/klorb-config.json` (default `~/.config/klorb`). Both should
+    refuse to clobber an existing file without an explicit `--force`.
+  * Could double as (or share code with) the entry point for the per-project `.klorb/` bootstrap
+    flow above — same "copy a starter config into place" idea, just a different destination and
+    trust prompt.
+
 * Tools
   * Test that ReadFile tool works.
     * And uses the max-lines from the settings
@@ -98,8 +112,24 @@
     between that check and the actual file I/O, so a rename/symlink swap in that window could
     redirect an approved operation. Closing this needs os.open()-based fd-relative I/O
     (O_NOFOLLOW/O_DIRECTORY), not path-string re-resolution. See docs/specs/permissions.md.
-  * The global klorb-config.json should include r/w denylist entries for "~/.ssh", "~/.aws",
-    ... and probably a few other well-known secrets-oriented places, too?
+  * Per-file allow/ask/deny isn't a supported concept yet — only directories (matched by
+    ancestor-or-self containment in `DirectoryAccessTable`) are covered by `readDirs`/
+    `writeDirs`. Plenty of real secrets are single files sitting directly inside an otherwise
+    unremarkable directory, where denylisting the whole parent directory would be too broad —
+    `~/.git-credentials`, living right in `$HOME` alongside lots of non-sensitive files, is the
+    canonical example (`~/.npmrc`, `~/.netrc`, `~/.pgpass` are others). Needs either exact-file-
+    path rules as a first-class, tested feature (not just something that happens to work today
+    via `Path` equality in `DirectoryAccessTable._matches`) or glob/pattern matching (`*.pem`,
+    `id_rsa*`, etc.) so one rule can catch a class of filenames wherever they show up.
+    `etc/klorb-config.json`'s reference denylist deliberately sticks to directories for now and
+    skips file-level entries pending this.
+  * Path macros: support expanding `${home}`/`${workspaceRoot}` (maybe also `${configDir}`)
+    inside `readDirs`/`writeDirs` (and any other future path-shaped config value), alongside the
+    plain `~` homedir shorthand `canonicalize_dir` already expands. `workspaceRoot` has no
+    shorthand today, and namespaced/braced macros read more explicitly than a bare `~` once
+    there's more than one kind of substitution — this would give one consistent expansion story
+    across every path source (config file, and LLM-supplied tool-call `filename`s) instead of
+    special-casing `~` alone.
 
 * BashTool
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)

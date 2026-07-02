@@ -22,7 +22,9 @@ than re-resolving a path string. Not implemented — see TODO.md's "Permissions"
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from klorb.permissions.directory_access import DirectoryAccessTable, is_privileged_path
+from klorb.permissions.directory_access import (
+    DirectoryAccessTable, canonicalize_dir, is_privileged_path,
+)
 from klorb.permissions.table import Verdict
 
 if TYPE_CHECKING:
@@ -30,17 +32,16 @@ if TYPE_CHECKING:
 
 
 def canonicalize_candidate(context: "ToolSetupContext", filename: str) -> Path:
-    """Resolve `filename` to an absolute, symlink- and `..`-canonicalized path, joining it onto
-    `context.session_config.workspace_root` first if relative. Does NOT check the result is
-    inside any particular boundary — callers that need a hard boundary should use
+    """Resolve `filename` to an absolute, symlink- and `..`-canonicalized path via
+    `klorb.permissions.directory_access.canonicalize_dir` (a leading `~`/`~user` is expanded to
+    the invoking user's home directory; a still-relative result is joined onto
+    `context.session_config.workspace_root`). Does NOT check the result is inside any
+    particular boundary — callers that need a hard boundary should use
     `resolve_within_workspace()` instead; callers that only need canonicalization ahead of a
     permissions-table check (e.g. a trusted-workspace `ReadFile`) call this directly.
     """
     root = context.session_config.workspace_root.resolve()
-    candidate = Path(filename)
-    if not candidate.is_absolute():
-        candidate = root / candidate
-    return candidate.resolve(strict=False)
+    return canonicalize_dir(Path(filename), root)
 
 
 def resolve_within_workspace(context: "ToolSetupContext", filename: str) -> Path:
