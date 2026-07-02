@@ -6,12 +6,14 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
 
 from coolname import generate_slug
 from pydantic import BaseModel
+from pydantic import Field
 
 from klorb.api_provider import ApiProvider
 from klorb.api_provider import ProviderResponse
@@ -95,6 +97,11 @@ class SessionConfig(BaseModel):
     thinking_effort: ThinkingEffort = "high"
     max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
     max_tool_calls_per_session: int = DEFAULT_MAX_TOOL_CALLS_PER_SESSION
+    workspace_root: Path = Field(default_factory=Path.cwd)
+    """Directory the file-editing tools (`EditFile`, `ReplaceAll`, `CreateFile`) are permitted
+    to read/write within — see `klorb.tools._path_safety.resolve_within_workspace`. A minimal
+    placeholder ahead of a fuller permission system
+    (docs/adrs/confine-file-tools-to-workspace-root.md)."""
 
 
 class Session:

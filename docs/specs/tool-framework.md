@@ -72,6 +72,54 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   actual `start_line`/`end_line` returned, the file's `total_lines`, a `truncated` flag (true
   when more content exists past `end_line`), and `content` — a single string with one
   `"N|line text"` entry per line, newline-separated.
+* `klorb.tools.edit_file.EditFileTool` (`klorb/src/klorb/tools/edit_file.py`), name
+  `EditFile`. Replaces the inclusive 1-indexed line range `start_line`..`end_line` of an
+  existing text file with `new_text`, after verifying the mandatory `start_text`/`end_text`
+  arguments still match what's actually at those lines — a mismatch raises `ValueError`
+  naming the actual content, signaling stale line numbers (e.g. from an earlier edit shifting
+  everything below it) rather than corrupting the file. There is no separate insert or delete
+  tool: insert without deleting by setting `start_line == end_line` and folding that line's
+  original text into `new_text`; delete by passing an empty `new_text`. The one exception is
+  an empty file (`total_lines == 0`), which has no anchor line to replace — the only valid
+  call there is `start_line=1, end_line=0, start_text="", end_text=""`. See
+  [the insert/delete ADR](../adrs/edit-file-covers-insert-and-delete-via-replace-range.md).
+  Trailing-newline handling: an edit that doesn't touch the file's last line preserves whatever
+  trailing-newline state the file already had; an edit whose `end_line` reaches the end of the
+  file (including the empty-file case) always terminates the file with a single trailing `\n`
+  if any content remains, none otherwise. The result is a dict: `filename`, the edited
+  region's `start_line`/`end_line` (renumbered to reflect what was actually written), the
+  file's new `new_total_lines`, and `content` — the changed region in `ReadFile`'s `"N|text"`
+  format, so the model can see the result without a follow-up `ReadFile` call.
+* `klorb.tools.replace_all.ReplaceAllTool` (`klorb/src/klorb/tools/replace_all.py`), name
+  `ReplaceAll`. Replaces every occurrence of `search` in a single `filename` with `new_text`.
+  `search` is matched as a literal substring by default; `is_regex` treats it as a Python
+  regex, in which case `new_text` may use `\1`-style backreferences. `case_insensitive` and
+  `multiline` (which maps to `re.MULTILINE`, only meaningful with `is_regex`) are both
+  optional and default to `false`. The file is only rewritten if at least one replacement was
+  made. The result is a dict: `filename`, `replacements_made` (the match count, returned as a
+  blast-radius signal analogous to `EditFile`'s drift check), and `is_regex`.
+* `klorb.tools.create_file.CreateFileTool` (`klorb/src/klorb/tools/create_file.py`), name
+  `CreateFile`. Creates a new text file at `filename` with the given `content` (may be `""`),
+  raising `FileExistsError` if the file already exists — file creation is always an explicit
+  tool call, never an implicit side effect of `EditFile`. A full-file rewrite of an existing
+  file goes through `EditFile` with `start_line=1, end_line=total_lines` instead. Missing
+  parent directories are created automatically. The result is a dict: `filename`,
+  `total_lines`, and `created: true`.
+
+## Path safety
+
+`EditFile`, `ReplaceAll`, and `CreateFile` all resolve their `filename` argument through
+`klorb.tools._path_safety.resolve_within_workspace` (`klorb/src/klorb/tools/_path_safety.py`)
+before touching the filesystem. It joins a relative `filename` onto
+`context.session_config.workspace_root` (a new `SessionConfig` field, defaulting to the
+process's cwd via `Path.cwd`), resolves both with `Path.resolve(strict=False)` — canonicalizing
+`..` segments and symlinks even when the target doesn't exist yet, so neither a traversal nor a
+symlink hop can land outside the root — and raises `PermissionError` if the result isn't the
+workspace root or somewhere beneath it. This is an intentionally minimal placeholder: see
+[the workspace-root ADR](../adrs/confine-file-tools-to-workspace-root.md) for why, and what a
+fuller permission system (allow-lists, interactive prompts) would add on top of it later. Not
+itself a `Tool` — the leading underscore is just a convention, since `ToolRegistry` only
+collects concrete `Tool` subclasses regardless of module name.
 
 ## Out of scope
 
