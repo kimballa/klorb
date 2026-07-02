@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Abstract permission-table evaluation: deny/ask/allow rule lists checked in that fixed
-category order, independent of what kind of resource (a directory, eventually a bash command
-or a URL — see TODO.md's "Permissions" backlog item) the rules describe. See
+category order, independent of what kind of resource (a directory, or in principle any other
+resource kind with its own matching semantics) the rules describe. See
 docs/specs/permissions.md and
 docs/adrs/evaluate-permission-categories-deny-then-ask-then-allow.md.
 """
@@ -19,11 +19,13 @@ specificity never changes this order, so a broad `deny` always beats a narrower 
 
 class PermissionAskRequired(Exception):
     """Raised when a `PermissionsTable`'s verdict for a candidate is `"ask"`, and the call site
-    has no interactive confirmation plumbing to route the question through yet (see TODO.md's
-    "Permissions" backlog item: "Need to handle `PermissionAskRequired` exception with a user
-    prompt."). Deliberately not a `PermissionError` subclass, so future interactive-prompt code
-    can catch it specifically without also swallowing plain denials. For now, callers that
-    raise this are failing closed: treating `"ask"` the same as denial, just distinguishably.
+    has no interactive confirmation plumbing to route the question through yet. Deliberately
+    not a `PermissionError` subclass, so future interactive-prompt code can catch it
+    specifically without also swallowing plain denials. For now, callers that raise this are
+    failing closed: treating `"ask"` the same as denial, just distinguishably.
+
+    TODO(aaron): route this through an actual user prompt instead of failing closed, once
+    interactive confirmation plumbing exists.
     """
 
 

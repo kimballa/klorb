@@ -90,9 +90,12 @@ class ProcessConfig(BaseModel):
     outside `workspace_root`) instead of the same hard workspace-root boundary the write tools
     have — see `klorb.permissions.workspace.resolve_and_evaluate_read`. Deliberately absent
     from `PROCESS_KEY_MAP`/`klorb-config.json`: a project must never be able to grant itself
-    trust via its own config file. Only a future, not-yet-built "trust this workspace" flow
-    (see TODO.md's "project bootstrapping" item) may set this `True`; no code path in this
-    codebase does so today outside of tests."""
+    trust via its own config file. No code path in this codebase sets this `True` outside of
+    tests.
+
+    TODO(aaron): a future, not-yet-built "trust this workspace" flow needs to be the only thing
+    that can set this `True` in production — interactively confirming trust once per workspace,
+    never via a config file key."""
 
 
 def _etc_config_path() -> Path:

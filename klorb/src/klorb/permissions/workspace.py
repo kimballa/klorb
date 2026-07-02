@@ -14,9 +14,11 @@ tools import from this module, not the other way around.
 Note (TOCTOU): every path this module returns is canonical only as of the moment it's resolved
 — nothing here holds an open OS-level handle across the gap between a permission check and the
 caller's actual file I/O, so a directory rename/symlink swap in that window could redirect an
-approved operation to an unintended target. Closing this would require operating relative to an
-`os.open()`-obtained directory file descriptor (e.g. with `O_NOFOLLOW`/`O_DIRECTORY`) rather
-than re-resolving a path string. Not implemented — see TODO.md's "Permissions" backlog item.
+approved operation to an unintended target.
+
+TODO(aaron): close the TOCTOU gap above by operating relative to an `os.open()`-obtained
+directory file descriptor (e.g. with `O_NOFOLLOW`/`O_DIRECTORY`) rather than re-resolving a
+path string.
 """
 
 from pathlib import Path
