@@ -20,10 +20,21 @@ or slicing a superset.
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
   looks `config.thinking_effort` up in for `"tokens"`-style models), `read_file_max_lines`
-  (int, default `tools.read_file.MAX_LINES` — `ReadFileTool`'s per-call page size; see "Out
-  of scope" below), and `openrouter_base_url` (str, default
+  (int, default `DEFAULT_READ_FILE_MAX_LINES`, `200` — `ReadFileTool`'s per-call page size;
+  see "Out of scope" below), and `openrouter_base_url` (str, default
   `openrouter.OPENROUTER_BASE_URL` — passed to `OpenRouterApiProvider(base_url=...)`, for
   pointing at a self-hosted or corporate OpenRouter-compatible gateway).
+
+  `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
+  `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
+  `DEFAULT_MAX_TOOL_CALLS_PER_SESSION` — `5`/`25`) — safety caps `Session._run_tool_calls()`
+  enforces on individual tool-call dispatches. These live on `SessionConfig`, not
+  `ProcessConfig`, specifically because reaching one can raise it: `Session` may ask (via an
+  `on_tool_call_limit_reached` callback — see [[session-and-turns]]) whether to double it and
+  keep going, mutating `self.config` for the rest of that session's lifetime — a per-session,
+  interactively-mutable value, which is exactly what `SessionConfig` (not `ProcessConfig`,
+  whose fields must stay identical across every concurrently running session) is for. See
+  [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
 
   `session` is a *template*, not a shared instance — every `Session` created in the process
   (at startup, or via `/clear`) gets `process_config.session.model_copy()`, an independent
@@ -101,7 +112,9 @@ sit as flat keys alongside it at the top level:
   "sessionDefaults": {
     "model": "openai/gpt-4o-mini",
     "thinking.enabled": true,
-    "thinking.effort": "high"
+    "thinking.effort": "high",
+    "tools.maxCallsPerTurn": 5,
+    "tools.maxCallsPerSession": 25
   },
 
   "thinking.tokenBudgets": {"low": 4096, "medium": 16384, "high": 32768},
@@ -138,10 +151,11 @@ field. A reference file with every recognized key at its current default lives a
 
 * `klorb-config.json` — see "How it works" above for the five file locations and their
   precedence, and "On-disk key naming" above for the file's shape and key style. Every entry
-  in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`) can be set inside
-  `sessionDefaults`; every entry in `PROCESS_KEY_MAP` (`thinking.tokenBudgets`,
-  `terminal.input.maxLines`, `tools.readFile.maxLines`, `providers.openrouter.baseUrl`) can
-  be set at the top level. `thinking.tokenBudgets`, being a nested object (`{"low": ...,
+  in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`,
+  `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
+  `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
+  `tools.readFile.maxLines`, `providers.openrouter.baseUrl`) can be set at the top level.
+  `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`
   key it wants to keep. `interactive` cannot be set from a config file at all: it's always
@@ -159,12 +173,12 @@ field. A reference file with every recognized key at its current default lives a
 * Adding another process-only field requires adding it to `ProcessConfig` and adding its
   on-disk key to `PROCESS_KEY_MAP` (or `SESSION_KEY_MAP`, for a new `SessionConfig` field) —
   the two aren't inferred from each other by design (see "On-disk key naming" above).
-* `read_file_max_lines` (`tools.readFile.maxLines`) has no live consumer yet:
-  `ReadFileTool.__init__` now accepts a `max_lines` parameter, but nothing in
-  `cli.py`/`session.py` constructs a `ReadFileTool` from a `ProcessConfig` today, since
-  tool-calling isn't wired into `Session` at all yet (see `TODO.md`'s
-  `EditFileTool`/`CreateFileTool`/etc. backlog items). The field exists so the value is
-  already there to consume once that wiring lands.
+* `read_file_max_lines` (`tools.readFile.maxLines`) is consumed by `ReadFileTool` via
+  `context.process_config.read_file_max_lines`, where `context` is the `ToolSetupContext`
+  every `Tool` (`klorb.tools.tool.Tool`) is constructed with — see [[tool-framework]].
+  `DEFAULT_READ_FILE_MAX_LINES` in `process_config.py` is its sole canonical default;
+  `klorb.tools.read_file` has no constant of its own — see
+  [the ToolSetupContext ADR](../adrs/tool-setup-context-carries-process-and-session-config.md).
 * `last-session.json` (`TODO.md`) doesn't exist yet; `_load_last_session_overrides()` is a
   placeholder that always returns no overrides.
 * Provider selection isn't implemented (no command exists to change it), so there's nothing

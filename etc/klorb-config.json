@@ -7,7 +7,9 @@
   "sessionDefaults": {
     "model": "openai/gpt-4o-mini",
     "thinking.enabled": true,
-    "thinking.effort": "high"
+    "thinking.effort": "high",
+    "tools.maxCallsPerTurn": 5,
+    "tools.maxCallsPerSession": 25
   },
 
   "thinking.tokenBudgets": {

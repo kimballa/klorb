@@ -48,6 +48,7 @@ class ApiProvider(ABC):
         model: str | None = None,
         session_id: str | None = None,
         reasoning: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
@@ -58,6 +59,12 @@ class ApiProvider(ABC):
         `reasoning`, if given, is a provider-shaped request body requesting extended
         thinking (e.g. `{"effort": "high"}` or `{"max_tokens": 32_768}` for OpenRouter);
         omitted or `None` means no reasoning is requested.
+
+        `tools`, if given, is the OpenAI-style function-calling `tools` array (see
+        `klorb.tools.registry.ToolRegistry.tool_definitions`) offered to the model alongside
+        the prompt; omitted, `None`, or empty means no tools are offered. If the model
+        requests one or more tool calls, they're reported on the returned reply's
+        `Message.tool_calls`.
 
         If `on_chunk` is given, it is invoked once per non-empty text delta as the response
         streams in, in addition to the final reply being returned as usual. If

@@ -16,6 +16,7 @@ from klorb.api_provider import ApiProvider
 from klorb.api_provider import ProviderResponse
 from klorb.api_provider import ResponseAborted
 from klorb.message import Message
+from klorb.message import ToolCallRequest
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
@@ -62,6 +63,7 @@ class OpenRouterApiProvider(ApiProvider):
         model: str | None = None,
         session_id: str | None = None,
         reasoning: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
@@ -69,6 +71,12 @@ class OpenRouterApiProvider(ApiProvider):
         """Send the given conversation history to a model via OpenRouter, streaming the
         reply and invoking `on_chunk` per text delta and `on_thinking_chunk` per
         reasoning/thinking delta, and return the fully-assembled reply.
+
+        If `tools` is given and non-empty, it's offered to the model as the OpenAI-style
+        function-calling `tools` array; any tool calls the model requests are streamed in as
+        `delta.tool_calls` fragments (per SDK index, an `id`/`function.name` sent once and
+        `function.arguments` accumulated piecemeal), reassembled here, and reported as
+        `ToolCallRequest`s on the returned reply's `Message.tool_calls`.
 
         If `cancel_event` is given and set while the stream is being consumed, the
         underlying HTTP stream is closed and `ResponseAborted` is raised.
@@ -84,18 +92,22 @@ class OpenRouterApiProvider(ApiProvider):
                 extra_body["session_id"] = session_id
             if reasoning is not None:
                 extra_body["reasoning"] = reasoning
-        stream = client.chat.completions.create(
-            model=resolved_model,
-            messages=api_messages,
-            stream=True,
-            stream_options={"include_usage": True},
-            extra_body=extra_body,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": api_messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "extra_body": extra_body,
+        }
+        if tools:
+            create_kwargs["tools"] = tools
+        stream = client.chat.completions.create(**create_kwargs)
 
         content_parts: list[str] = []
         finish_reason: str | None = None
         completion_tokens = 0
         prompt_tokens = 0
+        tool_call_accumulators: dict[int, dict[str, str]] = {}
         for chunk in stream:
             if cancel_event is not None and cancel_event.is_set():
                 stream.close()
@@ -111,6 +123,16 @@ class OpenRouterApiProvider(ApiProvider):
                 thinking_delta_text = getattr(choice.delta, "reasoning", None) or ""
                 if thinking_delta_text and on_thinking_chunk is not None:
                     on_thinking_chunk(thinking_delta_text)
+                for delta_call in choice.delta.tool_calls or []:
+                    accumulator = tool_call_accumulators.setdefault(
+                        delta_call.index, {"id": "", "name": "", "arguments": ""})
+                    if delta_call.id:
+                        accumulator["id"] = delta_call.id
+                    if delta_call.function is not None:
+                        if delta_call.function.name:
+                            accumulator["name"] = delta_call.function.name
+                        if delta_call.function.arguments:
+                            accumulator["arguments"] += delta_call.function.arguments
                 if choice.finish_reason is not None:
                     finish_reason = choice.finish_reason
             if chunk.usage is not None:
@@ -118,10 +140,16 @@ class OpenRouterApiProvider(ApiProvider):
                 prompt_tokens = chunk.usage.prompt_tokens
 
         content = "".join(content_parts)
+        tool_calls = [
+            ToolCallRequest(
+                id=accumulator["id"], name=accumulator["name"], arguments=accumulator["arguments"])
+            for _, accumulator in sorted(tool_call_accumulators.items())
+        ] or None
         logger.debug(
             "Received %d-character response from %s (finish_reason=%s, completion_tokens=%d, "
-            "prompt_tokens=%d)",
+            "prompt_tokens=%d, tool_calls=%s)",
             len(content), resolved_model, finish_reason, completion_tokens, prompt_tokens,
+            [call.name for call in tool_calls] if tool_calls else None,
         )
         reply = Message(
             content=content,
@@ -130,6 +158,7 @@ class OpenRouterApiProvider(ApiProvider):
             processing_state="complete",
             timestamp=datetime.now(),
             finish_reason=finish_reason,
+            tool_calls=tool_calls,
         )
         return ProviderResponse(message=reply, prompt_tokens=prompt_tokens)
 
@@ -138,16 +167,40 @@ class OpenRouterApiProvider(ApiProvider):
         messages: list[Message], system_prompt: str | None
     ) -> list[ChatCompletionMessageParam]:
         """Convert session history (plus an optional system prompt) into OpenAI SDK message
-        dicts. `"thinking"`-role messages are omitted: they aren't a role the OpenAI-compatible
-        API accepts, and reasoning content isn't meant to be replayed as conversation history.
+        dicts. `"thinking"`- and `"tool_defs"`-role messages are omitted: neither is a role
+        the OpenAI-compatible chat API accepts — reasoning content isn't meant to be replayed
+        as conversation history, and tool definitions are offered via the request's separate
+        `tools` array (see `send_prompt`), not as a chat message. `"tool_use"` and
+        `"tool_response"` are translated into the shapes the API expects for a tool-calling
+        round trip: an `assistant` message carrying `tool_calls`, and a `tool` message
+        carrying `tool_call_id`, respectively.
         """
         api_messages: list[ChatCompletionMessageParam] = []
         if system_prompt is not None:
             system_message = {"role": "system", "content": system_prompt}
             api_messages.append(cast(ChatCompletionMessageParam, system_message))
-        api_messages.extend(
-            cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content})
-            for message in messages
-            if message.role != "thinking"
-        )
+        for message in messages:
+            if message.role in ("thinking", "tool_defs"):
+                continue
+            if message.role == "tool_use":
+                assistant_message: dict[str, Any] = {"role": "assistant", "content": message.content or None}
+                if message.tool_calls:
+                    assistant_message["tool_calls"] = [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {"name": call.name, "arguments": call.arguments},
+                        }
+                        for call in message.tool_calls
+                    ]
+                api_messages.append(cast(ChatCompletionMessageParam, assistant_message))
+            elif message.role == "tool_response":
+                api_messages.append(cast(ChatCompletionMessageParam, {
+                    "role": "tool",
+                    "tool_call_id": message.tool_call_id,
+                    "content": message.content,
+                }))
+            else:
+                api_messages.append(
+                    cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content}))
         return api_messages

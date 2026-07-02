@@ -11,10 +11,12 @@ from klorb import process_config as process_config_module
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.process_config import DEFAULT_PROMPT_INPUT_MAX_LINES
+from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.process_config import load_process_config
+from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_SESSION
+from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
-from klorb.tools.read_file import MAX_LINES as DEFAULT_READ_FILE_MAX_LINES
 
 
 def _write_config(path: Path, data: dict) -> None:
@@ -38,6 +40,8 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.session == SessionConfig()
     assert process_config.session.model == DEFAULT_MODEL
+    assert process_config.session.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    assert process_config.session.max_tool_calls_per_session == DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     assert process_config.prompt_input_max_lines == DEFAULT_PROMPT_INPUT_MAX_LINES
     assert process_config.thinking_token_budgets == THINKING_EFFORT_TOKEN_BUDGETS
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
@@ -78,13 +82,23 @@ def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:
     """
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",
-        {"sessionDefaults": {"model": "project/model", "thinking.enabled": False, "thinking.effort": "low"}},
+        {
+            "sessionDefaults": {
+                "model": "project/model",
+                "thinking.enabled": False,
+                "thinking.effort": "low",
+                "tools.maxCallsPerTurn": 3,
+                "tools.maxCallsPerSession": 15,
+            },
+        },
     )
 
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.session.model == "project/model"
     assert process_config.session.thinking_enabled is False
     assert process_config.session.thinking_effort == "low"
+    assert process_config.session.max_tool_calls_per_turn == 3
+    assert process_config.session.max_tool_calls_per_session == 15
 
 
 def test_interactive_is_not_a_recognized_session_default(

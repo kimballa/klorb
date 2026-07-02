@@ -11,6 +11,16 @@ Role = Literal["system", "user", "assistant", "thinking", "tool_defs", "tool_use
 ProcessingState = Literal["pending", "error", "started_receipt", "complete"]
 
 
+class ToolCallRequest(BaseModel):
+    """One tool call the model asked to make, attached to a `role="tool_use"` `Message`."""
+
+    id: str
+    name: str
+    arguments: str
+    """Raw JSON-encoded arguments exactly as the model returned them; parsed by whoever
+    dispatches the call (see `klorb.session.Session`)."""
+
+
 class Message(BaseModel):
     """
     One message in a session's conversation history.
@@ -31,3 +41,10 @@ class Message(BaseModel):
     processing_state: ProcessingState
     last_error: str | None = None
     finish_reason: str | None = None
+
+    tool_calls: list[ToolCallRequest] | None = None
+    """Populated on a `role="tool_use"` `Message`: the tool call(s) the model requested."""
+
+    tool_call_id: str | None = None
+    """Populated on a `role="tool_response"` `Message`: the `ToolCallRequest.id` (from the
+    preceding `tool_use` message) this is the result of."""

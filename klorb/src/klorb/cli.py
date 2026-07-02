@@ -12,6 +12,7 @@ from klorb.logging_config import session_log_path
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import load_process_config
 from klorb.session import Session
+from klorb.tools.registry import ToolRegistry
 from klorb.tui.repl import run_repl
 
 logger = logging.getLogger(__name__)
@@ -85,10 +86,12 @@ def main() -> None:
         process_config.session.model = args.model
 
     provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
+    session_config = process_config.session.model_copy()
     session = Session(
-        process_config.session.model_copy(),
+        session_config,
         provider=provider,
         thinking_token_budgets=process_config.thinking_token_budgets,
+        tool_registry=ToolRegistry(process_config, session_config),
     )
 
     log_path = session_log_path(session.id) if session_log else None

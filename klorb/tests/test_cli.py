@@ -13,6 +13,7 @@ from klorb import cli
 from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
 
 
@@ -97,6 +98,39 @@ def test_main_passes_process_config_thinking_token_budgets_to_session(
             cli.main()
 
     assert mock_session_cls.call_args.kwargs["thinking_token_budgets"] == custom_budgets
+
+
+def test_main_passes_process_config_tool_call_limits_to_session(
+    stub_process_config: MagicMock,
+) -> None:
+    process_config = ProcessConfig(
+        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
+    stub_process_config.return_value = process_config
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "-m", "hi"]):
+            cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.max_tool_calls_per_turn == 3
+    assert config.max_tool_calls_per_session == 9
+
+
+def test_main_passes_a_tool_registry_built_from_process_and_session_config(
+    stub_process_config: MagicMock,
+) -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    sentinel_registry = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("klorb.cli.ToolRegistry", return_value=sentinel_registry) as mock_registry_cls:
+            with patch("sys.argv", ["klorb", "-m", "hi"]):
+                cli.main()
+
+    session_config = mock_session_cls.call_args.args[0]
+    mock_registry_cls.assert_called_once_with(stub_process_config.return_value, session_config)
+    assert mock_session_cls.call_args.kwargs["tool_registry"] is sentinel_registry
 
 
 def test_main_passes_config_flag_path_to_process_config_loader(

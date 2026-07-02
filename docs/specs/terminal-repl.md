@@ -111,6 +111,22 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `Session` has already discarded the turn from `self.messages` by this point — it's as if
   it never happened, not a new errored turn — see
   [[escape-aborts-streaming-turn-and-discards-it-from-history]].
+* If a turn's tool calls (see [[tool-framework]] and [[session-and-turns]]) reach
+  `SessionConfig.max_tool_calls_per_turn`/`max_tool_calls_per_session`, `Session` asks
+  whether to double the reached cap and keep going via the `on_tool_call_limit_reached`
+  callback `_send_prompt` passes into `Session.send_turn()`:
+  `ReplApp._on_tool_call_limit_reached(message)`. Since that callback runs on the worker
+  thread but showing a modal and waiting for its result requires the app's own event loop,
+  it blocks via `self.call_from_thread(self._confirm_tool_call_limit, message)`, where
+  `_confirm_tool_call_limit` is `async def` and `await`s
+  `self.push_screen_wait(ToolCallLimitScreen(message))` — `push_screen_wait` suspends until
+  the pushed screen calls `self.dismiss(...)`, which is exactly what happens when the worker
+  thread's `call_from_thread` needs to block until the user answers. `ToolCallLimitScreen`
+  is a `ModalScreen[bool]` showing `message` above a `Yes`/`No` button pair (`Yes` focused by
+  default so Enter confirms); clicking `No` or pressing Escape dismisses with `False`.
+  Returning `True` from the callback lets the turn continue (with that cap doubled);
+  `False` makes `Session` raise `ToolCallLimitExceeded`, which `_send_prompt`'s existing
+  failure handling renders the same way as any other turn error (`_show_error`).
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
   (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
   thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry
@@ -130,7 +146,10 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 * Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
   `Session` with a new one: same `SessionConfig` (model carries over) and the same
   `provider`/`model_registry` instances (via `Session`'s read-only properties, so the
-  OpenAI client and model discovery aren't rebuilt), but a fresh `generate_session_id()`
+  OpenAI client and model discovery aren't rebuilt), but a fresh `generate_session_id()`,
+  a fresh [[tool-framework]] `ToolRegistry` built from `ReplApp._process_config` and the new
+  session's `SessionConfig` (unlike `provider`/`model_registry`, not reused — see
+  [the fresh-instance-per-call ADR](../adrs/tool-registry-instantiates-a-fresh-tool-per-call.md)),
   and an empty message history. This runs synchronously in `on_input_submitted` — no
   worker thread, no disabling the input box, since no model call is involved. The visible
   history's children are removed, and if `session_log_enabled` is `True`,
@@ -159,8 +178,11 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
 
 ## Out of scope
 
-* `/clear` is the only slash command implemented. Tool/function calling and input history
-  (up-arrow to recall a previous prompt) are not implemented yet.
+* `/clear` is the only slash command implemented. Input history (up-arrow to recall a
+  previous prompt) is not implemented yet.
+* Tool call activity itself isn't rendered in the visible history — no bubble shows "called
+  ReadFile(...)" or its result mid-turn; the user sees only the eventually-final response (or
+  `ToolCallLimitScreen`, if a tool-call safety cap is reached along the way).
 * Thinking text is wrapped in `*...*` without escaping; a reasoning delta containing its
   own unescaped `*` could render with unbalanced/unintended emphasis. Accepted as a v1
   limitation, consistent with the response `Markdown` widget's existing unescaped handling

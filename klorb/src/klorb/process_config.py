@@ -17,9 +17,13 @@ from klorb.schema_envelope import read_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
-from klorb.tools.read_file import MAX_LINES as DEFAULT_READ_FILE_MAX_LINES
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_READ_FILE_MAX_LINES = 200
+"""`ReadFileTool`'s per-call page size default; the canonical source of this value —
+`klorb.tools.read_file` has no constant of its own, it reads `ProcessConfig.read_file_max_lines`
+via `ToolSetupContext` at construction time instead."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_FILENAME = "klorb-config.json"
@@ -37,6 +41,8 @@ SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
     "thinking.effort": "thinking_effort",
+    "tools.maxCallsPerTurn": "max_tool_calls_per_turn",
+    "tools.maxCallsPerSession": "max_tool_calls_per_session",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
