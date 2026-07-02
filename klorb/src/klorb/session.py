@@ -23,6 +23,7 @@ from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
+from klorb.permissions.directory_access import DirRules
 
 if TYPE_CHECKING:
     # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
@@ -98,10 +99,24 @@ class SessionConfig(BaseModel):
     max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
     max_tool_calls_per_session: int = DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     workspace_root: Path = Field(default_factory=Path.cwd)
-    """Directory the file-editing tools (`EditFile`, `ReplaceAll`, `CreateFile`) are permitted
-    to read/write within — see `klorb.tools._path_safety.resolve_within_workspace`. A minimal
-    placeholder ahead of a fuller permission system
-    (docs/adrs/confine-file-tools-to-workspace-root.md)."""
+    """Directory the file-editing tools (`EditFile`, `ReplaceAll`, `CreateFile`) are always
+    confined to — see `klorb.permissions.workspace.resolve_within_workspace` — a hard,
+    non-config-overridable boundary. `ReadFile` gets the same hard boundary unless
+    `ProcessConfig.is_workspace_trusted` is set (not reachable by any code path yet). Defaults
+    to `Path.cwd()` for callers that construct `SessionConfig` directly (e.g. tests); real runs
+    get an explicit, ancestor-searched root from
+    `klorb.permissions.directory_access.find_workspace_root()` via `load_process_config()`. See
+    docs/adrs/confine-file-tools-to-workspace-root.md and docs/specs/permissions.md."""
+    read_dirs: DirRules = Field(default_factory=DirRules)
+    """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults (alongside
+    `write_dirs`, as a fallthrough) — see `klorb.permissions.directory_access` and
+    docs/specs/permissions.md. Lives on `SessionConfig`, not `ProcessConfig`, because a future
+    "ask" flow will let a user approve a rule for the rest of the session — the same reason
+    `max_tool_calls_per_turn`/`max_tool_calls_per_session` live here too."""
+    write_dirs: DirRules = Field(default_factory=DirRules)
+    """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
+    `ReplaceAll`, `CreateFile`) consult in addition to the hard `workspace_root` boundary — see
+    `klorb.permissions.directory_access` and docs/specs/permissions.md."""
 
 
 class Session:

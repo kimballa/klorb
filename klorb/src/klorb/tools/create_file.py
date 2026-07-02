@@ -4,7 +4,8 @@
 import logging
 from typing import Any
 
-from klorb.tools._path_safety import resolve_within_workspace
+from klorb.permissions.table import raise_if_not_allowed
+from klorb.permissions.workspace import evaluate_write, resolve_within_workspace
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,9 @@ class CreateFileTool(Tool):
     already exists — use `EditFile` to modify an existing file's contents instead, so file
     creation is always an explicit, auditable event rather than an implicit side effect of an
     edit. Missing parent directories are created automatically.
+
+    `filename` is confined to `SessionConfig.workspace_root` and further checked against
+    `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
     """
 
     def name(self) -> str:
@@ -50,6 +54,8 @@ class CreateFileTool(Tool):
         logger.debug("CreateFile %s (%d bytes)", filename, len(content))
 
         path = resolve_within_workspace(self.context, filename)
+        raise_if_not_allowed(evaluate_write(self.context, path), resource_description=f"write to {path}")
+
         if path.exists():
             raise FileExistsError(f"{filename} already exists; use EditFile to modify it instead")
 

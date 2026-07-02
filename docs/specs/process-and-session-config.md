@@ -15,15 +15,19 @@ or slicing a superset.
 ## How it works
 
 * `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus
-  four process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
+  five process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
   prompt textarea's max grow height, applied via `input_widget.styles.max_height` in
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
   looks `config.thinking_effort` up in for `"tokens"`-style models), `read_file_max_lines`
   (int, default `DEFAULT_READ_FILE_MAX_LINES`, `200` — `ReadFileTool`'s per-call page size;
-  see "Out of scope" below), and `openrouter_base_url` (str, default
+  see "Out of scope" below), `openrouter_base_url` (str, default
   `openrouter.OPENROUTER_BASE_URL` — passed to `OpenRouterApiProvider(base_url=...)`, for
-  pointing at a self-hosted or corporate OpenRouter-compatible gateway).
+  pointing at a self-hosted or corporate OpenRouter-compatible gateway), and
+  `is_workspace_trusted` (bool, default `False` — governs whether `ReadFile` gets a hard
+  workspace-root boundary or table-only confinement; see docs/specs/permissions.md.
+  Deliberately has **no** on-disk key at all — a project must never be able to grant itself
+  trust via its own config file).
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
   `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
@@ -35,6 +39,12 @@ or slicing a superset.
   interactively-mutable value, which is exactly what `SessionConfig` (not `ProcessConfig`,
   whose fields must stay identical across every concurrently running session) is for. See
   [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
+
+  `SessionConfig` also carries `read_dirs`/`write_dirs` (`DirRules`, default empty
+  `deny`/`ask`/`allow` lists) — the `readDirs`/`writeDirs`-config-driven permission rules the
+  file tools consult (see docs/specs/permissions.md). These live on `SessionConfig` for the
+  same reason as the tool-call caps above: a future "ask" flow will let a user approve a rule
+  for the rest of the session, a per-session mutation `ProcessConfig` can't represent.
 
   `session` is a *template*, not a shared instance — every `Session` created in the process
   (at startup, or via `/clear`) gets `process_config.session.model_copy()`, an independent
@@ -69,6 +79,17 @@ or slicing a superset.
   without repeating everything else. A missing file at any layer is silently skipped —
   that's the expected common case, not an error — and logged at debug level either way, so a
   user debugging "why didn't my config apply" can see what was and wasn't found.
+
+  One exception: `sessionDefaults.readDirs`/`writeDirs` are **concatenated** across layers
+  instead of replaced — a layer's `deny`/`ask`/`allow` entries add to, rather than replace,
+  every earlier layer's. See docs/specs/permissions.md for why (a stricter rule from any
+  layer must never be discardable by a looser rule from another).
+
+  `SessionConfig.workspace_root` is also set here, from `find_workspace_root(cwd)` — an
+  ancestor search for the nearest directory with a non-symlinked `.klorb` child, falling back
+  to `cwd` itself — rather than `SessionConfig`'s own bare `Field(default_factory=Path.cwd)`
+  (which remains only as the fallback for callers constructing `SessionConfig` directly,
+  e.g. tests). See docs/specs/permissions.md.
 
   After merging, `_route_keys()` looks each on-disk key up in `SESSION_KEY_MAP` (for
   `sessionDefaults` keys) or `PROCESS_KEY_MAP` (for top-level keys) — both in
@@ -114,7 +135,9 @@ sit as flat keys alongside it at the top level:
     "thinking.enabled": true,
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 5,
-    "tools.maxCallsPerSession": 25
+    "tools.maxCallsPerSession": 25,
+    "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo"]},
+    "writeDirs": {"deny": [], "ask": [], "allow": []}
   },
 
   "thinking.tokenBudgets": {"low": 4096, "medium": 16384, "high": 32768},
@@ -123,6 +146,17 @@ sit as flat keys alongside it at the top level:
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
 }
 ```
+
+There are, as of `readDirs`/`writeDirs`, three distinct cross-layer merge behaviors in one
+file — a reader shouldn't assume there are only the first two:
+
+1. **Scalar replace** (most keys, e.g. `model`, `terminal.input.maxLines`): a later layer's
+   value replaces an earlier layer's outright.
+2. **Wholesale object replace** (`thinking.tokenBudgets`): the whole nested object is replaced,
+   not deep-merged — a layer overriding it must repeat every `ThinkingEffort` key it wants to
+   keep.
+3. **Array concatenate** (`readDirs`/`writeDirs`): each of `deny`/`ask`/`allow` is extended,
+   not replaced, across every layer — see docs/specs/permissions.md.
 
 Within each of those two objects, keys are flat strings with dot-delineated namespaces in
 lowerCamelCase — e.g. `"thinking.tokenBudgets"`, `"terminal.input.maxLines"` (the key is the
@@ -162,6 +196,11 @@ field. A reference file with every recognized key at its current default lives a
   inferred from CLI flags (`-m`/`--interactive`/`--no-interactive`), so a
   `sessionDefaults.interactive` key is dropped with a warning like any other unrecognized
   key.
+* `sessionDefaults.readDirs`/`writeDirs` are handled separately from `SESSION_KEY_MAP` — they
+  merge by concatenation, not the scalar replacement `_route_keys()` implements — see
+  docs/specs/permissions.md. `is_workspace_trusted` cannot be set from a config file at all,
+  by design, for the same reason `interactive` is CLI-only: unlike `interactive`, though,
+  there's no CLI flag for it either — no code path sets it `True` yet outside tests.
 * `$KLORB_ETC_CONFIG` — overrides the `/etc`-scope config file's path (see "How it works").
 * `--config FILE` — layers one more `klorb-config.json`-shaped file on top of the three
   fixed locations, below CLI flags.
@@ -186,3 +225,7 @@ field. A reference file with every recognized key at its current default lives a
   no per-session notion of "provider" to attach it to.
 * Concurrent sessions within one process aren't implemented yet; `ProcessConfig` is
   designed for that future but only one `Session` is ever live today.
+* `readDirs`/`writeDirs`, `is_workspace_trusted`, and everything else about how file-tool
+  permissions are actually evaluated (category order, the workspace-root hard boundary, the
+  `${workspace_root}/.klorb/` implicit deny, known risks) is out of scope for this spec — see
+  docs/specs/permissions.md.

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
+from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
@@ -47,6 +48,9 @@ SESSION_KEY_MAP: dict[str, str] = {
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
 inferred from CLI flags (`-m`/`--interactive`/`--no-interactive`), never config-file-driven.
+`readDirs`/`writeDirs` are also deliberately absent — they're merged by concatenation, not
+1:1 scalar replacement, so `load_process_config()` handles them separately, ahead of
+`_route_keys()` — see docs/specs/permissions.md.
 """
 
 PROCESS_KEY_MAP: dict[str, str] = {
@@ -56,7 +60,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "providers.openrouter.baseUrl": "openrouter_base_url",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
-process-only `ProcessConfig` attribute it sets."""
+process-only `ProcessConfig` attribute it sets. `is_workspace_trusted` is deliberately absent:
+it has no on-disk key at all, by design — see `ProcessConfig.is_workspace_trusted`."""
 
 # On-disk keys are flat strings with dot-delineated namespaces in lowerCamelCase
 # (`"thinking.tokenBudgets"`, matching VSCode/Claude Code settings-file style — see
@@ -80,6 +85,14 @@ class ProcessConfig(BaseModel):
     thinking_token_budgets: dict[ThinkingEffort, int] = dict(THINKING_EFFORT_TOKEN_BUDGETS)
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
     openrouter_base_url: str = OPENROUTER_BASE_URL
+    is_workspace_trusted: bool = False
+    """Whether `ReadFile` may use `readDirs`/`writeDirs`-table-only confinement (able to reach
+    outside `workspace_root`) instead of the same hard workspace-root boundary the write tools
+    have — see `klorb.permissions.workspace.resolve_and_evaluate_read`. Deliberately absent
+    from `PROCESS_KEY_MAP`/`klorb-config.json`: a project must never be able to grant itself
+    trust via its own config file. Only a future, not-yet-built "trust this workspace" flow
+    (see TODO.md's "project bootstrapping" item) may set this `True`; no code path in this
+    codebase does so today outside of tests."""
 
 
 def _etc_config_path() -> Path:
@@ -100,7 +113,7 @@ def _user_config_path() -> Path:
 
 def _project_config_path(cwd: Path) -> Path:
     """Per-project config file path, rooted at `cwd`."""
-    return cwd / ".klorb" / CONFIG_FILENAME
+    return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
 
 
 def _load_last_session_overrides(cwd: Path) -> dict[str, Any]:
@@ -152,14 +165,33 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
     see what was and wasn't found. CLI flags (other than `--config` itself) are applied on
     top of the returned `ProcessConfig` by the caller, since only `klorb.cli` knows the
     argparse `Namespace` shape.
+
+    One exception to the "`dict.update`, not a deep merge" rule above:
+    `sessionDefaults.readDirs`/`writeDirs` are concatenated across layers instead of replaced —
+    a layer's `deny`/`ask`/`allow` entries add to, rather than replace, every earlier layer's —
+    since a stricter rule from any layer must never be discardable by a looser rule from
+    another. See docs/specs/permissions.md.
+
+    `SessionConfig.workspace_root` is set here too, from `find_workspace_root(cwd)` — an
+    ancestor search for the nearest directory with a non-symlinked `.klorb` child, falling back
+    to `cwd` itself — rather than a bare `Path.cwd()`.
     """
     cwd = cwd if cwd is not None else Path.cwd()
 
     merged: dict[str, Any] = {}
     merged_session_defaults: dict[str, Any] = {}
+    concatenated_read_dirs: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_write_dirs: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
 
     def merge_layer(layer: dict[str, Any]) -> None:
-        merged_session_defaults.update(layer.pop(SESSION_DEFAULTS_KEY, None) or {})
+        session_layer = layer.pop(SESSION_DEFAULTS_KEY, None) or {}
+        for key, accumulator in (
+            ("readDirs", concatenated_read_dirs), ("writeDirs", concatenated_write_dirs),
+        ):
+            layer_dir_rules = session_layer.pop(key, None) or {}
+            for category in ("deny", "ask", "allow"):
+                accumulator[category].extend(Path(entry) for entry in layer_dir_rules.get(category, []))
+        merged_session_defaults.update(session_layer)
         merged.update(layer)
 
     merge_layer(read_versioned_json(_etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
@@ -170,5 +202,8 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
     merge_layer(_load_last_session_overrides(cwd))
 
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
+    session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)
+    session_overrides["write_dirs"] = DirRules(**concatenated_write_dirs)
+    session_overrides["workspace_root"] = find_workspace_root(cwd)
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
     return ProcessConfig(session=SessionConfig(**session_overrides), **process_overrides)

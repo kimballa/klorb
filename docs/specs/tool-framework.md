@@ -109,17 +109,13 @@ feature: individual tools (file search, shell exec, etc.) will be added under
 ## Path safety
 
 `EditFile`, `ReplaceAll`, and `CreateFile` all resolve their `filename` argument through
-`klorb.tools._path_safety.resolve_within_workspace` (`klorb/src/klorb/tools/_path_safety.py`)
-before touching the filesystem. It joins a relative `filename` onto
-`context.session_config.workspace_root` (a new `SessionConfig` field, defaulting to the
-process's cwd via `Path.cwd`), resolves both with `Path.resolve(strict=False)` — canonicalizing
-`..` segments and symlinks even when the target doesn't exist yet, so neither a traversal nor a
-symlink hop can land outside the root — and raises `PermissionError` if the result isn't the
-workspace root or somewhere beneath it. This is an intentionally minimal placeholder: see
-[the workspace-root ADR](../adrs/confine-file-tools-to-workspace-root.md) for why, and what a
-fuller permission system (allow-lists, interactive prompts) would add on top of it later. Not
-itself a `Tool` — the leading underscore is just a convention, since `ToolRegistry` only
-collects concrete `Tool` subclasses regardless of module name.
+`klorb.permissions.workspace.resolve_within_workspace` before touching the filesystem, then
+check the resolved path against `writeDirs` (`evaluate_write()`); `ReadFile` resolves and
+checks via `resolve_and_evaluate_read()` in the same module. See docs/specs/permissions.md for
+the full permission-table design (allow/ask/deny rules, workspace-root confinement, and the
+`is_workspace_trusted` distinction between `ReadFile` and the write tools) — this spec no
+longer duplicates those details, which superseded the placeholder described in
+[the workspace-root ADR](../adrs/confine-file-tools-to-workspace-root.md).
 
 ## Out of scope
 

@@ -9,7 +9,9 @@
     "thinking.enabled": true,
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 5,
-    "tools.maxCallsPerSession": 25
+    "tools.maxCallsPerSession": 25,
+    "readDirs": { "deny": [], "ask": [], "allow": [] },
+    "writeDirs": { "deny": [], "ask": [], "allow": [] }
   },
 
   "thinking.tokenBudgets": {

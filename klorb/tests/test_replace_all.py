@@ -5,15 +5,18 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.directory_access import DirRules
+from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.replace_all import ReplaceAllTool
 from klorb.tools.setup_context import ToolSetupContext
 
 
-def _context(workspace_root: Path) -> ToolSetupContext:
+def _context(workspace_root: Path, *, write_dirs: DirRules | None = None) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=workspace_root))
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(workspace_root=workspace_root, write_dirs=write_dirs or DirRules()))
 
 
 def _write(path: Path, name: str, content: str) -> Path:
@@ -117,3 +120,50 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
     assert tool.name() == "ReplaceAll"
     assert set(tool.parameters()["required"]) == {"filename", "search", "new_text"}
+
+
+# --- Permission-table integration (see docs/specs/permissions.md) ---
+
+
+def test_writedirs_deny_rejects_an_otherwise_in_workspace_replace(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "foo\n")
+
+    with pytest.raises(PermissionError):
+        ReplaceAllTool(_context(tmp_path, write_dirs=DirRules(deny=[tmp_path]))).apply(
+            {"filename": str(file_path), "search": "foo", "new_text": "bar"})
+
+    assert file_path.read_text() == "foo\n"
+
+
+def test_writedirs_ask_raises_permission_ask_required(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "foo\n")
+
+    with pytest.raises(PermissionAskRequired):
+        ReplaceAllTool(_context(tmp_path, write_dirs=DirRules(ask=[tmp_path]))).apply(
+            {"filename": str(file_path), "search": "foo", "new_text": "bar"})
+
+    assert file_path.read_text() == "foo\n"
+
+
+def test_hard_workspace_boundary_wins_even_if_writedirs_allow_covers_outside(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = _write(tmp_path, "outside.txt", "foo\n")
+
+    with pytest.raises(PermissionError):
+        ReplaceAllTool(_context(workspace, write_dirs=DirRules(allow=[tmp_path]))).apply(
+            {"filename": str(outside), "search": "foo", "new_text": "bar"})
+
+    assert outside.read_text() == "foo\n"
+
+
+def test_klorb_dir_write_implicitly_denied_even_with_no_config(tmp_path: Path) -> None:
+    klorb_dir = tmp_path / ".klorb"
+    klorb_dir.mkdir()
+    file_path = _write(klorb_dir, "klorb-config.json", "foo\n")
+
+    with pytest.raises(PermissionError):
+        ReplaceAllTool(_context(tmp_path)).apply(
+            {"filename": str(file_path), "search": "foo", "new_text": "bar"})
+
+    assert file_path.read_text() == "foo\n"

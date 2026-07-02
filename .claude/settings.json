@@ -6,7 +6,8 @@
       "Bash(git -C /home/aaron/src/klorb diff *)",
       "Bash(git -C /home/aaron/src/klorb status *)",
       "Bash(venv/bin/pip install *)",
-      "Bash(venv/bin/klorb --model openai/gpt-4o-mini *)"
+      "Bash(venv/bin/klorb --model openai/gpt-4o-mini *)",
+      "Bash(TESTARGS=* make test)"
     ]
   },
   "hooks": {

@@ -4,7 +4,8 @@
 import logging
 from typing import Any
 
-from klorb.tools._path_safety import resolve_within_workspace
+from klorb.permissions.table import raise_if_not_allowed
+from klorb.permissions.workspace import evaluate_write, resolve_within_workspace
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,9 @@ class EditFileTool(Tool):
     passing an empty `new_text`. The one exception is an empty file (`total_lines == 0`),
     where there's no anchor line to replace — the only valid call there is
     `start_line=1, end_line=0, start_text="", end_text=""`.
+
+    `filename` is confined to `SessionConfig.workspace_root` and further checked against
+    `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
     """
 
     def name(self) -> str:
@@ -91,6 +95,8 @@ class EditFileTool(Tool):
                 raise ValueError(f"{label} must be an integer, got {value!r} ({type(value).__name__})")
 
         path = resolve_within_workspace(self.context, filename)
+        raise_if_not_allowed(evaluate_write(self.context, path), resource_description=f"write to {path}")
+
         raw = path.read_text(encoding="utf-8")
         original_ends_with_newline = raw.endswith("\n")
         all_lines = raw.splitlines()

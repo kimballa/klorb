@@ -7,9 +7,12 @@
   yet — should these tools ship now with no confinement at all, or with a minimal placeholder?
 * Answer: Ship with a minimal placeholder now. `SessionConfig` gains a `workspace_root` field
   (defaulting to the process's cwd via `Path.cwd`), and all three tools resolve their
-  `filename` argument through a shared `klorb.tools._path_safety.resolve_within_workspace`
-  helper before touching the filesystem, which raises `PermissionError` if the resolved,
-  symlink-canonicalized path falls outside `workspace_root`.
+  `filename` argument through a shared `resolve_within_workspace` helper before touching the
+  filesystem, which raises `PermissionError` if the resolved, symlink-canonicalized path falls
+  outside `workspace_root`. (That helper originally lived at
+  `klorb.tools._path_safety.resolve_within_workspace`; it moved to
+  `klorb.permissions.workspace.resolve_within_workspace` when the fuller permission system this
+  ADR anticipated was built — see docs/specs/permissions.md.)
 * Reasoning: Shipping file-mutating tools with zero path confinement — even temporarily — means
   a model that's tricked, confused, or just wrong about a relative path can write outside the
   project it's supposed to be working on. That risk is easy to close narrowly (one field, one

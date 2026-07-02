@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.directory_access import DirRules
+from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
@@ -12,9 +14,23 @@ from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
 
 
-def _context(max_lines: int = DEFAULT_READ_FILE_MAX_LINES) -> ToolSetupContext:
+def _context(
+    workspace_root: Path,
+    *,
+    max_lines: int = DEFAULT_READ_FILE_MAX_LINES,
+    is_workspace_trusted: bool = False,
+    read_dirs: DirRules | None = None,
+    write_dirs: DirRules | None = None,
+) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(read_file_max_lines=max_lines), session_config=SessionConfig())
+        process_config=ProcessConfig(
+            read_file_max_lines=max_lines, is_workspace_trusted=is_workspace_trusted),
+        session_config=SessionConfig(
+            workspace_root=workspace_root,
+            read_dirs=read_dirs or DirRules(),
+            write_dirs=write_dirs or DirRules(),
+        ),
+    )
 
 
 def _write_lines(path: Path, count: int) -> Path:
@@ -26,7 +42,7 @@ def _write_lines(path: Path, count: int) -> Path:
 def test_reads_whole_short_file_by_default(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 3)
 
-    result = ReadFileTool(_context()).apply({"filename": str(file_path)})
+    result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
 
     assert result["start_line"] == 1
     assert result["end_line"] == 3
@@ -38,7 +54,7 @@ def test_reads_whole_short_file_by_default(tmp_path: Path) -> None:
 def test_start_line_zero_means_start_at_beginning(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 3)
 
-    result = ReadFileTool(_context()).apply({"filename": str(file_path), "start_line": 0})
+    result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path), "start_line": 0})
 
     assert result["start_line"] == 1
     assert result["content"].startswith("1|line 1")
@@ -47,7 +63,8 @@ def test_start_line_zero_means_start_at_beginning(tmp_path: Path) -> None:
 def test_explicit_range_returns_requested_lines(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 50)
 
-    result = ReadFileTool(_context()).apply({"filename": str(file_path), "start_line": 5, "end_line": 16})
+    result = ReadFileTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "start_line": 5, "end_line": 16})
 
     assert result["start_line"] == 5
     assert result["end_line"] == 16
@@ -57,7 +74,8 @@ def test_explicit_range_returns_requested_lines(tmp_path: Path) -> None:
 def test_request_beyond_max_lines_is_capped(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 1000)
 
-    result = ReadFileTool(_context()).apply({"filename": str(file_path), "start_line": 1, "end_line": 500})
+    result = ReadFileTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "start_line": 1, "end_line": 500})
 
     assert result["end_line"] == DEFAULT_READ_FILE_MAX_LINES
     assert len(result["content"].splitlines()) == DEFAULT_READ_FILE_MAX_LINES
@@ -67,24 +85,26 @@ def test_request_beyond_max_lines_is_capped(tmp_path: Path) -> None:
 def test_request_within_max_lines_returns_exact_count(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 50)
 
-    result = ReadFileTool(_context()).apply({"filename": str(file_path), "start_line": 1, "end_line": 12})
+    result = ReadFileTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "start_line": 1, "end_line": 12})
 
     assert len(result["content"].splitlines()) == 12
     assert result["truncated"] is True  # file has more lines beyond what was returned
 
 
-def test_negative_start_line_raises() -> None:
+def test_negative_start_line_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="start_line must be >= 0"):
-        ReadFileTool(_context()).apply({"filename": "irrelevant.txt", "start_line": -1})
+        ReadFileTool(_context(tmp_path)).apply({"filename": "irrelevant.txt", "start_line": -1})
 
 
-def test_end_line_before_start_line_raises() -> None:
+def test_end_line_before_start_line_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="end_line .* must be >= start_line"):
-        ReadFileTool(_context()).apply({"filename": "irrelevant.txt", "start_line": 10, "end_line": 5})
+        ReadFileTool(_context(tmp_path)).apply(
+            {"filename": "irrelevant.txt", "start_line": 10, "end_line": 5})
 
 
-def test_name_and_parameters() -> None:
-    tool = ReadFileTool(_context())
+def test_name_and_parameters(tmp_path: Path) -> None:
+    tool = ReadFileTool(_context(tmp_path))
 
     assert tool.name() == "ReadFile"
     assert tool.parameters()["required"] == ["filename"]
@@ -93,7 +113,7 @@ def test_name_and_parameters() -> None:
 def test_custom_max_lines_caps_request(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 50)
 
-    result = ReadFileTool(_context(max_lines=5)).apply(
+    result = ReadFileTool(_context(tmp_path, max_lines=5)).apply(
         {"filename": str(file_path), "start_line": 1, "end_line": 50})
 
     assert result["end_line"] == 5
@@ -101,7 +121,111 @@ def test_custom_max_lines_caps_request(tmp_path: Path) -> None:
     assert result["truncated"] is True
 
 
-def test_custom_max_lines_reflected_in_description() -> None:
-    tool = ReadFileTool(_context(max_lines=5))
+def test_custom_max_lines_reflected_in_description(tmp_path: Path) -> None:
+    tool = ReadFileTool(_context(tmp_path, max_lines=5))
 
     assert "up to 5" in tool.description()
+
+
+# --- Permission-table integration (see docs/specs/permissions.md) ---
+
+
+def test_zero_config_still_works_inside_workspace(tmp_path: Path) -> None:
+    """Regression pin: with no readDirs/writeDirs configured, ReadFile still works exactly as
+    it did before this feature for any file inside workspace_root."""
+    file_path = _write_lines(tmp_path, 3)
+
+    result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
+
+    assert result["total_lines"] == 3
+
+
+def test_untrusted_zero_config_denies_outside_workspace(tmp_path: Path) -> None:
+    """Behavior change: ReadFile previously had zero confinement; by default (untrusted
+    workspace) it's now hard-confined to workspace_root, exactly like the write tools."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n")
+
+    with pytest.raises(PermissionError):
+        ReadFileTool(_context(workspace)).apply({"filename": str(outside)})
+
+
+def test_untrusted_readdirs_allow_outside_workspace_does_not_bypass_hard_boundary(
+    tmp_path: Path,
+) -> None:
+    """Untrusted workspaces get the same hard boundary the write tools have — a readDirs.allow
+    entry outside workspace_root cannot widen past it."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n")
+
+    with pytest.raises(PermissionError):
+        ReadFileTool(_context(workspace, read_dirs=DirRules(allow=[tmp_path]))).apply(
+            {"filename": str(outside)})
+
+
+def test_readdirs_deny_rejects_in_workspace_file(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+
+    with pytest.raises(PermissionError):
+        ReadFileTool(_context(tmp_path, read_dirs=DirRules(deny=[tmp_path]))).apply(
+            {"filename": str(file_path)})
+
+
+def test_readdirs_ask_raises_permission_ask_required(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+
+    with pytest.raises(PermissionAskRequired):
+        ReadFileTool(_context(tmp_path, read_dirs=DirRules(ask=[tmp_path]))).apply(
+            {"filename": str(file_path)})
+
+
+def test_falls_through_to_writedirs_when_readdirs_silent(tmp_path: Path) -> None:
+    """readDirs.allow beating a matching writeDirs.deny for the same path, and the reverse:
+    an empty readDirs table falls through to writeDirs."""
+    file_path = _write_lines(tmp_path, 3)
+
+    result = ReadFileTool(_context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))).apply(
+        {"filename": str(file_path)})
+
+    assert result["total_lines"] == 3
+
+
+def test_readdirs_allow_wins_over_matching_writedirs_deny(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+
+    result = ReadFileTool(_context(
+        tmp_path, read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(deny=[tmp_path]),
+    )).apply({"filename": str(file_path)})
+
+    assert result["total_lines"] == 3
+
+
+def test_trusted_readdirs_allow_reaches_outside_workspace(tmp_path: Path) -> None:
+    """New capability: a trusted workspace's readDirs.allow can grant access outside
+    workspace_root — not reachable via any code path outside tests today, since nothing sets
+    ProcessConfig.is_workspace_trusted True in production code."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("line 1\n")
+
+    result = ReadFileTool(_context(
+        workspace, is_workspace_trusted=True, read_dirs=DirRules(allow=[tmp_path]),
+    )).apply({"filename": str(outside)})
+
+    assert result["total_lines"] == 1
+
+
+def test_trusted_empty_tables_deny_everything(tmp_path: Path) -> None:
+    """No magic "inside the workspace" fallback in trusted mode: default grants are meant to
+    come from an explicit readDirs.allow entry a future project-bootstrap flow writes, not from
+    a rule baked into the evaluator."""
+    file_path = _write_lines(tmp_path, 3)
+
+    with pytest.raises(PermissionError):
+        ReadFileTool(_context(tmp_path, is_workspace_trusted=True)).apply(
+            {"filename": str(file_path)})

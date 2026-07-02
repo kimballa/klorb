@@ -4,6 +4,8 @@
 import logging
 from typing import Any
 
+from klorb.permissions.table import raise_if_not_allowed
+from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 
@@ -11,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
-    """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers."""
+    """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers.
+
+    `filename` is resolved and checked against `readDirs`/`writeDirs` (see
+    `klorb.permissions.workspace.resolve_and_evaluate_read`) before the file is opened —
+    confined to `SessionConfig.workspace_root` unless `ProcessConfig.is_workspace_trusted`.
+    """
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
@@ -71,7 +78,10 @@ class ReadFileTool(Tool):
             raise ValueError(
                 f"end_line ({end_line}) must be >= start_line ({effective_start})")
 
-        with open(filename, encoding="utf-8") as file:
+        path, verdict = resolve_and_evaluate_read(self.context, filename)
+        raise_if_not_allowed(verdict, resource_description=f"read {path}")
+
+        with open(path, encoding="utf-8") as file:
             all_lines = file.read().splitlines()
         total_lines = len(all_lines)
 
