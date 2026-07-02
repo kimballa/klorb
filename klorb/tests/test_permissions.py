@@ -180,15 +180,64 @@ def test_is_privileged_path_matches_descendants_not_unrelated_paths(tmp_path: Pa
 # --- evaluate_write ---
 
 
-def test_evaluate_write_fallback_allows_when_nothing_matches(tmp_path: Path) -> None:
+def test_evaluate_write_asks_when_nothing_matches_in_either_table(tmp_path: Path) -> None:
+    """Zero config, for a write interrogation, is (None, None) -> ask/ask -- unlike read, write
+    has no permissive no-match fallback; see test_write_merge_matrix below for the full
+    (readDirs verdict, writeDirs verdict) -> write verdict table this is one cell of."""
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
-    assert evaluate_write(_context(tmp_path), path) == "allow"
+    assert evaluate_write(_context(tmp_path), path) == "ask"
+
+
+def test_evaluate_write_allows_only_when_both_tables_explicitly_allow(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    path = resolve_within_workspace(context, "f.txt")
+    assert evaluate_write(context, path) == "allow"
+
+
+def test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent(tmp_path: Path) -> None:
+    """The specific bug this write-merge logic exists to fix: a writeDirs.allow entry alone must
+    not grant write access to a path readDirs never mentions -- that would make the directory
+    write-only, which is backwards (write should never be more permissive than read)."""
+    context = _context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))
+    path = resolve_within_workspace(context, "f.txt")
+    assert evaluate_write(context, path) == "ask"
+
+
+def test_evaluate_write_denies_when_readdirs_denies_even_if_writedirs_allows(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, read_dirs=DirRules(deny=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    path = resolve_within_workspace(context, "f.txt")
+    assert evaluate_write(context, path) == "deny"
 
 
 def test_evaluate_write_restricts_in_workspace_path(tmp_path: Path) -> None:
     context = _context(tmp_path, write_dirs=DirRules(deny=[tmp_path]))
     path = resolve_within_workspace(context, "f.txt")
     assert evaluate_write(context, path) == "deny"
+
+
+@pytest.mark.parametrize(("read_verdict", "write_verdict", "expected"), [
+    ("deny", "deny", "deny"), ("deny", "ask", "deny"), ("deny", "allow", "deny"), ("deny", None, "deny"),
+    ("ask", "deny", "deny"), ("ask", "ask", "ask"), ("ask", "allow", "ask"), ("ask", None, "ask"),
+    ("allow", "deny", "deny"), ("allow", "ask", "ask"), ("allow", "allow", "allow"), ("allow", None, "ask"),
+    (None, "deny", "deny"), (None, "ask", "ask"), (None, "allow", "ask"), (None, None, "ask"),
+])
+def test_write_merge_matrix(
+    tmp_path: Path, read_verdict: str | None, write_verdict: str | None, expected: str,
+) -> None:
+    """Full 4x4 (readDirs verdict, writeDirs verdict) -> write verdict matrix: write access is
+    the stricter of the two, with a table's "no matching rule" (None) normalized to "ask" for
+    this write-side merge only (read's own no-match fallback, exercised separately below, is
+    unaffected by this normalization)."""
+    def rules(verdict: str | None) -> DirRules:
+        if verdict is None:
+            return DirRules()
+        return DirRules(**{verdict: [tmp_path]})
+
+    context = _context(tmp_path, read_dirs=rules(read_verdict), write_dirs=rules(write_verdict))
+    path = resolve_within_workspace(context, "f.txt")
+    assert evaluate_write(context, path) == expected
 
 
 def test_evaluate_write_denies_klorb_dir_even_with_empty_write_dirs(tmp_path: Path) -> None:
@@ -232,25 +281,29 @@ def test_untrusted_read_fallback_allows_inside_workspace(tmp_path: Path) -> None
     assert verdict == "allow"
 
 
-def test_read_six_step_chain_order(tmp_path: Path) -> None:
-    def verdict_for(read_dirs: DirRules, write_dirs: DirRules) -> str:
-        context = _context(tmp_path, read_dirs=read_dirs, write_dirs=write_dirs)
+def test_read_uses_only_readdirs(tmp_path: Path) -> None:
+    def verdict_for(read_dirs: DirRules) -> str:
+        context = _context(tmp_path, read_dirs=read_dirs)
         _, verdict = resolve_and_evaluate_read(context, "f.txt")
         return verdict
 
-    empty = DirRules()
-    assert verdict_for(DirRules(deny=[tmp_path]), empty) == "deny"
-    assert verdict_for(DirRules(ask=[tmp_path]), empty) == "ask"
-    assert verdict_for(DirRules(allow=[tmp_path]), empty) == "allow"
-    assert verdict_for(empty, DirRules(deny=[tmp_path])) == "deny"
-    assert verdict_for(empty, DirRules(ask=[tmp_path])) == "ask"
-    assert verdict_for(empty, DirRules(allow=[tmp_path])) == "allow"
+    assert verdict_for(DirRules(deny=[tmp_path])) == "deny"
+    assert verdict_for(DirRules(ask=[tmp_path])) == "ask"
+    assert verdict_for(DirRules(allow=[tmp_path])) == "allow"
 
 
-def test_readdirs_allow_wins_over_matching_writedirs_deny_for_same_path(tmp_path: Path) -> None:
-    context = _context(tmp_path, read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(deny=[tmp_path]))
-    _, verdict = resolve_and_evaluate_read(context, "f.txt")
+def test_read_ignores_writedirs_entirely(tmp_path: Path) -> None:
+    """writeDirs must never widen or narrow a read verdict -- unlike the old six-step chain,
+    readDirs.evaluate() returning None (no match at all) now falls straight through to read's
+    own fallback, never consulting writeDirs."""
+    denied_by_write = _context(tmp_path, write_dirs=DirRules(deny=[tmp_path]))
+    _, verdict = resolve_and_evaluate_read(denied_by_write, "f.txt")
     assert verdict == "allow"
+
+    allowed_by_write_denied_by_read = _context(
+        tmp_path, read_dirs=DirRules(deny=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    _, verdict = resolve_and_evaluate_read(allowed_by_write_denied_by_read, "f.txt")
+    assert verdict == "deny"
 
 
 def test_untrusted_read_denies_klorb_dir_even_with_readdirs_allow_covering_workspace(

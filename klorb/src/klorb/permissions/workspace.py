@@ -63,37 +63,63 @@ def resolve_within_workspace(context: "ToolSetupContext", filename: str) -> Path
     return resolved
 
 
+_VERDICT_STRICTNESS: dict[Verdict, int] = {"deny": 0, "ask": 1, "allow": 2}
+
+
+def _stricter(a: Verdict, b: Verdict) -> Verdict:
+    """The more restrictive of two verdicts: `deny` beats `ask` beats `allow`."""
+    return a if _VERDICT_STRICTNESS[a] <= _VERDICT_STRICTNESS[b] else b
+
+
+def _normalize_for_write(verdict: Verdict | None) -> Verdict:
+    """A table returning `None` for a candidate means that table has no opinion on it. For a
+    write interrogation specifically, "no opinion" is normalized to `"ask"` rather than a
+    permissive default — write access is granted only where something explicitly said `allow`,
+    never merely because nothing said `deny`. (This does not apply to a bare read interrogation;
+    see `resolve_and_evaluate_read()`, which keeps its own, more permissive, no-match fallback.)
+    """
+    return verdict if verdict is not None else "ask"
+
+
 def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     """Evaluate a write to the already-workspace-confined `path` (the caller must already have
-    called `resolve_within_workspace()` to obtain it) against `writeDirs`.
+    called `resolve_within_workspace()` to obtain it).
 
     Checks `klorb.permissions.directory_access.is_privileged_path()` first — unconditional, not
-    part of the `writeDirs` table, so no `writeDirs.allow` entry (even one covering the whole
-    workspace) can re-enable access. Writing there is where klorb's own config/session state
-    lives; letting the agent freely rewrite its own permission grants would let it silently
-    escalate its own access.
+    part of either table, so no `allow` entry (even one covering the whole workspace) can
+    re-enable access. Writing there is where klorb's own config/session state lives; letting the
+    agent freely rewrite its own permission grants would let it silently escalate its own access.
 
-    Falls back to `"allow"` when nothing in `writeDirs` matches, preserving the pre-existing,
-    already-shipped write-tool default that anything inside the workspace is writable.
+    Otherwise, evaluates `path` against both `readDirs` and `writeDirs` independently and takes
+    the stricter of the two (each normalized via `_normalize_for_write()` first): write access
+    can never be more permissive than read access for the same path, so granting write requires
+    an explicit `allow` in *both* tables, not just `writeDirs`. This is deliberately not a
+    fallback to `writeDirs` alone — a path `writeDirs` never mentions is `"ask"`, not `"allow"`,
+    even if `readDirs` allows it.
     """
     workspace_root = context.session_config.workspace_root.resolve()
     if is_privileged_path(path, workspace_root):
         return "deny"
 
+    read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
     write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
-    return write_table.evaluate(path) or "allow"
+    return _stricter(
+        _normalize_for_write(read_table.evaluate(path)),
+        _normalize_for_write(write_table.evaluate(path)))
 
 
 def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tuple[Path, Verdict]:
-    """Resolve `filename` and evaluate it against `readDirs`/`writeDirs`, branching on
+    """Resolve `filename` and evaluate it against `readDirs` only (never `writeDirs` — a write
+    grant does not imply a read grant; see `evaluate_write()` for the converse), branching on
     `context.process_config.is_workspace_trusted`:
 
     - Untrusted (default, and the only state reachable today — see
       `ProcessConfig.is_workspace_trusted`): resolves via `resolve_within_workspace()`, which
       raises `PermissionError` if the result falls outside `workspace_root`, exactly like the
-      write tools. The six-step chain below is then evaluated on that already-in-workspace
-      path, falling back to `"allow"` if nothing matches (mirroring the write tools' zero-config
-      default, since a hard boundary already confines the candidate).
+      write tools. `readDirs` is then evaluated on that already-in-workspace path, falling back
+      to `"allow"` if nothing matches — unlike `evaluate_write()`, this fallback is unaffected
+      by `writeDirs` (a hard boundary already confines the candidate, so a permissive read
+      default here doesn't compromise the write-side invariant).
     - Trusted (not reachable by any code path in this pass): resolves via
       `canonicalize_candidate()`, with no boundary raise, so `readDirs.allow` can grant access
       outside `workspace_root`. Falls back to `"deny"` if nothing matches — no implicit
@@ -102,14 +128,9 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
       `.klorb/klorb-config.json`, not from a rule baked into this evaluator.
 
     In both modes, `klorb.permissions.directory_access.is_privileged_path()` is checked next,
-    unconditionally, before either table — mirroring `evaluate_write()`'s hard deny — so no
+    unconditionally, before the table — mirroring `evaluate_write()`'s hard deny — so no
     `readDirs.allow` entry can grant access to `${workspace_root}/.klorb/` or the process-wide
     `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations.
-
-    Then the six-step chain: `readDirs.deny -> readDirs.ask -> readDirs.allow ->
-    writeDirs.deny -> writeDirs.ask -> writeDirs.allow` (the `readDirs` table is evaluated
-    first; `writeDirs` is only consulted if `readDirs` doesn't match at all, so `readDirs.allow`
-    can grant read-only access to something `writeDirs` denies).
 
     Returns `(path, verdict)` so the caller can enforce the verdict and then open the same
     canonicalized path that was actually checked.
@@ -126,10 +147,7 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
         return path, "deny"
 
     read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
-    write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
     verdict = read_table.evaluate(path)
-    if verdict is None:
-        verdict = write_table.evaluate(path)
     if verdict is None:
         verdict = fallback
     return path, verdict

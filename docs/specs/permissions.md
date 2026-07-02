@@ -11,9 +11,10 @@ how specific it is. The first concrete resource kind is directory access
 `SessionConfig` fields, `read_dirs`/`write_dirs`, exposed on-disk as `readDirs`/`writeDirs`.
 `TODO.md`'s "Permissions" backlog item anticipates further resource kinds (bash commands,
 website access) built on the same abstraction. See
-[the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md) and
-[the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md) for the reasoning
-behind the two most consequential decisions here.
+[the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md),
+[the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md), and
+[the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md) for the
+reasoning behind the most consequential decisions here.
 
 ## How it works
 
@@ -94,17 +95,25 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   hard, non-config-overridable check.
 * `evaluate_write(context, path) -> Verdict` — called on a path that has already passed
   `resolve_within_workspace()`. Checks `directory_access.is_privileged_path()` first (not part
-  of the `writeDirs` table — no `writeDirs.allow` entry, even one covering the whole workspace,
-  can re-enable it; see "`.klorb` self-tampering protection" below), then the `writeDirs` table.
-  Falls back to `"allow"` if nothing matches, preserving the write tools' pre-existing,
-  already-shipped zero-config behavior.
-* `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — branches on
+  of either table — no `allow` entry, even one covering the whole workspace, can re-enable it;
+  see "`.klorb` self-tampering protection" below), then evaluates `path` against *both*
+  `readDirs` and `writeDirs` independently and returns the **stricter** of the two, so write can
+  never be more permissive than read for the same path — see
+  [the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md). Each
+  table's raw result (`"deny"`/`"ask"`/`"allow"`, or `None` if none of its three lists match at
+  all) is normalized via `_normalize_for_write()` before comparing: `None` becomes `"ask"`, not
+  a permissive default, so write is `"allow"` only when *both* tables explicitly say `allow`.
+  This deliberately regresses the write tools' old zero-config default (`"allow"` everywhere in
+  the workspace) to `"ask"` everywhere — an accepted tradeoff; see the ADR.
+* `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — evaluates `path` against
+  `readDirs` alone; `writeDirs` is never consulted for a read (a write grant does not imply a
+  read grant — see `evaluate_write()` for the converse relationship). Branches on
   `context.process_config.is_workspace_trusted`:
   * **Untrusted (default; the only state reachable by any production code path today)**:
     resolves via `resolve_within_workspace()` (same hard boundary as the write tools), then
-    evaluates the **six-step chain** below on that already-in-workspace path, falling back to
-    `"allow"` if nothing matches (mirroring the write tools, since the hard boundary already
-    confines the candidate).
+    evaluates `readDirs` on that already-in-workspace path, falling back to `"allow"` if nothing
+    matches (mirroring the write tools' old default, since the hard boundary already confines
+    the candidate).
   * **Trusted (reserved for a future "trust this workspace" flow — not reachable today outside
     tests)**: resolves via `canonicalize_candidate()`, no boundary raise — so `readDirs.allow`
     can reach outside `workspace_root`. Falls back to `"deny"` if nothing matches: no implicit
@@ -114,16 +123,10 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
     bootstrapping" item), not from a rule baked into this evaluator.
 
   In both modes, `directory_access.is_privileged_path()` is then checked, unconditionally,
-  before either table — the read-side counterpart of `evaluate_write()`'s hard deny, so no
+  before the table — the read-side counterpart of `evaluate_write()`'s hard deny, so no
   `readDirs.allow` entry (trusted mode) or table fallback (untrusted mode) can grant access to
   `${workspace_root}/.klorb/` or the process-wide `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/
   `KLORB_STATE_DIR`.
-
-  Then the **six-step chain**, in both modes: `readDirs.deny → readDirs.ask → readDirs.allow →
-  writeDirs.deny → writeDirs.ask → writeDirs.allow` — `readDirs` is evaluated first (its own
-  three categories); `writeDirs` is only consulted if `readDirs` matched nothing at all. This
-  lets `readDirs.allow` grant read-only access to something `writeDirs` denies, since it's
-  checked (and can win) before `writeDirs.deny` is ever reached.
 
 ### Tool integration
 
@@ -163,6 +166,11 @@ strings), nest under `sessionDefaults` — see `docs/specs/process-and-session-c
   }
 }
 ```
+
+Note that with `writeDirs` empty as above, `/yolo` and `/goforit` are readable but not writable:
+`evaluate_write()` requires an explicit `allow` in *both* tables (see
+[the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md)), so a
+broad `readDirs.allow` with no corresponding `writeDirs.allow` entry never implies write access.
 
 Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are merged by
 **concatenating** each category's array across all five config layers (not replaced) — see
