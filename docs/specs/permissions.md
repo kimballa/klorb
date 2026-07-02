@@ -56,6 +56,18 @@ behind the two most consequential decisions here.
   `/home/the_project` allowed + `/home/the_project/private` denied correctly resolves
   `/home/the_project/foo.txt` to `allow` and `/home/the_project/private/nope.txt` to `deny` —
   `deny` is checked first as a category, and it's the more specific match.
+* `privileged_dirs(workspace_root) -> list[Path]` returns the canonicalized list of every
+  directory klorb's file tools may never read from or write to without a future
+  `EscalatePrivileges` grant: `${workspace_root}/.klorb/` plus the process-wide
+  `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` from `klorb.paths` (resolved on each
+  call, so an env-var override picked up by `klorb.paths` is honored, not baked in at import
+  time). `is_privileged_path(path, workspace_root)` checks a single already-canonicalized
+  candidate against that list using the same equal-or-descendant containment semantics as
+  `DirectoryAccessTable`. Both live here (not in `klorb.permissions.workspace`) since they're
+  pure directory-access data/logic with no `ToolSetupContext` dependency; `evaluate_write()` and
+  `resolve_and_evaluate_read()` are the only callers, each treating a `True` result as an
+  unconditional deny checked ahead of the `writeDirs`/`readDirs` tables — see "`.klorb`
+  self-tampering protection" below.
 * `find_workspace_root(cwd)` searches `cwd` and its ancestors for the nearest directory with an
   immediate-child `.klorb` that `is_dir()` and is not itself a symlink; a disqualified ancestor
   (symlinked or a plain file named `.klorb`) doesn't stop the search, it just keeps walking up.
@@ -81,11 +93,11 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   behavior from before this feature; still used by the three write tools as their first,
   hard, non-config-overridable check.
 * `evaluate_write(context, path) -> Verdict` — called on a path that has already passed
-  `resolve_within_workspace()`. Checks a hardcoded, unconditional deny on
-  `${workspace_root}/.klorb/` first (not part of the `writeDirs` table — no `writeDirs.allow`
-  entry, even one covering the whole workspace, can re-enable it; see "`.klorb` self-tampering
-  protection" below), then the `writeDirs` table. Falls back to `"allow"` if nothing matches,
-  preserving the write tools' pre-existing, already-shipped zero-config behavior.
+  `resolve_within_workspace()`. Checks `directory_access.is_privileged_path()` first (not part
+  of the `writeDirs` table — no `writeDirs.allow` entry, even one covering the whole workspace,
+  can re-enable it; see "`.klorb` self-tampering protection" below), then the `writeDirs` table.
+  Falls back to `"allow"` if nothing matches, preserving the write tools' pre-existing,
+  already-shipped zero-config behavior.
 * `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — branches on
   `context.process_config.is_workspace_trusted`:
   * **Untrusted (default; the only state reachable by any production code path today)**:
@@ -101,7 +113,13 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
     `.klorb/klorb-config.json` when a workspace is trusted (see `TODO.md`'s "project
     bootstrapping" item), not from a rule baked into this evaluator.
 
-  The **six-step chain**, in both modes: `readDirs.deny → readDirs.ask → readDirs.allow →
+  In both modes, `directory_access.is_privileged_path()` is then checked, unconditionally,
+  before either table — the read-side counterpart of `evaluate_write()`'s hard deny, so no
+  `readDirs.allow` entry (trusted mode) or table fallback (untrusted mode) can grant access to
+  `${workspace_root}/.klorb/` or the process-wide `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/
+  `KLORB_STATE_DIR`.
+
+  Then the **six-step chain**, in both modes: `readDirs.deny → readDirs.ask → readDirs.allow →
   writeDirs.deny → writeDirs.ask → writeDirs.allow` — `readDirs` is evaluated first (its own
   three categories); `writeDirs` is only consulted if `readDirs` matched nothing at all. This
   lets `readDirs.allow` grant read-only access to something `writeDirs` denies, since it's
@@ -115,14 +133,21 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   is `ReadFile`'s first-ever confinement — previously it called `open(filename)` directly, with
   no resolution or boundary check at all.
 
-### `.klorb` self-tampering protection
+### Internal privileged paths and `.klorb` self-tampering protection
 
 `${workspace_root}/.klorb/` holds `klorb-config.json` (and, per `TODO.md`, future session
-state). Writes there are implicitly denied, structurally, regardless of `writeDirs` config —
-so the agent can't use `EditFile`/`CreateFile` to rewrite its own permission grants and
-silently escalate its own access on a later config reload. `TODO.md` notes the intended unlock
-path is a future `EscalatePrivileges` tool that grants a temporary, user-confirmed exception
-through the end of a turn; that tool doesn't exist yet, so today the deny is absolute.
+state); `klorb.paths.KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` hold klorb's
+process-wide config, data, and state outside any one workspace (session logs, and whatever else
+lands there per `paths.py`). Both reads and writes to any of these are implicitly denied,
+structurally, regardless of `readDirs`/`writeDirs` config — so the agent can't use
+`ReadFile`/`EditFile`/`CreateFile` to inspect or rewrite its own permission grants (or other
+klorb-internal state) and silently escalate its own access on a later config reload.
+`directory_access.privileged_dirs(workspace_root)` is the single canonicalized list both
+`evaluate_write()` and `resolve_and_evaluate_read()` check via `is_privileged_path()`; adding a
+new internal directory to this protection means adding it there once, not touching each call
+site. `TODO.md` notes the intended unlock path is a future `EscalatePrivileges` tool that grants
+a temporary, user-confirmed exception through the end of a turn; that tool doesn't exist yet, so
+today the deny is absolute.
 
 ## Configuration
 
@@ -178,4 +203,4 @@ Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are m
   what that flow will need (step one of "project bootstrapping" is literally "attempts to
   identify the workspace root").
 * `EscalatePrivileges` — the future tool that would grant a temporary, user-confirmed exception
-  to the `${workspace_root}/.klorb/` write-deny — is `TODO.md`'s item, not built here.
+  to the `privileged_dirs()` read/write deny — is `TODO.md`'s item, not built here.

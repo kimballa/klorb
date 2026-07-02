@@ -88,6 +88,16 @@ The Klorb project is organized as a collection of subprojects:
   * It is less likely that the test should be modified to pass given the updated application
     source. Only make such a change after careful consideration, and be explicit in your
     output to me when you have modified tests in this way.
+* Do not add comments or docstrings that reference TODO.md, or point at "an item"/"a bullet" in
+  it, as a way of explaining why something is incomplete. TODO.md's bullets get reworded,
+  reordered, and removed independently of the code, so a cross-reference like that goes stale
+  silently and is hard to verify as fully scrubbed once the backlog item is actually done.
+  * If there's a specific incomplete case or follow-up tied to the exact line or method you're
+    writing, say so directly inline: `TODO(aaron): <specific, self-contained description of what
+    still needs to happen here>`. It should make sense to a reader who has never opened TODO.md.
+  * Don't use a bare `TODO:` (no owner) for this — always `TODO(aaron): ...`.
+  * This doesn't apply to docs/specs/ or docs/adrs/ files, which are expected to narrate how a
+    feature relates to backlog items as part of explaining the design.
 
 ## Important SDLC CI/CD commands
 
