@@ -156,7 +156,7 @@ def test_writedirs_allow_alone_does_not_grant_write_without_readdirs_allow(tmp_p
 
 def test_klorb_dir_write_implicitly_denied_even_with_no_config(tmp_path: Path) -> None:
     """${workspace_root}/.klorb/ is implicitly write-denied regardless of writeDirs config —
-    the agent must not be able to rewrite its own permission grants. See TODO.md."""
+    the agent must not be able to rewrite its own permission grants."""
     file_path = tmp_path / ".klorb" / "klorb-config.json"
 
     with pytest.raises(PermissionError):

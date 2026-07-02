@@ -108,15 +108,16 @@ class SessionConfig(BaseModel):
     `klorb.permissions.directory_access.find_workspace_root()` via `load_process_config()`. See
     docs/adrs/confine-file-tools-to-workspace-root.md and docs/specs/permissions.md."""
     read_dirs: DirRules = Field(default_factory=DirRules)
-    """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults (alongside
-    `write_dirs`, as a fallthrough) — see `klorb.permissions.directory_access` and
-    docs/specs/permissions.md. Lives on `SessionConfig`, not `ProcessConfig`, because a future
-    "ask" flow will let a user approve a rule for the rest of the session — the same reason
+    """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults — see
+    `klorb.permissions.directory_access` and docs/specs/permissions.md. Lives on
+    `SessionConfig`, not `ProcessConfig`, because a future "ask" flow will let a user approve a
+    rule for the rest of the session — the same reason
     `max_tool_calls_per_turn`/`max_tool_calls_per_session` live here too."""
     write_dirs: DirRules = Field(default_factory=DirRules)
     """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
-    `ReplaceAll`, `CreateFile`) consult in addition to the hard `workspace_root` boundary — see
-    `klorb.permissions.directory_access` and docs/specs/permissions.md."""
+    `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
+    `workspace_root` boundary — see `klorb.permissions.workspace.evaluate_write` and
+    docs/specs/permissions.md."""
 
 
 class Session:

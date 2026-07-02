@@ -131,8 +131,8 @@ def test_custom_max_lines_reflected_in_description(tmp_path: Path) -> None:
 
 
 def test_zero_config_still_works_inside_workspace(tmp_path: Path) -> None:
-    """Regression pin: with no readDirs/writeDirs configured, ReadFile still works exactly as
-    it did before this feature for any file inside workspace_root."""
+    """With no readDirs/writeDirs configured, ReadFile can read any file inside
+    workspace_root."""
     file_path = _write_lines(tmp_path, 3)
 
     result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
@@ -141,8 +141,8 @@ def test_zero_config_still_works_inside_workspace(tmp_path: Path) -> None:
 
 
 def test_untrusted_zero_config_denies_outside_workspace(tmp_path: Path) -> None:
-    """Behavior change: ReadFile previously had zero confinement; by default (untrusted
-    workspace) it's now hard-confined to workspace_root, exactly like the write tools."""
+    """By default (untrusted workspace), ReadFile is hard-confined to workspace_root, exactly
+    like the write tools."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside.txt"
@@ -209,8 +209,8 @@ def test_readdirs_allow_wins_over_matching_writedirs_deny(tmp_path: Path) -> Non
 
 
 def test_trusted_readdirs_allow_reaches_outside_workspace(tmp_path: Path) -> None:
-    """New capability: a trusted workspace's readDirs.allow can grant access outside
-    workspace_root — not reachable via any code path outside tests today, since nothing sets
+    """A trusted workspace's readDirs.allow can grant access outside workspace_root — not
+    reachable via any code path outside tests today, since nothing sets
     ProcessConfig.is_workspace_trusted True in production code."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
