@@ -18,7 +18,10 @@ paths or calling `logging.basicConfig` itself.
   * `KLORB_STATE_DIR` — defaults to `~/.local/state/klorb`, overridable via `KLORB_STATE_DIR`.
   * `SESSION_LOGS_DIR` — always `KLORB_STATE_DIR / "session-logs"`.
   * Each env var, where set, is interpreted as a filesystem path and takes precedence over
-    the default. See [the XDG-style directories ADR](
+    the default. A leading `~`/`~user` in the override is expanded to the invoking user's
+    home directory (`Path.expanduser()`, in `_dir_from_env()`), so `KLORB_CONFIG_DIR=~/elsewhere`
+    behaves the same as supplying an absolute path — every reader of these constants gets the
+    expansion for free rather than needing to repeat it. See [the XDG-style directories ADR](
     ../adrs/use-xdg-style-dirs-overridable-by-klorb-env-vars.md) for why these are
     klorb-specific env vars rather than the shared `XDG_*` ones.
 * `klorb.logging_config` (`klorb/src/klorb/logging_config.py`) exposes:

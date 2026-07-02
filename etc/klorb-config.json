@@ -10,8 +10,62 @@
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 50,
     "tools.maxCallsPerSession": 200,
-    "readDirs": { "deny": [], "ask": [], "allow": [] },
-    "writeDirs": { "deny": [], "ask": [], "allow": [] }
+    "readDirs": {
+      "deny": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.azure",
+        "~/.config/gcloud",
+        "~/.oci",
+        "~/.ibmcloud",
+        "~/.kube",
+        "~/.terraform.d",
+        "~/.gnupg",
+        "~/.age",
+        "~/.config/sops",
+        "~/.docker",
+        "~/.config/containers",
+        "~/.config/gh",
+        "~/.config/glab-cli",
+        "~/.config/op",
+        "~/.password-store",
+        "~/.local/share/keyrings",
+        "~/.pki",
+        "/etc/ssh",
+        "/etc/sudoers.d",
+        "/etc/ssl/private"
+      ],
+      "ask": [],
+      "allow": []
+    },
+    "writeDirs": {
+      "deny": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.azure",
+        "~/.config/gcloud",
+        "~/.oci",
+        "~/.ibmcloud",
+        "~/.kube",
+        "~/.terraform.d",
+        "~/.gnupg",
+        "~/.age",
+        "~/.config/sops",
+        "~/.docker",
+        "~/.config/containers",
+        "~/.config/gh",
+        "~/.config/glab-cli",
+        "~/.config/op",
+        "~/.password-store",
+        "~/.local/share/keyrings",
+        "~/.pki",
+        "/etc/ssh",
+        "/etc/sudoers.d",
+        "/etc/ssl/private"
+      ],
+      "ask": [],
+      "allow": []
+    }
   },
 
   "thinking.tokenBudgets": {

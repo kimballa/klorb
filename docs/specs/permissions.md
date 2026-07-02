@@ -46,11 +46,16 @@ behind the two most consequential decisions here.
   place, so `SessionConfig.model_copy()`'s shallow copy sharing the underlying list objects
   between a template and its cloned sessions is harmless.
 * `DirectoryAccessTable(PermissionsTable[Path])` canonicalizes every rule path at construction
-  time via `canonicalize_dir(path, workspace_root)`: a relative rule path is joined onto
-  `workspace_root` first (so `Allow("..")` means the same thing as
+  time via `canonicalize_dir(path, workspace_root)`: a leading `~`/`~user` is expanded to the
+  invoking user's home directory first (`Path.expanduser()`), then a still-relative rule path is
+  joined onto `workspace_root` (so `Allow("..")` means the same thing as
   `Allow("<workspace_root>/..")`, not the process's current working directory), then the result
   is symlink- and `..`-resolved (`Path.resolve(strict=False)`, same algorithm
-  `resolve_within_workspace` uses). It matches a candidate (which the caller must have already
+  `resolve_within_workspace` uses). `canonicalize_dir` is the single canonicalization primitive
+  for the whole permissions system — `canonicalize_candidate` (below) calls it directly rather
+  than duplicating the algorithm, so a model-supplied tool-call `filename` gets the same `~`
+  expansion and workspace-relative join as a config-file rule path. It matches a candidate
+  (which the caller must have already
   canonicalized the same way) via ancestor-or-equal containment:
   `candidate == rule or candidate.is_relative_to(rule)`. This is why
   `/home/the_project` allowed + `/home/the_project/private` denied correctly resolves
@@ -86,8 +91,13 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
 `ToolSetupContext`, needed only as a type annotation in this module, is imported under
 `TYPE_CHECKING` to avoid that cycle.)
 
-* `canonicalize_candidate(context, filename) -> Path` — joins a relative `filename` onto
-  `workspace_root`, resolves symlinks/`..`, no boundary check.
+* `canonicalize_candidate(context, filename) -> Path` — delegates to
+  `directory_access.canonicalize_dir()`: expands a leading `~`/`~user`, joins a still-relative
+  `filename` onto `workspace_root`, resolves symlinks/`..`, no boundary check. This means a
+  model-supplied `filename` of `"~/.ssh/id_rsa"` resolves to the real home directory, not a
+  literal `~` subdirectory under `workspace_root` — so it correctly falls outside the workspace
+  boundary (`resolve_within_workspace()` raises) rather than silently resolving to a
+  nonexistent in-workspace path.
 * `resolve_within_workspace(context, filename) -> Path` — canonicalizes via the above, then
   raises `PermissionError` if the result isn't `workspace_root` or beneath it. Unchanged
   behavior from before this feature; still used by the three write tools as their first,

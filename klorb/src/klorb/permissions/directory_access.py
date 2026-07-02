@@ -40,17 +40,27 @@ class DirRules(BaseModel):
 
 
 def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
-    """Resolve `path` to an absolute, symlink- and `..`-canonicalized form, matching
-    `canonicalize_candidate`'s algorithm: a relative `path` is joined onto `workspace_root`
-    first, so a rule like `Allow("..")` means the same thing as
-    `Allow("<workspace_root>/..")`, not whatever the process's current working directory
-    happens to be. `workspace_root` itself is resolved first, so this is well-defined even if
-    the caller passes it unresolved.
+    """Resolve `path` to an absolute, symlink- and `..`-canonicalized form. This is the single
+    canonicalization primitive for every path-shaped value in the permissions system —
+    `DirectoryAccessTable` uses it for `readDirs`/`writeDirs` rule paths below, and
+    `klorb.permissions.workspace.canonicalize_candidate` calls it directly (rather than
+    duplicating the algorithm) so a model-supplied tool-call `filename` is canonicalized
+    identically to a config-file rule path.
+
+    A leading `~`/`~user` component is expanded first (`Path.expanduser()`), so `"~/.ssh"`
+    means the invoking user's home directory regardless of `workspace_root` — this must happen
+    before the relative-path check below, since an unexpanded `~...` path is not absolute and
+    would otherwise be (wrongly) joined onto `workspace_root` as a literal `~` subdirectory.
+    After that, a still-relative `path` is joined onto `workspace_root` first, so a rule like
+    `Allow("..")` means the same thing as `Allow("<workspace_root>/..")`, not whatever the
+    process's current working directory happens to be. `workspace_root` itself is resolved
+    first, so this is well-defined even if the caller passes it unresolved.
 
     Note (TOCTOU): the returned path is canonical as of this call, not guaranteed to still
     point at the same target by the time a caller actually performs I/O on it — see
     `klorb.permissions.workspace.canonicalize_candidate`'s docstring.
     """
+    path = path.expanduser()
     if not path.is_absolute():
         path = workspace_root.resolve(strict=False) / path
     return path.resolve(strict=False)
