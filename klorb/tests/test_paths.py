@@ -54,3 +54,18 @@ def test_env_var_overrides_state_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     finally:
         monkeypatch.undo()
         importlib.reload(paths)
+
+
+def test_env_var_override_with_tilde_expands_to_home_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(paths.KLORB_CONFIG_DIR_ENV_VAR, "~/custom-klorb-config")
+    importlib.reload(paths)
+    try:
+        assert paths.KLORB_CONFIG_DIR == home / "custom-klorb-config"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(paths)
