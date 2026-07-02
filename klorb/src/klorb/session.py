@@ -35,18 +35,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_CALL_ROUNDS = 10
+MAX_TOOL_CALL_ROUNDS = 200
 """Safety cap on how many model-to-tool round trips one turn will run before giving up, in
 case a model gets stuck repeatedly requesting tool calls without ever returning a final
 answer. Unlike `SessionConfig.max_tool_calls_per_turn`/`max_tool_calls_per_session`, this
 isn't user-configurable or interactively raisable — it's a hard backstop."""
 
-DEFAULT_MAX_TOOL_CALLS_PER_TURN = 5
+DEFAULT_MAX_TOOL_CALLS_PER_TURN = 50
 """Default value of `SessionConfig.max_tool_calls_per_turn`: how many individual tool calls
 (across every round) one turn will execute before asking the user whether to keep going (see
 `Session._confirm_limit_increase`)."""
 
-DEFAULT_MAX_TOOL_CALLS_PER_SESSION = 25
+DEFAULT_MAX_TOOL_CALLS_PER_SESSION = 200
 """Default value of `SessionConfig.max_tool_calls_per_session`: how many individual tool
 calls a `Session` will execute across its entire lifetime (every turn combined) before asking
 the user whether to keep going (see `Session._confirm_limit_increase`)."""

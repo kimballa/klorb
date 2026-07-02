@@ -31,7 +31,7 @@ or slicing a superset.
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
   `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
-  `DEFAULT_MAX_TOOL_CALLS_PER_SESSION` — `5`/`25`) — safety caps `Session._run_tool_calls()`
+  `DEFAULT_MAX_TOOL_CALLS_PER_SESSION` — `50`/`200`) — safety caps `Session._run_tool_calls()`
   enforces on individual tool-call dispatches. These live on `SessionConfig`, not
   `ProcessConfig`, specifically because reaching one can raise it: `Session` may ask (via an
   `on_tool_call_limit_reached` callback — see [[session-and-turns]]) whether to double it and
@@ -134,8 +134,8 @@ sit as flat keys alongside it at the top level:
     "model": "openai/gpt-4o-mini",
     "thinking.enabled": true,
     "thinking.effort": "high",
-    "tools.maxCallsPerTurn": 5,
-    "tools.maxCallsPerSession": 25,
+    "tools.maxCallsPerTurn": 50,
+    "tools.maxCallsPerSession": 200,
     "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo"]},
     "writeDirs": {"deny": [], "ask": [], "allow": []}
   },
