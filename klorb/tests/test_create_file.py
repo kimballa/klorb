@@ -13,10 +13,20 @@ from klorb.tools.create_file import CreateFileTool
 from klorb.tools.setup_context import ToolSetupContext
 
 
-def _context(workspace_root: Path, *, write_dirs: DirRules | None = None) -> ToolSetupContext:
+def _context(
+    workspace_root: Path, *, read_dirs: DirRules | None = None, write_dirs: DirRules | None = None,
+) -> ToolSetupContext:
+    """Defaults both `readDirs`/`writeDirs` to allowing all of `workspace_root`, since
+    `evaluate_write()` now requires an explicit allow in *both* tables (see
+    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md) and most tests here are
+    about CreateFile's own logic, not the permission system -- only the "Permission-table
+    integration" tests below pass an explicit override to narrow that default."""
     return ToolSetupContext(
         process_config=ProcessConfig(),
-        session_config=SessionConfig(workspace_root=workspace_root, write_dirs=write_dirs or DirRules()))
+        session_config=SessionConfig(
+            workspace_root=workspace_root,
+            read_dirs=read_dirs or DirRules(allow=[workspace_root]),
+            write_dirs=write_dirs or DirRules(allow=[workspace_root])))
 
 
 def test_creates_a_new_file(tmp_path: Path) -> None:
