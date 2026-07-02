@@ -29,8 +29,11 @@
   `klorb.session` (for `SessionConfig`) — and `klorb.process_config` previously imported
   `klorb.tools.read_file.MAX_LINES` for its own default value, which would have made this
   import circular (`setup_context -> process_config -> read_file -> tool -> setup_context`).
-  `ProcessConfig.read_file_max_lines`'s default is now a literal duplicated in
-  `process_config.py` (`DEFAULT_READ_FILE_MAX_LINES = 200`, next to
-  `klorb.tools.read_file.MAX_LINES = 200`) instead of imported, which is a small, worthwhile
-  price for keeping `klorb.tools` unable to reach back into `klorb.process_config`'s
-  dependents.
+  The fix wasn't to duplicate the constant (that was tried once and reverted — see
+  `git log` on `process_config.py`'s `DEFAULT_READ_FILE_MAX_LINES`) but to flip which module
+  owns it: `process_config.py`'s `DEFAULT_READ_FILE_MAX_LINES` is now the *only* definition,
+  and `klorb.tools.read_file` has no constant of its own at all (it reads
+  `context.process_config.read_file_max_lines` at construction time, same as any other
+  process-config-backed tool setting). Since `ProcessConfig` never imports from `klorb.tools`
+  in the first place — the whole point of this ADR — nothing loops back, and there's exactly
+  one place this default can drift out of date: nowhere, because there's only one copy.

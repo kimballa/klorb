@@ -35,26 +35,25 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_CALL_ROUNDS = 10
 """Safety cap on how many model-to-tool round trips one turn will run before giving up, in
 case a model gets stuck repeatedly requesting tool calls without ever returning a final
-answer."""
+answer. Unlike `SessionConfig.max_tool_calls_per_turn`/`max_tool_calls_per_session`, this
+isn't user-configurable or interactively raisable — it's a hard backstop."""
 
 DEFAULT_MAX_TOOL_CALLS_PER_TURN = 5
-"""Default safety cap on how many individual tool calls (across every round) one turn will
-execute before giving up. Overridable per process via `ProcessConfig.max_tool_calls_per_turn`
-(see [[process-and-session-config]]); `Session` falls back to this default when none is
-given."""
+"""Default value of `SessionConfig.max_tool_calls_per_turn`: how many individual tool calls
+(across every round) one turn will execute before asking the user whether to keep going (see
+`Session._confirm_limit_increase`)."""
 
 DEFAULT_MAX_TOOL_CALLS_PER_SESSION = 25
-"""Default safety cap on how many individual tool calls a `Session` will execute across its
-entire lifetime (every turn combined). Overridable per process via
-`ProcessConfig.max_tool_calls_per_session`; `Session` falls back to this default when none is
-given."""
+"""Default value of `SessionConfig.max_tool_calls_per_session`: how many individual tool
+calls a `Session` will execute across its entire lifetime (every turn combined) before asking
+the user whether to keep going (see `Session._confirm_limit_increase`)."""
 
 
 class ToolCallLimitExceeded(Exception):
     """Raised when a turn exceeds one of the tool-calling safety caps without the model
-    returning a final answer: more than `MAX_TOOL_CALL_ROUNDS` model-to-tool round trips, more
-    than `max_tool_calls_per_turn` individual tool calls in that turn, or more than
-    `max_tool_calls_per_session` individual tool calls across the session's lifetime."""
+    returning a final answer: more than `MAX_TOOL_CALL_ROUNDS` model-to-tool round trips, or
+    the user declined to raise `max_tool_calls_per_turn`/`max_tool_calls_per_session` past
+    where it was exceeded (see `Session._confirm_limit_increase`)."""
 
 
 # Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids
@@ -94,6 +93,8 @@ class SessionConfig(BaseModel):
     interactive: bool = True
     thinking_enabled: bool = True
     thinking_effort: ThinkingEffort = "high"
+    max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    max_tool_calls_per_session: int = DEFAULT_MAX_TOOL_CALLS_PER_SESSION
 
 
 class Session:
@@ -112,8 +113,6 @@ class Session:
         session_id: str | None = None,
         thinking_token_budgets: dict[ThinkingEffort, int] | None = None,
         tool_registry: "ToolRegistry | None" = None,
-        max_tool_calls_per_turn: int | None = None,
-        max_tool_calls_per_session: int | None = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
@@ -121,8 +120,6 @@ class Session:
         self._model_registry = model_registry or ModelRegistry()
         self._thinking_token_budgets = thinking_token_budgets or THINKING_EFFORT_TOKEN_BUDGETS
         self._tool_registry = tool_registry
-        self._max_tool_calls_per_turn = max_tool_calls_per_turn or DEFAULT_MAX_TOOL_CALLS_PER_TURN
-        self._max_tool_calls_per_session = max_tool_calls_per_session or DEFAULT_MAX_TOOL_CALLS_PER_SESSION
         self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
         self._messages: list[Message] = []
@@ -234,17 +231,61 @@ class Session:
             timestamp=datetime.now(),
         ))
 
-    def _run_tool_calls(self, tool_use_message: Message) -> None:
+    def _confirm_limit_increase(
+        self,
+        scope: Literal["turn", "session"],
+        current_count: int,
+        current_limit: int,
+        on_tool_call_limit_reached: Callable[[str], bool] | None,
+    ) -> bool:
+        """A `max_tool_calls_per_{scope}` limit was just reached. Ask (via
+        `on_tool_call_limit_reached`, if given) whether to double it and keep going.
+
+        Returns `False` without asking anything if `on_tool_call_limit_reached` is `None`,
+        since there's no way to interactively confirm outside e.g. the TUI (see
+        [[terminal-repl]]'s `ToolCallLimitScreen`) — a one-shot CLI prompt has nobody to ask.
+        Otherwise calls it with a human-readable prompt describing the limit reached, and:
+        on `True`, doubles `self.config.max_tool_calls_per_{scope}` for the rest of this
+        `Session`'s lifetime (not just this turn) and returns `True`; on `False`, returns
+        `False` without changing the limit.
+        """
+        logger.warning(
+            "%s tool-call limit reached (%d/%d).", scope.capitalize(), current_count, current_limit)
+        if on_tool_call_limit_reached is None:
+            return False
+        prompt = (
+            f"This task has made {current_count} tool calls this {scope}, reaching its "
+            f"configured limit of {current_limit}. Continue tool use?"
+        )
+        if not on_tool_call_limit_reached(prompt):
+            logger.info("User declined to raise the %s tool-call limit; aborting turn.", scope)
+            return False
+        new_limit = current_limit * 2
+        if scope == "turn":
+            self.config.max_tool_calls_per_turn = new_limit
+        else:
+            self.config.max_tool_calls_per_session = new_limit
+        logger.info("User approved continuing; %s tool-call limit doubled to %d.", scope, new_limit)
+        return True
+
+    def _run_tool_calls(
+        self,
+        tool_use_message: Message,
+        on_tool_call_limit_reached: Callable[[str], bool] | None,
+    ) -> None:
         """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
         via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
         per call — carrying that call's result, or a description of the error if the tool
         was unknown or raised — so the next round can send it back to the model.
 
-        Before executing each call, checks it against `max_tool_calls_per_turn` (resets to
-        `0` at the start of every `_dispatch_turn`) and `max_tool_calls_per_session` (never
-        reset; accumulates for the life of this `Session`), raising `ToolCallLimitExceeded`
-        without executing it (or any later call in `tool_use_message.tool_calls`) if either
-        would be exceeded.
+        Before executing each call, checks it against `config.max_tool_calls_per_turn`
+        (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`)
+        and `config.max_tool_calls_per_session` (`self._tool_calls_this_session`; never
+        reset, accumulates for the life of this `Session`). Reaching either asks
+        `_confirm_limit_increase()` whether to double it and keep going; if that returns
+        `False` (declined, or `on_tool_call_limit_reached` wasn't given), raises
+        `ToolCallLimitExceeded` without executing this call (or any later call in
+        `tool_use_message.tool_calls`).
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -252,26 +293,27 @@ class Session:
             "Dispatching %d tool call(s) requested by the model: %s",
             len(tool_use_message.tool_calls), [call.name for call in tool_use_message.tool_calls])
         for call in tool_use_message.tool_calls:
-            if self._tool_calls_this_turn >= self._max_tool_calls_per_turn:
-                logger.warning(
-                    "Turn tool-call limit reached (%d/%d); refusing to dispatch %s(%s).",
-                    self._tool_calls_this_turn, self._max_tool_calls_per_turn, call.name, call.arguments)
-                raise ToolCallLimitExceeded(
-                    f"Exceeded {self._max_tool_calls_per_turn} tool call(s) in one turn.")
-            if self._tool_calls_this_session >= self._max_tool_calls_per_session:
-                logger.warning(
-                    "Session tool-call limit reached (%d/%d); refusing to dispatch %s(%s).",
-                    self._tool_calls_this_session, self._max_tool_calls_per_session, call.name,
-                    call.arguments)
-                raise ToolCallLimitExceeded(
-                    f"Exceeded {self._max_tool_calls_per_session} tool call(s) in this session.")
+            if self._tool_calls_this_turn >= self.config.max_tool_calls_per_turn:
+                if not self._confirm_limit_increase(
+                    "turn", self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
+                    on_tool_call_limit_reached,
+                ):
+                    raise ToolCallLimitExceeded(
+                        f"Exceeded {self.config.max_tool_calls_per_turn} tool call(s) in one turn.")
+            if self._tool_calls_this_session >= self.config.max_tool_calls_per_session:
+                if not self._confirm_limit_increase(
+                    "session", self._tool_calls_this_session, self.config.max_tool_calls_per_session,
+                    on_tool_call_limit_reached,
+                ):
+                    raise ToolCallLimitExceeded(
+                        f"Exceeded {self.config.max_tool_calls_per_session} tool call(s) in this session.")
 
             self._tool_calls_this_turn += 1
             self._tool_calls_this_session += 1
             logger.info(
                 "Tool call %d/%d this turn, %d/%d this session: %s(%s) [id=%s]",
-                self._tool_calls_this_turn, self._max_tool_calls_per_turn,
-                self._tool_calls_this_session, self._max_tool_calls_per_session,
+                self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
+                self._tool_calls_this_session, self.config.max_tool_calls_per_session,
                 call.name, call.arguments, call.id,
             )
             try:
@@ -294,8 +336,8 @@ class Session:
             ))
         logger.info(
             "Finished dispatching tool calls (%d/%d this turn, %d/%d this session).",
-            self._tool_calls_this_turn, self._max_tool_calls_per_turn,
-            self._tool_calls_this_session, self._max_tool_calls_per_session,
+            self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
+            self._tool_calls_this_session, self.config.max_tool_calls_per_session,
         )
 
     def _send_and_receive(
@@ -421,6 +463,7 @@ class Session:
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        on_tool_call_limit_reached: Callable[[str], bool] | None = None,
     ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
 
@@ -476,7 +519,7 @@ class Session:
                     raise ToolCallLimitExceeded(
                         f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
                 logger.info("Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
-                self._run_tool_calls(reply)
+                self._run_tool_calls(reply, on_tool_call_limit_reached)
                 reply, result = self._send_and_receive(
                     list(self._messages), system_prompt, model_name, reasoning, tools,
                     on_chunk, on_thinking_chunk, cancel_event)
@@ -505,6 +548,7 @@ class Session:
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        on_tool_call_limit_reached: Callable[[str], bool] | None = None,
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
@@ -515,7 +559,9 @@ class Session:
         `on_thinking_chunk` is given, it is invoked with each reasoning/thinking text delta.
         If `cancel_event` is given and set while the response is streaming in, the turn is
         aborted: `ResponseAborted` is raised and the user `Message` appended here is removed
-        from history again (see `_dispatch_turn`).
+        from history again (see `_dispatch_turn`). If `on_tool_call_limit_reached` is given,
+        it's invoked (with a human-readable prompt) when a tool-call safety limit is reached,
+        to ask whether to double it and keep going — see `_confirm_limit_increase`.
         """
         tokens_before = self._tokens_recorded_so_far()
         user_message = Message(
@@ -530,12 +576,13 @@ class Session:
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
         return self._dispatch_turn(
             user_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
-            cancel_event=cancel_event)
+            cancel_event=cancel_event, on_tool_call_limit_reached=on_tool_call_limit_reached)
 
     def retry_last_turn(
         self,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        on_tool_call_limit_reached: Callable[[str], bool] | None = None,
     ) -> str:
         """Resend the most recently errored user turn's content, mutating that same `Message`.
 
@@ -556,7 +603,8 @@ class Session:
         errored_message.processing_state = "pending"
         logger.info("Retrying errored turn for %s", self.active_model_name())
         return self._dispatch_turn(
-            errored_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)
+            errored_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
+            on_tool_call_limit_reached=on_tool_call_limit_reached)
 
     def run_one_shot(
         self,

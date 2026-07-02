@@ -65,8 +65,10 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   `start_line`/`end_line` (inclusive). `start_line` of `0` or omitted means start at the
   beginning of the file; `end_line` omitted means read up to the per-call line cap from
   `start_line`. At most `context.process_config.read_file_max_lines` lines (default
-  `MAX_LINES`, 200) are returned per call regardless of the requested range, so an agent
-  pages through larger files with successive calls. The result is a dict: `filename`, the
+  `process_config.DEFAULT_READ_FILE_MAX_LINES`, 200 — the sole canonical source of this
+  default; `klorb.tools.read_file` has no constant of its own) are returned per call
+  regardless of the requested range, so an agent pages through larger files with successive
+  calls. The result is a dict: `filename`, the
   actual `start_line`/`end_line` returned, the file's `total_lines`, a `truncated` flag (true
   when more content exists past `end_line`), and `content` — a single string with one
   `"N|line text"` entry per line, newline-separated.

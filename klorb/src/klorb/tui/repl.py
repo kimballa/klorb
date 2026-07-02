@@ -12,9 +12,12 @@ from textual import work
 from textual.app import App
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.containers import Vertical
 from textual.containers import VerticalScroll
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.widget import Widget
+from textual.widgets import Button
 from textual.widgets import Footer
 from textual.widgets import Header
 from textual.widgets import Markdown
@@ -128,6 +131,65 @@ class PromptInput(TextArea):
         await super()._on_key(event)
 
 
+class ToolCallLimitScreen(ModalScreen[bool]):
+    """Modal asking whether to double a tool-call safety limit and keep going, shown when
+    `Session` reports one has been reached (see `ReplApp._on_tool_call_limit_reached`).
+    "Yes" or Enter (via the focused "Yes" button) confirms; "No" or Escape declines.
+    """
+
+    CSS = """
+    ToolCallLimitScreen {
+        align: center middle;
+    }
+
+    ToolCallLimitScreen Vertical {
+        width: auto;
+        max-width: 60;
+        height: auto;
+        border: round $accent;
+        padding: 1 2;
+    }
+
+    #tool-call-limit-message {
+        margin: 0 0 1 0;
+    }
+
+    #tool-call-limit-buttons {
+        align: center middle;
+        height: auto;
+    }
+
+    #tool-call-limit-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [("escape", "decline", "No")]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(self._message, id="tool-call-limit-message"),
+            Horizontal(
+                Button("Yes", id="tool-call-limit-yes", variant="primary"),
+                Button("No", id="tool-call-limit-no"),
+                id="tool-call-limit-buttons",
+            ),
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#tool-call-limit-yes", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "tool-call-limit-yes")
+
+    def action_decline(self) -> None:
+        self.dismiss(False)
+
+
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
@@ -205,8 +267,6 @@ class ReplApp(App[None]):
                 new_config,
                 thinking_token_budgets=self._process_config.thinking_token_budgets,
                 tool_registry=ToolRegistry(self._process_config, new_config),
-                max_tool_calls_per_turn=self._process_config.max_tool_calls_per_turn,
-                max_tool_calls_per_session=self._process_config.max_tool_calls_per_session,
             )
         self._session = session
         self._initial_message = initial_message
@@ -320,8 +380,6 @@ class ReplApp(App[None]):
             model_registry=self._session.model_registry,
             thinking_token_budgets=self._process_config.thinking_token_budgets,
             tool_registry=ToolRegistry(self._process_config, new_config),
-            max_tool_calls_per_turn=self._process_config.max_tool_calls_per_turn,
-            max_tool_calls_per_session=self._process_config.max_tool_calls_per_session,
         )
 
         if self._session_log_enabled:
@@ -397,7 +455,7 @@ class ReplApp(App[None]):
         try:
             response_text = self._session.send_turn(
                 prompt_text, on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
-                cancel_event=cancel_event)
+                cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached)
         except ResponseAborted:
             self.call_from_thread(self._handle_aborted_response, mounted_widgets)
         except Exception as exc:
@@ -427,6 +485,28 @@ class ReplApp(App[None]):
         history.mount(widget)
         history.scroll_end(animate=False)
         return widget, label_widget
+
+    async def _confirm_tool_call_limit(self, message: str) -> bool:
+        """Show `ToolCallLimitScreen` with `message` and wait for the user's yes/no answer.
+
+        Must be run on the app's own event loop, since it awaits the screen's dismissal —
+        `_on_tool_call_limit_reached` is what the worker thread actually calls, via
+        `call_from_thread`, to get here.
+        """
+        return await self.push_screen_wait(ToolCallLimitScreen(message))
+
+    def _on_tool_call_limit_reached(self, message: str) -> bool:
+        """`Session`'s `on_tool_call_limit_reached` callback: block the worker thread running
+        `Session.send_turn()` until the user answers `ToolCallLimitScreen(message)`.
+        """
+        # mypy can't solve App.call_from_thread's `CallThreadReturnType` TypeVar against a
+        # `Callable[[str], Coroutine[Any, Any, bool]]` argument (a stub-modeling limitation,
+        # not a real type error: Textual's own runtime `invoke()` awaits coroutine callbacks
+        # like any other `Callable[..., T | Awaitable[T]]` argument, and this is exercised by
+        # test_tui_repl.py's ToolCallLimitScreen tests).
+        callback = self._confirm_tool_call_limit
+        confirmed: bool = self.call_from_thread(callback, message)  # type: ignore[arg-type]
+        return confirmed
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""

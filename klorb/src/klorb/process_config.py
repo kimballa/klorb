@@ -14,8 +14,6 @@ from pydantic import BaseModel
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
 from klorb.schema_envelope import read_versioned_json
-from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_SESSION
-from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
@@ -23,11 +21,9 @@ from klorb.session import ThinkingEffort
 logger = logging.getLogger(__name__)
 
 DEFAULT_READ_FILE_MAX_LINES = 200
-"""Mirrors `klorb.tools.read_file.MAX_LINES`. Duplicated rather than imported so
-`ProcessConfig` doesn't depend on a specific tool module: `klorb.tools.setup_context`
-(which every `Tool` implementation, including `ReadFileTool`, is built from) holds a
-`ProcessConfig` reference, so the reverse import would be circular. See
-docs/adrs/tool-setup-context-carries-process-and-session-config.md."""
+"""`ReadFileTool`'s per-call page size default; the canonical source of this value —
+`klorb.tools.read_file` has no constant of its own, it reads `ProcessConfig.read_file_max_lines`
+via `ToolSetupContext` at construction time instead."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_FILENAME = "klorb-config.json"
@@ -45,6 +41,8 @@ SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
     "thinking.effort": "thinking_effort",
+    "tools.maxCallsPerTurn": "max_tool_calls_per_turn",
+    "tools.maxCallsPerSession": "max_tool_calls_per_session",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
@@ -55,8 +53,6 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "thinking.tokenBudgets": "thinking_token_budgets",
     "terminal.input.maxLines": "prompt_input_max_lines",
     "tools.readFile.maxLines": "read_file_max_lines",
-    "tools.maxCallsPerTurn": "max_tool_calls_per_turn",
-    "tools.maxCallsPerSession": "max_tool_calls_per_session",
     "providers.openrouter.baseUrl": "openrouter_base_url",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
@@ -83,8 +79,6 @@ class ProcessConfig(BaseModel):
     prompt_input_max_lines: int = DEFAULT_PROMPT_INPUT_MAX_LINES
     thinking_token_budgets: dict[ThinkingEffort, int] = dict(THINKING_EFFORT_TOKEN_BUDGETS)
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
-    max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
-    max_tool_calls_per_session: int = DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     openrouter_base_url: str = OPENROUTER_BASE_URL
 
 

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import fixtures.sample_models as sample_models_package
+import fixtures.sample_tools as sample_tools_package
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown
 from textual.widgets import Static
@@ -17,16 +18,19 @@ from klorb.api_provider import ProviderResponse
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.message import Message
+from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import SessionConfig
+from klorb.tools.registry import ToolRegistry
 from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import STATUS_BAR_ID
 from klorb.tui.repl import THINKING_LABEL
 from klorb.tui.repl import PromptInput
 from klorb.tui.repl import ReplApp
+from klorb.tui.repl import ToolCallLimitScreen
 from klorb.tui.repl import format_token_count
 
 
@@ -37,6 +41,11 @@ def _session(provider: MagicMock, model: str = "some/model") -> Session:
     return Session(SessionConfig(model=model), provider=provider, session_id=TEST_SESSION_ID)
 
 
+def _session_with_tools(provider: MagicMock, config: SessionConfig) -> Session:
+    tool_registry = ToolRegistry(ProcessConfig(), config, package=sample_tools_package)
+    return Session(config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry)
+
+
 def _reply(content: str = "model reply") -> ProviderResponse:
     return ProviderResponse(
         message=Message(
@@ -45,6 +54,21 @@ def _reply(content: str = "model reply") -> ProviderResponse:
             num_tokens=1,
             processing_state="complete",
             timestamp=datetime.now(),
+        ),
+        prompt_tokens=1,
+    )
+
+
+def _tool_call_reply(calls: list[tuple[str, str, str]]) -> ProviderResponse:
+    return ProviderResponse(
+        message=Message(
+            content="",
+            role="assistant",
+            num_tokens=1,
+            processing_state="complete",
+            timestamp=datetime.now(),
+            finish_reason="tool_calls",
+            tool_calls=[ToolCallRequest(id=id_, name=name, arguments=args) for id_, name, args in calls],
         ),
         prompt_tokens=1,
     )
@@ -345,6 +369,63 @@ async def test_default_session_gets_a_tool_registry_discovering_built_in_tools()
     async with app.run_test():
         assert app._session.tool_registry is not None
         assert "ReadFile" in {tool.name() for tool in app._session.tool_registry.tools()}
+
+
+async def test_tool_call_limit_modal_yes_continues_the_turn() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", max_tool_calls_per_turn=0)
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, ToolCallLimitScreen)
+
+        await pilot.click("#tool-call-limit-yes")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        response_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
+        assert isinstance(response_widget, Markdown)
+        assert response_widget.source == "final answer"
+
+
+async def test_tool_call_limit_modal_no_shows_error() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+    config = SessionConfig(model="some/model", max_tool_calls_per_turn=0)
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, ToolCallLimitScreen)
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        error_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
+        assert isinstance(error_widget, Static)
+        assert "0 tool call" in str(error_widget.render())
 
 
 async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:

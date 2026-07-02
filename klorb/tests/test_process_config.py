@@ -11,12 +11,12 @@ from klorb import process_config as process_config_module
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.process_config import DEFAULT_PROMPT_INPUT_MAX_LINES
+from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.process_config import load_process_config
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_SESSION
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
-from klorb.tools.read_file import MAX_LINES as DEFAULT_READ_FILE_MAX_LINES
 
 
 def _write_config(path: Path, data: dict) -> None:
@@ -40,11 +40,11 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.session == SessionConfig()
     assert process_config.session.model == DEFAULT_MODEL
+    assert process_config.session.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    assert process_config.session.max_tool_calls_per_session == DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     assert process_config.prompt_input_max_lines == DEFAULT_PROMPT_INPUT_MAX_LINES
     assert process_config.thinking_token_budgets == THINKING_EFFORT_TOKEN_BUDGETS
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
-    assert process_config.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
-    assert process_config.max_tool_calls_per_session == DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     assert process_config.openrouter_base_url == OPENROUTER_BASE_URL
 
 
@@ -64,8 +64,6 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
             "terminal.input.maxLines": 20,
             "thinking.tokenBudgets": {"low": 1_000, "medium": 2_000, "high": 3_000},
             "tools.readFile.maxLines": 500,
-            "tools.maxCallsPerTurn": 3,
-            "tools.maxCallsPerSession": 15,
             "providers.openrouter.baseUrl": "https://gateway.example.com/v1",
         },
     )
@@ -74,8 +72,6 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.prompt_input_max_lines == 20
     assert process_config.thinking_token_budgets == {"low": 1_000, "medium": 2_000, "high": 3_000}
     assert process_config.read_file_max_lines == 500
-    assert process_config.max_tool_calls_per_turn == 3
-    assert process_config.max_tool_calls_per_session == 15
     assert process_config.openrouter_base_url == "https://gateway.example.com/v1"
 
 
@@ -86,13 +82,23 @@ def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:
     """
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",
-        {"sessionDefaults": {"model": "project/model", "thinking.enabled": False, "thinking.effort": "low"}},
+        {
+            "sessionDefaults": {
+                "model": "project/model",
+                "thinking.enabled": False,
+                "thinking.effort": "low",
+                "tools.maxCallsPerTurn": 3,
+                "tools.maxCallsPerSession": 15,
+            },
+        },
     )
 
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.session.model == "project/model"
     assert process_config.session.thinking_enabled is False
     assert process_config.session.thinking_effort == "low"
+    assert process_config.session.max_tool_calls_per_turn == 3
+    assert process_config.session.max_tool_calls_per_session == 15
 
 
 def test_interactive_is_not_a_recognized_session_default(

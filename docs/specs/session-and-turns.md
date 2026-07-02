@@ -23,15 +23,19 @@ config) has one place to live.
   * `thinking_effort: ThinkingEffort` (`"low" | "medium" | "high"`) — the user-facing
     reasoning depth knob, defaulting to `"high"`. See [[default-thinking-on-and-high-effort]]
     for why these are the defaults.
+  * `max_tool_calls_per_turn`/`max_tool_calls_per_session: int` — safety caps
+    `Session._run_tool_calls()` enforces on individual tool-call dispatches, defaulting to
+    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` (`5`/`25`).
+    Unlike the other fields, `Session` mutates these itself (doubling one in place when the
+    user approves continuing past it — see below), so they live on `SessionConfig` rather
+    than the process-wide `ProcessConfig`; see
+    [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
 * `klorb.session.Session` is constructed with a `SessionConfig` (saved as `self.config`),
   and optionally an `ApiProvider` (defaults to a fresh `OpenRouterApiProvider`), a
-  `ModelRegistry` (defaults to a fresh `ModelRegistry()`), a
+  `ModelRegistry` (defaults to a fresh `ModelRegistry()`), and a
   `klorb.tools.registry.ToolRegistry` (`tool_registry`, defaults to `None`, meaning
   tool-calling is off for this session — see [[tool-framework]] and
-  [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md)), and
-  `max_tool_calls_per_turn`/`max_tool_calls_per_session` (each defaulting to `None`, meaning
-  fall back to `DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` — see
-  below).
+  [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md)).
   It also holds `self._messages: list[[[message-model]]]`, exposed read-only via the
   `messages` property, plus read-only `provider`/`model_registry`/`tool_registry` properties
   so callers (e.g. [[terminal-repl]]'s `/clear`) can build a new `Session` that reuses the
@@ -51,7 +55,8 @@ config) has one place to live.
     [[map-thinking-effort-levels-to-fixed-token-budgets]]). Recomputed fresh on every turn,
     like `system_prompt`, so palette changes to thinking config take effect immediately.
   * `send_turn(prompt: str, on_chunk: ... = None, on_thinking_chunk: ... = None,
-    cancel_event: threading.Event | None = None) -> str` is the turn-based loop's unit of
+    cancel_event: threading.Event | None = None, on_tool_call_limit_reached: Callable[[str],
+    bool] | None = None) -> str` is the turn-based loop's unit of
     work. It appends a new `Message` (`role="user"`, `processing_state="pending"`) to the
     history, then sends the *entire* history plus the
     active model's system prompt (re-derived fresh from `Model.system_prompt()` on every
@@ -101,26 +106,37 @@ config) has one place to live.
     `Message` per call (feeding back `f"Error: {exc}"` as that call's result if lookup or
     execution failed, rather than failing the turn), and `_dispatch_turn()` sends another
     round with the updated history. This repeats until a plain `"assistant"` reply comes
-    back, or one of three safety caps is exceeded, which raises `ToolCallLimitExceeded`
-    (handled like any other mid-turn failure: `user_message` marked
-    `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (10, a module constant) model-to-tool
-    round trips; `max_tool_calls_per_turn` (`Session` constructor arg, defaulting to
+    back, or one of three safety caps is exceeded and not raised past, which raises
+    `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
+    `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (10, a hard module constant, never
+    raisable) model-to-tool round trips; `config.max_tool_calls_per_turn` (default
     `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 5) individual tool calls dispatched by
-    `_run_tool_calls()` in this turn — reset to `0` at the start of every `_dispatch_turn()`
-    call, including retries; or `max_tool_calls_per_session` (defaulting to
-    `DEFAULT_MAX_TOOL_CALLS_PER_SESSION`, 25) individual tool calls dispatched across this
-    `Session`'s entire lifetime — never reset. Both are checked, and the running counts
-    logged, before each individual call within `_run_tool_calls()` (not just once per round),
-    so a round requesting several parallel tool calls can be cut off partway through; calls
-    already dispatched earlier in that same round stay in history. `ProcessConfig` (see
-    [[process-and-session-config]]) is the source of the two configurable caps' values, which
-    `cli.py`/`repl.py` pass into `Session`'s constructor alongside `tool_registry`. See
+    `_run_tool_calls()` in this turn — `self._tool_calls_this_turn` resets to `0` at the
+    start of every `_dispatch_turn()` call, including retries; or `config.max_tool_calls_per_session`
+    (default `DEFAULT_MAX_TOOL_CALLS_PER_SESSION`, 25) individual tool calls dispatched
+    across this `Session`'s entire lifetime — `self._tool_calls_this_session` is never reset.
+    Both are checked, and the running counts logged, before each individual call within
+    `_run_tool_calls()` (not just once per round), so a round requesting several parallel
+    tool calls can be cut off partway through; calls already dispatched earlier in that same
+    round stay in history.
+
+    Reaching the turn or session cap isn't necessarily fatal: `_confirm_limit_increase()`
+    calls `on_tool_call_limit_reached(prompt)` (the callback threaded through `send_turn()`/
+    `retry_last_turn()`/`_dispatch_turn()`), if one was given, with a human-readable prompt
+    describing which cap was hit. Returning `True` doubles that cap on `self.config` — for
+    the rest of this `Session`'s lifetime, not just the current call — and lets the call
+    proceed; returning `False`, or no callback being given at all (e.g. `klorb.cli`'s
+    one-shot path), raises `ToolCallLimitExceeded` exactly as if no confirmation had been
+    offered. [[terminal-repl]]'s `ToolCallLimitScreen` is what supplies this callback
+    interactively. See
     [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md) and
     [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
+
     `user_message.num_tokens` is set from the *last* round's `prompt_tokens` delta, folding
     every round's cost (tool definitions and results included) into the one turn, the same
     way the system prompt's cost is folded into the first turn (see "Out of scope" below).
-  * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None) -> str` scans
+  * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None,
+    on_tool_call_limit_reached: ... = None) -> str` scans
     backward for the last `role == "user"` `Message`; if it isn't in `"error"` state (or
     none exists), raises `ValueError`. Otherwise it discards everything after that message
     (e.g. a partial assistant placeholder left by a failed stream) and resends its content,
@@ -138,8 +154,13 @@ config) has one place to live.
   [[terminal-repl]]'s `run_repl(session, initial_message=prompt)` to start the REPL.
 * `klorb.tui.repl.ReplApp` (`klorb/src/klorb/tui/repl.py`) takes a `Session` instead of a
   raw provider/model pair. Every submitted prompt — typed by the user or passed in as
-  `initial_message` — goes through `Session.send_turn()` on a background worker thread.
-  Selecting a model from the command palette ([[model-framework]]) sets
+  `initial_message` — goes through `Session.send_turn()` on a background worker thread,
+  passing `on_tool_call_limit_reached=self._on_tool_call_limit_reached`. Since that runs on
+  the worker thread but needs to show a modal and wait for the user's answer,
+  `_on_tool_call_limit_reached()` blocks via `App.call_from_thread(self._confirm_tool_call_limit,
+  message)`, where `_confirm_tool_call_limit()` is an `async def` that `await`s
+  `push_screen_wait(ToolCallLimitScreen(message))` on the app's own event loop — see
+  [[terminal-repl]]. Selecting a model from the command palette ([[model-framework]]) sets
   `session.config.model` directly.
 * `--interactive` / `--no-interactive` (`klorb.cli.build_parser()`) is an
   `argparse.BooleanOptionalAction` defaulting to `None`. `klorb.cli.main()` resolves it to a

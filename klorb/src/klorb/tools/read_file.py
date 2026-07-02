@@ -7,8 +7,6 @@ from typing import Any
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 
-MAX_LINES = 200
-
 logger = logging.getLogger(__name__)
 
 

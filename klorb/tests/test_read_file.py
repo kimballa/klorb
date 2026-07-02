@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
-from klorb.tools.read_file import MAX_LINES
 from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
 
 
-def _context(max_lines: int = MAX_LINES) -> ToolSetupContext:
+def _context(max_lines: int = DEFAULT_READ_FILE_MAX_LINES) -> ToolSetupContext:
     return ToolSetupContext(
         process_config=ProcessConfig(read_file_max_lines=max_lines), session_config=SessionConfig())
 
@@ -59,8 +59,8 @@ def test_request_beyond_max_lines_is_capped(tmp_path: Path) -> None:
 
     result = ReadFileTool(_context()).apply({"filename": str(file_path), "start_line": 1, "end_line": 500})
 
-    assert result["end_line"] == MAX_LINES
-    assert len(result["content"].splitlines()) == MAX_LINES
+    assert result["end_line"] == DEFAULT_READ_FILE_MAX_LINES
+    assert len(result["content"].splitlines()) == DEFAULT_READ_FILE_MAX_LINES
     assert result["truncated"] is True
 
 

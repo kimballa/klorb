@@ -13,6 +13,7 @@ from klorb import cli
 from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
 
 
@@ -102,7 +103,8 @@ def test_main_passes_process_config_thinking_token_budgets_to_session(
 def test_main_passes_process_config_tool_call_limits_to_session(
     stub_process_config: MagicMock,
 ) -> None:
-    process_config = ProcessConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9)
+    process_config = ProcessConfig(
+        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
     stub_process_config.return_value = process_config
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
@@ -110,8 +112,9 @@ def test_main_passes_process_config_tool_call_limits_to_session(
         with patch("sys.argv", ["klorb", "-m", "hi"]):
             cli.main()
 
-    assert mock_session_cls.call_args.kwargs["max_tool_calls_per_turn"] == 3
-    assert mock_session_cls.call_args.kwargs["max_tool_calls_per_session"] == 9
+    config = mock_session_cls.call_args.args[0]
+    assert config.max_tool_calls_per_turn == 3
+    assert config.max_tool_calls_per_session == 9
 
 
 def test_main_passes_a_tool_registry_built_from_process_and_session_config(

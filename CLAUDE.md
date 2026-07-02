@@ -69,6 +69,17 @@ The Klorb project is organized as a collection of subprojects:
 * Do not revise jsdoc comments or python docstrings for existing methods except to clarify
   newly-added functionality.
 * When possible, try to reuse existing API endpoints rather than make new ones.
+* Never duplicate a constant (a magic number, default value, etc.) across files as a
+  workaround for a circular import or any other reason. Duplicated constants drift out of
+  sync silently and are a form of tech debt. Instead:
+  * Define the constant in one canonical location and have every consumer import it from
+    there.
+  * If a circular import is genuinely in the way, fix the import direction (the module that
+    should own the constant usually shouldn't be the one importing from the module that
+    merely consumes it), or hoist the constant into a small shared module (e.g.
+    `foo_constants.py`) that both sides can depend on without a cycle.
+  * Only duplicate a constant's value across files with the user's *explicit* permission for
+    that specific case.
 * Work is not done until, at minimum, all existing tests pass.
   * Ideally, for nontrivial improvements, new unit tests are also added to cover new
     functionality or bugfixes, and those must also pass.
