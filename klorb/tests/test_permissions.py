@@ -40,24 +40,24 @@ def test_deny_beats_allow_regardless_of_specificity(tmp_path: Path) -> None:
     private = project / "private"
     private.mkdir(parents=True)
 
-    table = DirectoryAccessTable(DirRules(deny=[private], allow=[project]))
+    table = DirectoryAccessTable(DirRules(deny=[private], allow=[project]), tmp_path)
 
     assert table.evaluate(project / "foo.txt") == "allow"
     assert table.evaluate(private / "nope.txt") == "deny"
 
 
 def test_ask_wins_over_allow_but_loses_to_deny(tmp_path: Path) -> None:
-    all_three = DirectoryAccessTable(DirRules(deny=[tmp_path], ask=[tmp_path], allow=[tmp_path]))
+    all_three = DirectoryAccessTable(DirRules(deny=[tmp_path], ask=[tmp_path], allow=[tmp_path]), tmp_path)
     assert all_three.evaluate(tmp_path / "f.txt") == "deny"
 
-    ask_and_allow = DirectoryAccessTable(DirRules(ask=[tmp_path], allow=[tmp_path]))
+    ask_and_allow = DirectoryAccessTable(DirRules(ask=[tmp_path], allow=[tmp_path]), tmp_path)
     assert ask_and_allow.evaluate(tmp_path / "f.txt") == "ask"
 
 
 def test_no_matching_rule_returns_none(tmp_path: Path) -> None:
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    table = DirectoryAccessTable(DirRules(allow=[elsewhere]))
+    table = DirectoryAccessTable(DirRules(allow=[elsewhere]), tmp_path)
 
     assert table.evaluate(tmp_path / "unrelated" / "f.txt") is None
 
@@ -66,8 +66,8 @@ def test_stricter_rule_wins_regardless_of_construction_order(tmp_path: Path) -> 
     """The single most important invariant: a deny always beats an allow, no matter which was
     added to the table first — since concatenation across config layers means the final list
     order carries no evaluation precedence of its own."""
-    looser_first = DirectoryAccessTable(DirRules(allow=[tmp_path], deny=[tmp_path / "secret"]))
-    stricter_first = DirectoryAccessTable(DirRules(deny=[tmp_path / "secret"], allow=[tmp_path]))
+    looser_first = DirectoryAccessTable(DirRules(allow=[tmp_path], deny=[tmp_path / "secret"]), tmp_path)
+    stricter_first = DirectoryAccessTable(DirRules(deny=[tmp_path / "secret"], allow=[tmp_path]), tmp_path)
 
     candidate = tmp_path / "secret" / "key.txt"
     assert looser_first.evaluate(candidate) == "deny"
@@ -75,7 +75,7 @@ def test_stricter_rule_wins_regardless_of_construction_order(tmp_path: Path) -> 
 
 
 def test_containment_includes_exact_match(tmp_path: Path) -> None:
-    table = DirectoryAccessTable(DirRules(allow=[tmp_path]))
+    table = DirectoryAccessTable(DirRules(allow=[tmp_path]), tmp_path)
     assert table.evaluate(tmp_path) == "allow"
 
 
@@ -85,7 +85,7 @@ def test_symlinked_rule_directory_is_canonicalized(tmp_path: Path) -> None:
     link = tmp_path / "link"
     link.symlink_to(real_dir)
 
-    table = DirectoryAccessTable(DirRules(deny=[link]))
+    table = DirectoryAccessTable(DirRules(deny=[link]), tmp_path)
 
     assert table.evaluate(real_dir / "f.txt") == "deny"
 
@@ -103,7 +103,7 @@ def test_matches_a_pre_resolved_former_symlink_candidate_against_its_real_target
     link = real_dir / "link"
     link.symlink_to(outside)
 
-    table = DirectoryAccessTable(DirRules(deny=[outside]))
+    table = DirectoryAccessTable(DirRules(deny=[outside]), tmp_path)
 
     assert table.evaluate((link / "f.txt").resolve(strict=False)) == "deny"
 
@@ -114,7 +114,7 @@ def test_dotdot_traversal_is_canonicalized_before_matching(tmp_path: Path) -> No
     project.mkdir()
     other.mkdir()
 
-    table = DirectoryAccessTable(DirRules(allow=[project]))
+    table = DirectoryAccessTable(DirRules(allow=[project]), tmp_path)
 
     textually_inside_but_escapes = (project / ".." / "other" / "f.txt").resolve(strict=False)
     assert textually_inside_but_escapes == other / "f.txt"
@@ -122,13 +122,38 @@ def test_dotdot_traversal_is_canonicalized_before_matching(tmp_path: Path) -> No
 
 
 def test_dot_component_does_not_confuse_matching(tmp_path: Path) -> None:
-    table = DirectoryAccessTable(DirRules(allow=[tmp_path / "." / "project"]))
+    table = DirectoryAccessTable(DirRules(allow=[tmp_path / "." / "project"]), tmp_path)
     assert table.evaluate((tmp_path / "project" / "f.txt")) == "allow"
 
 
 def test_trailing_slash_does_not_affect_matching(tmp_path: Path) -> None:
-    table = DirectoryAccessTable(DirRules(allow=[Path(str(tmp_path) + "/")]))
+    table = DirectoryAccessTable(DirRules(allow=[Path(str(tmp_path) + "/")]), tmp_path)
     assert table.evaluate(tmp_path / "f.txt") == "allow"
+
+
+def test_relative_rule_path_is_resolved_against_workspace_root(tmp_path: Path) -> None:
+    """Allow("sub") should mean the same thing as Allow("<workspace_root>/sub"), not a path
+    relative to the process's current working directory."""
+    workspace = tmp_path / "workspace"
+    sub = workspace / "sub"
+    sub.mkdir(parents=True)
+
+    table = DirectoryAccessTable(DirRules(allow=[Path("sub")]), workspace)
+
+    assert table.evaluate(sub / "f.txt") == "allow"
+    assert table.evaluate(workspace / "other" / "f.txt") is None
+
+
+def test_relative_dotdot_rule_path_escapes_workspace_root(tmp_path: Path) -> None:
+    """Allow("..") means the same thing as Allow("<workspace_root>/.."), i.e. the workspace's
+    parent directory — not the process's current working directory's parent."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    table = DirectoryAccessTable(DirRules(allow=[Path("..")]), workspace)
+
+    assert table.evaluate(tmp_path) == "allow"
+    assert table.evaluate(tmp_path / "sibling" / "f.txt") == "allow"
 
 
 # --- evaluate_write ---

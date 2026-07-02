@@ -81,7 +81,7 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     if path == klorb_dir or path.is_relative_to(klorb_dir):
         return "deny"
 
-    write_table = DirectoryAccessTable(context.session_config.write_dirs)
+    write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
     return write_table.evaluate(path) or "allow"
 
 
@@ -110,6 +110,7 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     Returns `(path, verdict)` so the caller can enforce the verdict and then open the same
     canonicalized path that was actually checked.
     """
+    workspace_root = context.session_config.workspace_root.resolve()
     if context.process_config.is_workspace_trusted:
         path = canonicalize_candidate(context, filename)
         fallback: Verdict = "deny"
@@ -117,8 +118,8 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
         path = resolve_within_workspace(context, filename)
         fallback = "allow"
 
-    read_table = DirectoryAccessTable(context.session_config.read_dirs)
-    write_table = DirectoryAccessTable(context.session_config.write_dirs)
+    read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
+    write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
     verdict = read_table.evaluate(path)
     if verdict is None:
         verdict = write_table.evaluate(path)

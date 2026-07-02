@@ -5,12 +5,6 @@
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
-* "Whether a relative readDirs/writeDirs rule path (none of this doc's examples
-  use one) resolves against workspace_root or something else isn't specified". These should
-  always be canonicalized against the workspace root. e.g. Allow("..") really means the same
-  thing as Allow("<workspace_root>/../).
-  (This is called out as a gap in the bottom of permissions.md)
-
 # Feature backlog
 
 * project bootstrapping
