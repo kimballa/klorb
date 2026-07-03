@@ -18,6 +18,8 @@ docs/specs/persisted-json-schema-versioning.md for the full convention.
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -66,3 +68,37 @@ def read_versioned_json(path: Path, *, expected_schema_name: str) -> dict[str, A
 
     logger.debug("Loaded %s (schema %s v%s).", path, schema_info.name, schema_info.version)
     return contents
+
+
+def write_versioned_json(
+    path: Path, data: dict[str, Any], *, schema_name: str, schema_version: str,
+) -> None:
+    """Write `data` to `path` as a schema-enveloped JSON file (see module docstring),
+    creating `path`'s parent directory if it doesn't exist yet.
+
+    `data` must not itself contain a `SCHEMA_KEY` ("schema") key — that would silently collide
+    with, and be shadowed by, the envelope's own `schema` block; raises `ValueError` if it does,
+    rather than silently discarding the caller's key.
+
+    Writes atomically: the full contents are written to a temporary file in `path`'s own parent
+    directory (so the final `os.replace()` is same-filesystem and atomic), then renamed onto
+    `path`. This matters because `path` may be read again moments later by another tool call in
+    the same turn — a process interrupted mid-write must never leave a torn, unparseable config
+    file behind.
+    """
+    if SCHEMA_KEY in data:
+        raise ValueError(f"data already contains a {SCHEMA_KEY!r} key; refusing to overwrite it")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {SCHEMA_KEY: {"name": schema_name, "version": schema_version}, **data}
+
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            json.dump(payload, tmp_file, indent=2)
+            tmp_file.write("\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        os.unlink(tmp_name)
+        raise
+    logger.debug("Wrote %s (schema %s v%s).", path, schema_name, schema_version)

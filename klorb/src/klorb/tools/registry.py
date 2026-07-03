@@ -5,6 +5,7 @@ import importlib
 import inspect
 import logging
 import pkgutil
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -43,8 +44,10 @@ class ToolRegistry:
         self._tool_classes: dict[str, type[Tool]] = {}
         self._discover_tools(package)
 
-    def _context(self) -> ToolSetupContext:
-        return ToolSetupContext(process_config=self._process_config, session_config=self._session_config)
+    def _context(self, permission_override: Path | None = None) -> ToolSetupContext:
+        return ToolSetupContext(
+            process_config=self._process_config, session_config=self._session_config,
+            permission_override=permission_override)
 
     def _discover_tools(self, package: ModuleType) -> None:
         logger.debug("Discovering tools in package %s", package.__name__)
@@ -61,12 +64,13 @@ class ToolRegistry:
                 self._tool_classes[tool.name()] = candidate
         logger.info("Discovered %d tool(s) in %s", len(self._tool_classes), package.__name__)
 
-    def instantiate_tool(self, name: str) -> Tool:
+    def instantiate_tool(self, name: str, *, permission_override: Path | None = None) -> Tool:
         """Factory method: construct a fresh instance of the named tool from a `ToolSetupContext`
         built from this registry's current `process_config`/`session_config`, raising
-        `KeyError` if no tool with that name was discovered.
+        `KeyError` if no tool with that name was discovered. `permission_override`, if given, is
+        threaded onto that `ToolSetupContext` — see `ToolSetupContext.permission_override`.
         """
-        return self._tool_classes[name](self._context())
+        return self._tool_classes[name](self._context(permission_override=permission_override))
 
     def tools(self) -> list[Tool]:
         """Return a freshly-instantiated Tool for every discovered tool."""

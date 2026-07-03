@@ -7,6 +7,7 @@ docs/adrs/evaluate-permission-categories-deny-then-ask-then-allow.md.
 """
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Generic, Literal, TypeVar
 
 T = TypeVar("T")
@@ -18,15 +19,23 @@ specificity never changes this order, so a broad `deny` always beats a narrower 
 
 
 class PermissionAskRequired(Exception):
-    """Raised when a `PermissionsTable`'s verdict for a candidate is `"ask"`, and the call site
-    has no interactive confirmation plumbing to route the question through yet. Deliberately
-    not a `PermissionError` subclass, so future interactive-prompt code can catch it
-    specifically without also swallowing plain denials. For now, callers that raise this are
-    failing closed: treating `"ask"` the same as denial, just distinguishably.
+    """Raised when a `PermissionsTable`'s verdict for a candidate is `"ask"`. Deliberately not a
+    `PermissionError` subclass, so interactive-prompt code can catch it specifically without
+    also swallowing plain denials. A call site with no interactive confirmation plumbing (e.g.
+    a one-shot/headless run) fails closed: `Session._run_tool_calls` treats an uncaught instance
+    of this the same as denial, just distinguishably.
 
-    TODO(aaron): route this through an actual user prompt instead of failing closed, once
-    interactive confirmation plumbing exists.
+    `path` and `is_write` carry the resolved candidate path and whether this was a write
+    (rather than read) interrogation, so a caller with interactive plumbing (see
+    `Session.on_permission_ask`, `klorb.permissions.grant`) can act on the specific resource
+    without re-parsing `resource_description`. Both are optional and default to `None`/`False`
+    so existing callers that only care about the message string are unaffected.
     """
+
+    def __init__(self, message: str, *, path: Path | None = None, is_write: bool = False) -> None:
+        super().__init__(message)
+        self.path = path
+        self.is_write = is_write
 
 
 class PermissionsTable(ABC, Generic[T]):
@@ -58,16 +67,32 @@ class PermissionsTable(ABC, Generic[T]):
                 return verdict
         return None
 
+    def matching_rules(self, category: Verdict, candidate: T) -> list[T]:
+        """Return every rule in `category` (`deny`/`ask`/`allow`) that matches `candidate`, in
+        list order. Unlike `evaluate()`, which only reports the winning category, this exposes
+        which specific rule(s) matched — used by `klorb.permissions.grant` to promote a matched
+        `ask` rule's own path to `allow` rather than a narrower resolved candidate path.
+        """
+        rules = {"deny": self._deny, "ask": self._ask, "allow": self._allow}[category]
+        return [rule for rule in rules if self._matches(rule, candidate)]
 
-def raise_if_not_allowed(verdict: Verdict, *, resource_description: str) -> None:
+
+def raise_if_not_allowed(
+    verdict: Verdict, *, resource_description: str,
+    path: Path | None = None, is_write: bool = False,
+) -> None:
     """Enforce `verdict`: raise `PermissionError` for `"deny"`, `PermissionAskRequired` for
     `"ask"` (failing closed — see `PermissionAskRequired`), or return normally for `"allow"`.
 
     This is the single seam where "ask fails closed as deny-but-distinctly-typed" is
     implemented, so swapping it for real interactive confirmation later is a one-function
-    change rather than a change at every tool call site.
+    change rather than a change at every tool call site. `path`/`is_write` are forwarded onto
+    `PermissionAskRequired` so interactive callers (see `Session.on_permission_ask`) can act on
+    the specific resource; both are optional, so callers that don't have them handy (or don't
+    need them) can omit them.
     """
     if verdict == "deny":
         raise PermissionError(f"Permission denied: {resource_description}")
     if verdict == "ask":
-        raise PermissionAskRequired(f"Permission requires confirmation: {resource_description}")
+        raise PermissionAskRequired(
+            f"Permission requires confirmation: {resource_description}", path=path, is_write=is_write)

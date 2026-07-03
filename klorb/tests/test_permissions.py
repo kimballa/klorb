@@ -483,3 +483,95 @@ def test_raise_if_not_allowed_ask_raises_permission_ask_required() -> None:
 
 def test_raise_if_not_allowed_allow_returns_normally() -> None:
     raise_if_not_allowed("allow", resource_description="x")
+
+
+def test_raise_if_not_allowed_ask_populates_path_and_is_write() -> None:
+    target = Path("/some/file.txt")
+    with pytest.raises(PermissionAskRequired) as exc_info:
+        raise_if_not_allowed("ask", resource_description="x", path=target, is_write=True)
+    assert exc_info.value.path == target
+    assert exc_info.value.is_write is True
+
+
+def test_raise_if_not_allowed_ask_defaults_path_and_is_write_when_omitted() -> None:
+    """The two tests above (test_raise_if_not_allowed_ask_raises_permission_ask_required, etc.)
+    call raise_if_not_allowed with only resource_description, exactly as every pre-existing
+    call site outside the four file tools does; path/is_write must stay optional so those
+    keep working unchanged."""
+    with pytest.raises(PermissionAskRequired) as exc_info:
+        raise_if_not_allowed("ask", resource_description="x")
+    assert exc_info.value.path is None
+    assert exc_info.value.is_write is False
+
+
+# --- PermissionsTable.matching_rules ---
+
+
+def test_matching_rules_returns_every_match_in_the_category(tmp_path: Path) -> None:
+    broad = tmp_path / "broad"
+    narrow = tmp_path / "broad" / "narrow"
+    unrelated = tmp_path / "unrelated"
+    narrow.mkdir(parents=True)
+    unrelated.mkdir()
+
+    table = DirectoryAccessTable(DirRules(ask=[broad, narrow, unrelated]), tmp_path)
+    matches = table.matching_rules("ask", narrow / "f.txt")
+
+    assert set(matches) == {broad, narrow}
+
+
+def test_matching_rules_returns_empty_list_for_no_match(tmp_path: Path) -> None:
+    table = DirectoryAccessTable(DirRules(ask=[tmp_path / "elsewhere"]), tmp_path)
+    assert table.matching_rules("ask", tmp_path / "other" / "f.txt") == []
+
+
+def test_matching_rules_respects_category(tmp_path: Path) -> None:
+    table = DirectoryAccessTable(DirRules(deny=[tmp_path], allow=[tmp_path]), tmp_path)
+    assert table.matching_rules("ask", tmp_path / "f.txt") == []
+    assert table.matching_rules("deny", tmp_path / "f.txt") == [tmp_path]
+    assert table.matching_rules("allow", tmp_path / "f.txt") == [tmp_path]
+
+
+# --- ToolSetupContext.permission_override ("Allow once") ---
+
+
+def test_permission_override_short_circuits_evaluate_write_to_allow(tmp_path: Path) -> None:
+    path = resolve_within_workspace(_context(tmp_path), "f.txt")
+    context = ToolSetupContext(
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        permission_override=path)
+    assert evaluate_write(context, path) == "allow"
+
+
+def test_permission_override_short_circuits_resolve_and_evaluate_read_to_allow(tmp_path: Path) -> None:
+    path = resolve_within_workspace(_context(tmp_path), "f.txt")
+    context = ToolSetupContext(
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        permission_override=path)
+    _, verdict = resolve_and_evaluate_read(context, "f.txt")
+    assert verdict == "allow"
+
+
+def test_permission_override_has_no_effect_on_a_different_path(tmp_path: Path) -> None:
+    path = resolve_within_workspace(_context(tmp_path), "f.txt")
+    other_path = resolve_within_workspace(_context(tmp_path), "other.txt")
+    context = ToolSetupContext(
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        permission_override=other_path)
+    assert evaluate_write(context, path) == "ask"
+
+
+def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path) -> None:
+    """Safety-critical: "Allow once" must never be usable to reach .klorb/ or the process-wide
+    KLORB_*_DIR locations, even if a caller somehow set the override to that exact path."""
+    path = resolve_within_workspace(_context(tmp_path), ".klorb/klorb-config.json")
+    context = ToolSetupContext(
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        permission_override=path)
+    assert evaluate_write(context, path) == "deny"
+
+    read_context = ToolSetupContext(
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        permission_override=path)
+    _, verdict = resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")
+    assert verdict == "deny"

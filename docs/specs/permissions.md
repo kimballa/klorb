@@ -10,11 +10,19 @@ how specific it is. The first concrete resource kind is directory access
 (`ReadFile`, `EditFile`, `ReplaceAll`, `CreateFile`) may read from and write to, via two new
 `SessionConfig` fields, `read_dirs`/`write_dirs`, exposed on-disk as `readDirs`/`writeDirs`.
 `TODO.md`'s "Permissions" backlog item anticipates further resource kinds (bash commands,
-website access) built on the same abstraction. See
+website access) built on the same abstraction. An `"ask"` verdict is no longer necessarily a
+dead end either: the interactive TUI can route it through a modal (see "Interactive 'ask'
+confirmation" below) that lets the user grant access once, for the session, or persistently at
+the workspace or per-user level. See
 [the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md),
-[the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md), and
-[the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md) for the
-reasoning behind the most consequential decisions here.
+[the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md),
+[the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md),
+[the ask-rule-promotion ADR](../adrs/promote-matched-ask-rule-path-not-candidate-on-grant.md),
+[the cross-file-cleanup ADR](../adrs/homedir-grants-can-clean-workspace-ask-never-reverse.md),
+[the once-grant ADR](../adrs/once-grants-bypass-via-tool-context-override-not-table.md),
+[the grant-granularity ADR](../adrs/grant-unmentioned-paths-at-containing-directory.md), and
+[the read/write-union ADR](../adrs/union-matched-ask-rules-across-read-and-write-tables.md) for
+the reasoning behind the most consequential decisions here.
 
 ## How it works
 
@@ -209,10 +217,141 @@ Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are m
   descriptor (`O_NOFOLLOW`/`O_DIRECTORY`) rather than a re-resolved path string — real, separate
   work, tracked in `TODO.md`'s "Permissions" item, not implemented here.
 
+## Interactive "ask" confirmation
+
+When a tool call raises `PermissionAskRequired` and the interactive TUI is running, a modal
+(`klorb.tui.permission_ask_screen.PermissionAskScreen`) asks the user how to proceed, instead of
+failing closed. This is wired in as an optional callback, not a change to the fail-closed
+default: `Session.send_turn()`/`retry_last_turn()` take an `on_permission_ask` parameter
+(`klorb.session.PermissionAskContext -> klorb.session.PermissionDecision`), threaded through to
+`Session._run_tool_calls()`. With no callback given — every headless/one-shot run
+(`klorb.cli.main()` never passes one) — behavior is unchanged from the plain fail-closed case
+described above. `ReplApp._on_permission_ask` (`klorb.tui.repl`) is the TUI's implementation,
+mirroring the existing `on_tool_call_limit_reached`/`ToolCallLimitScreen` pattern: it blocks the
+worker thread running `Session.send_turn()` via `call_from_thread`, shows the modal on the app's
+own event loop, and returns once the user answers.
+
+### The six choices
+
+`PermissionAskScreen` offers exactly the six choices from `TODO.md`'s "Permissions" item:
+
+* **Allow (once)** — bypasses the check for this one tool call only, persisting nothing at all,
+  not even in memory. Implemented via a new `ToolSetupContext.permission_override: Path | None`
+  field: `evaluate_write()`/`resolve_and_evaluate_read()` (`klorb.permissions.workspace`) check
+  it — after the unconditional `is_privileged_path()` deny, before consulting either table — and
+  short-circuit to `"allow"` on an exact match. `Session._retry_after_permission_decision()`
+  retries the call via `tool_registry.instantiate_tool(name, permission_override=ask_exc.path)`,
+  a fresh, one-shot `ToolSetupContext` discarded after that single retry — the identical access
+  asks again next time, since no `readDirs`/`writeDirs` entry was ever added.
+* **Allow (this session)** — mutates only the live `Session.config.read_dirs`/`write_dirs`
+  (whole-object reassignment, never `.append()`ed in place — see `DirRules`'s own
+  immutable-by-convention contract). Nothing is written to disk, and the process-config
+  template (`ProcessConfig.session`) is untouched, so a future `/clear` does not inherit it.
+* **Allow (always, in this workspace)** — additionally mutates `ProcessConfig.session.read_dirs`/
+  `write_dirs` (so a `/clear`'d session in this same process inherits it too) and persists the
+  grant to `${workspace_root}/.klorb/klorb-config.json`, auto-creating the file (and the
+  `.klorb/` directory) if neither exists yet. This does **not** set `is_workspace_trusted` —
+  granting r/w access to one directory is a much narrower action than trusting the whole
+  workspace (see the read/trust ADR above); `ReadFile`'s hard workspace-root boundary is
+  unaffected.
+* **Allow (always, for me)** — the same in-memory dual-write as "this workspace" (live session
+  config *and* the process-config template), but persists to the per-user file
+  (`~/.config/klorb/klorb-config.json` by default — `klorb.process_config.user_config_path()`)
+  instead of the project one, auto-creating it the same way. See "Cross-file cleanup" below for
+  the one thing this scope does to the *workspace* file.
+* **Deny** — declines this one call, persisting nothing, ever (there is no "Deny (this
+  session)"/"(always)" variant — only Allow has graduated scopes).
+* **Other** — functionally identical to Deny (denies this one call, persists nothing), but the
+  free text the user typed is appended to the tool call's `tool_response` content alongside the
+  generic denial, so the model sees the redirection (e.g. "use `/tmp/scratch` instead") without
+  needing a second round trip.
+
+All of this is implemented in `klorb.permissions.grant`
+(`compute_grant_paths()`/`apply_permission_grant()`), not in the TUI layer itself —
+`ReplApp._on_permission_ask` only shows the modal and calls into this library module, keeping
+the grant-computation and file-persistence logic importable and unit-testable without Textual,
+per this repo's CLI/library firewall (see `CLAUDE.md`).
+
+### Grant granularity: directory, not file
+
+An Allow grant is never recorded at the exact file the model happened to touch. Two cases:
+
+* **A matching `ask` rule already exists** (`readDirs.ask`/`writeDirs.ask` — checked via the new
+  `PermissionsTable.matching_rules(category, candidate)`, which reports *which* rule(s) matched,
+  not just the winning category): the grant is recorded at *that rule's own path*, promoting it
+  from `ask` to `allow` (and removing it from `ask`), preserving whatever breadth the original
+  rule had. If more than one `ask` rule matches (in `readDirs`, or — for a write access — unioned
+  with `writeDirs` too, see below), all of them are promoted.
+* **Nothing matched at all** ("the dir was never mentioned" — e.g. a bare write interrogation's
+  `None`-normalized-to-`"ask"` default): the grant is recorded at the *containing directory* of
+  the accessed path (`path.parent`), not the single file. `PermissionAskScreen`'s copy states
+  this explicitly before the user picks a scope, since the user is granting more than what they
+  see the model touching right now.
+
+Granting the narrower, single accessed file instead of its directory (in the no-match case)
+would mean a subsequent access to any *other* file in the same directory triggers a fresh ask —
+for `writeDirs`, forever, one file at a time, since write's own no-match fallback is `"ask"`, not
+a permissive default. Recording the grant at the directory avoids that.
+
+### Write grants an equivalent read grant; read never implies write
+
+A write access (`is_write=True`) always grants the *same* computed path(s) to `readDirs.allow`
+too, alongside `writeDirs.allow` — `evaluate_write()` requires an explicit `allow` in *both*
+tables (see the write-verdict ADR above), so granting write without read would immediately
+re-cap the just-granted access back down to `ask` on the very next call. `compute_grant_paths()`
+implements this by unioning matched `ask` rules across *both* `readDirs` and `writeDirs` for a
+write access, and using that single unioned set for both tables' promotion — independently
+removing each table's own matching `ask` entries, never cross-contaminating the two lists. A
+read-only access (`is_write=False`) never touches `writeDirs` at all, in either direction —
+consulting only `readDirs.ask`, granting only `readDirs.allow` — matching
+`resolve_and_evaluate_read()`'s own read-only semantics.
+
+### Cross-file cleanup: homedir may clean workspace, never the reverse
+
+Persisting a grant means reading the *one target file's own* raw JSON
+(`sessionDefaults.readDirs`/`writeDirs`) and mutating only that file's own `allow`/`ask` arrays,
+then writing it back with every other key untouched — never reconstructing the file from the
+in-memory, all-layers-concatenated `SessionConfig.read_dirs`/`write_dirs`, which would leak
+entries that don't belong to that file's own scope.
+
+Because config layers are concatenated with no rule-provenance tracking (see "Configuration"
+below), "does this file contain the matched `ask` rule" is re-derived on demand by reading each
+candidate file directly, rather than tracked through the merge. This makes the following
+asymmetry straightforward to implement: a **homedir**-scope grant may *additionally* clean a
+matching, now-redundant `ask` entry out of the **workspace** file if one independently exists
+there — removal only, never an addition to that file's `allow` — since the user's homedir-scope
+decision is the more-trusted, broader action superseding a less-trusted project file's `ask`
+entry. The reverse never happens: a **workspace**-scope grant never opens the homedir (or
+`/etc`) file at all, for either reading or writing — a workspace file is the least-trusted
+config layer (it can arrive via a hostile cloned repository's `cwd`) and must never be able to
+mutate a more-trusted, personal or admin-controlled file.
+
+In every case, in-memory removal from the live `SessionConfig` (and, for `"workspace"`/
+`"homedir"` scope, the `ProcessConfig.session` template) happens unconditionally, regardless of
+which file(s) actually get touched — so the *running process* is never left dominated by a
+stale `ask` entry it just granted an offsetting `allow` for, even when a lower-trust scope
+couldn't clean up a higher-trust file. A stale `ask` entry surviving in a file this feature
+never reaches (a `/etc`-level entry, or a homedir entry left behind by a workspace-scope grant)
+will still apply on the *next* process start, since category-order evaluation over concatenated
+layers means an `ask` entry from any layer keeps beating an `allow` entry from any other layer —
+this is an inherent, already-documented property of the category-order/concatenation design
+(see the category-order ADR above), not something this feature can or should work around; the
+only way to actually remove such an entry is to edit or delete the file that contributed it.
+
+### Trusted harness code, not a bypass
+
+`klorb.permissions.grant`'s file writes go straight through `pathlib`/`json` (via
+`klorb.schema_envelope.write_versioned_json()`), not through `CreateFileTool`/`EditFileTool` or
+any `PermissionsTable` check — including for `${workspace_root}/.klorb/klorb-config.json`, which
+is unconditionally privileged against the *agent's own tools* (see "`.klorb` self-tampering
+protection" above). This is intentional, not a bypass bug: it's trusted harness code, not the
+agent, writing the file, in direct response to an explicit interactive user decision — exactly
+like a human hand-editing `klorb-config.json` themselves. The `.klorb` self-tampering
+protection's job is to stop the *agent* from rewriting its own grants via `ReadFile`/`EditFile`;
+it has nothing to say about the harness's own trusted config-persistence code.
+
 ## Out of scope
 
-* Interactive "ask" confirmation: `PermissionAskRequired` fails closed for this pass (see
-  TODO.md); no plumbing exists yet to actually pause and prompt the user mid-tool-call.
 * Bash-command and website-access `PermissionsTable`s — future resource kinds noted in
   `TODO.md`, not built here.
 * The "trust this workspace" bootstrap flow itself (interactively asking whether to treat a

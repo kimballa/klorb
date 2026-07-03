@@ -54,7 +54,9 @@ class CreateFileTool(Tool):
         logger.debug("CreateFile %s (%d bytes)", filename, len(content))
 
         path = resolve_within_workspace(self.context, filename)
-        raise_if_not_allowed(evaluate_write(self.context, path), resource_description=f"write to {path}")
+        raise_if_not_allowed(
+            evaluate_write(self.context, path), resource_description=f"write to {path}",
+            path=path, is_write=True)
 
         if path.exists():
             raise FileExistsError(f"{filename} already exists; use EditFile to modify it instead")

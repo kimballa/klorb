@@ -35,6 +35,7 @@ single-line edits an agent makes to one file per turn, not file size; see
 docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
+CONFIG_SCHEMA_VERSION = "1.0.0"
 CONFIG_FILENAME = "klorb-config.json"
 
 KLORB_ETC_CONFIG_ENV_VAR = "KLORB_ETC_CONFIG"
@@ -119,13 +120,15 @@ def _etc_config_path() -> Path:
     return Path(override) if override else DEFAULT_ETC_CONFIG_PATH
 
 
-def _user_config_path() -> Path:
-    """Per-user config file path, honoring the `KLORB_CONFIG_DIR` env var override."""
+def user_config_path() -> Path:
+    """Per-user config file path, honoring the `KLORB_CONFIG_DIR` env var override. Also used
+    by `klorb.permissions.grant` to persist an interactive "always for me" permission grant."""
     return KLORB_CONFIG_DIR / CONFIG_FILENAME
 
 
-def _project_config_path(cwd: Path) -> Path:
-    """Per-project config file path, rooted at `cwd`."""
+def project_config_path(cwd: Path) -> Path:
+    """Per-project config file path, rooted at `cwd`. Also used by `klorb.permissions.grant` to
+    persist an interactive "this workspace" permission grant."""
     return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
 
 
@@ -208,8 +211,8 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
         merged.update(layer)
 
     merge_layer(read_versioned_json(_etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
-    merge_layer(read_versioned_json(_user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
-    merge_layer(read_versioned_json(_project_config_path(cwd), expected_schema_name=CONFIG_SCHEMA_NAME))
+    merge_layer(read_versioned_json(user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
+    merge_layer(read_versioned_json(project_config_path(cwd), expected_schema_name=CONFIG_SCHEMA_NAME))
     if config_flag_path is not None:
         merge_layer(read_versioned_json(config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME))
     merge_layer(_load_last_session_overrides(cwd))

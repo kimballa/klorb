@@ -84,7 +84,9 @@ class ReplaceAllTool(Tool):
         )
 
         path = resolve_within_workspace(self.context, filename)
-        raise_if_not_allowed(evaluate_write(self.context, path), resource_description=f"write to {path}")
+        raise_if_not_allowed(
+            evaluate_write(self.context, path), resource_description=f"write to {path}",
+            path=path, is_write=True)
 
         content = path.read_text(encoding="utf-8")
 
