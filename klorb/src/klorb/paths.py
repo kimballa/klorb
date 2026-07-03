@@ -22,7 +22,7 @@ def _dir_from_env(env_var: str, default: Path) -> Path:
     (`Path.expanduser()`) here, at the single source of `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/
     `KLORB_STATE_DIR`, so every consumer of those constants (e.g.
     `klorb.permissions.directory_access.privileged_dirs`, `klorb.process_config.
-    _user_config_path`) gets a correctly expanded, usable path without having to expand it
+    user_config_path`) gets a correctly expanded, usable path without having to expand it
     again itself.
     """
     override = os.environ.get(env_var)

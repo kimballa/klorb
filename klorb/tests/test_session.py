@@ -28,6 +28,7 @@ from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
 from klorb.session import ToolCallLimitExceeded
+from klorb.session import TurnEventHandlers
 from klorb.session import generate_session_id
 from klorb.tools.registry import ToolRegistry
 
@@ -433,7 +434,7 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     session = Session(SessionConfig(model="some/model"), provider=mock_provider)
     spy = MagicMock()
 
-    session.send_turn("hi", on_chunk=spy)
+    session.send_turn("hi", TurnEventHandlers(on_chunk=spy))
 
     assert [call.args[0] for call in spy.call_args_list] == ["Hel", "lo"]
 
@@ -482,7 +483,7 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
     session = Session(SessionConfig(model="some/model"), provider=mock_provider)
     spy = MagicMock()
 
-    session.send_turn("hi", on_thinking_chunk=spy)
+    session.send_turn("hi", TurnEventHandlers(on_thinking_chunk=spy))
 
     assert [call.args[0] for call in spy.call_args_list] == ["Let ", "me think."]
 
@@ -784,7 +785,8 @@ def test_approving_turn_limit_increase_doubles_it_and_continues() -> None:
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_limit_reached = MagicMock(return_value=True)
 
-    response = session.send_turn("loop a few times", on_tool_call_limit_reached=on_limit_reached)
+    response = session.send_turn(
+        "loop a few times", TurnEventHandlers(on_tool_call_limit_reached=on_limit_reached))
 
     assert response == "finally done"
     tool_response_messages = [m for m in session.messages if m.role == "tool_response"]
@@ -803,7 +805,7 @@ def test_declining_turn_limit_increase_raises() -> None:
     on_limit_reached = MagicMock(return_value=False)
 
     with pytest.raises(ToolCallLimitExceeded, match="1 tool call"):
-        session.send_turn("loop forever", on_tool_call_limit_reached=on_limit_reached)
+        session.send_turn("loop forever", TurnEventHandlers(on_tool_call_limit_reached=on_limit_reached))
 
     on_limit_reached.assert_called_once()
     assert config.max_tool_calls_per_turn == 1  # unchanged
@@ -822,8 +824,9 @@ def test_approving_session_limit_increase_doubles_it_and_continues() -> None:
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_limit_reached = MagicMock(return_value=True)
 
-    response1 = session.send_turn("first", on_tool_call_limit_reached=on_limit_reached)
-    response2 = session.send_turn("second", on_tool_call_limit_reached=on_limit_reached)
+    callbacks = TurnEventHandlers(on_tool_call_limit_reached=on_limit_reached)
+    response1 = session.send_turn("first", callbacks)
+    response2 = session.send_turn("second", callbacks)
 
     assert response1 == "first done"
     assert response2 == "second done"
@@ -889,7 +892,7 @@ def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
 
-    response = session.send_turn("try it", on_permission_ask=on_permission_ask)
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
     assert response == "done"
     assert _tool_response_content(session) == f"granted:{target}"
@@ -942,7 +945,7 @@ def test_permission_ask_session_scope_retries_after_config_mutation(tmp_path: Pa
         config.write_dirs = DirRules(allow=[ctx.path.parent])
         return PermissionDecision(choice="session")
 
-    response = session.send_turn("try it", on_permission_ask=fake_ask)
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=fake_ask))
 
     assert response == "done"
     assert _tool_response_content(session) == f"granted:{target}"
@@ -969,7 +972,7 @@ def test_permission_ask_workspace_and_homedir_scope_also_retry_after_mutation(tm
             config.write_dirs = DirRules(allow=[ctx.path.parent])
             return PermissionDecision(choice=scope)  # type: ignore[arg-type]
 
-        response = session.send_turn("try it", on_permission_ask=fake_ask)
+        response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=fake_ask))
         assert response == "done"
         assert _tool_response_content(session) == f"granted:{target}"
 
@@ -985,7 +988,7 @@ def test_permission_ask_deny_denies_without_any_retry(tmp_path: Path) -> None:
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
 
-    response = session.send_turn("try it", on_permission_ask=on_permission_ask)
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
     assert response == "done"
     assert _tool_response_content(session) == f"Error: Permission denied: Permission requires " \
@@ -1007,7 +1010,7 @@ def test_permission_ask_other_includes_free_text_in_denial(tmp_path: Path) -> No
     on_permission_ask = MagicMock(
         return_value=PermissionDecision(choice="other", other_text="use /tmp instead"))
 
-    session.send_turn("try it", on_permission_ask=on_permission_ask)
+    session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
     content = _tool_response_content(session)
     assert "use /tmp instead" in content
@@ -1024,15 +1027,16 @@ def test_retry_last_turn_threads_on_permission_ask(tmp_path: Path) -> None:
     config = SessionConfig(model="some/model", workspace_root=tmp_path)
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+    callbacks = TurnEventHandlers(on_permission_ask=on_permission_ask)
 
     with pytest.raises(RuntimeError):
-        session.send_turn("first attempt", on_permission_ask=on_permission_ask)
+        session.send_turn("first attempt", callbacks)
 
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_2", target)]),
         _reply("done"),
     ]
-    response = session.retry_last_turn(on_permission_ask=on_permission_ask)
+    response = session.retry_last_turn(callbacks)
 
     assert response == "done"
     assert on_permission_ask.call_count == 2

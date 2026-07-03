@@ -34,6 +34,7 @@ from klorb.session import PermissionAskContext
 from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import ThinkingEffort
+from klorb.session import TurnEventHandlers
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.permission_ask_screen import PermissionAskScreen
@@ -458,10 +459,10 @@ class ReplApp(App[None]):
                 self.call_from_thread(thinking_widget.update, _italicized(thinking_accumulated))
 
         try:
-            response_text = self._session.send_turn(
-                prompt_text, on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
+            response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
+                on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
                 cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
-                on_permission_ask=self._on_permission_ask)
+                on_permission_ask=self._on_permission_ask))
         except ResponseAborted:
             self.call_from_thread(self._handle_aborted_response, mounted_widgets)
         except Exception as exc:

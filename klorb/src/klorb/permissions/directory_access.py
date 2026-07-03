@@ -21,7 +21,7 @@ from klorb.permissions.table import PermissionsTable
 
 KLORB_PROJECT_DIR_NAME = ".klorb"
 """Name of the directory (immediate child of a workspace root) that holds klorb's own
-per-project config and state. Shared with `klorb.process_config._project_config_path()`,
+per-project config and state. Shared with `klorb.process_config.project_config_path()`,
 which imports this constant rather than duplicating the literal."""
 
 

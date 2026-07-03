@@ -120,26 +120,16 @@ def _etc_config_path() -> Path:
     return Path(override) if override else DEFAULT_ETC_CONFIG_PATH
 
 
-def _user_config_path() -> Path:
-    """Per-user config file path, honoring the `KLORB_CONFIG_DIR` env var override."""
+def user_config_path() -> Path:
+    """Per-user config file path, honoring the `KLORB_CONFIG_DIR` env var override. Also used
+    by `klorb.permissions.grant` to persist an interactive "always for me" permission grant."""
     return KLORB_CONFIG_DIR / CONFIG_FILENAME
 
 
-def _project_config_path(cwd: Path) -> Path:
-    """Per-project config file path, rooted at `cwd`."""
-    return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
-
-
 def project_config_path(cwd: Path) -> Path:
-    """Public alias of `_project_config_path`, for callers outside this module (e.g.
-    `klorb.permissions.grant`, persisting an interactive permission grant) that need the
-    per-project config file's path directly, without duplicating its construction."""
-    return _project_config_path(cwd)
-
-
-def user_config_path() -> Path:
-    """Public alias of `_user_config_path`, for the same reason as `project_config_path`."""
-    return _user_config_path()
+    """Per-project config file path, rooted at `cwd`. Also used by `klorb.permissions.grant` to
+    persist an interactive "this workspace" permission grant."""
+    return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
 
 
 def _load_last_session_overrides(cwd: Path) -> dict[str, Any]:
@@ -221,8 +211,8 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
         merged.update(layer)
 
     merge_layer(read_versioned_json(_etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
-    merge_layer(read_versioned_json(_user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
-    merge_layer(read_versioned_json(_project_config_path(cwd), expected_schema_name=CONFIG_SCHEMA_NAME))
+    merge_layer(read_versioned_json(user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
+    merge_layer(read_versioned_json(project_config_path(cwd), expected_schema_name=CONFIG_SCHEMA_NAME))
     if config_flag_path is not None:
         merge_layer(read_versioned_json(config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME))
     merge_layer(_load_last_session_overrides(cwd))

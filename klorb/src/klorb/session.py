@@ -13,6 +13,7 @@ from typing import Literal
 
 from coolname import generate_slug
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 
 from klorb.api_provider import ApiProvider
@@ -145,6 +146,28 @@ class PermissionDecision(BaseModel):
 
     choice: Literal["once", "session", "workspace", "homedir", "deny", "other"]
     other_text: str | None = None
+
+
+class TurnEventHandlers(BaseModel):
+    """Immutable bundle of the optional callbacks (and cancellation signal) a caller can
+    supply for one turn: `on_chunk`/`on_thinking_chunk` (streamed response text),
+    `cancel_event` (abort a turn mid-stream), `on_tool_call_limit_reached` (ask whether to
+    raise a safety cap), and `on_permission_ask` (ask how to resolve an `"ask"` permission
+    verdict). Replaces passing these as five separate keyword arguments through `send_turn()`/
+    `retry_last_turn()`/`_dispatch_turn()` and everything they call — a single object here
+    means a future addition only touches this class, not every method's signature along the
+    chain. `frozen=True` since a `TurnEventHandlers` is built once per turn and never mutated;
+    `arbitrary_types_allowed=True` is needed for the `threading.Event` field (`Callable` fields
+    validate natively without it).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    on_chunk: Callable[[str], None] | None = None
+    on_thinking_chunk: Callable[[str], None] | None = None
+    cancel_event: threading.Event | None = None
+    on_tool_call_limit_reached: Callable[[str], bool] | None = None
+    on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None
 
 
 class Session:
@@ -380,8 +403,7 @@ class Session:
     def _run_tool_calls(
         self,
         tool_use_message: Message,
-        on_tool_call_limit_reached: Callable[[str], bool] | None,
-        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
+        callbacks: TurnEventHandlers,
     ) -> None:
         """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
         via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
@@ -393,12 +415,12 @@ class Session:
         and `config.max_tool_calls_per_session` (`self._tool_calls_this_session`; never
         reset, accumulates for the life of this `Session`). Reaching either asks
         `_confirm_limit_increase()` whether to double it and keep going; if that returns
-        `False` (declined, or `on_tool_call_limit_reached` wasn't given), raises
+        `False` (declined, or `callbacks.on_tool_call_limit_reached` wasn't given), raises
         `ToolCallLimitExceeded` without executing this call (or any later call in
         `tool_use_message.tool_calls`).
 
-        If a call raises `PermissionAskRequired` and `on_permission_ask` is given (and the
-        exception carries a `path`), the callback is asked for a `PermissionDecision` and the
+        If a call raises `PermissionAskRequired` and `callbacks.on_permission_ask` is given (and
+        the exception carries a `path`), the callback is asked for a `PermissionDecision` and the
         call is retried or denied accordingly (see `_retry_after_permission_decision`). With no
         callback (e.g. a headless one-shot run), or an exception with no `path` (a call site
         that didn't supply one), this fails closed exactly like any other tool exception: the
@@ -413,14 +435,14 @@ class Session:
             if self._tool_calls_this_turn >= self.config.max_tool_calls_per_turn:
                 if not self._confirm_limit_increase(
                     "turn", self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
-                    on_tool_call_limit_reached,
+                    callbacks.on_tool_call_limit_reached,
                 ):
                     raise ToolCallLimitExceeded(
                         f"Exceeded {self.config.max_tool_calls_per_turn} tool call(s) in one turn.")
             if self._tool_calls_this_session >= self.config.max_tool_calls_per_session:
                 if not self._confirm_limit_increase(
                     "session", self._tool_calls_this_session, self.config.max_tool_calls_per_session,
-                    on_tool_call_limit_reached,
+                    callbacks.on_tool_call_limit_reached,
                 ):
                     raise ToolCallLimitExceeded(
                         f"Exceeded {self.config.max_tool_calls_per_session} tool call(s) in this session.")
@@ -441,11 +463,11 @@ class Session:
                 content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
                 logger.info("Tool call %s succeeded: %s", call.name, content)
             except PermissionAskRequired as ask_exc:
-                if on_permission_ask is None or ask_exc.path is None:
+                if callbacks.on_permission_ask is None or ask_exc.path is None:
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                     content = f"Error: {ask_exc}"
                 else:
-                    decision = on_permission_ask(PermissionAskContext(
+                    decision = callbacks.on_permission_ask(PermissionAskContext(
                         path=ask_exc.path, is_write=ask_exc.is_write,
                         resource_description=str(ask_exc)))
                     content = self._retry_after_permission_decision(call, args, ask_exc, decision)
@@ -473,9 +495,7 @@ class Session:
         model_name: str,
         reasoning: dict[str, Any] | None,
         tools: list[dict[str, Any]] | None,
-        on_chunk: Callable[[str], None] | None,
-        on_thinking_chunk: Callable[[str], None] | None,
-        cancel_event: threading.Event | None,
+        callbacks: TurnEventHandlers,
     ) -> tuple[Message, ProviderResponse]:
         """Send one request to the active model and return `(reply, result)`.
 
@@ -519,8 +539,8 @@ class Session:
                 self._messages.append(placeholder)
             assert placeholder.streaming_content is not None
             placeholder.streaming_content.append(delta_text)
-            if on_chunk is not None:
-                on_chunk(delta_text)
+            if callbacks.on_chunk is not None:
+                callbacks.on_chunk(delta_text)
 
         def handle_thinking_chunk(delta_text: str) -> None:
             nonlocal thinking_placeholder
@@ -536,14 +556,14 @@ class Session:
                 self._messages.append(thinking_placeholder)
             assert thinking_placeholder.streaming_content is not None
             thinking_placeholder.streaming_content.append(delta_text)
-            if on_thinking_chunk is not None:
-                on_thinking_chunk(delta_text)
+            if callbacks.on_thinking_chunk is not None:
+                callbacks.on_thinking_chunk(delta_text)
 
         try:
             result = self._provider.send_prompt(
                 message_snapshot, system_prompt=system_prompt, model=model_name,
                 session_id=self.id, reasoning=reasoning, tools=tools, on_chunk=handle_chunk,
-                on_thinking_chunk=handle_thinking_chunk, cancel_event=cancel_event)
+                on_thinking_chunk=handle_thinking_chunk, cancel_event=callbacks.cancel_event)
         except ResponseAborted:
             if thinking_placeholder is not None:
                 self._messages.remove(thinking_placeholder)
@@ -586,11 +606,7 @@ class Session:
         self,
         user_message: Message,
         tokens_before: int,
-        on_chunk: Callable[[str], None] | None = None,
-        on_thinking_chunk: Callable[[str], None] | None = None,
-        cancel_event: threading.Event | None = None,
-        on_tool_call_limit_reached: Callable[[str], bool] | None = None,
-        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
+        callbacks: TurnEventHandlers | None = None,
     ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
 
@@ -615,13 +631,14 @@ class Session:
         failing round's own placeholder(s) are already marked the same way by
         `_send_and_receive`), and the exception is re-raised.
 
-        If `cancel_event` is given and the provider raises `ResponseAborted` (because it was
-        set mid-stream), this turn never happened as far as history is concerned: every
+        If `callbacks.cancel_event` is given and the provider raises `ResponseAborted` (because
+        it was set mid-stream), this turn never happened as far as history is concerned: every
         message appended since `user_message` — it, any earlier round's `tool_use`/
         `tool_response` messages, and the aborted round's placeholder(s) — is removed from
         `self._messages` entirely, rather than left behind in `"error"` state, and the
         exception is re-raised so the caller can offer the prompt back up for editing.
         """
+        callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
         self._ensure_tool_defs_message()
         self._tool_calls_this_turn = 0
@@ -634,8 +651,7 @@ class Session:
 
         try:
             reply, result = self._send_and_receive(
-                list(self._messages), system_prompt, model_name, reasoning, tools,
-                on_chunk, on_thinking_chunk, cancel_event)
+                list(self._messages), system_prompt, model_name, reasoning, tools, callbacks)
 
             rounds = 0
             while reply.role == "tool_use":
@@ -647,10 +663,9 @@ class Session:
                     raise ToolCallLimitExceeded(
                         f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
                 logger.info("Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
-                self._run_tool_calls(reply, on_tool_call_limit_reached, on_permission_ask)
+                self._run_tool_calls(reply, callbacks)
                 reply, result = self._send_and_receive(
-                    list(self._messages), system_prompt, model_name, reasoning, tools,
-                    on_chunk, on_thinking_chunk, cancel_event)
+                    list(self._messages), system_prompt, model_name, reasoning, tools, callbacks)
         except ResponseAborted:
             del self._messages[turn_start_index:]
             logger.info("Turn aborted for %s", model_name)
@@ -673,26 +688,23 @@ class Session:
     def send_turn(
         self,
         prompt: str,
-        on_chunk: Callable[[str], None] | None = None,
-        on_thinking_chunk: Callable[[str], None] | None = None,
-        cancel_event: threading.Event | None = None,
-        on_tool_call_limit_reached: Callable[[str], bool] | None = None,
-        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
+        callbacks: TurnEventHandlers | None = None,
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
         Appends a new user `Message` to the session's history, sends the full history (plus
         the active model's system prompt, if registered) to the provider, and mutates that
-        same `Message` in place to reflect the outcome (see `_dispatch_turn`). If `on_chunk`
-        is given, it is invoked with each text delta as the response streams in; if
-        `on_thinking_chunk` is given, it is invoked with each reasoning/thinking text delta.
-        If `cancel_event` is given and set while the response is streaming in, the turn is
-        aborted: `ResponseAborted` is raised and the user `Message` appended here is removed
-        from history again (see `_dispatch_turn`). If `on_tool_call_limit_reached` is given,
-        it's invoked (with a human-readable prompt) when a tool-call safety limit is reached,
-        to ask whether to double it and keep going — see `_confirm_limit_increase`. If
-        `on_permission_ask` is given, it's invoked when a tool call hits an `"ask"` permission
-        verdict, to ask whether (and how broadly) to allow it — see `_run_tool_calls`.
+        same `Message` in place to reflect the outcome (see `_dispatch_turn`). `callbacks`
+        (a `TurnEventHandlers`, defaulting to one with every field `None` if omitted) bundles
+        every optional hook for this turn: `on_chunk`/`on_thinking_chunk` are invoked with each
+        text/reasoning delta as the response streams in; if `cancel_event` is set while the
+        response is streaming in, the turn is aborted: `ResponseAborted` is raised and the user
+        `Message` appended here is removed from history again (see `_dispatch_turn`);
+        `on_tool_call_limit_reached` is invoked (with a human-readable prompt) when a tool-call
+        safety limit is reached, to ask whether to double it and keep going — see
+        `_confirm_limit_increase`; `on_permission_ask` is invoked when a tool call hits an
+        `"ask"` permission verdict, to ask whether (and how broadly) to allow it — see
+        `_run_tool_calls`.
         """
         tokens_before = self._tokens_recorded_so_far()
         user_message = Message(
@@ -705,24 +717,21 @@ class Session:
         self._messages.append(user_message)
         logger.info(
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
-        return self._dispatch_turn(
-            user_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
-            cancel_event=cancel_event, on_tool_call_limit_reached=on_tool_call_limit_reached,
-            on_permission_ask=on_permission_ask)
+        return self._dispatch_turn(user_message, tokens_before, callbacks)
 
     def retry_last_turn(
         self,
-        on_chunk: Callable[[str], None] | None = None,
-        on_thinking_chunk: Callable[[str], None] | None = None,
-        on_tool_call_limit_reached: Callable[[str], bool] | None = None,
-        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
+        callbacks: TurnEventHandlers | None = None,
     ) -> str:
         """Resend the most recently errored user turn's content, mutating that same `Message`.
 
         Scans from the end of the history for the last user-role `Message`; if none exists
         or it isn't in `"error"` state, raises `ValueError`. Any messages after it (e.g. a
         partial assistant placeholder left behind by a failed stream) are discarded before
-        resending, since they belong to the failed attempt, not the conversation.
+        resending, since they belong to the failed attempt, not the conversation. `callbacks`
+        is the same `TurnEventHandlers` bundle `send_turn()` takes, including
+        `callbacks.cancel_event` — a retried turn can be aborted mid-stream exactly like an
+        original one.
         """
         index = len(self._messages) - 1
         while index >= 0 and self._messages[index].role != "user":
@@ -735,9 +744,7 @@ class Session:
         tokens_before = self._tokens_recorded_so_far() - errored_message.num_tokens
         errored_message.processing_state = "pending"
         logger.info("Retrying errored turn for %s", self.active_model_name())
-        return self._dispatch_turn(
-            errored_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
-            on_tool_call_limit_reached=on_tool_call_limit_reached, on_permission_ask=on_permission_ask)
+        return self._dispatch_turn(errored_message, tokens_before, callbacks)
 
     def run_one_shot(
         self,
@@ -746,4 +753,5 @@ class Session:
         on_thinking_chunk: Callable[[str], None] | None = None,
     ) -> str:
         """Run a single, non-interactive turn and return the model's text response."""
-        return self.send_turn(prompt, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)
+        return self.send_turn(
+            prompt, TurnEventHandlers(on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk))
