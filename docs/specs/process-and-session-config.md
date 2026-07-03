@@ -188,7 +188,8 @@ field. A reference file with every recognized key at its current default lives a
   in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`,
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
-  `tools.readFile.maxLines`, `providers.openrouter.baseUrl`) can be set at the top level.
+  `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`,
+  `providers.openrouter.baseUrl`) can be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`
@@ -218,6 +219,11 @@ field. A reference file with every recognized key at its current default lives a
   `DEFAULT_READ_FILE_MAX_LINES` in `process_config.py` is its sole canonical default;
   `klorb.tools.read_file` has no constant of its own — see
   [the ToolSetupContext ADR](../adrs/tool-setup-context-carries-process-and-session-config.md).
+* `edit_file_drift_search_radius` (`tools.editFile.driftSearchRadius`) is consumed the same way
+  by `EditFileTool` via `context.process_config.edit_file_drift_search_radius`;
+  `DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS` in `process_config.py` is its sole canonical default —
+  see [[tool-framework]] and
+  [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
 * `last-session.json` (`TODO.md`) doesn't exist yet; `_load_last_session_overrides()` is a
   placeholder that always returns no overrides.
 * Provider selection isn't implemented (no command exists to change it), so there's nothing

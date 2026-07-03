@@ -24,7 +24,7 @@ class Gpt4oMiniModel(Model):
             "vision": True,
             "thinking": False,
             "max_context_window": 128_000,
-            "max_output_tokens": 16_384,
+            "max_output_tokens": 16_000,
             "function_calling": True,
             "streaming": True,
         }

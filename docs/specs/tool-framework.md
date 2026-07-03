@@ -74,22 +74,44 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   `"N|line text"` entry per line, newline-separated.
 * `klorb.tools.edit_file.EditFileTool` (`klorb/src/klorb/tools/edit_file.py`), name
   `EditFile`. Replaces the inclusive 1-indexed line range `start_line`..`end_line` of an
-  existing text file with `new_text`, after verifying the mandatory `start_text`/`end_text`
-  arguments still match what's actually at those lines — a mismatch raises `ValueError`
-  naming the actual content, signaling stale line numbers (e.g. from an earlier edit shifting
-  everything below it) rather than corrupting the file. There is no separate insert or delete
-  tool: insert without deleting by setting `start_line == end_line` and folding that line's
-  original text into `new_text`; delete by passing an empty `new_text`. The one exception is
-  an empty file (`total_lines == 0`), which has no anchor line to replace — the only valid
-  call there is `start_line=1, end_line=0, start_text="", end_text=""`. See
+  existing text file with `new_text`, after locating the mandatory `start_text`/`end_text`
+  arguments at or near those lines. `start_line`/`end_line` are a location hint, not a hard
+  requirement: if they don't match exactly, `apply()` searches within
+  `context.process_config.edit_file_drift_search_radius` lines (default
+  `process_config.DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS`, 20 — the sole canonical source of
+  this default) for a unique nearby location where `start_text`/`end_text` still match at the
+  same relative span, and edits there instead, reporting the correction back (see the response
+  shape below). No match within that radius still raises `ValueError` naming the actual
+  content at the hint, signaling stale line numbers (e.g. from an earlier edit shifting
+  everything below it) rather than corrupting the file; more than one match raises a
+  distinctly-worded `"Ambiguous match"` `ValueError` listing the candidate lines along with
+  each one's actual nearby content as a ready-to-use `context_before=...`/`context_after=...`
+  value, adaptively as many lines on each side as needed to tell every candidate apart (fewer
+  near a file's start/end, and no fixed cap — see `_minimal_disambiguating_window`), resolvable
+  by retrying with a closer `start_line` or the optional `context_before`/`context_after`
+  arguments (checked against every candidate whenever supplied) — the preview lets a model copy
+  that value verbatim for the location it means rather than reconstruct it from a separate
+  `ReadFile` call. Omitting `context_before`/`context_after` means "don't check this side";
+  passing the empty string `""` instead is a distinct, checked assertion that there's genuinely
+  nothing on that side (the target is the file's actual first/last line). An out-of-bounds hint
+  (`end_line` past the file's end, etc.) raises immediately with no search attempted. See
+  [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
+  There is no separate insert or delete tool: insert without deleting by setting
+  `start_line == end_line` and folding that line's original text into `new_text`; delete by
+  passing an empty `new_text`. The one exception is an empty file (`total_lines == 0`), which
+  has no anchor line to replace — the only valid call there is `start_line=1, end_line=0,
+  start_text="", end_text=""`. See
   [the insert/delete ADR](../adrs/edit-file-covers-insert-and-delete-via-replace-range.md).
   Trailing-newline handling: an edit that doesn't touch the file's last line preserves whatever
   trailing-newline state the file already had; an edit whose `end_line` reaches the end of the
   file (including the empty-file case) always terminates the file with a single trailing `\n`
-  if any content remains, none otherwise. The result is a dict: `filename`, the edited
-  region's `start_line`/`end_line` (renumbered to reflect what was actually written), the
-  file's new `new_total_lines`, and `content` — the changed region in `ReadFile`'s `"N|text"`
-  format, so the model can see the result without a follow-up `ReadFile` call.
+  if any content remains, none otherwise. The result is a dict: `filename`,
+  `requested_start_line`/`requested_end_line` (echoing the input), the edited region's
+  `start_line`/`end_line` (where the edit actually landed, renumbered to reflect what was
+  actually written — possibly different from what was requested), `line_hint_matched` (false
+  if a drift relocation happened), the file's new `new_total_lines`, and `content` — the
+  changed region in `ReadFile`'s `"N|text"` format, so the model can see the result without a
+  follow-up `ReadFile` call.
 * `klorb.tools.replace_all.ReplaceAllTool` (`klorb/src/klorb/tools/replace_all.py`), name
   `ReplaceAll`. Replaces every occurrence of `search` in a single `filename` with `new_text`.
   `search` is matched as a literal substring by default; `is_regex` treats it as a Python

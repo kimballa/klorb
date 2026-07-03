@@ -13,6 +13,14 @@ call can't return the whole file, forcing a competent run to either page with
 `session.messages` for the `ReadFile`/`EditFile` calls actually made (see
 docs/adrs/grade-tool-evals-by-filesystem-state.md's "where useful" carve-out), not just the
 resulting file content.
+
+Another handful use repeated, identical lines at or near a file's first/last line, where
+`EditFile`'s drift search (see
+docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md) necessarily
+returns more than one candidate — these check that the model actually recovers by supplying
+`context_before`/`context_after` (inspecting `session.messages` for those arguments, not just
+the resulting content), rather than passing only because it stumbled onto the right file state
+some other way.
 """
 
 import json
@@ -384,6 +392,148 @@ REPLACE_ALL_CASE_INSENSITIVE = EvalCase(
 )
 
 
+def _check_edit_file_ambiguous_match_first_line_repeated(
+    workspace_root: Path, session: Session,
+) -> str | None:
+    expected = ["STATUS: done", "STATUS: pending", "STATUS: pending", "END"]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any(
+        call.get("context_after") or call.get("context_before") == ""
+        for call in edit_calls
+    ):
+        return (
+            "expected at least one EditFile call to supply either a non-empty context_after, "
+            "or context_before=\"\" (asserting nothing genuinely precedes the target -- a "
+            "non-empty context_before can never match there, since nothing precedes line 1), "
+            "to disambiguate the repeated first line"
+        )
+    return None
+
+
+EDIT_FILE_AMBIGUOUS_MATCH_FIRST_LINE_REPEATED = EvalCase(
+    name="edit_file_ambiguous_match_first_line_repeated",
+    prompt=(
+        "log.txt starts with three identical lines reading 'STATUS: pending', followed by a "
+        "line reading 'END'. Change ONLY the first of those three identical lines to read "
+        "'STATUS: done' — leave the second and third 'STATUS: pending' lines, and the 'END' "
+        "line, exactly as they are."
+    ),
+    setup_files={
+        "log.txt": "STATUS: pending\nSTATUS: pending\nSTATUS: pending\nEND\n",
+    },
+    check=_check_edit_file_ambiguous_match_first_line_repeated,
+    expected_tool_calls=2,
+)
+
+
+def _check_edit_file_ambiguous_match_last_line_repeated(workspace_root: Path, session: Session) -> str | None:
+    expected = ["START", "STATUS: pending", "STATUS: pending", "STATUS: done"]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any(
+        call.get("context_before") or call.get("context_after") == ""
+        for call in edit_calls
+    ):
+        return (
+            "expected at least one EditFile call to supply either a non-empty context_before, "
+            "or context_after=\"\" (asserting nothing genuinely follows the target -- a "
+            "non-empty context_after can never match there, since nothing follows the last "
+            "line), to disambiguate the repeated last line"
+        )
+    return None
+
+
+EDIT_FILE_AMBIGUOUS_MATCH_LAST_LINE_REPEATED = EvalCase(
+    name="edit_file_ambiguous_match_last_line_repeated",
+    prompt=(
+        "log.txt starts with a line reading 'START', followed by three identical lines "
+        "reading 'STATUS: pending'. Change ONLY the last of those three identical lines to "
+        "read 'STATUS: done' — leave the first two 'STATUS: pending' lines, and the 'START' "
+        "line, exactly as they are."
+    ),
+    setup_files={
+        "log.txt": "START\nSTATUS: pending\nSTATUS: pending\nSTATUS: pending\n",
+    },
+    check=_check_edit_file_ambiguous_match_last_line_repeated,
+    expected_tool_calls=2,
+)
+
+
+def _check_edit_file_ambiguous_match_middle_of_repeats(workspace_root: Path, session: Session) -> str | None:
+    expected = ["BEFORE", "STATUS: pending", "STATUS: done", "STATUS: pending", "AFTER"]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any(call.get("context_before") and call.get("context_after") for call in edit_calls):
+        return (
+            "expected at least one EditFile call to supply both non-empty context_before and "
+            "context_after: since all three repeated lines fall within the default drift "
+            "search radius, an exact start_line hint alone can't disambiguate the middle one "
+            "from its neighbors -- only context on both sides can"
+        )
+    return None
+
+
+EDIT_FILE_AMBIGUOUS_MATCH_MIDDLE_OF_REPEATS = EvalCase(
+    name="edit_file_ambiguous_match_middle_of_repeats",
+    prompt=(
+        "log.txt has a line reading 'BEFORE', then three identical lines reading "
+        "'STATUS: pending', then a line reading 'AFTER'. Change ONLY the middle one of those "
+        "three identical lines to read 'STATUS: done' — leave the first and third "
+        "'STATUS: pending' lines, plus 'BEFORE' and 'AFTER', exactly as they are."
+    ),
+    setup_files={
+        "log.txt": "BEFORE\nSTATUS: pending\nSTATUS: pending\nSTATUS: pending\nAFTER\n",
+    },
+    check=_check_edit_file_ambiguous_match_middle_of_repeats,
+    expected_tool_calls=2,
+)
+
+
+def _check_edit_file_ambiguous_match_four_repeats_inner_position(
+    workspace_root: Path, session: Session,
+) -> str | None:
+    expected = [
+        "BEFORE", "STATUS: pending", "STATUS: done", "STATUS: pending", "STATUS: pending", "AFTER",
+    ]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any("\n" in (call.get("context_before") or "") for call in edit_calls):
+        return (
+            "expected at least one EditFile call to supply a context_before spanning 2 or "
+            "more lines: the second of four repeated lines is adjacent to another repeat, not "
+            "to the unique 'BEFORE' anchor, so a single line of context_before still leaves "
+            "multiple candidates -- only reaching back far enough to include 'BEFORE' resolves it"
+        )
+    return None
+
+
+EDIT_FILE_AMBIGUOUS_MATCH_FOUR_REPEATS_INNER_POSITION = EvalCase(
+    name="edit_file_ambiguous_match_four_repeats_inner_position",
+    prompt=(
+        "log.txt has a line reading 'BEFORE', then four identical lines reading "
+        "'STATUS: pending', then a line reading 'AFTER'. Change ONLY the second of those four "
+        "identical lines to read 'STATUS: done' — leave the first, third, and fourth "
+        "'STATUS: pending' lines, plus 'BEFORE' and 'AFTER', exactly as they are."
+    ),
+    setup_files={
+        "log.txt": (
+            "BEFORE\nSTATUS: pending\nSTATUS: pending\nSTATUS: pending\nSTATUS: pending\nAFTER\n"
+        ),
+    },
+    check=_check_edit_file_ambiguous_match_four_repeats_inner_position,
+    expected_tool_calls=2,
+)
+
+
 CASES: list[EvalCase] = [
     CREATE_FILE_BASIC,
     CREATE_FILE_NESTED_DIRECTORY,
@@ -399,4 +549,8 @@ CASES: list[EvalCase] = [
     READ_FILE_PAGINATES_PAST_MAX_LINES,
     EDIT_FILE_MANY_OPS_BOTTOM_TO_TOP,
     REPLACE_ALL_CASE_INSENSITIVE,
+    EDIT_FILE_AMBIGUOUS_MATCH_FIRST_LINE_REPEATED,
+    EDIT_FILE_AMBIGUOUS_MATCH_LAST_LINE_REPEATED,
+    EDIT_FILE_AMBIGUOUS_MATCH_MIDDLE_OF_REPEATS,
+    EDIT_FILE_AMBIGUOUS_MATCH_FOUR_REPEATS_INNER_POSITION,
 ]

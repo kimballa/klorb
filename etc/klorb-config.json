@@ -40,28 +40,6 @@
     },
     "writeDirs": {
       "deny": [
-        "~/.ssh",
-        "~/.aws",
-        "~/.azure",
-        "~/.config/gcloud",
-        "~/.oci",
-        "~/.ibmcloud",
-        "~/.kube",
-        "~/.terraform.d",
-        "~/.gnupg",
-        "~/.age",
-        "~/.config/sops",
-        "~/.docker",
-        "~/.config/containers",
-        "~/.config/gh",
-        "~/.config/glab-cli",
-        "~/.config/op",
-        "~/.password-store",
-        "~/.local/share/keyrings",
-        "~/.pki",
-        "/etc/ssh",
-        "/etc/sudoers.d",
-        "/etc/ssl/private"
       ],
       "ask": [],
       "allow": []
@@ -75,5 +53,6 @@
   },
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
+  "tools.editFile.driftSearchRadius": 20,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
 }

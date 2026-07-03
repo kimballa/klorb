@@ -26,6 +26,14 @@ DEFAULT_READ_FILE_MAX_LINES = 200
 `klorb.tools.read_file` has no constant of its own, it reads `ProcessConfig.read_file_max_lines`
 via `ToolSetupContext` at construction time instead."""
 
+DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS = 20
+"""`EditFileTool`'s bounded-search radius default (in lines) for locating a drifted
+`start_line`/`end_line` hint; the canonical source of this value — `klorb.tools.edit_file` has
+no constant of its own, it reads `ProcessConfig.edit_file_drift_search_radius` via
+`ToolSetupContext` at construction time instead. Chosen relative to a typical number of
+single-line edits an agent makes to one file per turn, not file size; see
+docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md."""
+
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_FILENAME = "klorb-config.json"
 
@@ -57,6 +65,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "thinking.tokenBudgets": "thinking_token_budgets",
     "terminal.input.maxLines": "prompt_input_max_lines",
     "tools.readFile.maxLines": "read_file_max_lines",
+    "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "providers.openrouter.baseUrl": "openrouter_base_url",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
@@ -84,6 +93,7 @@ class ProcessConfig(BaseModel):
     prompt_input_max_lines: int = DEFAULT_PROMPT_INPUT_MAX_LINES
     thinking_token_budgets: dict[ThinkingEffort, int] = dict(THINKING_EFFORT_TOKEN_BUDGETS)
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
+    edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     openrouter_base_url: str = OPENROUTER_BASE_URL
     is_workspace_trusted: bool = False
     """Whether `ReadFile` may use `readDirs`/`writeDirs`-table-only confinement (able to reach

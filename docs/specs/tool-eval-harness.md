@@ -73,14 +73,18 @@ offline against mocks. They run under their own `make evals` target instead — 
 * `klorb/evals/cases.py` holds the synthesized `EvalCase` list covering `ReadFile`, `CreateFile`,
   `EditFile`, and `ReplaceAll` — see its module docstring for the full list of scenarios.
 * `klorb/evals/report.py` renders a `list[CaseResult]` (plus an optional `tool_token_counts`) as
-  a markdown report: a summary (pass count, conditional-pass count, total duration,
-  total/average tool calls), an optional "Tool definitions" section (each tool's name and its
-  `tool_token_counts()` value, largest first) when `tool_token_counts` is given, then one
+  a markdown report: `render_summary()`'s block (pass count, conditional-pass count, total
+  duration, total/average tool calls), an optional "Tool definitions" section (each tool's name
+  and its `tool_token_counts()` value, largest first) when `tool_token_counts` is given, then one
   section per case (prompt, `status_label()`'s `PASS`/`CONDITIONAL PASS`/`FAIL`, duration, tool
   calls made vs. expected, failure reason or error if any). `status_label(result, color=...)` is
   the single place that turns a `CaseResult` into its three-way status string (green `PASS`,
   yellow `CONDITIONAL PASS`, red `FAIL`) — shared with `run_evals.py`'s live per-case progress
-  printer so both agree on the same status for the same result.
+  printer so both agree on the same status for the same result. `render_case_detail(result,
+  color=...)` renders one case's tool-call transcript (`  -> Tool(args)` / `  <- response`, red
+  when the response starts with `"Error:"`) plus its tool-call counts and status line — the same
+  block `render_report()`'s per-case section and `run_evals.py`'s live progress printer both show,
+  factored out so `run_evals.py` can also write it (with `color=False`) to `evals.log`.
 * `klorb/evals/colors.py` is a minimal ANSI-color helper: `use_color(stream)` reports whether
   `stream.isatty()`, and `colorize(text, color, enabled=...)` wraps `text` in ANSI codes only
   when `enabled` — callers decide and pass that decision in explicitly, so nothing in this
@@ -105,6 +109,14 @@ offline against mocks. They run under their own `make evals` target instead — 
     what's actually happening case by case instead of going silent until the final report.
     `use_color()` (checked once, against `sys.stdout`) decides whether any of that output — the
     live progress lines and the final report's `[PASS]`/`[FAIL]` markers — is colorized.
+  * After every case has run, `_write_eval_log()` writes `evals.log` in the current directory
+    (`klorb/`, since that's where `make evals` runs) as a plain, non-colorized record of the run:
+    `render_case_detail(result, color=False)` for every case that failed or conditionally passed
+    (see [[eval-conditional-pass-on-excess-tool-calls]]), followed by `render_summary()`'s block.
+    A fully clean run (every case a plain `PASS`) has no per-case sections worth re-reading, so
+    `evals.log` then holds just the summary block. This file isn't committed (see the repo-root
+    `.gitignore`'s `evals.log` entry) — it's a scrollback aid for the run that just happened, not
+    build output.
 
 ## Adding a new eval case
 
