@@ -141,7 +141,9 @@ class EditFileTool(Tool):
                 raise ValueError(f"{label} must be an integer, got {value!r} ({type(value).__name__})")
 
         path = resolve_within_workspace(self.context, filename)
-        raise_if_not_allowed(evaluate_write(self.context, path), resource_description=f"write to {path}")
+        raise_if_not_allowed(
+            evaluate_write(self.context, path), resource_description=f"write to {path}",
+            path=path, is_write=True)
 
         raw = path.read_text(encoding="utf-8")
         original_ends_with_newline = raw.endswith("\n")

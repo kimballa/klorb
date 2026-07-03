@@ -1,8 +1,10 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.session."""
 
+import json
 import re
 from datetime import datetime
+from pathlib import Path
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -14,10 +16,14 @@ from klorb.api_provider import ProviderResponse
 from klorb.message import Message
 from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
+from klorb.permissions.directory_access import DirRules
+from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import MAX_TOOL_CALL_ROUNDS
+from klorb.session import PermissionAskContext
+from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
@@ -578,7 +584,7 @@ def test_tool_definitions_offered_to_provider_when_tool_registry_set() -> None:
     session.send_turn("hi")
 
     _, kwargs = mock_provider.send_prompt.call_args
-    assert {d["function"]["name"] for d in kwargs["tools"]} == {"echo", "add"}
+    assert {d["function"]["name"] for d in kwargs["tools"]} == {"echo", "add", "ask_permission"}
 
 
 def test_tool_defs_message_inserted_before_first_turn() -> None:
@@ -836,3 +842,197 @@ def test_no_callback_declines_without_asking() -> None:
         session.send_turn("loop forever")
 
     assert config.max_tool_calls_per_turn == 1  # unchanged
+
+
+# --- on_permission_ask ---
+
+
+def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tuple[str, str, str]:
+    return id_, "ask_permission", json.dumps({"path": str(path), "is_write": is_write})
+
+
+def _session_with_ask_tool(config: SessionConfig, mock_provider: MagicMock) -> Session:
+    tool_registry = ToolRegistry(ProcessConfig(), config, package=sample_tools_package)
+    return Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+
+def _tool_response_content(session: Session) -> str:
+    tool_response = next(m for m in session.messages if m.role == "tool_response")
+    assert isinstance(tool_response.content, str)
+    return tool_response.content
+
+
+def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+
+    response = session.send_turn("try it")
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"Error: Permission requires confirmation: access {target}"
+
+
+def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+
+    response = session.send_turn("try it", on_permission_ask=on_permission_ask)
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"granted:{target}"
+    on_permission_ask.assert_called_once()
+    (ask_ctx,), _ = on_permission_ask.call_args
+    assert ask_ctx.path == target
+    assert ask_ctx.is_write is True
+    # "once" must not have touched the session's tables.
+    assert config.read_dirs == DirRules()
+    assert config.write_dirs == DirRules()
+
+
+def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_path: Path) -> None:
+    """If the retried call still fails even with the override applied, the result is an
+    ordinary "Error: ..." tool_response -- never a second ask. Exercises
+    Session._retry_after_permission_decision directly, via a mocked ToolRegistry, since
+    provoking this from AskPermissionTool itself would require an artificial path mismatch."""
+    target = tmp_path / "f.txt"
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+
+    mock_tool = MagicMock()
+    mock_tool.apply.side_effect = ValueError("still broken")
+    mock_registry = MagicMock()
+    mock_registry.instantiate_tool.return_value = mock_tool
+
+    session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
+    ask_exc = PermissionAskRequired(
+        f"Permission requires confirmation: access {target}", path=target, is_write=True)
+    call = ToolCallRequest(id="call_1", name="ask_permission", arguments="{}")
+
+    content = session._retry_after_permission_decision(
+        call, {}, ask_exc, PermissionDecision(choice="once"))
+
+    assert content == "Error: still broken"
+    mock_registry.instantiate_tool.assert_called_once_with("ask_permission", permission_override=target)
+
+
+def test_permission_ask_session_scope_retries_after_config_mutation(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+
+    def fake_ask(ctx: PermissionAskContext) -> PermissionDecision:
+        config.read_dirs = DirRules(allow=[ctx.path.parent])
+        config.write_dirs = DirRules(allow=[ctx.path.parent])
+        return PermissionDecision(choice="session")
+
+    response = session.send_turn("try it", on_permission_ask=fake_ask)
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"granted:{target}"
+    assert config.read_dirs.allow == [tmp_path]
+
+
+def test_permission_ask_workspace_and_homedir_scope_also_retry_after_mutation(tmp_path: Path) -> None:
+    """Session doesn't distinguish "workspace"/"homedir" from "session" itself -- it always
+    just retries plainly, trusting on_permission_ask already applied whatever grant the chosen
+    scope implies (see klorb.permissions.grant.apply_permission_grant, exercised directly in
+    test_permission_grant.py). This only pins Session's half of that contract."""
+    target = tmp_path / "f.txt"
+    for scope in ("workspace", "homedir"):
+        mock_provider = MagicMock()
+        mock_provider.send_prompt.side_effect = [
+            _tool_call_reply([_ask_permission_call("call_1", target)]),
+            _reply("done"),
+        ]
+        config = SessionConfig(model="some/model", workspace_root=tmp_path)
+        session = _session_with_ask_tool(config, mock_provider)
+
+        def fake_ask(ctx: PermissionAskContext, scope: str = scope) -> PermissionDecision:
+            config.read_dirs = DirRules(allow=[ctx.path.parent])
+            config.write_dirs = DirRules(allow=[ctx.path.parent])
+            return PermissionDecision(choice=scope)  # type: ignore[arg-type]
+
+        response = session.send_turn("try it", on_permission_ask=fake_ask)
+        assert response == "done"
+        assert _tool_response_content(session) == f"granted:{target}"
+
+
+def test_permission_ask_deny_denies_without_any_retry(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
+
+    response = session.send_turn("try it", on_permission_ask=on_permission_ask)
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"Error: Permission denied: Permission requires " \
+        f"confirmation: access {target}"
+    # The provider was only asked for the initial tool-call round and the final plain reply --
+    # never a third round retrying the tool call.
+    assert mock_provider.send_prompt.call_count == 2
+
+
+def test_permission_ask_other_includes_free_text_in_denial(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(
+        return_value=PermissionDecision(choice="other", other_text="use /tmp instead"))
+
+    session.send_turn("try it", on_permission_ask=on_permission_ask)
+
+    content = _tool_response_content(session)
+    assert "use /tmp instead" in content
+    assert "Permission denied" in content
+
+
+def test_retry_last_turn_threads_on_permission_ask(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        RuntimeError("transient failure"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+
+    with pytest.raises(RuntimeError):
+        session.send_turn("first attempt", on_permission_ask=on_permission_ask)
+
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_2", target)]),
+        _reply("done"),
+    ]
+    response = session.retry_last_turn(on_permission_ask=on_permission_ask)
+
+    assert response == "done"
+    assert on_permission_ask.call_count == 2

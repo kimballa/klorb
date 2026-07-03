@@ -19,11 +19,13 @@ from klorb.api_provider import ApiProvider
 from klorb.api_provider import ProviderResponse
 from klorb.api_provider import ResponseAborted
 from klorb.message import Message
+from klorb.message import ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.table import PermissionAskRequired
 
 if TYPE_CHECKING:
     # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
@@ -118,6 +120,31 @@ class SessionConfig(BaseModel):
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
     `workspace_root` boundary — see `klorb.permissions.workspace.evaluate_write` and
     docs/specs/permissions.md."""
+
+
+class PermissionAskContext(BaseModel):
+    """Passed to `on_permission_ask` when a tool call raises `PermissionAskRequired`: the
+    resolved candidate path, whether it was a write (vs. read) interrogation, and a
+    human-readable description of the access, for a UI to build its prompt from without
+    re-parsing `PermissionAskRequired`'s message string."""
+
+    path: Path
+    is_write: bool
+    resource_description: str
+
+
+class PermissionDecision(BaseModel):
+    """The user's answer to a `PermissionAskContext` prompt, returned by `on_permission_ask`.
+
+    `"once"`/`"session"`/`"workspace"`/`"homedir"` all mean "retry the call"; `on_permission_ask`
+    is expected to have already applied any persistent grant (`"session"`/`"workspace"`/
+    `"homedir"` — see `klorb.permissions.grant.apply_permission_grant`) before returning, since
+    `Session` itself has no `ProcessConfig` reference and cannot persist a grant on its own.
+    `"deny"`/`"other"` both decline; `other_text` is only meaningful for `"other"`, and is
+    surfaced to the model alongside the generic denial."""
+
+    choice: Literal["once", "session", "workspace", "homedir", "deny", "other"]
+    other_text: str | None = None
 
 
 class Session:
@@ -318,10 +345,43 @@ class Session:
         logger.info("User approved continuing; %s tool-call limit doubled to %d.", scope, new_limit)
         return True
 
+    def _retry_after_permission_decision(
+        self,
+        call: ToolCallRequest,
+        args: dict[str, Any],
+        ask_exc: PermissionAskRequired,
+        decision: PermissionDecision,
+    ) -> str:
+        """Format the `tool_response` content for a resolved `PermissionAskRequired`: retries
+        the call exactly once for `"once"`/`"session"`/`"workspace"`/`"homedir"` — any grant is
+        assumed already applied by `on_permission_ask` before it returned `decision`, since
+        `Session` has no `ProcessConfig` reference and never persists a grant itself — or
+        formats a denial for `"deny"`/`"other"`. Any exception from the retried call (including
+        a second `PermissionAskRequired`) falls through to the same generic `"Error: {exc}"`
+        formatting an ordinary tool failure gets — never a second ask.
+        """
+        assert ask_exc.path is not None
+        if decision.choice == "deny":
+            return f"Error: Permission denied: {ask_exc}"
+        if decision.choice == "other":
+            return f"Error: Permission denied: {ask_exc}. User note: {decision.other_text}"
+        assert self._tool_registry is not None
+        try:
+            if decision.choice == "once":
+                tool = self._tool_registry.instantiate_tool(call.name, permission_override=ask_exc.path)
+            else:
+                tool = self._tool_registry.instantiate_tool(call.name)
+            tool_result = tool.apply(args)
+            return tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
+        except Exception as exc:
+            logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
+            return f"Error: {exc}"
+
     def _run_tool_calls(
         self,
         tool_use_message: Message,
         on_tool_call_limit_reached: Callable[[str], bool] | None,
+        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
     ) -> None:
         """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
         via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
@@ -336,6 +396,13 @@ class Session:
         `False` (declined, or `on_tool_call_limit_reached` wasn't given), raises
         `ToolCallLimitExceeded` without executing this call (or any later call in
         `tool_use_message.tool_calls`).
+
+        If a call raises `PermissionAskRequired` and `on_permission_ask` is given (and the
+        exception carries a `path`), the callback is asked for a `PermissionDecision` and the
+        call is retried or denied accordingly (see `_retry_after_permission_decision`). With no
+        callback (e.g. a headless one-shot run), or an exception with no `path` (a call site
+        that didn't supply one), this fails closed exactly like any other tool exception: the
+        error is reported back to the model as this call's `tool_response`.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -366,13 +433,22 @@ class Session:
                 self._tool_calls_this_session, self.config.max_tool_calls_per_session,
                 call.name, call.arguments, call.id,
             )
+            args = json.loads(call.arguments) if call.arguments else {}
             try:
                 tool = self._tool_registry.instantiate_tool(call.name)
-                args = json.loads(call.arguments) if call.arguments else {}
                 logger.debug("Tool call %s parsed arguments: %r", call.name, args)
                 tool_result = tool.apply(args)
                 content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
                 logger.info("Tool call %s succeeded: %s", call.name, content)
+            except PermissionAskRequired as ask_exc:
+                if on_permission_ask is None or ask_exc.path is None:
+                    logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
+                    content = f"Error: {ask_exc}"
+                else:
+                    decision = on_permission_ask(PermissionAskContext(
+                        path=ask_exc.path, is_write=ask_exc.is_write,
+                        resource_description=str(ask_exc)))
+                    content = self._retry_after_permission_decision(call, args, ask_exc, decision)
             except Exception as exc:
                 logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
                 content = f"Error: {exc}"
@@ -514,6 +590,7 @@ class Session:
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
         on_tool_call_limit_reached: Callable[[str], bool] | None = None,
+        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
     ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
 
@@ -570,7 +647,7 @@ class Session:
                     raise ToolCallLimitExceeded(
                         f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
                 logger.info("Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
-                self._run_tool_calls(reply, on_tool_call_limit_reached)
+                self._run_tool_calls(reply, on_tool_call_limit_reached, on_permission_ask)
                 reply, result = self._send_and_receive(
                     list(self._messages), system_prompt, model_name, reasoning, tools,
                     on_chunk, on_thinking_chunk, cancel_event)
@@ -600,6 +677,7 @@ class Session:
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
         on_tool_call_limit_reached: Callable[[str], bool] | None = None,
+        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
@@ -612,7 +690,9 @@ class Session:
         aborted: `ResponseAborted` is raised and the user `Message` appended here is removed
         from history again (see `_dispatch_turn`). If `on_tool_call_limit_reached` is given,
         it's invoked (with a human-readable prompt) when a tool-call safety limit is reached,
-        to ask whether to double it and keep going — see `_confirm_limit_increase`.
+        to ask whether to double it and keep going — see `_confirm_limit_increase`. If
+        `on_permission_ask` is given, it's invoked when a tool call hits an `"ask"` permission
+        verdict, to ask whether (and how broadly) to allow it — see `_run_tool_calls`.
         """
         tokens_before = self._tokens_recorded_so_far()
         user_message = Message(
@@ -627,13 +707,15 @@ class Session:
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
         return self._dispatch_turn(
             user_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
-            cancel_event=cancel_event, on_tool_call_limit_reached=on_tool_call_limit_reached)
+            cancel_event=cancel_event, on_tool_call_limit_reached=on_tool_call_limit_reached,
+            on_permission_ask=on_permission_ask)
 
     def retry_last_turn(
         self,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         on_tool_call_limit_reached: Callable[[str], bool] | None = None,
+        on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None,
     ) -> str:
         """Resend the most recently errored user turn's content, mutating that same `Message`.
 
@@ -655,7 +737,7 @@ class Session:
         logger.info("Retrying errored turn for %s", self.active_model_name())
         return self._dispatch_turn(
             errored_message, tokens_before, on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
-            on_tool_call_limit_reached=on_tool_call_limit_reached)
+            on_tool_call_limit_reached=on_tool_call_limit_reached, on_permission_ask=on_permission_ask)
 
     def run_one_shot(
         self,

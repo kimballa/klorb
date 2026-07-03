@@ -27,11 +27,16 @@ from textual.widgets import TextArea
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
+from klorb.permissions.grant import apply_permission_grant
+from klorb.permissions.grant import compute_grant_paths
 from klorb.process_config import ProcessConfig
+from klorb.session import PermissionAskContext
+from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import ThinkingEffort
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.model_commands import ModelCommandProvider
+from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
 from klorb.tui.session_commands import SessionCommandProvider
 from klorb.tui.thinking_commands import ThinkingCommandProvider
@@ -455,7 +460,8 @@ class ReplApp(App[None]):
         try:
             response_text = self._session.send_turn(
                 prompt_text, on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
-                cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached)
+                cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
+                on_permission_ask=self._on_permission_ask)
         except ResponseAborted:
             self.call_from_thread(self._handle_aborted_response, mounted_widgets)
         except Exception as exc:
@@ -507,6 +513,38 @@ class ReplApp(App[None]):
         callback = self._confirm_tool_call_limit
         confirmed: bool = self.call_from_thread(callback, message)  # type: ignore[arg-type]
         return confirmed
+
+    async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
+        """Show `PermissionAskScreen` for `ask_ctx` and wait for the user's choice.
+
+        Must be run on the app's own event loop, since it awaits the screen's dismissal —
+        `_on_permission_ask` is what the worker thread actually calls, via `call_from_thread`,
+        to get here. `compute_grant_paths()` is recomputed here (rather than threaded in from
+        wherever `ask_ctx` was built) purely so the modal can show the directory a persistent
+        grant would actually cover; it's pure and read-only, so calling it again inside
+        `_on_permission_ask`/`apply_permission_grant` afterwards is safe and cheap.
+        """
+        granted_paths = compute_grant_paths(
+            self._session.config.read_dirs, self._session.config.write_dirs,
+            self._session.config.workspace_root, ask_ctx.path, ask_ctx.is_write)
+        return await self.push_screen_wait(PermissionAskScreen(ask_ctx, granted_paths))
+
+    def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
+        """`Session`'s `on_permission_ask` callback: block the worker thread running
+        `Session.send_turn()` until the user answers `PermissionAskScreen`, then — for a
+        persistent scope — apply the grant (in-memory and, for "workspace"/"homedir", on disk)
+        before returning, since `Session` has no `ProcessConfig` reference and never persists a
+        grant itself. File I/O happens here, on the worker thread, matching where a tool's own
+        blocking file I/O already runs (never on the event loop).
+        """
+        # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
+        callback = self._confirm_permission_ask
+        decision: PermissionDecision = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
+        if decision.choice in ("session", "workspace", "homedir"):
+            apply_permission_grant(
+                decision.choice, self._session.config, self._process_config,
+                ask_ctx.path, ask_ctx.is_write)
+        return decision
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""

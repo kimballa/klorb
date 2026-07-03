@@ -1,6 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Configuration handed to every `Tool` at construction time."""
 
+from pathlib import Path
+
 from pydantic import BaseModel
 
 from klorb.process_config import ProcessConfig
@@ -22,3 +24,9 @@ class ToolSetupContext(BaseModel):
     """The active `Session.config` — *not* `process_config.session`, which is only the
     template a new session's config is copied from (see docs/specs/process-and-session-config.md)
     and won't reflect changes made to the live session (e.g. via the TUI command palette)."""
+    permission_override: Path | None = None
+    """When set, the exact resolved candidate path this one `Tool` instance is permitted to
+    bypass the `readDirs`/`writeDirs` tables for — a one-shot "Allow (once)" grant (see
+    `Session.PermissionDecision`) that persists no table entry, so the identical access asks
+    again next time. Never bypasses the unconditional `is_privileged_path()` deny — see
+    `klorb.permissions.workspace.evaluate_write`/`resolve_and_evaluate_read`."""

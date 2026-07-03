@@ -92,7 +92,7 @@ class ReadFileTool(Tool):
                 f"end_line ({end_line}) must be >= start_line ({effective_start})")
 
         path, verdict = resolve_and_evaluate_read(self.context, filename)
-        raise_if_not_allowed(verdict, resource_description=f"read {path}")
+        raise_if_not_allowed(verdict, resource_description=f"read {path}", path=path, is_write=False)
 
         with open(path, encoding="utf-8") as file:
             all_lines = file.read().splitlines()

@@ -35,6 +35,7 @@ single-line edits an agent makes to one file per turn, not file size; see
 docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
+CONFIG_SCHEMA_VERSION = "1.0.0"
 CONFIG_FILENAME = "klorb-config.json"
 
 KLORB_ETC_CONFIG_ENV_VAR = "KLORB_ETC_CONFIG"
@@ -127,6 +128,18 @@ def _user_config_path() -> Path:
 def _project_config_path(cwd: Path) -> Path:
     """Per-project config file path, rooted at `cwd`."""
     return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
+
+
+def project_config_path(cwd: Path) -> Path:
+    """Public alias of `_project_config_path`, for callers outside this module (e.g.
+    `klorb.permissions.grant`, persisting an interactive permission grant) that need the
+    per-project config file's path directly, without duplicating its construction."""
+    return _project_config_path(cwd)
+
+
+def user_config_path() -> Path:
+    """Public alias of `_user_config_path`, for the same reason as `project_config_path`."""
+    return _user_config_path()
 
 
 def _load_last_session_overrides(cwd: Path) -> dict[str, Any]:

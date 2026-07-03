@@ -93,6 +93,10 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     re-enable access. Writing there is where klorb's own config/session state lives; letting the
     agent freely rewrite its own permission grants would let it silently escalate its own access.
 
+    Next, checks `context.permission_override`: if it's set and equals `path` exactly, returns
+    `"allow"` without consulting either table — a one-shot "Allow (once)" bypass (see
+    `ToolSetupContext.permission_override`) that never overrides the privileged-path deny above.
+
     Otherwise, evaluates `path` against both `readDirs` and `writeDirs` independently and takes
     the stricter of the two (each normalized via `_normalize_for_write()` first): write access
     can never be more permissive than read access for the same path, so granting write requires
@@ -103,6 +107,8 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     workspace_root = context.session_config.workspace_root.resolve()
     if is_privileged_path(path, workspace_root):
         return "deny"
+    if context.permission_override is not None and path == context.permission_override:
+        return "allow"
 
     read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
     write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
@@ -133,7 +139,9 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     In both modes, `klorb.permissions.directory_access.is_privileged_path()` is checked next,
     unconditionally, before the table — mirroring `evaluate_write()`'s hard deny — so no
     `readDirs.allow` entry can grant access to `${workspace_root}/.klorb/` or the process-wide
-    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations.
+    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations. `context.permission_override`
+    is then checked, exactly as in `evaluate_write()`: an exact match on `path` short-circuits to
+    `"allow"` without consulting `readDirs`.
 
     Returns `(path, verdict)` so the caller can enforce the verdict and then open the same
     canonicalized path that was actually checked.
@@ -148,6 +156,8 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
 
     if is_privileged_path(path, workspace_root):
         return path, "deny"
+    if context.permission_override is not None and path == context.permission_override:
+        return path, "allow"
 
     read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
     verdict = read_table.evaluate(path)

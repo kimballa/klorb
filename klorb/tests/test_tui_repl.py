@@ -2,16 +2,22 @@
 """Tests for klorb.tui.repl."""
 
 import asyncio
+import json
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+from typing import Literal
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
+import pytest
 from textual.containers import VerticalScroll
+from textual.widgets import Input
 from textual.widgets import Markdown
+from textual.widgets import OptionList
 from textual.widgets import Static
 
 from klorb.api_provider import ProviderResponse
@@ -20,10 +26,16 @@ from klorb.logging_config import session_log_path
 from klorb.message import Message
 from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
+from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
+from klorb.session import PermissionAskContext
+from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tools.registry import ToolRegistry
+from klorb.tui.permission_ask_screen import PERMISSION_ASK_INPUT_ID
+from klorb.tui.permission_ask_screen import PERMISSION_ASK_OPTIONS_ID
+from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import STATUS_BAR_ID
@@ -426,6 +438,230 @@ async def test_tool_call_limit_modal_no_shows_error() -> None:
         error_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
         assert isinstance(error_widget, Static)
         assert "0 tool call" in str(error_widget.render())
+
+
+def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tuple[str, str, str]:
+    return id_, "ask_permission", json.dumps({"path": str(path), "is_write": is_write})
+
+
+# --- PermissionAskScreen (unit-level, mirroring ThinkingEffortScreen's test style) ---
+
+
+def _ask_ctx(tmp_path: Path, is_write: bool = True) -> PermissionAskContext:
+    target = tmp_path / "f.txt"
+    return PermissionAskContext(path=target, is_write=is_write, resource_description=f"write to {target}")
+
+
+def test_permission_ask_screen_message_names_the_granted_directory(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+
+    container = next(iter(screen.compose()))
+    message, _ = container._pending_children
+
+    assert isinstance(message, Static)
+    assert str(tmp_path) in str(message.render())
+
+
+def test_permission_ask_screen_lists_all_six_options_in_order(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+
+    container = next(iter(screen.compose()))
+    _, option_list = container._pending_children
+
+    assert isinstance(option_list, OptionList)
+    prompts = tuple(str(option.prompt) for option in option_list._options)
+    assert prompts == (
+        "Allow (once)", "Allow (this session)", "Allow (always, in this workspace)",
+        "Allow (always, for me)", "Deny", "Other...")
+
+
+@pytest.mark.parametrize(("option_index", "expected_choice"), [
+    (0, "once"), (1, "session"), (2, "workspace"), (3, "homedir"), (4, "deny"),
+])
+def test_on_option_list_option_selected_dismisses_with_matching_choice(
+    tmp_path: Path, option_index: int,
+    expected_choice: Literal["once", "session", "workspace", "homedir", "deny"],
+) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+    event = MagicMock(option_index=option_index)
+
+    screen.on_option_list_option_selected(event)
+
+    screen.dismiss.assert_called_once_with(PermissionDecision(choice=expected_choice))
+
+
+def test_selecting_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+    screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
+    event = MagicMock(option_index=5)
+
+    screen.on_option_list_option_selected(event)
+
+    screen._reveal_other_input.assert_called_once()
+    screen.dismiss.assert_not_called()
+
+
+def test_on_input_submitted_dismisses_with_other_choice_and_text(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+    event = MagicMock(value="use /tmp instead")
+
+    screen.on_input_submitted(event)
+
+    screen.dismiss.assert_called_once_with(PermissionDecision(choice="other", other_text="use /tmp instead"))
+
+
+def test_action_decline_dismisses_with_deny(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+
+    screen.action_decline()
+
+    screen.dismiss.assert_called_once_with(PermissionDecision(choice="deny"))
+
+
+# --- PermissionAskScreen end-to-end through ReplApp ---
+
+
+async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", tmp_path / "f.txt")]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        assert isinstance(app.screen, PermissionAskScreen)
+
+
+async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionAskScreen)
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        tool_response = next(m for m in app._session.messages if m.role == "tool_response")
+        assert "Permission denied" in str(tool_response.content)
+        assert config.read_dirs == DirRules()
+        assert config.write_dirs == DirRules()
+
+
+async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: Path) -> None:
+    """Full plumbing check: selecting "Allow (this session)" applies the grant to the live
+    session config (via _on_permission_ask -> apply_permission_grant) and the retried tool
+    call succeeds -- but the process-config template is untouched, since "session" scope is
+    in-memory-only, narrower than "workspace"/"homedir"."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    process_config = ProcessConfig(session=SessionConfig(model="some/model", workspace_root=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session, process_config=process_config)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionAskScreen)
+
+        screen = app.screen
+        assert isinstance(screen, PermissionAskScreen)
+        screen.dismiss(PermissionDecision(choice="session"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        response_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
+        assert isinstance(response_widget, Markdown)
+        assert response_widget.source == "final answer"
+        assert config.read_dirs.allow == [target.parent]
+        assert config.write_dirs.allow == [target.parent]
+        # "session" scope is in-memory-only for the live session -- the process-config
+        # template (what a future /clear would copy from) must stay untouched.
+        assert process_config.session.read_dirs == DirRules()
+        assert process_config.session.write_dirs == DirRules()
+
+
+async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PermissionAskScreen)
+
+        option_list = screen.query_one(f"#{PERMISSION_ASK_OPTIONS_ID}", OptionList)
+        option_list.highlighted = 5  # "Other..."
+        await pilot.press("enter")
+        await pilot.pause()
+
+        other_input = screen.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
+        other_input.value = "use /tmp instead"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        tool_response = next(m for m in app._session.messages if m.role == "tool_response")
+        assert "use /tmp instead" in str(tool_response.content)
+        assert "Permission denied" in str(tool_response.content)
 
 
 async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:
