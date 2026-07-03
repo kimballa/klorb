@@ -27,6 +27,12 @@ from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
+from klorb.role import COORDINATOR_ROLE_NAME
+from klorb.role import Role
+from klorb.role import get_role
+from klorb.system_prompts import DEFAULT_SYS_FILENAME
+from klorb.system_prompts import DEFAULT_SYSTEM_PROMPT
+from klorb.system_prompts import resolve_prompt_file
 
 if TYPE_CHECKING:
     # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
@@ -96,6 +102,14 @@ class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
 
     model: str = DEFAULT_MODEL
+    role_name: str = COORDINATOR_ROLE_NAME
+    """The operating role this session's agent performs — see `klorb.role`. `Session`
+    builds its `Role` object from this name itself, via `klorb.role.get_role()`, so a
+    session's `Role` can never disagree with this field. Set by code (this default, or a
+    future subagent-spawning call site giving the child session its specialist role) —
+    deliberately *not* a recognized `klorb-config.json` key (see
+    `klorb.process_config.SESSION_KEY_MAP`), so a config file can't change what kind of
+    agent the user is talking to."""
     interactive: bool = True
     thinking_enabled: bool = True
     thinking_effort: ThinkingEffort = "high"
@@ -189,6 +203,7 @@ class Session:
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
+        self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
         self._thinking_token_budgets = thinking_token_budgets or THINKING_EFFORT_TOKEN_BUDGETS
@@ -196,6 +211,12 @@ class Session:
         self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
         self._messages: list[Message] = []
+
+    @property
+    def role(self) -> Role:
+        """Return the `Role` this session's agent operates as, built (in `__init__`, from
+        `config.role_name`) via `klorb.role.get_role()`."""
+        return self._role
 
     @property
     def provider(self) -> ApiProvider:
@@ -260,6 +281,34 @@ class Session:
             return None
         return model.capabilities().get("max_context_window")
 
+    def _default_system_prompt(self) -> str:
+        """Return the role- and model-agnostic default system prompt: the `default_sys.md`
+        prompt file (user override tier, then packaged tier — see
+        `klorb.system_prompts.resolve_prompt_file`), falling back to the hardcoded
+        `DEFAULT_SYSTEM_PROMPT` constant only if that file exists in neither tier (it
+        always ships inside the `klorb.resources` package, so the constant is a safety net,
+        not an expected path)."""
+        prompt = resolve_prompt_file(DEFAULT_SYS_FILENAME)
+        return prompt if prompt is not None else DEFAULT_SYSTEM_PROMPT
+
+    def _resolve_system_prompt(self) -> str:
+        """Resolve the system prompt for the active turn, most specific source first: the
+        session's `Role`'s prompt tiers (role+model, then role default — see
+        `Role.system_prompt`), then the active model's role-agnostic prompt
+        (`Model.system_prompt`, skipped when `config.model` isn't registered), then
+        `_default_system_prompt()`. Never returns an empty prompt: the final tier always
+        produces one. Re-derived fresh each place it's needed, so it always reflects the
+        *current* active model — see docs/specs/roles-and-system-prompts.md."""
+        model = self._active_model()
+        prompt = self._role.system_prompt(model)
+        if prompt is not None:
+            return prompt
+        if model is not None:
+            prompt = model.system_prompt()
+            if prompt is not None:
+                return prompt
+        return self._default_system_prompt()
+
     def _reasoning_params(self) -> dict[str, Any] | None:
         """Return the provider-shaped `reasoning` request body for the active turn, or
         `None` if thinking shouldn't be requested (disabled in config, or the active model
@@ -280,22 +329,20 @@ class Session:
 
     def _ensure_system_message(self) -> None:
         """Insert a `role="system"` `Message` at the very front of `self._messages`,
-        recording the active model's system prompt, the first time a turn is dispatched. A
-        no-op if the active model isn't registered or its `system_prompt()` is empty, or if
-        one is already present (so retries and later turns don't insert a duplicate). This
-        message is bookkeeping only: it's never replayed to the model as a chat message (see
-        `OpenRouterApiProvider._build_api_messages`) — the live system prompt is sent via
-        `send_prompt(system_prompt=...)` on every turn instead (re-derived fresh from
-        `Model.system_prompt()` each time, so it reflects the *current* active model even if
-        the session's `config.model` changes after this message was inserted), so this
-        doesn't need to be kept in sync with such changes after it's first inserted.
+        recording the session's resolved system prompt (see `_resolve_system_prompt` —
+        resolution always produces a prompt, so one is always inserted), the first time a
+        turn is dispatched. A no-op if one is already present (so retries and later turns
+        don't insert a duplicate). This message is bookkeeping only: it's never replayed to
+        the model as a chat message (see `OpenRouterApiProvider._build_api_messages`) — the
+        live system prompt is sent via `send_prompt(system_prompt=...)` on every turn
+        instead (re-resolved fresh via `_resolve_system_prompt()` each time, so it reflects
+        the *current* active model even if the session's `config.model` changes after this
+        message was inserted), so this doesn't need to be kept in sync with such changes
+        after it's first inserted.
         """
         if any(message.role == "system" for message in self._messages):
             return
-        model = self._active_model()
-        system_prompt = model.system_prompt() if model is not None else None
-        if not system_prompt:
-            return
+        system_prompt = self._resolve_system_prompt()
         self._messages.insert(0, Message(
             content=system_prompt,
             role="system",
@@ -644,8 +691,7 @@ class Session:
         self._tool_calls_this_turn = 0
         turn_start_index = self._messages.index(user_message)
         model_name = self.active_model_name()
-        model = self._active_model()
-        system_prompt = model.system_prompt() if model is not None else None
+        system_prompt = self._resolve_system_prompt()
         reasoning = self._reasoning_params()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
 
@@ -693,7 +739,8 @@ class Session:
         """Send one turn of the conversation to the active model and return its response.
 
         Appends a new user `Message` to the session's history, sends the full history (plus
-        the active model's system prompt, if registered) to the provider, and mutates that
+        the session's resolved system prompt — see `_resolve_system_prompt`) to the
+        provider, and mutates that
         same `Message` in place to reflect the outcome (see `_dispatch_turn`). `callbacks`
         (a `TurnEventHandlers`, defaulting to one with every field `None` if omitted) bundles
         every optional hook for this turn: `on_chunk`/`on_thinking_chunk` are invoked with each

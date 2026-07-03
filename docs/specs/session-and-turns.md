@@ -59,8 +59,9 @@ config) has one place to live.
     bool] | None = None) -> str` is the turn-based loop's unit of
     work. It appends a new `Message` (`role="user"`, `processing_state="pending"`) to the
     history, then sends the *entire* history plus the
-    active model's system prompt (re-derived fresh from `Model.system_prompt()` on every
-    call) and `_reasoning_params()`'s result via
+    session's resolved system prompt (re-resolved fresh by `_resolve_system_prompt()` on
+    every call — role tiers first, then model, then default; see
+    [[roles-and-system-prompts]]) and `_reasoning_params()`'s result via
     `ApiProvider.send_prompt(messages, system_prompt=, model=, session_id=, reasoning=,
     on_chunk=, on_thinking_chunk=)`. As chunks arrive, `Session` (not the provider) owns the
     in-progress assistant `Message`: on the first content chunk it appends a placeholder
@@ -95,12 +96,12 @@ config) has one place to live.
     below), so they apply to every round, not just the first.
   * The first time a turn is dispatched, `_dispatch_turn()` also inserts a `role="system"`
     `Message` at the very front of history (`_ensure_system_message()`; a no-op on later
-    turns, or if the active model isn't registered or its `system_prompt()` is empty)
-    recording the active model's system prompt at that point. Like the `tool_defs` message
-    below, this is bookkeeping only — it's dropped by
+    turns) recording the session's resolved system prompt at that point — resolution always
+    produces a prompt (see [[roles-and-system-prompts]]), so one is always inserted. Like
+    the `tool_defs` message below, this is bookkeeping only — it's dropped by
     `OpenRouterApiProvider._build_api_messages` and never kept in sync with a later
     `config.model` change; the live system prompt sent to the model is always the one
-    re-derived fresh from `Model.system_prompt()` for the *current* active model (see
+    re-resolved fresh by `_resolve_system_prompt()` for the *current* active model (see
     [the system-prompt bookkeeping ADR](../adrs/store-system-prompt-as-a-bookkeeping-message.md)).
   * When `tool_registry` is set and non-empty, `_dispatch_turn()` passes
     `tool_registry.tool_definitions()` as `send_prompt(tools=...)` on every round, and — the

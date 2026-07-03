@@ -2,8 +2,8 @@
 
 ## Summary
 
-A `Model` describes a model klorb can send prompts to: its identifier, its system prompt,
-its provider-specific settings/flags, and a dict of its capabilities (vision, thinking, max
+A `Model` describes a model klorb can send prompts to: its identifier, its
+provider-specific settings/flags, and a dict of its capabilities (vision, thinking, max
 context window, etc.). `ModelRegistry` discovers `Model` implementations the same way
 [[tool-framework]]'s `ToolRegistry` discovers tools. The REPL exposes the discovered models
 through Textual's command palette so the user can switch models interactively. See
@@ -16,7 +16,6 @@ instead of a bespoke picker widget.
   Concrete models implement:
   * `name() -> str` — the model's identifier, as used by the API provider (e.g. an
     OpenRouter model string) and as the value shown/selected in the command palette.
-  * `system_prompt() -> str` — the system prompt to send to this model.
   * `settings() -> dict[str, Any]` — provider-specific settings/flags to send alongside
     requests to this model (e.g. `temperature`).
   * `capabilities() -> dict[str, Any]` — a dict describing the model's capabilities.
@@ -26,6 +25,13 @@ instead of a bespoke picker widget.
     low/medium/high effort keyword or a numeric reasoning token budget; defaults to
     `"effort"` if omitted, see [[session-and-turns]]), and `max_context_window` (int, in
     tokens); implementations may add further provider-specific keys.
+
+  The base class additionally provides two concrete methods used by system-prompt
+  resolution (see [[roles-and-system-prompts]]): `mangled_name() -> str` (the identifier
+  made filesystem-safe: `/` and `:` become `__`) and `system_prompt() -> str | None` (the
+  model's role-agnostic `<mangled_name>.md` prompt file from a `system_prompts.d/` tree, or
+  `None` if no such file exists; subclasses — e.g. test fixtures — may override it to
+  return a literal string without filesystem access).
 * `klorb.models.registry.ModelRegistry` (`klorb/src/klorb/models/registry.py`) discovers
   `Model` subclasses by walking a package's modules with `pkgutil.iter_modules`, importing
   each, and collecting concrete (non-abstract) `Model` subclasses defined directly in that
@@ -65,8 +71,8 @@ instead of a bespoke picker widget.
 
 ## Out of scope
 
-* Wiring a `Model`'s `system_prompt()` and `settings()` into the actual
-  `ApiProvider.send_prompt()` call is future work — today only `name()` is used (as the
-  `model` argument), mirroring [[openrouter-prompt-client]]'s single-shot, no-system-prompt
-  request shape.
+* Wiring a `Model`'s `settings()` into the actual `ApiProvider.send_prompt()` call is
+  future work — `name()` is used (as the `model` argument), and `system_prompt()` is
+  consulted as one tier of [[roles-and-system-prompts]]'s resolution, but `settings()` is
+  not sent with requests yet.
 * Recursive discovery into subpackages of `klorb.models` is not implemented yet.

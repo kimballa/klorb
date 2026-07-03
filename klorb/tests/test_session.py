@@ -19,6 +19,7 @@ from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
+from klorb.role import CoordinatorRole
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import MAX_TOOL_CALL_ROUNDS
@@ -30,9 +31,21 @@ from klorb.session import ThinkingEffort
 from klorb.session import ToolCallLimitExceeded
 from klorb.session import TurnEventHandlers
 from klorb.session import generate_session_id
+from klorb.system_prompts import DEFAULT_SYS_FILENAME
+from klorb.system_prompts import resolve_prompt_file
 from klorb.tools.registry import ToolRegistry
 
 SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-[a-z]+-[a-z]+$")
+
+# What Session._resolve_system_prompt() produces for the default (coordinator) role, and for a
+# role with no prompt files on an unregistered model. Computed via the same resolve_prompt_file()
+# the session uses, so these stay correct even if a developer's own user-tier override files exist.
+COORDINATOR_PROMPT = resolve_prompt_file("roles/coordinator/default.md")
+DEFAULT_PROMPT = resolve_prompt_file(DEFAULT_SYS_FILENAME)
+
+# A role_name with no dedicated Role subclass and no roles/<name>/ prompt files anywhere, so
+# resolution falls through the role tiers to the model-specific and default tiers.
+ROLE_WITHOUT_PROMPT_FILES = "test-role-with-no-prompt-files"
 
 
 def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int = 10) -> ProviderResponse:
@@ -83,6 +96,18 @@ def test_session_saves_config() -> None:
     session = Session(config, provider=MagicMock())
 
     assert session.config is config
+
+
+def test_session_role_defaults_to_coordinator() -> None:
+    session = Session(SessionConfig(), provider=MagicMock())
+
+    assert isinstance(session.role, CoordinatorRole)
+
+
+def test_session_builds_role_from_config_role_name() -> None:
+    session = Session(SessionConfig(role_name="auditor"), provider=MagicMock())
+
+    assert session.role.name() == "auditor"
 
 
 def test_generate_session_id_matches_expected_format() -> None:
@@ -157,9 +182,10 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        reasoning=None, tools=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
-    assert [m.content for m in session.messages] == ["hi", "model reply"]
+        session.messages[:-1], system_prompt=COORDINATOR_PROMPT, model="some/model",
+        session_id="my-session-id", reasoning=None, tools=None, on_chunk=mock.ANY,
+        on_thinking_chunk=mock.ANY, cancel_event=None)
+    assert [m.content for m in session.messages] == [COORDINATOR_PROMPT, "hi", "model reply"]
 
 
 def test_run_one_shot_delegates_to_send_turn() -> None:
@@ -172,14 +198,15 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=None, model="some/model", session_id="my-session-id",
-        reasoning=None, tools=None, on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, cancel_event=None)
+        session.messages[:-1], system_prompt=COORDINATOR_PROMPT, model="some/model",
+        session_id="my-session-id", reasoning=None, tools=None, on_chunk=mock.ANY,
+        on_thinking_chunk=mock.ANY, cancel_event=None)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha")
+    config = SessionConfig(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
     registry = ModelRegistry(package=sample_models_package)
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -189,10 +216,35 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
     assert kwargs["system_prompt"] == "You are Alpha."
 
 
+def test_role_prompt_outranks_registered_model_prompt() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="alpha")  # role_name defaults to "coordinator"
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(config, provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["system_prompt"] == COORDINATOR_PROMPT
+
+
+def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/unregistered-model", role_name=ROLE_WITHOUT_PROMPT_FILES)
+    session = Session(config, provider=mock_provider)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["system_prompt"] == DEFAULT_PROMPT
+
+
 def test_system_message_inserted_before_first_turn_for_registered_model() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha")
+    config = SessionConfig(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
     registry = ModelRegistry(package=sample_models_package)
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -215,14 +267,15 @@ def test_system_message_not_duplicated_across_turns() -> None:
     assert sum(1 for m in session.messages if m.role == "system") == 1
 
 
-def test_no_system_message_when_model_unregistered() -> None:
+def test_system_message_holds_role_prompt_when_model_unregistered() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
 
     session.send_turn("hi")
 
-    assert all(m.role != "system" for m in session.messages)
+    assert session.messages[0].role == "system"
+    assert session.messages[0].content == COORDINATOR_PROMPT
 
 
 def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
@@ -336,7 +389,7 @@ def test_send_turn_sends_full_history_to_provider() -> None:
     session.send_turn("second")
 
     second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
-    assert [m.content for m in second_call_messages] == ["first", "r1", "second"]
+    assert [m.content for m in second_call_messages] == [COORDINATOR_PROMPT, "first", "r1", "second"]
 
 
 def test_token_delta_accounted_across_two_turns() -> None:
@@ -350,7 +403,8 @@ def test_token_delta_accounted_across_two_turns() -> None:
     session.send_turn("first")
     session.send_turn("second")
 
-    user1, assistant1, user2, assistant2 = session.messages
+    system_message, user1, assistant1, user2, assistant2 = session.messages
+    assert system_message.num_tokens == 0
     assert user1.num_tokens == 10
     assert assistant1.num_tokens == 5
     assert user2.num_tokens == 23 - (10 + 5)
@@ -381,8 +435,8 @@ def test_retry_last_turn_mutates_same_message_on_success() -> None:
     response = session.retry_last_turn()
 
     assert response == "recovered"
-    assert len(session.messages) == 2
-    user_message = session.messages[0]
+    assert len(session.messages) == 3
+    user_message = session.messages[1]
     assert user_message.content == "hi"
     assert user_message.processing_state == "complete"
     assert user_message.last_error is None
@@ -411,7 +465,7 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
 
     session.send_turn("hi")
 
-    assert len(session.messages) == 2
+    assert len(session.messages) == 3
     assistant_message = session.messages[-1]
     assert assistant_message.content == "Hello"
     assert assistant_message.streaming_content is None
@@ -456,8 +510,9 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
 
     session.send_turn("hi")
 
-    assert len(session.messages) == 3
-    user_message, thinking_message, assistant_message = session.messages
+    assert len(session.messages) == 4
+    system_message, user_message, thinking_message, assistant_message = session.messages
+    assert system_message.role == "system"
     assert user_message.role == "user"
     assert thinking_message.role == "thinking"
     assert thinking_message.content == "Let me think."
@@ -504,7 +559,7 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
 
-    user_message, assistant_message = session.messages
+    _system_message, user_message, assistant_message = session.messages
     assert user_message.processing_state == "error"
     assert user_message.last_error == "boom"
     assert assistant_message.processing_state == "error"
@@ -528,7 +583,7 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
 
-    user_message, thinking_message = session.messages
+    _system_message, user_message, thinking_message = session.messages
     assert user_message.processing_state == "error"
     assert thinking_message.processing_state == "error"
     assert thinking_message.last_error == "boom"
@@ -551,7 +606,7 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
 
-    assert len(session.messages) == 2
+    assert len(session.messages) == 3
 
     mock_provider.send_prompt.side_effect = None
     mock_provider.send_prompt.return_value = _reply("recovered")
@@ -559,9 +614,9 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     response = session.retry_last_turn()
 
     assert response == "recovered"
-    assert len(session.messages) == 2
-    assert session.messages[0].processing_state == "complete"
-    assert session.messages[1].content == "recovered"
+    assert len(session.messages) == 3
+    assert session.messages[1].processing_state == "complete"
+    assert session.messages[2].content == "recovered"
 
 
 def test_no_tools_offered_when_tool_registry_unset() -> None:
@@ -597,8 +652,8 @@ def test_tool_defs_message_inserted_before_first_turn() -> None:
 
     session.send_turn("hi")
 
-    assert session.messages[0].role == "tool_defs"
-    assert [m.role for m in session.messages] == ["tool_defs", "user", "assistant"]
+    assert session.messages[1].role == "tool_defs"
+    assert [m.role for m in session.messages] == ["system", "tool_defs", "user", "assistant"]
 
 
 def test_tool_defs_message_not_duplicated_across_turns() -> None:
@@ -638,14 +693,14 @@ def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
 
     assert response == "final answer"
     roles = [m.role for m in session.messages]
-    assert roles == ["tool_defs", "user", "tool_use", "tool_response", "assistant"]
-    tool_use_message = session.messages[2]
+    assert roles == ["system", "tool_defs", "user", "tool_use", "tool_response", "assistant"]
+    tool_use_message = session.messages[3]
     assert tool_use_message.tool_calls == [
         ToolCallRequest(id="call_1", name="echo", arguments='{"message": "hi there"}')]
-    tool_response_message = session.messages[3]
+    tool_response_message = session.messages[4]
     assert tool_response_message.tool_call_id == "call_1"
     assert tool_response_message.content == "hi there"
-    user_message = session.messages[1]
+    user_message = session.messages[2]
     assert user_message.processing_state == "complete"
     assert user_message.num_tokens == 20
     assert mock_provider.send_prompt.call_count == 2
@@ -664,7 +719,8 @@ def test_tool_call_round_trip_forwards_tool_calls_to_second_request() -> None:
     session.send_turn("please echo")
 
     second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
-    assert [m.role for m in second_call_messages] == ["tool_defs", "user", "tool_use", "tool_response"]
+    assert [m.role for m in second_call_messages] == [
+        "system", "tool_defs", "user", "tool_use", "tool_response"]
 
 
 def test_unknown_tool_call_reports_error_to_model() -> None:
@@ -680,7 +736,7 @@ def test_unknown_tool_call_reports_error_to_model() -> None:
     response = session.send_turn("call a bogus tool")
 
     assert response == "recovered"
-    tool_response_message = session.messages[3]
+    tool_response_message = session.messages[4]
     assert tool_response_message.role == "tool_response"
     assert tool_response_message.content.startswith("Error:")
 
@@ -697,7 +753,7 @@ def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
         session.send_turn("loop forever")
 
     assert mock_provider.send_prompt.call_count == MAX_TOOL_CALL_ROUNDS + 1
-    user_message = session.messages[1]
+    user_message = session.messages[2]
     assert user_message.processing_state == "error"
     assert str(MAX_TOOL_CALL_ROUNDS) in (user_message.last_error or "")
 
@@ -714,7 +770,7 @@ def test_per_turn_tool_call_limit_defaults_to_fifty() -> None:
 
     tool_response_messages = [m for m in session.messages if m.role == "tool_response"]
     assert len(tool_response_messages) == DEFAULT_MAX_TOOL_CALLS_PER_TURN
-    user_message = session.messages[1]
+    user_message = session.messages[2]
     assert user_message.processing_state == "error"
 
 
