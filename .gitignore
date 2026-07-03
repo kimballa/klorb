@@ -19,3 +19,4 @@ tsconfig.tsbuildinfo
 **/.claude/worktrees
 **/.claude/settings.local.json
 .mypy_worker.*
+evals.log

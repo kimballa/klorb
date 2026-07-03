@@ -19,6 +19,50 @@ def status_label(result: CaseResult, *, color: bool) -> str:
     return colorize("PASS", "green", enabled=color)
 
 
+def render_summary(results: list[CaseResult]) -> str:
+    """Render just the `## Summary` section of the eval report: pass/fail counts, conditional
+    passes, and aggregate duration/tool-call stats. Shared by `render_report()` (as its opening
+    section) and `run_evals`'s `evals.log` writer, which uses this alone as the log's entire
+    contents on a fully clean run (see docs/specs/tool-eval-harness.md).
+    """
+    passed = sum(1 for result in results if result.passed)
+    conditional = sum(1 for result in results if result.conditional)
+    total = len(results)
+    total_duration_s = sum(result.duration_s for result in results)
+    total_tool_calls = sum(result.num_tool_calls for result in results)
+    average_tool_calls = total_tool_calls / total if total else 0.0
+
+    accuracy_suffix = f" ({100 * passed / total:.1f}%)" if total else ""
+    lines = [
+        "## Summary",
+        "",
+        f"- **Passed**: {passed}/{total}{accuracy_suffix}",
+        f"- **Conditional passes**: {conditional} (passed, but used more tool calls than expected)",
+        f"- **Total duration**: {total_duration_s:.2f}s",
+        f"- **Total tool calls**: {total_tool_calls}",
+        f"- **Average tool calls per case**: {average_tool_calls:.2f}",
+    ]
+    return "\n".join(lines)
+
+
+def render_case_detail(result: CaseResult, *, color: bool) -> str:
+    """Render one case's tool-call transcript (request/response pairs, tool call counts, and
+    pass/fail status line) — the same detail `run_evals`'s per-case progress printer shows as
+    each case finishes, factored out here so it can also be written verbatim (with `color=False`)
+    to `evals.log` for cases that failed or conditionally passed.
+    """
+    lines: list[str] = []
+    for entry in result.tool_call_log:
+        failed = (entry.response or "").startswith("Error:")
+        lines.append(colorize(f"  -> {entry.name}({entry.arguments})", "yellow", enabled=color))
+        response_color = "red" if failed else "green"
+        lines.append(colorize(f"  <- {entry.response}", response_color, enabled=color))
+    lines.append(f"- **Tool call counts**: {result.num_tool_calls} {result.tool_call_counts}")
+    status = status_label(result, color=color)
+    lines.append(f"  [{status}] {result.name} ({result.duration_s:.2f}s)")
+    return "\n".join(lines)
+
+
 def render_report(
     results: list[CaseResult], *, color: bool = False,
     tool_token_counts: dict[str, int] | None = None,
@@ -33,26 +77,7 @@ def render_report(
     offered tool's name and the token count of its full function-calling definition — the
     fixed per-turn prompt cost of offering that tool, independent of any case.
     """
-    passed = sum(1 for result in results if result.passed)
-    conditional = sum(1 for result in results if result.conditional)
-    total = len(results)
-    total_duration_s = sum(result.duration_s for result in results)
-    total_tool_calls = sum(result.num_tool_calls for result in results)
-    average_tool_calls = total_tool_calls / total if total else 0.0
-
-    accuracy_suffix = f" ({100 * passed / total:.1f}%)" if total else ""
-    lines = [
-        "# Tool eval report",
-        "",
-        "## Summary",
-        "",
-        f"- **Passed**: {passed}/{total}{accuracy_suffix}",
-        f"- **Conditional passes**: {conditional} (passed, but used more tool calls than expected)",
-        f"- **Total duration**: {total_duration_s:.2f}s",
-        f"- **Total tool calls**: {total_tool_calls}",
-        f"- **Average tool calls per case**: {average_tool_calls:.2f}",
-        "",
-    ]
+    lines = ["# Tool eval report", "", render_summary(results), ""]
     if tool_token_counts:
         lines.append("## Tool definitions")
         lines.append("")

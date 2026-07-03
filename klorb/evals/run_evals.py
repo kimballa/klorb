@@ -6,6 +6,7 @@ markdown report. See docs/specs/tool-eval-harness.md.
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -18,10 +19,12 @@ from .colors import use_color
 from .harness import CaseResult
 from .harness import run_evaluation
 from .harness import tool_token_counts
+from .report import render_case_detail
 from .report import render_report
-from .report import status_label
+from .report import render_summary
 
 EVAL_MODEL_ENV_VAR = "KLORB_EVAL_MODEL"
+EVAL_LOG_PATH = Path("evals.log")
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -37,17 +40,24 @@ def _print_case_start(name: str, *, color: bool) -> None:
 
 
 def _print_case_result(result: CaseResult, *, color: bool) -> None:
-    """Print `result.tool_call_log`'s raw request/response transcript, then a pass/fail line —
+    """Print `render_case_detail`'s tool-call transcript and pass/fail line for `result` —
     called as each case finishes, so a `make evals` run shows what each case actually did as it
     happens, not just the summary report printed after every case has run.
     """
-    for entry in result.tool_call_log:
-        failed = (entry.response or "").startswith("Error:")
-        print(colorize(f"  -> {entry.name}({entry.arguments})", "yellow", enabled=color), flush=True)
-        response_color = "red" if failed else "green"
-        print(colorize(f"  <- {entry.response}", response_color, enabled=color), flush=True)
-    status = status_label(result, color=color)
-    print(f"  [{status}] {result.name} ({result.duration_s:.2f}s)", flush=True)
+    print(render_case_detail(result, color=color), flush=True)
+    print(flush=True)
+
+
+def _write_eval_log(results: list[CaseResult], *, path: Path) -> None:
+    """Write `path` a non-colorized eval log: the detailed tool-call transcript for every case
+    that failed or conditionally passed (see `CaseResult.conditional`), followed by the same
+    `## Summary` block `render_report()` prints. A fully clean run (no failures, no conditional
+    passes) has nothing worth re-reading in detail, so `path` then holds just the summary block.
+    """
+    notable_results = [result for result in results if not result.passed or result.conditional]
+    sections = [render_case_detail(result, color=False) for result in notable_results]
+    sections.append(render_summary(results))
+    path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     printed as `[CONDITIONAL PASS]`) still counts as passed for this exit code — it's a
     yellow-flag efficiency signal, not a correctness failure. See
     docs/adrs/eval-conditional-pass-on-excess-tool-calls.md.
+
+    Also writes `EVAL_LOG_PATH` (`evals.log` in the current directory) via `_write_eval_log()`.
     """
     load_dotenv()
     args = _parse_args(sys.argv[1:] if argv is None else argv)
@@ -79,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         on_case_complete=lambda result: _print_case_result(result, color=color))
     print()
     print(render_report(results, color=color, tool_token_counts=tool_token_counts(model=model)))
+    _write_eval_log(results, path=EVAL_LOG_PATH)
     return 0 if all(result.passed for result in results) else 1
 
 
