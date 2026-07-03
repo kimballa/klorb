@@ -38,11 +38,11 @@
     flow above — same "copy a starter config into place" idea, just a different destination and
     trust prompt.
 
-* Tools
-  * Test that ReadFile tool works.
-    * And uses the max-lines from the settings
-  * Test that EditFileTool works
-  * Add some tool evals; see https://platform.claude.com/cookbook/tool-evaluation-tool-evaluation
+* Tool eval cases:
+  * Test that ReadFile works for longer files and it should respect max-lines setting
+  * Test that multiple EditFile ops on the same file works ok
+  * ... on a file with several hundred lines, so it exceeds a single ReadFile call boundary.
+  * Test the ReplaceAll tool in case-insensitive mode.
 
 * Add a basic system prompt to make this actually do coding things.
 

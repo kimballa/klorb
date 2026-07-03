@@ -7,8 +7,8 @@
 # * `make install_dev_deps` to install local deps, `install_deps` for production
 #   * `make sync_deps` to resolve and update dependency locks from the pkg manager.
 
-COMMANDS=help build lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test test-cli venv
+COMMANDS=help lint typecheck clean distclean sync_deps \
+	install_deps install_dev_deps test evals venv
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
@@ -19,7 +19,7 @@ PYTEST=venv/bin/pytest
 SHELL=/bin/bash
 DOCKER=docker
 UV=venv/bin/uv
-LOAD_VENV=export VIRTUAL_ENV=$(CURDIR)/venv
+LOAD_VENV=export VIRTUAL_ENV="$(CURDIR)/venv"
 # Python executable to use when creating the venv. Can be overridden on the command line
 # (e.g. PYTHON=python3.12 make venv) or via the cloud session-start script.
 PYTHON ?= python3
@@ -28,6 +28,8 @@ PYTHON ?= python3
 # of how PYTHON is spelled.
 PYTHON_VERSION := $(shell cut -d. -f1-2 .python-version)
 PYTHON_LIB_DIR := python$(PYTHON_VERSION)
+# Python executable to use for execution inside the virtual environment.
+VENV_PYTHON=$(CURDIR)/venv/bin/python3
 
 PYPROJECT=pyproject.toml
 # Dependencies needed at runtime:
@@ -49,17 +51,18 @@ MYPYPATH=./types/
 # We only show the logger output, not stdout/stderr since those are redundant with the log.
 TESTARGS ?=--stepwise --lfnf=all --show-capture=log
 
+# Extra args forwarded to `evals/run_evals.py`, e.g. `EVALARGS='--model openai/gpt-4o' make evals`.
+EVALARGS ?=
+
 help:
 	@echo "Available commands:"
 	@echo "${COMMANDS}"
 
-#build:
-#	"${DOCKER}" build --progress=plain --no-cache -t gremblbom-flask .
-
 
 lint:
-	$(LOAD_VENV); ${PYFLAKES} --config ${FLAKE8RC} src/
-	$(LOAD_VENV); ${PYFLAKES} --config ${FLAKE8RC} tests/
+	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" src/
+	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" tests/
+	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" evals/
 
 typecheck:
 	#PYTHONPATH="$(PYTHONPATH)" "$(MYPY)" --check-untyped-defs src tests
@@ -77,18 +80,18 @@ typecheck:
 			--native-parser \
 			--num-workers 4 \
 			--cache-dir .mypy_cache \
-			src tests
+			src tests evals
 
 venv:
-	[ -d venv ] || ($(PYTHON) -m venv venv; \
-		source venv/bin/activate && $(PIP) install wheel)
-	$(LOAD_VENV); $(PIP) install -U uv
+	[ -d venv ] || ("$(PYTHON)" -m venv venv; \
+		source venv/bin/activate && "$(PIP)" install wheel)
+	$(LOAD_VENV); "$(PIP)" install -U uv
 
 sync_deps: venv
 	@echo "Resolving development dependencies..."
-	$(LOAD_VENV); $(UV) pip compile pyproject.toml --extra dev -o "$(LOCAL_REQUIREMENTS)" -U
+	$(LOAD_VENV); "$(UV)" pip compile pyproject.toml --extra dev -o "$(LOCAL_REQUIREMENTS)" -U
 	@echo "Resolving runtime dependencies..."
-	$(LOAD_VENV); $(UV) pip compile pyproject.toml -o "$(RELEASE_REQUIREMENTS)" -U
+	$(LOAD_VENV); "$(UV)" pip compile pyproject.toml -o "$(RELEASE_REQUIREMENTS)" -U
 	@echo ""
 	@echo "Runtime and development dependencies calculated."
 	@echo "Use 'make install_deps' to install runtime dependencies."
@@ -97,13 +100,13 @@ sync_deps: venv
 install_deps: venv
 	# Only install release requirements.
 	@echo "Installing runtime dependencies..."
-	$(LOAD_VENV); $(UV) pip install -r "$(RELEASE_REQUIREMENTS)"
+	$(LOAD_VENV); "$(UV)" pip install -r "$(RELEASE_REQUIREMENTS)"
 	@echo ""
 	@echo "Runtime dependencies installed."
 	@echo "For development, run: make install_dev_deps"
 
 install_dev_deps: venv
-	$(LOAD_VENV); $(UV) pip install -r "$(LOCAL_REQUIREMENTS)"
+	$(LOAD_VENV); "$(UV)" pip install -r "$(LOCAL_REQUIREMENTS)"
 	@echo ""
 	@echo "Installed runtime and development dependencies."
 
@@ -121,6 +124,12 @@ distclean: clean
 	-rm .venv_init_ok
 
 test:
-	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" $(PYTEST) -o cache_dir=.pytest_cache tests/ $(TESTARGS)
+	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)"" -o cache_dir=.pytest_cache tests/ $(TESTARGS)
+
+# Tool-efficacy evals: makes real calls to a real hosted model (see docs/specs/tool-eval-harness.md,
+# docs/adrs/tool-evals-skip-without-api-key.md).
+evals:
+	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(VENV_PYTHON)" -m evals.run_evals $(EVALARGS)
+
 
 .PHONY: ${COMMANDS}
