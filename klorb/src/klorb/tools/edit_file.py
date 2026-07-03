@@ -104,17 +104,17 @@ class EditFileTool(Tool):
                     ),
                 },
                 "context_before": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
                         "Optional. Raw content (no line numbers) immediately before start_line, "
                         "used only to disambiguate multiple start_text/end_text matches. "
-                        "Omit unless you get an 'Ambiguous match' error. The empty string \"\" "
-                        "is a distinct assertion that there must be "
-                        "genuinely nothing before start_line (i.e. it's the file's first line)."
+                        "Only include after an 'Ambiguous match' error. The empty string \"\" "
+                        "means that there must be absolutely nothing before start_line "
+                        "(i.e. it's the file's first line). To omit, just send null."
                     ),
                 },
                 "context_after": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
                         "Optional. Like context_before, but matches immediately after end_line "
                         "-- and \"\" asserts end_line is the file's last line."
