@@ -42,9 +42,12 @@ offline against mocks. They run under their own `make evals` target instead — 
   * `run_case(case, *, model, provider) -> CaseResult` — the per-case runner. For each case it:
     1. Creates a fresh temp directory and writes `setup_files` into it.
     2. Builds a `SessionConfig(model=model, interactive=False, thinking_enabled=False,
-       workspace_root=<temp dir>)` — zero-config `read_dirs`/`write_dirs`, so all four file
-       tools default to "allowed anywhere inside `workspace_root`" (see
-       docs/specs/permissions.md).
+       workspace_root=<temp dir>, read_dirs=DirRules(allow=[<temp dir>]),
+       write_dirs=DirRules(allow=[<temp dir>]))` — explicit `allow` rules for the temp
+       workspace in both tables, since an unmatched `writeDirs` table normalizes to `"ask"`
+       rather than `"allow"` (see
+       docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md) and this harness runs
+       non-interactively, where `"ask"` has no prompting flow to resolve and fails closed.
     3. Builds a `ToolRegistry(ProcessConfig(), session_config, package=klorb.tools)` — the real
        tools package, so exactly the tools a live session would offer (`ReadFile`, `CreateFile`,
        `EditFile`, `ReplaceAll`; see docs/specs/tool-framework.md) are offered here too.

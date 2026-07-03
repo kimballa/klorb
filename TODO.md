@@ -38,12 +38,6 @@
     flow above — same "copy a starter config into place" idea, just a different destination and
     trust prompt.
 
-* Tool eval cases:
-  * Test that ReadFile works for longer files and it should respect max-lines setting
-  * Test that multiple EditFile ops on the same file works ok
-  * ... on a file with several hundred lines, so it exceeds a single ReadFile call boundary.
-  * Test the ReplaceAll tool in case-insensitive mode.
-
 * Add a basic system prompt to make this actually do coding things.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
@@ -80,7 +74,6 @@
     * Session can get the current Provider from the ProviderFactory.
     * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
 * More tools:
-    * CreateFileTool
     * ListDirTool
     * AskUserQuestionsTool
     * GrepTool

@@ -18,6 +18,7 @@ import tiktoken
 
 import klorb.tools as tools_package
 from klorb.api_provider import ApiProvider
+from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import SessionConfig
@@ -144,7 +145,8 @@ def run_case(
             file_path.write_text(content, encoding="utf-8")
 
         session_config = SessionConfig(
-            model=model, interactive=False, thinking_enabled=False, workspace_root=workspace_root)
+            model=model, interactive=False, thinking_enabled=False, workspace_root=workspace_root,
+            read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]))
         tool_registry = ToolRegistry(ProcessConfig(), session_config, package=tools_package)
         session = Session(session_config, provider=provider, tool_registry=tool_registry)
 

@@ -6,10 +6,19 @@ text — see docs/adrs/grade-tool-evals-by-filesystem-state.md. Content comparis
 incidental trailing-newline differences (a model may or may not end a file with a trailing
 newline) but are otherwise exact: an eval case is meant to catch a model failing to use a tool
 correctly, not to reward creative alternate phrasing of the outcome.
+
+A handful of cases use files longer than `DEFAULT_READ_FILE_MAX_LINES` so a single `ReadFile`
+call can't return the whole file, forcing a competent run to either page with
+`start_line`/`end_line` or target specific lines directly — these also inspect
+`session.messages` for the `ReadFile`/`EditFile` calls actually made (see
+docs/adrs/grade-tool-evals-by-filesystem-state.md's "where useful" carve-out), not just the
+resulting file content.
 """
 
+import json
 from pathlib import Path
 
+from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.session import Session
 
 from .harness import EvalCase
@@ -21,6 +30,29 @@ def _read(path: Path) -> str:
 
 def _lines(path: Path) -> list[str]:
     return _read(path).splitlines()
+
+
+def _tool_call_args(session: Session, tool_name: str) -> list[dict]:
+    """Every call to `tool_name` the model made during `session`'s turn, as parsed argument
+    dicts, in the order they were made."""
+    return [
+        json.loads(call.arguments)
+        for message in session.messages
+        if message.role == "tool_use" and message.tool_calls
+        for call in message.tool_calls
+        if call.name == tool_name
+    ]
+
+
+def _first_mismatch(expected: list[str], actual: list[str], filename: str) -> str | None:
+    """Compare two line lists and describe the first difference, if any — used in place of an
+    inline `!=` check for cases whose file is too long to usefully print in full on failure."""
+    if len(expected) != len(actual):
+        return f"{filename} should have {len(expected)} lines, got {len(actual)}"
+    for line_num, (expected_line, actual_line) in enumerate(zip(expected, actual), start=1):
+        if expected_line != actual_line:
+            return f"{filename} line {line_num} should read {expected_line!r}, got {actual_line!r}"
+    return None
 
 
 def _check_create_file_basic(workspace_root: Path, session: Session) -> str | None:
@@ -245,6 +277,113 @@ EDIT_FILE_COPY_LINE_CONTENT_NO_PREFIX_LEAK = EvalCase(
 )
 
 
+_PAGINATION_FILE_TOTAL_LINES = DEFAULT_READ_FILE_MAX_LINES + 20
+_PAGINATION_FILE_MARKER_LINE = DEFAULT_READ_FILE_MAX_LINES + 5
+
+
+def _check_read_file_paginates_past_max_lines(workspace_root: Path, session: Session) -> str | None:
+    expected = [f"row {i:03d}" for i in range(1, _PAGINATION_FILE_TOTAL_LINES + 1)]
+    expected[_PAGINATION_FILE_MARKER_LINE - 1] = "SECRET_PASSWORD=changed123"
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "config.txt"), "config.txt")
+    if mismatch is not None:
+        return mismatch
+
+    read_calls = _tool_call_args(session, "ReadFile")
+    if len(read_calls) < 2:
+        return (
+            f"expected at least 2 ReadFile calls to page past the default "
+            f"{DEFAULT_READ_FILE_MAX_LINES}-line max_lines cap and reach line "
+            f"{_PAGINATION_FILE_MARKER_LINE}, got {len(read_calls)}"
+        )
+    return None
+
+
+READ_FILE_PAGINATES_PAST_MAX_LINES = EvalCase(
+    name="read_file_paginates_past_max_lines",
+    prompt=(
+        f"config.txt has {_PAGINATION_FILE_TOTAL_LINES} lines. Exactly one line contains the "
+        "marker 'SECRET_PASSWORD=' — it is not necessarily near the top of the file. Find that "
+        "line and change it to read exactly 'SECRET_PASSWORD=changed123'. Leave every other "
+        "line exactly as it is."
+    ),
+    setup_files={
+        "config.txt": "\n".join(
+            "SECRET_PASSWORD=hunter2" if i == _PAGINATION_FILE_MARKER_LINE else f"row {i:03d}"
+            for i in range(1, _PAGINATION_FILE_TOTAL_LINES + 1)
+        ) + "\n",
+    },
+    check=_check_read_file_paginates_past_max_lines,
+    expected_tool_calls=3,
+)
+
+
+_MANY_EDITS_FILE_TOTAL_LINES = 300
+_MANY_EDITS_INSERT_AFTER_LINES = [10, 90, 150, 210, 260, 295]
+"""Original (pre-edit) line numbers to insert a new line after. Each insertion shifts every
+line below it down by one, so applying these top-to-bottom without re-reading in between
+targets the wrong line for every insertion after the first — see EditFileTool's docstring
+recommendation to instead go bottom-to-top."""
+
+
+def _check_edit_file_many_ops_bottom_to_top(workspace_root: Path, session: Session) -> str | None:
+    insert_after = set(_MANY_EDITS_INSERT_AFTER_LINES)
+    expected: list[str] = []
+    for i in range(1, _MANY_EDITS_FILE_TOTAL_LINES + 1):
+        expected.append(f"item {i:03d}")
+        if i in insert_after:
+            expected.append("NOTE: reviewed")
+    return _first_mismatch(expected, _lines(workspace_root / "manifest.txt"), "manifest.txt")
+
+
+EDIT_FILE_MANY_OPS_BOTTOM_TO_TOP = EvalCase(
+    name="edit_file_many_ops_bottom_to_top",
+    prompt=(
+        f"manifest.txt lists {_MANY_EDITS_FILE_TOTAL_LINES} entries, one per line, reading "
+        f"'item 001' through 'item {_MANY_EDITS_FILE_TOTAL_LINES:03d}' in order (each zero-"
+        "padded to 3 digits, matching its line number). Insert a new line reading "
+        "'NOTE: reviewed' immediately after each of these lines, without modifying the item "
+        "lines themselves or inserting anything else: "
+        + ", ".join(f"item {n:03d} (line {n})" for n in _MANY_EDITS_INSERT_AFTER_LINES) + "."
+    ),
+    setup_files={
+        "manifest.txt": "\n".join(
+            f"item {i:03d}" for i in range(1, _MANY_EDITS_FILE_TOTAL_LINES + 1)
+        ) + "\n",
+    },
+    check=_check_edit_file_many_ops_bottom_to_top,
+    expected_tool_calls=len(_MANY_EDITS_INSERT_AFTER_LINES),
+)
+
+
+def _check_replace_all_case_insensitive(workspace_root: Path, session: Session) -> str | None:
+    expected = [
+        "The wolf jumped over the fence.",
+        "wolf tracks were everywhere in the snow.",
+        "A wolf call echoed at night.",
+        "The dog chased something but not a wolf.",
+    ]
+    return _first_mismatch(expected, _lines(workspace_root / "wildlife.txt"), "wildlife.txt")
+
+
+REPLACE_ALL_CASE_INSENSITIVE = EvalCase(
+    name="replace_all_case_insensitive",
+    prompt=(
+        "In wildlife.txt, replace every occurrence of the word 'fox' with 'wolf', matching "
+        "regardless of capitalization — so 'fox', 'FOX', and 'Fox' should all be replaced."
+    ),
+    setup_files={
+        "wildlife.txt": (
+            "The fox jumped over the fence.\n"
+            "FOX tracks were everywhere in the snow.\n"
+            "A Fox call echoed at night.\n"
+            "The dog chased something but not a fox.\n"
+        ),
+    },
+    check=_check_replace_all_case_insensitive,
+    expected_tool_calls=2,
+)
+
+
 CASES: list[EvalCase] = [
     CREATE_FILE_BASIC,
     CREATE_FILE_NESTED_DIRECTORY,
@@ -257,4 +396,7 @@ CASES: list[EvalCase] = [
     EDIT_FILE_LINE_CONTENT_STARTS_WITH_DIGIT,
     EDIT_FILE_TWO_EDITS_IN_ONE_TURN,
     EDIT_FILE_COPY_LINE_CONTENT_NO_PREFIX_LEAK,
+    READ_FILE_PAGINATES_PAST_MAX_LINES,
+    EDIT_FILE_MANY_OPS_BOTTOM_TO_TOP,
+    REPLACE_ALL_CASE_INSENSITIVE,
 ]
