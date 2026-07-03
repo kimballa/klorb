@@ -14,9 +14,9 @@
     * if no, do nothing. we only get default permissions of stuff.
     * if yes, create cwd/.klorb/ and write a config json in there
     * by default allow file read access to the workspace root.
-  * ask the user if they trust the dir and want to allow writes 
+  * ask the user if they trust the dir and want to allow writes
     * if yes then allow file write/create access to the workspace root.
-    * if no then put the workspace root down as 'ask' for writes. 
+    * if no then put the workspace root down as 'ask' for writes.
     * If no then clamp down reads to inside workspace root too, not just trusting its config file.
   * ... this trust question actually needs to happen the first time a given
     workspace is opened even if it already contained a config file (e.g., you download it from
@@ -83,7 +83,7 @@
     * ListDirTool
     * AskUserQuestionsTool
     * GrepTool
-    * WebSearchTool
+    * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans
     * WebFetchTool
 
 * Skills in <built-in-skills-dir>, ~/.klorb/skills, cwd/.klorb/skills/
@@ -92,8 +92,15 @@
     * TodoList tool
     * TodoWrite tool
 * Memories in ~/.klorb/memory, cwd/.klorb/memory/
-    * UpdateMemory tool
-    * Remember tool
+  * UpdateMemory tool
+  * Remember tool
+* "Team scratchpad" is a file where all agents on the team can read and write
+  * ephemeral; survives for the length of a session.
+  * ReadScratchpad tool -- reads range from the file.
+  * EditScratchpad tool -- updates file
+  * SearchScratchpad tool -- grep it.
+
+
 * Subagent spawning
   * When an agent spawns a subagent for a different role, the subagent gets a new child
     `Session` whose `SessionConfig` (and related context) is a *copy* of the parent's, with
