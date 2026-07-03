@@ -13,9 +13,6 @@ class Gpt5NanoModel(Model):
     def name(self) -> str:
         return DEFAULT_MODEL
 
-    def system_prompt(self) -> str:
-        return "You are klorb, a helpful coding and software engineering assistant."
-
     def settings(self) -> dict[str, Any]:
         return {"temperature": 0.2}
 

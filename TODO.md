@@ -38,7 +38,13 @@
     flow above — same "copy a starter config into place" idea, just a different destination and
     trust prompt.
 
-* Add a basic system prompt to make this actually do coding things.
+* Add a command (CLI and/or command palette) that dumps the *resolved* system prompt for the
+  current role + model into the user's editable tree
+  (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same relative path the resolver would
+  read it back from), so the user has a real `.md` file to start editing from instead of
+  hunting down the packaged copy inside site-packages. Should refuse to clobber an existing
+  file without `--force`, like the planned `klorb init`. See
+  docs/specs/roles-and-system-prompts.md.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
@@ -89,7 +95,18 @@
     * UpdateMemory tool
     * Remember tool
 * Subagent spawning
+  * When an agent spawns a subagent for a different role, the subagent gets a new child
+    `Session` whose `SessionConfig` (and related context) is a *copy* of the parent's, with
+    `role_name` (and thus the `Role` the child session builds) replaced by the
+    subagent-specific one, and with the parent-provided instructions message seeded into the
+    child's message context. Roles and role-tier system prompt resolution already exist
+    (docs/specs/roles-and-system-prompts.md); the spawning/dispatch mechanism does not.
 * Agent teams
+  * A team of specialist agents working a larger coding problem in parallel or in series:
+    writing specs and ADRs, writing code, system design, writing tests, and reviewing code —
+    the latter possibly its own team of specialists (correctness, performance,
+    cybersecurity, ...). `Role` subclasses (`klorb/src/klorb/role.py`) and
+    `Role.repertoire()` are the placeholder hooks for this.
 * Need a Planning Tool or Planning Mode agent
 
 * Permissions

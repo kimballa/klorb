@@ -6,7 +6,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-Role = Literal["system", "user", "assistant", "thinking", "tool_defs", "tool_use", "tool_response"]
+MessageRole = Literal["system", "user", "assistant", "thinking", "tool_defs", "tool_use", "tool_response"]
+"""Which participant a `Message` records: named `MessageRole` (matching the `Message.role`
+field, itself named for the chat API's wire-format `"role"` key) rather than `Role`, which
+is `klorb.role.Role` — the operating role a session's *agent* performs."""
 
 ProcessingState = Literal["pending", "error", "started_receipt", "complete"]
 
@@ -34,7 +37,7 @@ class Message(BaseModel):
     set back to `None`.
     """
 
-    role: Role
+    role: MessageRole
     num_tokens: int
     timestamp: datetime
     "Timestamp user msg was sent, or beginning of streaming response was received."

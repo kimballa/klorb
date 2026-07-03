@@ -57,9 +57,12 @@ SESSION_KEY_MAP: dict[str, str] = {
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
 inferred from CLI flags (`-m`/`--interactive`/`--no-interactive`), never config-file-driven.
-`readDirs`/`writeDirs` are also deliberately absent — they're merged by concatenation, not
-1:1 scalar replacement, so `load_process_config()` handles them separately, ahead of
-`_route_keys()` — see docs/specs/permissions.md.
+`role_name` is likewise deliberately absent: the operating role is set by code (defaulting
+to the coordinator role), never by a config file — see
+docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDirs` are also deliberately
+absent — they're merged by concatenation, not 1:1 scalar replacement, so
+`load_process_config()` handles them separately, ahead of `_route_keys()` — see
+docs/specs/permissions.md.
 """
 
 PROCESS_KEY_MAP: dict[str, str] = {

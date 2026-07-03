@@ -6,6 +6,9 @@ from abc import abstractmethod
 from typing import Any
 from typing import Literal
 
+from klorb.system_prompts import mangle_model_name
+from klorb.system_prompts import resolve_prompt_file
+
 ThinkingBudgetStyle = Literal["effort", "tokens"]
 """How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a
 low/medium/high keyword, or `"tokens"` for a numeric reasoning token budget."""
@@ -18,9 +21,21 @@ class Model(ABC):
     def name(self) -> str:
         """Return the model's identifier, as used by the API provider and the command palette."""
 
-    @abstractmethod
-    def system_prompt(self) -> str:
-        """Return the system prompt to send to this model."""
+    def mangled_name(self) -> str:
+        """Return `name()` made filesystem-safe (see
+        `klorb.system_prompts.mangle_model_name`): this model's filename stem within a
+        `system_prompts.d/` prompt-file tree."""
+        return mangle_model_name(self.name())
+
+    def system_prompt(self) -> str | None:
+        """Return this model's role-agnostic, model-specific system prompt — the
+        `<mangled_name()>.md` prompt file at the top of a `system_prompts.d/` tree (user
+        override tier, then packaged tier — see
+        `klorb.system_prompts.resolve_prompt_file`) — or `None` if no such file exists.
+        Consulted by `Session._resolve_system_prompt()` only after the active `Role`'s
+        prompt tiers returned nothing. Subclasses (e.g. test fixtures) may override to
+        return a literal string without filesystem access."""
+        return resolve_prompt_file(f"{self.mangled_name()}.md")
 
     @abstractmethod
     def settings(self) -> dict[str, Any]:

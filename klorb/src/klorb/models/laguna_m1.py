@@ -14,9 +14,6 @@ class LagunaM1Model(Model):
     def name(self) -> str:
         return LAGUNA_M1_MODEL_NAME
 
-    def system_prompt(self) -> str:
-        return "You are klorb, a helpful coding and software engineering assistant."
-
     def settings(self) -> dict[str, Any]:
         return {"temperature": 0.2}
 

@@ -44,6 +44,12 @@
     "pytest-asyncio>=1.4.0,<2.0.0",
   ]
 
+[tool.setuptools.package-data]
+  # Ship the built-in system prompt files inside the wheel so
+  # klorb.system_prompts.resolve_prompt_file() can read them via importlib.resources at
+  # runtime. See docs/specs/roles-and-system-prompts.md.
+  "klorb.resources" = ["system_prompts.d/*.md", "system_prompts.d/roles/*/*.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 filterwarnings = [

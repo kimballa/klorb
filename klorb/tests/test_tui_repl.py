@@ -222,7 +222,9 @@ async def test_aborted_response_restores_prompt_and_clears_history() -> None:
         assert prompt_input.text == "what is 2+2?"
         assert prompt_input.disabled is False
 
-    assert session.messages == []
+    # Only the system bookkeeping message (inserted ahead of the turn) survives the abort;
+    # the discarded turn itself leaves nothing behind.
+    assert [m.role for m in session.messages] == ["system"]
 
 
 async def test_escape_aborts_a_streaming_response() -> None:
@@ -259,7 +261,8 @@ async def test_escape_aborts_a_streaming_response() -> None:
         assert prompt_input.disabled is False
         assert app.check_action("abort_response", ()) is False
 
-    assert session.messages == []
+    # Only the system bookkeeping message (inserted ahead of the turn) survives the abort.
+    assert [m.role for m in session.messages] == ["system"]
 
 
 async def test_select_model_updates_active_model_and_subtitle() -> None:
