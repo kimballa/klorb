@@ -5,6 +5,8 @@
       "Bash(make *)",
       "Bash(git -C /home/aaron/src/klorb diff *)",
       "Bash(git -C /home/aaron/src/klorb status *)",
+      "Bash(git -C /home/aaron/src/klorb show *)",
+      "Bash(git -C /home/aaron/src/klorb log *)",
       "Bash(venv/bin/pip install *)",
       "Bash(venv/bin/klorb --model openai/gpt-4o-mini *)",
       "Bash(TESTARGS=* make test)",

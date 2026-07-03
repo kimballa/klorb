@@ -5,6 +5,7 @@ See docs/specs/tool-eval-harness.md and docs/adrs/reuse-session-for-tool-eval-ag
 for why this drives `klorb.session.Session` directly instead of a bespoke chat/tool loop.
 """
 
+import json
 import logging
 import tempfile
 import time
@@ -12,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+
+import tiktoken
 
 import klorb.tools as tools_package
 from klorb.api_provider import ApiProvider
@@ -37,6 +40,13 @@ class EvalCase:
     that ran it, returns `None` on success or a human-readable failure reason."""
     setup_files: dict[str, str] = field(default_factory=dict)
     """Workspace-relative path -> initial file content, written before `prompt` is sent."""
+    expected_tool_calls: int | None = None
+    """Rough number of tool calls a competent, error-free run should need (e.g. one `ReadFile`
+    plus one `EditFile`). Compared against `CaseResult.num_tool_calls` to flag an otherwise
+    passing case as a `CaseResult.conditional` pass when the model needed noticeably more calls
+    than that — typically a sign it stumbled into retries (e.g. a rejected `EditFile` call)
+    before eventually recovering. `None` (the default) means no threshold is checked for this
+    case. See docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,20 @@ class CaseResult:
     """Set when `check()` ran but reported a problem; `None` on success or if `error` is set."""
     error: str | None = None
     """Set instead of running `check()` at all if `session.send_turn()` itself raised."""
+    expected_tool_calls: int | None = None
+    """Copied from the `EvalCase.expected_tool_calls` that produced this result."""
+
+    @property
+    def conditional(self) -> bool:
+        """True if this case passed but took more tool calls than `expected_tool_calls` — a
+        sign the model likely stumbled into a rejected call and retried before recovering,
+        rather than a clean sign of genuine failure. See report.py's `[CONDITIONAL PASS]`
+        status and docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
+        return (
+            self.passed
+            and self.expected_tool_calls is not None
+            and self.num_tool_calls > self.expected_tool_calls
+        )
 
 
 def _tool_call_log(session: Session) -> list[ToolCallLogEntry]:
@@ -153,6 +177,7 @@ def run_case(
             final_response=final_response,
             failure_reason=failure_reason,
             error=error,
+            expected_tool_calls=case.expected_tool_calls,
         )
         if on_complete is not None:
             on_complete(result)
@@ -174,3 +199,37 @@ def run_evaluation(
             case, model=model, provider=provider, on_start=on_case_start, on_complete=on_case_complete)
         for case in cases
     ]
+
+
+def _encoding_for_model(model: str) -> tiktoken.Encoding:
+    """Best-effort `tiktoken` encoding for `model`: tries `model` as-is, then with any
+    OpenRouter `provider/` prefix (e.g. `"openai/"`) stripped, falling back to `o200k_base`
+    (GPT-4o's encoding) if neither is recognized. Exact only for OpenAI models; for any other
+    model proxied through OpenRouter (Anthropic, Meta, etc. all use their own, unrelated
+    tokenizers) this is a reference approximation, not that model's real token count.
+    """
+    for candidate in (model, model.rsplit("/", 1)[-1]):
+        try:
+            return tiktoken.encoding_for_model(candidate)
+        except KeyError:
+            continue
+    return tiktoken.get_encoding("o200k_base")
+
+
+def tool_token_counts(*, model: str) -> dict[str, int]:
+    """Token count of every discovered tool's full function-calling definition (the same
+    `{"type": "function", "function": {"name", "description", "parameters"}}` dict
+    `ToolRegistry.tool_definitions()` builds, JSON-encoded) under `model`'s tokenizer — the
+    actual per-turn prompt cost of offering that tool, not just its description text alone.
+
+    This is independent of any particular `EvalCase`: the tool package's tools and their
+    schemas never vary by case, so it's computed once per eval run (see `run_evals.main()`)
+    rather than per case. `SessionConfig`'s default `workspace_root` (cwd) is never touched —
+    `name()`/`description()`/`parameters()` do no I/O — so no real workspace is needed here.
+    """
+    tool_registry = ToolRegistry(ProcessConfig(), SessionConfig(), package=tools_package)
+    encoding = _encoding_for_model(model)
+    return {
+        definition["function"]["name"]: len(encoding.encode(json.dumps(definition)))
+        for definition in tool_registry.tool_definitions()
+    }

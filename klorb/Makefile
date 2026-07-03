@@ -124,7 +124,7 @@ distclean: clean
 	-rm .venv_init_ok
 
 test:
-	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)"" -o cache_dir=.pytest_cache tests/ $(TESTARGS)
+	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)" -o cache_dir=.pytest_cache tests/ $(TESTARGS)
 
 # Tool-efficacy evals: makes real calls to a real hosted model (see docs/specs/tool-eval-harness.md,
 # docs/adrs/tool-evals-skip-without-api-key.md).

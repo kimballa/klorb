@@ -32,16 +32,26 @@ class EditFileTool(Tool):
     def description(self) -> str:
         return (
             "Replaces the inclusive line range start_line..end_line of a text file with "
-            "new_text. start_text and end_text must exactly match the current content of "
-            "start_line and end_line (as returned by ReadFile) or the edit is rejected — "
-            "re-ReadFile the file if this happens, since it means the line numbers have "
+            "new_text. start_text, end_text, and new_text are all raw file content: never "
+            "include the 'N|' line-number prefix that ReadFile prepends to each line for "
+            "display purposes — that prefix is not part of the file, only a label for which "
+            "line goes where. start_text and end_text must exactly match the current content of "
+            "start_line and end_line (with no line-number prefix) or the edit is rejected — "
+            "re-ReadFile if this happens, since it means the line numbers have "
             "drifted (e.g. from an earlier edit in this turn). "
-            "There is no separate insert or delete tool: to insert new content without "
-            "deleting anything, set start_line == end_line and include that line's original "
-            "text as part of new_text (e.g. prepend or append the new lines around it); to "
-            "delete a range, pass an empty new_text. To insert into an empty file (0 lines), "
-            "call with start_line=1, end_line=0, start_text=\"\", end_text=\"\". "
-            "If you're making multiple edits to the same file in one turn, apply them "
+            "There is no separate insert or delete tool. To insert new content into a "
+            "non-empty file without deleting anything — including inserting a new first "
+            "line — set start_line == end_line to an existing line number and fold that "
+            "line's original text into new_text alongside the new content (e.g. to insert "
+            "a line before the current line 1, call with start_line=1, end_line=1, "
+            "start_text and end_text both equal to the current line 1's content, and "
+            "new_text = the new line followed by that original line 1 content). Setting "
+            "end_line to start_line minus 1 (a zero-width range) is invalid for any "
+            "non-empty file. The only case where end_line = start_line - 1 is allowed is "
+            "a completely empty file (0 lines), where the only valid call is "
+            "start_line=1, end_line=0, start_text=\"\", end_text=\"\". "
+            "To delete a range, pass empty new_text. "
+            "To make multiple edits to the same file, apply them "
             "bottom-to-top (highest line numbers first), since every edit shifts the line "
             "numbers of everything below it — otherwise re-ReadFile between edits."
         )
@@ -64,16 +74,23 @@ class EditFileTool(Tool):
                 },
                 "start_text": {
                     "type": "string",
-                    "description": "Expected current content of start_line, for drift verification.",
+                    "description": (
+                        "Expected current content of start_line, for drift verification. Raw "
+                        "line content only — do not include line-number prefix."
+                    ),
                 },
                 "end_text": {
                     "type": "string",
-                    "description": "Expected current content of end_line, for drift verification.",
+                    "description": (
+                        "Expected current content of end_line, for drift verification. Raw "
+                        "line content only — do not include line-number prefix."
+                    ),
                 },
                 "new_text": {
                     "type": "string",
                     "description": (
-                        "Replacement content for the range. Empty string deletes the range."
+                        "Replacement content for the range. Empty string deletes the range. "
+                        "Raw line content only."
                     ),
                 },
             },

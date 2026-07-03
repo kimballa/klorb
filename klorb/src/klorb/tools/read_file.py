@@ -30,8 +30,17 @@ class ReadFileTool(Tool):
     def description(self) -> str:
         return (
             f"Reads a text file and returns up to {self._max_lines} of its lines, each "
-            "prefixed with its 1-indexed line number. Use start_line and end_line to page "
-            "through files larger than the per-call limit."
+            "prefixed with its 1-indexed line number followed by '|' (e.g. '3|some text'), "
+            "purely so you can tell which line goes where — that 'N|' prefix is not part of the "
+            "file's actual content. When quoting a line's content back to another tool (e.g. "
+            "EditFile), use the text after the '|' only, never "
+            "the line number or the '|' itself. Use start_line and end_line to page through "
+            "files larger than the per-call limit. There is no way to address a line relative "
+            "to the end of the file (e.g. -1 does not mean 'last line') — start_line and "
+            "end_line only accept 1-indexed positions counted from the beginning. To find or "
+            "read the last line of a file whose length you don't already know, call with no "
+            "start_line/end_line (or start_line=1): the result's total_lines tells you the "
+            "last line's number, which you can then target directly if needed."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -45,8 +54,9 @@ class ReadFileTool(Tool):
                 "start_line": {
                     "type": "integer",
                     "description": (
-                        "1-indexed line to start reading from. 0 or omitted means start "
-                        "at the beginning of the file."
+                        "1-indexed line to start reading from, counted from the beginning of "
+                        "the file — never negative or relative to the end (there is no -1)."
+                        "0 or omitted means start at the beginning of the file."
                     ),
                 },
                 "end_line": {
@@ -68,7 +78,10 @@ class ReadFileTool(Tool):
         logger.debug("ReadFile %s (start_line=%s, end_line=%s)", filename, start_line, end_line)
 
         if start_line is not None and start_line < 0:
-            raise ValueError(f"start_line must be >= 0, got {start_line}")
+            raise ValueError(
+                f"start_line must be >= 0, got {start_line}; there is no negative/"
+                "relative-to-the-end addressing (e.g. -1 does not mean 'last line') — call "
+                "with no start_line/end_line to see total_lines and find the last line's number")
         if end_line is not None and end_line < 1:
             raise ValueError(f"end_line must be >= 1, got {end_line}")
 
@@ -93,7 +106,8 @@ class ReadFileTool(Tool):
         else:
             selected_lines = []
         content = "\n".join(f"{effective_start + i}|{line}" for i, line in enumerate(selected_lines))
-        returned_end = effective_start + len(selected_lines) - 1 if selected_lines else effective_start - 1
+        returned_end = effective_start + len(selected_lines) - \
+            1 if selected_lines else effective_start - 1
         logger.debug(
             "ReadFile %s returned lines %d-%d of %d (truncated=%s)",
             filename, effective_start, returned_end, total_lines, returned_end < total_lines,
