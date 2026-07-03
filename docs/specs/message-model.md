@@ -18,7 +18,7 @@ this one shape.
     whatever text (often empty) accompanied the tool call request; on a `role="tool_response"`
     message it's the tool's result, stringified (`Tool.apply()`'s return value as-is if it's
     already a `str`, otherwise `json.dumps()`'d), or `f"Error: {exc}"` if the call failed.
-  * `role: Role` — a `Literal["system", "user", "assistant", "thinking", "tool_defs",
+  * `role: MessageRole` — a `Literal["system", "user", "assistant", "thinking", "tool_defs",
     "tool_use", "tool_response"]`. `"system"` is a bookkeeping message
     (`Session._ensure_system_message()`) recording the session's resolved system prompt
     (see [[roles-and-system-prompts]]),
