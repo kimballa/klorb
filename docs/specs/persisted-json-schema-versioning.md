@@ -19,7 +19,7 @@ this exists.
   ```json
   {
     "schema": {"name": "klorb-config", "version": "1.0.0"},
-    "sessionDefaults": {"model": "openai/gpt-4o-mini"}
+    "sessionDefaults": {"model": "openai/gpt-5-nano"}
   }
   ```
 

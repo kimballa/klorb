@@ -7,7 +7,7 @@ Every such file is one JSON object with a top-level `schema` key alongside its d
 ```json
 {
   "schema": {"name": "klorb-config", "version": "1.0.0"},
-  "model": "openai/gpt-4o-mini"
+  "model": "openai/gpt-5-nano"
 }
 ```
 

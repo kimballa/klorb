@@ -48,7 +48,7 @@ mechanism the rest of the harness will build on to talk to models.
     `role="tool_use"`/`role="tool_response"` — see below) with `system_prompt`, if given,
     prepended as a `"system"` role message, and always calls the OpenAI SDK's streaming
     completions API (`stream=True`, `stream_options={"include_usage": True}`) against the
-    given model (default `openai/gpt-4o-mini`, an OpenRouter model identifier). `session_id`
+    given model (default `openai/gpt-5-nano`, an OpenRouter model identifier). `session_id`
     and `reasoning`, if given, are folded into `extra_body` (as `{"session_id": ...}` and/or
     `{"reasoning": ...}`); `extra_body` stays `None` if neither is given, so requests that
     don't need it are unchanged from before reasoning support was added. `tools`, if

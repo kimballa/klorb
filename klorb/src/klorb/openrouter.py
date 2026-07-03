@@ -20,7 +20,7 @@ from klorb.message import ToolCallRequest
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+DEFAULT_MODEL = "openai/gpt-5-nano"
 
 logger = logging.getLogger(__name__)
 

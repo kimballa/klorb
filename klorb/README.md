@@ -38,7 +38,7 @@ See [`usage.md`](usage.md) for the full command reference, including the
 
 ```
 make evals                                    # run every case in klorb/evals/cases.py
-EVALARGS='--model openai/gpt-4o-mini' make evals   # against a specific model
+EVALARGS='--model openai/gpt-5-nano' make evals   # against a specific model
 ```
 
 `make evals` runs `klorb/evals/`'s tool-efficacy suite: unlike `make test` (fully offline), it

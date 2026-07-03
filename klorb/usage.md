@@ -28,7 +28,7 @@ message submitted as the first turn, then keeps the REPL open for more.
 * `--model` *MODEL*
 
   OpenRouter model identifier to use (e.g. `anthropic/claude-3.5-sonnet`).
-  Defaults to `openai/gpt-4o-mini`, unless overridden by a `klorb-config.json`
+  Defaults to `openai/gpt-5-nano`, unless overridden by a `klorb-config.json`
   file (see `docs/specs/process-and-session-config.md`).
 
 * `--config` *FILE*

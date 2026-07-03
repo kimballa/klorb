@@ -35,8 +35,8 @@ instead of a bespoke picker widget.
   constructor (used by tests to scan a fixture package instead).
   * `models() -> list[Model]` — all discovered models.
   * `get(name: str) -> Model` — look up a discovered model by name.
-* `klorb.models.gpt_4o_mini.Gpt4oMiniModel` (`klorb/src/klorb/models/gpt_4o_mini.py`) is the
-  built-in `Model` for `openai/gpt-4o-mini`, klorb's current default model
+* `klorb.models.gpt_5_nano.Gpt5NanoModel` (`klorb/src/klorb/models/gpt_5_nano.py`) is the
+  built-in `Model` for `openai/gpt-5-nano`, klorb's current default model
   (`klorb.openrouter.DEFAULT_MODEL`).
 * `klorb.models.laguna_m1.LagunaM1Model` (`klorb/src/klorb/models/laguna_m1.py`) is a
   built-in `Model` for `poolside/laguna-m.1:free`, a free OpenRouter coding-agent model.

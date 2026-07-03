@@ -85,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     color = use_color()
+    print()
+    print(f'Running eval cases on model: {colorize(model, 'green', enabled=color)}...')
     results = run_evaluation(
         CASES, model=model, provider=provider,
         on_case_start=lambda name: _print_case_start(name, color=color),

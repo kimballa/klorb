@@ -119,7 +119,7 @@ READ_THEN_EDIT_SINGLE_LINE = EvalCase(
     ),
     setup_files={"todo.txt": "1. wake up\n2. write code\n3. sleep\n"},
     check=_check_read_then_edit_single_line,
-    expected_tool_calls=2,
+    expected_tool_calls=3,
 )
 
 
@@ -158,7 +158,7 @@ EDIT_FILE_INSERT_LINE = EvalCase(
     ),
     setup_files={"script.py": "import sys\nprint(sys.argv)\n"},
     check=_check_edit_file_insert_line,
-    expected_tool_calls=2,
+    expected_tool_calls=3,
 )
 
 
@@ -216,7 +216,7 @@ EDIT_FILE_LAST_LINE_OF_MULTILINE_FILE = EvalCase(
     ),
     setup_files={"status.txt": "stage=build\nstage=test\nstage=release\n"},
     check=_check_edit_file_last_line_of_multiline_file,
-    expected_tool_calls=2,
+    expected_tool_calls=3,
 )
 
 
@@ -359,7 +359,9 @@ EDIT_FILE_MANY_OPS_BOTTOM_TO_TOP = EvalCase(
         ) + "\n",
     },
     check=_check_edit_file_many_ops_bottom_to_top,
-    expected_tool_calls=len(_MANY_EDITS_INSERT_AFTER_LINES),
+    # +2: a competent run may re-ReadFile around a line whose EditFile response reports
+    # line_hint_matched=False, to confirm the drift search landed on the right target.
+    expected_tool_calls=len(_MANY_EDITS_INSERT_AFTER_LINES) + 2,
 )
 
 

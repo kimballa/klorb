@@ -28,4 +28,4 @@ def test_default_registry_discovers_production_models() -> None:
 
     names = {model.name() for model in registry.models()}
 
-    assert "openai/gpt-4o-mini" in names
+    assert "openai/gpt-5-nano" in names

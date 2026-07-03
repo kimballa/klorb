@@ -5,7 +5,7 @@
   },
 
   "sessionDefaults": {
-    "model": "openai/gpt-4o-mini",
+    "model": "openai/gpt-5-nano",
     "thinking.enabled": true,
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 50,

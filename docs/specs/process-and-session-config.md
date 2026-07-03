@@ -99,7 +99,7 @@ or slicing a superset.
 * CLI flags (other than `--config` itself, which selects a layer above) are applied by
   `klorb.cli.main()` directly on top of the loaded `ProcessConfig`, since only `cli.py` knows
   the argparse `Namespace` shape (see `CLAUDE.md`'s CLI/library firewall rule). Today that's
-  `--model`, whose argparse default is `None` (not `openai/gpt-4o-mini`) specifically so
+  `--model`, whose argparse default is `None` (not `openai/gpt-5-nano`) specifically so
   `main()` can tell "flag not given" (leave whatever the config layers produced) apart from
   "flag explicitly given" (overwrite it) — see [the `--interactive` pattern in
   `add-cli-flag`](../../.claude/skills/add-cli-flag/SKILL.md) for why `None` defaults matter
@@ -131,7 +131,7 @@ sit as flat keys alongside it at the top level:
   "schema": {"name": "klorb-config", "version": "1.0.0"},
 
   "sessionDefaults": {
-    "model": "openai/gpt-4o-mini",
+    "model": "openai/gpt-5-nano",
     "thinking.enabled": true,
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 50,
