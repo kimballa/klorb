@@ -103,11 +103,33 @@ def _italicized(text: str) -> str:
 
 def _pinned_to_bottom(history: VerticalScroll) -> bool:
     """Whether `history`'s viewport is currently showing its bottom edge, i.e. whether the
-    user hasn't scrolled away from the latest content. Call this immediately before mounting
-    or updating a widget that may grow `history`, so the caller can decide whether to follow
-    the new content to the bottom or leave the user's scroll position undisturbed.
+    user hasn't scrolled away from the latest content.
+
+    Only `ReplApp._on_history_scroll_changed` should call this: it's accurate exactly when
+    `history`'s `scroll_y` has just changed (mounting a widget doesn't itself update
+    `max_scroll_y` until the next layout refresh, so calling this at an arbitrary other time
+    can read a stale comparison). Everywhere else that needs to know whether to follow new
+    content to the bottom reads the cached `ReplApp._history_pinned_to_bottom` instead.
     """
     return history.is_vertical_scroll_end
+
+
+def _move_to_end(history: VerticalScroll, *widgets: Widget) -> None:
+    """Reposition `widgets` — already mounted in `history`, given in the order they should
+    appear — to be its last children, preserving their relative order.
+
+    A response or thinking widget stays mounted (and gets updated in place) across an entire
+    turn, even when the model interleaves tool calls with its own streamed text/reasoning; each
+    tool-call widget mounts fresh, below wherever the response/thinking widget already sits.
+    Left alone, that leaves the still-drafting widget stuck above tool calls made after it
+    started, rather than reading as the newest thing in the conversation. Call this before
+    every update to such a widget so it's always repositioned to the true end first.
+    """
+    for widget in widgets:
+        last_child = history.children[-1]
+        if last_child is widget:
+            continue
+        history.move_child(widget, after=last_child)
 
 
 class PromptInput(TextArea):
@@ -331,6 +353,7 @@ class ReplApp(App[None]):
         self._shell_cancel_event: threading.Event | None = None
         self._tool_call_widgets: list[ToolCallStatic] = []
         self._tool_call_detail_shown: bool = False
+        self._history_pinned_to_bottom: bool = True
         self.title = "klorb"
         self.sub_title = self._session.config.model
 
@@ -423,8 +446,9 @@ class ReplApp(App[None]):
         self.refresh_bindings()
 
     def on_mount(self) -> None:
-        """Label and focus the input box, cap its growth at the configured max height, then
-        submit any initial message as the first turn.
+        """Label and focus the input box, cap its growth at the configured max height, watch
+        the history's scroll position (see `_on_history_scroll_changed`), then submit any
+        initial message as the first turn.
         """
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
@@ -432,8 +456,28 @@ class ReplApp(App[None]):
         input_widget.focus()
         self._update_status_bar()
 
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        self.watch(history, "scroll_y", self._on_history_scroll_changed, init=False)
+
         if self._initial_message:
             self._submit_prompt(self._initial_message)
+
+    def _on_history_scroll_changed(self) -> None:
+        """Keep `_history_pinned_to_bottom` in sync with the history viewport's actual scroll
+        position, recomputed only when Textual itself changes `scroll_y` — via our own
+        `scroll_end()`/`scroll_home()` calls landing, or genuine user scrolling — rather than by
+        re-reading `is_vertical_scroll_end` synchronously wherever a streaming update happens.
+
+        Mounting a widget doesn't immediately update `max_scroll_y` (it's only remeasured on the
+        next layout refresh, which is exactly why `scroll_end()`/`scroll_home()` themselves defer
+        via `call_after_refresh` by default), so eagerly re-checking `is_vertical_scroll_end`
+        right after scheduling one streaming update — before an earlier update's own deferred
+        scroll has actually landed — could misread a still-pinned viewport as scrolled away.
+        Reacting only to `scroll_y` actually changing sidesteps that: by the time this fires,
+        `max_scroll_y` is necessarily consistent with the `scroll_y` that triggered it.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        self._history_pinned_to_bottom = _pinned_to_bottom(history)
 
     def _update_status_bar(self) -> None:
         """Refresh the status bar's running token tally against the active model's context window."""
@@ -539,7 +583,7 @@ class ReplApp(App[None]):
         output (e.g. `[INFO]` log tags) can't be misread as Rich console markup.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         widget = Static(escape(initial_text))
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
@@ -548,11 +592,12 @@ class ReplApp(App[None]):
     def _update_shell_output_widget(self, widget: Static, text: str) -> None:
         """Update a streaming shell command's output `Static` widget with the latest
         accumulated `text` (already escaped), following the view to the bottom only if it was
-        already pinned there before this growth (see `_pinned_to_bottom`) — so a user who's
-        scrolled up to reread earlier output isn't yanked back down by every incoming chunk.
+        already pinned there before this growth (see `_history_pinned_to_bottom`) — so a user
+        who's scrolled up to reread earlier output isn't yanked back down by every incoming
+        chunk.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         widget.update(text)
         self._scroll_if_pinned(history, was_pinned)
 
@@ -565,7 +610,7 @@ class ReplApp(App[None]):
             self._show_error(error_message)
         else:
             history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-            self._finish_turn(history, _pinned_to_bottom(history))
+            self._finish_turn(history, self._history_pinned_to_bottom)
 
     def clear_session(self) -> None:
         """Replace the active Session with a fresh one (new id, config reset to the current
@@ -628,6 +673,7 @@ class ReplApp(App[None]):
         response_widget: Markdown | None = None
         accumulated = ""
         thinking_widget: Static | None = None
+        thinking_label_widget: Static | None = None
         thinking_accumulated = ""
         mounted_widgets: list[Widget] = []
 
@@ -641,16 +687,17 @@ class ReplApp(App[None]):
                 self.call_from_thread(self._update_response_widget, response_widget, accumulated)
 
         def handle_thinking_chunk(delta_text: str) -> None:
-            nonlocal thinking_accumulated, thinking_widget
+            nonlocal thinking_accumulated, thinking_widget, thinking_label_widget
             thinking_accumulated += delta_text
             if thinking_widget is None:
-                thinking_widget, thinking_label = self.call_from_thread(
+                thinking_widget, thinking_label_widget = self.call_from_thread(
                     self._mount_thinking_widget, thinking_accumulated)
-                mounted_widgets.append(thinking_label)
+                mounted_widgets.append(thinking_label_widget)
                 mounted_widgets.append(thinking_widget)
             else:
                 self.call_from_thread(
-                    self._update_thinking_widget, thinking_widget, _italicized(thinking_accumulated))
+                    self._update_thinking_widget, thinking_label_widget, thinking_widget,
+                    _italicized(thinking_accumulated))
 
         def handle_tool_call(event: ToolCallEvent) -> None:
             summary_text, detail_text = self._render_tool_call(event)
@@ -677,20 +724,25 @@ class ReplApp(App[None]):
     def _mount_response_widget(self, initial_text: str) -> Markdown:
         """Mount a new `Markdown` widget for a streaming response and return it."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         widget = Markdown(initial_text, classes="response")
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
         return widget
 
     def _update_response_widget(self, widget: Markdown, text: str) -> None:
-        """Update a streaming response `Markdown` widget with the latest accumulated `text`,
-        following the view to the bottom only if it was already pinned there before this
-        growth (see `_pinned_to_bottom`) — so a user who's scrolled up to reread earlier output
-        isn't yanked back down by every incoming chunk.
+        """Update a streaming response `Markdown` widget with the latest accumulated `text`.
+
+        Repositions `widget` to the end of the history first (see `_move_to_end`) — a tool call
+        made partway through drafting a response mounts below it, and without this it would
+        stay stuck above that tool call for the rest of the turn instead of reading as the
+        newest content — then follows the view to the bottom only if it was already pinned
+        there before this change (see `_history_pinned_to_bottom`), so a user who's scrolled up
+        to reread earlier output isn't yanked back down by every incoming chunk.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
+        _move_to_end(history, widget)
         widget.update(text)
         self._scroll_if_pinned(history, was_pinned)
 
@@ -699,7 +751,7 @@ class ReplApp(App[None]):
         widget for a streaming thinking block, and return `(body_widget, label_widget)`.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         label_widget = Static(THINKING_LABEL, classes="thinking-label")
         history.mount(label_widget)
         widget = Static(_italicized(initial_text), classes="thinking-body")
@@ -707,13 +759,20 @@ class ReplApp(App[None]):
         self._scroll_if_pinned(history, was_pinned)
         return widget, label_widget
 
-    def _update_thinking_widget(self, widget: Static, italicized_text: str) -> None:
+    def _update_thinking_widget(self, label_widget: Static, widget: Static, italicized_text: str) -> None:
         """Update a streaming `<Thinking>` `Static` widget with `italicized_text` (already run
-        through `_italicized`), following the view to the bottom only if it was already pinned
-        there before this growth (see `_update_response_widget`).
+        through `_italicized`).
+
+        Repositions the `label_widget`/`widget` pair to the end of the history first (see
+        `_move_to_end`), for the same reason `_update_response_widget` does — a tool call made
+        partway through a thinking block mounts below it, and the block would otherwise stay
+        stuck above that tool call for the rest of the turn — then follows the view to the
+        bottom only if it was already pinned there before this change (see
+        `_update_response_widget`).
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
+        _move_to_end(history, label_widget, widget)
         widget.update(italicized_text)
         self._scroll_if_pinned(history, was_pinned)
 
@@ -745,7 +804,7 @@ class ReplApp(App[None]):
         than a summary the user would have to toggle past.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
         history.mount(label_widget)
         widget = ToolCallStatic(summary_text, detail_text)
@@ -812,21 +871,21 @@ class ReplApp(App[None]):
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         widget.update(response_text)
         self._finish_turn(history, was_pinned)
 
     def _show_response(self, response_text: str) -> None:
         """Append a model response to the history and re-enable the input box."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         history.mount(Markdown(response_text, classes="response"))
         self._finish_turn(history, was_pinned)
 
     def _show_error(self, message: str) -> None:
         """Append an error message to the history and re-enable the input box."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = _pinned_to_bottom(history)
+        was_pinned = self._history_pinned_to_bottom
         history.mount(Static(f"Error: {message}", classes="error"))
         self._finish_turn(history, was_pinned)
 
@@ -844,16 +903,16 @@ class ReplApp(App[None]):
         restored_text = self._pending_prompt_text or ""
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        self._finish_turn(history, _pinned_to_bottom(history))
+        self._finish_turn(history, self._history_pinned_to_bottom)
 
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.text = restored_text
 
     def _scroll_if_pinned(self, history: VerticalScroll, was_pinned: bool) -> None:
-        """Scroll `history` to its end iff `was_pinned` — the viewport's state captured via
-        `_pinned_to_bottom` immediately before the content that just changed was applied — so
-        streaming updates follow the user to the bottom only when they hadn't already scrolled
-        away from it.
+        """Scroll `history` to its end iff `was_pinned` — `_history_pinned_to_bottom`'s value
+        captured immediately before the content that just changed was applied — so streaming
+        updates follow the user to the bottom only when they hadn't already scrolled away from
+        it.
         """
         if was_pinned:
             history.scroll_end(animate=False)
