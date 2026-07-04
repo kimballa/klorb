@@ -34,6 +34,16 @@ no constant of its own, it reads `ProcessConfig.edit_file_drift_search_radius` v
 single-line edits an agent makes to one file per turn, not file size; see
 docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md."""
 
+DEFAULT_GREP_MAX_RESULTS = 500
+"""`GrepTool`'s per-call match cap default; the canonical source of this value —
+`klorb.tools.grep` has no constant of its own, it reads `ProcessConfig.grep_max_results` via
+`ToolSetupContext` at construction time instead."""
+
+DEFAULT_FIND_FILE_MAX_RESULTS = 500
+"""`FindFileTool`'s per-call match cap default; the canonical source of this value —
+`klorb.tools.find_file` has no constant of its own, it reads
+`ProcessConfig.find_file_max_results` via `ToolSetupContext` at construction time instead."""
+
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_SCHEMA_VERSION = "1.0.0"
 CONFIG_FILENAME = "klorb-config.json"
@@ -76,6 +86,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "terminal.input.maxLines": "prompt_input_max_lines",
     "tools.readFile.maxLines": "read_file_max_lines",
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
+    "tools.grep.maxResults": "grep_max_results",
+    "tools.findFile.maxResults": "find_file_max_results",
     "providers.openrouter.baseUrl": "openrouter_base_url",
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
@@ -107,6 +119,8 @@ class ProcessConfig(BaseModel):
     thinking_token_budgets: dict[ThinkingEffort, int] = dict(THINKING_EFFORT_TOKEN_BUDGETS)
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
     edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
+    grep_max_results: int = DEFAULT_GREP_MAX_RESULTS
+    find_file_max_results: int = DEFAULT_FIND_FILE_MAX_RESULTS
     openrouter_base_url: str = OPENROUTER_BASE_URL
     shell_command: str = DEFAULT_SHELL_COMMAND
     """Shell binary a `!`-prefixed REPL command is run through, e.g. `/bin/bash` or `/bin/zsh`

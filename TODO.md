@@ -85,18 +85,7 @@
     * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
 * More tools:
     * AskUserQuestionsTool
-    * GrepTool
-      * text|regex
-      * specific file tree to search (blank = workspace root)
-        * readDir permissions enforced.
-        * automatically recursively checks subdirs.
-        * ... it's possible that some subdirs are access-denied, so evaluate permissions at each
-          level of the hierarchy.
-      * optional: file pattern glob to filter files, like "*.py"
-      * optional flags: case-insensitive, regex, ...others?
-    * FindFileTool 
-      * specific file tree to search (blank = workspace root)
-      * file name or pattern glob to filter files, like "*.py" or "*_context*"
+    * Add Evals for GrepTool and FindFileTool.
 
     * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans
     * WebFetchTool

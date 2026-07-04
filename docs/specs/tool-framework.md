@@ -159,13 +159,60 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   parent directories are created automatically. The result is a dict: `filename`,
   `total_lines`, and `created: true`. `summary()` names the file and its line count; no
   `detail_view()` override, same reasoning as `ReplaceAll`.
+* `klorb.tools.grep.GrepTool` (`klorb/src/klorb/tools/grep.py`), name `Grep`. Recursively
+  searches the directory tree rooted at `dirname` (`""` means the whole project root) for lines
+  matching `pattern` — a literal substring by default, or a Python regular expression when
+  `is_regex` is true (an invalid regex raises `ValueError`). `case_insensitive` and the optional
+  `file_glob` (matched against each file's bare name, e.g. `"*.py"`) narrow the search further.
+  Walks via `klorb.tools.dir_walk.walk_readable_tree()` (see "Recursive tree walks" below) rather
+  than a single `resolve_and_evaluate_read()` call, since the search spans however many
+  directories the tree actually has. A file that fails to decode as UTF-8 (or fails to open at
+  all) is skipped silently, matching common `grep -I` behavior. At most
+  `context.process_config.grep_max_results` matches (default
+  `process_config.DEFAULT_GREP_MAX_RESULTS`, 500) are returned per call. The result is a dict:
+  `root` (the resolved search root), `pattern`, `is_regex`, `case_insensitive`, `file_glob`,
+  `matches` (a list of `{filename, line_number, line}`), and `truncated`. `summary()` names the
+  pattern, root, and match count; `detail_view()` caps `matches` to its first 20 entries (adding
+  a `matches_omitted` count), since a full result can hold up to `grep_max_results` matches.
+* `klorb.tools.find_file.FindFileTool` (`klorb/src/klorb/tools/find_file.py`), name `FindFile`.
+  Recursively searches the directory tree rooted at `dirname` (`""` means the whole project
+  root) for files whose bare name matches a glob `pattern` (e.g. `"*.py"` or `"*_context*"`;
+  `case_insensitive` folds case on both sides of the match). Uses the same
+  `walk_readable_tree()` walk as `Grep`. At most `context.process_config.find_file_max_results`
+  matches (default `process_config.DEFAULT_FIND_FILE_MAX_RESULTS`, 500) are returned per call.
+  The result is a dict: `root`, `pattern`, `case_insensitive`, `matches` (a list of absolute
+  file paths), and `truncated`. `summary()` names the pattern, root, and match count;
+  `detail_view()` caps `matches` the same way `Grep`'s does.
+
+## Recursive tree walks
+
+`Grep` and `FindFile` both need to walk a whole directory tree rather than resolve one path, so
+the permission-aware traversal lives once in `klorb.tools.dir_walk.walk_readable_tree(context,
+dirname)` rather than being duplicated between them. It resolves and checks `dirname` itself
+exactly like `ListDir`'s `dirname` (`resolve_and_evaluate_read()`, raising
+`PermissionError`/`PermissionAskRequired` if not `"allow"`), then yields
+`(dir_path, subdir_names, file_names)` depth-first for that root and every directory beneath it
+that `readDirs` permits — `dir_path` absolute and canonicalized, `subdir_names`/`file_names` bare
+names sorted alphabetically. Every subdirectory encountered during the walk (not just the root)
+gets its own `resolve_and_evaluate_read()` check before being descended into: one that isn't
+`"allow"` is pruned — excluded from `subdir_names`, never yielded itself, never raising — rather
+than aborting the whole walk, so one restricted subtree doesn't make a bulk search fail entirely.
+See [the pruning ADR](../adrs/prune-non-allow-subdirs-during-recursive-tree-walk.md). A
+subdirectory that is itself a symlink is also excluded and never descended into, regardless of
+its own verdict, mirroring `os.walk`'s `followlinks=False` default so a symlink cycle can't
+recurse forever — see
+[the symlink ADR](../adrs/recursive-tree-walk-does-not-follow-symlinked-dirs.md). A symlinked
+*file* (not a directory) is still listed normally in `file_names`, since it can't introduce a
+cycle.
 
 ## Path safety
 
 `EditFile`, `ReplaceAll`, and `CreateFile` all resolve their `filename` argument through
 `klorb.permissions.workspace.resolve_within_workspace` before touching the filesystem, then
 check the resolved path against `writeDirs` (`evaluate_write()`); `ReadFile` resolves and
-checks via `resolve_and_evaluate_read()` in the same module. See docs/specs/permissions.md for
+checks via `resolve_and_evaluate_read()` in the same module, as does `ListDir`'s `dirname` and
+`Grep`/`FindFile`'s `dirname` (the latter two also re-checking every subdirectory the walk
+descends into — see "Recursive tree walks" above). See docs/specs/permissions.md for
 the full permission-table design (allow/ask/deny rules, workspace-root confinement, and the
 `is_workspace_trusted` distinction between `ReadFile` and the write tools) — this spec no
 longer duplicates those details, which superseded the placeholder described in

@@ -154,6 +154,16 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
 * `ReadFile`: `resolve_and_evaluate_read()` → `raise_if_not_allowed(verdict)` → `open()`. This
   is `ReadFile`'s first-ever confinement — previously it called `open(filename)` directly, with
   no resolution or boundary check at all.
+* `ListDir`: `resolve_and_evaluate_read()` on `dirname` → `raise_if_not_allowed(verdict)` →
+  `iterdir()`, same single-path shape as `ReadFile`.
+* `Grep`/`FindFile`: `klorb.tools.dir_walk.walk_readable_tree()` applies the same
+  `resolve_and_evaluate_read()` check to `dirname` itself (raising exactly like `ListDir` if it
+  isn't `"allow"`), then re-applies it to every subdirectory the recursive walk considers
+  descending into — one that isn't `"allow"` is excluded from the walk rather than raising, so a
+  single restricted subtree doesn't abort an otherwise-permitted bulk search. See
+  docs/specs/tool-framework.md's "Recursive tree walks" section and
+  [the pruning ADR](../adrs/prune-non-allow-subdirs-during-recursive-tree-walk.md) for the full
+  reasoning.
 
 ### Internal privileged paths and `.klorb` self-tampering protection
 

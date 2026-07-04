@@ -148,6 +148,8 @@ sit as flat keys alongside it at the top level:
   "thinking.tokenBudgets": {"low": 4096, "medium": 16384, "high": 32768},
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
+  "tools.grep.maxResults": 500,
+  "tools.findFile.maxResults": 500,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null
@@ -195,9 +197,9 @@ field. A reference file with every recognized key at its current default lives a
   in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`,
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
-  `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`,
-  `providers.openrouter.baseUrl`, `shell.command`, `shell.timeout`,
-  `compatibility.claudeMarkdown`) can be set at the top level.
+  `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
+  `tools.findFile.maxResults`, `providers.openrouter.baseUrl`, `shell.command`,
+  `shell.timeout`, `compatibility.claudeMarkdown`) can be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`
@@ -232,6 +234,11 @@ field. A reference file with every recognized key at its current default lives a
   `DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS` in `process_config.py` is its sole canonical default —
   see [[tool-framework]] and
   [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
+* `grep_max_results` (`tools.grep.maxResults`) and `find_file_max_results`
+  (`tools.findFile.maxResults`) are consumed the same way by `GrepTool`/`FindFileTool` via
+  `context.process_config.grep_max_results`/`find_file_max_results`; `DEFAULT_GREP_MAX_RESULTS`/
+  `DEFAULT_FIND_FILE_MAX_RESULTS` in `process_config.py` are their sole canonical defaults — see
+  [[tool-framework]].
 * `last-session.json` (`TODO.md`) doesn't exist yet; `_load_last_session_overrides()` is a
   placeholder that always returns no overrides.
 * Provider selection isn't implemented (no command exists to change it), so there's nothing

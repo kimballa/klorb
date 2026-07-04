@@ -12,6 +12,8 @@ from klorb.openrouter import DEFAULT_MODEL
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.permissions.directory_access import DirectoryAccessTable
 from klorb.process_config import DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
+from klorb.process_config import DEFAULT_FIND_FILE_MAX_RESULTS
+from klorb.process_config import DEFAULT_GREP_MAX_RESULTS
 from klorb.process_config import DEFAULT_PROMPT_INPUT_MAX_LINES
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.process_config import DEFAULT_SHELL_COMMAND
@@ -53,6 +55,8 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.thinking_token_budgets == THINKING_EFFORT_TOKEN_BUDGETS
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
     assert process_config.edit_file_drift_search_radius == DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
+    assert process_config.grep_max_results == DEFAULT_GREP_MAX_RESULTS
+    assert process_config.find_file_max_results == DEFAULT_FIND_FILE_MAX_RESULTS
     assert process_config.openrouter_base_url == OPENROUTER_BASE_URL
     assert process_config.shell_command == DEFAULT_SHELL_COMMAND
     assert process_config.shell_timeout_seconds is None
@@ -77,6 +81,8 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
             "thinking.tokenBudgets": {"low": 1_000, "medium": 2_000, "high": 3_000},
             "tools.readFile.maxLines": 500,
             "tools.editFile.driftSearchRadius": 5,
+            "tools.grep.maxResults": 50,
+            "tools.findFile.maxResults": 75,
             "providers.openrouter.baseUrl": "https://gateway.example.com/v1",
             "shell.command": "/bin/zsh",
             "shell.timeout": 30,
@@ -88,6 +94,8 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.thinking_token_budgets == {"low": 1_000, "medium": 2_000, "high": 3_000}
     assert process_config.read_file_max_lines == 500
     assert process_config.edit_file_drift_search_radius == 5
+    assert process_config.grep_max_results == 50
+    assert process_config.find_file_max_results == 75
     assert process_config.openrouter_base_url == "https://gateway.example.com/v1"
     assert process_config.shell_command == "/bin/zsh"
     assert process_config.shell_timeout_seconds == 30
