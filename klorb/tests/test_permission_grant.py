@@ -162,6 +162,24 @@ def test_workspace_scope_mutates_session_and_process_template(tmp_path: Path) ->
     assert process_config.session.write_dirs.allow == [target.parent]
 
 
+def test_workspace_scope_with_no_process_config_skips_the_ripple_but_still_persists(
+    tmp_path: Path,
+) -> None:
+    """A caller with no live `ProcessConfig` (e.g. a `Session` constructed without one) still
+    gets a working grant: the live `SessionConfig` and the on-disk file, neither of which needs
+    the `ProcessConfig` object itself, are still updated -- only the `process_config.session.*`
+    ripple is skipped, since there's nothing to ripple into."""
+    session_config = SessionConfig(workspace_root=tmp_path)
+    target = tmp_path / "sub" / "f.txt"
+
+    apply_permission_grant("workspace", session_config, None, target, is_write=True)
+
+    assert session_config.read_dirs.allow == [target.parent]
+    assert session_config.write_dirs.allow == [target.parent]
+    session_defaults = _read_session_defaults(project_config_path(tmp_path))
+    assert session_defaults["readDirs"]["allow"] == [str(target.parent)]
+
+
 def test_workspace_scope_creates_file_if_missing(tmp_path: Path) -> None:
     session_config = SessionConfig(workspace_root=tmp_path)
     process_config = ProcessConfig()
@@ -256,6 +274,21 @@ def test_homedir_scope_creates_file_if_missing(tmp_path: Path) -> None:
     session_defaults = _read_session_defaults(path)
     assert session_defaults["readDirs"]["allow"] == [str(target.parent)]
     assert session_defaults["writeDirs"]["allow"] == [str(target.parent)]
+
+
+def test_homedir_scope_with_no_process_config_skips_the_ripple_but_still_persists(
+    tmp_path: Path,
+) -> None:
+    session_config = SessionConfig(workspace_root=tmp_path)
+    target = tmp_path / "sub" / "f.txt"
+    path = user_config_path()
+
+    apply_permission_grant("homedir", session_config, None, target, is_write=True)
+
+    assert path.is_file()
+    assert session_config.read_dirs.allow == [target.parent]
+    session_defaults = _read_session_defaults(path)
+    assert session_defaults["readDirs"]["allow"] == [str(target.parent)]
 
 
 def test_homedir_scope_cleans_matching_ask_entry_out_of_workspace_file(tmp_path: Path) -> None:

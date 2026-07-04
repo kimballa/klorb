@@ -55,9 +55,13 @@ def _session(provider: MagicMock, model: str = "some/model") -> Session:
     return Session(SessionConfig(model=model), provider=provider, session_id=TEST_SESSION_ID)
 
 
-def _session_with_tools(provider: MagicMock, config: SessionConfig) -> Session:
-    tool_registry = ToolRegistry(ProcessConfig(), config, package=sample_tools_package)
-    return Session(config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry)
+def _session_with_tools(
+    provider: MagicMock, config: SessionConfig, process_config: ProcessConfig | None = None,
+) -> Session:
+    tool_registry = ToolRegistry(process_config or ProcessConfig(), config, package=sample_tools_package)
+    return Session(
+        config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry,
+        process_config=process_config)
 
 
 def _reply(content: str = "model reply") -> ProviderResponse:
@@ -903,9 +907,10 @@ async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path
 
 async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: Path) -> None:
     """Full plumbing check: selecting "Allow (this session)" applies the grant to the live
-    session config (via _on_permission_ask -> apply_permission_grant) and the retried tool
-    call succeeds -- but the process-config template is untouched, since "session" scope is
-    in-memory-only, narrower than "workspace"/"homedir"."""
+    session config (`Session._retry_after_permission_decision` -> `apply_permission_grant`,
+    once `_on_permission_ask` reports the user's choice) and the retried tool call succeeds --
+    but the process-config template is untouched, since "session" scope is in-memory-only,
+    narrower than "workspace"/"homedir"."""
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
@@ -914,7 +919,7 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
     ]
     config = SessionConfig(model="some/model", workspace_root=tmp_path)
     process_config = ProcessConfig(session=SessionConfig(model="some/model", workspace_root=tmp_path))
-    session = _session_with_tools(mock_provider, config)
+    session = _session_with_tools(mock_provider, config, process_config)
     app = ReplApp(session=session, process_config=process_config)
 
     async with app.run_test() as pilot:

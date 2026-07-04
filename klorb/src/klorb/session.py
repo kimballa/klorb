@@ -42,9 +42,9 @@ if TYPE_CHECKING:
     # docs/adrs/tool-setup-context-carries-process-and-session-config.md).
     from klorb.tools.registry import ToolRegistry
     # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
-    # from this module, so importing it for real here would be circular too. `Session` only
-    # reads a couple of fields off a `ProcessConfig` it's handed, so a type-checking-only
-    # import is enough, same as `ToolRegistry` above.
+    # from this module, so importing it for real here would be circular too. `Session` stores
+    # (and reads a couple of fields off) a `ProcessConfig` it's handed, but never constructs one
+    # itself, so a type-checking-only import is enough, same as `ToolRegistry` above.
     from klorb.process_config import ProcessConfig
 
 logger = logging.getLogger(__name__)
@@ -166,12 +166,13 @@ class PermissionAskContext(BaseModel):
 class PermissionDecision(BaseModel):
     """The user's answer to a `PermissionAskContext` prompt, returned by `on_permission_ask`.
 
-    `"once"`/`"session"`/`"workspace"`/`"homedir"` all mean "retry the call"; `on_permission_ask`
-    is expected to have already applied any persistent grant (`"session"`/`"workspace"`/
-    `"homedir"` — see `klorb.permissions.grant.apply_permission_grant`) before returning, since
-    `Session` itself has no `ProcessConfig` reference and cannot persist a grant on its own.
-    `"deny"`/`"other"` both decline; `other_text` is only meaningful for `"other"`, and is
-    surfaced to the model alongside the generic denial."""
+    `"once"`/`"session"`/`"workspace"`/`"homedir"` all mean "retry the call"; for the latter
+    three, `Session._retry_after_permission_decision` applies the persistent grant itself (via
+    `klorb.permissions.grant.apply_permission_grant`, using `Session`'s own `ProcessConfig`
+    reference) before retrying — `on_permission_ask` only needs to ask the user and report their
+    choice back, not apply or persist anything itself. `"deny"`/`"other"` both decline;
+    `other_text` is only meaningful for `"other"`, and is surfaced to the model alongside the
+    generic denial."""
 
     choice: Literal["once", "session", "workspace", "homedir", "deny", "other"]
     other_text: str | None = None
@@ -246,6 +247,12 @@ class Session:
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
+        self._process_config = process_config
+        """The `ProcessConfig` this session was constructed with, or `None`. Kept around (beyond
+        the fields already pulled out of it above) so `_retry_after_permission_decision` can
+        thread it into `klorb.permissions.grant.apply_permission_grant` for a `"workspace"`/
+        `"homedir"` grant's process-wide ripple — see that method and
+        docs/adrs/session-applies-its-own-permission-grants.md."""
         self._thinking_token_budgets = (
             process_config.thinking_token_budgets if process_config is not None
             else THINKING_EFFORT_TOKEN_BUDGETS
@@ -540,18 +547,26 @@ class Session:
     ) -> tuple[Any, str | None]:
         """Resolve a `PermissionAskRequired` into a `(result, error)` pair (see
         `_format_tool_response_content` for how a caller turns this into `tool_response`
-        content): retries the call exactly once for `"once"`/`"session"`/`"workspace"`/
-        `"homedir"` — any grant is assumed already applied by `on_permission_ask` before it
-        returned `decision`, since `Session` has no `ProcessConfig` reference and never
-        persists a grant itself — or reports a denial for `"deny"`/`"other"`. Any exception
-        from the retried call (including a second `PermissionAskRequired`) is reported the
-        same generic way an ordinary tool failure is — never a second ask.
+        content): for `"session"`/`"workspace"`/`"homedir"`, first applies the grant `decision`
+        implies via `klorb.permissions.grant.apply_permission_grant` — passing `self.config` and
+        `self._process_config` (possibly `None`; that function skips the process-wide ripple,
+        but still persists to disk, in that case) — then retries the call exactly once, same as
+        `"once"` (which instead retries via a one-shot `ToolSetupContext.permission_override`,
+        persisting nothing). Reports a denial for `"deny"`/`"other"` with no retry. Any exception
+        from the retried call (including a second `PermissionAskRequired`) is reported the same
+        generic way an ordinary tool failure is — never a second ask.
         """
         assert ask_exc.path is not None
         if decision.choice == "deny":
             return None, f"Permission denied: {ask_exc}"
         if decision.choice == "other":
             return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
+        if decision.choice in ("session", "workspace", "homedir"):
+            # Local import: `klorb.permissions.grant` imports `SessionConfig` from this module,
+            # so importing it at module scope here would be circular.
+            from klorb.permissions.grant import apply_permission_grant
+            apply_permission_grant(
+                decision.choice, self.config, self._process_config, ask_exc.path, ask_exc.is_write)
         assert self._tool_registry is not None
         try:
             if decision.choice == "once":

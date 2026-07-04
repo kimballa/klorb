@@ -167,7 +167,7 @@ def _clean_ask_entries_only(path: Path, workspace_root: Path, granted_paths: lis
 def apply_permission_grant(
     scope: GrantScope,
     session_config: SessionConfig,
-    process_config: ProcessConfig,
+    process_config: ProcessConfig | None,
     path: Path,
     is_write: bool,
 ) -> None:
@@ -178,10 +178,14 @@ def apply_permission_grant(
       — never mutates their lists in place — so the live session sees the grant immediately.
     - `"session"` scope stops there: nothing else is touched.
     - `"workspace"`/`"homedir"` additionally reassign `process_config.session.read_dirs`/
-      `write_dirs` the same way (so a future `/clear` in this process inherits the grant too),
-      and persist it to the scope's target file — `project_config_path(session_config.
-      workspace_root)` for `"workspace"`, `user_config_path()` for `"homedir"` — auto-creating
-      the file and its parent directory with a minimal schema envelope if it doesn't exist yet.
+      `write_dirs` the same way (so a future `/clear` in this process inherits the grant too) —
+      skipped when `process_config` is `None` (a caller, e.g. `Session`, with no live
+      `ProcessConfig` to ripple into) — and persist it to the scope's target file —
+      `project_config_path(session_config.workspace_root)` for `"workspace"`,
+      `user_config_path()` for `"homedir"` — auto-creating the file and its parent directory
+      with a minimal schema envelope if it doesn't exist yet. The file-persist step doesn't
+      depend on `process_config` at all (only `session_config.workspace_root`), so it still runs
+      when `process_config` is `None`.
     - `"homedir"` only, additionally: best-effort-cleans a matching, now-redundant `ask` entry
       out of the *workspace* file if one independently exists there (removal only, never an
       addition) — the user's homedir-scope decision is the more-trusted, broader action. The
@@ -198,11 +202,12 @@ def apply_permission_grant(
     if scope == "session":
         return
 
-    process_config.session.read_dirs = _promote_table(
-        process_config.session.read_dirs, workspace_root, granted_paths)
-    if is_write:
-        process_config.session.write_dirs = _promote_table(
-            process_config.session.write_dirs, workspace_root, granted_paths)
+    if process_config is not None:
+        process_config.session.read_dirs = _promote_table(
+            process_config.session.read_dirs, workspace_root, granted_paths)
+        if is_write:
+            process_config.session.write_dirs = _promote_table(
+                process_config.session.write_dirs, workspace_root, granted_paths)
 
     if scope == "workspace":
         _apply_grant_to_file(project_config_path(workspace_root), workspace_root, granted_paths, is_write)

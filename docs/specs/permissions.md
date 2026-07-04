@@ -267,10 +267,21 @@ own event loop, and returns once the user answers.
   needing a second round trip.
 
 All of this is implemented in `klorb.permissions.grant`
-(`compute_grant_paths()`/`apply_permission_grant()`), not in the TUI layer itself —
-`ReplApp._on_permission_ask` only shows the modal and calls into this library module, keeping
-the grant-computation and file-persistence logic importable and unit-testable without Textual,
-per this repo's CLI/library firewall (see `CLAUDE.md`).
+(`compute_grant_paths()`/`apply_permission_grant()`) and invoked by `Session` itself —
+`Session._retry_after_permission_decision` calls `apply_permission_grant()`, passing its own
+`config` (the live `SessionConfig`) and the `ProcessConfig` reference it was constructed with
+(see "Configuration" below), once `on_permission_ask` returns a persistent-scope decision, before
+retrying the call. `ReplApp._on_permission_ask` only shows the modal (`compute_grant_paths()` is
+also called there, read-only, purely so the modal's copy can name the directory a grant would
+cover) and returns the user's choice — it never applies or persists a grant itself. This keeps
+the grant-computation and file-persistence logic entirely inside the library layer, importable
+and unit-testable without Textual, and automatically available to any other consumer of
+`Session` (a future VSCode plugin, say) without reimplementing this dance — per this repo's
+CLI/library firewall (see `CLAUDE.md`). A `Session` constructed with no `ProcessConfig` at all
+(`process_config=None`) still gets a working grant — `apply_permission_grant()` just skips the
+process-wide ripple described below, since there's no in-memory `ProcessConfig.session` template
+to ripple into; the live `SessionConfig` mutation and the on-disk persistence, which only need
+`SessionConfig.workspace_root`, still happen.
 
 ### Grant granularity: directory, not file
 
@@ -326,11 +337,13 @@ entry. The reverse never happens: a **workspace**-scope grant never opens the ho
 config layer (it can arrive via a hostile cloned repository's `cwd`) and must never be able to
 mutate a more-trusted, personal or admin-controlled file.
 
-In every case, in-memory removal from the live `SessionConfig` (and, for `"workspace"`/
-`"homedir"` scope, the `ProcessConfig.session` template) happens unconditionally, regardless of
-which file(s) actually get touched — so the *running process* is never left dominated by a
-stale `ask` entry it just granted an offsetting `allow` for, even when a lower-trust scope
-couldn't clean up a higher-trust file. A stale `ask` entry surviving in a file this feature
+In every case, in-memory removal from the live `SessionConfig` happens unconditionally,
+regardless of which file(s) actually get touched — so the *running process* is never left
+dominated by a stale `ask` entry it just granted an offsetting `allow` for, even when a
+lower-trust scope couldn't clean up a higher-trust file. The `ProcessConfig.session` template is
+updated the same way for `"workspace"`/`"homedir"` scope too, *when a `ProcessConfig` is
+available* — a `Session` given none at construction has no template to update, so that half of
+the mutation is simply skipped (see above). A stale `ask` entry surviving in a file this feature
 never reaches (a `/etc`-level entry, or a homedir entry left behind by a workspace-scope grant)
 will still apply on the *next* process start, since category-order evaluation over concatenated
 layers means an `ask` entry from any layer keeps beating an `allow` entry from any other layer —

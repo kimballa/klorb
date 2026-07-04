@@ -28,7 +28,6 @@ from textual.widgets import TextArea
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
-from klorb.permissions.grant import apply_permission_grant
 from klorb.permissions.grant import compute_grant_paths
 from klorb.process_config import ProcessConfig
 from klorb.session import PermissionAskContext
@@ -746,19 +745,17 @@ class ReplApp(App[None]):
 
     def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """`Session`'s `on_permission_ask` callback: block the worker thread running
-        `Session.send_turn()` until the user answers `PermissionAskScreen`, then — for a
-        persistent scope — apply the grant (in-memory and, for "workspace"/"homedir", on disk)
-        before returning, since `Session` has no `ProcessConfig` reference and never persists a
-        grant itself. File I/O happens here, on the worker thread, matching where a tool's own
-        blocking file I/O already runs (never on the event loop).
+        `Session.send_turn()` until the user answers `PermissionAskScreen`, then return that
+        choice as-is. Applying (and, for "workspace"/"homedir", persisting to disk) any grant
+        the choice implies is `Session`'s own responsibility —
+        `Session._retry_after_permission_decision`, via
+        `klorb.permissions.grant.apply_permission_grant` — using the `ProcessConfig` reference
+        `ReplApp` gave it at construction time; this callback only needs to surface the user's
+        decision, not act on it.
         """
         # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
         callback = self._confirm_permission_ask
         decision: PermissionDecision = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
-        if decision.choice in ("session", "workspace", "homedir"):
-            apply_permission_grant(
-                decision.choice, self._session.config, self._process_config,
-                ask_ctx.path, ask_ctx.is_write)
         return decision
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:

@@ -5,6 +5,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -16,6 +17,7 @@ from klorb.api_provider import ProviderResponse
 from klorb.message import Message
 from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
+from klorb import process_config as process_config_module
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
@@ -23,7 +25,6 @@ from klorb.role import CoordinatorRole
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import MAX_TOOL_CALL_ROUNDS
-from klorb.session import PermissionAskContext
 from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import SessionConfig
@@ -997,9 +998,12 @@ def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tupl
     return id_, "ask_permission", json.dumps({"path": str(path), "is_write": is_write})
 
 
-def _session_with_ask_tool(config: SessionConfig, mock_provider: MagicMock) -> Session:
-    tool_registry = ToolRegistry(ProcessConfig(), config, package=sample_tools_package)
-    return Session(config, provider=mock_provider, tool_registry=tool_registry)
+def _session_with_ask_tool(
+    config: SessionConfig, mock_provider: MagicMock, process_config: ProcessConfig | None = None,
+) -> Session:
+    tool_registry = ToolRegistry(process_config or ProcessConfig(), config, package=sample_tools_package)
+    return Session(
+        config, provider=mock_provider, tool_registry=tool_registry, process_config=process_config)
 
 
 def _tool_response_content(session: Session) -> str:
@@ -1074,7 +1078,10 @@ def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_pa
     mock_registry.instantiate_tool.assert_called_once_with("ask_permission", permission_override=target)
 
 
-def test_permission_ask_session_scope_retries_after_config_mutation(tmp_path: Path) -> None:
+def test_permission_ask_session_scope_retries_after_applying_the_grant(tmp_path: Path) -> None:
+    """`Session` applies the "session"-scope grant itself (via
+    `klorb.permissions.grant.apply_permission_grant`) once `on_permission_ask` returns the
+    decision -- `on_permission_ask` itself doesn't need to touch `config` at all."""
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
@@ -1082,43 +1089,76 @@ def test_permission_ask_session_scope_retries_after_config_mutation(tmp_path: Pa
         _reply("done"),
     ]
     config = SessionConfig(model="some/model", workspace_root=tmp_path)
-    session = _session_with_ask_tool(config, mock_provider)
+    process_config = ProcessConfig()
+    session = _session_with_ask_tool(config, mock_provider, process_config)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="session"))
 
-    def fake_ask(ctx: PermissionAskContext) -> PermissionDecision:
-        config.read_dirs = DirRules(allow=[ctx.path.parent])
-        config.write_dirs = DirRules(allow=[ctx.path.parent])
-        return PermissionDecision(choice="session")
-
-    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=fake_ask))
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
     assert response == "done"
     assert _tool_response_content(session) == f"granted:{target}"
     assert config.read_dirs.allow == [tmp_path]
+    # "session" scope must not have rippled into the process-config template.
+    assert process_config.session.read_dirs == DirRules()
 
 
-def test_permission_ask_workspace_and_homedir_scope_also_retry_after_mutation(tmp_path: Path) -> None:
-    """Session doesn't distinguish "workspace"/"homedir" from "session" itself -- it always
-    just retries plainly, trusting on_permission_ask already applied whatever grant the chosen
-    scope implies (see klorb.permissions.grant.apply_permission_grant, exercised directly in
-    test_permission_grant.py). This only pins Session's half of that contract."""
+def test_permission_ask_workspace_and_homedir_scope_persist_the_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Session` applies and persists the "workspace"/"homedir" grant itself too, the same way
+    as "session" scope -- this only pins that `Session` actually calls
+    `apply_permission_grant()` and the retry succeeds; the grant's own computation and
+    file-persistence semantics are covered directly in test_permission_grant.py."""
+    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "homedir")
     target = tmp_path / "f.txt"
-    for scope in ("workspace", "homedir"):
+    scopes_and_files: list[tuple[Literal["workspace", "homedir"], Path]] = [
+        ("workspace", tmp_path / ".klorb" / "klorb-config.json"),
+        ("homedir", tmp_path / "homedir" / "klorb-config.json"),
+    ]
+    for scope, expected_file in scopes_and_files:
         mock_provider = MagicMock()
         mock_provider.send_prompt.side_effect = [
             _tool_call_reply([_ask_permission_call("call_1", target)]),
             _reply("done"),
         ]
         config = SessionConfig(model="some/model", workspace_root=tmp_path)
-        session = _session_with_ask_tool(config, mock_provider)
+        process_config = ProcessConfig()
+        session = _session_with_ask_tool(config, mock_provider, process_config)
+        on_permission_ask = MagicMock(return_value=PermissionDecision(choice=scope))
 
-        def fake_ask(ctx: PermissionAskContext, scope: str = scope) -> PermissionDecision:
-            config.read_dirs = DirRules(allow=[ctx.path.parent])
-            config.write_dirs = DirRules(allow=[ctx.path.parent])
-            return PermissionDecision(choice=scope)  # type: ignore[arg-type]
+        response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
-        response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=fake_ask))
         assert response == "done"
         assert _tool_response_content(session) == f"granted:{target}"
+        assert config.read_dirs.allow == [tmp_path]
+        assert process_config.session.read_dirs.allow == [tmp_path]
+        assert expected_file.is_file()
+
+
+def test_permission_ask_workspace_scope_without_process_config_skips_the_ripple(
+    tmp_path: Path,
+) -> None:
+    """A `Session` constructed with no `ProcessConfig` (`process_config=None`) has no
+    process-wide template to ripple a "workspace"/"homedir" grant into --
+    `apply_permission_grant` skips that step but still promotes the live `SessionConfig` and
+    persists the grant to disk, since neither of those needs the `ProcessConfig` object
+    itself (see test_permission_grant.py's own coverage of that behavior)."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)  # no process_config
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="workspace"))
+
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"granted:{target}"
+    assert config.read_dirs.allow == [tmp_path]
+    assert (tmp_path / ".klorb" / "klorb-config.json").is_file()
 
 
 def test_permission_ask_deny_denies_without_any_retry(tmp_path: Path) -> None:
