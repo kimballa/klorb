@@ -93,7 +93,6 @@
     * Session can get the current Provider from the ProviderFactory.
     * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
 * More tools:
-    * ListDirTool
     * AskUserQuestionsTool
     * GrepTool
     * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans

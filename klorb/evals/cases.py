@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Synthesized EvalCase tasks covering ReadFile, CreateFile, EditFile, and ReplaceAll.
+"""Synthesized EvalCase tasks covering ReadFile, CreateFile, EditFile, ReplaceAll, and ListDir.
 
 Each case's `check` inspects the resulting workspace file state only, never `final_response`
 text — see docs/adrs/grade-tool-evals-by-filesystem-state.md. Content comparisons tolerate
@@ -536,6 +536,89 @@ EDIT_FILE_AMBIGUOUS_MATCH_FOUR_REPEATS_INNER_POSITION = EvalCase(
 )
 
 
+def _check_list_dir_root_inventory(workspace_root: Path, session: Session) -> str | None:
+    expected = ["DIRS:", "banana", "mango", "FILES:", "apple.txt", "zebra.txt"]
+    return _first_mismatch(expected, _lines(workspace_root / "inventory.txt"), "inventory.txt")
+
+
+LIST_DIR_ROOT_INVENTORY = EvalCase(
+    name="list_dir_root_inventory",
+    prompt=(
+        "List every file and subdirectory directly inside the project root (do not look inside "
+        "any subdirectory). Then create a file named inventory.txt containing exactly six "
+        "lines, in this order: the literal line 'DIRS:', then each subdirectory name "
+        "alphabetically sorted one per line, then the literal line 'FILES:', then each "
+        "top-level file name alphabetically sorted one per line."
+    ),
+    setup_files={
+        "zebra.txt": "z\n",
+        "apple.txt": "a\n",
+        "mango/README.md": "mango notes\n",
+        "banana/note.txt": "banana notes\n",
+    },
+    check=_check_list_dir_root_inventory,
+    expected_tool_calls=2,
+)
+
+
+_DATA_FILE_NAMES = ["alpha.csv", "beta.log", "gamma.json", "delta.txt", "epsilon.md"]
+
+
+def _check_list_dir_count_files_in_subdirectory(workspace_root: Path, session: Session) -> str | None:
+    path = workspace_root / "count.txt"
+    if not path.exists():
+        return "count.txt was not created"
+    content = _read(path).strip()
+    expected = str(len(_DATA_FILE_NAMES))
+    if content != expected:
+        return f"count.txt should contain exactly {expected!r}, got {content!r}"
+    return None
+
+
+LIST_DIR_COUNT_FILES_IN_SUBDIRECTORY = EvalCase(
+    name="list_dir_count_files_in_subdirectory",
+    prompt=(
+        "The data/ directory contains an unknown number of files (and no subdirectories). "
+        "Count exactly how many files it contains and write that count into count.txt as a "
+        "single line containing only the digit(s), nothing else."
+    ),
+    setup_files={f"data/{name}": "x\n" for name in _DATA_FILE_NAMES},
+    check=_check_list_dir_count_files_in_subdirectory,
+    expected_tool_calls=2,
+)
+
+
+def _check_list_dir_find_subdirectory_with_marker(workspace_root: Path, session: Session) -> str | None:
+    path = workspace_root / "answer.txt"
+    if not path.exists():
+        return "answer.txt was not created"
+    content = _read(path).strip()
+    expected = "2024"
+    if content != expected:
+        return f"answer.txt should contain exactly {expected!r}, got {content!r}"
+    return None
+
+
+LIST_DIR_FIND_SUBDIRECTORY_WITH_MARKER = EvalCase(
+    name="list_dir_find_subdirectory_with_marker",
+    prompt=(
+        "Under reports/, there are several year subdirectories. Exactly one of them contains a "
+        "file named summary.txt (the others don't). Find which year that is and write just "
+        "that year into answer.txt, nothing else."
+    ),
+    setup_files={
+        "reports/2023/notes.txt": "notes for 2023\n",
+        "reports/2024/notes.txt": "notes for 2024\n",
+        "reports/2024/summary.txt": "summary for 2024\n",
+        "reports/2025/notes.txt": "notes for 2025\n",
+    },
+    check=_check_list_dir_find_subdirectory_with_marker,
+    # ListDir(reports) + ListDir each of 3 year subdirs (or equivalent ReadFile probes) +
+    # CreateFile(answer.txt).
+    expected_tool_calls=5,
+)
+
+
 CASES: list[EvalCase] = [
     CREATE_FILE_BASIC,
     CREATE_FILE_NESTED_DIRECTORY,
@@ -555,4 +638,7 @@ CASES: list[EvalCase] = [
     EDIT_FILE_AMBIGUOUS_MATCH_LAST_LINE_REPEATED,
     EDIT_FILE_AMBIGUOUS_MATCH_MIDDLE_OF_REPEATS,
     EDIT_FILE_AMBIGUOUS_MATCH_FOUR_REPEATS_INNER_POSITION,
+    LIST_DIR_ROOT_INVENTORY,
+    LIST_DIR_COUNT_FILES_IN_SUBDIRECTORY,
+    LIST_DIR_FIND_SUBDIRECTORY_WITH_MARKER,
 ]
