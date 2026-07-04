@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from typing import Callable
 from typing import Literal
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -15,6 +16,7 @@ import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
 from textual.containers import VerticalScroll
+from textual.pilot import Pilot
 from textual.widgets import Input
 from textual.widgets import Markdown
 from textual.widgets import OptionList
@@ -62,6 +64,21 @@ def _session_with_tools(
     return Session(
         config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry,
         process_config=process_config)
+
+
+async def _wait_until(pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 2.0) -> None:
+    """Poll `predicate` via repeated `pilot.pause()` calls until it's true.
+
+    Some scroll effects (e.g. `VerticalScroll.scroll_end()`/`scroll_home()` with the default
+    `immediate=False`) are deferred until after a layout refresh rather than applying
+    synchronously, so a single `pilot.pause()` isn't reliably enough to observe their result.
+    """
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError(f"Timed out after {timeout}s waiting for condition")
+        await pilot.pause()
 
 
 def _reply(content: str = "model reply") -> ProviderResponse:
@@ -1213,3 +1230,87 @@ async def test_thinking_chunks_escape_literal_brackets() -> None:
         thinking_widgets = list(history.query(".thinking-body").results(Static))
 
         assert thinking_widgets[0].content == r"[italic]check \[status][/italic]"
+
+
+async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom() -> None:
+    """`ReplApp._scroll_if_pinned` is where the app decides whether to follow new streaming
+    content to the bottom; spying on it (rather than asserting on `history.scroll_y` /
+    `max_scroll_y` directly) tests that decision without depending on exactly when Textual's
+    own deferred `scroll_end()` settles the viewport, which is unrelated to the bug this
+    covers and isn't something this test needs to pin down.
+    """
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        on_thinking_chunk("Thinking...")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        with patch.object(ReplApp, "_scroll_if_pinned", autospec=True) as mock_scroll_if_pinned:
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            prompt_input.text = "hi"
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert mock_scroll_if_pinned.call_args_list
+        was_pinned_values = [call.args[-1] for call in mock_scroll_if_pinned.call_args_list]
+        assert all(was_pinned_values)
+
+
+async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scrolled_away() -> None:
+    """See `test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom` for
+    why this spies on `_scroll_if_pinned` rather than asserting on the viewport's actual scroll
+    position.
+    """
+    mock_provider = MagicMock()
+    first_chunk_sent = threading.Event()
+    release_rest_of_turn = threading.Event()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        on_thinking_chunk("First bit of thinking.")
+        first_chunk_sent.set()
+        release_rest_of_turn.wait(timeout=5)
+        on_thinking_chunk(" More thinking, streamed in after the user scrolled away.")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test(size=(40, 6)) as pilot:
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        for i in range(20):
+            history.mount(Static(f"padding line {i}"))
+        await pilot.pause()
+
+        with patch.object(ReplApp, "_scroll_if_pinned", autospec=True) as mock_scroll_if_pinned:
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            prompt_input.text = "hi"
+            await pilot.press("enter")
+
+            while not first_chunk_sent.is_set():
+                await asyncio.sleep(0.01)
+            await pilot.pause()
+
+            # The user scrolls up to reread earlier output while the rest of the turn streams in.
+            history.scroll_home(animate=False)
+            await _wait_until(pilot, lambda: not history.is_vertical_scroll_end)
+
+            release_rest_of_turn.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+        was_pinned_values = [call.args[-1] for call in mock_scroll_if_pinned.call_args_list]
+        assert was_pinned_values
+        assert not any(was_pinned_values[was_pinned_values.index(False):])
