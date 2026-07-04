@@ -41,6 +41,11 @@ if TYPE_CHECKING:
     # type-checking-only import is enough (see
     # docs/adrs/tool-setup-context-carries-process-and-session-config.md).
     from klorb.tools.registry import ToolRegistry
+    # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
+    # from this module, so importing it for real here would be circular too. `Session` only
+    # reads a couple of fields off a `ProcessConfig` it's handed, so a type-checking-only
+    # import is enough, same as `ToolRegistry` above.
+    from klorb.process_config import ProcessConfig
 
 logger = logging.getLogger(__name__)
 
@@ -233,20 +238,24 @@ class Session:
         provider: ApiProvider | None = None,
         model_registry: ModelRegistry | None = None,
         session_id: str | None = None,
-        thinking_token_budgets: dict[ThinkingEffort, int] | None = None,
         tool_registry: "ToolRegistry | None" = None,
-        compatibility_claude_markdown: bool = False,
+        process_config: "ProcessConfig | None" = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
-        self._thinking_token_budgets = thinking_token_budgets or THINKING_EFFORT_TOKEN_BUDGETS
+        self._thinking_token_budgets = (
+            process_config.thinking_token_budgets if process_config is not None
+            else THINKING_EFFORT_TOKEN_BUDGETS
+        )
         self._tool_registry = tool_registry
         self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
-        self._compatibility_claude_markdown = compatibility_claude_markdown
+        self._compatibility_claude_markdown = (
+            process_config.compatibility_claude_markdown if process_config is not None else False
+        )
         self._messages: list[Message] = []
         self._context_files_seeded = False
         """Whether `_ensure_context_files_message()` has already inserted the workspace

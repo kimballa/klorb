@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from klorb.message import Message
+from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import SessionConfig
 
@@ -20,7 +21,7 @@ def _session(
     return Session(
         config,
         provider=MagicMock(),
-        compatibility_claude_markdown=compatibility_claude_markdown,
+        process_config=ProcessConfig(compatibility_claude_markdown=compatibility_claude_markdown),
     )
 
 

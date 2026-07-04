@@ -97,7 +97,7 @@ def test_main_passes_process_config_thinking_token_budgets_to_session(
         with patch("sys.argv", ["klorb", "-m", "hi"]):
             cli.main()
 
-    assert mock_session_cls.call_args.kwargs["thinking_token_budgets"] == custom_budgets
+    assert mock_session_cls.call_args.kwargs["process_config"] is process_config
 
 
 def test_main_passes_process_config_tool_call_limits_to_session(

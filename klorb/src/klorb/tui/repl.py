@@ -310,8 +310,8 @@ class ReplApp(App[None]):
             new_config = self._process_config.session.model_copy()
             session = Session(
                 new_config,
-                thinking_token_budgets=self._process_config.thinking_token_budgets,
-                compatibility_claude_markdown=self._process_config.compatibility_claude_markdown,
+                process_config=self._process_config,
+                tool_registry=ToolRegistry(self._process_config, new_config),
             )
         self._session = session
         self._initial_message = initial_message
@@ -554,8 +554,8 @@ class ReplApp(App[None]):
             new_config,
             provider=self._session.provider,
             model_registry=self._session.model_registry,
-            thinking_token_budgets=self._process_config.thinking_token_budgets,
-            compatibility_claude_markdown=self._process_config.compatibility_claude_markdown,
+            process_config=self._process_config,
+            tool_registry=ToolRegistry(self._process_config, new_config),
         )
 
         if self._session_log_enabled:

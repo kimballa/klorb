@@ -335,7 +335,7 @@ def test_reasoning_uses_custom_token_budgets_when_given() -> None:
     custom_budgets: dict[ThinkingEffort, int] = {"low": 1_000, "medium": 2_000, "high": 3_000}
     session = Session(
         SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry,
-        thinking_token_budgets=custom_budgets)
+        process_config=ProcessConfig(thinking_token_budgets=custom_budgets))
 
     session.send_turn("hi")
 

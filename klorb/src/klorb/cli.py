@@ -87,11 +87,12 @@ def main() -> None:
 
     provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
     session_config = process_config.session.model_copy()
+    tool_registry = ToolRegistry(process_config, session_config)
     session = Session(
         session_config,
         provider=provider,
-        thinking_token_budgets=process_config.thinking_token_budgets,
-        compatibility_claude_markdown=process_config.compatibility_claude_markdown,
+        process_config=process_config,
+        tool_registry=tool_registry,
     )
 
     log_path = session_log_path(session.id) if session_log else None

@@ -17,8 +17,8 @@
 
 # Feature backlog
 
-* Just pass the ProcessConfig to the Session as a c'tor arg, rather than unpacking multiple
-  boolean fields out of the ProcCfg and putting them in the Session C'tor. 
+* When you hit 'esc' to abort, it shouldn't remove the message(s) that were already [partially]
+  drafted. Just leave that in my history to read, but stop generating more of it.
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
