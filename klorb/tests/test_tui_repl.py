@@ -1208,3 +1208,78 @@ async def test_thinking_chunks_escape_literal_brackets() -> None:
         thinking_widgets = list(history.query(".thinking-body").results(Static))
 
         assert thinking_widgets[0].content == r"[italic]check \[status][/italic]"
+
+
+async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        on_thinking_chunk("Thinking...")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test(size=(40, 6)) as pilot:
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        for i in range(20):
+            history.mount(Static(f"padding line {i}"))
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert history.is_vertical_scroll_end
+
+
+async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scrolled_away() -> None:
+    mock_provider = MagicMock()
+    first_chunk_sent = threading.Event()
+    release_rest_of_turn = threading.Event()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        on_thinking_chunk("First bit of thinking.")
+        first_chunk_sent.set()
+        release_rest_of_turn.wait(timeout=5)
+        on_thinking_chunk(" More thinking, streamed in after the user scrolled away.")
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test(size=(40, 6)) as pilot:
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        for i in range(20):
+            history.mount(Static(f"padding line {i}"))
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+
+        while not first_chunk_sent.is_set():
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        # The user scrolls up to reread earlier output while the rest of the turn streams in.
+        history.scroll_home(animate=False)
+        await pilot.pause()
+        assert not history.is_vertical_scroll_end
+        scroll_y_while_reading = history.scroll_y
+
+        release_rest_of_turn.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert history.scroll_y == scroll_y_while_reading
