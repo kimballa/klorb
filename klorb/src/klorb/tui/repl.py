@@ -40,6 +40,7 @@ from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
 from klorb.tui.session_commands import SessionCommandProvider
+from klorb.tui.shell import UserShellCommand
 from klorb.tui.thinking_commands import ThinkingCommandProvider
 
 logger = logging.getLogger(__name__)
@@ -361,7 +362,8 @@ class ReplApp(App[None]):
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model, or
-        handle a slash command (currently only `/clear`) synchronously.
+        handle a slash command (currently only `/clear`) or a `!`-prefixed shell command
+        synchronously.
         """
         prompt_text = event.value.strip()
         if not prompt_text:
@@ -372,7 +374,54 @@ class ReplApp(App[None]):
             self.clear_session()
             return
 
+        if prompt_text in [":q", "/quit", "/exit"]:
+            self.exit()
+            return
+
+        if prompt_text.startswith("!") and "\n" not in prompt_text and "\r" not in prompt_text:
+            self._run_shell_command(prompt_text[1:].lstrip())
+            return
+
         self._submit_prompt(prompt_text)
+
+    def _run_shell_command(self, command: str) -> None:
+        """Run `command` via `UserShellCommand` and append its combined stdout/stderr to the
+        history. Runs synchronously on the app's own thread (this is called directly from the
+        `on_prompt_input_submitted` message handler, not a worker thread), so displaying the
+        result calls `_show_response`/`_show_error` directly rather than via `call_from_thread`
+        — that hop is only needed to get back onto the app thread from a worker thread, e.g. in
+        `_send_prompt` below.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(f"!{command}", classes="prompt"))
+
+        stdout, stderr, rc = UserShellCommand(command).run()
+        response_text = stdout
+        if stderr:
+            if response_text:
+                response_text += "\n"
+            response_text += stderr
+
+        if response_text:
+            self._show_shell_output(response_text)
+        if rc == 0:
+            self._show_response("<Shell returned exit code 0.>")
+        else:
+            self._show_error(f"<Shell returned exit code {rc}.>")
+
+    def _show_shell_output(self, output_text: str) -> None:
+        """Append raw shell command output to the history and re-enable the input box.
+
+        Uses `Static` rather than the `Markdown` widget `_show_response` mounts for model
+        replies: shell output is plain text, not markdown, and `Markdown`'s CommonMark
+        rendering collapses a single newline within a paragraph into a soft line break (a
+        space), which mangles multi-line command output. `Static` renders text verbatim,
+        preserving every newline. `output_text` is escaped so literal `[`/`]` in the output
+        (e.g. `[INFO]` log tags) can't be misread as Rich console markup.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(escape(output_text)))
+        self._finish_turn(history)
 
     def clear_session(self) -> None:
         """Replace the active Session with a fresh one (new id, config reset to the current

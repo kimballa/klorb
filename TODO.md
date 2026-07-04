@@ -5,7 +5,22 @@
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
+* If you're scrolled tro the bottom and a new ThinkingWidget or ResponseWidget arrives,
+  scroll to the end. But if the user has explicitly kept the scroll higher up, don't pull
+  them away from what they're reading as more response comes streaming in.
+
 # Feature backlog
+
+* local shell with '!'
+  * Use of /bin/bash for shell should be a process config var `shell.command`
+  * This should run in another thread and we should be updating the history/output block as more
+    data comes to the pipe. Slow commands should show output incrementally.
+  * Should also have `shell.timeout` (in seconds). Terminate the thread/process if it's exceeeded.
+  * Should also capture ^C when a shell command is running and terminate the command if pressed.
+  * A given Session can only have one UserShellCommand thread running at a time. Don't overlap
+    their responses.
+    
+
 
 * project bootstrapping
   * when you start klorb it attempts to identify the workspace root.
