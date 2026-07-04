@@ -142,6 +142,15 @@ class EditFileTool(Tool):
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f"{label} must be an integer, got {value!r} ({type(value).__name__})")
 
+        for label, value in (("start_text", start_text), ("end_text", end_text)):
+            if "\n" in value:
+                first_line = value.split("\n", 1)[0]
+                raise ValueError(
+                    f"{label} must be exactly one line, with no '\\n' character: got "
+                    f"{value!r}, which spans multiple lines. Send only the single line of "
+                    f"{'start_line' if label == 'start_text' else 'end_line'}'s raw content, "
+                    f"not the whole range being replaced. Did you mean {first_line!r}?")
+
         path = resolve_within_workspace(self.context, filename)
         raise_if_not_allowed(
             evaluate_write(self.context, path), resource_description=f"write to {path}",

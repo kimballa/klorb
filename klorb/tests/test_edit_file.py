@@ -668,6 +668,28 @@ def test_boolean_line_number_raises(tmp_path: Path) -> None:
         })
 
 
+def test_multiline_start_text_raises_with_did_you_mean_nudge(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="start_text must be exactly one line") as excinfo:
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 2,
+            "start_text": "a\nb", "end_text": "b", "new_text": "x",
+        })
+    assert "Did you mean 'a'?" in str(excinfo.value)
+
+
+def test_multiline_end_text_raises_with_did_you_mean_nudge(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="end_text must be exactly one line") as excinfo:
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 2,
+            "start_text": "a", "end_text": "b\nc", "new_text": "x",
+        })
+    assert "Did you mean 'b'?" in str(excinfo.value)
+
+
 def test_path_outside_workspace_root_rejected(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
