@@ -8,7 +8,14 @@
 * In tool limit increase modal there are yes and no buttons. You can [tab] between them
   but you should also be able to use L/R arrow keys to get there.
 
+* Some of the config for this repo must actually be settings in my User-specific vscode config
+  on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
+  as extensions that should be listed as Workspace Recommendations.
+
 # Feature backlog
+
+* When you select a model, it should update the workspace's `sessionDefaults > model` config file 
+  setting so it remembers next time.
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
@@ -32,19 +39,12 @@
     ~/.share/klorb/ or ~/.config/klorb/ or something external to the workspace itself.
     ("Trust" is its own whole thing that will need a dedicated plan, basically.)
 
-* `klorb init` bootstrap command
-  * Packaging can't place `/etc/klorb/klorb-config.json` or `~/.config/klorb/klorb-config.json`
-    at install time on its own — modern wheels don't reliably support `data_files`-style
-    absolute install destinations, and neither `pip install` nor `uv install` has any notion of
-    "was this a sudo, site-wide install vs. a per-user one" to branch on anyway. `etc/klorb-
-    config.json` in the repo stays an uninstalled reference file for now.
-  * Add a `klorb init` CLI command instead: `klorb init --system` copies the reference config to
-    `/etc/klorb/klorb-config.json`, refusing loudly if not running as root; `klorb init --user`
-    copies it to `$KLORB_CONFIG_DIR/klorb-config.json` (default `~/.config/klorb`). Both should
-    refuse to clobber an existing file without an explicit `--force`.
-  * Could double as (or share code with) the entry point for the per-project `.klorb/` bootstrap
-    flow above — same "copy a starter config into place" idea, just a different destination and
-    trust prompt.
+* Plan 001: `klorb init` bootstrap command
+
+* command palette use from the prompt text with `>`
+  * The /command syntax should be reserved for skills. Conflating skills with in-system
+    commands does obnoxious things to the namespace for both.
+
 
 * Add a command (CLI and/or command palette) that dumps the *resolved* system prompt for the
   current role + model into the user's editable tree

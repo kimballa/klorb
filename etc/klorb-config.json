@@ -3,7 +3,6 @@
     "name": "klorb-config",
     "version": "1.0.0"
   },
-
   "sessionDefaults": {
     "model": "openai/gpt-5-nano",
     "thinking.enabled": true,
@@ -39,13 +38,11 @@
       "allow": []
     },
     "writeDirs": {
-      "deny": [
-      ],
+      "deny": [],
       "ask": [],
       "allow": []
     }
   },
-
   "thinking.tokenBudgets": {
     "low": 4096,
     "medium": 16384,
