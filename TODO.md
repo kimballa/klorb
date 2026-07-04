@@ -2,11 +2,23 @@
 
 # Bugs:
 
+* For PLAN-002 (palette from the prompt)
+  * The `> palette` hint is shown on the left side of the bottom status bar in black/white. It 
+    should be in the yellow-on-blue for the hotkey, white-on-blue for the word just like `^q Quit` and
+    `^o Detail`. 
+  * I don't mind it all the way on the LHS, though. But the `^p Palette` all the way on the RHS
+    should go away completely.
+  * There is something more fundamentally wrong with the behavior though. If I type `>` the palette
+    appears but then if I type 'backspace' it stays open. But up/down no longer selects between them.
+    I can *click* on one to highlight, though. In any case, if the user backspaces all the way to
+    an empty prompt and the `>` leader disappears, you should completely close the palette pop-up.
+
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
 * In tool limit increase modal there are yes and no buttons. You can [tab] between them
   but you should also be able to use L/R arrow keys to get there.
+  * (This should be the case for all the yes/no selection modals we have.)
 
 * Some of the config for this repo must actually be settings in my User-specific vscode config
   on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
@@ -17,24 +29,26 @@
 * When you select a model, it should update the workspace's `sessionDefaults > model` config file 
   setting so it remembers next time.
 
-* PLAN 001: `klorb init` bootstrap command
-* PLAN 002 (READY): palette access from prompt.
-  * command palette use from the prompt text with `>`
-  * The /command syntax should be reserved for skills. Conflating skills with in-system
-    commands does obnoxious things to the namespace for both.
+* PLAN 001 (READY): `klorb init` bootstrap command
+
+* When you select a theme, the theme selection modal should put a `(*)` as a suffix next to
+  the currently-selected theme name.
+  * When you change to a new theme, a confirmation msg should show up in the main scroll "Changed
+    current theme to `foo bar theme name`."
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
     can interject midway thru what it's saying. 
 
-* project bootstrapping
+* PLAN-003 (READY): project bootstrapping and trust
   * when you start klorb it attempts to identify the workspace root.
   * if it can't find one, then the cwd is the workspace.
   * ask the user if they want to open the cwd as a project.
     * if no, do nothing. we only get default permissions of stuff.
-    * if yes, create cwd/.klorb/ and write a config json in there
-    * by default allow file read access to the workspace root.
+    * if yes, create cwd/.klorb/ and write a minimal config json in there
+      * by default allow file read access to the workspace root.
+      * Also burn in the currently-active model name to the default session config in the file.
   * ask the user if they trust the dir and want to allow writes
     * if yes then allow file write/create access to the workspace root.
     * if no then put the workspace root down as 'ask' for writes.
