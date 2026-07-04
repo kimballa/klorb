@@ -12,7 +12,9 @@
       ]
     },
     "writeDirs": {
-      "deny": [],
+      "deny": [
+        "/home/aaron/src/klorb/klorb/venv"
+      ],
       "ask": [],
       "allow": [
         "/home/aaron/src/klorb"

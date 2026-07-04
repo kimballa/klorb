@@ -86,6 +86,9 @@ venv:
 	[ -d venv ] || ("$(PYTHON)" -m venv venv; \
 		source venv/bin/activate && "$(PIP)" install wheel)
 	$(LOAD_VENV); "$(PIP)" install -U uv
+	# Editable install of klorb itself so its console-script entry point
+	# (venv/bin/klorb, see pyproject.toml's [project.scripts]) exists.
+	$(LOAD_VENV); "$(UV)" pip install -e .
 
 sync_deps: venv
 	@echo "Resolving development dependencies..."

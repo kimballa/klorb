@@ -123,9 +123,48 @@ class PromptInput(TextArea):
     ever reaches the app. Ctrl+Enter itself commonly arrives as `"ctrl+j"` rather than
     `"ctrl+enter"`, since terminals typically send the same linefeed control byte for both
     Ctrl+Enter and Ctrl+J; both spellings are handled here.
+
+    Up-arrow at the start of the text and down-arrow at the end of the text walk a per-session
+    history of previously-submitted prompts (see `_recall_history`), loading the recalled entry
+    into the box for editing and resending; once that walk has started, further up/down presses
+    keep walking regardless of where the cursor lands. Walking up from an untouched draft stashes
+    that draft's text so walking back down past the most recent entry restores it rather than
+    clearing the box. Any text-mutating action (typing, deleting, pasting) detaches the box from
+    its current position in that history so the now-edited text is treated as a fresh draft
+    rather than a rooted recall; pure cursor movement (arrow keys, home/end, selection) does not
+    detach. `/clear` resets the history, the recall position, and the stashed draft.
     """
 
     NEWLINE_KEYS = ("ctrl+j", "ctrl+enter")
+
+    # Keys `TextArea` treats as pure cursor/selection movement (no text mutation), so
+    # `_on_key` leaves the recall position untouched for them and lets `TextArea`'s own
+    # bindings handle the navigation. Everything else that reaches `_on_key` (printable
+    # characters, the newline keys, and the deletion/editing bindings below) mutates the
+    # text and detaches the box from history; the deletion/editing bindings are enumerated
+    # explicitly because `TextArea` dispatches them via `action_*` methods rather than
+    # `_on_key`, so `_on_key` only needs to recognize them to set the detach flag before
+    # the binding runs.
+    _NAVIGATION_KEYS = frozenset({
+        "up", "down", "left", "right",
+        "ctrl+left", "ctrl+right",
+        "home", "end", "ctrl+a", "ctrl+e",
+        "pageup", "pagedown",
+        "shift+up", "shift+down", "shift+left", "shift+right",
+        "ctrl+shift+left", "ctrl+shift+right", "shift+home", "shift+end",
+        "tab",
+    })
+
+    # Binding-driven text mutations (see `_NAVIGATION_KEYS`): each deletes, cuts, pastes, or
+    # undoes/redoes content. `_on_key` checks membership to detach from history before
+    # `TextArea`'s binding dispatches the matching `action_*`.
+    _MUTATION_BINDING_KEYS = frozenset({
+        "backspace", "delete", "ctrl+d",
+        "ctrl+w", "ctrl+backspace", "alt+delete",
+        "ctrl+u", "super+backspace", "ctrl+k", "ctrl+shift+k",
+        "ctrl+x", "ctrl+v",
+        "ctrl+z", "super+z", "ctrl+y", "super+y",
+    })
 
     class Submitted(Message):
         """Posted when the user presses Enter to submit the current text."""
@@ -139,21 +178,140 @@ class PromptInput(TextArea):
         def control(self) -> "PromptInput":
             return self.prompt_input
 
-    async def _on_key(self, event: events.Key) -> None:
-        """Submit on Enter; insert a newline on Ctrl+Enter; defer everything else (typing,
-        navigation, selection) to `TextArea`'s own handling.
+    def on_mount(self) -> None:
+        """Initialize the per-instance input-history state.
+
+        Done here rather than in `__init__` (which would need to redeclare `TextArea`'s many
+        keyword parameters just to forward them) so the widget keeps `TextArea`'s own
+        constructor signature untouched. `TextArea` defines `_on_mount`, not `on_mount`, so
+        this handler is purely additive and doesn't shadow one of its own.
         """
-        if event.key == "enter":
+        self._history: list[str] = []
+        self._history_index: int | None = None
+        self._draft: str = ""
+
+    def clear_input_history(self) -> None:
+        """Drop the recorded prompt history and reset the recall position.
+
+        Called by `ReplApp.clear_session()` so a `/clear`'s fresh `Session` starts with an
+        empty input history to match its empty conversation history.
+        """
+        self._history.clear()
+        self._history_index = None
+        self._draft = ""
+
+    async def _on_key(self, event: events.Key) -> None:
+        """Submit on Enter; insert a newline on Ctrl+Enter; walk the input history on
+        up/down at the text boundaries; detach from history on any text mutation; and defer
+        everything else (typing, navigation, selection) to `TextArea`'s own handling.
+        """
+        key = event.key
+        if key == "enter":
             event.stop()
             event.prevent_default()
-            self.post_message(self.Submitted(self, self.text))
+            self._record_and_submit()
             return
-        if event.key in self.NEWLINE_KEYS:
+        if key in self.NEWLINE_KEYS:
             event.stop()
             event.prevent_default()
+            self._detach_from_history()
             self.replace("\n", *self.selection)
             return
+        if key == "up":
+            # Once already mid-recall, further up-presses keep walking regardless of where
+            # the previous recall left the cursor (recall lands it at the entry's end, not
+            # its start); the boundary check only gates *starting* a fresh walk from a draft.
+            at_boundary = self._history_index is not None or self.cursor_at_start_of_text
+            if at_boundary and self._recall_history(-1):
+                event.stop()
+                event.prevent_default()
+                return
+            await super()._on_key(event)
+            return
+        if key == "down":
+            at_boundary = self._history_index is not None or self.cursor_at_end_of_text
+            if at_boundary and self._recall_history(1):
+                event.stop()
+                event.prevent_default()
+                return
+            await super()._on_key(event)
+            return
+        if key not in self._NAVIGATION_KEYS:
+            # Any key that isn't pure navigation either inserts/deletes text directly (a
+            # printable character or a `_MUTATION_BINDING_KEYS` entry) or is unrecognized;
+            # the former detaches the box from history so the edit reads as a fresh draft.
+            if key in self._MUTATION_BINDING_KEYS or event.is_printable:
+                self._detach_from_history()
         await super()._on_key(event)
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Detach from history before a paste inserts text, since pasting mutates the box."""
+        self._detach_from_history()
+        await super()._on_paste(event)
+
+    def _detach_from_history(self) -> None:
+        """Mark the current text as no longer rooted at a position in the input history, so a
+        subsequent up/down at the boundaries resumes recall from the most recent entry rather
+        than continuing from a now-stale index.
+        """
+        self._history_index = None
+
+    def _record_and_submit(self) -> None:
+        """Record the current (non-empty) text into the input history and post `Submitted`.
+
+        Mirrors `ReplApp.on_prompt_input_submitted`'s own empty-prompt guard so an empty or
+        whitespace-only submit isn't recorded (and, by not clearing the box here, is left in
+        place for the user to keep typing into). The recall position is reset to a fresh draft
+        so the next up-arrow walks back from the just-appended entry.
+        """
+        value = self.text
+        if not value.strip():
+            self.post_message(self.Submitted(self, value))
+            return
+        self._history.append(value)
+        self._history_index = None
+        self.post_message(self.Submitted(self, value))
+
+    def _recall_history(self, direction: int) -> bool:
+        """Move the recall position by `direction` (-1 for up/older, +1 for down/newer) and load
+        the entry there into the box, returning whether a recall actually happened.
+
+        With no recorded history there's nothing to recall. Otherwise up-arrow from a fresh
+        draft (`_history_index is None`) stashes the draft's current text in `_draft` and jumps
+        to the most recent entry, then to older ones; down-arrow from the most recent entry
+        restores that stashed draft rather than clearing to empty. Recalling loads the entry's
+        text verbatim and lands the cursor at its end so the user can append to it, matching the
+        common readline behavior of editing a recalled line from its tail.
+        """
+        if not self._history:
+            return False
+        if direction < 0:
+            if self._history_index is None:
+                self._draft = self.text
+                self._history_index = len(self._history) - 1
+            elif self._history_index > 0:
+                self._history_index -= 1
+            else:
+                return False
+        else:
+            if self._history_index is None:
+                return False
+            if self._history_index < len(self._history) - 1:
+                self._history_index += 1
+            else:
+                self._history_index = None
+                self.text = self._draft
+                self.move_cursor(self._last_location())
+                return True
+        entry = self._history[self._history_index]
+        self.text = entry
+        self.move_cursor(self._last_location())
+        return True
+
+    def _last_location(self) -> tuple[int, int]:
+        """Return the document location just past the end of the current text."""
+        last_row = self.document.line_count - 1
+        return (last_row, len(self.document[last_row]))
 
 
 class ToolCallLimitScreen(ModalScreen[bool]):
@@ -617,7 +775,9 @@ class ReplApp(App[None]):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
 
-        self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).focus()
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.clear_input_history()
+        prompt_input.focus()
         self._update_status_bar()
         self.notify("Session cleared.")
 

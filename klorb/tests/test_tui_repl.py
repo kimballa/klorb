@@ -1172,6 +1172,193 @@ async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
     mock_configure_logging.assert_not_called()
 
 
+# --- input history (up/down-arrow recall) ---
+
+
+async def _complete_turn(pilot: Pilot[None], app: ReplApp) -> None:
+    """Wait for the in-flight model turn to finish and the input box to re-enable."""
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+async def test_up_arrow_recalls_the_most_recent_prompt() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        assert prompt_input.text == ""
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "first"
+
+
+async def test_repeated_up_arrow_walks_back_through_history() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = "second"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "second"
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "first"
+
+
+async def test_down_arrow_walks_forward_and_returns_to_empty_draft() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = "second"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "second"
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "first"
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert prompt_input.text == "second"
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert prompt_input.text == ""
+
+
+async def test_down_arrow_past_most_recent_restores_the_in_progress_draft() -> None:
+    """Walking up from an untouched draft and back down past the most recent entry restores
+    that draft rather than clearing the box to empty."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = "an unsent draft"
+        await pilot.press("home")
+        await pilot.pause()
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "first"
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert prompt_input.text == "an unsent draft"
+
+
+async def test_editing_a_recalled_prompt_detaches_and_resets_recall_position() -> None:
+    """After typing into a recalled entry, the next up-arrow starts fresh from the most
+    recent entry rather than continuing from the now-stale recall position."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = "second"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        # Walk back to the oldest entry, then edit it.
+        await pilot.press("up", "up")
+        await pilot.pause()
+        assert prompt_input.text == "first"
+        await pilot.press("x")
+        await pilot.pause()
+        assert prompt_input.text == "firstx"
+
+        # Move to the start so the next up-arrow triggers recall rather than cursor movement.
+        await pilot.press("home")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        # Detached, so recall jumps to the most recent entry ("second"), not continuing from
+        # the stale position that would have gone past "first" with nowhere to go.
+        assert prompt_input.text == "second"
+
+
+async def test_empty_prompt_is_not_recorded_in_history() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        # An empty submit doesn't get recorded, so there's still only one history entry.
+        prompt_input.text = "   "
+        await pilot.press("enter")
+        await pilot.pause()
+        assert prompt_input.text == "   "
+
+        await pilot.press("home", "up")
+        await pilot.pause()
+        assert prompt_input.text == "first"
+
+
+async def test_clear_resets_input_history() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = "/clear"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # After /clear, there's no history to recall.
+        assert prompt_input.text == ""
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == ""
+
+
 async def test_streaming_response_updates_widget_progressively() -> None:
     mock_provider = MagicMock()
 

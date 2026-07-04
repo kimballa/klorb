@@ -10,15 +10,6 @@
 
 # Feature backlog
 
-* Actually hold a history of user inputs and using up-arrow when you're at the beginning of
-  the user input box will recall the previous msg into your textbox for editing. Repeatedly
-  pressing up-arrow will give you the N-2'nd msg, then N-3'rd, etc. as a text you can edit
-  and resend anew. Likewise if you're cursoring up thru history, the down-arrow key, when
-  pressed at the end of the text, recalls later and later messages that you've sent. If you
-  actually take any action that mutates the text in the textbox (typing; backspacing; pasting
-  content from the clipboard) then this is now a "new" message and not rooted in a place in 
-  history any more. 
-
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
@@ -95,6 +86,18 @@
 * More tools:
     * AskUserQuestionsTool
     * GrepTool
+      * text|regex
+      * specific file tree to search (blank = workspace root)
+        * readDir permissions enforced.
+        * automatically recursively checks subdirs.
+        * ... it's possible that some subdirs are access-denied, so evaluate permissions at each
+          level of the hierarchy.
+      * optional: file pattern glob to filter files, like "*.py"
+      * optional flags: case-insensitive, regex, ...others?
+    * FindFileTool 
+      * specific file tree to search (blank = workspace root)
+      * file name or pattern glob to filter files, like "*.py" or "*_context*"
+
     * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans
     * WebFetchTool
 

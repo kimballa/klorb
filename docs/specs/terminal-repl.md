@@ -261,11 +261,53 @@ klorb -m "What is 2+2?"        # single-shot prompt/response, no REPL
 klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first turn
 ```
 
+## Input history (up/down-arrow recall)
+
+`PromptInput` keeps a per-session list of previously-submitted prompts and lets the
+user recall them into the box for editing and resending via the arrow keys:
+
+* **Recording.** On Enter, `PromptInput._record_and_submit()` appends the current
+  (non-empty, non-whitespace) text to `self._history` before posting `Submitted`, so the
+  entry that ends up in history is the verbatim text the user saw, not the trimmed form
+  `ReplApp.on_prompt_input_submitted` dispatches to the model. Empty or whitespace-only
+  submits are not recorded (mirroring the app-level guard that ignores them) and the box
+  is left in place for the user to keep typing into. The recall position is reset to a
+  fresh draft (`_history_index = None`) so the next up-arrow walks back from the
+  just-appended entry.
+* **Recall.** Up-arrow at the start of the text (`cursor_at_start_of_text`) and
+  down-arrow at the end of the text (`cursor_at_end_of_text`) move the recall position
+  (`_history_index`) through `self._history` and load the entry there verbatim, landing
+  the cursor at the end of the recalled text so the user can append to it (readline
+  behavior). That boundary check only gates *starting* a walk from a fresh, untouched
+  draft (`_history_index is None`); once `_history_index` is set, further up/down presses
+  keep walking regardless of where the cursor lands, since recall itself moves the cursor
+  away from the boundary that triggered it. Up-arrow from a fresh draft stashes the
+  draft's current text in `self._draft` and jumps to the most recent entry, then older;
+  down-arrow from the most recent entry resets `_history_index` to `None` and restores
+  `self._draft` rather than clearing to empty, so an in-progress draft isn't lost by
+  browsing history and walking back down past it. Arrow keys anywhere else in the text
+  defer to `TextArea`'s ordinary cursor movement, so the user can still navigate within a
+  recalled (or any) line before a walk has started.
+* **Detach.** Any text-mutating action — a printable keystroke, a deletion/editing
+  binding (backspace, delete, cut, paste, undo/redo, etc.), or a bracketed paste —
+  calls `_detach_from_history()`, resetting `_history_index` to `None` so the now-edited
+  text is treated as a fresh draft rather than a rooted recall: the next up-arrow starts
+  over from the most recent entry. Pure cursor/selection movement (the arrow keys,
+  home/end, page up/down, and their shift-select variants) does not detach, so the user
+  can roam a recalled line and still recall further once they reach a boundary. The
+  mutation bindings are enumerated in `PromptInput._MUTATION_BINDING_KEYS` because
+  `TextArea` dispatches them via `action_*` methods (triggered by the binding system)
+  rather than through `_on_key`, so `_on_key` recognizes them to set the detach flag
+  before the binding runs.
+* **`/clear` reset.** `ReplApp.clear_session()` calls `PromptInput.clear_input_history()`,
+  which drops the recorded history, resets the recall position, and clears the stashed
+  draft, so a fresh session starts with an empty input history to match its empty
+  conversation history.
+
 ## Out of scope
 
 * `/clear` and `:q`/`/quit`/`/exit` are the only recognized non-prompt input, alongside the
-  `!`-prefixed shell command mechanism described above. Input history (up-arrow to recall a
-  previous prompt) is not implemented yet.
+  `!`-prefixed shell command mechanism described above.
 * Thinking text is wrapped in `*...*` without escaping; a reasoning delta containing its
   own unescaped `*` could render with unbalanced/unintended emphasis. Accepted as a v1
   limitation, consistent with the response `Markdown` widget's existing unescaped handling
