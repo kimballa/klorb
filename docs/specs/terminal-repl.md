@@ -18,16 +18,19 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   (constructing a default one if none is given) rather than a raw `ApiProvider`/model pair,
   so the REPL sends every turn through the same `Session.send_turn()` path a one-shot
   prompt uses. `session_log_enabled` records whether `cli.main()` turned on per-session
-  logging for this invocation, so `/clear` (below) knows whether to roll the log file over.
-* `ReplApp.compose()` lays out four widgets/regions top-to-bottom: a `Header` showing the
+  logging for this invocation, so clearing the session (below) knows whether to roll the log
+  file over.
+* `ReplApp.compose()` lays out five widgets/regions top-to-bottom: a `Header` showing the
   app title and the active model as its subtitle, a `VerticalScroll` (id `history`) that
-  holds the conversation so far, an `Input` (id `prompt-input`) for typing the next prompt,
-  and a `Horizontal` (id `status-row`) docked to the bottom of the screen that holds the
-  `Footer` (key bindings) side by side with a `Static` token-tally widget (id `status-bar`)
-  in the same row — so the tally reads like one more item alongside `^q Quit`/`^p palette`
-  rather than a separate line. The history container is styled `height: 1fr` so it fills
-  all available vertical space above the input box, which is why the history scrolls "up"
-  as content is added while the input box stays pinned to the bottom of the screen.
+  holds the conversation so far, a `PromptPalette` (id `prompt-palette`, hidden until the
+  user types a leading `>` — see [[command-palette-from-prompt]]), a `PromptInput` (id
+  `prompt-input`) for typing the next prompt, and a `Horizontal` (id `status-row`) docked to
+  the bottom of the screen that holds a `Static` `> palette` hint, the `Footer` (key
+  bindings), and a `Static` token-tally widget (id `status-bar`) side by side in the same
+  row — so the tally reads like one more item alongside `^q Quit` rather than a separate
+  line. The history container is styled `height: 1fr` so it fills all available vertical
+  space above the input box, which is why the history scrolls "up" as content is added while
+  the input box stays pinned to the bottom of the screen.
 * `Footer`'s own `dock: bottom` CSS rule is overridden to `dock: none; width: 1fr` when
   nested inside `#status-row`, since Textual resolves a docked widget's position against
   its immediate parent: left docked, `Footer` would claim the entire row's height for
@@ -45,8 +48,8 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   significant figures — e.g. `1400` -> `"1.4k"`, `423000` -> `"420k"` — so the bar stays
   short and doesn't imply more precision than the token accounting actually has (see
   [[derive-user-turn-token-counts-from-a-prompt-token-delta]]). `ReplApp._update_status_bar()`
-  recomputes and redraws the bar on mount, after switching models, after `/clear`, and at
-  the end of every turn (success or error).
+  recomputes and redraws the bar on mount, after switching models, after clearing the
+  session, and at the end of every turn (success or error).
 * The input box's default full box border is overridden (`border: none; border-top: solid
   $accent;`) so only a single horizontal rule separates it from the history, with no side
   or bottom borders. This keeps the input looking like a plain line of text rather than a
@@ -147,7 +150,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `summary_text`. `Ctrl+O` (`action_toggle_tool_call_detail`) globally toggles every
   `ToolCallStatic` currently in the history — from any turn, not just the latest — to
   `detail_text` and back, via an app-lifetime `_tool_call_detail_shown` flag rather than
-  per-turn state, so the toggle persists across turns and `/clear`. A newly-mounted tool-call
+  per-turn state, so the toggle persists across turns and clearing the session. A newly-mounted tool-call
   widget picks up whichever mode is currently active, rather than always starting as a
   summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted before an
   abort stay in the history and the toggle-tracking list exactly like any other turn's,
@@ -198,19 +201,20 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   without changing anything. `"Enable thinking"`/`"Disable thinking"` remain an always-on/off
   pair, mirroring how `ModelCommandProvider` always lists every model rather than showing
   dynamic toggle-state labels.
-* Typing `/clear` and pressing enter, instead of submitting a prompt, replaces the active
-  `Session` with a new one: same `SessionConfig` (model carries over) and the same
-  `provider`/`model_registry` instances (via `Session`'s read-only properties, so the
-  OpenAI client and model discovery aren't rebuilt), but a fresh `generate_session_id()`,
-  a fresh [[tool-framework]] `ToolRegistry` built from `ReplApp._process_config` and the new
-  session's `SessionConfig` (unlike `provider`/`model_registry`, not reused — see
+* `ReplApp.clear_session()` — reached by typing `>clear` and pressing enter to select
+  `Clear session` from the inline palette (see [[command-palette-from-prompt]]), or the
+  equivalent `Ctrl+P` → `Clear session` — replaces the active `Session` with a new one: same
+  `SessionConfig` (model carries over) and the same `provider`/`model_registry` instances
+  (via `Session`'s read-only properties, so the OpenAI client and model discovery aren't
+  rebuilt), but a fresh `generate_session_id()`, a fresh [[tool-framework]] `ToolRegistry`
+  built from `ReplApp._process_config` and the new session's `SessionConfig` (unlike
+  `provider`/`model_registry`, not reused — see
   [the fresh-instance-per-call ADR](../adrs/tool-registry-instantiates-a-fresh-tool-per-call.md)),
-  and an empty message history. This runs synchronously in `on_input_submitted` — no
-  worker thread, no disabling the input box, since no model call is involved. The visible
-  history's children are removed, and if `session_log_enabled` is `True`,
-  `configure_logging()` is called again with a new `session_log_path()` for the new
-  session id (relying on `configure_logging`'s `force=True` behavior to safely repoint the
-  root logger's file handler mid-process). See
+  and an empty message history. This runs synchronously — no worker thread, no disabling the
+  input box, since no model call is involved. The visible history's children are removed, and
+  if `session_log_enabled` is `True`, `configure_logging()` is called again with a new
+  `session_log_path()` for the new session id (relying on `configure_logging`'s `force=True`
+  behavior to safely repoint the root logger's file handler mid-process). See
   [[clear-command-starts-a-new-session-and-log-file]].
 * Typing a line starting with `!` and pressing enter runs the rest of the line as a shell
   command instead of submitting a prompt — e.g. `!ls -la`. `ReplApp._submit_shell_command()`
@@ -243,8 +247,9 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 * `Ctrl+C` (when no shell command is running) and `Ctrl+Q` quit the REPL. `Ctrl+P` opens
   Textual's command palette, which includes `ModelCommandProvider` for switching the active
   model — see [[model-framework]]. Selecting a model updates `Session.config.model` directly.
-  `Ctrl+O` globally toggles every rendered tool call between its one-line summary and its
-  fuller detail view (see above).
+  Typing `>` in the prompt input reaches the same providers without leaving the prompt box —
+  see [[command-palette-from-prompt]]. `Ctrl+O` globally toggles every rendered tool call
+  between its one-line summary and its fuller detail view (see above).
 * `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `-m`/`--message` flag
   optional (default `None`) and adds an `--interactive`/`--no-interactive` flag (see
   [[session-and-turns]] for its defaulting rules). `klorb.cli.main()` builds a `Session`
@@ -299,15 +304,17 @@ user recall them into the box for editing and resending via the arrow keys:
   `TextArea` dispatches them via `action_*` methods (triggered by the binding system)
   rather than through `_on_key`, so `_on_key` recognizes them to set the detach flag
   before the binding runs.
-* **`/clear` reset.** `ReplApp.clear_session()` calls `PromptInput.clear_input_history()`,
+* **Reset on clear.** `ReplApp.clear_session()` calls `PromptInput.clear_input_history()`,
   which drops the recorded history, resets the recall position, and clears the stashed
   draft, so a fresh session starts with an empty input history to match its empty
-  conversation history.
+  conversation history. A leading `>` in the recalled text is handled separately — see
+  [[command-palette-from-prompt]]'s "History browsing" section.
 
 ## Out of scope
 
-* `/clear` and `:q`/`/quit`/`/exit` are the only recognized non-prompt input, alongside the
-  `!`-prefixed shell command mechanism described above.
+* `:q`/`/quit`/`/exit`, a leading `>` (the inline command palette, see
+  [[command-palette-from-prompt]]), and the `!`-prefixed shell command mechanism described
+  above are the only recognized non-prompt input.
 * Thinking text is wrapped in `*...*` without escaping; a reasoning delta containing its
   own unescaped `*` could render with unbalanced/unintended emphasis. Accepted as a v1
   limitation, consistent with the response `Markdown` widget's existing unescaped handling

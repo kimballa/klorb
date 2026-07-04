@@ -6,8 +6,8 @@
   * The `> palette` hint is shown on the left side of the bottom status bar in black/white. It 
     should be in the yellow-on-blue for the hotkey, white-on-blue for the word just like `^q Quit` and
     `^o Detail`. 
-  * I don't mind it all the way on the LHS, though. But the `^p Palette` all the way on the RHS
-    should go away completely.
+  * That one is *almost* fixed now. The foreground colors are correct. the background color is
+    black, though, and it should be blue, like the rest of the header and footer status bar stuff.
   * There is something more fundamentally wrong with the behavior though. If I type `>` the palette
     appears but then if I type 'backspace' it stays open. But up/down no longer selects between them.
     I can *click* on one to highlight, though. In any case, if the user backspaces all the way to

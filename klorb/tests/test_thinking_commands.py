@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from unittest.mock import PropertyMock
 from unittest.mock import patch
 
+from textual.command import DiscoveryHit
 from textual.widgets import OptionList
 from textual.widgets import Static
 
@@ -68,11 +69,47 @@ async def test_discover_yields_a_hit_per_command() -> None:
     provider = ThinkingCommandProvider(mock_screen)
 
     hits = [hit async for hit in provider.discover()]
+    assert all(isinstance(hit, DiscoveryHit) for hit in hits)
 
-    labels = {str(hit.text) for hit in hits}
-    assert "Enable thinking" not in labels
-    assert "Disable thinking" in labels
-    assert "Set thinking effort (Medium)" in labels
+    displayed = {str(hit.display) for hit in hits if isinstance(hit, DiscoveryHit)}
+    assert "Enable thinking" not in displayed
+    assert "Disable thinking" in displayed
+    assert "Set thinking effort (Medium)" in displayed
+
+
+async def test_discover_canonicalizes_toggle_text_to_its_own_display() -> None:
+    """A toggle command's canonical `text` (used to recall it later, see
+    `docs/specs/command-palette-from-prompt.md`) is exactly what's displayed, since
+    "Disable thinking" is itself a stable, non-dynamic label.
+    """
+    mock_screen = MagicMock()
+    mock_screen.app.get_thinking_enabled.return_value = True
+    mock_screen.app.get_thinking_effort.return_value = "medium"
+    provider = ThinkingCommandProvider(mock_screen)
+
+    hits = [hit async for hit in provider.discover()]
+
+    disable_hit = next(
+        hit for hit in hits if isinstance(hit, DiscoveryHit) and hit.display == "Disable thinking")
+    assert disable_hit.text == "Disable thinking"
+
+
+async def test_discover_canonicalizes_set_effort_text_to_its_undecorated_root() -> None:
+    """`Set thinking effort (Medium)`'s parenthetical suffix changes with the current
+    effort level, so its canonical `text` is always the undecorated root name — recording
+    the decorated display text verbatim wouldn't reliably match this same command again.
+    """
+    mock_screen = MagicMock()
+    mock_screen.app.get_thinking_enabled.return_value = True
+    mock_screen.app.get_thinking_effort.return_value = "medium"
+    provider = ThinkingCommandProvider(mock_screen)
+
+    hits = [hit async for hit in provider.discover()]
+
+    effort_hit = next(
+        hit for hit in hits
+        if isinstance(hit, DiscoveryHit) and hit.display == "Set thinking effort (Medium)")
+    assert effort_hit.text == "Set thinking effort"
 
 
 async def test_search_filters_by_query() -> None:

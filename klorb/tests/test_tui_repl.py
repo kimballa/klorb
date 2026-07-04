@@ -35,10 +35,16 @@ from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tools.registry import ToolRegistry
+from klorb.tui.palette import PALETTE_PREFIX
+from klorb.tui.palette import PROMPT_PALETTE_ID
+from klorb.tui.palette import PaletteOption
+from klorb.tui.palette import PromptPalette
 from klorb.tui.permission_ask_screen import PERMISSION_ASK_INPUT_ID
 from klorb.tui.permission_ask_screen import PERMISSION_ASK_OPTIONS_ID
 from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.repl import HISTORY_ID
+from klorb.tui.repl import PALETTE_HINT_ID
+from klorb.tui.repl import PALETTE_HINT_TEXT
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import STATUS_BAR_ID
 from klorb.tui.repl import THINKING_LABEL
@@ -64,6 +70,23 @@ def _session_with_tools(
     return Session(
         config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry,
         process_config=process_config)
+
+
+def _palette_hit_texts(palette: PromptPalette) -> set[str]:
+    """The canonical `text` of every hit currently rendered in `palette`'s rows."""
+    options = palette._options
+    assert all(isinstance(option, PaletteOption) for option in options)
+    return {str(option.hit.text) for option in options if isinstance(option, PaletteOption)}
+
+
+async def _invoke_clear_session(pilot: Pilot[None]) -> None:
+    """Type `>clear` and press enter to select "Clear session" from the inline palette
+    (see docs/specs/command-palette-from-prompt.md), mirroring how a real user reaches it now
+    that the bare `/clear` prompt text is no longer special-cased.
+    """
+    await pilot.press(*f"{PALETTE_PREFIX}clear")
+    await pilot.press("enter")
+    await pilot.pause()
 
 
 async def _wait_until(pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 2.0) -> None:
@@ -1071,10 +1094,7 @@ async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        prompt_input.text = "/clear"
-        await pilot.press("enter")
-        await pilot.pause()
+        await _invoke_clear_session(pilot)
 
         assert app._session.tool_registry is not None
         assert "ReadFile" in {tool.name() for tool in app._session.tool_registry.tools()}
@@ -1095,9 +1115,7 @@ async def test_clear_replaces_session_and_resets_history() -> None:
 
         original_session_id = app._session.id
 
-        prompt_input.text = "/clear"
-        await pilot.press("enter")
-        await pilot.pause()
+        await _invoke_clear_session(pilot)
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         assert len(history.children) == 0
@@ -1119,10 +1137,7 @@ async def test_clear_carries_over_thinking_settings_from_process_config() -> Non
         app.set_thinking_enabled(False)
         app.set_thinking_effort("low")
 
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        prompt_input.text = "/clear"
-        await pilot.press("enter")
-        await pilot.pause()
+        await _invoke_clear_session(pilot)
 
         assert app._session.config.thinking_enabled is False
         assert app._session.config.thinking_effort == "low"
@@ -1134,9 +1149,7 @@ async def test_clear_does_not_disable_input_or_send_to_provider() -> None:
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        prompt_input.text = "/clear"
-        await pilot.press("enter")
-        await pilot.pause()
+        await _invoke_clear_session(pilot)
 
         assert prompt_input.disabled is False
 
@@ -1149,10 +1162,7 @@ async def test_clear_rotates_log_file_when_session_log_enabled() -> None:
 
     with patch("klorb.tui.repl.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "/clear"
-            await pilot.press("enter")
-            await pilot.pause()
+            await _invoke_clear_session(pilot)
 
     mock_configure_logging.assert_called_once_with(
         repl_mode=True, log_path=session_log_path(app._session.id))
@@ -1164,10 +1174,7 @@ async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
 
     with patch("klorb.tui.repl.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "/clear"
-            await pilot.press("enter")
-            await pilot.pause()
+            await _invoke_clear_session(pilot)
 
     mock_configure_logging.assert_not_called()
 
@@ -1348,15 +1355,220 @@ async def test_clear_resets_input_history() -> None:
         await pilot.press("enter")
         await _complete_turn(pilot, app)
 
-        prompt_input.text = "/clear"
-        await pilot.press("enter")
-        await pilot.pause()
+        await _invoke_clear_session(pilot)
 
-        # After /clear, there's no history to recall.
+        # Clearing the session drops "first" from the input history, but the
+        # ">Clear session" selection that triggered it is recorded afterward (see
+        # `ReplApp._run_palette_command`), so it's the sole entry left to recall — not
+        # "first", and no entry further back than it either.
         assert prompt_input.text == ""
         await pilot.press("up")
         await pilot.pause()
+        assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
+
+
+# --- command palette from the prompt (a leading ">" in the prompt input) ---
+
+
+async def test_bare_gt_shows_the_full_discovery_list() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(">")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        assert palette.display is True
+        assert palette.option_count > 0
+        assert "Clear session" in _palette_hit_texts(palette)
+
+
+async def test_bare_gt_lists_rows_alphabetically_since_every_score_ties_at_zero() -> None:
+    """A `DiscoveryHit` (what `discover()` yields for the empty query behind a bare `>`)
+    always scores `0.0`, so with nothing to rank by, the alphabetical tiebreak alone decides
+    the full listing's order (see `gather_palette_hits`).
+    """
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(">")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        options = palette._options
+        assert all(isinstance(option, PaletteOption) for option in options)
+        texts = [str(option.hit.text) for option in options if isinstance(option, PaletteOption)]
+        assert texts == sorted(texts, key=str.casefold)
+
+
+async def test_typing_a_query_narrows_the_palette_to_matching_hits() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(*f"{PALETTE_PREFIX}clear")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        assert palette.display is True
+        assert _palette_hit_texts(palette) == {"Clear session"}
+
+
+async def test_up_down_arrows_move_the_palette_highlight_not_the_cursor() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(">")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        first_highlight = palette.highlighted
+        assert first_highlight is not None
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert palette.highlighted == first_highlight + 1
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert palette.highlighted == first_highlight
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        assert prompt_input.text == ">"
+
+
+async def test_enter_executes_the_highlighted_palette_command_and_clears_the_input() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(*f"{PALETTE_PREFIX}clear")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
         assert prompt_input.text == ""
+        assert palette.display is False
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.children) == 0  # clear_session() ran, not a submitted prompt.
+
+
+async def test_palette_selection_is_recorded_in_history_by_its_canonical_name() -> None:
+    """Recalling a palette selection via up-arrow should show `>Clear session` (the
+    canonical/standard name), not whatever partial query the user actually typed.
+    """
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(*f"{PALETTE_PREFIX}cle")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
+
+
+async def test_recalling_a_past_palette_selection_does_not_resurface_the_popup() -> None:
+    """Browsing history up to a recalled `>Clear session` entry (per
+    docs/specs/command-palette-from-prompt.md's "History browsing" section) shows it as
+    plain recalled text; the popup only reappears once the user actually edits it.
+    """
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(*f"{PALETTE_PREFIX}clear")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
+        assert palette.display is False
+
+
+async def test_escape_dismisses_the_palette_and_continues_as_plain_text() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(*f"{PALETTE_PREFIX}clear")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        assert palette.display is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert palette.display is False
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)  # type: ignore[unreachable]
+        await pilot.press("!")
+        await pilot.pause()
+        assert prompt_input.text == f"{PALETTE_PREFIX}clear!"
+        assert palette.display is False
+
+
+async def test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        gibberish = f"{PALETTE_PREFIX}asd3434j2asdadkjfkjl34kj"
+        await pilot.press(*gibberish)
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        assert palette.display is False
+
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        prompt_widget = history.query_one(Static)
+        assert prompt_widget.content == gibberish
+
+
+async def test_no_match_then_space_dismisses_the_palette() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        await pilot.press(*f"{PALETTE_PREFIX}zzzznomatch")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        assert palette.display is False
+
+        await pilot.press("space")
+        await pilot.press(*"more text")
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        assert prompt_input.text == f"{PALETTE_PREFIX}zzzznomatch more text"
+        assert palette.display is False
+
+
+async def test_palette_hint_shown_only_while_the_box_is_empty_or_bare_gt() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        hint = app.query_one(f"#{PALETTE_HINT_ID}", Static)
+        assert str(hint.render()).strip() == PALETTE_HINT_TEXT
+
+        await pilot.press(">")
+        await pilot.pause()
+        assert str(hint.render()).strip() == PALETTE_HINT_TEXT
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert str(hint.render()) == ""
 
 
 async def test_streaming_response_updates_widget_progressively() -> None:

@@ -98,27 +98,36 @@ class ThinkingCommandProvider(Provider):
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        for label, callback in self._commands().items():
+        for label, (callback, canonical_text) in self._commands().items():
             score = matcher.match(label)
             if score > 0:
-                yield Hit(score, matcher.highlight(label), callback)
+                yield Hit(score, matcher.highlight(label), callback, text=canonical_text)
 
     async def discover(self) -> Hits:
-        for label, callback in self._commands().items():
-            yield DiscoveryHit(label, callback)
+        for label, (callback, canonical_text) in self._commands().items():
+            yield DiscoveryHit(label, callback, text=canonical_text)
 
-    def _commands(self) -> dict[str, Callable[[], None]]:
-        """Return a mapping of command palette display text to its callback. Only the
-        toggle command that reflects a valid state transition is offered: `Enable
-        thinking` when thinking is currently off, `Disable thinking` when it's on.
+    def _commands(self) -> dict[str, tuple[Callable[[], None], str]]:
+        """Return a mapping of command palette display text to its `(callback,
+        canonical_text)` pair. Only the toggle command that reflects a valid state
+        transition is offered: `Enable thinking` when thinking is currently off, `Disable
+        thinking` when it's on.
+
+        `canonical_text` is what a caller (e.g. palette-from-prompt, see
+        `docs/specs/command-palette-from-prompt.md`) should record as "what the user typed"
+        for recall purposes, which for the toggle commands is just their own display text
+        (selecting `Disable thinking` should recall `Disable thinking`) but for `set_effort_label`
+        is always the undecorated `SET_THINKING_EFFORT_LABEL` root — the displayed text's
+        parenthetical current-value suffix changes with `current_effort`, so recording it
+        verbatim wouldn't reliably match this same command again later.
         """
         thinking_enabled = cast(SupportsThinkingConfig, self.app).get_thinking_enabled()
         toggle_label = DISABLE_THINKING_LABEL if thinking_enabled else ENABLE_THINKING_LABEL
         current_effort = cast(SupportsThinkingConfig, self.app).get_thinking_effort()
         set_effort_label = f"{SET_THINKING_EFFORT_LABEL} ({current_effort.title()})"
         return {
-            toggle_label: partial(self._set_thinking_enabled, not thinking_enabled),
-            set_effort_label: self._show_thinking_effort_screen,
+            toggle_label: (partial(self._set_thinking_enabled, not thinking_enabled), toggle_label),
+            set_effort_label: (self._show_thinking_effort_screen, SET_THINKING_EFFORT_LABEL),
         }
 
     def _set_thinking_enabled(self, enabled: bool) -> None:

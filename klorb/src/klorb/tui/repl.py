@@ -3,20 +3,25 @@
 box pinned to the bottom of the screen.
 """
 
+import inspect
 import logging
 import threading
 
 from rich.markup import escape
+from rich.text import Text
 from textual import events
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit
+from textual.command import Hit
 from textual.containers import Horizontal
 from textual.containers import Vertical
 from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.types import IgnoreReturnCallbackType
 from textual.widgets import Button
 from textual.widgets import Footer
 from textual.widgets import Header
@@ -39,8 +44,11 @@ from klorb.tools.registry import ToolRegistry
 from klorb.tools.tool import default_tool_call_detail
 from klorb.tools.tool import default_tool_call_summary
 from klorb.tui.model_commands import ModelCommandProvider
+from klorb.tui.palette import PALETTE_PREFIX
+from klorb.tui.palette import PROMPT_PALETTE_ID
+from klorb.tui.palette import PromptPalette
+from klorb.tui.palette import gather_palette_hits
 from klorb.tui.permission_ask_screen import PermissionAskScreen
-from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
 from klorb.tui.session_commands import SessionCommandProvider
 from klorb.tui.shell import ShellCommandCancelled
 from klorb.tui.shell import ShellCommandTimedOut
@@ -51,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
+PALETTE_HINT_ID = "palette-hint"
+PALETTE_HINT_TEXT = f"{PALETTE_PREFIX} palette"
 STATUS_BAR_ID = "status-bar"
 THINKING_LABEL = "<Thinking>"
 TOOL_USE_LABEL = "<Tool use>"
@@ -132,7 +142,12 @@ class PromptInput(TextArea):
     clearing the box. Any text-mutating action (typing, deleting, pasting) detaches the box from
     its current position in that history so the now-edited text is treated as a fresh draft
     rather than a rooted recall; pure cursor movement (arrow keys, home/end, selection) does not
-    detach. `/clear` resets the history, the recall position, and the stashed draft.
+    detach. Clearing the session (see `ReplApp.clear_session()`) resets the history, the recall
+    position, and the stashed draft.
+
+    Whenever the text starts with `>` (see `klorb.tui.palette`), up/down/enter instead drive the
+    inline `PromptPalette` popup mounted just above this widget rather than history recall or
+    submission: see `_on_key`'s palette branch and `_refresh_palette`.
     """
 
     NEWLINE_KEYS = ("ctrl+j", "ctrl+enter")
@@ -189,23 +204,77 @@ class PromptInput(TextArea):
         self._history: list[str] = []
         self._history_index: int | None = None
         self._draft: str = ""
+        self._palette_dismissed: bool = False
+        self._suppress_palette_during_recall: bool = False
 
     def clear_input_history(self) -> None:
         """Drop the recorded prompt history and reset the recall position.
 
-        Called by `ReplApp.clear_session()` so a `/clear`'s fresh `Session` starts with an
-        empty input history to match its empty conversation history.
+        Called by `ReplApp.clear_session()` so a fresh `Session` starts with an empty input
+        history to match its empty conversation history.
         """
         self._history.clear()
         self._history_index = None
         self._draft = ""
+        self._palette_dismissed = False
+        self._suppress_palette_during_recall = False
+        self._palette_widget().hide()
+
+    @property
+    def _palette_mode(self) -> bool:
+        """Whether up/down/enter/escape should drive the `PromptPalette` popup rather than
+        history recall or submission: the text starts with `>` and hasn't been dismissed out
+        of palette mode for this draft (see `_dismiss_palette`), and the text didn't just get
+        there via history recall (`_suppress_palette_during_recall`) — a recalled entry that
+        happens to start with `>` (recording an earlier palette selection, see
+        `_execute_palette_hit`) is browsed as plain recalled text, not treated as a fresh
+        palette query, until the user actually edits it (`_detach_from_history` clears the
+        suppression).
+        """
+        return (
+            self.text.startswith(PALETTE_PREFIX)
+            and not self._palette_dismissed
+            and not self._suppress_palette_during_recall
+        )
+
+    def _palette_widget(self) -> PromptPalette:
+        """The sibling `PromptPalette` popup mounted just above this widget."""
+        return self.screen.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
 
     async def _on_key(self, event: events.Key) -> None:
         """Submit on Enter; insert a newline on Ctrl+Enter; walk the input history on
-        up/down at the text boundaries; detach from history on any text mutation; and defer
-        everything else (typing, navigation, selection) to `TextArea`'s own handling.
+        up/down at the text boundaries; detach from history on any text mutation; defer
+        everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
+        while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
+        popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
+        or leaves palette mode).
         """
         key = event.key
+        if self._palette_mode:
+            if key == "escape":
+                event.stop()
+                event.prevent_default()
+                self._dismiss_palette()
+                return
+            if key == "up":
+                event.stop()
+                event.prevent_default()
+                self._palette_widget().move_highlight(-1)
+                return
+            if key == "down":
+                event.stop()
+                event.prevent_default()
+                self._palette_widget().move_highlight(1)
+                return
+            if key == "enter":
+                event.stop()
+                event.prevent_default()
+                hit = self._palette_widget().current_hit
+                if hit is None:
+                    self._record_and_submit()
+                else:
+                    self._execute_palette_hit(hit)
+                return
         if key == "enter":
             event.stop()
             event.prevent_default()
@@ -216,6 +285,7 @@ class PromptInput(TextArea):
             event.prevent_default()
             self._detach_from_history()
             self.replace("\n", *self.selection)
+            await self._refresh_palette(key)
             return
         if key == "up":
             # Once already mid-recall, further up-presses keep walking regardless of where
@@ -243,18 +313,96 @@ class PromptInput(TextArea):
             if key in self._MUTATION_BINDING_KEYS or event.is_printable:
                 self._detach_from_history()
         await super()._on_key(event)
+        await self._refresh_palette(key)
 
     async def _on_paste(self, event: events.Paste) -> None:
         """Detach from history before a paste inserts text, since pasting mutates the box."""
         self._detach_from_history()
         await super()._on_paste(event)
+        await self._refresh_palette(None)
+
+    async def _refresh_palette(self, key: str | None) -> None:
+        """Recompute palette mode from the current text and update the popup to match.
+
+        Text that no longer starts with `>` (typically an empty box, e.g. right after a
+        submission) always resets `_palette_dismissed` and hides the popup, so a fresh `>`
+        later starts palette mode again. Otherwise, unless already dismissed for this draft,
+        this queries every registered command provider (`gather_palette_hits`) for the text
+        after the leading `>` and shows the popup if anything matched. If nothing matched and
+        `key` is one of the whitespace keys that "give up" on a palette search (space, tab, or
+        a literal newline via `NEWLINE_KEYS`), the draft is marked dismissed so the rest of it
+        types as an ordinary prompt rather than re-showing the popup on every further
+        keystroke.
+        """
+        if not self.text.startswith(PALETTE_PREFIX):
+            self._palette_dismissed = False
+            self._palette_widget().hide()
+            return
+        if self._palette_dismissed:
+            return
+        query = self.text[len(PALETTE_PREFIX):]
+        hits = await gather_palette_hits(self.app, query)
+        palette = self._palette_widget()
+        if hits:
+            palette.show_hits(hits)
+            return
+        palette.hide()
+        if key == "space" or key == "tab" or key in self.NEWLINE_KEYS:
+            self._palette_dismissed = True
+
+    def _dismiss_palette(self) -> None:
+        """Leave palette mode for the current draft without changing its text, so the user can
+        keep typing it as an ordinary prompt (Escape's behavior, per
+        `docs/specs/command-palette-from-prompt.md`).
+        """
+        self._palette_dismissed = True
+        self._palette_widget().hide()
+
+    def _execute_palette_hit(self, hit: Hit | DiscoveryHit) -> None:
+        """Clear the box and hide the popup, then run the currently-highlighted palette
+        command once this key event has finished being handled (`call_later`, mirroring
+        Textual's own `CommandPalette._select_or_command`, since a command that itself
+        pushes a modal shouldn't do so mid-keystroke). `_run_palette_command` records the
+        selection into the input history only after `hit.command` has actually run — see its
+        docstring for why that order matters.
+        """
+        canonical_text = hit.text
+        assert canonical_text is not None
+        self.text = ""
+        self._palette_dismissed = False
+        self._palette_widget().hide()
+        self.app.call_later(self._run_palette_command, hit.command, canonical_text)
+
+    async def _run_palette_command(
+        self, command: IgnoreReturnCallbackType, canonical_text: str,
+    ) -> None:
+        """Run `command`, awaiting it first if it's async, then record `>canonical_text`
+        into the input history.
+
+        Recording only happens *after* `command` has run — not before, and not
+        unconditionally — because a command can itself mutate the input history: selecting
+        `>Clear session` must still leave `>Clear session` recallable afterward (per
+        `docs/specs/command-palette-from-prompt.md`'s worked example), but `clear_session()`
+        resets the history via `PromptInput.clear_input_history()` as part of starting a
+        fresh session. Appending here, after that reset has already happened, is what makes
+        the entry survive as the new history's first (and, until something else is
+        submitted, only) entry.
+        """
+        result = command()
+        if inspect.isawaitable(result):
+            await result
+        self._history.append(f"{PALETTE_PREFIX}{canonical_text}")
+        self._history_index = None
 
     def _detach_from_history(self) -> None:
         """Mark the current text as no longer rooted at a position in the input history, so a
         subsequent up/down at the boundaries resumes recall from the most recent entry rather
-        than continuing from a now-stale index.
+        than continuing from a now-stale index. Also lifts a recalled entry's suppression of
+        palette mode (see `_palette_mode`), since editing it turns it into a fresh draft that
+        a leading `>` should once again be read as a live palette query.
         """
         self._history_index = None
+        self._suppress_palette_during_recall = False
 
     def _record_and_submit(self) -> None:
         """Record the current (non-empty) text into the input history and post `Submitted`.
@@ -281,7 +429,11 @@ class PromptInput(TextArea):
         to the most recent entry, then to older ones; down-arrow from the most recent entry
         restores that stashed draft rather than clearing to empty. Recalling loads the entry's
         text verbatim and lands the cursor at its end so the user can append to it, matching the
-        common readline behavior of editing a recalled line from its tail.
+        common readline behavior of editing a recalled line from its tail. Loading a recalled
+        entry also sets `_suppress_palette_during_recall` so a recalled entry starting with `>`
+        (e.g. a previously-executed palette selection) is browsed as plain text rather than
+        resurfacing the `PromptPalette` popup; restoring the stashed draft clears it again,
+        since that's the user's own in-progress text rather than a recalled entry.
         """
         if not self._history:
             return False
@@ -300,10 +452,12 @@ class PromptInput(TextArea):
                 self._history_index += 1
             else:
                 self._history_index = None
+                self._suppress_palette_during_recall = False
                 self.text = self._draft
                 self.move_cursor(self._last_location())
                 return True
         entry = self._history[self._history_index]
+        self._suppress_palette_during_recall = True
         self.text = entry
         self.move_cursor(self._last_location())
         return True
@@ -387,6 +541,59 @@ class ToolCallStatic(Static):
     def set_detail_shown(self, show_detail: bool) -> None:
         """Update the rendered content to the detail view if `show_detail`, else the summary."""
         self.update(escape(self._detail_text if show_detail else self._summary_text))
+
+
+class PaletteHint(Static):
+    """Renders `PALETTE_HINT_TEXT` styled like one of `Footer`'s own key-binding chips (e.g.
+    `^q Quit`): the leading `>` in `$footer-key-foreground`/`-background` (bold, like a key),
+    ` palette` in `$footer-description-foreground`/`-background` — rather than plain
+    single-toned text — so it reads as one more binding in the status row instead of an
+    unrelated label. Uses its own component classes (`palette-hint--key`/`-description`)
+    rather than `Footer`'s private `footer-key--key`/`-description` ones: Textual resolves a
+    component class through CSS scoped to the declaring widget type, so borrowing `Footer`'s
+    directly wouldn't resolve on a different widget; declaring our own against the same
+    theme-level `$footer-*` variables gets the identical look without that coupling.
+    """
+
+    COMPONENT_CLASSES = {"palette-hint--key", "palette-hint--description"}
+
+    DEFAULT_CSS = """
+    PaletteHint {
+        width: auto;
+        height: 1;
+    }
+    PaletteHint .palette-hint--key {
+        color: $footer-key-foreground;
+        background: $footer-key-background;
+        text-style: bold;
+        padding: 0 1;
+    }
+    PaletteHint .palette-hint--description {
+        color: $footer-description-foreground;
+        background: $footer-description-background;
+        padding: 0 1 0 0;
+    }
+    """
+
+    def show_hint(self) -> None:
+        """Render `PALETTE_PREFIX` and `"palette"` in the two component styles above,
+        padded the same way `FooterKey.render()` pads its own key/description (reading the
+        padding from CSS rather than hardcoding spaces, so a theme override to that padding
+        is picked up here too).
+        """
+        key_style = self.get_component_rich_style("palette-hint--key")
+        key_padding = self.get_component_styles("palette-hint--key").padding
+        description_style = self.get_component_rich_style("palette-hint--description")
+        description_padding = self.get_component_styles("palette-hint--description").padding
+        self.update(Text.assemble(
+            (" " * key_padding.left + PALETTE_PREFIX + " " * key_padding.right, key_style),
+            (" " * description_padding.left + "palette" + " " * description_padding.right,
+             description_style),
+        ))
+
+    def hide_hint(self) -> None:
+        """Clear the rendered content, leaving nothing shown."""
+        self.update("")
 
 
 class ReplApp(App[None]):
@@ -501,9 +708,11 @@ class ReplApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id=HISTORY_ID)
+        yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         with Horizontal(id="status-row"):
-            yield Footer()
+            yield PaletteHint(id=PALETTE_HINT_ID)
+            yield Footer(show_command_palette=False)
             yield Static(id=STATUS_BAR_ID)
 
     def select_model(self, name: str) -> None:
@@ -588,20 +797,44 @@ class ReplApp(App[None]):
 
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, watch
-        the history's scroll position (see `_on_history_scroll_changed`), then submit any
-        initial message as the first turn.
+        the history's scroll position (see `_on_history_scroll_changed`), show the initial
+        `> palette` hint (the box starts empty), then submit any initial message as the first
+        turn.
         """
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
         input_widget.styles.max_height = self._process_config.prompt_input_max_lines + 1
         input_widget.focus()
         self._update_status_bar()
+        self._update_palette_hint()
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self.watch(history, "scroll_y", self._on_history_scroll_changed, init=False)
 
         if self._initial_message:
             self._submit_prompt(self._initial_message)
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Keep the `> palette` hint in sync with the prompt input's content, including edits
+        that don't go through a key event (e.g. `PromptInput._recall_history`'s `self.text =
+        ...` assignments).
+        """
+        self._update_palette_hint()
+
+    def _update_palette_hint(self) -> None:
+        """Show the `PaletteHint` only while the box is empty or holds just the leading `>`
+        (i.e. before any real query narrows it) — the statusbar analog of the `Footer`'s own
+        `^p` command-palette hint (suppressed via `Footer(show_command_palette=False)` in
+        `compose()`, since palette-from-prompt is now the primary way to reach the command
+        palette — see `docs/specs/command-palette-from-prompt.md`).
+        """
+        hint = self.query_one(f"#{PALETTE_HINT_ID}", PaletteHint)
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        text = prompt_input.text
+        if text in ("", PALETTE_PREFIX):
+            hint.show_hint()
+        else:
+            hint.hide_hint()
 
     def _on_history_scroll_changed(self) -> None:
         """Keep `_history_pinned_to_bottom` in sync with the history viewport's actual scroll
@@ -629,18 +862,19 @@ class ReplApp(App[None]):
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model, or
-        handle a slash command (currently only `/clear`) or a `!`-prefixed shell command
-        synchronously.
+        handle `:q`/`/quit`/`/exit` or a `!`-prefixed shell command synchronously.
+
+        `PromptInput._execute_palette_hit` handles a palette selection (e.g. `>Clear
+        session`) entirely on its own — invoking the hit's command directly rather than
+        posting `Submitted` — so a `>`-prefixed `prompt_text` reaching here is always one
+        that ruled out every palette option, dispatched as an ordinary prompt like any other
+        (see `docs/specs/command-palette-from-prompt.md`).
         """
         prompt_text = event.value.strip()
         if not prompt_text:
             return
 
         event.prompt_input.text = ""
-        if prompt_text == CLEAR_SESSION_COMMAND:
-            self.clear_session()
-            return
-
         if prompt_text in [":q", "/quit", "/exit"]:
             self.exit()
             return

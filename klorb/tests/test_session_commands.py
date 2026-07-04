@@ -20,7 +20,7 @@ async def test_discover_yields_clear_session_hit() -> None:
 
     hits = [hit async for hit in provider.discover()]
 
-    assert any(hit.text == "Clear session" and hit.help == "/clear" for hit in hits)
+    assert any(hit.text == "Clear session" for hit in hits)
 
 
 async def test_search_matches_label_query() -> None:
@@ -31,12 +31,16 @@ async def test_search_matches_label_query() -> None:
     assert any("Clear session" in str(hit.text) for hit in hits)
 
 
-async def test_search_matches_slash_command_query() -> None:
+async def test_search_does_not_match_slash_command_query() -> None:
+    """`/clear` is no longer a recognized alias — see `docs/specs/command-palette-from-prompt.md`
+    ("Converting legacy commands") — so searching for it shouldn't surface `Clear session`
+    (the `/` character doesn't appear in that label for the fuzzy matcher to find).
+    """
     provider = SessionCommandProvider(MagicMock())
 
     hits = [hit async for hit in provider.search("/clear")]
 
-    assert any("Clear session" in str(hit.text) for hit in hits)
+    assert hits == []
 
 
 async def test_search_does_not_match_unrelated_query() -> None:

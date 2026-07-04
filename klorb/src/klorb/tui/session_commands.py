@@ -9,7 +9,6 @@ from textual.command import Hit
 from textual.command import Hits
 from textual.command import Provider
 
-CLEAR_SESSION_COMMAND = "/clear"
 CLEAR_SESSION_LABEL = "Clear session"
 
 
@@ -21,18 +20,19 @@ class SupportsSessionClear(Protocol):
 
 
 class SessionCommandProvider(Provider):
-    """Offers session-management commands (currently just `/clear`) via the command palette."""
+    """Offers session-management commands (currently just clearing the active session) via
+    the command palette — reachable via `ctrl+p` or by typing `>clear` in the prompt (see
+    `docs/specs/command-palette-from-prompt.md`).
+    """
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        score = max(matcher.match(CLEAR_SESSION_LABEL), matcher.match(CLEAR_SESSION_COMMAND))
+        score = matcher.match(CLEAR_SESSION_LABEL)
         if score > 0:
-            yield Hit(
-                score, matcher.highlight(CLEAR_SESSION_LABEL), self._clear_session,
-                help=CLEAR_SESSION_COMMAND)
+            yield Hit(score, matcher.highlight(CLEAR_SESSION_LABEL), self._clear_session)
 
     async def discover(self) -> Hits:
-        yield DiscoveryHit(CLEAR_SESSION_LABEL, self._clear_session, help=CLEAR_SESSION_COMMAND)
+        yield DiscoveryHit(CLEAR_SESSION_LABEL, self._clear_session)
 
     def _clear_session(self) -> None:
         cast(SupportsSessionClear, self.app).clear_session()
