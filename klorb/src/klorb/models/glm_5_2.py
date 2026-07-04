@@ -1,18 +1,18 @@
 # © Copyright 2026 Aaron Kimball
-"""Model implementation for poolside/laguna-m.1:free, a free OpenRouter coding-agent model."""
+"""Model implementation for z-ai/glm-5.2, a free OpenRouter coding-agent model."""
 
 from typing import Any
 
 from klorb.models.model import Model
 
-LAGUNA_M1_MODEL_NAME = "poolside/laguna-m.1:free"
+GLM_5_2_MODEL_NAME = "z-ai/glm-5.2"
 
 
-class LagunaM1Model(Model):
-    """Describes poolside/laguna-m.1:free, Poolside's free coding-agent model on OpenRouter."""
+class Glm52Model(Model):
+    """Describes z-ai/glm-5.2, Z.ai's coding-agent model on OpenRouter."""
 
     def name(self) -> str:
-        return LAGUNA_M1_MODEL_NAME
+        return GLM_5_2_MODEL_NAME
 
     def settings(self) -> dict[str, Any]:
         return {"temperature": 0.2}

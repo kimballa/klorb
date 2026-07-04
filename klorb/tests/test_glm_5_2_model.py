@@ -1,20 +1,20 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.models.laguna_m1."""
+"""Tests for klorb.models.glm_5_2."""
 
 from pathlib import Path
 
 import pytest
 
-from klorb.models.laguna_m1 import LAGUNA_M1_MODEL_NAME
-from klorb.models.laguna_m1 import LagunaM1Model
+from klorb.models.glm_5_2 import GLM_5_2_MODEL_NAME
+from klorb.models.glm_5_2 import Glm52Model
 
 
 def test_name_matches_the_openrouter_model_slug() -> None:
-    assert LagunaM1Model().name() == LAGUNA_M1_MODEL_NAME == "poolside/laguna-m.1:free"
+    assert Glm52Model().name() == GLM_5_2_MODEL_NAME == "z-ai/glm-5.2"
 
 
 def test_mangled_name_is_filesystem_safe() -> None:
-    assert LagunaM1Model().mangled_name() == "poolside__laguna-m.1__free"
+    assert Glm52Model().mangled_name() == "z-ai__glm-5.2"
 
 
 def test_system_prompt_is_none_without_a_model_specific_prompt_file(
@@ -22,15 +22,15 @@ def test_system_prompt_is_none_without_a_model_specific_prompt_file(
 ) -> None:
     monkeypatch.setattr("klorb.system_prompts.KLORB_CONFIG_DIR", tmp_path)
 
-    assert LagunaM1Model().system_prompt() is None
+    assert Glm52Model().system_prompt() is None
 
 
 def test_settings_returns_a_dict() -> None:
-    assert isinstance(LagunaM1Model().settings(), dict)
+    assert isinstance(Glm52Model().settings(), dict)
 
 
 def test_capabilities_includes_standard_keys() -> None:
-    capabilities = LagunaM1Model().capabilities()
+    capabilities = Glm52Model().capabilities()
 
     assert capabilities["vision"] is False
     assert capabilities["thinking"] is True

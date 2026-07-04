@@ -44,8 +44,8 @@ instead of a bespoke picker widget.
 * `klorb.models.gpt_5_nano.Gpt5NanoModel` (`klorb/src/klorb/models/gpt_5_nano.py`) is the
   built-in `Model` for `openai/gpt-5-nano`, klorb's current default model
   (`klorb.openrouter.DEFAULT_MODEL`).
-* `klorb.models.laguna_m1.LagunaM1Model` (`klorb/src/klorb/models/laguna_m1.py`) is a
-  built-in `Model` for `poolside/laguna-m.1:free`, a free OpenRouter coding-agent model.
+* `klorb.models.glm_5_2.Glm52Model` (`klorb/src/klorb/models/glm_5_2.py`) is a
+  built-in `Model` for `z-ai/glm-5.2`, a free OpenRouter coding-agent model.
   `capabilities()` reports `thinking: True` with `thinking_budget_style: "effort"`,
   assumed rather than confirmed against OpenRouter's parameter schema for this model (its
   docs describe "tool calling and reasoning" support but don't spell out the request
