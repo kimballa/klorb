@@ -17,25 +17,27 @@ from klorb.tui.thinking_commands import ThinkingEffortScreen
 def test_commands_lists_disable_and_set_effort_when_thinking_enabled() -> None:
     mock_screen = MagicMock()
     mock_screen.app.get_thinking_enabled.return_value = True
+    mock_screen.app.get_thinking_effort.return_value = "high"
     provider = ThinkingCommandProvider(mock_screen)
 
     commands = provider._commands()
 
     assert "Enable thinking" not in commands
     assert "Disable thinking" in commands
-    assert "Set thinking effort" in commands
+    assert "Set thinking effort (High)" in commands
 
 
 def test_commands_lists_enable_and_set_effort_when_thinking_disabled() -> None:
     mock_screen = MagicMock()
     mock_screen.app.get_thinking_enabled.return_value = False
+    mock_screen.app.get_thinking_effort.return_value = "low"
     provider = ThinkingCommandProvider(mock_screen)
 
     commands = provider._commands()
 
     assert "Enable thinking" in commands
     assert "Disable thinking" not in commands
-    assert "Set thinking effort" in commands
+    assert "Set thinking effort (Low)" in commands
 
 
 def test_set_thinking_enabled_calls_app() -> None:
@@ -62,6 +64,7 @@ def test_show_thinking_effort_screen_pushes_modal_with_current_effort() -> None:
 async def test_discover_yields_a_hit_per_command() -> None:
     mock_screen = MagicMock()
     mock_screen.app.get_thinking_enabled.return_value = True
+    mock_screen.app.get_thinking_effort.return_value = "medium"
     provider = ThinkingCommandProvider(mock_screen)
 
     hits = [hit async for hit in provider.discover()]
@@ -69,11 +72,14 @@ async def test_discover_yields_a_hit_per_command() -> None:
     labels = {str(hit.text) for hit in hits}
     assert "Enable thinking" not in labels
     assert "Disable thinking" in labels
-    assert "Set thinking effort" in labels
+    assert "Set thinking effort (Medium)" in labels
 
 
 async def test_search_filters_by_query() -> None:
-    provider = ThinkingCommandProvider(MagicMock())
+    mock_screen = MagicMock()
+    mock_screen.app.get_thinking_enabled.return_value = True
+    mock_screen.app.get_thinking_effort.return_value = "high"
+    provider = ThinkingCommandProvider(mock_screen)
 
     hits = [hit async for hit in provider.search("effort")]
     no_hits = [hit async for hit in provider.search("not-a-real-command-xyz")]

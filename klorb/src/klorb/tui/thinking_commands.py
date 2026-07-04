@@ -114,9 +114,11 @@ class ThinkingCommandProvider(Provider):
         """
         thinking_enabled = cast(SupportsThinkingConfig, self.app).get_thinking_enabled()
         toggle_label = DISABLE_THINKING_LABEL if thinking_enabled else ENABLE_THINKING_LABEL
+        current_effort = cast(SupportsThinkingConfig, self.app).get_thinking_effort()
+        set_effort_label = f"{SET_THINKING_EFFORT_LABEL} ({current_effort.title()})"
         return {
             toggle_label: partial(self._set_thinking_enabled, not thinking_enabled),
-            SET_THINKING_EFFORT_LABEL: self._show_thinking_effort_screen,
+            set_effort_label: self._show_thinking_effort_screen,
         }
 
     def _set_thinking_enabled(self, enabled: bool) -> None:

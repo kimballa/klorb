@@ -84,7 +84,6 @@
   }
   ```
 
-* "Set Thinking Effort" palette option should say currently-selected value in parens: ("... Effort (High)")
 * send_one_shot should actually run a whole session (non-interactively) until it gets a 'finished'
   state rather than just sending a single msg turn for a single response.
 * Need a ProviderFactory

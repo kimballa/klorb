@@ -47,8 +47,9 @@ class EditFileTool(Tool):
             "file with new_text. start_text, end_text, new_text, context_before, and "
             "context_after are all raw file content: never include the 'N|' line-number "
             "prefix that ReadFile prepends to each line for display purposes. start_text "
-            "and end_text are the contents of the first and last lines to replace, and "
-            "must match the lines exactly. The associated line numbers are given in "
+            "and end_text are each one line of text: the contents of the first and last "
+            "lines to replace, and must match the first and last lines exactly, without "
+            "any trailing newline ('\\n'). The associated line numbers are given in "
             "start_line and end_line. start_line/end_line are only a location hint, not "
             "exact coordinates: some offset drift (e.g. from an earlier edit) is "
             "tolerated — if start_text/end_text don't match exactly at the hint but "
@@ -89,7 +90,7 @@ class EditFileTool(Tool):
                 "start_text": {
                     "type": "string",
                     "description": (
-                        "Expected current content of start_line, for drift verification."
+                        "Expected current single-line content of start_line, for drift verification."
                     ),
                 },
                 "end_text": {
