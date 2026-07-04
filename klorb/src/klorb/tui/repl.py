@@ -112,24 +112,6 @@ def _pinned_to_bottom(history: VerticalScroll) -> bool:
     return history.is_vertical_scroll_end
 
 
-def _move_to_end(history: VerticalScroll, *widgets: Widget) -> None:
-    """Reposition `widgets` — already mounted in `history`, given in the order they should
-    appear — to be its last children, preserving their relative order.
-
-    A response or thinking widget stays mounted (and gets updated in place) across an entire
-    turn, even when the model interleaves tool calls with its own streamed text/reasoning; each
-    tool-call widget mounts fresh, below wherever the response/thinking widget already sits.
-    Left alone, that leaves the still-drafting widget stuck above tool calls made after it
-    started, rather than reading as the newest thing in the conversation. Call this before
-    every update to such a widget so it's always repositioned to the true end first.
-    """
-    for widget in widgets:
-        last_child = history.children[-1]
-        if last_child is widget:
-            continue
-        history.move_child(widget, after=last_child)
-
-
 class PromptInput(TextArea):
     """A multi-line prompt box that soft-wraps long input and grows with it.
 
@@ -665,21 +647,42 @@ class ReplApp(App[None]):
         apply across blank-line-separated blocks, whereas Rich's `[italic]...[/italic]`
         console markup styles every line regardless).
 
+        A turn with tool calls is really a sequence of rounds under the hood (see
+        `Session._dispatch_turn`): each round streams its own thinking/response text, then, if
+        it ends in a tool-call request, `Session` dispatches those calls before starting the
+        next round's stream. `on_tool_call` fires once per finished call, in between two
+        rounds' streams, so seeing it is what marks a round boundary here — `round_index` is
+        bumped on every such call, and `handle_chunk`/`handle_thinking_chunk` compare it
+        against the round their current widget belongs to, starting a fresh widget rather than
+        appending to the previous round's whenever it's moved on. Without this, one round's
+        widget would keep absorbing every later round's text too, reading as a single
+        ever-growing block that swallows the tool calls mounted in between rather than as
+        separate, time-ordered blocks.
+
         If `cancel_event` is set (via Escape / `action_abort_response`) before the response
         finishes, `Session.send_turn()` raises `ResponseAborted`; the echoed prompt and any
         widgets already mounted for this turn's partial response/thinking/tool calls are left
         in place (`Session` keeps the same content in history, tagged `"aborted"` — see
         `_handle_aborted_response`) rather than torn down, and the input box is left empty for
-        the next message rather than repopulated with this one.
+        the next message rather than repopulated with this one. `response_widget`/
+        `thinking_widget` at that point necessarily belong to the round that was still
+        streaming when Escape fired, matching the single round's worth of content `Session`
+        keeps for it.
         """
         response_widget: Markdown | None = None
         accumulated = ""
+        response_round: int | None = None
         thinking_widget: Static | None = None
-        thinking_label_widget: Static | None = None
         thinking_accumulated = ""
+        thinking_round: int | None = None
+        round_index = 0
 
         def handle_chunk(delta_text: str) -> None:
-            nonlocal accumulated, response_widget
+            nonlocal accumulated, response_widget, response_round
+            if response_round != round_index:
+                response_widget = None
+                accumulated = ""
+                response_round = round_index
             accumulated += delta_text
             if response_widget is None:
                 response_widget = self.call_from_thread(self._mount_response_widget, accumulated)
@@ -687,19 +690,24 @@ class ReplApp(App[None]):
                 self.call_from_thread(self._update_response_widget, response_widget, accumulated)
 
         def handle_thinking_chunk(delta_text: str) -> None:
-            nonlocal thinking_accumulated, thinking_widget, thinking_label_widget
+            nonlocal thinking_accumulated, thinking_widget, thinking_round
+            if thinking_round != round_index:
+                thinking_widget = None
+                thinking_accumulated = ""
+                thinking_round = round_index
             thinking_accumulated += delta_text
             if thinking_widget is None:
-                thinking_widget, thinking_label_widget = self.call_from_thread(
+                thinking_widget, _ = self.call_from_thread(
                     self._mount_thinking_widget, thinking_accumulated)
             else:
                 self.call_from_thread(
-                    self._update_thinking_widget, thinking_label_widget, thinking_widget,
-                    _italicized(thinking_accumulated))
+                    self._update_thinking_widget, thinking_widget, _italicized(thinking_accumulated))
 
         def handle_tool_call(event: ToolCallEvent) -> None:
+            nonlocal round_index
             summary_text, detail_text = self._render_tool_call(event)
             self.call_from_thread(self._mount_tool_call_widget, summary_text, detail_text)
+            round_index += 1
 
         try:
             response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
@@ -728,18 +736,16 @@ class ReplApp(App[None]):
         return widget
 
     def _update_response_widget(self, widget: Markdown, text: str) -> None:
-        """Update a streaming response `Markdown` widget with the latest accumulated `text`.
-
-        Repositions `widget` to the end of the history first (see `_move_to_end`) — a tool call
-        made partway through drafting a response mounts below it, and without this it would
-        stay stuck above that tool call for the rest of the turn instead of reading as the
-        newest content — then follows the view to the bottom only if it was already pinned
-        there before this change (see `_history_pinned_to_bottom`), so a user who's scrolled up
-        to reread earlier output isn't yanked back down by every incoming chunk.
+        """Update a streaming response `Markdown` widget with the latest accumulated `text`,
+        following the view to the bottom only if it was already pinned there before this change
+        (see `_history_pinned_to_bottom`), so a user who's scrolled up to reread earlier output
+        isn't yanked back down by every incoming chunk. `widget` is always still the last thing
+        mounted in the history at this point: `_send_prompt` starts a fresh widget rather than
+        reusing this one once a round boundary (a tool call) has passed, so there's nothing
+        mounted after it left to get stuck behind.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
-        _move_to_end(history, widget)
         widget.update(text)
         self._scroll_if_pinned(history, was_pinned)
 
@@ -756,20 +762,14 @@ class ReplApp(App[None]):
         self._scroll_if_pinned(history, was_pinned)
         return widget, label_widget
 
-    def _update_thinking_widget(self, label_widget: Static, widget: Static, italicized_text: str) -> None:
+    def _update_thinking_widget(self, widget: Static, italicized_text: str) -> None:
         """Update a streaming `<Thinking>` `Static` widget with `italicized_text` (already run
-        through `_italicized`).
-
-        Repositions the `label_widget`/`widget` pair to the end of the history first (see
-        `_move_to_end`), for the same reason `_update_response_widget` does — a tool call made
-        partway through a thinking block mounts below it, and the block would otherwise stay
-        stuck above that tool call for the rest of the turn — then follows the view to the
-        bottom only if it was already pinned there before this change (see
-        `_update_response_widget`).
+        through `_italicized`), following the view to the bottom only if it was already pinned
+        there before this change (see `_update_response_widget`) — the label mounted alongside
+        `widget` never changes after being set, so only the body needs updating here.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
-        _move_to_end(history, label_widget, widget)
         widget.update(italicized_text)
         self._scroll_if_pinned(history, was_pinned)
 

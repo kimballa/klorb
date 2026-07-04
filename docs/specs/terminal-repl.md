@@ -157,6 +157,24 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   instance's own mutable copy of the merged class-level `BINDINGS`) and calling
   `refresh_bindings()`, since a `Binding`'s description is otherwise fixed at `BINDINGS`
   class-definition time.
+* A turn with tool calls is really a sequence of rounds under the hood (see
+  [[session-and-turns]]'s `Session._dispatch_turn`): each round streams its own
+  thinking/response text, then, if it ends in a tool-call request, `Session` dispatches those
+  calls before starting the next round's stream. `_send_prompt` tracks this with a
+  `round_index` counter, bumped every time `on_tool_call` fires (the signal that a round
+  boundary has passed, since dispatch only happens between two rounds' streams, never mid-
+  stream); `handle_chunk`/`handle_thinking_chunk` compare the round their current
+  response/thinking widget belongs to against `round_index` and start a fresh widget rather
+  than appending to the previous round's whenever it's moved on. Each round's thinking and
+  response therefore render as their own blocks, in the order they actually happened, with
+  that round's tool-call widgets sitting between one round's blocks and the next's — rather
+  than one widget absorbing every round's text into a single ever-growing block that reads as
+  older than the tool calls mounted after it started (see
+  [the per-round-block ADR](../adrs/render-each-tool-call-rounds-thinking-and-response-as-its-own-block.md)).
+  An aborted turn's
+  `response_widget`/`thinking_widget` (see the Escape bullet above) are therefore always the
+  ones belonging to the round that was still streaming when Escape fired, matching the single
+  round's worth of content `Session` keeps for it.
 * Each new block in the history — a submitted prompt (`.prompt`), a `<Thinking>` label
   (`.thinking-label`), a `<Tool use>` label (`.tool-call-label`), and a model response
   (`.response`, applied to the `Markdown` widget in both `_mount_response_widget` and

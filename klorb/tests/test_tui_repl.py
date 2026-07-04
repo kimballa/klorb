@@ -654,6 +654,52 @@ async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
     assert len(app._tool_call_widgets) == 1
 
 
+async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() -> None:
+    mock_provider = MagicMock()
+    calls_made = 0
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        nonlocal calls_made
+        calls_made += 1
+        if calls_made == 1:
+            on_thinking_chunk("Round one thinking.")
+            on_chunk("Round one reply.")
+            return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+        on_thinking_chunk("Round two thinking.")
+        on_chunk("Round two reply.")
+        return _reply("Round two reply.")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        thinking_bodies = list(history.query(".thinking-body").results(Static))
+        response_widgets = list(history.query(Markdown))
+
+        # Each round gets its own thinking/response widgets, rather than one growing block
+        # absorbing both rounds' text across the tool call in between.
+        assert [w.content for w in thinking_bodies] == [
+            "[italic]Round one thinking.[/italic]", "[italic]Round two thinking.[/italic]"]
+        assert [w.source for w in response_widgets] == ["Round one reply.", "Round two reply."]
+
+        # The tool call sits between the two rounds' blocks in the transcript, matching the
+        # actual time-order: round one drafts, then the tool call runs, then round two drafts.
+        children = list(history.children)
+        tool_call_index = children.index(history.query_one(ToolCallStatic))
+        assert children.index(response_widgets[0]) < tool_call_index < children.index(response_widgets[1])
+
+
 # --- shell commands ("!"-prefixed) ---
 
 
