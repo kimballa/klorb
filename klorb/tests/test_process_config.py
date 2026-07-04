@@ -14,6 +14,7 @@ from klorb.permissions.directory_access import DirectoryAccessTable
 from klorb.process_config import DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
 from klorb.process_config import DEFAULT_PROMPT_INPUT_MAX_LINES
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
+from klorb.process_config import DEFAULT_SHELL_COMMAND
 from klorb.process_config import PROCESS_KEY_MAP
 from klorb.process_config import SESSION_KEY_MAP
 from klorb.process_config import load_process_config
@@ -53,6 +54,8 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
     assert process_config.edit_file_drift_search_radius == DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     assert process_config.openrouter_base_url == OPENROUTER_BASE_URL
+    assert process_config.shell_command == DEFAULT_SHELL_COMMAND
+    assert process_config.shell_timeout_seconds is None
     assert process_config.is_workspace_trusted is False
 
 
@@ -74,6 +77,8 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
             "tools.readFile.maxLines": 500,
             "tools.editFile.driftSearchRadius": 5,
             "providers.openrouter.baseUrl": "https://gateway.example.com/v1",
+            "shell.command": "/bin/zsh",
+            "shell.timeout": 30,
         },
     )
 
@@ -83,6 +88,8 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.read_file_max_lines == 500
     assert process_config.edit_file_drift_search_radius == 5
     assert process_config.openrouter_base_url == "https://gateway.example.com/v1"
+    assert process_config.shell_command == "/bin/zsh"
+    assert process_config.shell_timeout_seconds == 30
 
 
 def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:

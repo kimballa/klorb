@@ -47,6 +47,12 @@ DEFAULT_PROMPT_INPUT_MAX_LINES = 12
 """Default max soft-wrapped-line height for the REPL's prompt textarea before it scrolls
 instead of growing further; see `ProcessConfig.prompt_input_max_lines`."""
 
+DEFAULT_SHELL_COMMAND = "/bin/bash"
+"""Default shell binary a `!`-prefixed REPL command is run through; see
+`ProcessConfig.shell_command`. The sole canonical source of this value — `klorb.tui.shell`'s
+`UserShellCommand` takes `shell_path` as a required constructor argument rather than
+defaulting it itself, so this string isn't duplicated across the two modules."""
+
 SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
@@ -71,6 +77,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.readFile.maxLines": "read_file_max_lines",
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "providers.openrouter.baseUrl": "openrouter_base_url",
+    "shell.command": "shell_command",
+    "shell.timeout": "shell_timeout_seconds",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
 process-only `ProcessConfig` attribute it sets. `is_workspace_trusted` is deliberately absent:
@@ -99,6 +107,12 @@ class ProcessConfig(BaseModel):
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
     edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     openrouter_base_url: str = OPENROUTER_BASE_URL
+    shell_command: str = DEFAULT_SHELL_COMMAND
+    """Shell binary a `!`-prefixed REPL command is run through, e.g. `/bin/bash` or `/bin/zsh`
+    — see `klorb.tui.shell.UserShellCommand`."""
+    shell_timeout_seconds: float | None = None
+    """Maximum wall-clock seconds a `!`-prefixed REPL command may run before it's killed.
+    `None` (the default) means no timeout is enforced."""
     is_workspace_trusted: bool = False
     """Whether `ReadFile` may use `readDirs`/`writeDirs`-table-only confinement (able to reach
     outside `workspace_root`) instead of the same hard workspace-root boundary the write tools

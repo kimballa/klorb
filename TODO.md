@@ -11,17 +11,6 @@
 
 # Feature backlog
 
-* local shell with '!'
-  * Use of /bin/bash for shell should be a process config var `shell.command`
-  * This should run in another thread and we should be updating the history/output block as more
-    data comes to the pipe. Slow commands should show output incrementally.
-  * Should also have `shell.timeout` (in seconds). Terminate the thread/process if it's exceeeded.
-  * Should also capture ^C when a shell command is running and terminate the command if pressed.
-  * A given Session can only have one UserShellCommand thread running at a time. Don't overlap
-    their responses.
-    
-
-
 * project bootstrapping
   * when you start klorb it attempts to identify the workspace root.
   * if it can't find one, then the cwd is the workspace.

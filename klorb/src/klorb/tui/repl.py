@@ -40,6 +40,8 @@ from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
 from klorb.tui.session_commands import SessionCommandProvider
+from klorb.tui.shell import ShellCommandCancelled
+from klorb.tui.shell import ShellCommandTimedOut
 from klorb.tui.shell import UserShellCommand
 from klorb.tui.thinking_commands import ThinkingCommandProvider
 
@@ -253,7 +255,7 @@ class ReplApp(App[None]):
     """
 
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+c", "interrupt", "Quit"),
         ("ctrl+q", "quit", "Quit"),
         ("escape", "abort_response", "Abort"),
     ]
@@ -281,6 +283,7 @@ class ReplApp(App[None]):
         self._cancel_event: threading.Event | None = None
         self._pending_prompt_text: str | None = None
         self._pending_prompt_widget: Static | None = None
+        self._shell_cancel_event: threading.Event | None = None
         self.title = "klorb"
         self.sub_title = self._session.config.model
 
@@ -340,6 +343,18 @@ class ReplApp(App[None]):
         if self._cancel_event is not None:
             self._cancel_event.set()
 
+    def action_interrupt(self) -> None:
+        """Ctrl+C: if a `!`-prefixed shell command is currently running, terminate it instead
+        of quitting — mirroring a terminal's own Ctrl+C, which interrupts the foreground job
+        rather than closing the shell. With no shell command in flight, falls through to the
+        ordinary quit behavior (matching `action_quit`, which Ctrl+C used to be bound to
+        directly).
+        """
+        if self._shell_cancel_event is not None:
+            self._shell_cancel_event.set()
+        else:
+            self.exit()
+
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, then
         submit any initial message as the first turn.
@@ -379,49 +394,97 @@ class ReplApp(App[None]):
             return
 
         if prompt_text.startswith("!") and "\n" not in prompt_text and "\r" not in prompt_text:
-            self._run_shell_command(prompt_text[1:].lstrip())
+            self._submit_shell_command(prompt_text[1:].lstrip())
             return
 
         self._submit_prompt(prompt_text)
 
-    def _run_shell_command(self, command: str) -> None:
-        """Run `command` via `UserShellCommand` and append its combined stdout/stderr to the
-        history. Runs synchronously on the app's own thread (this is called directly from the
-        `on_prompt_input_submitted` message handler, not a worker thread), so displaying the
-        result calls `_show_response`/`_show_error` directly rather than via `call_from_thread`
-        — that hop is only needed to get back onto the app thread from a worker thread, e.g. in
-        `_send_prompt` below.
+    def _submit_shell_command(self, command: str) -> None:
+        """Echo `!command` into the history, disable the input, and dispatch it to a worker
+        thread (`_run_shell_command`) so a slow command can't block the UI. Only one shell
+        command can be in flight at a time for this REPL: the input box stays disabled for the
+        duration, exactly as it does for a model turn in `_submit_prompt`, so a user can't
+        start a second one while the first is still running.
         """
+        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        input_widget.disabled = True
+
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(f"!{command}", classes="prompt"))
+        history.scroll_end(animate=False)
 
-        stdout, stderr, rc = UserShellCommand(command).run()
-        response_text = stdout
-        if stderr:
-            if response_text:
-                response_text += "\n"
-            response_text += stderr
+        self._shell_cancel_event = threading.Event()
+        self.refresh_bindings()
+        self._run_shell_command(command, self._shell_cancel_event)
 
-        if response_text:
-            self._show_shell_output(response_text)
-        if rc == 0:
-            self._show_response("<Shell returned exit code 0.>")
+    @work(thread=True)
+    def _run_shell_command(self, command: str, cancel_event: threading.Event) -> None:
+        """Run `command` via `UserShellCommand` on a worker thread, streaming its combined
+        stdout/stderr into the history as it arrives (mirroring `_send_prompt`'s progressive
+        rendering of a streamed model response). `output_lock` serializes the stdout and
+        stderr pump threads `UserShellCommand.run()` spawns internally — both call back into
+        `handle_output` concurrently, and without a lock two racing calls could each mount
+        their own output widget, or one line could clobber another's addition to `accumulated`.
+
+        The shell binary and timeout come from `ProcessConfig` (`shell_command`,
+        `shell_timeout_seconds`); a timeout or a Ctrl+C interrupt (`action_interrupt`, which
+        sets `cancel_event`) both kill the process and are reported as an error in the history
+        rather than raised, matching how a failed/aborted model turn is displayed.
+        """
+        output_widget: Static | None = None
+        accumulated = ""
+        output_lock = threading.Lock()
+
+        def handle_output(delta_text: str) -> None:
+            nonlocal accumulated, output_widget
+            with output_lock:
+                accumulated += delta_text
+                if output_widget is None:
+                    output_widget = self.call_from_thread(self._mount_shell_output_widget, accumulated)
+                else:
+                    self.call_from_thread(output_widget.update, escape(accumulated))
+
+        error_message: str | None = None
+        try:
+            _, _, rc = UserShellCommand(command, shell_path=self._process_config.shell_command).run(
+                on_stdout=handle_output, on_stderr=handle_output,
+                timeout=self._process_config.shell_timeout_seconds, cancel_event=cancel_event)
+        except ShellCommandTimedOut:
+            timeout = self._process_config.shell_timeout_seconds
+            error_message = f"Shell command timed out after {timeout:g}s; killed."
+        except ShellCommandCancelled:
+            error_message = "Shell command interrupted."
         else:
-            self._show_error(f"<Shell returned exit code {rc}.>")
+            if rc != 0:
+                error_message = f"Shell command exited with status {rc}."
 
-    def _show_shell_output(self, output_text: str) -> None:
-        """Append raw shell command output to the history and re-enable the input box.
+        self.call_from_thread(self._finish_shell_command, error_message)
 
-        Uses `Static` rather than the `Markdown` widget `_show_response` mounts for model
-        replies: shell output is plain text, not markdown, and `Markdown`'s CommonMark
-        rendering collapses a single newline within a paragraph into a soft line break (a
-        space), which mangles multi-line command output. `Static` renders text verbatim,
-        preserving every newline. `output_text` is escaped so literal `[`/`]` in the output
-        (e.g. `[INFO]` log tags) can't be misread as Rich console markup.
+    def _mount_shell_output_widget(self, initial_text: str) -> Static:
+        """Mount a new `Static` widget for a streaming shell command's output and return it.
+
+        Uses `Static` rather than the `Markdown` widget `_mount_response_widget` mounts for a
+        streaming model reply: shell output is plain text, not markdown, and `Markdown`'s
+        CommonMark rendering collapses a single newline within a paragraph into a soft line
+        break (a space), which mangles multi-line command output. `Static` renders text
+        verbatim, preserving every newline. `initial_text` is escaped so literal `[`/`]` in the
+        output (e.g. `[INFO]` log tags) can't be misread as Rich console markup.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(escape(output_text)))
-        self._finish_turn(history)
+        widget = Static(escape(initial_text))
+        history.mount(widget)
+        history.scroll_end(animate=False)
+        return widget
+
+    def _finish_shell_command(self, error_message: str | None) -> None:
+        """Show `error_message` (if any) in the history, then finish the shell command's
+        "turn" exactly like a model turn (`_finish_turn`): scroll to the end, refresh the
+        token tally, and re-enable/refocus the input box.
+        """
+        if error_message is not None:
+            self._show_error(error_message)
+        else:
+            self._finish_turn(self.query_one(f"#{HISTORY_ID}", VerticalScroll))
 
     def clear_session(self) -> None:
         """Replace the active Session with a fresh one (new id, config reset to the current
@@ -632,9 +695,11 @@ class ReplApp(App[None]):
 
     def _finish_turn(self, history: VerticalScroll) -> None:
         """Scroll the history into view, refresh the token tally, and hand focus back to the
-        input box. Also clears the in-flight turn's cancel event and pending-prompt tracking,
-        since Escape has nothing left to abort once a turn is done (successfully, in error, or
-        aborted).
+        input box. Also clears the in-flight turn's cancel event and pending-prompt tracking
+        (model turn) and the shell command's cancel event (`_run_shell_command`), since neither
+        Escape nor Ctrl+C has anything left to abort/interrupt once a turn is done
+        (successfully, in error, or aborted) — shared by both a model turn and a shell command,
+        since only one of the two is ever in flight at a time.
         """
         history.scroll_end(animate=False)
         self._update_status_bar()
@@ -644,6 +709,7 @@ class ReplApp(App[None]):
         self._cancel_event = None
         self._pending_prompt_text = None
         self._pending_prompt_widget = None
+        self._shell_cancel_event = None
         self.refresh_bindings()
 
 

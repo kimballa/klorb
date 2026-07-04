@@ -443,6 +443,146 @@ async def test_tool_call_limit_modal_no_shows_error() -> None:
         assert "0 tool call" in str(error_widget.render())
 
 
+# --- shell commands ("!"-prefixed) ---
+
+
+async def test_shell_command_echoes_and_shows_output() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "!echo hello"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        widgets = list(history.query(Static))
+        assert widgets[0].content == "!echo hello"
+        assert widgets[1].content == "hello\n"
+        assert prompt_input.disabled is False
+        assert prompt_input.text == ""
+
+    mock_provider.send_prompt.assert_not_called()
+
+
+async def test_shell_command_preserves_newlines_across_multiple_lines() -> None:
+    """Regression test: shell output used to be rendered via a `Markdown` widget, whose
+    CommonMark rendering collapses a single newline inside a paragraph into a soft line
+    break (a space). Shell output isn't markdown, so its newlines must survive verbatim.
+    """
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "!printf 'a\\nb\\nc\\n'"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        output_widget = list(history.query(Static))[1]
+        assert output_widget.content == "a\nb\nc\n"
+
+
+async def test_shell_command_exit_code_shown_as_error() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "!exit 7"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        error_widget = history.query_one(".error", Static)
+        assert "status 7" in str(error_widget.content)
+        assert prompt_input.disabled is False
+
+
+async def test_shell_command_uses_configured_shell_binary() -> None:
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(shell_command="/no/such/shell")
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "!echo hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        output_widget = list(history.query(Static))[1]
+        assert "/no/such/shell not found" in str(output_widget.content)
+
+
+async def test_shell_command_timeout_kills_it_and_shows_an_error() -> None:
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(shell_timeout_seconds=0.2)
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "!sleep 5"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        error_widget = history.query_one(".error", Static)
+        assert "timed out" in str(error_widget.content)
+        assert prompt_input.disabled is False
+
+
+async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(tmp_path: Path) -> None:
+    """A running shell command disables the input box (enforcing "only one at a time"), and
+    Ctrl+C — which otherwise quits the app — kills the in-flight shell command instead.
+    """
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+    marker = tmp_path / "started"
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = f"!touch {marker}; sleep 5"
+        await pilot.press("enter")
+
+        while not marker.exists():
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        assert prompt_input.disabled is True
+        assert app._shell_cancel_event is not None
+
+        await pilot.press("ctrl+c")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        error_widget = history.query_one(".error", Static)
+        assert "interrupted" in str(error_widget.content)
+        assert prompt_input.disabled is False
+        assert app._shell_cancel_event is None  # type: ignore[unreachable]
+        assert app.is_running
+
+
+async def test_ctrl_c_quits_when_no_shell_command_is_running() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        app.exit.assert_called_once()
+
+
 def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tuple[str, str, str]:
     return id_, "ask_permission", json.dumps({"path": str(path), "is_write": is_write})
 

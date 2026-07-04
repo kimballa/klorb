@@ -54,5 +54,7 @@
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
   "tools.editFile.driftSearchRadius": 20,
-  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
+  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
+  "shell.command": "/bin/bash",
+  "shell.timeout": null
 }

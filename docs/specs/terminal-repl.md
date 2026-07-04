@@ -157,9 +157,37 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   session id (relying on `configure_logging`'s `force=True` behavior to safely repoint the
   root logger's file handler mid-process). See
   [[clear-command-starts-a-new-session-and-log-file]].
-* `Ctrl+C` and `Ctrl+Q` quit the REPL. `Ctrl+P` opens Textual's command palette, which
-  includes `ModelCommandProvider` for switching the active model — see
-  [[model-framework]]. Selecting a model updates `Session.config.model` directly.
+* Typing a line starting with `!` and pressing enter runs the rest of the line as a shell
+  command instead of submitting a prompt — e.g. `!ls -la`. `ReplApp._submit_shell_command()`
+  echoes `!command` into the history (styled like a submitted prompt) and disables the input
+  box, then dispatches to `_run_shell_command`, a `@work(thread=True)` worker that mirrors
+  `_send_prompt`'s streaming pattern: `klorb.tui.shell.UserShellCommand.run()` runs `command`
+  via `ProcessConfig.shell_command -- --login -c command` (default `/bin/bash`; the shell
+  binary path is a process-only, `klorb-config.json`-configurable setting — see
+  [[process-and-session-config]]), pumping its stdout and stderr on their own background
+  threads and calling back into a shared `handle_output` (guarded by a lock, since both pump
+  threads call it concurrently) once per line as it arrives. The first line mounts a `Static`
+  widget (not `Markdown`: shell output is plain text, and `Markdown`'s CommonMark rendering
+  collapses a single newline inside a paragraph into a soft line break, mangling multi-line
+  output); later lines `.update()` the same widget with the growing accumulated text, escaped
+  via `rich.markup.escape` so literal `[`/`]` in the output (e.g. `[INFO]` log tags) can't be
+  misread as Rich console markup. Only one shell command can be in flight at a time for a
+  given REPL: the input box stays disabled for the duration, exactly as it does for a model
+  turn, so a second `!command` can't be submitted while the first is still running.
+  `ProcessConfig.shell_timeout_seconds` (`shell.timeout` on disk, default `None` — no limit)
+  bounds how long a command may run before `UserShellCommand.run()` kills it and raises
+  `ShellCommandTimedOut`; either that or a nonzero exit status is shown as an `.error`-styled
+  `Static` in the history (mirroring `_show_error` for a failed model turn) once the command
+  finishes.
+* Pressing Ctrl+C while a shell command is running interrupts it instead of quitting:
+  `ReplApp.action_interrupt()` (bound to `ctrl+c` in place of Textual's default `quit` action)
+  sets the shell command's `threading.Event` if one is in flight — `UserShellCommand.run()`
+  notices, kills the process, and raises `ShellCommandCancelled`, which is shown the same way
+  a timeout is — and otherwise falls through to quitting the app, so Ctrl+C with no shell
+  command running behaves exactly as it did before.
+* `Ctrl+C` (when no shell command is running) and `Ctrl+Q` quit the REPL. `Ctrl+P` opens
+  Textual's command palette, which includes `ModelCommandProvider` for switching the active
+  model — see [[model-framework]]. Selecting a model updates `Session.config.model` directly.
 * `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `-m`/`--message` flag
   optional (default `None`) and adds an `--interactive`/`--no-interactive` flag (see
   [[session-and-turns]] for its defaulting rules). `klorb.cli.main()` builds a `Session`
@@ -178,7 +206,8 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
 
 ## Out of scope
 
-* `/clear` is the only slash command implemented. Input history (up-arrow to recall a
+* `/clear` and `:q`/`/quit`/`/exit` are the only recognized non-prompt input, alongside the
+  `!`-prefixed shell command mechanism described above. Input history (up-arrow to recall a
   previous prompt) is not implemented yet.
 * Tool call activity itself isn't rendered in the visible history — no bubble shows "called
   ReadFile(...)" or its result mid-turn; the user sees only the eventually-final response (or
@@ -187,3 +216,8 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
   own unescaped `*` could render with unbalanced/unintended emphasis. Accepted as a v1
   limitation, consistent with the response `Markdown` widget's existing unescaped handling
   of arbitrary model output.
+* A `!`-prefixed command can only span one line: `on_prompt_input_submitted` only treats input
+  starting with `!` as a shell command when it contains no embedded newline, so a multi-line
+  shell command isn't supported (nor is escaping a literal leading `!` in an ordinary prompt).
+* stdout/stderr are interleaved into one output block in arrival order, with no visual
+  distinction between the two streams (unlike, say, a red-highlighted stderr).

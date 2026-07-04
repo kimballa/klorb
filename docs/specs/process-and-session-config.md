@@ -15,7 +15,7 @@ or slicing a superset.
 ## How it works
 
 * `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus
-  five process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
+  seven process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
   prompt textarea's max grow height, applied via `input_widget.styles.max_height` in
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
@@ -23,9 +23,12 @@ or slicing a superset.
   (int, default `DEFAULT_READ_FILE_MAX_LINES`, `200` — `ReadFileTool`'s per-call page size;
   see "Out of scope" below), `openrouter_base_url` (str, default
   `openrouter.OPENROUTER_BASE_URL` — passed to `OpenRouterApiProvider(base_url=...)`, for
-  pointing at a self-hosted or corporate OpenRouter-compatible gateway), and
-  `is_workspace_trusted` (bool, default `False` — governs whether `ReadFile` gets a hard
-  workspace-root boundary or table-only confinement; see docs/specs/permissions.md.
+  pointing at a self-hosted or corporate OpenRouter-compatible gateway), `shell_command` (str,
+  default `DEFAULT_SHELL_COMMAND`, `/bin/bash` — the shell binary a `!`-prefixed REPL command
+  is run through; see [[terminal-repl]]), `shell_timeout_seconds` (`float | None`, default
+  `None` — how long a `!`-prefixed REPL command may run before it's killed; `None` means no
+  timeout), and `is_workspace_trusted` (bool, default `False` — governs whether `ReadFile` gets
+  a hard workspace-root boundary or table-only confinement; see docs/specs/permissions.md.
   Deliberately has **no** on-disk key at all — a project must never be able to grant itself
   trust via its own config file).
 
@@ -143,7 +146,9 @@ sit as flat keys alongside it at the top level:
   "thinking.tokenBudgets": {"low": 4096, "medium": 16384, "high": 32768},
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
-  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1"
+  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
+  "shell.command": "/bin/bash",
+  "shell.timeout": null
 }
 ```
 
@@ -189,7 +194,7 @@ field. A reference file with every recognized key at its current default lives a
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`,
-  `providers.openrouter.baseUrl`) can be set at the top level.
+  `providers.openrouter.baseUrl`, `shell.command`, `shell.timeout`) can be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`
