@@ -17,6 +17,12 @@
 * When you select a model, it should update the workspace's `sessionDefaults > model` config file 
   setting so it remembers next time.
 
+* PLAN 001: `klorb init` bootstrap command
+* PLAN 002 (READY): palette access from prompt.
+  * command palette use from the prompt text with `>`
+  * The /command syntax should be reserved for skills. Conflating skills with in-system
+    commands does obnoxious things to the namespace for both.
+
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
@@ -38,13 +44,6 @@
     the internet and unzip a tarball with a /.klorb/ in it). so trust needs to be tracked in
     ~/.share/klorb/ or ~/.config/klorb/ or something external to the workspace itself.
     ("Trust" is its own whole thing that will need a dedicated plan, basically.)
-
-* Plan 001: `klorb init` bootstrap command
-
-* command palette use from the prompt text with `>`
-  * The /command syntax should be reserved for skills. Conflating skills with in-system
-    commands does obnoxious things to the namespace for both.
-
 
 * Add a command (CLI and/or command palette) that dumps the *resolved* system prompt for the
   current role + model into the user's editable tree

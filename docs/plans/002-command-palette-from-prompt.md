@@ -41,6 +41,15 @@ When up/down browsing thru history, do not immedpately resurface the palette cho
 
 ### "standard" vs "displayed" palette option names
 
+Some palette commands have been modified with a "Dynamic" name that includes information about the current
+setting of the command. e.g. "set effort level (high)" is a displayed name whereas the "set effort level"
+root is the standard name. We should only trap the "root name" / "standard name" for the command in
+such cases, as modifying the setting by using the palette cmd would immediately make recall of that same
+string (e.g. with `(High)` at the end) not find the setting in question.
+
+_That said_, for palette options that represent toggles ("Enable Foo" / "Disable Foo") and
+dynamically show one or the other, we should actually just record whatever it was the user enacted.
+i.e. if the user selects `>Disable Foo`, then we write `>Disable Foo` into the command history.
 
 ## UI changes
 
