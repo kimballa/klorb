@@ -11,7 +11,10 @@ MessageRole = Literal["system", "user", "assistant", "thinking", "tool_defs", "t
 field, itself named for the chat API's wire-format `"role"` key) rather than `Role`, which
 is `klorb.role.Role` — the operating role a session's *agent* performs."""
 
-ProcessingState = Literal["pending", "error", "started_receipt", "complete"]
+ProcessingState = Literal["pending", "error", "started_receipt", "complete", "aborted"]
+"""`"aborted"` marks a message the user interrupted mid-stream (via Escape): unlike
+`"error"`, nothing went wrong — the message simply stopped short of a finished reply, and
+whatever `content` it has is exactly what streamed in before the interruption."""
 
 
 class ToolCallRequest(BaseModel):

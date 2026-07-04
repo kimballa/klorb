@@ -14,6 +14,7 @@ import fixtures.sample_tools as sample_tools_package
 import pytest
 
 from klorb.api_provider import ProviderResponse
+from klorb.api_provider import ResponseAborted
 from klorb.message import Message
 from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
@@ -589,6 +590,83 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     assert thinking_message.processing_state == "error"
     assert thinking_message.last_error == "boom"
     assert thinking_message.streaming_content == ["partial thought"]
+
+
+def test_abort_before_any_chunk_marks_user_message_aborted_not_removed() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = ResponseAborted()
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    with pytest.raises(ResponseAborted):
+        session.send_turn("hi")
+
+    _system_message, user_message = session.messages
+    assert user_message.processing_state == "aborted"
+    assert user_message.last_error is None
+    assert user_message.num_tokens == 0
+
+
+def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None:
+    mock_provider = MagicMock()
+
+    def aborting_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        on_thinking_chunk("thinking out loud")
+        on_chunk("partial rep")
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = aborting_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    with pytest.raises(ResponseAborted):
+        session.send_turn("hi")
+
+    _system_message, user_message, thinking_message, assistant_message = session.messages
+    assert user_message.processing_state == "aborted"
+    assert thinking_message.processing_state == "aborted"
+    assert thinking_message.content == "thinking out loud"
+    assert thinking_message.streaming_content is None
+    assert assistant_message.processing_state == "aborted"
+    assert assistant_message.content == "partial rep"
+    assert assistant_message.streaming_content is None
+
+
+def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() -> None:
+    mock_provider = MagicMock()
+    calls_made = 0
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
+        on_thinking_chunk=None, cancel_event=None,
+    ):
+        nonlocal calls_made
+        calls_made += 1
+        if calls_made == 1:
+            return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    with pytest.raises(ResponseAborted):
+        session.send_turn("please echo")
+
+    roles = [m.role for m in session.messages]
+    assert roles == ["system", "tool_defs", "user", "tool_use", "tool_response"]
+    tool_use_message = session.messages[3]
+    assert tool_use_message.tool_calls == [
+        ToolCallRequest(id="call_1", name="echo", arguments='{"message": "hi"}')]
+    tool_response_message = session.messages[4]
+    assert tool_response_message.content == "hi"
+    user_message = session.messages[2]
+    assert user_message.processing_state == "aborted"
+    # The completed round's own prompt_tokens (10, per _tool_call_reply's default) counts
+    # toward this turn even though the second round never finished.
+    assert user_message.num_tokens == 10
 
 
 def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> None:

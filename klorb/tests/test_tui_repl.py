@@ -227,7 +227,7 @@ async def test_provider_error_is_shown_in_history() -> None:
         assert prompt_input.disabled is False
 
 
-async def test_aborted_response_restores_prompt_and_clears_history() -> None:
+async def test_aborted_response_keeps_prompt_in_history_and_clears_input() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = ResponseAborted()
     session = _session(mock_provider)
@@ -241,13 +241,15 @@ async def test_aborted_response_restores_prompt_and_clears_history() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert len(history.children) == 0
-        assert prompt_input.text == "what is 2+2?"
+        history.query_one(".prompt", Static)
+        history.query_one(".interrupted", Static)
+        assert prompt_input.text == ""
         assert prompt_input.disabled is False
 
-    # Only the system bookkeeping message (inserted ahead of the turn) survives the abort;
-    # the discarded turn itself leaves nothing behind.
-    assert [m.role for m in session.messages] == ["system"]
+    # The user turn stays in history, tagged "aborted" rather than discarded — nothing ever
+    # streamed in before the abort, so there's no assistant/thinking placeholder alongside it.
+    assert [m.role for m in session.messages] == ["system", "user"]
+    assert session.messages[-1].processing_state == "aborted"
 
 
 async def test_escape_aborts_a_streaming_response() -> None:
@@ -279,13 +281,15 @@ async def test_escape_aborts_a_streaming_response() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert len(history.children) == 0
-        assert prompt_input.text == "what is 2+2?"
+        history.query_one(".prompt", Static)
+        history.query_one(".interrupted", Static)
+        assert prompt_input.text == ""
         assert prompt_input.disabled is False
         assert app.check_action("abort_response", ()) is False
 
-    # Only the system bookkeeping message (inserted ahead of the turn) survives the abort.
-    assert [m.role for m in session.messages] == ["system"]
+    # The user turn stays in history, tagged "aborted", rather than being discarded.
+    assert [m.role for m in session.messages] == ["system", "user"]
+    assert session.messages[-1].processing_state == "aborted"
 
 
 async def test_select_model_updates_active_model_and_subtitle() -> None:
@@ -604,7 +608,7 @@ async def test_unregistered_tool_name_renders_via_default_formatters() -> None:
         assert str(tool_call_widgets[0].render()).startswith("NoSuchTool: ")
 
 
-async def test_aborting_a_turn_removes_its_tool_call_widgets() -> None:
+async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
     mock_provider = MagicMock()
     streaming_started = threading.Event()
     calls_made = 0
@@ -639,8 +643,15 @@ async def test_aborting_a_turn_removes_its_tool_call_widgets() -> None:
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(list(history.query(ToolCallStatic))) == 0
-        assert app._tool_call_widgets == []
+        # The echo call already ran, with a real (if trivial) side effect, before the second
+        # round's abort — it stays in the transcript exactly like a completed turn's would.
+        assert len(list(history.query(ToolCallStatic))) == 1
+        history.query_one(".interrupted", Static)
+
+    assert [m.role for m in session.messages] == [
+        "system", "tool_defs", "user", "tool_use", "tool_response"]
+    assert session.messages[2].processing_state == "aborted"
+    assert len(app._tool_call_widgets) == 1
 
 
 # --- shell commands ("!"-prefixed) ---

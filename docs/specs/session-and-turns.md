@@ -86,10 +86,14 @@ config) has one place to live.
     created, leaving their partial `streaming_content` intact) and re-raises. If
     `cancel_event` is given and becomes set while the response is streaming in, the
     provider raises `ResponseAborted` instead of a normal failure; unlike a real error, the
-    user `Message` and any placeholder(s) are removed from `self._messages` entirely
-    (the turn is discarded, not marked errored) before re-raising, since the caller is
-    handing the prompt back to the user rather than treating this as a failed attempt to
-    retry — see [[escape-aborts-streaming-turn-and-discards-it-from-history]]. Both a
+    user `Message` and any placeholder(s) are kept in `self._messages` rather than removed
+    or marked `"error"` — folding whatever `streaming_content` had arrived into `content`
+    and setting `processing_state="aborted"` on each — since nothing actually went wrong,
+    the interrupted reply may still be worth reading, and any earlier round's completed
+    `tool_use`/`tool_response` messages in the same turn already ran with real side effects
+    that must stay in history regardless — see
+    [[escape-aborts-streaming-turn-and-discards-it-from-history]] and
+    [[keep-aborted-turn-content-in-history-tagged-not-discarded]]. Both a
     one-shot prompt and every REPL submission are exactly one call to `send_turn()`. The
     streaming/placeholder mechanics above live in `Session._send_and_receive()`, one call per
     model round trip; `_dispatch_turn()` calls it in a loop when `tool_registry` is set (see

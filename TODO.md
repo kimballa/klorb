@@ -5,30 +5,24 @@
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
-* If you're scrolled to the bottom and a new ThinkingWidget or ResponseWidget arrives,
-  scroll to the end. But if the user has explicitly kept the scroll higher up, don't pull
-  them away from what they're reading as more response comes streaming in.
-  * Things also get weird when there are blocks below the Thinking block, but more thoughts
-    are being thunk. It's pushing everything down but the scrollbar at that point is just
-    fighting you and being really jittery.
-
 * In tool limit increase modal there are yes and no buttons. You can [tab] between them
   but you should also be able to use L/R arrow keys to get there.
 
 # Feature backlog
 
-* When you hit 'esc' to abort, it shouldn't remove the message(s) that were already [partially]
-  drafted. Just leave that in my history to read, but stop generating more of it.
+* Actually hold a history of user inputs and using up-arrow when you're at the beginning of
+  the user input box will recall the previous msg into your textbox for editing. Repeatedly
+  pressing up-arrow will give you the N-2'nd msg, then N-3'rd, etc. as a text you can edit
+  and resend anew. Likewise if you're cursoring up thru history, the down-arrow key, when
+  pressed at the end of the text, recalls later and later messages that you've sent. If you
+  actually take any action that mutates the text in the textbox (typing; backspacing; pasting
+  content from the clipboard) then this is now a "new" message and not rooted in a place in 
+  history any more. 
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
     can interject midway thru what it's saying. 
-
-* When the agent is thinking and doing tool calls, it also has started to draft a response.
-  This gets completed and left earlier in the history; it should always be brought to the bottom
-  as the agent continues to write it, so that we see it and aren't just sitting in a scroll full of
-  tool calls where the real response was actually further up in the history queue.
 
 * project bootstrapping
   * when you start klorb it attempts to identify the workspace root.

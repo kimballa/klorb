@@ -105,12 +105,17 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `threading.Event` per submitted prompt and passes it as `Session.send_turn()`'s
   `cancel_event`, and Escape (bound to `action_abort_response`, shown in the footer only
   while a turn is in flight via `check_action`) sets it. `_send_prompt`'s worker thread
-  catches the `ResponseAborted` this raises, tears down every widget mounted for that turn
-  (the echoed prompt, and any partial response/thinking/tool-call widgets), and writes the
-  original prompt text back into the now-re-enabled input box so the user can edit and resend it.
-  `Session` has already discarded the turn from `self.messages` by this point — it's as if
-  it never happened, not a new errored turn — see
-  [[escape-aborts-streaming-turn-and-discards-it-from-history]].
+  catches the `ResponseAborted` this raises and calls `_handle_aborted_response`, which
+  leaves the echoed prompt and every widget mounted for that turn (partial
+  response/thinking/tool-call widgets) in place — tagging whichever of the response/thinking
+  widgets was still streaming with an "(interrupted)" marker, or mounting a standalone
+  `.interrupted` marker if neither had started yet — and leaves the now-re-enabled input box
+  empty rather than repopulating it with the original prompt. `Session` keeps the turn in
+  `self.messages` too: the user `Message` and any partial assistant/thinking placeholder(s)
+  are tagged `processing_state="aborted"` rather than removed, and any earlier round's
+  completed `tool_use`/`tool_response` messages stay exactly as they would in a completed
+  turn — see [[escape-aborts-streaming-turn-and-discards-it-from-history]] and
+  [[keep-aborted-turn-content-in-history-tagged-not-discarded]].
 * If a turn's tool calls (see [[tool-framework]] and [[session-and-turns]]) reach
   `SessionConfig.max_tool_calls_per_turn`/`max_tool_calls_per_session`, `Session` asks
   whether to double the reached cap and keep going via the `on_tool_call_limit_reached`
@@ -144,9 +149,9 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `detail_text` and back, via an app-lifetime `_tool_call_detail_shown` flag rather than
   per-turn state, so the toggle persists across turns and `/clear`. A newly-mounted tool-call
   widget picks up whichever mode is currently active, rather than always starting as a
-  summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted during an
-  aborted turn are torn down (and, for the latter, dropped from the toggle-tracking list)
-  exactly like a partial response/thinking widget. The footer's own label for this binding
+  summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted before an
+  abort stay in the history and the toggle-tracking list exactly like any other turn's,
+  since the tool calls they represent already ran to completion. The footer's own label for this binding
   flips with it — `"Detail"` while summaries are shown, `"Hide"` once detail is shown — by
   replacing the `"ctrl+o"` entry in `self._bindings.key_to_bindings` (this `ReplApp`
   instance's own mutable copy of the merged class-level `BINDINGS`) and calling

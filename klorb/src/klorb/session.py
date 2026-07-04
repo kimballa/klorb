@@ -704,8 +704,10 @@ class Session:
         are mutated to `processing_state="error"`/`last_error` (partial `streaming_content`
         left intact) before re-raising, mirroring how the caller is expected to mark the
         turn's own anchor message (a user message, or a prior round's `tool_response`). On
-        `ResponseAborted`, those placeholder(s) are instead removed from `self._messages`
-        entirely before re-raising, since an aborted round leaves nothing worth keeping.
+        `ResponseAborted`, those placeholder(s) are instead finalized in place with
+        `processing_state="aborted"` and whatever `streaming_content` had arrived before the
+        interruption folded into `content` — the user may still want to read a partial reply,
+        and it stays out of the way of a resent prompt since `"aborted"` isn't `"complete"`.
         """
         placeholder: Message | None = None
         thinking_placeholder: Message | None = None
@@ -751,9 +753,13 @@ class Session:
                 on_thinking_chunk=handle_thinking_chunk, cancel_event=callbacks.cancel_event)
         except ResponseAborted:
             if thinking_placeholder is not None:
-                self._messages.remove(thinking_placeholder)
+                thinking_placeholder.content = "".join(thinking_placeholder.streaming_content or [])
+                thinking_placeholder.streaming_content = None
+                thinking_placeholder.processing_state = "aborted"
             if placeholder is not None:
-                self._messages.remove(placeholder)
+                placeholder.content = "".join(placeholder.streaming_content or [])
+                placeholder.streaming_content = None
+                placeholder.processing_state = "aborted"
             raise
         except Exception as exc:
             if placeholder is not None:
@@ -817,26 +823,31 @@ class Session:
         `_send_and_receive`), and the exception is re-raised.
 
         If `callbacks.cancel_event` is given and the provider raises `ResponseAborted` (because
-        it was set mid-stream), this turn never happened as far as history is concerned: every
-        message appended since `user_message` — it, any earlier round's `tool_use`/
-        `tool_response` messages, and the aborted round's placeholder(s) — is removed from
-        `self._messages` entirely, rather than left behind in `"error"` state, and the
-        exception is re-raised so the caller can offer the prompt back up for editing.
+        it was set mid-stream), `user_message` and every message already appended for this
+        turn — any earlier round's completed `tool_use`/`tool_response` messages (their tool
+        calls already ran, with real side effects, and stay in history exactly like a
+        completed turn's would), plus the aborted round's placeholder(s), already finalized
+        with `processing_state="aborted"` by `_send_and_receive` — are left in
+        `self._messages` rather than erased. `user_message.processing_state` becomes
+        `"aborted"` too, and its `num_tokens` reflects the last *completed* round's prompt
+        tokens (`0` if the very first round was the one aborted, since no round completed).
+        The exception is re-raised so the caller can report the interruption.
         """
         callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
         self._ensure_tool_defs_message()
         self._ensure_context_files_message()
         self._tool_calls_this_turn = 0
-        turn_start_index = self._messages.index(user_message)
         model_name = self.active_model_name()
         system_prompt = self._resolve_system_prompt()
         reasoning = self._reasoning_params()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
+        last_completed_result: ProviderResponse | None = None
 
         try:
             reply, result = self._send_and_receive(
                 list(self._messages), system_prompt, model_name, reasoning, tools, callbacks)
+            last_completed_result = result
 
             rounds = 0
             while reply.role == "tool_use":
@@ -851,8 +862,11 @@ class Session:
                 self._run_tool_calls(reply, callbacks)
                 reply, result = self._send_and_receive(
                     list(self._messages), system_prompt, model_name, reasoning, tools, callbacks)
+                last_completed_result = result
         except ResponseAborted:
-            del self._messages[turn_start_index:]
+            user_message.processing_state = "aborted"
+            if last_completed_result is not None:
+                user_message.num_tokens = last_completed_result.prompt_tokens - tokens_before
             logger.info("Turn aborted for %s", model_name)
             raise
         except Exception as exc:
@@ -884,8 +898,10 @@ class Session:
         (a `TurnEventHandlers`, defaulting to one with every field `None` if omitted) bundles
         every optional hook for this turn: `on_chunk`/`on_thinking_chunk` are invoked with each
         text/reasoning delta as the response streams in; if `cancel_event` is set while the
-        response is streaming in, the turn is aborted: `ResponseAborted` is raised and the user
-        `Message` appended here is removed from history again (see `_dispatch_turn`);
+        response is streaming in, the turn is aborted: `ResponseAborted` is raised, and the
+        user `Message` appended here — along with whatever partial reply/thinking content and
+        completed tool-call rounds accumulated before the interruption — stays in history with
+        `processing_state="aborted"` rather than being removed (see `_dispatch_turn`);
         `on_tool_call_limit_reached` is invoked (with a human-readable prompt) when a tool-call
         safety limit is reached, to ask whether to double it and keep going — see
         `_confirm_limit_increase`; `on_permission_ask` is invoked when a tool call hits an

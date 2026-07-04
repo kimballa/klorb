@@ -17,7 +17,6 @@ from textual.containers import Vertical
 from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widget import Widget
 from textual.widgets import Button
 from textual.widgets import Footer
 from textual.widgets import Header
@@ -317,6 +316,11 @@ class ReplApp(App[None]):
     .response {
         margin: 1 0 0 0;
     }
+
+    .interrupted {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
     """
 
     BINDINGS = [
@@ -347,8 +351,6 @@ class ReplApp(App[None]):
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
         self._cancel_event: threading.Event | None = None
-        self._pending_prompt_text: str | None = None
-        self._pending_prompt_widget: Static | None = None
         self._shell_cancel_event: threading.Event | None = None
         self._tool_call_widgets: list[ToolCallStatic] = []
         self._tool_call_detail_shown: bool = False
@@ -647,8 +649,6 @@ class ReplApp(App[None]):
         history.mount(prompt_widget)
         history.scroll_end(animate=False)
 
-        self._pending_prompt_text = prompt_text
-        self._pending_prompt_widget = prompt_widget
         self._cancel_event = threading.Event()
         self.refresh_bindings()
         self._send_prompt(prompt_text, self._cancel_event)
@@ -666,22 +666,23 @@ class ReplApp(App[None]):
         console markup styles every line regardless).
 
         If `cancel_event` is set (via Escape / `action_abort_response`) before the response
-        finishes, `Session.send_turn()` raises `ResponseAborted`; any widgets mounted for
-        this turn's partial response are torn down and the prompt is handed back for editing.
+        finishes, `Session.send_turn()` raises `ResponseAborted`; the echoed prompt and any
+        widgets already mounted for this turn's partial response/thinking/tool calls are left
+        in place (`Session` keeps the same content in history, tagged `"aborted"` — see
+        `_handle_aborted_response`) rather than torn down, and the input box is left empty for
+        the next message rather than repopulated with this one.
         """
         response_widget: Markdown | None = None
         accumulated = ""
         thinking_widget: Static | None = None
         thinking_label_widget: Static | None = None
         thinking_accumulated = ""
-        mounted_widgets: list[Widget] = []
 
         def handle_chunk(delta_text: str) -> None:
             nonlocal accumulated, response_widget
             accumulated += delta_text
             if response_widget is None:
                 response_widget = self.call_from_thread(self._mount_response_widget, accumulated)
-                mounted_widgets.append(response_widget)
             else:
                 self.call_from_thread(self._update_response_widget, response_widget, accumulated)
 
@@ -691,8 +692,6 @@ class ReplApp(App[None]):
             if thinking_widget is None:
                 thinking_widget, thinking_label_widget = self.call_from_thread(
                     self._mount_thinking_widget, thinking_accumulated)
-                mounted_widgets.append(thinking_label_widget)
-                mounted_widgets.append(thinking_widget)
             else:
                 self.call_from_thread(
                     self._update_thinking_widget, thinking_label_widget, thinking_widget,
@@ -700,10 +699,7 @@ class ReplApp(App[None]):
 
         def handle_tool_call(event: ToolCallEvent) -> None:
             summary_text, detail_text = self._render_tool_call(event)
-            widget, label_widget = self.call_from_thread(
-                self._mount_tool_call_widget, summary_text, detail_text)
-            mounted_widgets.append(label_widget)
-            mounted_widgets.append(widget)
+            self.call_from_thread(self._mount_tool_call_widget, summary_text, detail_text)
 
         try:
             response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
@@ -711,7 +707,9 @@ class ReplApp(App[None]):
                 cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
                 on_permission_ask=self._on_permission_ask, on_tool_call=handle_tool_call))
         except ResponseAborted:
-            self.call_from_thread(self._handle_aborted_response, mounted_widgets)
+            self.call_from_thread(
+                self._handle_aborted_response, response_widget, accumulated,
+                thinking_widget, thinking_accumulated)
         except Exception as exc:
             self.call_from_thread(self._show_error, str(exc))
         else:
@@ -886,24 +884,30 @@ class ReplApp(App[None]):
         history.mount(Static(f"Error: {message}", classes="error"))
         self._finish_turn(history, was_pinned)
 
-    def _handle_aborted_response(self, mounted_widgets: list[Widget]) -> None:
-        """Tear down everything mounted for an aborted turn (the echoed prompt plus any
-        partial response/thinking/tool-call widgets) and hand the prompt text back to the
-        input box for editing, since `Session` has already discarded the turn from history.
+    def _handle_aborted_response(
+        self, response_widget: Markdown | None, response_text: str,
+        thinking_widget: Static | None, thinking_text: str,
+    ) -> None:
+        """Leave the echoed prompt and every widget mounted for the aborted turn in place
+        (`Session` keeps the same content in history, tagged `processing_state="aborted"`,
+        rather than discarding it), tagging whichever of the response/thinking widgets was
+        still streaming when Escape fired with an "(interrupted)" marker. If neither had
+        started streaming yet (the turn was interrupted before its first chunk, e.g. during an
+        earlier round's tool-call dispatch), mount a standalone marker instead so the
+        interruption is still visible. The input box is left empty rather than repopulated
+        with the original prompt, since that prompt is now a real, if incomplete, turn in
+        history rather than a draft to resend.
         """
-        if self._pending_prompt_widget is not None:
-            self._pending_prompt_widget.remove()
-        for widget in mounted_widgets:
-            widget.remove()
-            if isinstance(widget, ToolCallStatic):
-                self._tool_call_widgets.remove(widget)
-        restored_text = self._pending_prompt_text or ""
+        if response_widget is not None:
+            response_widget.update(f"{response_text}\n\n*(interrupted)*")
+        elif thinking_widget is not None:
+            thinking_widget.update(_italicized(f"{thinking_text}\n\n(interrupted)"))
+        else:
+            history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            history.mount(Static("(interrupted)", classes="interrupted"))
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self._finish_turn(history, self._history_pinned_to_bottom)
-
-        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        input_widget.text = restored_text
 
     def _scroll_if_pinned(self, history: VerticalScroll, was_pinned: bool) -> None:
         """Scroll `history` to its end iff `was_pinned` — `_history_pinned_to_bottom`'s value
@@ -929,8 +933,6 @@ class ReplApp(App[None]):
         input_widget.disabled = False
         input_widget.focus()
         self._cancel_event = None
-        self._pending_prompt_text = None
-        self._pending_prompt_widget = None
         self._shell_cancel_event = None
         self.refresh_bindings()
 
