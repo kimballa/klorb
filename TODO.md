@@ -122,16 +122,9 @@
 * Need a Planning Tool or Planning Mode agent
 
 * Permissions
-  * Need to handle `PermissionAskRequired` exception with a user prompt.
-  * When that interactive prompt is answered "ask"/"allow" for a *write* tool's request, the
-    grant it records must also widen `readDirs` to at least as permissive as the new `writeDirs`
-    grant for that path -- otherwise `evaluate_write()`'s stricter-of-read-and-write merge (see
-    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md) would immediately cap the
-    just-granted write access back down to `ask`/`deny` on the very next call, since `readDirs`
-    would still be silent on that path.
   * Need to handle extra safeguards for writing into ${workspaceRoot}/.klorb/. This is
-    implicitly denied; we will add a separate EscalatePrivileges tool that will unlock
-    the dir (with a user prompt) for writes through the end of the *turn*.
+    implicitly denied; add a separate EscalatePrivileges tool that will unlock
+    the dir (with a user ask prompt) for writes (thru the end of the turn? the session?)
   * what bash commands can it run (or not)
   * what web sites can it access? (... what kind of prompt injection could happen here?)
   * Use bubblewrap via https://github.com/anthropic-experimental/sandbox-runtime ?
