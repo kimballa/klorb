@@ -8,6 +8,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import evaluate_write, resolve_within_workspace
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
+from klorb.tools.tool import truncate_lines
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,33 @@ class EditFileTool(Tool):
             "new_total_lines": new_total_lines,
             "content": snippet,
         }
+
+    def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts are computed from
+        the call's own `start_line`/`end_line`/`new_text` args (not `result`), so the summary
+        is identical on success and failure and unaffected by drift relocation, which preserves
+        the requested span's length.
+        """
+        filename = args.get("filename", "?")
+        diff = ""
+        start_line, end_line, new_text = args.get("start_line"), args.get("end_line"), args.get("new_text")
+        if isinstance(start_line, int) and isinstance(end_line, int) and isinstance(new_text, str):
+            removed = end_line - start_line + 1
+            added = new_text.count("\n") + 1 if new_text else 0
+            diff = f" (+{added}/-{removed})"
+        base = f"Edit file: {filename}{diff}"
+        return base if error is None else f"{base} failed: {error}"
+
+    def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        """Same as the default pretty-JSON rendering, but with `result["content"]` (the edited
+        region) capped to 8 lines — a full-file rewrite via one large `new_text` could otherwise
+        dump hundreds of lines here.
+        """
+        if error is not None or not isinstance(result, dict) or "content" not in result:
+            return super().detail_view(args, result, error)
+        capped_result = dict(result)
+        capped_result["content"] = truncate_lines(result["content"], 8)
+        return super().detail_view(args, capped_result, error)
 
     def _describe_candidate_neighbors(
         self, all_lines: list[str], candidate_start: int, span: int, preview_lines: int,

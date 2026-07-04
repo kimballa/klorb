@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.read_file."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -233,3 +234,43 @@ def test_trusted_empty_tables_deny_everything(tmp_path: Path) -> None:
     with pytest.raises(PermissionError):
         ReadFileTool(_context(tmp_path, is_workspace_trusted=True)).apply(
             {"filename": str(file_path)})
+
+
+# --- summary()/detail_view() (see docs/specs/terminal-repl.md) ---
+
+
+def test_summary_on_success_names_the_file_and_line_range(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 50)
+    tool = ReadFileTool(_context(tmp_path))
+    result = tool.apply({"filename": str(file_path), "start_line": 5, "end_line": 16})
+
+    assert tool.summary({"filename": str(file_path)}, result) == (
+        f"Read file: {file_path} (lines 5-16 of 50)")
+
+
+def test_summary_on_failure_includes_the_error() -> None:
+    tool = ReadFileTool(_context(Path("/tmp")))
+
+    assert tool.summary({"filename": "missing.txt"}, error="not found") == (
+        "Read file: missing.txt failed: not found")
+
+
+def test_detail_view_truncates_long_content_to_eight_lines(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 50)
+    tool = ReadFileTool(_context(tmp_path))
+    result = tool.apply({"filename": str(file_path)})
+
+    detail = json.loads(tool.detail_view({"filename": str(file_path)}, result))
+
+    assert detail["result"]["content"] == "\n".join(f"{i}|line {i}" for i in range(1, 9)) + "\n..."
+    assert detail["result"]["total_lines"] == 50
+
+
+def test_detail_view_leaves_short_content_untouched(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+    tool = ReadFileTool(_context(tmp_path))
+    result = tool.apply({"filename": str(file_path)})
+
+    detail = json.loads(tool.detail_view({"filename": str(file_path)}, result))
+
+    assert detail["result"]["content"] == result["content"]

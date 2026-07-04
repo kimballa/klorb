@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.edit_file."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -781,3 +782,70 @@ def test_klorb_dir_write_implicitly_denied_even_with_no_config(tmp_path: Path) -
         })
 
     assert file_path.read_text() == "{}"
+
+
+# --- summary()/detail_view() (see docs/specs/terminal-repl.md) ---
+
+
+def test_summary_reports_a_git_style_line_diff(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {
+        "filename": str(file_path), "start_line": 2, "end_line": 3,
+        "start_text": "b", "end_text": "c", "new_text": "B\nC\nD",
+    }
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Edit file: {file_path} (+3/-2)"
+
+
+def test_summary_diff_count_for_a_pure_insert(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {
+        "filename": str(file_path), "start_line": 1, "end_line": 1,
+        "start_text": "a", "end_text": "a", "new_text": "a\nnew",
+    }
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Edit file: {file_path} (+2/-1)"
+
+
+def test_summary_diff_count_for_a_pure_delete(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "b", "end_text": "b", "new_text": "",
+    }
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Edit file: {file_path} (+0/-1)"
+
+
+def test_summary_on_failure_includes_the_error_and_still_computes_the_diff_count() -> None:
+    tool = EditFileTool(_context(Path("/tmp")))
+    args = {
+        "filename": "missing.txt", "start_line": 1, "end_line": 1,
+        "start_text": "a", "end_text": "a", "new_text": "b",
+    }
+
+    assert tool.summary(args, error="not found") == "Edit file: missing.txt (+1/-1) failed: not found"
+
+
+def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\n")
+    tool = EditFileTool(_context(tmp_path))
+    new_text = "\n".join(f"line{i}" for i in range(20))
+    args = {
+        "filename": str(file_path), "start_line": 1, "end_line": 1,
+        "start_text": "a", "end_text": "a", "new_text": new_text,
+    }
+
+    result = tool.apply(args)
+    detail = json.loads(tool.detail_view(args, result))
+
+    assert detail["result"]["content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."

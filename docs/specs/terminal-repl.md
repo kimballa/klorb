@@ -106,8 +106,8 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `cancel_event`, and Escape (bound to `action_abort_response`, shown in the footer only
   while a turn is in flight via `check_action`) sets it. `_send_prompt`'s worker thread
   catches the `ResponseAborted` this raises, tears down every widget mounted for that turn
-  (the echoed prompt, and any partial response/thinking widgets), and writes the original
-  prompt text back into the now-re-enabled input box so the user can edit and resend it.
+  (the echoed prompt, and any partial response/thinking/tool-call widgets), and writes the
+  original prompt text back into the now-re-enabled input box so the user can edit and resend it.
   `Session` has already discarded the turn from `self.messages` by this point — it's as if
   it never happened, not a new errored turn — see
   [[escape-aborts-streaming-turn-and-discards-it-from-history]].
@@ -127,6 +127,33 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   Returning `True` from the callback lets the turn continue (with that cap doubled);
   `False` makes `Session` raise `ToolCallLimitExceeded`, which `_send_prompt`'s existing
   failure handling renders the same way as any other turn error (`_show_error`).
+* Every tool call the model makes (see [[tool-framework]]) shows up in the history as it
+  happens: `_send_prompt` passes an `on_tool_call` callback into `Session.send_turn()`
+  (`TurnEventHandlers.on_tool_call`), fired once per finished call — success or failure —
+  from `Session._run_tool_calls`. `ReplApp._render_tool_call` turns the callback's
+  `ToolCallEvent` (raw `name`/`args`/`result`/`error`, not pre-rendered text — see
+  [the raw-callback-data ADR](../adrs/render-tool-calls-via-raw-callback-data.md)) into a
+  `(summary_text, detail_text)` pair by instantiating the named tool a second time and calling
+  its `summary()`/`detail_view()` (falling back to `default_tool_call_summary()`/
+  `default_tool_call_detail()` if the name isn't a registered tool). `_mount_tool_call_widget`
+  mounts a left-justified `<Tool use>` label (`TOOL_USE_LABEL`, styled via the
+  `.tool-call-label` CSS class — the same label/body split `_mount_thinking_widget` uses for
+  `<Thinking>`) followed by a `ToolCallStatic` (styled via the `.tool-call` CSS class) showing
+  `summary_text`. `Ctrl+O` (`action_toggle_tool_call_detail`) globally toggles every
+  `ToolCallStatic` currently in the history — from any turn, not just the latest — to
+  `detail_text` and back, via an app-lifetime `_tool_call_detail_shown` flag rather than
+  per-turn state, so the toggle persists across turns and `/clear`. A newly-mounted tool-call
+  widget picks up whichever mode is currently active, rather than always starting as a
+  summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted during an
+  aborted turn are torn down (and, for the latter, dropped from the toggle-tracking list)
+  exactly like a partial response/thinking widget.
+* Each new block in the history — a submitted prompt (`.prompt`), a `<Thinking>` label
+  (`.thinking-label`), a `<Tool use>` label (`.tool-call-label`), and a model response
+  (`.response`, applied to the `Markdown` widget in both `_mount_response_widget` and
+  `_show_response`) — carries a top-only margin (`margin: 1 0 0 0`) in its CSS class, so a
+  blank line separates it from whatever was mounted before it regardless of that widget's
+  type. `.thinking-body` and `.tool-call` (the *body* widgets, not their labels) carry no
+  margin of their own, since the preceding label already opened the gap.
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
   (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
   thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry
@@ -188,6 +215,8 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 * `Ctrl+C` (when no shell command is running) and `Ctrl+Q` quit the REPL. `Ctrl+P` opens
   Textual's command palette, which includes `ModelCommandProvider` for switching the active
   model — see [[model-framework]]. Selecting a model updates `Session.config.model` directly.
+  `Ctrl+O` globally toggles every rendered tool call between its one-line summary and its
+  fuller detail view (see above).
 * `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `-m`/`--message` flag
   optional (default `None`) and adds an `--interactive`/`--no-interactive` flag (see
   [[session-and-turns]] for its defaulting rules). `klorb.cli.main()` builds a `Session`
@@ -209,9 +238,6 @@ klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first tu
 * `/clear` and `:q`/`/quit`/`/exit` are the only recognized non-prompt input, alongside the
   `!`-prefixed shell command mechanism described above. Input history (up-arrow to recall a
   previous prompt) is not implemented yet.
-* Tool call activity itself isn't rendered in the visible history — no bubble shows "called
-  ReadFile(...)" or its result mid-turn; the user sees only the eventually-final response (or
-  `ToolCallLimitScreen`, if a tool-call safety cap is reached along the way).
 * Thinking text is wrapped in `*...*` without escaping; a reasoning delta containing its
   own unescaped `*` could render with unbalanced/unintended emphasis. Accepted as a v1
   limitation, consistent with the response `Markdown` widget's existing unescaped handling

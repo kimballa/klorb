@@ -40,9 +40,11 @@ from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PROMPT_INPUT_ID
 from klorb.tui.repl import STATUS_BAR_ID
 from klorb.tui.repl import THINKING_LABEL
+from klorb.tui.repl import TOOL_USE_LABEL
 from klorb.tui.repl import PromptInput
 from klorb.tui.repl import ReplApp
 from klorb.tui.repl import ToolCallLimitScreen
+from klorb.tui.repl import ToolCallStatic
 from klorb.tui.repl import format_token_count
 
 
@@ -441,6 +443,156 @@ async def test_tool_call_limit_modal_no_shows_error() -> None:
         error_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
         assert isinstance(error_widget, Static)
         assert "0 tool call" in str(error_widget.render())
+
+
+# --- tool call rendering ---
+
+
+async def test_tool_call_renders_as_a_one_line_summary_by_default() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        tool_call_widgets = list(history.query(ToolCallStatic))
+        assert len(tool_call_widgets) == 1
+        # EchoTool doesn't override summary(), so the default is just the tool's name.
+        assert str(tool_call_widgets[0].render()) == "echo"
+
+
+async def test_tool_call_widget_is_preceded_by_a_tool_use_label() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        children = list(history.children)
+        tool_call_widget = next(w for w in children if isinstance(w, ToolCallStatic))
+        label_widget = children[children.index(tool_call_widget) - 1]
+        assert isinstance(label_widget, Static)
+        assert str(label_widget.render()) == TOOL_USE_LABEL
+
+
+async def test_ctrl_o_toggles_every_tool_call_widget_including_earlier_turns() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("first done"),
+        _tool_call_reply([("call_2", "echo", '{"message": "bye"}')]),
+        _reply("second done"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        prompt_input.text = "please echo again"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        tool_call_widgets = list(history.query(ToolCallStatic))
+        assert len(tool_call_widgets) == 2
+        assert all(str(w.render()) == "echo" for w in tool_call_widgets)
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        for widget in tool_call_widgets:
+            rendered = json.loads(str(widget.render()))
+            assert rendered["result"] in ("hi", "bye")
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert all(str(w.render()) == "echo" for w in tool_call_widgets)
+
+
+async def test_unregistered_tool_name_renders_via_default_formatters() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "NoSuchTool", "{}")]),
+        _reply("recovered"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "call a bogus tool"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        tool_call_widgets = list(history.query(ToolCallStatic))
+        assert len(tool_call_widgets) == 1
+        assert str(tool_call_widgets[0].render()).startswith("NoSuchTool: ")
+
+
+async def test_aborting_a_turn_removes_its_tool_call_widgets() -> None:
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+    calls_made = 0
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        nonlocal calls_made
+        calls_made += 1
+        if calls_made == 1:
+            return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+        assert cancel_event is not None
+        streaming_started.set()
+        cancel_event.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+
+        while not streaming_started.is_set():
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(list(history.query(ToolCallStatic))) == 1
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(list(history.query(ToolCallStatic))) == 0
+        assert app._tool_call_widgets == []
 
 
 # --- shell commands ("!"-prefixed) ---

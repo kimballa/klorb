@@ -8,6 +8,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
+from klorb.tools.tool import truncate_lines
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +122,25 @@ class ReadFileTool(Tool):
             "truncated": returned_end < total_lines,
             "content": content,
         }
+
+    def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        filename = args.get("filename", "?")
+        if error is not None:
+            return f"Read file: {filename} failed: {error}"
+        if not isinstance(result, dict):
+            return f"Read file: {filename}"
+        return (
+            f"Read file: {result.get('filename', filename)} "
+            f"(lines {result.get('start_line')}-{result.get('end_line')} of {result.get('total_lines')})"
+        )
+
+    def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        """Same as the default pretty-JSON rendering, but with `result["content"]` capped to 8
+        lines — a full-length `ReadFile` result can be up to `self._max_lines` (200 by default)
+        lines, far more than is useful to show inline.
+        """
+        if error is not None or not isinstance(result, dict) or "content" not in result:
+            return super().detail_view(args, result, error)
+        capped_result = dict(result)
+        capped_result["content"] = truncate_lines(result["content"], 8)
+        return super().detail_view(args, capped_result, error)

@@ -5,11 +5,15 @@
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
-* If you're scrolled tro the bottom and a new ThinkingWidget or ResponseWidget arrives,
+* If you're scrolled to the bottom and a new ThinkingWidget or ResponseWidget arrives,
   scroll to the end. But if the user has explicitly kept the scroll higher up, don't pull
   them away from what they're reading as more response comes streaming in.
 
 # Feature backlog
+
+* Read AGENTS.md from the proj root into the context as an initial user turn. 
+  * If ProcessConfig-level setting `compatibility.claudeMarkdown` is true, also read CLAUDE.md.
+
 
 * project bootstrapping
   * when you start klorb it attempts to identify the workspace root.
@@ -52,11 +56,8 @@
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
-* If we are streaming a response back from the agent, the ESC key should abort the
-  response generation, and also put the most recent user prompt back in the textbox for editing.
-
 * When we quit, ask if we should save the session state.
-  If yes, then write a file that goes in `cwd`/.klorb/last-session.json
+  If yes, then write a file that goes in `projRoot`/.klorb/last-session.json
   storing last Session config  and the message history for the session.
 
   When we next load klorb in that same directory, auto-load the session state info from last-session.json
@@ -90,12 +91,13 @@
     * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans
     * WebFetchTool
 
-* Skills in <built-in-skills-dir>, ~/.klorb/skills, cwd/.klorb/skills/
+* Skills in <built-in-skills-dir>, ~/.klorb/skills, projRoot/.klorb/skills/
     * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
+    * If `compatibility.claudeSkills` is true, include projRoot/.claude/skills/
 * Integrate with chainlink for todo tracking
     * TodoList tool
     * TodoWrite tool
-* Memories in ~/.klorb/memory, cwd/.klorb/memory/
+* Memories in ~/.klorb/memory, projRoot/.klorb/memory/
   * UpdateMemory tool
   * Remember tool
 * "Team scratchpad" is a file where all agents on the team can read and write

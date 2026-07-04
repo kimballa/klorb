@@ -98,6 +98,16 @@ def generate_session_id() -> str:
     return f"{timestamp}-{nonce}"
 
 
+def _format_tool_response_content(result: Any, error: str | None) -> str:
+    """Render a tool call's `(result, error)` pair (see `ToolCallEvent`) as the string stored
+    in its `role="tool_response"` `Message.content`: `"Error: {error}"` on failure, otherwise
+    `result` unchanged if it's already a string, else its JSON encoding.
+    """
+    if error is not None:
+        return f"Error: {error}"
+    return result if isinstance(result, str) else json.dumps(result)
+
+
 class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
 
@@ -162,17 +172,41 @@ class PermissionDecision(BaseModel):
     other_text: str | None = None
 
 
+class ToolCallEvent(BaseModel):
+    """Reports one finished tool call to `TurnEventHandlers.on_tool_call`, fired once per call
+    from `_run_tool_calls` right after it completes (including after an `on_permission_ask`-
+    driven retry). Carries raw data — the parsed call arguments and either the tool's raw
+    (non-JSON-stringified) return value or a failure description — rather than pre-rendered
+    display strings, so `Session` stays entirely ignorant of how (or whether) a call is
+    displayed; a consumer renders `name`/`args`/`result`/`error` itself, e.g. via
+    `klorb.tools.tool.Tool.summary()`/`detail_view()`. See
+    docs/adrs/render-tool-calls-via-raw-callback-data.md.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    call_id: str
+    name: str
+    args: dict[str, Any]
+    result: Any = None
+    """The tool's raw return value from `apply()` when `error is None`; meaningless (and
+    typically `None`) when the call failed."""
+    error: str | None = None
+    """Human-readable failure description when the call failed, `None` on success — the sole
+    success/failure discriminant, since a successful call may legitimately return `None`."""
+
+
 class TurnEventHandlers(BaseModel):
     """Immutable bundle of the optional callbacks (and cancellation signal) a caller can
     supply for one turn: `on_chunk`/`on_thinking_chunk` (streamed response text),
     `cancel_event` (abort a turn mid-stream), `on_tool_call_limit_reached` (ask whether to
-    raise a safety cap), and `on_permission_ask` (ask how to resolve an `"ask"` permission
-    verdict). Replaces passing these as five separate keyword arguments through `send_turn()`/
-    `retry_last_turn()`/`_dispatch_turn()` and everything they call — a single object here
-    means a future addition only touches this class, not every method's signature along the
-    chain. `frozen=True` since a `TurnEventHandlers` is built once per turn and never mutated;
-    `arbitrary_types_allowed=True` is needed for the `threading.Event` field (`Callable` fields
-    validate natively without it).
+    raise a safety cap), `on_permission_ask` (ask how to resolve an `"ask"` permission
+    verdict), and `on_tool_call` (report one finished tool call, for display). Replaces passing
+    these as separate keyword arguments through `send_turn()`/`retry_last_turn()`/
+    `_dispatch_turn()` and everything they call — a single object here means a future addition
+    only touches this class, not every method's signature along the chain. `frozen=True` since
+    a `TurnEventHandlers` is built once per turn and never mutated; `arbitrary_types_allowed=True`
+    is needed for the `threading.Event` field (`Callable` fields validate natively without it).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -182,6 +216,7 @@ class TurnEventHandlers(BaseModel):
     cancel_event: threading.Event | None = None
     on_tool_call_limit_reached: Callable[[str], bool] | None = None
     on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None
+    on_tool_call: Callable[[ToolCallEvent], None] | None = None
 
 
 class Session:
@@ -421,31 +456,31 @@ class Session:
         args: dict[str, Any],
         ask_exc: PermissionAskRequired,
         decision: PermissionDecision,
-    ) -> str:
-        """Format the `tool_response` content for a resolved `PermissionAskRequired`: retries
-        the call exactly once for `"once"`/`"session"`/`"workspace"`/`"homedir"` — any grant is
-        assumed already applied by `on_permission_ask` before it returned `decision`, since
-        `Session` has no `ProcessConfig` reference and never persists a grant itself — or
-        formats a denial for `"deny"`/`"other"`. Any exception from the retried call (including
-        a second `PermissionAskRequired`) falls through to the same generic `"Error: {exc}"`
-        formatting an ordinary tool failure gets — never a second ask.
+    ) -> tuple[Any, str | None]:
+        """Resolve a `PermissionAskRequired` into a `(result, error)` pair (see
+        `_format_tool_response_content` for how a caller turns this into `tool_response`
+        content): retries the call exactly once for `"once"`/`"session"`/`"workspace"`/
+        `"homedir"` — any grant is assumed already applied by `on_permission_ask` before it
+        returned `decision`, since `Session` has no `ProcessConfig` reference and never
+        persists a grant itself — or reports a denial for `"deny"`/`"other"`. Any exception
+        from the retried call (including a second `PermissionAskRequired`) is reported the
+        same generic way an ordinary tool failure is — never a second ask.
         """
         assert ask_exc.path is not None
         if decision.choice == "deny":
-            return f"Error: Permission denied: {ask_exc}"
+            return None, f"Permission denied: {ask_exc}"
         if decision.choice == "other":
-            return f"Error: Permission denied: {ask_exc}. User note: {decision.other_text}"
+            return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
         assert self._tool_registry is not None
         try:
             if decision.choice == "once":
                 tool = self._tool_registry.instantiate_tool(call.name, permission_override=ask_exc.path)
             else:
                 tool = self._tool_registry.instantiate_tool(call.name)
-            tool_result = tool.apply(args)
-            return tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
+            return tool.apply(args), None
         except Exception as exc:
             logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
-            return f"Error: {exc}"
+            return None, str(exc)
 
     def _run_tool_calls(
         self,
@@ -455,7 +490,9 @@ class Session:
         """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
         via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
         per call — carrying that call's result, or a description of the error if the tool
-        was unknown or raised — so the next round can send it back to the model.
+        was unknown or raised — so the next round can send it back to the model. Also fires
+        `callbacks.on_tool_call`, if given, once per call with a `ToolCallEvent` carrying the
+        same result-or-error outcome as raw data, for a UI to render.
 
         Before executing each call, checks it against `config.max_tool_calls_per_turn`
         (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`)
@@ -503,24 +540,29 @@ class Session:
                 call.name, call.arguments, call.id,
             )
             args = json.loads(call.arguments) if call.arguments else {}
+            result: Any = None
+            error: str | None = None
             try:
                 tool = self._tool_registry.instantiate_tool(call.name)
                 logger.debug("Tool call %s parsed arguments: %r", call.name, args)
-                tool_result = tool.apply(args)
-                content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
-                logger.info("Tool call %s succeeded: %s", call.name, content)
+                result = tool.apply(args)
+                logger.info("Tool call %s succeeded: %s", call.name, result)
             except PermissionAskRequired as ask_exc:
                 if callbacks.on_permission_ask is None or ask_exc.path is None:
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
-                    content = f"Error: {ask_exc}"
+                    error = str(ask_exc)
                 else:
                     decision = callbacks.on_permission_ask(PermissionAskContext(
                         path=ask_exc.path, is_write=ask_exc.is_write,
                         resource_description=str(ask_exc)))
-                    content = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                    result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
             except Exception as exc:
                 logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
-                content = f"Error: {exc}"
+                error = str(exc)
+            content = _format_tool_response_content(result, error)
+            if callbacks.on_tool_call is not None:
+                callbacks.on_tool_call(ToolCallEvent(
+                    call_id=call.id, name=call.name, args=args, result=result, error=error))
             self._messages.append(Message(
                 content=content,
                 role="tool_response",

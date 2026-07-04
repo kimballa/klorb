@@ -194,3 +194,43 @@ def test_klorb_dir_write_implicitly_denied_even_with_no_config(tmp_path: Path) -
             {"filename": str(file_path), "search": "foo", "new_text": "bar"})
 
     assert file_path.read_text() == "foo\n"
+
+
+# --- summary() (see docs/specs/terminal-repl.md) ---
+
+
+def test_summary_on_success_names_the_file_and_match_count(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "foo bar foo\n")
+    tool = ReplaceAllTool(_context(tmp_path))
+    args = {"filename": str(file_path), "search": "foo", "new_text": "qux"}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Replace all: {file_path} (2 literal replacements)"
+
+
+def test_summary_singular_replacement_count(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "foo bar\n")
+    tool = ReplaceAllTool(_context(tmp_path))
+    args = {"filename": str(file_path), "search": "foo", "new_text": "qux"}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Replace all: {file_path} (1 literal replacement)"
+
+
+def test_summary_names_regex_replacements(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a1 a2\n")
+    tool = ReplaceAllTool(_context(tmp_path))
+    args = {"filename": str(file_path), "search": r"a\d", "new_text": "x", "is_regex": True}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Replace all: {file_path} (2 regex replacements)"
+
+
+def test_summary_on_failure_includes_the_error() -> None:
+    tool = ReplaceAllTool(_context(Path("/tmp")))
+
+    assert tool.summary({"filename": "missing.txt"}, error="not found") == (
+        "Replace all: missing.txt failed: not found")

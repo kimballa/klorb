@@ -903,6 +903,93 @@ def test_no_callback_declines_without_asking() -> None:
     assert config.max_tool_calls_per_turn == 1  # unchanged
 
 
+# --- on_tool_call ---
+
+
+def test_on_tool_call_fires_once_per_successful_call() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    on_tool_call = MagicMock()
+
+    session.send_turn("please echo", TurnEventHandlers(on_tool_call=on_tool_call))
+
+    on_tool_call.assert_called_once()
+    (event,), _ = on_tool_call.call_args
+    assert event.call_id == "call_1"
+    assert event.name == "echo"
+    assert event.args == {"message": "hi there"}
+    assert event.result == "hi there"
+    assert event.error is None
+
+
+def test_on_tool_call_fires_with_error_for_unknown_tool_name() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "NoSuchTool", "{}")]),
+        _reply("recovered"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    on_tool_call = MagicMock()
+
+    session.send_turn("call a bogus tool", TurnEventHandlers(on_tool_call=on_tool_call))
+
+    on_tool_call.assert_called_once()
+    (event,), _ = on_tool_call.call_args
+    assert event.name == "NoSuchTool"
+    assert event.result is None
+    assert event.error is not None
+
+
+def test_on_tool_call_fires_with_retried_result_after_permission_grant(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+    on_tool_call = MagicMock()
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+
+    session.send_turn("try it", TurnEventHandlers(
+        on_tool_call=on_tool_call, on_permission_ask=on_permission_ask))
+
+    on_tool_call.assert_called_once()
+    (event,), _ = on_tool_call.call_args
+    assert event.result == f"granted:{target}"
+    assert event.error is None
+
+
+def test_on_tool_call_fires_with_error_for_a_denied_permission_ask(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    session = _session_with_ask_tool(config, mock_provider)
+    on_tool_call = MagicMock()
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
+
+    session.send_turn("try it", TurnEventHandlers(
+        on_tool_call=on_tool_call, on_permission_ask=on_permission_ask))
+
+    on_tool_call.assert_called_once()
+    (event,), _ = on_tool_call.call_args
+    assert event.result is None
+    assert event.error is not None
+
+
 # --- on_permission_ask ---
 
 
@@ -979,10 +1066,11 @@ def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_pa
         f"Permission requires confirmation: access {target}", path=target, is_write=True)
     call = ToolCallRequest(id="call_1", name="ask_permission", arguments="{}")
 
-    content = session._retry_after_permission_decision(
+    result, error = session._retry_after_permission_decision(
         call, {}, ask_exc, PermissionDecision(choice="once"))
 
-    assert content == "Error: still broken"
+    assert result is None
+    assert error == "still broken"
     mock_registry.instantiate_tool.assert_called_once_with("ask_permission", permission_override=target)
 
 

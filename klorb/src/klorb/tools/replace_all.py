@@ -106,3 +106,14 @@ class ReplaceAllTool(Tool):
             "replacements_made": replacements_made,
             "is_regex": is_regex,
         }
+
+    def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        filename = args.get("filename", "?")
+        if error is not None:
+            return f"Replace all: {filename} failed: {error}"
+        if not isinstance(result, dict):
+            return f"Replace all: {filename}"
+        count = result.get("replacements_made")
+        kind = "regex" if result.get("is_regex") else "literal"
+        plural = "" if count == 1 else "s"
+        return f"Replace all: {result.get('filename', filename)} ({count} {kind} replacement{plural})"

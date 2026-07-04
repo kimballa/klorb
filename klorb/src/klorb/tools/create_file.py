@@ -72,3 +72,11 @@ class CreateFileTool(Tool):
             "total_lines": total_lines,
             "created": True,
         }
+
+    def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        filename = args.get("filename", "?")
+        if error is not None:
+            return f"Create file: {filename} failed: {error}"
+        if not isinstance(result, dict):
+            return f"Create file: {filename}"
+        return f"Create file: {result.get('filename', filename)} ({result.get('total_lines')} lines)"

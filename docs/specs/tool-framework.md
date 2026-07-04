@@ -34,6 +34,29 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     a raw JSON schema dict or a pydantic `BaseModel` subclass.
   * `apply(args: dict[str, Any]) -> Any` — runs the tool given a dict of arguments (as
     returned by the model) and returns the result.
+
+  Two further methods are concrete, not abstract, so every `Tool` has a usable default and a
+  subclass only overrides them for a nicer rendering:
+  * `summary(args, result=None, error=None) -> str` — a one-line, human-friendly description
+    of one call to this tool (e.g. `"Edit file: foo.py (+15/-6)"`), shown by default wherever
+    a UI renders tool call activity (see [[terminal-repl]]). `error is None` means the call
+    succeeded (even if `result` is itself `None`); `error is not None` means it failed and
+    `result` is meaningless — this is the sole success/failure discriminant. Defaults to
+    `default_tool_call_summary()`.
+  * `detail_view(args, result=None, error=None) -> str` — a fuller rendering of the call's
+    arguments and result/error, shown when a UI's user asks for more than `summary()` gives.
+    Same success/failure contract as `summary()`. Defaults to `default_tool_call_detail()`
+    (pretty-printed JSON of `args` alongside `result` or `error`); overridden only when that's
+    a poor fit, e.g. to truncate a long field via the `truncate_lines()` helper instead of
+    dumping it in full.
+
+  `default_tool_call_summary()`/`default_tool_call_detail()` (both in `klorb/src/klorb/tools/
+  tool.py`) are also what a consumer falls back to for a tool call whose name isn't recognized
+  by a `ToolRegistry` (so there's no `Tool` instance to call `.summary()`/`.detail_view()` on)
+  — one implementation of the default rendering, not duplicated between the base class and
+  that fallback path. See
+  [the raw-callback-data ADR](../adrs/render-tool-calls-via-raw-callback-data.md) for how a
+  `Session`-reported tool call actually reaches these methods.
 * `klorb.tools.registry.ToolRegistry` (`klorb/src/klorb/tools/registry.py`) is constructed
   with `(process_config: ProcessConfig, session_config: SessionConfig, package: ModuleType =
   klorb.tools)` — held by reference, not copied, so later changes to either (e.g. a TUI
@@ -71,7 +94,9 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   calls. The result is a dict: `filename`, the
   actual `start_line`/`end_line` returned, the file's `total_lines`, a `truncated` flag (true
   when more content exists past `end_line`), and `content` — a single string with one
-  `"N|line text"` entry per line, newline-separated.
+  `"N|line text"` entry per line, newline-separated. `summary()` names the file and the
+  returned line range; `detail_view()` caps `content` to 8 lines via `truncate_lines()`, since
+  a full result can be up to `read_file_max_lines` (200 by default) lines.
 * `klorb.tools.edit_file.EditFileTool` (`klorb/src/klorb/tools/edit_file.py`), name
   `EditFile`. Replaces the inclusive 1-indexed line range `start_line`..`end_line` of an
   existing text file with `new_text`, after locating the mandatory `start_text`/`end_text`
@@ -111,7 +136,10 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   actually written — possibly different from what was requested), `line_hint_matched` (false
   if a drift relocation happened), the file's new `new_total_lines`, and `content` — the
   changed region in `ReadFile`'s `"N|text"` format, so the model can see the result without a
-  follow-up `ReadFile` call.
+  follow-up `ReadFile` call. `summary()` reports a `"+A/-R"` line-diff count computed from the
+  call's own `start_line`/`end_line`/`new_text` args (identical on success and failure, and
+  unaffected by drift relocation, which preserves the requested span's length); `detail_view()`
+  caps `content` to 8 lines via `truncate_lines()`, same as `ReadFile`.
 * `klorb.tools.replace_all.ReplaceAllTool` (`klorb/src/klorb/tools/replace_all.py`), name
   `ReplaceAll`. Replaces every occurrence of `search` in a single `filename` with `new_text`.
   `search` is matched as a literal substring by default; `is_regex` treats it as a Python
@@ -119,14 +147,18 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   `multiline` (which maps to `re.MULTILINE`, only meaningful with `is_regex`) are both
   optional and default to `false`. The file is only rewritten if at least one replacement was
   made. The result is a dict: `filename`, `replacements_made` (the match count, returned as a
-  blast-radius signal analogous to `EditFile`'s drift check), and `is_regex`.
+  blast-radius signal analogous to `EditFile`'s drift check), and `is_regex`. `summary()` names
+  the file, the match count, and whether the match was literal or regex; no `detail_view()`
+  override — the result is a few small scalars, so the default pretty-printed JSON is
+  already a good fit.
 * `klorb.tools.create_file.CreateFileTool` (`klorb/src/klorb/tools/create_file.py`), name
   `CreateFile`. Creates a new text file at `filename` with the given `content` (may be `""`),
   raising `FileExistsError` if the file already exists — file creation is always an explicit
   tool call, never an implicit side effect of `EditFile`. A full-file rewrite of an existing
   file goes through `EditFile` with `start_line=1, end_line=total_lines` instead. Missing
   parent directories are created automatically. The result is a dict: `filename`,
-  `total_lines`, and `created: true`.
+  `total_lines`, and `created: true`. `summary()` names the file and its line count; no
+  `detail_view()` override, same reasoning as `ReplaceAll`.
 
 ## Path safety
 

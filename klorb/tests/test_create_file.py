@@ -175,3 +175,23 @@ def test_klorb_dir_write_denied_even_with_writedirs_allow_covering_whole_workspa
             {"filename": str(file_path), "content": "{}"})
 
     assert not file_path.exists()
+
+
+# --- summary() (see docs/specs/terminal-repl.md) ---
+
+
+def test_summary_on_success_names_the_file_and_line_count(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+    tool = CreateFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "content": "a\nb\nc\n"}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Create file: {file_path} (3 lines)"
+
+
+def test_summary_on_failure_includes_the_error() -> None:
+    tool = CreateFileTool(_context(Path("/tmp")))
+
+    assert tool.summary({"filename": "existing.txt"}, error="already exists") == (
+        "Create file: existing.txt failed: already exists")

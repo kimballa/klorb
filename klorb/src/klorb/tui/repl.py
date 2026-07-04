@@ -34,8 +34,11 @@ from klorb.session import PermissionAskContext
 from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import ThinkingEffort
+from klorb.session import ToolCallEvent
 from klorb.session import TurnEventHandlers
 from klorb.tools.registry import ToolRegistry
+from klorb.tools.tool import default_tool_call_detail
+from klorb.tools.tool import default_tool_call_summary
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.session_commands import CLEAR_SESSION_COMMAND
@@ -51,6 +54,7 @@ HISTORY_ID = "history"
 PROMPT_INPUT_ID = "prompt-input"
 STATUS_BAR_ID = "status-bar"
 THINKING_LABEL = "<Thinking>"
+TOOL_USE_LABEL = "<Tool use>"
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -199,6 +203,22 @@ class ToolCallLimitScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class ToolCallStatic(Static):
+    """One finished tool call in the history, shown as either its one-line summary or its
+    fuller detail view — toggled globally, across every `ToolCallStatic` at once, by Ctrl+O
+    (see `ReplApp.action_toggle_tool_call_detail`).
+    """
+
+    def __init__(self, summary_text: str, detail_text: str) -> None:
+        super().__init__(escape(summary_text), classes="tool-call")
+        self._summary_text = summary_text
+        self._detail_text = detail_text
+
+    def set_detail_shown(self, show_detail: bool) -> None:
+        """Update the rendered content to the detail view if `show_detail`, else the summary."""
+        self.update(escape(self._detail_text if show_detail else self._summary_text))
+
+
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
@@ -252,12 +272,27 @@ class ReplApp(App[None]):
         color: $text-muted;
         padding: 0 2;
     }
+
+    .tool-call-label {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
+
+    .tool-call {
+        color: $text-muted;
+        padding: 0 2;
+    }
+
+    .response {
+        margin: 1 0 0 0;
+    }
     """
 
     BINDINGS = [
         ("ctrl+c", "interrupt", "Quit"),
         ("ctrl+q", "quit", "Quit"),
         ("escape", "abort_response", "Abort"),
+        ("ctrl+o", "toggle_tool_call_detail", "Detail"),
     ]
     COMMANDS = App.COMMANDS | {ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider}
 
@@ -284,6 +319,8 @@ class ReplApp(App[None]):
         self._pending_prompt_text: str | None = None
         self._pending_prompt_widget: Static | None = None
         self._shell_cancel_event: threading.Event | None = None
+        self._tool_call_widgets: list[ToolCallStatic] = []
+        self._tool_call_detail_shown: bool = False
         self.title = "klorb"
         self.sub_title = self._session.config.model
 
@@ -354,6 +391,14 @@ class ReplApp(App[None]):
             self._shell_cancel_event.set()
         else:
             self.exit()
+
+    def action_toggle_tool_call_detail(self) -> None:
+        """Ctrl+O: flip every `ToolCallStatic` currently in the history — from any turn, not
+        just the latest — between its one-line summary and its fuller detail view, all at once.
+        """
+        self._tool_call_detail_shown = not self._tool_call_detail_shown
+        for widget in self._tool_call_widgets:
+            widget.set_detail_shown(self._tool_call_detail_shown)
 
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, then
@@ -570,11 +615,18 @@ class ReplApp(App[None]):
             else:
                 self.call_from_thread(thinking_widget.update, _italicized(thinking_accumulated))
 
+        def handle_tool_call(event: ToolCallEvent) -> None:
+            summary_text, detail_text = self._render_tool_call(event)
+            widget, label_widget = self.call_from_thread(
+                self._mount_tool_call_widget, summary_text, detail_text)
+            mounted_widgets.append(label_widget)
+            mounted_widgets.append(widget)
+
         try:
             response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
                 on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
                 cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
-                on_permission_ask=self._on_permission_ask))
+                on_permission_ask=self._on_permission_ask, on_tool_call=handle_tool_call))
         except ResponseAborted:
             self.call_from_thread(self._handle_aborted_response, mounted_widgets)
         except Exception as exc:
@@ -588,7 +640,7 @@ class ReplApp(App[None]):
     def _mount_response_widget(self, initial_text: str) -> Markdown:
         """Mount a new `Markdown` widget for a streaming response and return it."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        widget = Markdown(initial_text)
+        widget = Markdown(initial_text, classes="response")
         history.mount(widget)
         history.scroll_end(animate=False)
         return widget
@@ -603,6 +655,43 @@ class ReplApp(App[None]):
         widget = Static(_italicized(initial_text), classes="thinking-body")
         history.mount(widget)
         history.scroll_end(animate=False)
+        return widget, label_widget
+
+    def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
+        """Render `event` as `(summary_text, detail_text)` via its tool's `summary()`/
+        `detail_view()` — instantiating a fresh `Tool` purely to call these pure methods
+        (`ToolRegistry.instantiate_tool()` is already a cheap, no-shared-state operation; see
+        docs/adrs/tool-registry-instantiates-a-fresh-tool-per-call.md) — or via the shared
+        default formatters if `event.name` isn't a registered tool (e.g. a hallucinated tool
+        name, which `Session._run_tool_calls` already turned into `event.error`).
+        """
+        registry = self._session.tool_registry
+        try:
+            if registry is None:
+                raise KeyError(event.name)
+            tool = registry.instantiate_tool(event.name)
+        except KeyError:
+            return (default_tool_call_summary(event.name, event.args, event.error),
+                    default_tool_call_detail(event.name, event.args, event.result, event.error))
+        return (tool.summary(event.args, event.result, event.error),
+                tool.detail_view(event.args, event.result, event.error))
+
+    def _mount_tool_call_widget(self, summary_text: str, detail_text: str) -> tuple[ToolCallStatic, Static]:
+        """Mount a left-justified `<Tool use>` label (styled via the `.tool-call-label` CSS
+        class, matching `<Thinking>`'s label/body split in `_mount_thinking_widget`) followed
+        by a `ToolCallStatic` for one finished tool call, and return `(widget, label_widget)`.
+        Applies the current global detail-shown state (see `action_toggle_tool_call_detail`)
+        so a call rendered while detail view is already active shows detail immediately rather
+        than a summary the user would have to toggle past.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
+        history.mount(label_widget)
+        widget = ToolCallStatic(summary_text, detail_text)
+        widget.set_detail_shown(self._tool_call_detail_shown)
+        history.mount(widget)
+        history.scroll_end(animate=False)
+        self._tool_call_widgets.append(widget)
         return widget, label_widget
 
     async def _confirm_tool_call_limit(self, message: str) -> bool:
@@ -667,7 +756,7 @@ class ReplApp(App[None]):
     def _show_response(self, response_text: str) -> None:
         """Append a model response to the history and re-enable the input box."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Markdown(response_text))
+        history.mount(Markdown(response_text, classes="response"))
         self._finish_turn(history)
 
     def _show_error(self, message: str) -> None:
@@ -678,13 +767,15 @@ class ReplApp(App[None]):
 
     def _handle_aborted_response(self, mounted_widgets: list[Widget]) -> None:
         """Tear down everything mounted for an aborted turn (the echoed prompt plus any
-        partial response/thinking widgets) and hand the prompt text back to the input box
-        for editing, since `Session` has already discarded the turn from history.
+        partial response/thinking/tool-call widgets) and hand the prompt text back to the
+        input box for editing, since `Session` has already discarded the turn from history.
         """
         if self._pending_prompt_widget is not None:
             self._pending_prompt_widget.remove()
         for widget in mounted_widgets:
             widget.remove()
+            if isinstance(widget, ToolCallStatic):
+                self._tool_call_widgets.remove(widget)
         restored_text = self._pending_prompt_text or ""
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
