@@ -534,6 +534,33 @@ async def test_ctrl_o_toggles_every_tool_call_widget_including_earlier_turns() -
         assert all(str(w.render()) == "echo" for w in tool_call_widgets)
 
 
+async def test_ctrl_o_footer_label_reads_detail_then_hide() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        assert app.active_bindings["ctrl+o"].binding.description == "Detail"
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert app.active_bindings["ctrl+o"].binding.description == "Hide"
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert app.active_bindings["ctrl+o"].binding.description == "Detail"
+
+
 async def test_unregistered_tool_name_renders_via_default_formatters() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [

@@ -91,7 +91,7 @@ def main() -> None:
         session_config,
         provider=provider,
         thinking_token_budgets=process_config.thinking_token_budgets,
-        tool_registry=ToolRegistry(process_config, session_config),
+        compatibility_claude_markdown=process_config.compatibility_claude_markdown,
     )
 
     log_path = session_log_path(session.id) if session_log else None

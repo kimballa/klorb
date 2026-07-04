@@ -11,6 +11,7 @@ from textual import events
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.containers import Vertical
 from textual.containers import VerticalScroll
@@ -310,7 +311,7 @@ class ReplApp(App[None]):
             session = Session(
                 new_config,
                 thinking_token_budgets=self._process_config.thinking_token_budgets,
-                tool_registry=ToolRegistry(self._process_config, new_config),
+                compatibility_claude_markdown=self._process_config.compatibility_claude_markdown,
             )
         self._session = session
         self._initial_message = initial_message
@@ -395,10 +396,22 @@ class ReplApp(App[None]):
     def action_toggle_tool_call_detail(self) -> None:
         """Ctrl+O: flip every `ToolCallStatic` currently in the history — from any turn, not
         just the latest — between its one-line summary and its fuller detail view, all at once.
+
+        Also updates the footer's own label for this binding — `"Detail"` while summaries are
+        shown (offering to reveal detail), `"Hide"` once detail is shown (offering to go back)
+        — since a binding's description is otherwise fixed at `BINDINGS` class-definition time.
+        `self._bindings` is this `ReplApp` instance's own mutable copy of the merged class-level
+        `BINDINGS` (see `DOMNode.__init__`), so replacing its `"ctrl+o"` entry only affects this
+        instance; `refresh_bindings()` is Textual's documented hook for prompting `Footer` to
+        redraw after such a change.
         """
         self._tool_call_detail_shown = not self._tool_call_detail_shown
         for widget in self._tool_call_widgets:
             widget.set_detail_shown(self._tool_call_detail_shown)
+        label = "Hide" if self._tool_call_detail_shown else "Detail"
+        self._bindings.key_to_bindings["ctrl+o"] = [
+            Binding("ctrl+o", "toggle_tool_call_detail", label)]
+        self.refresh_bindings()
 
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, then
@@ -542,7 +555,7 @@ class ReplApp(App[None]):
             provider=self._session.provider,
             model_registry=self._session.model_registry,
             thinking_token_budgets=self._process_config.thinking_token_budgets,
-            tool_registry=ToolRegistry(self._process_config, new_config),
+            compatibility_claude_markdown=self._process_config.compatibility_claude_markdown,
         )
 
         if self._session_log_enabled:

@@ -79,6 +79,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "providers.openrouter.baseUrl": "openrouter_base_url",
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
+    "compatibility.claudeMarkdown": "compatibility_claude_markdown",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
 process-only `ProcessConfig` attribute it sets. `is_workspace_trusted` is deliberately absent:
@@ -124,6 +125,11 @@ class ProcessConfig(BaseModel):
     TODO(aaron): a future, not-yet-built "trust this workspace" flow needs to be the only thing
     that can set this `True` in production — interactively confirming trust once per workspace,
     never via a config file key."""
+    compatibility_claude_markdown: bool = False
+    """Whether to read `CLAUDE.md` from the workspace root and inject it into the conversation
+    alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
+    A compatibility shim for projects that carry Claude-Code-style instructions in a
+    `CLAUDE.md` file; `AGENTS.md` is always read, since it's klorb's own convention."""
 
 
 def _etc_config_path() -> Path:

@@ -56,5 +56,6 @@
   "tools.editFile.driftSearchRadius": 20,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
-  "shell.timeout": null
+  "shell.timeout": null,
+  "compatibility.claudeMarkdown": false
 }

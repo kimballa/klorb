@@ -15,7 +15,7 @@ or slicing a superset.
 ## How it works
 
 * `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus
-  seven process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
+  eight process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
   prompt textarea's max grow height, applied via `input_widget.styles.max_height` in
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
@@ -30,7 +30,9 @@ or slicing a superset.
   timeout), and `is_workspace_trusted` (bool, default `False` — governs whether `ReadFile` gets
   a hard workspace-root boundary or table-only confinement; see docs/specs/permissions.md.
   Deliberately has **no** on-disk key at all — a project must never be able to grant itself
-  trust via its own config file).
+  trust via its own config file). `compatibility_claude_markdown` (bool, default `False` —
+  when `True`, `CLAUDE.md` is read from the workspace root and injected into the conversation
+  alongside `AGENTS.md`; see [[workspace-context-files]]).
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
   `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
@@ -194,7 +196,8 @@ field. A reference file with every recognized key at its current default lives a
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`,
-  `providers.openrouter.baseUrl`, `shell.command`, `shell.timeout`) can be set at the top level.
+  `providers.openrouter.baseUrl`, `shell.command`, `shell.timeout`,
+  `compatibility.claudeMarkdown`) can be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`

@@ -57,6 +57,7 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.shell_command == DEFAULT_SHELL_COMMAND
     assert process_config.shell_timeout_seconds is None
     assert process_config.is_workspace_trusted is False
+    assert process_config.compatibility_claude_markdown is False
 
 
 def test_etc_config_path_honors_env_var_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,6 +91,16 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.openrouter_base_url == "https://gateway.example.com/v1"
     assert process_config.shell_command == "/bin/zsh"
     assert process_config.shell_timeout_seconds == 30
+
+
+def test_compatibility_claude_markdown_is_overridable_via_config_file(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"compatibility.claudeMarkdown": True},
+    )
+
+    process_config = load_process_config(cwd=tmp_path)
+    assert process_config.compatibility_claude_markdown is True
 
 
 def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:

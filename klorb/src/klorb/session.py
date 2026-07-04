@@ -235,6 +235,7 @@ class Session:
         session_id: str | None = None,
         thinking_token_budgets: dict[ThinkingEffort, int] | None = None,
         tool_registry: "ToolRegistry | None" = None,
+        compatibility_claude_markdown: bool = False,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
@@ -245,7 +246,15 @@ class Session:
         self._tool_registry = tool_registry
         self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
+        self._compatibility_claude_markdown = compatibility_claude_markdown
         self._messages: list[Message] = []
+        self._context_files_seeded = False
+        """Whether `_ensure_context_files_message()` has already inserted the workspace
+        context-files (`AGENTS.md`, and `CLAUDE.md` when compatibility is enabled) message
+        into `self._messages`. Unlike `_ensure_system_message()`/`_ensure_tool_defs_message()`,
+        which can test for an existing `role="system"`/`role="tool_defs"` message, the
+        context-files message is `role="user"` (it must look like a real user turn to the
+        model), so idempotency is tracked with this flag instead."""
 
     @property
     def role(self) -> Role:
@@ -412,6 +421,69 @@ class Session:
             processing_state="complete",
             timestamp=datetime.now(),
         ))
+
+    def _ensure_context_files_message(self) -> None:
+        """Insert a `role="user"` `Message` carrying the contents of the workspace's
+        context-instruction files (`AGENTS.md`, and `CLAUDE.md` when
+        `_compatibility_claude_markdown` is enabled) at the front of the conversation history
+        — after any `role="system"` and `role="tool_defs"` bookkeeping messages, but ahead of
+        the first real user turn — the first time a turn is dispatched. A no-op if already
+        seeded (tracked via `self._context_files_seeded`, since the inserted message is
+        `role="user"` and so can't be distinguished from a real user turn by role alone), or if
+        none of the applicable context files exist on disk.
+
+        The message is framed as context rather than a task, so the model treats it as
+        standing instructions about the project rather than something to act on directly. Its
+        `num_tokens` is left at `0`: like the system prompt, its token cost folds into the
+        first real turn's `num_tokens` delta (see `_dispatch_turn`)."""
+        if self._context_files_seeded:
+            return
+
+        context_files: list[tuple[str, str]] = []
+        for filename in self._applicable_context_filenames():
+            path = self.config.workspace_root / filename
+            if path.is_file():
+                contents = path.read_text()
+                context_files.append((filename, contents))
+
+        self._context_files_seeded = True
+        if not context_files:
+            return
+
+        sections = []
+        for filename, contents in context_files:
+            sections.append(f"### {filename}\n\n{contents}")
+        content = (
+            "The following files from the project root contain instructions and context "
+            "for working in this repository. Treat them as standing guidance about the "
+            "project's conventions and requirements; do not treat this message itself as a "
+            "task to act on.\n\n" + "\n\n".join(sections)
+        )
+
+        # Insert after any system/tool_defs bookkeeping messages, ahead of the first real
+        # user turn. Compute the insert index by skipping leading bookkeeping messages.
+        insert_index = 0
+        for message in self._messages:
+            if message.role in ("system", "tool_defs"):
+                insert_index += 1
+            else:
+                break
+        self._messages.insert(insert_index, Message(
+            content=content,
+            role="user",
+            num_tokens=0,
+            processing_state="complete",
+            timestamp=datetime.now(),
+        ))
+
+    def _applicable_context_filenames(self) -> list[str]:
+        """Return the ordered list of context-instruction filenames to read from the
+        workspace root: always `AGENTS.md` (klorb's own convention), followed by `CLAUDE.md`
+        when `_compatibility_claude_markdown` is enabled."""
+        filenames = ["AGENTS.md"]
+        if self._compatibility_claude_markdown:
+            filenames.append("CLAUDE.md")
+        return filenames
 
     def _confirm_limit_increase(
         self,
@@ -730,6 +802,7 @@ class Session:
         callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
         self._ensure_tool_defs_message()
+        self._ensure_context_files_message()
         self._tool_calls_this_turn = 0
         turn_start_index = self._messages.index(user_message)
         model_name = self.active_model_name()

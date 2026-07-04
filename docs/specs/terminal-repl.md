@@ -146,7 +146,12 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   widget picks up whichever mode is currently active, rather than always starting as a
   summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted during an
   aborted turn are torn down (and, for the latter, dropped from the toggle-tracking list)
-  exactly like a partial response/thinking widget.
+  exactly like a partial response/thinking widget. The footer's own label for this binding
+  flips with it — `"Detail"` while summaries are shown, `"Hide"` once detail is shown — by
+  replacing the `"ctrl+o"` entry in `self._bindings.key_to_bindings` (this `ReplApp`
+  instance's own mutable copy of the merged class-level `BINDINGS`) and calling
+  `refresh_bindings()`, since a `Binding`'s description is otherwise fixed at `BINDINGS`
+  class-definition time.
 * Each new block in the history — a submitted prompt (`.prompt`), a `<Thinking>` label
   (`.thinking-label`), a `<Tool use>` label (`.tool-call-label`), and a model response
   (`.response`, applied to the `Markdown` widget in both `_mount_response_widget` and

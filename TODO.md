@@ -8,12 +8,27 @@
 * If you're scrolled to the bottom and a new ThinkingWidget or ResponseWidget arrives,
   scroll to the end. But if the user has explicitly kept the scroll higher up, don't pull
   them away from what they're reading as more response comes streaming in.
+  * Things also get weird when there are blocks below the Thinking block, but more thoughts
+    are being thunk. It's pushing everything down but the scrollbar at that point is just
+    fighting you and being really jittery.
+
+* In tool limit increase modal there are yes and no buttons. You can [tab] between them
+  but you should also be able to use L/R arrow keys to get there.
 
 # Feature backlog
 
-* Read AGENTS.md from the proj root into the context as an initial user turn. 
-  * If ProcessConfig-level setting `compatibility.claudeMarkdown` is true, also read CLAUDE.md.
+* Just pass the ProcessConfig to the Session as a c'tor arg, rather than unpacking multiple
+  boolean fields out of the ProcCfg and putting them in the Session C'tor. 
 
+* If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
+  and you should be allowed to type before it's actually your turn to send.
+  * The next logical thing to do is to implement "interrupting" in the conversation so you
+    can interject midway thru what it's saying. 
+
+* When the agent is thinking and doing tool calls, it also has started to draft a response.
+  This gets completed and left earlier in the history; it should always be brought to the bottom
+  as the agent continues to write it, so that we see it and aren't just sitting in a scroll full of
+  tool calls where the real response was actually further up in the history queue.
 
 * project bootstrapping
   * when you start klorb it attempts to identify the workspace root.

@@ -18,5 +18,7 @@
         "/home/aaron/src/klorb"
       ]
     }
-  }
+  },
+
+  "compatibility.claudeMarkdown": true
 }
