@@ -465,6 +465,21 @@ async def test_set_thinking_enabled_also_updates_process_config_template() -> No
         assert app._process_config.session.thinking_enabled is False
 
 
+async def test_set_thinking_enabled_persists_to_the_user_config_file(tmp_path: Path) -> None:
+    config_path = tmp_path / "klorb-config.json"
+    config_path.write_text(json.dumps({"shell.command": "/bin/zsh"}), encoding="utf-8")
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+        async with app.run_test():
+            app.set_thinking_enabled(False)
+
+    written = json.loads(config_path.read_text(encoding="utf-8"))
+    assert written["sessionDefaults"]["thinking.enabled"] is False
+    assert written["shell.command"] == "/bin/zsh"
+
+
 async def test_set_thinking_effort_also_updates_process_config_template() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
@@ -472,6 +487,21 @@ async def test_set_thinking_effort_also_updates_process_config_template() -> Non
     async with app.run_test():
         app.set_thinking_effort("low")
         assert app._process_config.session.thinking_effort == "low"
+
+
+async def test_set_thinking_effort_persists_to_the_user_config_file(tmp_path: Path) -> None:
+    config_path = tmp_path / "klorb-config.json"
+    config_path.write_text(json.dumps({"shell.command": "/bin/zsh"}), encoding="utf-8")
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+        async with app.run_test():
+            app.set_thinking_effort("low")
+
+    written = json.loads(config_path.read_text(encoding="utf-8"))
+    assert written["sessionDefaults"]["thinking.effort"] == "low"
+    assert written["shell.command"] == "/bin/zsh"
 
 
 @pytest.mark.usefixtures("_isolate_process_config_layers")
