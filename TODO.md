@@ -2,9 +2,6 @@
 
 # Bugs:
 
-* SessionConfig.workspace_root and ProcessConfig.workspace.path are also redundant.
-  ... and maybe that means `workspace` should just be on the SessionConfig, instead?
-
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
