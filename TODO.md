@@ -26,6 +26,9 @@
 
 # Feature backlog
 
+* If you change the visual theme, the theme color should get baked into the ProcessConfig /
+  homedir-level settings file.
+
 * When you select a model, it should update the workspace's `sessionDefaults > model` config file 
   setting so it remembers next time.
 

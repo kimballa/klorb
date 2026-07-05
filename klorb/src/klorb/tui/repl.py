@@ -552,7 +552,13 @@ class PaletteHint(Static):
     rather than `Footer`'s private `footer-key--key`/`-description` ones: Textual resolves a
     component class through CSS scoped to the declaring widget type, so borrowing `Footer`'s
     directly wouldn't resolve on a different widget; declaring our own against the same
-    theme-level `$footer-*` variables gets the identical look without that coupling.
+    theme-level `$footer-*` variables gets the identical look without that coupling. The
+    widget's own base `background` is set to `$footer-background` — the same variable
+    `Footer` itself uses — rather than left at its default: `$footer-key-background`/
+    `$footer-item-background`/`$footer-description-background` all resolve to `transparent`
+    in the built-in themes (`Footer`'s own blue comes entirely from its own top-level
+    `background: $footer-background`, not from those component-class colors), so without
+    this base the hint would composite over the app's own background instead.
     """
 
     COMPONENT_CLASSES = {"palette-hint--key", "palette-hint--description"}
@@ -561,6 +567,7 @@ class PaletteHint(Static):
     PaletteHint {
         width: auto;
         height: 1;
+        background: $footer-background;
     }
     PaletteHint .palette-hint--key {
         color: $footer-key-foreground;
@@ -575,25 +582,42 @@ class PaletteHint(Static):
     }
     """
 
-    def show_hint(self) -> None:
-        """Render `PALETTE_PREFIX` and `"palette"` in the two component styles above,
-        padded the same way `FooterKey.render()` pads its own key/description (reading the
-        padding from CSS rather than hardcoding spaces, so a theme override to that padding
-        is picked up here too).
+    def on_mount(self) -> None:
+        """Start hidden until `show_hint()` is first called."""
+        self._shown = False
+
+    def render(self) -> Text:
+        """Render `PALETTE_PREFIX` and `"palette"` in the two component styles above (or
+        nothing, while hidden), padded the same way `FooterKey.render()` pads its own
+        key/description. Recomputing the styles here — rather than baking a `Text` once via
+        `self.update(...)` in `show_hint()` — is what `FooterKey.render()` itself does too,
+        and is why it works: Textual re-invokes `render()` whenever the active theme changes,
+        so reading `get_component_rich_style()`/`get_component_styles()` fresh on every call
+        (rather than caching their result in a stored renderable) is what keeps this hint's
+        colors following a theme switch instead of freezing at whatever they were the moment
+        `show_hint()` last ran.
         """
+        if not self._shown:
+            return Text("")
         key_style = self.get_component_rich_style("palette-hint--key")
         key_padding = self.get_component_styles("palette-hint--key").padding
         description_style = self.get_component_rich_style("palette-hint--description")
         description_padding = self.get_component_styles("palette-hint--description").padding
-        self.update(Text.assemble(
+        return Text.assemble(
             (" " * key_padding.left + PALETTE_PREFIX + " " * key_padding.right, key_style),
             (" " * description_padding.left + "palette" + " " * description_padding.right,
              description_style),
-        ))
+        )
+
+    def show_hint(self) -> None:
+        """Show the hint, redrawing via `render()` above."""
+        self._shown = True
+        self.refresh()
 
     def hide_hint(self) -> None:
-        """Clear the rendered content, leaving nothing shown."""
-        self.update("")
+        """Hide the hint, redrawing via `render()` above."""
+        self._shown = False
+        self.refresh()
 
 
 class ReplApp(App[None]):
@@ -625,7 +649,7 @@ class ReplApp(App[None]):
     #status-bar {
         width: auto;
         color: $footer-description-foreground;
-        background: $footer-description-background;
+        background: $footer-background;
         padding: 0 1;
     }
 
