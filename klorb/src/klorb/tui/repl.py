@@ -6,6 +6,7 @@ box pinned to the bottom of the screen.
 import inspect
 import logging
 import threading
+from collections.abc import Iterable
 from pathlib import Path
 
 from rich.markup import escape
@@ -14,6 +15,7 @@ from textual import events
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
+from textual.app import SystemCommand
 from textual.binding import Binding
 from textual.command import DiscoveryHit
 from textual.command import Hit
@@ -23,6 +25,7 @@ from textual.containers import VerticalScroll
 from textual.content import Content
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.screen import Screen
 from textual.types import IgnoreReturnCallbackType
 from textual.widgets import Button
 from textual.widgets import Footer
@@ -38,6 +41,7 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
 from klorb.process_config import ProcessConfig
 from klorb.process_config import load_process_config
+from klorb.process_config import persist_theme
 from klorb.process_config import project_config_path
 from klorb.process_config import user_config_path
 from klorb.session import PermissionAskContext
@@ -62,6 +66,7 @@ from klorb.tui.session_commands import SessionCommandProvider
 from klorb.tui.shell import ShellCommandCancelled
 from klorb.tui.shell import ShellCommandTimedOut
 from klorb.tui.shell import UserShellCommand
+from klorb.tui.theme_commands import ThemeCommandProvider
 from klorb.tui.thinking_commands import ThinkingCommandProvider
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.trust_commands import TrustWorkspaceCommandProvider
@@ -796,8 +801,8 @@ class ReplApp(App[None]):
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
     ]
     COMMANDS = App.COMMANDS | {
-        InitCommandProvider, ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider,
-        TrustWorkspaceCommandProvider,
+        InitCommandProvider, ModelCommandProvider, SessionCommandProvider, ThemeCommandProvider,
+        ThinkingCommandProvider, TrustWorkspaceCommandProvider,
     }
 
     def __init__(
@@ -837,6 +842,8 @@ class ReplApp(App[None]):
         self._tool_call_widgets: list[ToolCallStatic] = []
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
+        if self._process_config.theme is not None and self._process_config.theme in self.available_themes:
+            self.theme = self._process_config.theme
         self.title = "klorb"
         self.sub_title = self._session.config.model
 
@@ -859,6 +866,36 @@ class ReplApp(App[None]):
         self.sub_title = name
         self._update_status_bar()
         self.notify(f"Model set to {name}.")
+
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        """Every default system command except "Theme" — `ThemeCommandProvider` supersedes it
+        with a command that shows the current theme name in its own label and opens
+        `ThemeSelectionScreen`'s `(*)`-marked picker instead of Textual's own unmarked one.
+        """
+        for command in super().get_system_commands(screen):
+            if command.title != "Theme":
+                yield command
+
+    def get_current_theme_name(self) -> str:
+        """Return the name of the currently-active Textual theme — see `ThemeCommandProvider`."""
+        return self.theme
+
+    def available_theme_names(self) -> list[str]:
+        """Return every registered Textual theme name, sorted for a stable display order in
+        `ThemeSelectionScreen` — see `ThemeCommandProvider`.
+        """
+        return sorted(self.available_themes)
+
+    def select_theme(self, name: str) -> None:
+        """Make `name` the active Textual theme, persist it to the per-user config file
+        (`persist_theme`) so it's restored on the next klorb session, and announce the change
+        in the history scroll.
+        """
+        self.theme = name
+        self._process_config.theme = name
+        persist_theme(name)
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(f"Changed current theme to `{name}`.", classes="notice"))
 
     def format_title(self, title: str, sub_title: str) -> Content:
         """Compose the `Header`'s displayed title from the current workspace path (shortened

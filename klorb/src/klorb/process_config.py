@@ -17,6 +17,7 @@ from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.schema_envelope import parse_versioned_json
 from klorb.schema_envelope import read_versioned_json
+from klorb.schema_envelope import write_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
@@ -63,6 +64,11 @@ DEFAULT_ETC_CONFIG_PATH = Path("/etc/klorb") / CONFIG_FILENAME
 
 SESSION_DEFAULTS_KEY = "sessionDefaults"
 
+THEME_CONFIG_KEY = "ui.theme"
+"""On-disk `klorb-config.json` key for `ProcessConfig.theme` — the sole canonical spelling,
+shared by `PROCESS_KEY_MAP` (reading it back) and `persist_theme` (writing it), so the two
+never drift apart."""
+
 DEFAULT_PROMPT_INPUT_MAX_LINES = 12
 """Default max soft-wrapped-line height for the REPL's prompt textarea before it scrolls
 instead of growing further; see `ProcessConfig.prompt_input_max_lines`."""
@@ -104,6 +110,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
+    THEME_CONFIG_KEY: "theme",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
 process-only `ProcessConfig` attribute it sets."""
@@ -144,6 +151,11 @@ class ProcessConfig(BaseModel):
     alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
     A compatibility shim for projects that carry Claude-Code-style instructions in a
     `CLAUDE.md` file; `AGENTS.md` is always read, since it's klorb's own convention."""
+    theme: str | None = None
+    """Name of the Textual theme selected via the TUI's theme picker (see
+    `klorb.tui.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`
+    so it's restored on the next klorb session. `None` (the default) means no persisted choice
+    exists yet; `ReplApp` falls back to Textual's own built-in default theme in that case."""
 
 
 def _default_config_layer() -> dict[str, Any]:
@@ -186,6 +198,21 @@ def project_config_path(cwd: Path) -> Path:
     """Per-project config file path, rooted at `cwd`. Also used by `klorb.permissions.grant` to
     persist an interactive "this workspace" permission grant."""
     return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
+
+
+def persist_theme(theme_name: str) -> None:
+    """Write `theme_name` to the per-user config file (`user_config_path()`) under
+    `THEME_CONFIG_KEY`, preserving every other key already in that file untouched. Auto-creates
+    the file and its parent directory with a minimal schema envelope if it doesn't exist yet.
+    Called by `ReplApp.select_theme()` so a theme chosen via the TUI's theme picker survives to
+    the next klorb session.
+    """
+    path = user_config_path()
+    raw = read_versioned_json(path, expected_schema_name=CONFIG_SCHEMA_NAME)
+    new_contents = dict(raw)
+    new_contents[THEME_CONFIG_KEY] = theme_name
+    write_versioned_json(
+        path, new_contents, schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)
 
 
 def _load_last_session_overrides(cwd: Path) -> dict[str, Any]:

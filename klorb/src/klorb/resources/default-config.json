@@ -56,5 +56,6 @@
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null,
-  "compatibility.claudeMarkdown": false
+  "compatibility.claudeMarkdown": false,
+  "ui.theme": null
 }

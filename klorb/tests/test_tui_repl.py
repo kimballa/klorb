@@ -459,6 +459,89 @@ async def test_set_thinking_effort_also_updates_process_config_template() -> Non
         assert app._process_config.session.thinking_effort == "low"
 
 
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_select_theme_updates_live_theme_and_process_config_template() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.select_theme("nord")
+        assert app.theme == "nord"
+        assert app._process_config.theme == "nord"
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_select_theme_persists_to_user_config() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.select_theme("nord")
+
+    raw = json.loads(process_config_module.user_config_path().read_text(encoding="utf-8"))
+    assert raw["ui.theme"] == "nord"
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_select_theme_announces_change_in_history_scroll() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.select_theme("nord")
+        await pilot.pause()
+        assert "Changed current theme to `nord`." in _notice_texts(app)
+
+
+async def test_get_system_commands_excludes_builtin_theme_command() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        titles = {command.title for command in app.get_system_commands(app.screen)}
+        assert "Theme" not in titles
+        assert "Quit" in titles
+
+
+async def test_constructor_applies_persisted_theme_from_process_config() -> None:
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(theme="nord")
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test():
+        assert app.theme == "nord"
+
+
+async def test_constructor_ignores_unknown_persisted_theme() -> None:
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(theme="not-a-real-theme")
+    default_theme = ReplApp(session=_session(mock_provider)).theme
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test():
+        assert app.theme == default_theme
+
+
+async def test_available_theme_names_returns_sorted_registered_themes() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        names = app.available_theme_names()
+        assert names == sorted(names)
+        assert "nord" in names
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_get_current_theme_name_reflects_active_theme() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        app.select_theme("nord")
+        assert app.get_current_theme_name() == "nord"
+
+
 async def test_get_thinking_effort_reflects_session_config() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))

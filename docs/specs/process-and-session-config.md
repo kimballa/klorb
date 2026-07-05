@@ -15,7 +15,7 @@ or slicing a superset.
 ## How it works
 
 * `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus
-  eight process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
+  nine process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
   prompt textarea's max grow height, applied via `input_widget.styles.max_height` in
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
@@ -27,9 +27,12 @@ or slicing a superset.
   default `DEFAULT_SHELL_COMMAND`, `/bin/bash` — the shell binary a `!`-prefixed REPL command
   is run through; see [[terminal-repl]]), `shell_timeout_seconds` (`float | None`, default
   `None` — how long a `!`-prefixed REPL command may run before it's killed; `None` means no
-  timeout), and `compatibility_claude_markdown` (bool, default `False` — when `True`,
+  timeout), `compatibility_claude_markdown` (bool, default `False` — when `True`,
   `CLAUDE.md` is read from the workspace root and injected into the conversation alongside
-  `AGENTS.md`; see [[workspace-context-files]]).
+  `AGENTS.md`; see [[workspace-context-files]]), and `theme` (`str | None`, default `None` —
+  the Textual theme name selected via the TUI's theme picker (`ThemeCommandProvider`/
+  `ThemeSelectionScreen` in `klorb/src/klorb/tui/theme_commands.py`); `None` means no persisted
+  choice exists yet, so `ReplApp` falls back to Textual's own built-in default theme).
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
   `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
@@ -138,6 +141,12 @@ or slicing a superset.
   thinking enabled (`set_thinking_enabled`), and thinking effort (`set_thinking_effort`).
   Provider selection isn't implemented yet (see `TODO.md`'s `ProviderFactory` item); when it
   is, it should follow the same dual-write pattern.
+* `theme` is also user-editable via the command palette (`ThemeCommandProvider`), but unlike
+  the four settings above it's process-only, not session-scoped: `ReplApp.select_theme()` sets
+  `self.theme` (the live Textual reactive) and `self._process_config.theme` (the template), and
+  additionally persists it straight to `user_config_path()` via `process_config.persist_theme()`
+  — the only one of these palette-editable settings written through to disk immediately rather
+  than staying in-memory-only until some future explicit save.
 * `ReplApp.clear_session()` (`klorb/src/klorb/tui/repl.py`) builds the new session's config
   as `self._process_config.session.model_copy()` — the *current* template, including any
   dual-written changes — rather than hand-picking individual fields. This is why `/clear`
@@ -173,7 +182,8 @@ sit as flat keys alongside it at the top level:
   "tools.findFile.maxResults": 500,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
-  "shell.timeout": null
+  "shell.timeout": null,
+  "ui.theme": null
 }
 ```
 
@@ -235,7 +245,7 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
   `tools.findFile.maxResults`, `providers.openrouter.baseUrl`, `shell.command`,
-  `shell.timeout`, `compatibility.claudeMarkdown`) can be set at the top level.
+  `shell.timeout`, `compatibility.claudeMarkdown`, `ui.theme`) can be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`

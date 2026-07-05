@@ -20,6 +20,8 @@ from klorb.process_config import DEFAULT_SHELL_COMMAND
 from klorb.process_config import PROCESS_KEY_MAP
 from klorb.process_config import SESSION_KEY_MAP
 from klorb.process_config import load_process_config
+from klorb.process_config import persist_theme
+from klorb.process_config import user_config_path
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_SESSION
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
@@ -83,6 +85,7 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.shell_command == DEFAULT_SHELL_COMMAND
     assert process_config.shell_timeout_seconds is None
     assert process_config.compatibility_claude_markdown is False
+    assert process_config.theme is None
 
 
 def test_default_config_layer_reads_the_packaged_resource() -> None:
@@ -156,6 +159,7 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
             "providers.openrouter.baseUrl": "https://gateway.example.com/v1",
             "shell.command": "/bin/zsh",
             "shell.timeout": 30,
+            "ui.theme": "nord",
         },
     )
 
@@ -169,6 +173,7 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.openrouter_base_url == "https://gateway.example.com/v1"
     assert process_config.shell_command == "/bin/zsh"
     assert process_config.shell_timeout_seconds == 30
+    assert process_config.theme == "nord"
 
 
 def test_compatibility_claude_markdown_is_overridable_via_config_file(tmp_path: Path) -> None:
@@ -490,3 +495,29 @@ def test_load_process_config_sets_workspace_from_argument(tmp_path: Path) -> Non
     process_config = load_process_config(cwd=tmp_path, workspace=workspace)
 
     assert process_config.session.workspace == workspace
+
+
+def test_persist_theme_writes_ui_theme_key_to_user_config() -> None:
+    persist_theme("nord")
+
+    raw = json.loads(user_config_path().read_text(encoding="utf-8"))
+    assert raw["ui.theme"] == "nord"
+    assert raw["schema"] == {"name": "klorb-config", "version": "1.0.0"}
+
+
+def test_persist_theme_preserves_other_keys_already_in_the_file(tmp_path: Path) -> None:
+    _write_config(user_config_path(), {"sessionDefaults": {"model": "user/model"}})
+
+    persist_theme("gruvbox")
+
+    raw = json.loads(user_config_path().read_text(encoding="utf-8"))
+    assert raw["ui.theme"] == "gruvbox"
+    assert raw["sessionDefaults"]["model"] == "user/model"
+
+
+def test_persist_theme_is_picked_up_by_a_later_load(tmp_path: Path) -> None:
+    persist_theme("dracula")
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.theme == "dracula"
