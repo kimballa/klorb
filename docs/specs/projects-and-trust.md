@@ -199,5 +199,7 @@ so they aren't lost the next time klorb opens this workspace.
 * `last-session.json` (`TODO.md`) doesn't exist yet, so there's no "reconstitute the previous
   session automatically" behavior tied to a trusted workspace — a possible future extension, not
   built here.
-* The top status bar does not yet show the current workspace name or an `(Untrusted)` marker —
-  see `TODO.md`'s "Feature backlog".
+* The `Header`'s title (`ReplApp.format_title()`, `klorb.tui.repl`) shows the current workspace
+  path plus an `(Untrusted)` marker whenever `SessionConfig.workspace.trusted` is `False`,
+  alongside the active model and (if thinking is enabled) its effort level — see
+  `docs/specs/terminal-repl.md`.

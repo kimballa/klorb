@@ -15,11 +15,6 @@
 
 # Feature backlog
 
-* The top status bar should show the workspace name, and `(Untrusted)` if not trusted.
-  * The `- <model_name>` suffix should also stay, as well as thinking effort level, 
-    if thinking is enabled. e.g `.../path/to/somewhere (Untrusted) - gpt-4o (High)`
-  * If the path is too long to fit, use ".../last/two_parts". 
-
 * If you change the visual theme, the theme color should get baked into the ProcessConfig /
   homedir-level settings file.
 

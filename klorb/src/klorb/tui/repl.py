@@ -20,6 +20,7 @@ from textual.command import Hit
 from textual.containers import Horizontal
 from textual.containers import Vertical
 from textual.containers import VerticalScroll
+from textual.content import Content
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.types import IgnoreReturnCallbackType
@@ -142,6 +143,21 @@ def format_token_count(count: int) -> str:
     if value == int(value):
         return f"{int(value)}{suffix}"
     return f"{value}{suffix}"
+
+
+_WORKSPACE_PATH_DISPLAY_MAX_CHARS = 40
+
+
+def _format_workspace_path(
+    path: Path, max_chars: int = _WORKSPACE_PATH_DISPLAY_MAX_CHARS,
+) -> str:
+    """Render `path` for the header: the full path if it's at most `max_chars` characters long,
+    else just its last two components prefixed with `"..."` (e.g. `".../last/two_parts"`).
+    """
+    full = str(path)
+    if len(full) <= max_chars or len(path.parts) < 2:
+        return full
+    return ".../" + "/".join(path.parts[-2:])
 
 
 def _italicized(text: str) -> str:
@@ -844,6 +860,38 @@ class ReplApp(App[None]):
         self._update_status_bar()
         self.notify(f"Model set to {name}.")
 
+    def format_title(self, title: str, sub_title: str) -> Content:
+        """Compose the `Header`'s displayed title from the current workspace path (shortened
+        per `_format_workspace_path` if it's too long to comfortably fit) plus an `"(Untrusted)"`
+        marker when the workspace isn't trusted, followed by `sub_title` (the active model,
+        kept in sync with it by `select_model`) and, if thinking is enabled, its effort level in
+        parentheses — e.g. `".../path/to/somewhere (Untrusted) - gpt-4o (High)"`. Overrides
+        `App.format_title`, which otherwise just joins `title`/`sub_title` with an em dash;
+        `title` is ignored here since a bare "klorb" app name isn't useful once every session is
+        tied to a specific workspace directory.
+        """
+        workspace = self._session.config.workspace
+        workspace_display = _format_workspace_path(workspace.path)
+        if not workspace.trusted:
+            workspace_display += " (Untrusted)"
+        model_display = sub_title
+        if self.get_thinking_enabled():
+            model_display += f" ({self.get_thinking_effort().title()})"
+        return Content.assemble(
+            Content(workspace_display),
+            (" - ", "dim"),
+            Content(model_display).stylize("dim"),
+        )
+
+    def _refresh_header_title(self) -> None:
+        """Force the `Header` to redraw via `format_title()`, for state changes (workspace
+        trust, thinking effort/enabled) that it depends on but that `Header` doesn't itself
+        watch — unlike `self.title`/`self.sub_title`, whose own changes it watches directly.
+        `mutate_reactive` re-runs those watchers with `self.sub_title`'s value unchanged, which
+        is enough to make `Header` re-invoke `format_title()`.
+        """
+        self.mutate_reactive(ReplApp.sub_title)
+
     def get_thinking_effort(self) -> ThinkingEffort:
         """Return the reasoning effort level currently configured for subsequent prompts."""
         return self._session.config.thinking_effort
@@ -858,6 +906,7 @@ class ReplApp(App[None]):
         """
         self._session.config.thinking_enabled = enabled
         self._process_config.session.thinking_enabled = enabled
+        self._refresh_header_title()
         self.notify(f"Thinking {'enabled' if enabled else 'disabled'}.")
 
     def set_thinking_effort(self, effort: ThinkingEffort) -> None:
@@ -867,6 +916,7 @@ class ReplApp(App[None]):
         """
         self._session.config.thinking_effort = effort
         self._process_config.session.thinking_effort = effort
+        self._refresh_header_title()
         self.notify(f"Thinking effort set to {effort}.")
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -1044,6 +1094,8 @@ class ReplApp(App[None]):
             self._process_config.session.read_dirs, reloaded.session.read_dirs)
         self._process_config.session.write_dirs = _concat_dir_rules(
             self._process_config.session.write_dirs, reloaded.session.write_dirs)
+
+        self._refresh_header_title()
 
     def _announce_workspace(self, workspace: Workspace) -> None:
         """Mount the one-line history notice docs/specs/projects-and-trust.md specifies for the

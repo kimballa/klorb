@@ -21,7 +21,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   logging for this invocation, so clearing the session (below) knows whether to roll the log
   file over.
 * `ReplApp.compose()` lays out five widgets/regions top-to-bottom: a `Header` showing the
-  app title and the active model as its subtitle, a `VerticalScroll` (id `history`) that
+  current workspace and model (see below), a `VerticalScroll` (id `history`) that
   holds the conversation so far, a `PromptPalette` (id `prompt-palette`, hidden until the
   user types a leading `>` — see [[command-palette-from-prompt]]), a `PromptInput` (id
   `prompt-input`) for typing the next prompt, and a `Horizontal` (id `status-row`) docked to
@@ -31,6 +31,20 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   line. The history container is styled `height: 1fr` so it fills all available vertical
   space above the input box, which is why the history scrolls "up" as content is added while
   the input box stays pinned to the bottom of the screen.
+* `ReplApp.format_title()` overrides `App.format_title()` to control what the `Header`
+  displays, rather than relying on the default `title — sub_title` join: it shows the current
+  workspace's path (`SessionConfig.workspace.path`), shortened to its last two path components
+  prefixed with `"..."` (e.g. `".../last/two_parts"`) once the full path exceeds
+  `_WORKSPACE_PATH_DISPLAY_MAX_CHARS` characters, followed by `" (Untrusted)"` when
+  `SessionConfig.workspace.trusted` is `False`, then `" - "` and the active model
+  (`self.sub_title`, kept in sync by `select_model()`), with its thinking effort level in
+  parentheses appended whenever thinking is enabled — e.g.
+  `".../path/to/somewhere (Untrusted) - gpt-4o (High)"`. Since `Header` only redraws when
+  `App.title`/`App.sub_title` change (its own reactive watchers), state changes it depends on
+  but that don't touch those two attributes — trusting a workspace (`_apply_workspace_config()`)
+  or toggling thinking enablement/effort (`set_thinking_enabled()`/`set_thinking_effort()`) —
+  call `ReplApp._refresh_header_title()`, which uses `mutate_reactive()` to force `Header` to
+  re-invoke `format_title()` without needing `sub_title`'s value to actually change.
 * `Footer`'s own `dock: bottom` CSS rule is overridden to `dock: none; width: 1fr` when
   nested inside `#status-row`, since Textual resolves a docked widget's position against
   its immediate parent: left docked, `Footer` would claim the entire row's height for

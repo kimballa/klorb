@@ -468,6 +468,62 @@ async def test_get_thinking_effort_reflects_session_config() -> None:
         assert app.get_thinking_effort() == "low"
 
 
+async def test_format_title_shows_workspace_path_model_and_thinking_effort() -> None:
+    mock_provider = MagicMock()
+    short_path = Path("/home/user/proj")
+    config = SessionConfig(model="gpt-5", workspace=Workspace(path=short_path, trusted=True))
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        app.set_thinking_enabled(True)
+        app.set_thinking_effort("high")
+        title = app.format_title(app.title, app.sub_title).plain
+        assert title == f"{short_path} - gpt-5 (High)"
+
+
+async def test_format_title_marks_an_untrusted_workspace_and_omits_effort_when_disabled() -> None:
+    mock_provider = MagicMock()
+    short_path = Path("/home/user/proj")
+    config = SessionConfig(model="gpt-5", workspace=Workspace(path=short_path, trusted=False))
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        app.set_thinking_enabled(False)
+        title = app.format_title(app.title, app.sub_title).plain
+        assert title == f"{short_path} (Untrusted) - gpt-5"
+
+
+async def test_format_title_shortens_a_long_workspace_path_to_its_last_two_parts() -> None:
+    mock_provider = MagicMock()
+    long_path = Path("/some/very/deeply/nested/workspace/directory/tree/root")
+    config = SessionConfig(model="gpt-5", workspace=Workspace(path=long_path, trusted=True))
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        app.set_thinking_enabled(False)
+        title = app.format_title(app.title, app.sub_title).plain
+        assert title == ".../tree/root - gpt-5"
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -> None:
+    mock_provider = MagicMock()
+    config = SessionConfig(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        app.set_thinking_enabled(False)
+        assert "(Untrusted)" in app.format_title(app.title, app.sub_title).plain
+
+        app._apply_workspace_config(
+            session.config.workspace.model_copy(update={"trusted": True}))
+        assert "(Untrusted)" not in app.format_title(app.title, app.sub_title).plain
+
+
 async def test_initial_message_is_submitted_as_first_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
