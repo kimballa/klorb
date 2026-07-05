@@ -96,6 +96,16 @@ THINKING_LABEL = "<Thinking>"
 TOOL_USE_LABEL = "<Tool use>"
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
+MASCOT_ART = """\
+      o
+     /
+    ▄▄▄
+   █████
+  ███████
+ █░███x███
+███████████
+▟█▙     ▟█▙"""
+MASCOT_GREETING = "Roar! Let's go code a Thing!"
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -755,6 +765,12 @@ class ReplApp(App[None]):
         color: $text-muted;
         margin: 1 0 0 0;
     }
+
+    .mascot {
+        color: $accent;
+        text-align: center;
+        margin: 1 0 0 0;
+    }
     """
 
     BINDINGS = [
@@ -901,8 +917,9 @@ class ReplApp(App[None]):
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, watch
         the history's scroll position (see `_on_history_scroll_changed`), show the initial
-        `> palette` hint (the box starts empty), note in the history if no per-user config
-        file exists yet (see `CONFIG_MISSING_MESSAGE`), then hand off to
+        `> palette` hint (the box starts empty), greet the user with the klorb mascot (see
+        `MASCOT_ART`/`MASCOT_GREETING`), note in the history if no per-user config file exists
+        yet (see `CONFIG_MISSING_MESSAGE`), then hand off to
         `_run_startup_workspace_and_initial_message` to resolve (and, if this is a brand-new
         workspace, interactively bootstrap) workspace trust before submitting any initial
         message as the first turn.
@@ -916,6 +933,8 @@ class ReplApp(App[None]):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self.watch(history, "scroll_y", self._on_history_scroll_changed, init=False)
+
+        history.mount(Static(f"{MASCOT_ART}\n\n{MASCOT_GREETING}", classes="mascot"))
 
         if not user_config_path().is_file():
             history.mount(Static(CONFIG_MISSING_MESSAGE, classes="notice"))

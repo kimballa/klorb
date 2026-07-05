@@ -267,7 +267,7 @@ async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        prompt_widget = history.query_one(Static)
+        prompt_widget = history.query(Static).exclude(".mascot").first()
         response_widget = history.query_one(Markdown)
 
         assert prompt_widget.content == "what is 2+2?"
@@ -290,7 +290,7 @@ async def test_submitting_an_empty_prompt_does_nothing() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert len(history.children) == 0
+        assert len(history.query(Static).exclude(".mascot")) == 0
 
     mock_provider.send_prompt.assert_not_called()
 
@@ -478,7 +478,7 @@ async def test_initial_message_is_submitted_as_first_turn() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        prompt_widget = history.query_one(Static)
+        prompt_widget = history.query(Static).exclude(".mascot").first()
         response_widget = history.query_one(Markdown)
 
         assert prompt_widget.content == "what is 2+2?"
@@ -802,7 +802,7 @@ async def test_shell_command_echoes_and_shows_output() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        widgets = list(history.query(Static))
+        widgets = list(history.query(Static).exclude(".mascot"))
         assert widgets[0].content == "!echo hello"
         assert widgets[1].content == "hello\n"
         assert prompt_input.disabled is False
@@ -827,7 +827,7 @@ async def test_shell_command_preserves_newlines_across_multiple_lines() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        output_widget = list(history.query(Static))[1]
+        output_widget = list(history.query(Static).exclude(".mascot"))[1]
         assert output_widget.content == "a\nb\nc\n"
 
 
@@ -861,7 +861,7 @@ async def test_shell_command_uses_configured_shell_binary() -> None:
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        output_widget = list(history.query(Static))[1]
+        output_widget = list(history.query(Static).exclude(".mascot"))[1]
         assert "/no/such/shell not found" in str(output_widget.content)
 
 
@@ -1597,7 +1597,7 @@ async def test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt()
         await pilot.pause()
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        prompt_widget = history.query_one(Static)
+        prompt_widget = history.query(Static).exclude(".mascot").first()
         assert prompt_widget.content == gibberish
 
 
