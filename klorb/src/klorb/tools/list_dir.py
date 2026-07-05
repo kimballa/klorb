@@ -18,7 +18,7 @@ class ListDirTool(Tool):
 
     `dirname` is resolved and checked against `readDirs` (see
     `klorb.permissions.workspace.resolve_and_evaluate_read`) before the directory is opened —
-    confined to `SessionConfig.workspace_root` unless `ProcessConfig.workspace.trusted`,
+    confined to `SessionConfig.workspace.path` unless `SessionConfig.workspace.trusted`,
     exactly like `ReadFileTool`. A relative `dirname` is resolved against the workspace root,
     not the process's current working directory. An empty string means the workspace root
     itself.

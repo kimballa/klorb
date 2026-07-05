@@ -17,7 +17,7 @@ class ReplaceAllTool(Tool):
     a literal substring or (`is_regex=True`) a regex pattern supporting `\\1`-style
     backreferences in `new_text`.
 
-    `filename` is confined to `SessionConfig.workspace_root` and further checked against
+    `filename` is confined to `SessionConfig.workspace.path` and further checked against
     `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
     """
 

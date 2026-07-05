@@ -27,14 +27,9 @@ or slicing a superset.
   default `DEFAULT_SHELL_COMMAND`, `/bin/bash` — the shell binary a `!`-prefixed REPL command
   is run through; see [[terminal-repl]]), `shell_timeout_seconds` (`float | None`, default
   `None` — how long a `!`-prefixed REPL command may run before it's killed; `None` means no
-  timeout), and `workspace` (a `klorb.workspace.Workspace` — which directory klorb considers
-  the current project root, whether it's a registered project, and whether it's trusted;
-  `workspace.trusted` governs whether `ReadFile` gets a hard workspace-root boundary or
-  table-only confinement, see docs/specs/permissions.md and docs/specs/projects-and-trust.md.
-  Deliberately has **no** on-disk key at all — a project must never be able to grant itself
-  trust via its own config file). `compatibility_claude_markdown` (bool, default `False` —
-  when `True`, `CLAUDE.md` is read from the workspace root and injected into the conversation
-  alongside `AGENTS.md`; see [[workspace-context-files]]).
+  timeout), and `compatibility_claude_markdown` (bool, default `False` — when `True`,
+  `CLAUDE.md` is read from the workspace root and injected into the conversation alongside
+  `AGENTS.md`; see [[workspace-context-files]]).
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
   `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
@@ -53,15 +48,26 @@ or slicing a superset.
   same reason as the tool-call caps above: a future "ask" flow will let a user approve a rule
   for the rest of the session, a per-session mutation `ProcessConfig` can't represent.
 
+  `SessionConfig.workspace` (a `klorb.workspace.Workspace`) is which directory this session
+  considers its project root, whether it's a registered project, and whether it's trusted;
+  `workspace.trusted` governs whether `ReadFile` gets a hard workspace-root boundary or
+  table-only confinement (see docs/specs/permissions.md and docs/specs/projects-and-trust.md).
+  It lives on `SessionConfig`, not `ProcessConfig`, for the same concurrency reason as
+  `read_dirs`/`write_dirs`/the tool-call caps above — multiple sessions in one process could
+  each be pointed at a different directory — see
+  [the workspace-on-session ADR](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
+  Deliberately has **no** on-disk key at all, in either `SESSION_KEY_MAP` or `PROCESS_KEY_MAP` —
+  a project must never be able to grant itself trust via its own config file.
+
   `session` is a *template*, not a shared instance — every `Session` created in the process
   (at startup, or via `/clear`) gets `process_config.session.model_copy()`, an independent
   copy it can mutate freely without affecting any other session or the template itself. The
   process-only fields, by contrast, are read directly wherever they're needed (e.g.
   `self._process_config.prompt_input_max_lines`) rather than copied, since they must be
   identical across every concurrently running session.
-* `load_process_config(*, config_flag_path: Path | None = None, cwd: Path | None = None) ->
-  ProcessConfig` assembles the config once at process startup by layering plain JSON
-  objects, each read via
+* `load_process_config(*, config_flag_path: Path | None = None, cwd: Path | None = None,
+  workspace: Workspace | None = None) -> ProcessConfig` assembles the config once at process
+  startup by layering plain JSON objects, each read via
   [`read_versioned_json`](persisted-json-schema-versioning.md) (or, for the first layer,
   `klorb.schema_envelope.parse_versioned_json` directly on packaged resource text), in
   increasing order of precedence:
@@ -103,11 +109,13 @@ or slicing a superset.
   every earlier layer's. See docs/specs/permissions.md for why (a stricter rule from any
   layer must never be discardable by a looser rule from another).
 
-  `SessionConfig.workspace_root` is also set here, from `find_workspace_root(cwd)` — an
-  ancestor search for the nearest directory with a non-symlinked `.klorb` child, falling back
-  to `cwd` itself — rather than `SessionConfig`'s own bare `Field(default_factory=Path.cwd)`
-  (which remains only as the fallback for callers constructing `SessionConfig` directly,
-  e.g. tests). See docs/specs/permissions.md.
+  `SessionConfig.workspace` is also set here, from a `Workspace` resolved via
+  `klorb.workspace.TrustManager.resolve_workspace(cwd)` (or synthesized from
+  `find_workspace_root(cwd)` — an ancestor search for the nearest directory with a
+  non-symlinked `.klorb` child — when no `workspace` argument is given) — rather than
+  `SessionConfig`'s own bare `Field(default_factory=lambda: Workspace(path=Path.cwd()))` (which
+  remains only as the fallback for callers constructing `SessionConfig` directly, e.g. tests).
+  See docs/specs/permissions.md and docs/specs/projects-and-trust.md.
 
   After merging, `_route_keys()` looks each on-disk key up in `SESSION_KEY_MAP` (for
   `sessionDefaults` keys) or `PROCESS_KEY_MAP` (for top-level keys) — both in

@@ -33,7 +33,7 @@ compatibility shim for projects that carry Claude-Code-style instructions in tha
   by role alone.
 * `_ensure_context_files_message()` reads each applicable filename (via
   `_applicable_context_filenames()`: `["AGENTS.md"]`, or `["AGENTS.md", "CLAUDE.md"]` when
-  compatibility is on) from `self.config.workspace_root`, concatenating the ones that exist
+  compatibility is on) from `self.config.workspace.path`, concatenating the ones that exist
   on disk into a single message framed as standing project guidance rather than a task:
 
   ```

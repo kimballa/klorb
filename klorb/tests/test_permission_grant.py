@@ -26,6 +26,7 @@ from klorb.process_config import (
 )
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import SessionConfig
+from klorb.workspace import Workspace
 
 
 @pytest.fixture(autouse=True)
@@ -121,7 +122,7 @@ def test_promote_table_never_mutates_input_in_place(tmp_path: Path) -> None:
 
 
 def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
@@ -136,7 +137,7 @@ def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> 
 
 
 def test_session_scope_read_only_never_touches_write_dirs(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
@@ -150,7 +151,7 @@ def test_session_scope_read_only_never_touches_write_dirs(tmp_path: Path) -> Non
 
 
 def test_workspace_scope_mutates_session_and_process_template(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
@@ -169,7 +170,7 @@ def test_workspace_scope_with_no_process_config_skips_the_ripple_but_still_persi
     gets a working grant: the live `SessionConfig` and the on-disk file, neither of which needs
     the `ProcessConfig` object itself, are still updated -- only the `process_config.session.*`
     ripple is skipped, since there's nothing to ripple into."""
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     target = tmp_path / "sub" / "f.txt"
 
     apply_permission_grant("workspace", session_config, None, target, is_write=True)
@@ -181,7 +182,7 @@ def test_workspace_scope_with_no_process_config_skips_the_ripple_but_still_persi
 
 
 def test_workspace_scope_creates_file_if_missing(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
     path = project_config_path(tmp_path)
@@ -202,7 +203,7 @@ def test_workspace_scope_preserves_unrelated_keys_in_existing_file(tmp_path: Pat
         "readDirs": {"deny": ["/nope"], "ask": [], "allow": ["/already-allowed"]},
         "writeDirs": {"deny": [], "ask": [], "allow": []},
     })
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
@@ -224,7 +225,8 @@ def test_workspace_scope_promotes_matched_ask_rule_and_removes_it_from_the_same_
         "writeDirs": {"deny": [], "ask": [str(ask_dir)], "allow": []},
     })
     session_config = SessionConfig(
-        workspace_root=tmp_path, read_dirs=DirRules(ask=[ask_dir]), write_dirs=DirRules(ask=[ask_dir]))
+        workspace=Workspace(path=tmp_path),
+        read_dirs=DirRules(ask=[ask_dir]), write_dirs=DirRules(ask=[ask_dir]))
     process_config = ProcessConfig()
     target = ask_dir / "sub" / "f.txt"
 
@@ -247,7 +249,7 @@ def test_workspace_scope_never_opens_the_homedir_file(tmp_path: Path) -> None:
     _write_config(homedir_path, {"readDirs": {"deny": [], "ask": [str(tmp_path)], "allow": []}})
     homedir_mtime_before = homedir_path.stat().st_mtime_ns
 
-    session_config = SessionConfig(workspace_root=tmp_path, read_dirs=DirRules(ask=[tmp_path]))
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path), read_dirs=DirRules(ask=[tmp_path]))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
@@ -262,7 +264,7 @@ def test_workspace_scope_never_opens_the_homedir_file(tmp_path: Path) -> None:
 
 
 def test_homedir_scope_creates_file_if_missing(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
     path = user_config_path()
@@ -279,7 +281,7 @@ def test_homedir_scope_creates_file_if_missing(tmp_path: Path) -> None:
 def test_homedir_scope_with_no_process_config_skips_the_ripple_but_still_persists(
     tmp_path: Path,
 ) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     target = tmp_path / "sub" / "f.txt"
     path = user_config_path()
 
@@ -298,7 +300,7 @@ def test_homedir_scope_cleans_matching_ask_entry_out_of_workspace_file(tmp_path:
         "readDirs": {"deny": [], "ask": [str(ask_dir)], "allow": ["/keep-me"]},
         "writeDirs": {"deny": [], "ask": [], "allow": []},
     })
-    session_config = SessionConfig(workspace_root=tmp_path, read_dirs=DirRules(ask=[ask_dir]))
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path), read_dirs=DirRules(ask=[ask_dir]))
     process_config = ProcessConfig()
     target = ask_dir / "sub" / "f.txt"
 
@@ -316,7 +318,7 @@ def test_homedir_scope_cleans_matching_ask_entry_out_of_workspace_file(tmp_path:
 def test_homedir_scope_workspace_cleanup_is_a_noop_when_workspace_file_is_absent(
     tmp_path: Path,
 ) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
@@ -332,7 +334,7 @@ def test_write_access_grants_read_dirs_even_when_only_write_dirs_had_the_ask_rul
     tmp_path: Path,
 ) -> None:
     ask_dir = tmp_path / "maybe"
-    session_config = SessionConfig(workspace_root=tmp_path, write_dirs=DirRules(ask=[ask_dir]))
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path), write_dirs=DirRules(ask=[ask_dir]))
     process_config = ProcessConfig()
     target = ask_dir / "f.txt"
 
@@ -343,7 +345,7 @@ def test_write_access_grants_read_dirs_even_when_only_write_dirs_had_the_ask_rul
 
 
 def test_read_only_access_never_mutates_write_dirs(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path, write_dirs=DirRules(ask=[tmp_path]))
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path), write_dirs=DirRules(ask=[tmp_path]))
     process_config = ProcessConfig()
     target = tmp_path / "f.txt"
 
@@ -356,7 +358,7 @@ def test_read_only_access_never_mutates_write_dirs(tmp_path: Path) -> None:
 
 
 def test_repeated_grant_does_not_duplicate_allow_entries(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace_root=tmp_path)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 

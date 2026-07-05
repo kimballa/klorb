@@ -941,20 +941,20 @@ class ReplApp(App[None]):
 
     def is_workspace_trusted(self) -> bool:
         """Whether the current workspace is currently trusted — see `TrustWorkspaceCommandProvider`."""
-        return self._process_config.workspace.trusted
+        return self._session.config.workspace.trusted
 
     async def _resolve_workspace_trust(self) -> None:
         """A no-op unless this app was given a `TrustManager` (see `__init__`). Otherwise:
-        if `ProcessConfig.workspace` (already resolved by whichever
-        `klorb.process_config.load_process_config()` call built `self._process_config`) has no
-        `projects.json` record yet (`workspace.id is None`), interactively bootstraps it
+        if `SessionConfig.workspace` (already resolved by whichever
+        `klorb.process_config.load_process_config()` call built the live session's config) has
+        no `projects.json` record yet (`workspace.id is None`), interactively bootstraps it
         (`_bootstrap_new_workspace`) and applies whatever the user decided
         (`_apply_workspace_config`); either way, finishes by announcing the resulting trust
         state in the history (`_announce_workspace`). See docs/specs/projects-and-trust.md.
         """
         if self._trust_manager is None:
             return
-        workspace = self._process_config.workspace
+        workspace = self._session.config.workspace
         if workspace.id is None:
             workspace = await self._bootstrap_new_workspace(workspace)
             self._apply_workspace_config(workspace)
@@ -967,7 +967,8 @@ class ReplApp(App[None]):
         If opened as a project, registers it (`TrustManager.register_project`) and writes its
         starter config file (`write_initial_project_config`, burning in the session's
         currently-active model); otherwise returns an unregistered `Workspace` carrying only
-        the trust decision, kept in memory for the rest of this process's lifetime.
+        the trust decision, kept in memory for the rest of this session's lifetime (see
+        `SessionConfig.workspace`).
         """
         assert self._trust_manager is not None
         open_as_project = await self.push_screen_wait(ConfirmScreen(
@@ -994,20 +995,27 @@ class ReplApp(App[None]):
 
         `read_dirs`/`write_dirs` are concatenated onto the live session's own via
         `_concat_dir_rules` (never replaced), so an "Allow (this session)" grant made before
-        the user decided to trust the workspace isn't discarded. Every other process-only
-        field is overwritten from the reload outright; `session`'s other scalar fields (model,
-        thinking, tool-call limits) are deliberately left alone here, since a config file's
-        declared defaults shouldn't silently override a value the user may have already picked
-        interactively earlier this same session.
+        the user decided to trust the workspace isn't discarded. Every process-only
+        (`ProcessConfig`) field is overwritten from the reload outright; `session`'s other
+        scalar fields (model, thinking, tool-call limits) are deliberately left alone here,
+        since a config file's declared defaults shouldn't silently override a value the user
+        may have already picked interactively earlier this same session.
+
+        `workspace` itself is dual-written onto both the live `self._session.config` and the
+        `self._process_config.session` template — the same pattern `select_model()`/
+        `set_thinking_enabled()` already use for session-scoped settings — so a future `/clear`
+        in this process inherits the resolved trust state instead of re-bootstrapping it.
         """
         reloaded = load_process_config(
             config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
 
         for field_name in ProcessConfig.model_fields:
-            if field_name in ("session", "workspace"):
+            if field_name == "session":
                 continue
             setattr(self._process_config, field_name, getattr(reloaded, field_name))
-        self._process_config.workspace = workspace
+
+        self._session.config.workspace = workspace
+        self._process_config.session.workspace = workspace
 
         self._session.config.read_dirs = _concat_dir_rules(
             self._session.config.read_dirs, reloaded.session.read_dirs)
@@ -1054,7 +1062,7 @@ class ReplApp(App[None]):
         """
         if self._trust_manager is None:
             return
-        workspace = self._process_config.workspace
+        workspace = self._session.config.workspace
         confirmed = await self.push_screen_wait(
             ConfirmScreen(f"Do you trust the workspace at {workspace.path}?"))
         if not confirmed:
@@ -1502,7 +1510,7 @@ class ReplApp(App[None]):
         """
         granted_paths = compute_grant_paths(
             self._session.config.read_dirs, self._session.config.write_dirs,
-            self._session.config.workspace_root, ask_ctx.path, ask_ctx.is_write)
+            self._session.config.workspace.path, ask_ctx.path, ask_ctx.is_write)
         return await self.push_screen_wait(PermissionAskScreen(ask_ctx, granted_paths))
 
     def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:

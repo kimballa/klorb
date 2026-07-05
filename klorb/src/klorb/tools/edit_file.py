@@ -30,7 +30,7 @@ class EditFileTool(Tool):
     where there's no anchor line to replace — the only valid call there is
     `start_line=1, end_line=0, start_text="", end_text=""`.
 
-    `filename` is confined to `SessionConfig.workspace_root` and further checked against
+    `filename` is confined to `SessionConfig.workspace.path` and further checked against
     `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
     """
 

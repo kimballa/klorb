@@ -181,17 +181,17 @@ def apply_permission_grant(
       `write_dirs` the same way (so a future `/clear` in this process inherits the grant too) —
       skipped when `process_config` is `None` (a caller, e.g. `Session`, with no live
       `ProcessConfig` to ripple into) — and persist it to the scope's target file —
-      `project_config_path(session_config.workspace_root)` for `"workspace"`,
+      `project_config_path(session_config.workspace.path)` for `"workspace"`,
       `user_config_path()` for `"homedir"` — auto-creating the file and its parent directory
       with a minimal schema envelope if it doesn't exist yet. The file-persist step doesn't
-      depend on `process_config` at all (only `session_config.workspace_root`), so it still runs
+      depend on `process_config` at all (only `session_config.workspace.path`), so it still runs
       when `process_config` is `None`.
     - `"homedir"` only, additionally: best-effort-cleans a matching, now-redundant `ask` entry
       out of the *workspace* file if one independently exists there (removal only, never an
       addition) — the user's homedir-scope decision is the more-trusted, broader action. The
       reverse never happens: a `"workspace"` grant never opens the homedir (or `/etc`) file.
     """
-    workspace_root = session_config.workspace_root.resolve()
+    workspace_root = session_config.workspace.path.resolve()
     granted_paths = compute_grant_paths(
         session_config.read_dirs, session_config.write_dirs, workspace_root, path, is_write)
 

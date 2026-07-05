@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
-from pydantic import Field
 
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
@@ -89,7 +88,9 @@ to the coordinator role), never by a config file — see
 docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDirs` are also deliberately
 absent — they're merged by concatenation, not 1:1 scalar replacement, so
 `load_process_config()` handles them separately, ahead of `_route_keys()` — see
-docs/specs/permissions.md.
+docs/specs/permissions.md. `workspace` is deliberately absent too: it has no on-disk key at
+all, by design — see `SessionConfig.workspace`/docs/specs/projects-and-trust.md — a project
+must never be able to grant itself trust via its own config file.
 """
 
 PROCESS_KEY_MAP: dict[str, str] = {
@@ -105,8 +106,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
-process-only `ProcessConfig` attribute it sets. `workspace` is deliberately absent: it has no
-on-disk key at all, by design — see `ProcessConfig.workspace`."""
+process-only `ProcessConfig` attribute it sets."""
 
 # On-disk keys are flat strings with dot-delineated namespaces in lowerCamelCase
 # (`"thinking.tokenBudgets"`, matching VSCode/Claude Code settings-file style — see
@@ -139,20 +139,6 @@ class ProcessConfig(BaseModel):
     shell_timeout_seconds: float | None = None
     """Maximum wall-clock seconds a `!`-prefixed REPL command may run before it's killed.
     `None` (the default) means no timeout is enforced."""
-    workspace: Workspace = Field(default_factory=lambda: Workspace(path=Path.cwd()))
-    """Which directory klorb considers the current project root, whether it's a registered
-    project, and whether it's trusted — see `klorb.workspace.Workspace` and
-    docs/specs/projects-and-trust.md. Resolved by `klorb.workspace.TrustManager` and threaded in
-    via `load_process_config(workspace=...)`; never loaded from `klorb-config.json` (no on-disk
-    key at all — a project must never be able to grant itself trust via its own config file).
-
-    `workspace.trusted` is what `klorb.permissions.workspace.resolve_and_evaluate_read` reads to
-    decide whether `ReadFile` may use `readDirs`/`writeDirs`-table-only confinement (able to
-    reach outside `workspace_root`) instead of the same hard workspace-root boundary the write
-    tools have. There is deliberately no separate `ProcessConfig.is_workspace_trusted` bool
-    mirroring this — an earlier version of this field had one, kept manually in sync by every
-    place that changed either; see
-    docs/adrs/consolidate-workspace-trust-into-a-single-field.md for why that was removed."""
     compatibility_claude_markdown: bool = False
     """Whether to read `CLAUDE.md` from the workspace root and inject it into the conversation
     alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
@@ -269,12 +255,14 @@ def load_process_config(
     tests constructing a `ProcessConfig` directly), a conservative, unregistered, untrusted
     `Workspace` is synthesized from `klorb.permissions.directory_access.find_workspace_root(cwd)`
     — the same ancestor search for a `.klorb/` directory this function has always used for
-    `SessionConfig.workspace_root`, just now also driving whether layer 4 above is read at all.
-    Layer 4 is read from `workspace.path`, not `cwd` — the two only differ when `workspace` was
+    `SessionConfig.workspace`, just now also driving whether layer 4 above is read at all. Layer
+    4 is read from `workspace.path`, not `cwd` — the two only differ when `workspace` was
     resolved by `TrustManager.resolve_workspace()` against a registered ancestor project. The
-    returned `ProcessConfig`'s `workspace` field is this same `Workspace` — this is the one
+    returned `ProcessConfig.session.workspace` is this same `Workspace` — this is the one
     production code path allowed to set `workspace.trusted` `True`, gated entirely on the
-    harness-resolved `Workspace`, never on anything a config file said.
+    harness-resolved `Workspace`, never on anything a config file said. `workspace` lives on
+    `SessionConfig`, not `ProcessConfig`, since it's a per-session concern — see
+    docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md.
     """
     cwd = cwd if cwd is not None else Path.cwd()
     workspace = workspace if workspace is not None else Workspace(path=find_workspace_root(cwd))
@@ -308,6 +296,6 @@ def load_process_config(
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
     session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)
     session_overrides["write_dirs"] = DirRules(**concatenated_write_dirs)
-    session_overrides["workspace_root"] = workspace.path
+    session_overrides["workspace"] = workspace
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
-    return ProcessConfig(session=SessionConfig(**session_overrides), workspace=workspace, **process_overrides)
+    return ProcessConfig(session=SessionConfig(**session_overrides), **process_overrides)

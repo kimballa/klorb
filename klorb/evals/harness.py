@@ -23,6 +23,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tools.registry import ToolRegistry
+from klorb.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,8 @@ def run_case(
             file_path.write_text(content, encoding="utf-8")
 
         session_config = SessionConfig(
-            model=model, interactive=False, thinking_enabled=False, workspace_root=workspace_root,
+            model=model, interactive=False, thinking_enabled=False,
+            workspace=Workspace(path=workspace_root),
             read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]))
         tool_registry = ToolRegistry(ProcessConfig(), session_config, package=tools_package)
         session = Session(session_config, provider=provider, tool_registry=tool_registry)
@@ -226,7 +228,7 @@ def tool_token_counts(*, model: str) -> dict[str, int]:
 
     This is independent of any particular `EvalCase`: the tool package's tools and their
     schemas never vary by case, so it's computed once per eval run (see `run_evals.main()`)
-    rather than per case. `SessionConfig`'s default `workspace_root` (cwd) is never touched —
+    rather than per case. `SessionConfig`'s default `workspace` (cwd) is never touched —
     `name()`/`description()`/`parameters()` do no I/O — so no real workspace is needed here.
     """
     tool_registry = ToolRegistry(ProcessConfig(), SessionConfig(), package=tools_package)

@@ -37,25 +37,25 @@ def canonicalize_candidate(context: "ToolSetupContext", filename: str) -> Path:
     """Resolve `filename` to an absolute, symlink- and `..`-canonicalized path via
     `klorb.permissions.directory_access.canonicalize_dir` (a leading `~`/`~user` is expanded to
     the invoking user's home directory; a still-relative result is joined onto
-    `context.session_config.workspace_root`). Does NOT check the result is inside any
+    `context.session_config.workspace.path`). Does NOT check the result is inside any
     particular boundary — callers that need a hard boundary should use
     `resolve_within_workspace()` instead; callers that only need canonicalization ahead of a
     permissions-table check (e.g. a trusted-workspace `ReadFile`) call this directly.
     """
-    root = context.session_config.workspace_root.resolve()
+    root = context.session_config.workspace.path.resolve()
     return canonicalize_dir(Path(filename), root)
 
 
 def resolve_within_workspace(context: "ToolSetupContext", filename: str) -> Path:
     """Resolve `filename` (via `canonicalize_candidate()`) and verify the result is
-    `context.session_config.workspace_root` or somewhere beneath it.
+    `context.session_config.workspace.path` or somewhere beneath it.
 
     This means a symlink hop or a `../../` traversal can't be used to reach a path outside the
     workspace root even though the check itself only compares final, resolved paths.
 
     Raises `PermissionError` if the resolved path falls outside the workspace root.
     """
-    root = context.session_config.workspace_root.resolve()
+    root = context.session_config.workspace.path.resolve()
     resolved = canonicalize_candidate(context, filename)
 
     if not resolved.is_relative_to(root):
@@ -104,7 +104,7 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     fallback to `writeDirs` alone — a path `writeDirs` never mentions is `"ask"`, not `"allow"`,
     even if `readDirs` allows it.
     """
-    workspace_root = context.session_config.workspace_root.resolve()
+    workspace_root = context.session_config.workspace.path.resolve()
     if is_privileged_path(path, workspace_root):
         return "deny"
     if context.permission_override is not None and path == context.permission_override:
@@ -120,9 +120,9 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
 def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tuple[Path, Verdict]:
     """Resolve `filename` and evaluate it against `readDirs` only (never `writeDirs` — a write
     grant does not imply a read grant; see `evaluate_write()` for the converse), branching on
-    `context.process_config.workspace.trusted`:
+    `context.session_config.workspace.trusted`:
 
-    - Untrusted (default — see `ProcessConfig.workspace`): resolves via
+    - Untrusted (default — see `SessionConfig.workspace`): resolves via
       `resolve_within_workspace()`, which raises `PermissionError` if the result falls outside
       `workspace_root`, exactly like the write tools. `readDirs` is then evaluated on that
       already-in-workspace path, falling back to `"allow"` if nothing matches — unlike
@@ -147,8 +147,8 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     Returns `(path, verdict)` so the caller can enforce the verdict and then open the same
     canonicalized path that was actually checked.
     """
-    workspace_root = context.session_config.workspace_root.resolve()
-    if context.process_config.workspace.trusted:
+    workspace_root = context.session_config.workspace.path.resolve()
+    if context.session_config.workspace.trusted:
         path = canonicalize_candidate(context, filename)
         fallback: Verdict = "deny"
     else:

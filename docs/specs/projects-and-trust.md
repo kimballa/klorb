@@ -7,10 +7,13 @@ whether the user *trusts* it — independently of whether that directory happens
 `.klorb/klorb-config.json` file, since a hostile, downloaded-and-unzipped repository could ship
 one of those itself. The registry (`projects.json`) lives under `$KLORB_DATA_DIR`, outside any
 one workspace, so trust survives across process runs and can't be forged by the workspace it
-describes. `ProcessConfig.workspace` (a `klorb.workspace.Workspace`) carries the resolved answer
-for the current process; `workspace.trusted` is read directly by the permission-evaluation code
+describes. `SessionConfig.workspace` (a `klorb.workspace.Workspace`) carries the resolved answer
+for the owning session; `workspace.trusted` is read directly by the permission-evaluation code
 (see [[permissions]] and
 [docs/adrs/gate-read-hard-boundary-on-workspace-trust.md](../adrs/gate-read-hard-boundary-on-workspace-trust.md)).
+`workspace` lives on `SessionConfig`, not `ProcessConfig`, since multiple concurrent sessions
+could each be pointed at a different directory — see
+[docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
 Only an untrusted workspace's own `.klorb/klorb-config.json` is ever skipped — every other
 config layer (`/etc`, per-user, `--config`) is unaffected.
 
@@ -28,11 +31,11 @@ A `Workspace` (pydantic model) is `{id: str | None, path: Path, is_project: bool
 bool}`. `id` is the project's key into `projects.json`, or `None` if it has no persistent record
 yet; `is_project` is `True` exactly when `id` is not `None`. It's never loaded from
 `klorb-config.json` — no on-disk key exists for it at all, the same reason
-`ProcessConfig.workspace` itself has none (see [[process-and-session-config]]'s "Configuration"
-section). There is deliberately no separate `ProcessConfig.is_workspace_trusted` bool mirroring
-`workspace.trusted` — an earlier version of this feature had one, kept manually in sync by every
-place that changed either, until it was removed as a needless duplication risk; see
-docs/adrs/consolidate-workspace-trust-into-a-single-field.md.
+`SessionConfig.workspace` itself has none (see [[process-and-session-config]]'s "Configuration"
+section). There is deliberately no separate `is_workspace_trusted` bool mirroring
+`workspace.trusted` on either config object — an earlier version of this feature had one, kept
+manually in sync by every place that changed either, until it was removed as a needless
+duplication risk; see docs/adrs/consolidate-workspace-trust-into-a-single-field.md.
 
 ### `projects.json` (`klorb.workspace.trust_manager`)
 
@@ -62,22 +65,23 @@ anyone and never writes anything:
 `uuid4` id and persists it; `TrustManager.set_trusted(project_id, trusted)` updates and persists
 an existing record's flag (raising `KeyError` if the id isn't found).
 
-### `ProcessConfig.workspace` and trust-gated config loading (`klorb.process_config`)
+### `SessionConfig.workspace` and trust-gated config loading (`klorb.process_config`)
 
-`load_process_config(*, config_flag_path=None, cwd=None, workspace=None)` gained a `workspace:
+`load_process_config(*, config_flag_path=None, cwd=None, workspace=None)` takes a `workspace:
 Workspace | None` parameter. When omitted, a conservative one is synthesized:
 `Workspace(path=find_workspace_root(cwd))` (unregistered, untrusted) — the same ancestor search
-`SessionConfig.workspace_root` has always used, so every pre-existing caller (tests
+`SessionConfig.workspace` has always used, so every pre-existing caller (tests
 constructing a `ProcessConfig` directly, or `load_process_config()` called with no `workspace`
 argument) is unaffected. The per-project config layer
 (`workspace.path/.klorb/klorb-config.json`) is read only when `workspace.trusted` is `True`;
 when it isn't, that layer is skipped entirely — not read and then discarded, *never opened* —
 so an untrusted project's `readDirs.allow` can't even reach the "unrecognized key" warning path,
-let alone the concatenated `readDirs`/`writeDirs` lists. `SessionConfig.workspace_root` is set
-from `workspace.path`, and the returned `ProcessConfig` carries `workspace` itself (never routed
-through `PROCESS_KEY_MAP`, which has no entry for it) — this is the one production code path
-allowed to set `workspace.trusted = True`, gated entirely on the harness-resolved `Workspace`,
-never on anything a config file said.
+let alone the concatenated `readDirs`/`writeDirs` lists. The returned `ProcessConfig.session.workspace`
+is this same `Workspace` (never routed through `SESSION_KEY_MAP`/`PROCESS_KEY_MAP`, neither of
+which has an entry for it) — this is the one production code path allowed to set
+`workspace.trusted = True`, gated entirely on the harness-resolved `Workspace`, never on
+anything a config file said. `workspace` lives on `SessionConfig`, not `ProcessConfig` — see
+[docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
 
 `klorb.cli.main()` constructs one `TrustManager`, calls `resolve_workspace(Path.cwd())`, and
 passes the result into `load_process_config(...)` — for *both* the headless one-shot path and
@@ -125,7 +129,7 @@ from an active worker context — see
 `_resolve_workspace_trust()`:
 
 * If `trust_manager` is `None`, returns immediately.
-* If `ProcessConfig.workspace.id` is not `None` (already registered — `load_process_config()`
+* If `SessionConfig.workspace.id` is not `None` (already registered — `load_process_config()`
   resolved it via an exact or ancestor `projects.json` match), skips straight to announcing it.
 * Otherwise (`id is None` — never resolved before), runs `_bootstrap_new_workspace()`: pushes
   "You are working in `<path>`. Open as a project?" (Yes: "Open as project", No: "Not now"),
@@ -133,7 +137,7 @@ from an active worker context — see
   If opened as a project, registers it (`TrustManager.register_project`) and writes its starter
   config (`write_initial_project_config`, burning in the *current* session's model) using the
   trust answer; otherwise returns an unregistered `Workspace` carrying only the trust decision,
-  which lives in memory for the rest of this process's lifetime (never persisted, since there's
+  which lives in memory for the rest of this session's lifetime (never persisted, since there's
   no project record to persist it to).
 * Either way, `_apply_workspace_config()` reconciles the live config against the (possibly new)
   `Workspace` (see below), then `_announce_workspace()` mounts one history notice: `"Working in
@@ -144,12 +148,16 @@ from an active worker context — see
 cwd=workspace.path, workspace=workspace)` and applies the result *in place* — mutating the
 existing `ProcessConfig`/`SessionConfig` objects rather than reconstructing `Session`/
 `ToolRegistry` (both hold references to these same objects, not copies, so every tool sees the
-change on its very next call with nothing to rebuild). `read_dirs`/`write_dirs` are
-*concatenated* onto the live session's own (never replaced), so an "Allow (this session)" grant
-made earlier isn't discarded by the reload; every other process-only field is overwritten
-outright; `session`'s other scalar fields (model, thinking, tool-call limits) are deliberately
-left alone, since a config file's declared defaults shouldn't silently override a value the user
-may have already picked interactively earlier in the same session.
+change on its very next call with nothing to rebuild). `workspace` itself is dual-written onto
+both the live `Session.config` and the `ProcessConfig.session` template — the same pattern
+`select_model()`/`set_thinking_enabled()` already use for session-scoped settings — so a future
+`/clear` in this process inherits the resolved trust state rather than re-bootstrapping it.
+`read_dirs`/`write_dirs` are *concatenated* onto the live session's own (never replaced), so an
+"Allow (this session)" grant made earlier isn't discarded by the reload; every other
+process-only field is overwritten outright; `session`'s other scalar fields (model, thinking,
+tool-call limits) are deliberately left alone, since a config file's declared defaults shouldn't
+silently override a value the user may have already picked interactively earlier in the same
+session.
 
 ### The "Trust workspace" command (`klorb.tui.trust_commands`, `ReplApp.trust_workspace`)
 
@@ -187,7 +195,7 @@ so they aren't lost the next time klorb opens this workspace.
   only checks the per-user tier and the packaged default) — so this feature's requirement that
   "system prompts must not load from an untrusted project" is currently vacuous, not implemented
   against a real mechanism. Whenever such a per-project tier is built, it must be gated on
-  `ProcessConfig.workspace.trusted` the same way the config-file layer is here.
+  `SessionConfig.workspace.trusted` the same way the config-file layer is here.
 * `last-session.json` (`TODO.md`) doesn't exist yet, so there's no "reconstitute the previous
   session automatically" behavior tied to a trusted workspace — a possible future extension, not
   built here.

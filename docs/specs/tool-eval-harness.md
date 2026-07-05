@@ -42,7 +42,7 @@ offline against mocks. They run under their own `make evals` target instead — 
   * `run_case(case, *, model, provider) -> CaseResult` — the per-case runner. For each case it:
     1. Creates a fresh temp directory and writes `setup_files` into it.
     2. Builds a `SessionConfig(model=model, interactive=False, thinking_enabled=False,
-       workspace_root=<temp dir>, read_dirs=DirRules(allow=[<temp dir>]),
+       workspace=Workspace(path=<temp dir>), read_dirs=DirRules(allow=[<temp dir>]),
        write_dirs=DirRules(allow=[<temp dir>]))` — explicit `allow` rules for the temp
        workspace in both tables, since an unmatched `writeDirs` table normalizes to `"ask"`
        rather than `"allow"` (see

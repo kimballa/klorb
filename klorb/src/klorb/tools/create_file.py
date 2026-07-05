@@ -17,7 +17,7 @@ class CreateFileTool(Tool):
     creation is always an explicit, auditable event rather than an implicit side effect of an
     edit. Missing parent directories are created automatically.
 
-    `filename` is confined to `SessionConfig.workspace_root` and further checked against
+    `filename` is confined to `SessionConfig.workspace.path` and further checked against
     `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
     """
 

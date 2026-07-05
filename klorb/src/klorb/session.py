@@ -33,6 +33,7 @@ from klorb.role import get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME
 from klorb.system_prompts import DEFAULT_SYSTEM_PROMPT
 from klorb.system_prompts import resolve_prompt_file
+from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
     # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
@@ -130,16 +131,23 @@ class SessionConfig(BaseModel):
     thinking_effort: ThinkingEffort = "high"
     max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
     max_tool_calls_per_session: int = DEFAULT_MAX_TOOL_CALLS_PER_SESSION
-    workspace_root: Path = Field(default_factory=Path.cwd)
-    """Directory the file-editing tools (`EditFile`, `ReplaceAll`, `CreateFile`) are always
-    confined to — see `klorb.permissions.workspace.resolve_within_workspace` — a hard,
-    non-config-overridable boundary. `ReadFile` gets the same hard boundary unless
-    `ProcessConfig.workspace.trusted` is set (via the interactive workspace-trust flow — see
-    `klorb.workspace`/docs/specs/projects-and-trust.md). Defaults to `Path.cwd()` for callers
-    that construct `SessionConfig` directly (e.g. tests); real runs
-    get an explicit, ancestor-searched root from
-    `klorb.permissions.directory_access.find_workspace_root()` via `load_process_config()`. See
-    docs/adrs/confine-file-tools-to-workspace-root.md and docs/specs/permissions.md."""
+    workspace: Workspace = Field(default_factory=lambda: Workspace(path=Path.cwd()))
+    """Which directory this session considers its project root, whether it's a registered
+    project, and whether it's trusted — see `klorb.workspace.Workspace` and
+    docs/specs/projects-and-trust.md. Lives on `SessionConfig`, not `ProcessConfig`: multiple
+    sessions can run concurrently within one process, each against a different directory (and
+    so a different trust decision), which makes workspace identity a per-session concern, not
+    a process-wide one — see docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md.
+
+    `workspace.path` is the directory the file-editing tools (`EditFile`, `ReplaceAll`,
+    `CreateFile`) are always confined to — see
+    `klorb.permissions.workspace.resolve_within_workspace` — a hard, non-config-overridable
+    boundary. `ReadFile` gets the same hard boundary unless `workspace.trusted` is set (via the
+    interactive workspace-trust flow). Defaults to `Workspace(path=Path.cwd())` for callers
+    that construct `SessionConfig` directly (e.g. tests); real runs get an explicit,
+    ancestor-searched `path` from `klorb.permissions.directory_access.find_workspace_root()` via
+    `load_process_config()`. See docs/adrs/confine-file-tools-to-workspace-root.md and
+    docs/specs/permissions.md."""
     read_dirs: DirRules = Field(default_factory=DirRules)
     """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults — see
     `klorb.permissions.directory_access` and docs/specs/permissions.md. Lives on
@@ -149,7 +157,7 @@ class SessionConfig(BaseModel):
     write_dirs: DirRules = Field(default_factory=DirRules)
     """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
-    `workspace_root` boundary — see `klorb.permissions.workspace.evaluate_write` and
+    `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write` and
     docs/specs/permissions.md."""
 
 
@@ -458,7 +466,7 @@ class Session:
 
         context_files: list[tuple[str, str]] = []
         for filename in self._applicable_context_filenames():
-            path = self.config.workspace_root / filename
+            path = self.config.workspace.path / filename
             if path.is_file():
                 contents = path.read_text()
                 context_files.append((filename, contents))

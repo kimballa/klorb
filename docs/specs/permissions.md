@@ -85,12 +85,12 @@ the reasoning behind the most consequential decisions here.
 * `find_workspace_root(cwd)` searches `cwd` and its ancestors for the nearest directory with an
   immediate-child `.klorb` that `is_dir()` and is not itself a symlink; a disqualified ancestor
   (symlinked or a plain file named `.klorb`) doesn't stop the search, it just keeps walking up.
-  Falls back to `cwd` itself if nothing qualifies. `load_process_config()` calls this and
-  threads the result into `SessionConfig.workspace_root` for every real run — a behavior change
-  from the previous bare `Path.cwd()`: running klorb from a subdirectory of a project with
-  `<project>/.klorb/` at its root now resolves `workspace_root` to `<project>`, not the
-  subdirectory (matching `.git` ancestor search). `SessionConfig.workspace_root`'s own
-  `Field(default_factory=Path.cwd)` is unchanged and remains the fallback for callers
+  Falls back to `cwd` itself if nothing qualifies. `load_process_config()` calls this (via
+  `klorb.workspace.TrustManager.resolve_workspace()`, when no `workspace` argument is given) and
+  threads the result into `SessionConfig.workspace.path` for every real run: running klorb from
+  a subdirectory of a project with `<project>/.klorb/` at its root resolves `workspace.path` to
+  `<project>`, not the subdirectory (matching `.git` ancestor search). `SessionConfig.workspace`'s
+  own `Field(default_factory=lambda: Workspace(path=Path.cwd()))` is the fallback for callers
   constructing `SessionConfig` directly (tests).
 
 ### Path resolution and enforcement (`klorb.permissions.workspace`)
@@ -126,7 +126,7 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
 * `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — evaluates `path` against
   `readDirs` alone; `writeDirs` is never consulted for a read (a write grant does not imply a
   read grant — see `evaluate_write()` for the converse relationship). Branches on
-  `context.process_config.workspace.trusted`:
+  `context.session_config.workspace.trusted`:
   * **Untrusted (default)**: resolves via `resolve_within_workspace()` (same hard boundary as
     the write tools), then evaluates `readDirs` on that already-in-workspace path, falling back
     to `"allow"` if nothing matches — a permissive default that's safe here because the hard
@@ -204,7 +204,7 @@ broad `readDirs.allow` with no corresponding `writeDirs.allow` entry never impli
 Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are merged by
 **concatenating** each category's array across all five config layers (not replaced) — see
 [the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md).
-`ProcessConfig.workspace` has no on-disk key at all, anywhere — see "Known risks" below.
+`SessionConfig.workspace` has no on-disk key at all, anywhere — see "Known risks" below.
 
 ## Known risks
 
@@ -290,7 +290,7 @@ CLI/library firewall (see `CLAUDE.md`). A `Session` constructed with no `Process
 (`process_config=None`) still gets a working grant — `apply_permission_grant()` just skips the
 process-wide ripple described below, since there's no in-memory `ProcessConfig.session` template
 to ripple into; the live `SessionConfig` mutation and the on-disk persistence, which only need
-`SessionConfig.workspace_root`, still happen.
+`SessionConfig.workspace.path`, still happen.
 
 ### Grant granularity: directory, not file
 

@@ -1018,7 +1018,7 @@ async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path)
         _tool_call_reply([_ask_permission_call("call_1", tmp_path / "f.txt")]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1041,7 +1041,7 @@ async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1078,8 +1078,9 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace_root=tmp_path)
-    process_config = ProcessConfig(session=SessionConfig(model="some/model", workspace_root=tmp_path))
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    process_config = ProcessConfig(
+        session=SessionConfig(model="some/model", workspace=Workspace(path=tmp_path)))
     session = _session_with_tools(mock_provider, config, process_config)
     app = ReplApp(session=session, process_config=process_config)
 
@@ -1120,7 +1121,7 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace_root=tmp_path)
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1879,8 +1880,7 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
 
 
 def _process_config_for_workspace(workspace: Workspace, model: str = "some/model") -> ProcessConfig:
-    return ProcessConfig(
-        session=SessionConfig(model=model, workspace_root=workspace.path), workspace=workspace)
+    return ProcessConfig(session=SessionConfig(model=model, workspace=workspace))
 
 
 def _repl_app_for_workspace(
@@ -1958,7 +1958,7 @@ async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
 
         await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
         assert f"Working in project: {project_root}" in _notice_texts(app)
-        assert app._process_config.workspace.trusted is True
+        assert app._session.config.workspace.trusted is True
 
     resolved = trust_manager.resolve_workspace(project_root)
     assert resolved.is_project is True
@@ -1991,9 +1991,9 @@ async def test_bootstrap_declining_project_but_trusting_keeps_it_in_memory_only(
         await pilot.pause()
 
         await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
-        assert app._process_config.workspace.id is None
-        assert app._process_config.workspace.is_project is False
-        assert app._process_config.workspace.trusted is True
+        assert app._session.config.workspace.id is None
+        assert app._session.config.workspace.is_project is False
+        assert app._session.config.workspace.trusted is True
 
     assert trust_manager.resolve_workspace(project_root).id is None
     assert not project_config_path(project_root).is_file()
@@ -2017,7 +2017,7 @@ async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
         await pilot.pause()
 
         await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
-        assert app._process_config.workspace.trusted is False
+        assert app._session.config.workspace.trusted is False
         assert any("not trusted" in notice for notice in _notice_texts(app))
 
     assert trust_manager.resolve_workspace(tmp_path).id is None
@@ -2053,7 +2053,7 @@ async def test_trust_workspace_command_persists_and_offers_config_init(
         await pilot.pause()
 
         await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
-        assert app._process_config.workspace.trusted is True
+        assert app._session.config.workspace.trusted is True
         assert any("Trusted workspace" in notice for notice in _notice_texts(app))
 
     assert trust_manager.resolve_workspace(tmp_path).trusted is True
@@ -2084,7 +2084,7 @@ async def test_trust_workspace_command_declining_config_init_leaves_no_file(
         await pilot.pause()
 
         await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
-        assert app._process_config.workspace.trusted is True
+        assert app._session.config.workspace.trusted is True
 
     assert not project_config_path(tmp_path).is_file()
 
@@ -2114,6 +2114,6 @@ async def test_trust_workspace_for_non_project_workspace_skips_config_init_promp
         await pilot.pause()
 
         await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
-        assert app._process_config.workspace.trusted is True
+        assert app._session.config.workspace.trusted is True
 
     assert not project_config_path(tmp_path).is_file()

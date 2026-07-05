@@ -4,7 +4,7 @@ project root, whether it's a registered project, and whether the user has truste
 docs/specs/projects-and-trust.md.
 
 This top-level module defines `Workspace` itself (the value object every other module in this
-package, and `ProcessConfig.workspace`, revolves around) and re-exports `TrustManager`
+package, and `SessionConfig.workspace`, revolves around) and re-exports `TrustManager`
 (`klorb.workspace.trust_manager`, which owns `projects.json`) for callers outside this package
 to import directly (`from klorb.workspace import TrustManager`). `klorb.workspace.workspace_init`
 (the config-file writers used once a workspace is opened as a project or newly trusted) is
@@ -18,12 +18,16 @@ than the one-way dependency it is today. Callers that need `write_initial_projec
 has no such dependency on `klorb.process_config`) imports `Workspace` back from here via a
 relative import, per this repo's own import-style rule for same-feature imports.
 
-A `Workspace` is attached to `ProcessConfig.workspace` (`klorb.process_config`) once resolved
+A `Workspace` is attached to `SessionConfig.workspace` (`klorb.session`) once resolved
 (`TrustManager.resolve_workspace`), and is never loaded from `klorb-config.json` — a project
 must not be able to grant itself trust, or fabricate its own project id, via its own config
-file. `workspace.trusted` is read directly by the permission-evaluation code
-(`klorb.permissions.workspace.evaluate_write`/`resolve_and_evaluate_read`).
-(See docs/adrs/consolidate-workspace-trust-into-a-single-field.md).
+file. It lives on `SessionConfig`, not `ProcessConfig`, since multiple sessions can run
+concurrently within one process against different directories, making workspace identity a
+per-session concern — see docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md.
+`workspace.trusted` is read directly by the permission-evaluation code
+(`klorb.permissions.workspace.evaluate_write`/`resolve_and_evaluate_read`); there is no separate
+`is_workspace_trusted` bool mirroring it — see
+docs/adrs/consolidate-workspace-trust-into-a-single-field.md.
 """
 
 from pathlib import Path
@@ -42,8 +46,8 @@ class Workspace(BaseModel):
     same way through `model_copy()`/equality checks as every other field here, and so a reader
     doesn't have to know `id is not None` is the invariant. `trusted` (see module docstring)
     governs `ReadFile`'s workspace-boundary behavior regardless of `is_project` — an
-    unregistered workspace can still be trusted for the rest of this process's lifetime, it
-    just won't be remembered next time klorb runs there.
+    unregistered workspace can still be trusted for the rest of the owning session's lifetime,
+    it just won't be remembered next time klorb runs there.
     """
 
     id: str | None = None

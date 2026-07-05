@@ -9,6 +9,7 @@ from klorb.process_config import SESSION_DEFAULTS_KEY
 from klorb.process_config import project_config_path
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import SessionConfig
+from klorb.workspace import Workspace
 from klorb.workspace.workspace_init import write_initial_project_config
 from klorb.workspace.workspace_init import write_session_defaults_to_project_config
 
@@ -53,7 +54,7 @@ def test_write_initial_project_config_overwrites_existing_file(tmp_path: Path) -
 def test_write_session_defaults_dumps_scalar_fields(tmp_path: Path) -> None:
     config = SessionConfig(
         model="project/model", thinking_enabled=False, thinking_effort="low",
-        max_tool_calls_per_turn=3, max_tool_calls_per_session=15, workspace_root=tmp_path)
+        max_tool_calls_per_turn=3, max_tool_calls_per_session=15, workspace=Workspace(path=tmp_path))
 
     write_session_defaults_to_project_config(tmp_path, config)
 
@@ -70,7 +71,7 @@ def test_write_session_defaults_dumps_dir_rules_built_up_this_session(tmp_path: 
     ask_dir = tmp_path / "maybe"
     allow_dir = tmp_path / "yes"
     config = SessionConfig(
-        workspace_root=tmp_path,
+        workspace=Workspace(path=tmp_path),
         read_dirs=DirRules(ask=[ask_dir], allow=[allow_dir]),
         write_dirs=DirRules(deny=[tmp_path / "no"]),
     )
@@ -86,7 +87,7 @@ def test_write_session_defaults_dumps_dir_rules_built_up_this_session(tmp_path: 
 
 def test_write_session_defaults_overwrites_existing_file(tmp_path: Path) -> None:
     write_initial_project_config(tmp_path, "old/model", trusted=False)
-    config = SessionConfig(model="new/model", workspace_root=tmp_path)
+    config = SessionConfig(model="new/model", workspace=Workspace(path=tmp_path))
 
     write_session_defaults_to_project_config(tmp_path, config)
 

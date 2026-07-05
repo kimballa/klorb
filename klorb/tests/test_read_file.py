@@ -25,11 +25,9 @@ def _context(
     write_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(
-            read_file_max_lines=max_lines,
-            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted)),
+        process_config=ProcessConfig(read_file_max_lines=max_lines),
         session_config=SessionConfig(
-            workspace_root=workspace_root,
+            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
             read_dirs=read_dirs or DirRules(),
             write_dirs=write_dirs or DirRules(),
         ),

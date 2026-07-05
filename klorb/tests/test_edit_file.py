@@ -12,6 +12,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.edit_file import EditFileTool
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.workspace import Workspace
 
 
 def _context(
@@ -28,7 +29,7 @@ def _context(
     return ToolSetupContext(
         process_config=process_config or ProcessConfig(),
         session_config=SessionConfig(
-            workspace_root=workspace_root,
+            workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(allow=[workspace_root]),
             write_dirs=write_dirs or DirRules(allow=[workspace_root])))
 

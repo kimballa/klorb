@@ -69,7 +69,7 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
     # workspace_root is always set from find_workspace_root(cwd), not SessionConfig's own
     # Path.cwd() default_factory — see test_workspace_root_falls_back_to_cwd_when_no_klorb_dir_found.
-    assert process_config.session == SessionConfig(workspace_root=tmp_path)
+    assert process_config.session == SessionConfig(workspace=Workspace(path=tmp_path))
     assert process_config.session.model == DEFAULT_MODEL
     assert process_config.session.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
     assert process_config.session.max_tool_calls_per_session == DEFAULT_MAX_TOOL_CALLS_PER_SESSION
@@ -82,7 +82,6 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.openrouter_base_url == OPENROUTER_BASE_URL
     assert process_config.shell_command == DEFAULT_SHELL_COMMAND
     assert process_config.shell_timeout_seconds is None
-    assert process_config.workspace.trusted is False
     assert process_config.compatibility_claude_markdown is False
 
 
@@ -393,27 +392,29 @@ def test_workspace_trust_has_no_on_disk_key(
     with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
         process_config = load_process_config(cwd=tmp_path)
 
-    assert process_config.workspace.trusted is False
+    assert process_config.session.workspace.trusted is False
     assert "isWorkspaceTrusted" in caplog.text
 
 
-def test_process_key_map_deliberately_excludes_workspace() -> None:
-    """Deep-inspect PROCESS_KEY_MAP itself, not just load_process_config()'s observable
-    behavior (test_workspace_trust_has_no_on_disk_key above already covers that): a static,
-    structural check that catches the mistake at the source (the map definition) rather than
-    only downstream, and fails with a clear message pointing at *why* even if a future change
-    accidentally makes the behavioral test pass some other way.
+def test_key_maps_deliberately_exclude_workspace() -> None:
+    """Deep-inspect SESSION_KEY_MAP/PROCESS_KEY_MAP themselves, not just
+    load_process_config()'s observable behavior (test_workspace_trust_has_no_on_disk_key above
+    already covers that): a static, structural check that catches the mistake at the source
+    (the map definitions) rather than only downstream, and fails with a clear message pointing
+    at *why* even if a future change accidentally makes the behavioral test pass some other way.
 
-    See docs/specs/projects-and-trust.md: `ProcessConfig.workspace` (and so `workspace.trusted`)
-    is deliberately absent from PROCESS_KEY_MAP, at any key spelling — a project config file
-    granting itself trust would defeat the entire point of gating ReadFile's hard
-    workspace-root boundary on it. If this assertion ever fails, do not "fix" it by updating
-    the test — the fix is almost certainly to remove whatever entry was just added to
-    PROCESS_KEY_MAP.
+    See docs/specs/projects-and-trust.md: `SessionConfig.workspace` (and so `workspace.trusted`)
+    is deliberately absent from both maps, at any key spelling — a project config file granting
+    itself trust would defeat the entire point of gating ReadFile's hard workspace-root
+    boundary on it. If this assertion ever fails, do not "fix" it by updating the test — the
+    fix is almost certainly to remove whatever entry was just added to one of the maps.
     """
+    assert "workspace" not in SESSION_KEY_MAP.values()
+    assert "workspace" not in SESSION_KEY_MAP
     assert "workspace" not in PROCESS_KEY_MAP.values()
     assert "workspace" not in PROCESS_KEY_MAP
     assert "isWorkspaceTrusted" not in PROCESS_KEY_MAP
+    assert "isWorkspaceTrusted" not in SESSION_KEY_MAP
 
 
 def test_workspace_root_uses_find_workspace_root_result(tmp_path: Path) -> None:
@@ -423,12 +424,12 @@ def test_workspace_root_uses_find_workspace_root_result(tmp_path: Path) -> None:
     nested.mkdir(parents=True)
 
     process_config = load_process_config(cwd=nested)
-    assert process_config.session.workspace_root == project
+    assert process_config.session.workspace.path == project
 
 
 def test_workspace_root_falls_back_to_cwd_when_no_klorb_dir_found(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
-    assert process_config.session.workspace_root == tmp_path
+    assert process_config.session.workspace.path == tmp_path
 
 
 def test_stricter_layer_always_wins_end_to_end(tmp_path: Path) -> None:
@@ -446,7 +447,8 @@ def test_stricter_layer_always_wins_end_to_end(tmp_path: Path) -> None:
         {"sessionDefaults": {"writeDirs": {"allow": [str(tmp_path)]}}})
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
-    table = DirectoryAccessTable(process_config.session.write_dirs, process_config.session.workspace_root)
+    table = DirectoryAccessTable(
+        process_config.session.write_dirs, process_config.session.workspace.path)
     assert table.evaluate(sensitive / "key.txt") == "deny"
 
 
@@ -461,7 +463,8 @@ def test_workspace_defaults_to_unregistered_untrusted_from_find_workspace_root(t
 
     process_config = load_process_config(cwd=nested)
 
-    assert process_config.workspace == Workspace(path=project, is_project=False, trusted=False)
+    assert process_config.session.workspace == Workspace(
+        path=project, is_project=False, trusted=False)
 
 
 def test_untrusted_workspace_skips_project_config_layer_entirely(tmp_path: Path) -> None:
@@ -486,4 +489,4 @@ def test_load_process_config_sets_workspace_from_argument(tmp_path: Path) -> Non
 
     process_config = load_process_config(cwd=tmp_path, workspace=workspace)
 
-    assert process_config.workspace == workspace
+    assert process_config.session.workspace == workspace

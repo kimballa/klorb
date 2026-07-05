@@ -11,6 +11,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.grep import GrepTool
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.workspace import Workspace
 
 
 def _context(
@@ -22,7 +23,7 @@ def _context(
     return ToolSetupContext(
         process_config=ProcessConfig(grep_max_results=max_results),
         session_config=SessionConfig(
-            workspace_root=workspace_root,
+            workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(),
             write_dirs=DirRules(),
         ),

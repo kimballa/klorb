@@ -9,6 +9,7 @@ from klorb.message import Message
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.session import SessionConfig
+from klorb.workspace import Workspace
 
 
 def _session(
@@ -17,7 +18,7 @@ def _session(
     compatibility_claude_markdown: bool = False,
 ) -> Session:
     """Build a `Session` with a mock provider whose workspace_root is `workspace_root`."""
-    config = SessionConfig(model="some/model", workspace_root=workspace_root)
+    config = SessionConfig(model="some/model", workspace=Workspace(path=workspace_root))
     return Session(
         config,
         provider=MagicMock(),

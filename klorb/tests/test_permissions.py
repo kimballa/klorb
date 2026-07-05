@@ -30,11 +30,10 @@ def _context(
     write_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(
-            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted)),
+        process_config=ProcessConfig(),
         session_config=SessionConfig(
-            workspace_root=workspace_root, read_dirs=read_dirs or DirRules(),
-            write_dirs=write_dirs or DirRules()),
+            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
+            read_dirs=read_dirs or DirRules(), write_dirs=write_dirs or DirRules()),
     )
 
 
@@ -540,7 +539,7 @@ def test_matching_rules_respects_category(tmp_path: Path) -> None:
 def test_permission_override_short_circuits_evaluate_write_to_allow(tmp_path: Path) -> None:
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=path)
     assert evaluate_write(context, path) == "allow"
 
@@ -548,7 +547,7 @@ def test_permission_override_short_circuits_evaluate_write_to_allow(tmp_path: Pa
 def test_permission_override_short_circuits_resolve_and_evaluate_read_to_allow(tmp_path: Path) -> None:
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=path)
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
     assert verdict == "allow"
@@ -558,7 +557,7 @@ def test_permission_override_has_no_effect_on_a_different_path(tmp_path: Path) -
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     other_path = resolve_within_workspace(_context(tmp_path), "other.txt")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=other_path)
     assert evaluate_write(context, path) == "ask"
 
@@ -568,12 +567,12 @@ def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path)
     KLORB_*_DIR locations, even if a caller somehow set the override to that exact path."""
     path = resolve_within_workspace(_context(tmp_path), ".klorb/klorb-config.json")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=path)
     assert evaluate_write(context, path) == "deny"
 
     read_context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace_root=tmp_path),
+        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=path)
     _, verdict = resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")
     assert verdict == "deny"
