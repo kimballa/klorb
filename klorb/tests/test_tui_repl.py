@@ -4,6 +4,7 @@
 import asyncio
 import json
 import threading
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from klorb.tui.palette import PromptPalette
 from klorb.tui.permission_ask_screen import PERMISSION_ASK_INPUT_ID
 from klorb.tui.permission_ask_screen import PERMISSION_ASK_OPTIONS_ID
 from klorb.tui.permission_ask_screen import PermissionAskScreen
+from klorb.tui.repl import CONFIG_MISSING_MESSAGE
 from klorb.tui.repl import HISTORY_ID
 from klorb.tui.repl import PALETTE_HINT_ID
 from klorb.tui.repl import PALETTE_HINT_TEXT
@@ -77,6 +79,19 @@ def _palette_hit_texts(palette: PromptPalette) -> set[str]:
     options = palette._options
     assert all(isinstance(option, PaletteOption) for option in options)
     return {str(option.hit.text) for option in options if isinstance(option, PaletteOption)}
+
+
+@pytest.fixture(autouse=True)
+def _user_config_present(tmp_path: Path) -> Iterator[None]:
+    """Make `user_config_path()` resolve to an existing file by default, so `ReplApp.on_mount`'s
+    "config file not found" notice (see `CONFIG_MISSING_MESSAGE`) doesn't leak an extra
+    `Static` into every other test's history assertions. The tests that specifically exercise
+    the notice re-patch `klorb.tui.repl.user_config_path` themselves, overriding this.
+    """
+    config_path = tmp_path / "klorb-config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+        yield
 
 
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
@@ -188,6 +203,29 @@ async def test_status_bar_omits_limit_when_model_unregistered() -> None:
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         assert status_bar.content == "0"
+
+
+async def test_shows_config_missing_notice_when_user_config_file_absent(tmp_path: Path) -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    with patch("klorb.tui.repl.user_config_path", return_value=tmp_path / "does-not-exist.json"):
+        async with app.run_test():
+            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            notice = history.query_one(".notice", Static)
+            assert str(notice.content) == CONFIG_MISSING_MESSAGE
+
+
+async def test_omits_config_missing_notice_when_user_config_file_present(tmp_path: Path) -> None:
+    config_path = tmp_path / "klorb-config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+        async with app.run_test():
+            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            assert len(history.query(".notice")) == 0
 
 
 async def test_submitting_a_prompt_shows_it_and_the_response() -> None:

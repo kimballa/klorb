@@ -60,19 +60,28 @@ or slicing a superset.
 * `load_process_config(*, config_flag_path: Path | None = None, cwd: Path | None = None) ->
   ProcessConfig` assembles the config once at process startup by layering plain JSON
   objects, each read via
-  [`read_versioned_json`](persisted-json-schema-versioning.md), in increasing order of
-  precedence:
-  1. `/etc/klorb/klorb-config.json`, or the file named by `$KLORB_ETC_CONFIG` if that env
+  [`read_versioned_json`](persisted-json-schema-versioning.md) (or, for the first layer,
+  `klorb.schema_envelope.parse_versioned_json` directly on packaged resource text), in
+  increasing order of precedence:
+  1. The packaged built-in defaults, `klorb.resources/default-config.json`
+     (`process_config._default_config_layer()`) — read via `importlib.resources`, shipped
+     inside every klorb install, and therefore never missing, unlike every layer below. This
+     is the file to edit when *shipping* a new default (see "On-disk key naming" below); it's
+     never written to, copied, or user-editable.
+  2. `/etc/klorb/klorb-config.json`, or the file named by `$KLORB_ETC_CONFIG` if that env
      var is set. Resolved lazily, at call time rather than import time, specifically so a
      value set via a `.env` file (loaded by `klorb.cli.main()`'s `load_dotenv()` call before
      `load_process_config()` runs) takes effect — unlike `KLORB_CONFIG_DIR` below, which
      (per [[paths-and-logging]]) is resolved once at `klorb.paths` import time and so does
      *not* currently pick up a `.env`-supplied value.
-  2. `$KLORB_CONFIG_DIR/klorb-config.json` (defaults to `~/.config/klorb`; see
-     [[paths-and-logging]] for the `KLORB_CONFIG_DIR` override).
-  3. `cwd/.klorb/klorb-config.json`
-  4. The file named by `--config` on the command line, if given.
-  5. Overrides carried over from the previous session's saved state — a placeholder for now
+  3. `$KLORB_CONFIG_DIR/klorb-config.json` (defaults to `~/.config/klorb`; see
+     [[paths-and-logging]] for the `KLORB_CONFIG_DIR` override). `klorb init` (see
+     [[klorb-init]]) is what actually creates this file, from a *different* packaged
+     resource — `klorb.resources/template-config.json` — a spartan starter meant for
+     hand-editing, not the built-in-defaults file above.
+  4. `cwd/.klorb/klorb-config.json`
+  5. The file named by `--config` on the command line, if given.
+  6. Overrides carried over from the previous session's saved state — a placeholder for now
      (`_load_last_session_overrides()` always returns `{}`), reserved for when
      `last-session.json` (see `TODO.md`) exists.
 
@@ -81,9 +90,11 @@ or slicing a superset.
   settings — see "On-disk key naming" below. The top-level object and the `sessionDefaults`
   object are merged independently across layers (`dict.update` on each, not a deep merge),
   so a layer can override just one session default, or just one process-only setting,
-  without repeating everything else. A missing file at any layer is silently skipped —
-  that's the expected common case, not an error — and logged at debug level either way, so a
-  user debugging "why didn't my config apply" can see what was and wasn't found.
+  without repeating everything else. A missing file at layer 2 and below is silently skipped
+  — that's the expected common case, not an error — and logged at debug level either way, so
+  a user debugging "why didn't my config apply" can see what was and wasn't found. Layer 1
+  is never missing, so nothing has to fall back to a bare pydantic field default in practice
+  — see "Out of scope" below.
 
   One exception: `sessionDefaults.readDirs`/`writeDirs` are **concatenated** across layers
   instead of replaced — a layer's `deny`/`ask`/`allow` entries add to, rather than replace,
@@ -187,12 +198,27 @@ the other; there is deliberately no attempt to derive one name from the other
 mechanically, since the on-disk convention (dotted, camelCase, grouped by feature) and the
 Python convention (snake_case, flat) diverge by design. Adding a new config-file-exposed
 setting means adding one entry to the relevant map, not renaming the underlying Python
-field. A reference file with every recognized key at its current default lives at
-`etc/klorb-config.json` in the repo root.
+field — **and** adding that key, at its shipped default value, to
+`klorb/src/klorb/resources/default-config.json`. That file (not a bare pydantic field
+default) is the canonical, always-merged source of a setting's built-in default going
+forward — see "How it works" above — so a new setting with no entry there would only get its
+Python field default until *some* config layer happened to set it explicitly.
+
+Two other, differently-scoped JSON files are easy to confuse with `default-config.json`:
+
+* `klorb/src/klorb/resources/template-config.json` — a second packaged resource, but never
+  read as a config layer *itself*. It's a deliberately spartan starter file (most keys
+  omitted, so it reads as "here's what's worth touching," not "here's every key") that
+  `klorb init` (see [[klorb-init]]) copies to `/etc/klorb/klorb-config.json` or
+  `$KLORB_CONFIG_DIR/klorb-config.json` for a user to hand-edit. Once copied, *that* on-disk
+  copy is an ordinary layer 2/3 file, indistinguishable from a hand-authored one — but the
+  packaged `template-config.json` resource itself never is.
+* `.klorb/klorb-config.json` in *this* repo's own root — an ordinary per-project config
+  layer (layer 4 above) for developing klorb itself, unrelated to either packaged resource.
 
 ## Configuration
 
-* `klorb-config.json` — see "How it works" above for the five file locations and their
+* `klorb-config.json` — see "How it works" above for the six layers and their
   precedence, and "On-disk key naming" above for the file's shape and key style. Every entry
   in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`,
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
@@ -213,16 +239,18 @@ field. A reference file with every recognized key at its current default lives a
   by design, for the same reason `interactive` is CLI-only: unlike `interactive`, though,
   there's no CLI flag for it either — no code path sets it `True` yet outside tests.
 * `$KLORB_ETC_CONFIG` — overrides the `/etc`-scope config file's path (see "How it works").
-* `--config FILE` — layers one more `klorb-config.json`-shaped file on top of the three
-  fixed locations, below CLI flags.
+* `--config FILE` — layers one more `klorb-config.json`-shaped file on top of the packaged
+  and fixed-path layers, below CLI flags.
 * `--model MODEL` — overrides `sessionDefaults.model` for this process, on top of every
   config file layer.
 
 ## Out of scope
 
 * Adding another process-only field requires adding it to `ProcessConfig` and adding its
-  on-disk key to `PROCESS_KEY_MAP` (or `SESSION_KEY_MAP`, for a new `SessionConfig` field) —
-  the two aren't inferred from each other by design (see "On-disk key naming" above).
+  on-disk key to `PROCESS_KEY_MAP` (or `SESSION_KEY_MAP`, for a new `SessionConfig` field),
+  plus a shipped-default entry in `default-config.json` — the two maps aren't inferred from
+  each other by design, and neither map is inferred from `default-config.json` either (see
+  "On-disk key naming" above).
 * `read_file_max_lines` (`tools.readFile.maxLines`) is consumed by `ReadFileTool` via
   `context.process_config.read_file_max_lines`, where `context` is the `ToolSetupContext`
   every `Tool` (`klorb.tools.tool.Tool`) is constructed with — see [[tool-framework]].

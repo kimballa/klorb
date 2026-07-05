@@ -1,0 +1,19 @@
+{
+  "schema": {
+    "name": "klorb-config",
+    "version": "1.0.0"
+  },
+  "sessionDefaults": {
+    "readDirs": {
+      "deny": [],
+      "ask": [],
+      "allow": []
+    },
+    "writeDirs": {
+      "deny": [],
+      "ask": [],
+      "allow": []
+    }
+  },
+  "compatibility.claudeMarkdown": false
+}

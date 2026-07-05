@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from klorb import cli
+from klorb.klorb_init import InitError
 from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
@@ -273,3 +274,67 @@ def test_main_one_shot_streams_incrementally_with_single_trailing_newline(
             cli.main()
 
     assert capsys.readouterr().out == "Hello\n"
+
+
+def test_main_dispatches_to_init_subcommand_when_argv1_is_init() -> None:
+    with patch("klorb.cli.run_init_cli", return_value=0) as mock_run_init_cli:
+        with patch("sys.argv", ["klorb", "init", "--user", "--force"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    mock_run_init_cli.assert_called_once_with(["--user", "--force"])
+    assert exc_info.value.code == 0
+
+
+def test_main_propagates_init_subcommand_failure_exit_code() -> None:
+    with patch("klorb.cli.run_init_cli", return_value=1):
+        with patch("sys.argv", ["klorb", "init"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    assert exc_info.value.code == 1
+
+
+def test_main_does_not_treat_init_as_a_subcommand_unless_it_is_argv1() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_init_cli") as mock_run_init_cli:
+            with patch("sys.argv", ["klorb", "-m", "init"]):
+                cli.main()
+
+    mock_run_init_cli.assert_not_called()
+
+
+def test_run_init_cli_defaults_scope_and_prints_messages_to_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.default_scope", return_value="user"):
+        with patch("klorb.cli.run_init", return_value=["msg one", "msg two"]) as mock_run_init:
+            exit_code = cli.run_init_cli([])
+
+    assert exit_code == 0
+    mock_run_init.assert_called_once_with("user", force=False)
+    assert capsys.readouterr().err == "msg one\nmsg two\n"
+
+
+def test_run_init_cli_passes_explicit_scope_and_force() -> None:
+    with patch("klorb.cli.run_init", return_value=[]) as mock_run_init:
+        cli.run_init_cli(["--system", "--force"])
+
+    mock_run_init.assert_called_once_with("system", force=True)
+
+
+def test_run_init_cli_rejects_conflicting_scope_flags() -> None:
+    with pytest.raises(SystemExit):
+        cli.run_init_cli(["--system", "--user"])
+
+
+def test_run_init_cli_returns_one_and_prints_error_on_init_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.run_init", side_effect=InitError("boom")):
+        exit_code = cli.run_init_cli(["--user"])
+
+    assert exit_code == 1
+    assert "boom" in capsys.readouterr().err

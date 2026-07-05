@@ -48,7 +48,15 @@
   # Ship the built-in system prompt files inside the wheel so
   # klorb.system_prompts.resolve_prompt_file() can read them via importlib.resources at
   # runtime. See docs/specs/roles-and-system-prompts.md.
-  "klorb.resources" = ["system_prompts.d/*.md", "system_prompts.d/roles/*/*.md"]
+  #
+  # Ship default-config.json (klorb.process_config's built-in-defaults config layer, merged
+  # on every process start) and template-config.json (klorb.klorb_init's spartan starter
+  # file, copied to disk by `klorb init`) the same way, so both are read via
+  # importlib.resources at runtime. See docs/specs/process-and-session-config.md and
+  # docs/specs/klorb-init.md.
+  "klorb.resources" = [
+    "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", "default-config.json", "template-config.json",
+  ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -216,6 +216,12 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `session_log_path()` for the new session id (relying on `configure_logging`'s `force=True`
   behavior to safely repoint the root logger's file handler mid-process). See
   [[clear-command-starts-a-new-session-and-log-file]].
+* `Ctrl+P`'s command palette (and `>init` from the inline palette) also includes
+  `InitCommandProvider`'s `Init local klorb config`, which runs
+  `klorb.klorb_init.run_init("user", force=False)` and reports the outcome via `App.notify()`.
+  `ReplApp.on_mount()` mounts a `Static` (class `notice`) into the history on startup if
+  `klorb.process_config.user_config_path()` doesn't exist yet, pointing the user at that
+  command. See [[klorb-init]].
 * Typing a line starting with `!` and pressing enter runs the rest of the line as a shell
   command instead of submitting a prompt — e.g. `!ls -la`. `ReplApp._submit_shell_command()`
   echoes `!command` into the history (styled like a submitted prompt) and disables the input

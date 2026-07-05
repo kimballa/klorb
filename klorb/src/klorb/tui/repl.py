@@ -34,6 +34,7 @@ from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
 from klorb.permissions.grant import compute_grant_paths
 from klorb.process_config import ProcessConfig
+from klorb.process_config import user_config_path
 from klorb.session import PermissionAskContext
 from klorb.session import PermissionDecision
 from klorb.session import Session
@@ -43,6 +44,8 @@ from klorb.session import TurnEventHandlers
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.tool import default_tool_call_detail
 from klorb.tools.tool import default_tool_call_summary
+from klorb.tui.init_commands import INIT_CONFIG_LABEL
+from klorb.tui.init_commands import InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.palette import PALETTE_PREFIX
 from klorb.tui.palette import PROMPT_PALETTE_ID
@@ -64,6 +67,8 @@ PALETTE_HINT_TEXT = f"{PALETTE_PREFIX} palette"
 STATUS_BAR_ID = "status-bar"
 THINKING_LABEL = "<Thinking>"
 TOOL_USE_LABEL = "<Tool use>"
+CONFIG_MISSING_MESSAGE = (
+    f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -718,6 +723,11 @@ class ReplApp(App[None]):
         color: $text-muted;
         margin: 1 0 0 0;
     }
+
+    .notice {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
     """
 
     BINDINGS = [
@@ -726,7 +736,9 @@ class ReplApp(App[None]):
         ("escape", "abort_response", "Abort"),
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
     ]
-    COMMANDS = App.COMMANDS | {ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider}
+    COMMANDS = App.COMMANDS | {
+        InitCommandProvider, ModelCommandProvider, SessionCommandProvider, ThinkingCommandProvider,
+    }
 
     def __init__(
         self,
@@ -848,8 +860,9 @@ class ReplApp(App[None]):
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, watch
         the history's scroll position (see `_on_history_scroll_changed`), show the initial
-        `> palette` hint (the box starts empty), then submit any initial message as the first
-        turn.
+        `> palette` hint (the box starts empty), note in the history if no per-user config
+        file exists yet (see `CONFIG_MISSING_MESSAGE`), then submit any initial message as the
+        first turn.
         """
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
@@ -860,6 +873,9 @@ class ReplApp(App[None]):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self.watch(history, "scroll_y", self._on_history_scroll_changed, init=False)
+
+        if not user_config_path().is_file():
+            history.mount(Static(CONFIG_MISSING_MESSAGE, classes="notice"))
 
         if self._initial_message:
             self._submit_prompt(self._initial_message)

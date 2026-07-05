@@ -4,6 +4,7 @@ are shared by every `Session` created within it (today, one at a time; eventuall
 running concurrently). See docs/specs/process-and-session-config.md.
 """
 
+import importlib.resources
 import logging
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
+from klorb.schema_envelope import parse_versioned_json
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
@@ -47,6 +49,13 @@ DEFAULT_FIND_FILE_MAX_RESULTS = 500
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_SCHEMA_VERSION = "1.0.0"
 CONFIG_FILENAME = "klorb-config.json"
+
+DEFAULT_CONFIG_RESOURCE_NAME = "default-config.json"
+"""Filename of the packaged, built-in-defaults config layer within the `klorb.resources`
+package — see `_default_config_layer()`. Distinct from `klorb.klorb_init`'s
+`TEMPLATE_CONFIG_RESOURCE_NAME` (`template-config.json`), the spartan starter file `klorb
+init` copies to disk; this one is never copied anywhere; it's read directly, every process
+start, as the lowest-precedence layer below."""
 
 KLORB_ETC_CONFIG_ENV_VAR = "KLORB_ETC_CONFIG"
 DEFAULT_ETC_CONFIG_PATH = Path("/etc/klorb") / CONFIG_FILENAME
@@ -146,12 +155,31 @@ class ProcessConfig(BaseModel):
     `CLAUDE.md` file; `AGENTS.md` is always read, since it's klorb's own convention."""
 
 
-def _etc_config_path() -> Path:
+def _default_config_layer() -> dict[str, Any]:
+    """The packaged built-in-defaults layer: `klorb.resources/default-config.json`
+    (`DEFAULT_CONFIG_RESOURCE_NAME`), read via `importlib.resources` and parsed the same way
+    an on-disk `klorb-config.json` layer is. Unlike every other layer `load_process_config()`
+    merges, this one is never missing — it ships inside every klorb install — so it always
+    contributes a value for every key it lists, e.g. `sessionDefaults.readDirs.deny`'s
+    dotfile denylist, which used to only exist in an uninstalled reference file nobody was
+    guaranteed to actually load. See docs/specs/process-and-session-config.md.
+    """
+    text = (
+        importlib.resources.files("klorb.resources")
+        .joinpath(DEFAULT_CONFIG_RESOURCE_NAME)
+        .read_text(encoding="utf-8")
+    )
+    source = f"klorb.resources/{DEFAULT_CONFIG_RESOURCE_NAME}"
+    return parse_versioned_json(text, expected_schema_name=CONFIG_SCHEMA_NAME, source=source)
+
+
+def etc_config_path() -> Path:
     """Resolve the `/etc`-scope config file path, honoring the `KLORB_ETC_CONFIG` env var
     override. Resolved lazily (at call time, not import time) so a value supplied via a
     `.env` file — loaded by `klorb.cli.main()`'s `load_dotenv()` call before
     `load_process_config()` runs — is actually honored, unlike a module-level constant
-    computed from `os.environ` at import time (before `load_dotenv()` has run).
+    computed from `os.environ` at import time (before `load_dotenv()` has run). Also used by
+    `klorb.klorb_init` to resolve `klorb init --system`'s target file.
     """
     override = os.environ.get(KLORB_ETC_CONFIG_ENV_VAR)
     return Path(override) if override else DEFAULT_ETC_CONFIG_PATH
@@ -201,11 +229,13 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
 
     Layers config data from, in increasing order of precedence:
 
-    1. `/etc/klorb/klorb-config.json` (or `$KLORB_ETC_CONFIG`, if set).
-    2. The per-user config file under `KLORB_CONFIG_DIR` (defaults to `~/.config/klorb`).
-    3. The per-project config file under `cwd/.klorb/`.
-    4. The file named by `--config` (`config_flag_path`), if given.
-    5. Last-session state overrides (not yet implemented; always empty for now).
+    1. The packaged built-in defaults, `klorb.resources/default-config.json`
+       (`_default_config_layer()`) — always present, never missing.
+    2. `/etc/klorb/klorb-config.json` (or `$KLORB_ETC_CONFIG`, if set).
+    3. The per-user config file under `KLORB_CONFIG_DIR` (defaults to `~/.config/klorb`).
+    4. The per-project config file under `cwd/.klorb/`.
+    5. The file named by `--config` (`config_flag_path`), if given.
+    6. Last-session state overrides (not yet implemented; always empty for now).
 
     Each layer is one JSON object with process-only settings as flat top-level keys and all
     session-scoped settings nested under a `sessionDefaults` key (see
@@ -213,9 +243,9 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
     `sessionDefaults` object are merged independently across layers — a later layer's keys
     overwrite an earlier layer's within each (`dict.update`, not a deep merge) — so a layer
     can override just one session default without repeating every other one. A missing file
-    at any layer is silently skipped — that's the expected common case, not an error — and
-    logged at debug level either way, so a user debugging "why didn't my config apply" can
-    see what was and wasn't found. CLI flags (other than `--config` itself) are applied on
+    at layer 2 and below is silently skipped — that's the expected common case, not an error
+    — and logged at debug level either way, so a user debugging "why didn't my config apply"
+    can see what was and wasn't found. CLI flags (other than `--config` itself) are applied on
     top of the returned `ProcessConfig` by the caller, since only `klorb.cli` knows the
     argparse `Namespace` shape.
 
@@ -247,7 +277,8 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
         merged_session_defaults.update(session_layer)
         merged.update(layer)
 
-    merge_layer(read_versioned_json(_etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
+    merge_layer(_default_config_layer())
+    merge_layer(read_versioned_json(etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
     merge_layer(read_versioned_json(user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
     merge_layer(read_versioned_json(project_config_path(cwd), expected_schema_name=CONFIG_SCHEMA_NAME))
     if config_flag_path is not None:

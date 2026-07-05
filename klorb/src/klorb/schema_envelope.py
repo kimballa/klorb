@@ -37,6 +37,33 @@ class SchemaInfo(BaseModel):
     version: str
 
 
+def parse_versioned_json(text: str, *, expected_schema_name: str, source: str) -> dict[str, Any]:
+    """Parse already-read `text` as a schema-enveloped JSON document (see module docstring),
+    validating and stripping its `schema` block exactly like `read_versioned_json` does for an
+    on-disk file — this is what that function delegates to once it has the file's contents in
+    hand, and it's also what a caller reading a *packaged* resource via `importlib.resources`
+    (which yields text, not a `Path`) should use directly, e.g.
+    `klorb.process_config`'s built-in-defaults layer. `source` identifies `text`'s origin
+    (a `Path`, or a resource name) for the log messages below only.
+    """
+    contents: dict[str, Any] = json.loads(text)
+
+    schema_block = contents.pop(SCHEMA_KEY, None)
+    if schema_block is None:
+        logger.debug("%s has no schema block; treating all keys as data.", source)
+        return contents
+
+    schema_info = SchemaInfo.model_validate(schema_block)
+    if schema_info.name != expected_schema_name:
+        logger.warning(
+            "%s declares schema name %r, expected %r; ignoring its contents.",
+            source, schema_info.name, expected_schema_name)
+        return {}
+
+    logger.debug("Loaded %s (schema %s v%s).", source, schema_info.name, schema_info.version)
+    return contents
+
+
 def read_versioned_json(path: Path, *, expected_schema_name: str) -> dict[str, Any]:
     """Read a schema-enveloped JSON file's data, or `{}` if `path` doesn't exist.
 
@@ -51,23 +78,8 @@ def read_versioned_json(path: Path, *, expected_schema_name: str) -> dict[str, A
         logger.debug("No file at %s; skipping.", path)
         return {}
 
-    with path.open("r", encoding="utf-8") as config_file:
-        contents: dict[str, Any] = json.load(config_file)
-
-    schema_block = contents.pop(SCHEMA_KEY, None)
-    if schema_block is None:
-        logger.debug("%s has no schema block; treating all keys as data.", path)
-        return contents
-
-    schema_info = SchemaInfo.model_validate(schema_block)
-    if schema_info.name != expected_schema_name:
-        logger.warning(
-            "%s declares schema name %r, expected %r; ignoring its contents.",
-            path, schema_info.name, expected_schema_name)
-        return {}
-
-    logger.debug("Loaded %s (schema %s v%s).", path, schema_info.name, schema_info.version)
-    return contents
+    return parse_versioned_json(
+        path.read_text(encoding="utf-8"), expected_schema_name=expected_schema_name, source=str(path))
 
 
 def write_versioned_json(

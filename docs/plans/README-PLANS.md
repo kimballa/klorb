@@ -18,4 +18,7 @@ Rules:
   on the lowest-numbered plan in the `ready/` folder.
 * When a plan is implemented, the relevant and durable aspects of the plan can be moved 
   into a spec. The plan file itself should be moved to the `archive/` subdir with `git mv`.
-
+* After planning docs are moved to the archive dir, they are no longer modified, even if
+  later decisions cause the plan to be out-of-date with respect to the source code. That's
+  OK -- the plan was a planning doc for a task, not a specification to be maintained in
+  sync with the codebase.

@@ -9,6 +9,8 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 `klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*] [`--config` *FILE*]
 [`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
 
+`klorb init` [`--system` | `--user`] [`--force`]
+
 ## DESCRIPTION
 
 klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
@@ -17,6 +19,28 @@ prints the response to stdout. Invoked with no `-m`/`--message` flag, it
 starts an interactive, full-screen terminal REPL instead. Passing
 `--interactive` together with `-m`/`--message` starts the REPL with that
 message submitted as the first turn, then keeps the REPL open for more.
+
+Invoked as `klorb init` (only recognized when `init` is the very first
+argument), it instead bootstraps a `klorb-config.json` file and a `klorb`
+executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
+
+## COMMANDS
+
+* `init` [`--system` | `--user`] [`--force`]
+
+  Writes the packaged reference `klorb-config.json` into place and creates a
+  `klorb` executable symlink pointing at the currently-running launcher
+  script. `--user` (the default unless running as root) targets
+  `$KLORB_CONFIG_DIR/klorb-config.json` and `~/.local/bin/klorb`; `--system`
+  (must be run as root) targets `/etc/klorb/klorb-config.json` and
+  `/usr/bin/klorb`. Each of the two targets is left alone with a stderr
+  message if it already exists, unless `--force` is given, in which case the
+  existing file/symlink is replaced. Progress and diagnostics are printed to
+  stderr; exit status is `0` if both steps ran or were skipped as
+  already-done, `1` on a real failure (e.g. `--system` run as a non-root
+  user, or a permission error). Also reachable from the interactive REPL as
+  the `Init local klorb config` command palette entry (always `--user`
+  scope) — see `docs/specs/klorb-init.md`.
 
 ## OPTIONS
 
@@ -121,9 +145,15 @@ Start the REPL with settings from an extra config file, on top of the usual
 klorb --config ./ci-defaults.json
 ```
 
+Bootstrap a per-user config file and `~/.local/bin/klorb` symlink:
+
+```
+klorb init
+```
+
 ## SEE ALSO
 
 `docs/specs/openrouter-prompt-client.md`, `docs/specs/terminal-repl.md`,
 `docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`,
 `docs/specs/process-and-session-config.md`,
-`docs/specs/persisted-json-schema-versioning.md`
+`docs/specs/persisted-json-schema-versioning.md`, `docs/specs/klorb-init.md`

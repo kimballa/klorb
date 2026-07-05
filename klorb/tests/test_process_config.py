@@ -32,15 +32,26 @@ def _write_config(path: Path, data: dict) -> None:
     path.write_text(json.dumps(envelope), encoding="utf-8")
 
 
+_real_default_config_layer = process_config_module._default_config_layer
+"""A handle to the genuine, packaged-resource-reading `_default_config_layer`, captured at
+collection time before `_isolate_config_layers` (below) monkeypatches the module attribute of
+the same name for every test. The `test_default_config_layer_*` tests restore it explicitly
+to exercise the real packaged `default-config.json`."""
+
+
 @pytest.fixture(autouse=True)
 def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point every file-backed config layer at empty locations under `tmp_path` by default,
-    so tests never accidentally read a real `/etc/klorb/klorb-config.json` or the
-    developer's own `~/.config/klorb/klorb-config.json`.
+    """Point every file-backed config layer at empty locations under `tmp_path`, and blank out
+    the packaged built-in-defaults layer, so tests never accidentally read a real
+    `/etc/klorb/klorb-config.json`, the developer's own `~/.config/klorb/klorb-config.json`,
+    or the packaged `default-config.json`'s own `readDirs`/session-default values. Tests that
+    specifically cover the packaged layer (see `test_default_config_layer_*` below) restore
+    the real `_default_config_layer` themselves.
     """
     monkeypatch.setenv(
         process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
     monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
+    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda: {})
 
 
 def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
@@ -62,6 +73,55 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.shell_timeout_seconds is None
     assert process_config.is_workspace_trusted is False
     assert process_config.compatibility_claude_markdown is False
+
+
+def test_default_config_layer_reads_the_packaged_resource() -> None:
+    layer = _real_default_config_layer()
+    assert layer["sessionDefaults"]["model"] == DEFAULT_MODEL
+    assert "~/.ssh" in layer["sessionDefaults"]["readDirs"]["deny"]
+
+
+def test_default_config_layer_strips_the_schema_envelope() -> None:
+    layer = _real_default_config_layer()
+    assert "schema" not in layer
+
+
+def test_default_config_layer_is_merged_when_no_other_config_files_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(process_config_module, "_default_config_layer", _real_default_config_layer)
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.session.model == DEFAULT_MODEL
+    assert Path("~/.ssh") in process_config.session.read_dirs.deny
+
+
+def test_default_config_layer_is_overridden_by_etc_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(process_config_module, "_default_config_layer", _real_default_config_layer)
+    _write_config(tmp_path / "etc" / "klorb-config.json", {"sessionDefaults": {"model": "etc/model"}})
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.session.model == "etc/model"
+
+
+def test_default_config_layer_readdirs_deny_survives_later_layers_own_allow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A project config that only adds an `allow` entry must not drop the packaged layer's
+    own `deny` list — see docs/specs/permissions.md: lists concatenate, they never replace."""
+    monkeypatch.setattr(process_config_module, "_default_config_layer", _real_default_config_layer)
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"readDirs": {"allow": ["/ok"]}}})
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert Path("~/.ssh") in process_config.session.read_dirs.deny
+    assert Path("/ok") in process_config.session.read_dirs.allow
 
 
 def test_etc_config_path_honors_env_var_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

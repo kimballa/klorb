@@ -3,12 +3,13 @@
     "allow": [
       "Bash(pip show *)",
       "Bash(make *)",
-      "Bash(git -C /home/aaron/src/klorb diff *)",
-      "Bash(git -C /home/aaron/src/klorb status *)",
-      "Bash(git -C /home/aaron/src/klorb show *)",
-      "Bash(git -C /home/aaron/src/klorb log *)",
+      "Bash(git -C * diff *)",
+      "Bash(git -C * status *)",
+      "Bash(git -C * show *)",
+      "Bash(git -C * log *)",
       "Bash(venv/bin/pip install *)",
       "Bash(venv/bin/klorb --model openai/gpt-5-nano *)",
+      "Bash(venv/bin/python -m pytest *)",
       "Bash(TESTARGS=* make test)",
       "Bash(env)"
     ]

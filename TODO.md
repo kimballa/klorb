@@ -21,8 +21,6 @@
 * When you select a model, it should update the workspace's `sessionDefaults > model` config file 
   setting so it remembers next time.
 
-* PLAN 001 (READY): `klorb init` bootstrap command
-
 * When you select a theme, the theme selection modal should put a `(*)` as a suffix next to
   the currently-selected theme name.
   * When you change to a new theme, a confirmation msg should show up in the main scroll "Changed
@@ -56,7 +54,7 @@
   (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same relative path the resolver would
   read it back from), so the user has a real `.md` file to start editing from instead of
   hunting down the packaged copy inside site-packages. Should refuse to clobber an existing
-  file without `--force`, like the planned `klorb init`. See
+  file without `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
   docs/specs/roles-and-system-prompts.md.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
@@ -147,7 +145,7 @@
     path rules as a first-class, tested feature (not just something that happens to work today
     via `Path` equality in `DirectoryAccessTable._matches`) or glob/pattern matching (`*.pem`,
     `id_rsa*`, etc.) so one rule can catch a class of filenames wherever they show up.
-    `etc/klorb-config.json`'s reference denylist deliberately sticks to directories for now and
+    `klorb/src/klorb/resources/default-config.json`'s reference denylist deliberately sticks to directories for now and
     skips file-level entries pending this.
   * Path macros: support expanding `${home}`/`${workspaceRoot}` (maybe also `${configDir}`)
     inside `readDirs`/`writeDirs` (and any other future path-shaped config value), alongside the

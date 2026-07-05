@@ -3,10 +3,15 @@
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from klorb.klorb_init import InitError
+from klorb.klorb_init import InitScope
+from klorb.klorb_init import default_scope
+from klorb.klorb_init import run_init
 from klorb.logging_config import configure_logging
 from klorb.logging_config import session_log_path
 from klorb.openrouter import OpenRouterApiProvider
@@ -16,6 +21,8 @@ from klorb.tools.registry import ToolRegistry
 from klorb.tui.repl import run_repl
 
 logger = logging.getLogger(__name__)
+
+INIT_SUBCOMMAND = "init"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,9 +73,58 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_init_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for `klorb init`'s own flags (`--system`/`--user`/`--force`)
+    — see `run_init_cli()`.
+    """
+    parser = argparse.ArgumentParser(
+        prog="klorb init", description="Bootstrap a klorb-config.json and a klorb executable symlink.")
+    scope_group = parser.add_mutually_exclusive_group()
+    scope_group.add_argument(
+        "--system", dest="scope", action="store_const", const="system",
+        help="Install to /etc/klorb and /usr/bin. Must be run as root. Default when running as root.")
+    scope_group.add_argument(
+        "--user", dest="scope", action="store_const", const="user",
+        help="Install to $KLORB_CONFIG_DIR and ~/.local/bin. Default when not running as root.")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing config file or executable symlink instead of leaving it alone.")
+    return parser
+
+
+def run_init_cli(argv: list[str]) -> int:
+    """Parse `argv` (the arguments following `klorb init`) and run `klorb.klorb_init.run_init`,
+    printing its progress messages to stderr as it goes. Returns the process exit status: `0`
+    if every step ran (including a step that was skipped because its target already exists),
+    `1` if `run_init` raised `InitError` partway through — see `docs/specs/klorb-init.md`.
+    """
+    parser = build_init_parser()
+    args = parser.parse_args(argv)
+    scope: InitScope = args.scope or default_scope()
+
+    try:
+        messages = run_init(scope, force=args.force)
+    except InitError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    for message in messages:
+        print(message, file=sys.stderr)
+    return 0
+
+
 def main() -> None:
-    """Parse CLI arguments and either run a single prompt or start the interactive REPL."""
+    """Parse CLI arguments and either run a single prompt or start the interactive REPL.
+
+    `klorb init ...` is special-cased ahead of the normal argument parsing below: it's only
+    recognized when `init` is the very first argument (`sys.argv[1]`), so it can't be
+    confused with an ordinary flag value or one-shot prompt appearing later in `argv` — see
+    `docs/specs/klorb-init.md`.
+    """
     load_dotenv()
+
+    if len(sys.argv) > 1 and sys.argv[1] == INIT_SUBCOMMAND:
+        raise SystemExit(run_init_cli(sys.argv[2:]))
 
     parser = build_parser()
     args = parser.parse_args()
