@@ -2,6 +2,9 @@
 
 # Bugs:
 
+* SessionConfig.workspace_root and ProcessConfig.workspace.path are also redundant.
+  ... and maybe that means `workspace` should just be on the SessionConfig, instead?
+
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
@@ -14,6 +17,11 @@
   as extensions that should be listed as Workspace Recommendations.
 
 # Feature backlog
+
+* The top status bar should show the workspace name, and `(Untrusted)` if not trusted.
+  * The `- <model_name>` suffix should also stay, as well as thinking effort level, 
+    if thinking is enabled. e.g `.../path/to/somewhere (Untrusted) - gpt-4o (High)`
+  * If the path is too long to fit, use ".../last/two_parts". 
 
 * If you change the visual theme, the theme color should get baked into the ProcessConfig /
   homedir-level settings file.
@@ -30,24 +38,6 @@
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
     can interject midway thru what it's saying. 
-
-* PLAN-003 (READY): project bootstrapping and trust
-  * when you start klorb it attempts to identify the workspace root.
-  * if it can't find one, then the cwd is the workspace.
-  * ask the user if they want to open the cwd as a project.
-    * if no, do nothing. we only get default permissions of stuff.
-    * if yes, create cwd/.klorb/ and write a minimal config json in there
-      * by default allow file read access to the workspace root.
-      * Also burn in the currently-active model name to the default session config in the file.
-  * ask the user if they trust the dir and want to allow writes
-    * if yes then allow file write/create access to the workspace root.
-    * if no then put the workspace root down as 'ask' for writes.
-    * If no then clamp down reads to inside workspace root too, not just trusting its config file.
-  * ... this trust question actually needs to happen the first time a given
-    workspace is opened even if it already contained a config file (e.g., you download it from
-    the internet and unzip a tarball with a /.klorb/ in it). so trust needs to be tracked in
-    ~/.share/klorb/ or ~/.config/klorb/ or something external to the workspace itself.
-    ("Trust" is its own whole thing that will need a dedicated plan, basically.)
 
 * Add a command (CLI and/or command palette) that dumps the *resolved* system prompt for the
   current role + model into the user's editable tree

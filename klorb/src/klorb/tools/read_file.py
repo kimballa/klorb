@@ -18,7 +18,7 @@ class ReadFileTool(Tool):
 
     `filename` is resolved and checked against `readDirs` (see
     `klorb.permissions.workspace.resolve_and_evaluate_read`) before the file is opened —
-    confined to `SessionConfig.workspace_root` unless `ProcessConfig.is_workspace_trusted`.
+    confined to `SessionConfig.workspace_root` unless `ProcessConfig.workspace.trusted`.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:

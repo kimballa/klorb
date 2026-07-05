@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic import Field
 
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
@@ -20,6 +21,7 @@ from klorb.schema_envelope import read_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
+from klorb.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +105,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
-process-only `ProcessConfig` attribute it sets. `is_workspace_trusted` is deliberately absent:
-it has no on-disk key at all, by design — see `ProcessConfig.is_workspace_trusted`."""
+process-only `ProcessConfig` attribute it sets. `workspace` is deliberately absent: it has no
+on-disk key at all, by design — see `ProcessConfig.workspace`."""
 
 # On-disk keys are flat strings with dot-delineated namespaces in lowerCamelCase
 # (`"thinking.tokenBudgets"`, matching VSCode/Claude Code settings-file style — see
@@ -137,17 +139,20 @@ class ProcessConfig(BaseModel):
     shell_timeout_seconds: float | None = None
     """Maximum wall-clock seconds a `!`-prefixed REPL command may run before it's killed.
     `None` (the default) means no timeout is enforced."""
-    is_workspace_trusted: bool = False
-    """Whether `ReadFile` may use `readDirs`/`writeDirs`-table-only confinement (able to reach
-    outside `workspace_root`) instead of the same hard workspace-root boundary the write tools
-    have — see `klorb.permissions.workspace.resolve_and_evaluate_read`. Deliberately absent
-    from `PROCESS_KEY_MAP`/`klorb-config.json`: a project must never be able to grant itself
-    trust via its own config file. No code path in this codebase sets this `True` outside of
-    tests.
+    workspace: Workspace = Field(default_factory=lambda: Workspace(path=Path.cwd()))
+    """Which directory klorb considers the current project root, whether it's a registered
+    project, and whether it's trusted — see `klorb.workspace.Workspace` and
+    docs/specs/projects-and-trust.md. Resolved by `klorb.workspace.TrustManager` and threaded in
+    via `load_process_config(workspace=...)`; never loaded from `klorb-config.json` (no on-disk
+    key at all — a project must never be able to grant itself trust via its own config file).
 
-    TODO(aaron): a future, not-yet-built "trust this workspace" flow needs to be the only thing
-    that can set this `True` in production — interactively confirming trust once per workspace,
-    never via a config file key."""
+    `workspace.trusted` is what `klorb.permissions.workspace.resolve_and_evaluate_read` reads to
+    decide whether `ReadFile` may use `readDirs`/`writeDirs`-table-only confinement (able to
+    reach outside `workspace_root`) instead of the same hard workspace-root boundary the write
+    tools have. There is deliberately no separate `ProcessConfig.is_workspace_trusted` bool
+    mirroring this — an earlier version of this field had one, kept manually in sync by every
+    place that changed either; see
+    docs/adrs/consolidate-workspace-trust-into-a-single-field.md for why that was removed."""
     compatibility_claude_markdown: bool = False
     """Whether to read `CLAUDE.md` from the workspace root and inject it into the conversation
     alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
@@ -224,7 +229,9 @@ def _route_keys(data: dict[str, Any], key_map: dict[str, str]) -> dict[str, Any]
     return routed
 
 
-def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | None = None) -> ProcessConfig:
+def load_process_config(
+    *, config_flag_path: Path | None = None, cwd: Path | None = None, workspace: Workspace | None = None,
+) -> ProcessConfig:
     """Assemble the `ProcessConfig` for this process.
 
     Layers config data from, in increasing order of precedence:
@@ -233,7 +240,8 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
        (`_default_config_layer()`) — always present, never missing.
     2. `/etc/klorb/klorb-config.json` (or `$KLORB_ETC_CONFIG`, if set).
     3. The per-user config file under `KLORB_CONFIG_DIR` (defaults to `~/.config/klorb`).
-    4. The per-project config file under `cwd/.klorb/`.
+    4. The per-project config file under `workspace.path/.klorb/` — skipped entirely, not just
+       ignored once read, when `workspace.trusted` is `False` (see below).
     5. The file named by `--config` (`config_flag_path`), if given.
     6. Last-session state overrides (not yet implemented; always empty for now).
 
@@ -255,11 +263,21 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
     since a stricter rule from any layer must never be discardable by a looser rule from
     another. See docs/specs/permissions.md.
 
-    `SessionConfig.workspace_root` is set here too, from `find_workspace_root(cwd)` — an
-    ancestor search for the nearest directory with a non-symlinked `.klorb` child, falling back
-    to `cwd` itself — rather than a bare `Path.cwd()`.
+    `workspace` identifies the current project root and whether it's trusted — see
+    `klorb.workspace.Workspace` and docs/specs/projects-and-trust.md. When omitted (the common
+    case for a caller that hasn't resolved one via `klorb.workspace.TrustManager`, e.g.
+    tests constructing a `ProcessConfig` directly), a conservative, unregistered, untrusted
+    `Workspace` is synthesized from `klorb.permissions.directory_access.find_workspace_root(cwd)`
+    — the same ancestor search for a `.klorb/` directory this function has always used for
+    `SessionConfig.workspace_root`, just now also driving whether layer 4 above is read at all.
+    Layer 4 is read from `workspace.path`, not `cwd` — the two only differ when `workspace` was
+    resolved by `TrustManager.resolve_workspace()` against a registered ancestor project. The
+    returned `ProcessConfig`'s `workspace` field is this same `Workspace` — this is the one
+    production code path allowed to set `workspace.trusted` `True`, gated entirely on the
+    harness-resolved `Workspace`, never on anything a config file said.
     """
     cwd = cwd if cwd is not None else Path.cwd()
+    workspace = workspace if workspace is not None else Workspace(path=find_workspace_root(cwd))
 
     merged: dict[str, Any] = {}
     merged_session_defaults: dict[str, Any] = {}
@@ -280,7 +298,9 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
     merge_layer(_default_config_layer())
     merge_layer(read_versioned_json(etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
     merge_layer(read_versioned_json(user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
-    merge_layer(read_versioned_json(project_config_path(cwd), expected_schema_name=CONFIG_SCHEMA_NAME))
+    if workspace.trusted:
+        merge_layer(read_versioned_json(
+            project_config_path(workspace.path), expected_schema_name=CONFIG_SCHEMA_NAME))
     if config_flag_path is not None:
         merge_layer(read_versioned_json(config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME))
     merge_layer(_load_last_session_overrides(cwd))
@@ -288,6 +308,6 @@ def load_process_config(*, config_flag_path: Path | None = None, cwd: Path | Non
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
     session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)
     session_overrides["write_dirs"] = DirRules(**concatenated_write_dirs)
-    session_overrides["workspace_root"] = find_workspace_root(cwd)
+    session_overrides["workspace_root"] = workspace.path
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
-    return ProcessConfig(session=SessionConfig(**session_overrides), **process_overrides)
+    return ProcessConfig(session=SessionConfig(**session_overrides), workspace=workspace, **process_overrides)

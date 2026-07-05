@@ -27,8 +27,10 @@ or slicing a superset.
   default `DEFAULT_SHELL_COMMAND`, `/bin/bash` — the shell binary a `!`-prefixed REPL command
   is run through; see [[terminal-repl]]), `shell_timeout_seconds` (`float | None`, default
   `None` — how long a `!`-prefixed REPL command may run before it's killed; `None` means no
-  timeout), and `is_workspace_trusted` (bool, default `False` — governs whether `ReadFile` gets
-  a hard workspace-root boundary or table-only confinement; see docs/specs/permissions.md.
+  timeout), and `workspace` (a `klorb.workspace.Workspace` — which directory klorb considers
+  the current project root, whether it's a registered project, and whether it's trusted;
+  `workspace.trusted` governs whether `ReadFile` gets a hard workspace-root boundary or
+  table-only confinement, see docs/specs/permissions.md and docs/specs/projects-and-trust.md.
   Deliberately has **no** on-disk key at all — a project must never be able to grant itself
   trust via its own config file). `compatibility_claude_markdown` (bool, default `False` —
   when `True`, `CLAUDE.md` is read from the workspace root and injected into the conversation
@@ -235,9 +237,10 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   key.
 * `sessionDefaults.readDirs`/`writeDirs` are handled separately from `SESSION_KEY_MAP` — they
   merge by concatenation, not the scalar replacement `_route_keys()` implements — see
-  docs/specs/permissions.md. `is_workspace_trusted` cannot be set from a config file at all,
-  by design, for the same reason `interactive` is CLI-only: unlike `interactive`, though,
-  there's no CLI flag for it either — no code path sets it `True` yet outside tests.
+  docs/specs/permissions.md. `workspace` cannot be set from a config file at all, by design, for
+  the same reason `interactive` is CLI-only: unlike `interactive`, though, there's no CLI flag
+  for it either — it's resolved by `klorb.workspace.TrustManager` and threaded into
+  `load_process_config(workspace=...)` instead; see docs/specs/projects-and-trust.md.
 * `$KLORB_ETC_CONFIG` — overrides the `/etc`-scope config file's path (see "How it works").
 * `--config FILE` — layers one more `klorb-config.json`-shaped file on top of the packaged
   and fixed-path layers, below CLI flags.
@@ -274,7 +277,8 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   no per-session notion of "provider" to attach it to.
 * Concurrent sessions within one process aren't implemented yet; `ProcessConfig` is
   designed for that future but only one `Session` is ever live today.
-* `readDirs`/`writeDirs`, `is_workspace_trusted`, and everything else about how file-tool
+* `readDirs`/`writeDirs`, `workspace.trusted`, and everything else about how file-tool
   permissions are actually evaluated (category order, the workspace-root hard boundary, the
   `${workspace_root}/.klorb/` implicit deny, known risks) is out of scope for this spec — see
-  docs/specs/permissions.md.
+  docs/specs/permissions.md. How `workspace` itself gets resolved (registration, the interactive
+  trust bootstrap) is out of scope too — see docs/specs/projects-and-trust.md.

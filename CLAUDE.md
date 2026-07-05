@@ -157,6 +157,7 @@ The following are **critical** instructions for invoking shell commands:
   `command1 | jq <expr>`). Direct the output of `command1` in each case into a temp file
   and then read it into the second command from the file.
 * Do not redirect stderr to stdout with `2>&1`. You can read both output streams.
+* Do not use env variable substitution. This wastes time on automatic command approval.
 * Do not quote special characters like `#` or `"` or `'` or `|`, as doing so voids prior
   command approval. Instead, write such expressions into a temp file and use files as
   arguments.
@@ -173,6 +174,14 @@ Examples of GOOD bash commands:
 * `make test`
 
 Examples of BAD bash commands:
+* `PYTHONPATH=./src:./tests venv/bin/pytest -q tests/ 2>&1 | tail -30`
 * `make test | tail -30`
 * `source venv/bin/activate && make test`
 * `cd backend && make lint`
+
+When you make up complex commands, you waste more time waiting for user approval than if
+you had just stuck to using the pre-approved "make" commands, even if `make test`, etc,
+would run a larger number of tests or typecheck more files than an alternative you can
+generate.  CPU time is fast. User effort is slow. The user is very sad when you make him
+proofread bash statements if a clean alternative was already provided for you.
+

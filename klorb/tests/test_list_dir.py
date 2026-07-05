@@ -11,6 +11,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.list_dir import ListDirTool
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.workspace import Workspace
 
 
 def _context(
@@ -21,7 +22,8 @@ def _context(
     write_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(is_workspace_trusted=is_workspace_trusted),
+        process_config=ProcessConfig(
+            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted)),
         session_config=SessionConfig(
             workspace_root=workspace_root,
             read_dirs=read_dirs or DirRules(),

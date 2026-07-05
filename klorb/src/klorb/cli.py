@@ -19,6 +19,7 @@ from klorb.process_config import load_process_config
 from klorb.session import Session
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.repl import run_repl
+from klorb.workspace import TrustManager
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,12 @@ def main() -> None:
     recognized when `init` is the very first argument (`sys.argv[1]`), so it can't be
     confused with an ordinary flag value or one-shot prompt appearing later in `argv` — see
     `docs/specs/klorb-init.md`.
+
+    The current workspace's registration/trust state is resolved (never bootstrapped — that
+    needs the interactive TUI, see `klorb.tui.repl.ReplApp._resolve_workspace_trust`) via a
+    fresh `TrustManager` before `load_process_config()` runs, so both a headless one-shot
+    prompt and the REPL honor whatever trust decision a previous interactive session recorded
+    for this directory. See docs/specs/projects-and-trust.md.
     """
     load_dotenv()
 
@@ -135,8 +142,12 @@ def main() -> None:
 
     session_log = interactive if args.session_log is None else args.session_log
 
-    process_config = load_process_config(
-        config_flag_path=Path(args.config) if args.config is not None else None)
+    cwd = Path.cwd()
+    config_flag_path = Path(args.config) if args.config is not None else None
+    trust_manager = TrustManager()
+    workspace = trust_manager.resolve_workspace(cwd)
+
+    process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
     process_config.session.interactive = interactive
     if args.model is not None:
         process_config.session.model = args.model
@@ -161,6 +172,8 @@ def main() -> None:
             process_config=process_config,
             initial_message=args.prompt,
             session_log_enabled=session_log,
+            trust_manager=trust_manager,
+            config_flag_path=config_flag_path,
         )
     else:
         logger.info("Sending prompt to model=%s", session.config.model)

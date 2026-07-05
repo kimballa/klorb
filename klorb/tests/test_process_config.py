@@ -24,12 +24,23 @@ from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_SESSION
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
 from klorb.session import SessionConfig
+from klorb.workspace import Workspace
 
 
 def _write_config(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     envelope = {"schema": {"name": "klorb-config", "version": "1.0.0"}, **data}
     path.write_text(json.dumps(envelope), encoding="utf-8")
+
+
+def _trusted_workspace(path: Path) -> Workspace:
+    """A `Workspace` for `path`, trusted — passed to `load_process_config(workspace=...)` by
+    every test below that writes a `.klorb/klorb-config.json` and expects it to be merged as
+    layer 4: since docs/specs/projects-and-trust.md, that layer is skipped entirely unless
+    `workspace.trusted`, so these tests (which are about the merge mechanism itself, not trust
+    gating — see `test_untrusted_workspace_skips_project_config_layer` for that) opt in
+    explicitly rather than relying on the conservative untrusted default."""
+    return Workspace(path=path, trusted=True)
 
 
 _real_default_config_layer = process_config_module._default_config_layer
@@ -71,7 +82,7 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.openrouter_base_url == OPENROUTER_BASE_URL
     assert process_config.shell_command == DEFAULT_SHELL_COMMAND
     assert process_config.shell_timeout_seconds is None
-    assert process_config.is_workspace_trusted is False
+    assert process_config.workspace.trusted is False
     assert process_config.compatibility_claude_markdown is False
 
 
@@ -118,7 +129,7 @@ def test_default_config_layer_readdirs_deny_survives_later_layers_own_allow(
         tmp_path / ".klorb" / "klorb-config.json",
         {"sessionDefaults": {"readDirs": {"allow": ["/ok"]}}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
     assert Path("~/.ssh") in process_config.session.read_dirs.deny
     assert Path("/ok") in process_config.session.read_dirs.allow
@@ -149,7 +160,7 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
         },
     )
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.prompt_input_max_lines == 20
     assert process_config.thinking_token_budgets == {"low": 1_000, "medium": 2_000, "high": 3_000}
     assert process_config.read_file_max_lines == 500
@@ -167,7 +178,7 @@ def test_compatibility_claude_markdown_is_overridable_via_config_file(tmp_path: 
         {"compatibility.claudeMarkdown": True},
     )
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.compatibility_claude_markdown is True
 
 
@@ -189,7 +200,7 @@ def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:
         },
     )
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"
     assert process_config.session.thinking_enabled is False
     assert process_config.session.thinking_effort == "low"
@@ -204,7 +215,7 @@ def test_interactive_is_not_a_recognized_session_default(
     _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"interactive": False}})
 
     with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
-        process_config = load_process_config(cwd=tmp_path)
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
     assert process_config.session.interactive is True
     assert "interactive" in caplog.text
@@ -216,7 +227,7 @@ def test_unrecognized_config_key_is_dropped_with_a_warning(
     _write_config(tmp_path / ".klorb" / "klorb-config.json", {"totally.madeUp": "value"})
 
     with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
-        process_config = load_process_config(cwd=tmp_path)
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
     assert process_config.session.model == DEFAULT_MODEL
     assert "totally.madeUp" in caplog.text
@@ -225,7 +236,7 @@ def test_unrecognized_config_key_is_dropped_with_a_warning(
 def test_project_config_file_overrides_defaults(tmp_path: Path) -> None:
     _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"
 
 
@@ -243,7 +254,7 @@ def test_project_config_overrides_user_config(tmp_path: Path) -> None:
         tmp_path / "user-config" / "klorb-config.json", {"sessionDefaults": {"model": "user/model"}})
     _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"
 
 
@@ -252,7 +263,8 @@ def test_config_flag_path_overrides_project_config(tmp_path: Path) -> None:
     flag_path = tmp_path / "extra-config.json"
     _write_config(flag_path, {"sessionDefaults": {"model": "flag/model"}})
 
-    process_config = load_process_config(config_flag_path=flag_path, cwd=tmp_path)
+    process_config = load_process_config(
+        config_flag_path=flag_path, cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "flag/model"
 
 
@@ -269,7 +281,7 @@ def test_config_layers_merge_rather_than_replace_wholesale(tmp_path: Path) -> No
     )
     _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"
     assert process_config.session.thinking_enabled is False
     assert process_config.prompt_input_max_lines == 20
@@ -285,7 +297,7 @@ def test_config_file_with_mismatched_schema_name_is_skipped(tmp_path: Path) -> N
         }),
         encoding="utf-8")
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == DEFAULT_MODEL
 
 
@@ -299,7 +311,7 @@ def test_readdirs_and_writedirs_concatenate_across_layers(tmp_path: Path) -> Non
         tmp_path / ".klorb" / "klorb-config.json",
         {"sessionDefaults": {"readDirs": {"allow": ["/d", "/e", "/f"]}}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.read_dirs.allow == [
         Path(p) for p in ["/a", "/b", "/c", "/d", "/e", "/f"]]
 
@@ -314,7 +326,7 @@ def test_readdirs_writedirs_merge_concatenates_per_category_independently(tmp_pa
         tmp_path / ".klorb" / "klorb-config.json",
         {"sessionDefaults": {"writeDirs": {"allow": ["/yolo"]}}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.write_dirs.deny == [Path("/nope")]
     assert process_config.session.write_dirs.allow == [Path("/yolo")]
 
@@ -331,7 +343,8 @@ def test_readdirs_writedirs_duplicates_and_conflicts_across_layers_are_tolerated
         tmp_path / ".klorb" / "klorb-config.json",
         {"sessionDefaults": {"readDirs": {"deny": ["/shared"]}}})
 
-    process_config = load_process_config(cwd=tmp_path)  # must not raise
+    process_config = load_process_config(  # must not raise
+        cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.read_dirs.allow == [Path("/shared")]
     assert process_config.session.read_dirs.deny == [Path("/shared")]
 
@@ -346,7 +359,7 @@ def test_readdirs_writedirs_bypass_session_key_map_routing(
         tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"readDirs": {"allow": ["/a"]}}})
 
     with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
-        process_config = load_process_config(cwd=tmp_path)
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
     assert process_config.session.read_dirs.allow == [Path("/a")]
     assert "readDirs" not in caplog.text
@@ -366,35 +379,40 @@ def test_session_key_map_deliberately_excludes_readdirs_and_writedirs() -> None:
     assert "write_dirs" not in SESSION_KEY_MAP.values()
 
 
-def test_is_workspace_trusted_has_no_on_disk_key(
+def test_workspace_trust_has_no_on_disk_key(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """is_workspace_trusted must never be settable from klorb-config.json — a project must not
-    be able to grant itself trust via its own config file."""
-    _write_config(tmp_path / ".klorb" / "klorb-config.json", {"isWorkspaceTrusted": True})
+    """`workspace.trusted` must never be settable from klorb-config.json — a project must not
+    be able to grant itself trust via its own config file. Written to the per-user layer
+    (always loaded, unlike the trust-gated project layer — see
+    docs/specs/projects-and-trust.md) so this test isn't entangled with `workspace` trust-gating
+    at all: the key must have no effect at *any* layer, on top of the untrusted default
+    `workspace` this test leaves untouched."""
+    _write_config(tmp_path / "user-config" / "klorb-config.json", {"isWorkspaceTrusted": True})
 
     with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
         process_config = load_process_config(cwd=tmp_path)
 
-    assert process_config.is_workspace_trusted is False
+    assert process_config.workspace.trusted is False
     assert "isWorkspaceTrusted" in caplog.text
 
 
-def test_process_key_map_deliberately_excludes_is_workspace_trusted() -> None:
+def test_process_key_map_deliberately_excludes_workspace() -> None:
     """Deep-inspect PROCESS_KEY_MAP itself, not just load_process_config()'s observable
-    behavior (test_is_workspace_trusted_has_no_on_disk_key above already covers that): a
-    static, structural check that catches the mistake at the source (the map definition)
-    rather than only downstream, and fails with a clear message pointing at *why* even if a
-    future change accidentally makes the behavioral test pass some other way.
+    behavior (test_workspace_trust_has_no_on_disk_key above already covers that): a static,
+    structural check that catches the mistake at the source (the map definition) rather than
+    only downstream, and fails with a clear message pointing at *why* even if a future change
+    accidentally makes the behavioral test pass some other way.
 
-    See docs/adrs/gate-read-hard-boundary-on-workspace-trust.md: "ProcessConfig.is_workspace_trusted:
-    bool field, default False, deliberately absent from PROCESS_KEY_MAP" — a project config
-    file granting itself trust would defeat the entire point of gating ReadFile's hard
-    workspace-root boundary on this flag. If this assertion ever fails, do not "fix" it by
-    updating the test — re-read the ADR; the fix is almost certainly to remove whatever entry
-    was just added to PROCESS_KEY_MAP.
+    See docs/specs/projects-and-trust.md: `ProcessConfig.workspace` (and so `workspace.trusted`)
+    is deliberately absent from PROCESS_KEY_MAP, at any key spelling — a project config file
+    granting itself trust would defeat the entire point of gating ReadFile's hard
+    workspace-root boundary on it. If this assertion ever fails, do not "fix" it by updating
+    the test — the fix is almost certainly to remove whatever entry was just added to
+    PROCESS_KEY_MAP.
     """
-    assert "is_workspace_trusted" not in PROCESS_KEY_MAP.values()
+    assert "workspace" not in PROCESS_KEY_MAP.values()
+    assert "workspace" not in PROCESS_KEY_MAP
     assert "isWorkspaceTrusted" not in PROCESS_KEY_MAP
 
 
@@ -427,6 +445,45 @@ def test_stricter_layer_always_wins_end_to_end(tmp_path: Path) -> None:
         tmp_path / ".klorb" / "klorb-config.json",
         {"sessionDefaults": {"writeDirs": {"allow": [str(tmp_path)]}}})
 
-    process_config = load_process_config(cwd=tmp_path)
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     table = DirectoryAccessTable(process_config.session.write_dirs, process_config.session.workspace_root)
     assert table.evaluate(sensitive / "key.txt") == "deny"
+
+
+def test_workspace_defaults_to_unregistered_untrusted_from_find_workspace_root(tmp_path: Path) -> None:
+    """With no `workspace` argument, `load_process_config` synthesizes a conservative one:
+    unregistered (`id=None`, `is_project=False`) and untrusted, rooted at
+    `find_workspace_root(cwd)` — see docs/specs/projects-and-trust.md."""
+    project = tmp_path / "project"
+    (project / ".klorb").mkdir(parents=True)
+    nested = project / "src"
+    nested.mkdir()
+
+    process_config = load_process_config(cwd=nested)
+
+    assert process_config.workspace == Workspace(path=project, is_project=False, trusted=False)
+
+
+def test_untrusted_workspace_skips_project_config_layer_entirely(tmp_path: Path) -> None:
+    """An untrusted workspace's `.klorb/klorb-config.json` isn't merely ignored once read — it
+    is never read at all, so it can't even reach the "unrecognized key" warning path. This is
+    what actually protects a hostile, downloaded-and-unzipped repository's `readDirs.allow`
+    from reaching the concatenated list at all (see docs/specs/projects-and-trust.md and
+    docs/adrs/gate-read-hard-boundary-on-workspace-trust.md)."""
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"model": "hostile/model", "readDirs": {"allow": ["/whatever"]}}})
+
+    process_config = load_process_config(
+        cwd=tmp_path, workspace=Workspace(path=tmp_path, trusted=False))
+
+    assert process_config.session.model == DEFAULT_MODEL
+    assert Path("/whatever") not in process_config.session.read_dirs.allow
+
+
+def test_load_process_config_sets_workspace_from_argument(tmp_path: Path) -> None:
+    workspace = Workspace(id="some-uuid", path=tmp_path, is_project=True, trusted=True)
+
+    process_config = load_process_config(cwd=tmp_path, workspace=workspace)
+
+    assert process_config.workspace == workspace

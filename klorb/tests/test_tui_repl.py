@@ -23,6 +23,7 @@ from textual.widgets import Markdown
 from textual.widgets import OptionList
 from textual.widgets import Static
 
+from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import session_log_path
@@ -30,12 +31,19 @@ from klorb.message import Message
 from klorb.message import ToolCallRequest
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
+from klorb.process_config import CONFIG_SCHEMA_NAME
+from klorb.process_config import SESSION_DEFAULTS_KEY
 from klorb.process_config import ProcessConfig
+from klorb.process_config import project_config_path
+from klorb.schema_envelope import read_versioned_json
 from klorb.session import PermissionAskContext
 from klorb.session import PermissionDecision
 from klorb.session import Session
 from klorb.session import SessionConfig
 from klorb.tools.registry import ToolRegistry
+from klorb.tui.confirm_screen import CONFIRM_NO_ID
+from klorb.tui.confirm_screen import CONFIRM_YES_ID
+from klorb.tui.confirm_screen import ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX
 from klorb.tui.palette import PROMPT_PALETTE_ID
 from klorb.tui.palette import PaletteOption
@@ -56,6 +64,9 @@ from klorb.tui.repl import ReplApp
 from klorb.tui.repl import ToolCallLimitScreen
 from klorb.tui.repl import ToolCallStatic
 from klorb.tui.repl import format_token_count
+from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
+from klorb.workspace import TrustManager
+from klorb.workspace import Workspace
 
 
 TEST_SESSION_ID = "test-session-id"
@@ -92,6 +103,21 @@ def _user_config_present(tmp_path: Path) -> Iterator[None]:
     config_path.write_text("{}", encoding="utf-8")
     with patch("klorb.tui.repl.user_config_path", return_value=config_path):
         yield
+
+
+@pytest.fixture
+def _isolate_process_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point the `/etc`- and per-user-scope `klorb-config.json` layers `load_process_config()`
+    reads at empty locations under `tmp_path`, and blank out the packaged built-in-defaults
+    layer -- for the workspace-bootstrap/"Trust workspace" tests below, whose
+    `ReplApp._apply_workspace_config` calls the real `load_process_config()` (unlike every
+    other test in this file, which never reaches it). Mirrors
+    `test_process_config.py`'s `_isolate_config_layers` fixture.
+    """
+    monkeypatch.setenv(
+        process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
+    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
+    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda: {})
 
 
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
@@ -1847,3 +1873,247 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
         was_pinned_values = [call.args[-1] for call in mock_scroll_if_pinned.call_args_list]
         assert was_pinned_values
         assert not any(was_pinned_values[was_pinned_values.index(False):])
+
+
+# --- workspace trust: bootstrap at startup and the "Trust workspace" command ---
+
+
+def _process_config_for_workspace(workspace: Workspace, model: str = "some/model") -> ProcessConfig:
+    return ProcessConfig(
+        session=SessionConfig(model=model, workspace_root=workspace.path), workspace=workspace)
+
+
+def _repl_app_for_workspace(
+    workspace: Workspace, trust_manager: TrustManager | None, model: str = "some/model",
+) -> ReplApp:
+    process_config = _process_config_for_workspace(workspace, model)
+    session = Session(
+        process_config.session.model_copy(), provider=MagicMock(), session_id=TEST_SESSION_ID,
+        process_config=process_config)
+    return ReplApp(session=session, process_config=process_config, trust_manager=trust_manager)
+
+
+def _notice_texts(app: ReplApp) -> list[str]:
+    history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+    notices = history.query(".notice")
+    assert all(isinstance(widget, Static) for widget in notices)
+    return [str(widget.content) for widget in notices if isinstance(widget, Static)]
+
+
+async def test_registered_trusted_workspace_announces_and_shows_no_modal(tmp_path: Path) -> None:
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+        assert f"Working in project: {tmp_path}" in _notice_texts(app)
+
+
+async def test_registered_untrusted_workspace_announces_not_trusted_with_no_modal(tmp_path: Path) -> None:
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+        notices = _notice_texts(app)
+        assert any(
+            f"The workspace at {tmp_path} is not trusted" in notice and TRUST_WORKSPACE_LABEL in notice
+            for notice in notices)
+
+
+async def test_no_trust_manager_skips_bootstrap_and_announcement_entirely(tmp_path: Path) -> None:
+    workspace = Workspace(path=tmp_path)
+    app = _repl_app_for_workspace(workspace, trust_manager=None)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+        assert _notice_texts(app) == []
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=project_root)
+    app = _repl_app_for_workspace(workspace, trust_manager, model="burned/model")
+
+    async with app.run_test() as pilot:
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # "Open as project?" -> Yes
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # "Do you trust...?" -> Yes
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert f"Working in project: {project_root}" in _notice_texts(app)
+        assert app._process_config.workspace.trusted is True
+
+    resolved = trust_manager.resolve_workspace(project_root)
+    assert resolved.is_project is True
+    assert resolved.trusted is True
+
+    raw = read_versioned_json(project_config_path(project_root), expected_schema_name=CONFIG_SCHEMA_NAME)
+    session_defaults = raw[SESSION_DEFAULTS_KEY]
+    assert session_defaults["model"] == "burned/model"
+    assert session_defaults["readDirs"]["allow"] == [str(project_root)]
+    assert session_defaults["writeDirs"]["allow"] == [str(project_root)]
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_bootstrap_declining_project_but_trusting_keeps_it_in_memory_only(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=project_root)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # "Open as project?" -> No
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # "Do you trust...?" -> Yes
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert app._process_config.workspace.id is None
+        assert app._process_config.workspace.is_project is False
+        assert app._process_config.workspace.trusted is True
+
+    assert trust_manager.resolve_workspace(project_root).id is None
+    assert not project_config_path(project_root).is_file()
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
+    tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=tmp_path)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # "Open as project?" -> No
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # "Do you trust...?" -> No
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert app._process_config.workspace.trusted is False
+        assert any("not trusted" in notice for notice in _notice_texts(app))
+
+    assert trust_manager.resolve_workspace(tmp_path).id is None
+    assert not project_config_path(tmp_path).is_file()
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_trust_workspace_command_persists_and_offers_config_init(
+    tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app.screen_stack) == 1  # already registered: no bootstrap modal at mount
+
+        await pilot.press(*f"{PALETTE_PREFIX}trust")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # confirm trust
+        await pilot.pause()
+
+        # tmp_path has no config file yet and is a registered project, so a second modal offers
+        # to write one from the live session's current settings.
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # yes, initialize
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert app._process_config.workspace.trusted is True
+        assert any("Trusted workspace" in notice for notice in _notice_texts(app))
+
+    assert trust_manager.resolve_workspace(tmp_path).trusted is True
+    assert project_config_path(tmp_path).is_file()
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_trust_workspace_command_declining_config_init_leaves_no_file(
+    tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press(*f"{PALETTE_PREFIX}trust")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # confirm trust
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # decline config init
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert app._process_config.workspace.trusted is True
+
+    assert not project_config_path(tmp_path).is_file()
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_trust_workspace_for_non_project_workspace_skips_config_init_prompt(
+    tmp_path: Path,
+) -> None:
+    """A non-project (never registered) workspace can only reach "already resolved, untrusted"
+    mid-session -- a fresh mount always treats `workspace.id is None` as "never resolved" and
+    runs the full bootstrap (see the tests above). Simulated here by constructing the app with
+    no `TrustManager` (so mounting doesn't itself trigger a fresh bootstrap) and attaching one
+    afterward, then driving `trust_workspace()` directly as a background task rather than via
+    the palette, so this test can focus purely on the "not a project" branch.
+    """
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=tmp_path, is_project=False, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager=None)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._trust_manager = trust_manager
+
+        app.trust_workspace()
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # confirm trust
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert app._process_config.workspace.trusted is True
+
+    assert not project_config_path(tmp_path).is_file()

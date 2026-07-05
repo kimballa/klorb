@@ -120,21 +120,22 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
 def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tuple[Path, Verdict]:
     """Resolve `filename` and evaluate it against `readDirs` only (never `writeDirs` — a write
     grant does not imply a read grant; see `evaluate_write()` for the converse), branching on
-    `context.process_config.is_workspace_trusted`:
+    `context.process_config.workspace.trusted`:
 
-    - Untrusted (default, and the only state reachable today — see
-      `ProcessConfig.is_workspace_trusted`): resolves via `resolve_within_workspace()`, which
-      raises `PermissionError` if the result falls outside `workspace_root`, exactly like the
-      write tools. `readDirs` is then evaluated on that already-in-workspace path, falling back
-      to `"allow"` if nothing matches — unlike `evaluate_write()`, this fallback is unaffected
-      by `writeDirs` (a hard boundary already confines the candidate, so a permissive read
-      default here doesn't compromise the write-side invariant).
-    - Trusted (not reachable by any code path in this pass): resolves via
+    - Untrusted (default — see `ProcessConfig.workspace`): resolves via
+      `resolve_within_workspace()`, which raises `PermissionError` if the result falls outside
+      `workspace_root`, exactly like the write tools. `readDirs` is then evaluated on that
+      already-in-workspace path, falling back to `"allow"` if nothing matches — unlike
+      `evaluate_write()`, this fallback is unaffected by `writeDirs` (a hard boundary already
+      confines the candidate, so a permissive read default here doesn't compromise the
+      write-side invariant).
+    - Trusted (set via the interactive workspace-trust flow — see
+      `klorb.workspace`/docs/specs/projects-and-trust.md): resolves via
       `canonicalize_candidate()`, with no boundary raise, so `readDirs.allow` can grant access
       outside `workspace_root`. Falls back to `"deny"` if nothing matches — no implicit
-      "inside the workspace" default is applied in this mode; default grants are meant to come
-      from an explicit `readDirs.allow` entry a future project-bootstrap flow writes into
-      `.klorb/klorb-config.json`, not from a rule baked into this evaluator.
+      "inside the workspace" default is applied in this mode; default grants come from an
+      explicit `readDirs.allow` entry `klorb.workspace.workspace_init.write_initial_project_config()`
+      writes into `.klorb/klorb-config.json`, not from a rule baked into this evaluator.
 
     In both modes, `klorb.permissions.directory_access.is_privileged_path()` is checked next,
     unconditionally, before the table — mirroring `evaluate_write()`'s hard deny — so no
@@ -147,7 +148,7 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     canonicalized path that was actually checked.
     """
     workspace_root = context.session_config.workspace_root.resolve()
-    if context.process_config.is_workspace_trusted:
+    if context.process_config.workspace.trusted:
         path = canonicalize_candidate(context, filename)
         fallback: Verdict = "deny"
     else:

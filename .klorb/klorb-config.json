@@ -4,23 +4,20 @@
     "version": "1.0.0"
   },
   "sessionDefaults": {
+    "model": "openai/gpt-5-nano",
     "readDirs": {
       "deny": [],
       "ask": [],
       "allow": [
-        "/home/aaron/src/klorb"
+        "/home/dev/workspace/klorb"
       ]
     },
     "writeDirs": {
-      "deny": [
-        "/home/aaron/src/klorb/klorb/venv"
-      ],
+      "deny": [],
       "ask": [],
       "allow": [
-        "/home/aaron/src/klorb"
+        "/home/dev/workspace/klorb"
       ]
     }
-  },
-
-  "compatibility.claudeMarkdown": true
+  }
 }

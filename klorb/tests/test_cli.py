@@ -16,6 +16,15 @@ from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.session import ThinkingEffort
+from klorb.workspace import trust_manager as trust_manager_module
+
+
+@pytest.fixture(autouse=True)
+def _isolate_projects_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point `klorb.workspace.trust_manager.projects_path()` (and so the real `TrustManager()`
+    `cli.main()` constructs) at an empty location under `tmp_path`, so no test in this module
+    reads or writes the developer's own `$KLORB_DATA_DIR/projects.json`."""
+    monkeypatch.setattr(trust_manager_module, "KLORB_DATA_DIR", tmp_path / "data")
 
 
 @pytest.fixture(autouse=True)
@@ -143,7 +152,8 @@ def test_main_passes_config_flag_path_to_process_config_loader(
         with patch("sys.argv", ["klorb", "--config", "/some/extra-config.json", "-m", "hi"]):
             cli.main()
 
-    stub_process_config.assert_called_once_with(config_flag_path=Path("/some/extra-config.json"))
+    stub_process_config.assert_called_once_with(
+        config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)
 
 
 def test_main_passes_no_config_flag_path_by_default(stub_process_config: MagicMock) -> None:
@@ -153,7 +163,7 @@ def test_main_passes_no_config_flag_path_by_default(stub_process_config: MagicMo
         with patch("sys.argv", ["klorb", "-m", "hi"]):
             cli.main()
 
-    stub_process_config.assert_called_once_with(config_flag_path=None)
+    stub_process_config.assert_called_once_with(config_flag_path=None, cwd=mock.ANY, workspace=mock.ANY)
 
 
 def test_main_one_shot_config_is_not_interactive() -> None:
@@ -177,7 +187,8 @@ def test_main_starts_repl_when_no_prompt_given() -> None:
     config = mock_session_cls.call_args.args[0]
     assert config.interactive is True
     mock_run_repl.assert_called_once_with(
-        mock_session, process_config=mock.ANY, initial_message=None, session_log_enabled=True)
+        mock_session, process_config=mock.ANY, initial_message=None, session_log_enabled=True,
+        trust_manager=mock.ANY, config_flag_path=None)
 
 
 def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -> None:
@@ -190,7 +201,8 @@ def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -
     config = mock_session_cls.call_args.args[0]
     assert config.interactive is True
     mock_run_repl.assert_called_once_with(
-        mock_session, process_config=mock.ANY, initial_message="hi", session_log_enabled=True)
+        mock_session, process_config=mock.ANY, initial_message="hi", session_log_enabled=True,
+        trust_manager=mock.ANY, config_flag_path=None)
 
 
 def test_main_no_message_and_explicit_no_interactive_errors() -> None:
@@ -255,7 +267,8 @@ def test_main_repl_passes_session_log_enabled_false_when_disabled() -> None:
                 cli.main()
 
     mock_run_repl.assert_called_once_with(
-        mock_session, process_config=mock.ANY, initial_message=None, session_log_enabled=False)
+        mock_session, process_config=mock.ANY, initial_message=None, session_log_enabled=False,
+        trust_manager=mock.ANY, config_flag_path=None)
 
 
 def test_main_one_shot_streams_incrementally_with_single_trailing_newline(

@@ -134,8 +134,9 @@ class SessionConfig(BaseModel):
     """Directory the file-editing tools (`EditFile`, `ReplaceAll`, `CreateFile`) are always
     confined to — see `klorb.permissions.workspace.resolve_within_workspace` — a hard,
     non-config-overridable boundary. `ReadFile` gets the same hard boundary unless
-    `ProcessConfig.is_workspace_trusted` is set (not reachable by any code path yet). Defaults
-    to `Path.cwd()` for callers that construct `SessionConfig` directly (e.g. tests); real runs
+    `ProcessConfig.workspace.trusted` is set (via the interactive workspace-trust flow — see
+    `klorb.workspace`/docs/specs/projects-and-trust.md). Defaults to `Path.cwd()` for callers
+    that construct `SessionConfig` directly (e.g. tests); real runs
     get an explicit, ancestor-searched root from
     `klorb.permissions.directory_access.find_workspace_root()` via `load_process_config()`. See
     docs/adrs/confine-file-tools-to-workspace-root.md and docs/specs/permissions.md."""

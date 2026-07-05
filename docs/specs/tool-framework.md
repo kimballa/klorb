@@ -214,8 +214,8 @@ checks via `resolve_and_evaluate_read()` in the same module, as does `ListDir`'s
 `Grep`/`FindFile`'s `dirname` (the latter two also re-checking every subdirectory the walk
 descends into — see "Recursive tree walks" above). See docs/specs/permissions.md for
 the full permission-table design (allow/ask/deny rules, workspace-root confinement, and the
-`is_workspace_trusted` distinction between `ReadFile` and the write tools) — this spec no
-longer duplicates those details, which superseded the placeholder described in
+`ProcessConfig.workspace.trusted` distinction between `ReadFile` and the write tools) — this
+spec no longer duplicates those details, which superseded the placeholder described in
 [the workspace-root ADR](../adrs/confine-file-tools-to-workspace-root.md).
 
 ## Out of scope

@@ -19,6 +19,7 @@ from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_withi
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.workspace import Workspace
 
 
 def _context(
@@ -29,7 +30,8 @@ def _context(
     write_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(is_workspace_trusted=is_workspace_trusted),
+        process_config=ProcessConfig(
+            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted)),
         session_config=SessionConfig(
             workspace_root=workspace_root, read_dirs=read_dirs or DirRules(),
             write_dirs=write_dirs or DirRules()),
@@ -338,7 +340,7 @@ def test_untrusted_read_denies_klorb_dir_even_with_readdirs_allow_covering_works
     assert verdict == "deny"
 
 
-# --- resolve_and_evaluate_read: trusted (not reachable by production code paths today) ---
+# --- resolve_and_evaluate_read: trusted (see docs/specs/projects-and-trust.md) ---
 
 
 def test_trusted_read_does_not_raise_merely_for_being_outside_workspace(tmp_path: Path) -> None:

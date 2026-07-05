@@ -13,6 +13,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.workspace import Workspace
 
 
 def _context(
@@ -25,7 +26,8 @@ def _context(
 ) -> ToolSetupContext:
     return ToolSetupContext(
         process_config=ProcessConfig(
-            read_file_max_lines=max_lines, is_workspace_trusted=is_workspace_trusted),
+            read_file_max_lines=max_lines,
+            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted)),
         session_config=SessionConfig(
             workspace_root=workspace_root,
             read_dirs=read_dirs or DirRules(),
@@ -210,9 +212,9 @@ def test_readdirs_allow_wins_over_matching_writedirs_deny(tmp_path: Path) -> Non
 
 
 def test_trusted_readdirs_allow_reaches_outside_workspace(tmp_path: Path) -> None:
-    """A trusted workspace's readDirs.allow can grant access outside workspace_root — not
-    reachable via any code path outside tests today, since nothing sets
-    ProcessConfig.is_workspace_trusted True in production code."""
+    """A trusted workspace's readDirs.allow can grant access outside workspace_root — set in
+    production via the interactive workspace-trust flow (see docs/specs/projects-and-trust.md),
+    constructed directly here via ProcessConfig(is_workspace_trusted=True) instead."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside.txt"

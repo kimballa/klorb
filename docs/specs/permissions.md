@@ -126,20 +126,20 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
 * `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — evaluates `path` against
   `readDirs` alone; `writeDirs` is never consulted for a read (a write grant does not imply a
   read grant — see `evaluate_write()` for the converse relationship). Branches on
-  `context.process_config.is_workspace_trusted`:
-  * **Untrusted (default; the only state reachable by any production code path today)**:
-    resolves via `resolve_within_workspace()` (same hard boundary as the write tools), then
-    evaluates `readDirs` on that already-in-workspace path, falling back to `"allow"` if nothing
-    matches — a permissive default that's safe here because the hard boundary already confines
-    the candidate, and because this fallback plays no part in `evaluate_write()`'s
-    stricter-of-read-and-write computation (`writeDirs` still requires its own explicit grant).
-  * **Trusted (reserved for a future "trust this workspace" flow — not reachable today outside
-    tests)**: resolves via `canonicalize_candidate()`, no boundary raise — so `readDirs.allow`
-    can reach outside `workspace_root`. Falls back to `"deny"` if nothing matches: no implicit
-    "inside the workspace" default here. Default grants in this mode are meant to come from an
-    explicit `readDirs.allow` entry a future project-bootstrap flow writes into
-    `.klorb/klorb-config.json` when a workspace is trusted (see `TODO.md`'s "project
-    bootstrapping" item), not from a rule baked into this evaluator.
+  `context.process_config.workspace.trusted`:
+  * **Untrusted (default)**: resolves via `resolve_within_workspace()` (same hard boundary as
+    the write tools), then evaluates `readDirs` on that already-in-workspace path, falling back
+    to `"allow"` if nothing matches — a permissive default that's safe here because the hard
+    boundary already confines the candidate, and because this fallback plays no part in
+    `evaluate_write()`'s stricter-of-read-and-write computation (`writeDirs` still requires its
+    own explicit grant).
+  * **Trusted (set via the interactive workspace-trust flow — see [[projects-and-trust]])**:
+    resolves via `canonicalize_candidate()`, no boundary raise — so `readDirs.allow` can reach
+    outside `workspace_root`. Falls back to `"deny"` if nothing matches: no implicit "inside the
+    workspace" default here. Default grants in this mode come from an explicit `readDirs.allow`
+    entry `klorb.workspace.workspace_init.write_initial_project_config()` writes into
+    `.klorb/klorb-config.json` when a workspace is opened as a trusted project, not from a rule
+    baked into this evaluator.
 
   In both modes, `directory_access.is_privileged_path()` is then checked, unconditionally,
   before the table — the read-side counterpart of `evaluate_write()`'s hard deny, so no
@@ -204,22 +204,21 @@ broad `readDirs.allow` with no corresponding `writeDirs.allow` entry never impli
 Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are merged by
 **concatenating** each category's array across all five config layers (not replaced) — see
 [the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md).
-`is_workspace_trusted` has no on-disk key at all, anywhere — see "Known risks" below.
+`ProcessConfig.workspace` has no on-disk key at all, anywhere — see "Known risks" below.
 
 ## Known risks
 
-* **Untrusted-project self-granted read access, deferred until a future feature exists.**
-  `.klorb/klorb-config.json` is the least-trusted config layer — it can arrive via whatever
-  `cwd` an untrusted, cloned repository puts a user in — yet its `readDirs.allow` entries
-  participate in the exact same flat, concatenated list as the user's own home config. Because
-  `ReadFile` is gated by `is_workspace_trusted` (default `False`, not settable by any code path
-  in this codebase outside tests), that risk cannot be reached today: every workspace klorb can
-  actually run against gets the same hard boundary the write tools have. It becomes live again
-  the moment a future "trust this workspace" flow (see `TODO.md`'s "project bootstrapping"
-  item) sets `is_workspace_trusted = True` for a directory. Mitigation then, as now: a user- or
-  `/etc`-level `readDirs.deny` for a sensitive path (`~/.ssh`, `~/.aws`, etc.) always outranks
-  anything a project layer can add, since `deny` is evaluated first regardless of which layer
-  contributed it. See [the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md).
+* **Trusted-project `readDirs.allow` participates in the same flat, concatenated list as the
+  user's own home config.** Once a workspace is trusted (see [[projects-and-trust]]),
+  `.klorb/klorb-config.json` — still the least-trusted config layer, since it arrived via
+  whatever directory the user chose to trust — is read, and its `readDirs.allow` entries
+  concatenate into the same list `readDirs.deny` from every other layer is checked against.
+  Mitigation: a user- or `/etc`-level `readDirs.deny` for a sensitive path (`~/.ssh`, `~/.aws`,
+  etc.) always outranks anything a project layer can add, since `deny` is evaluated first
+  regardless of which layer contributed it — and, per [[projects-and-trust]], a workspace only
+  reaches this state via an explicit interactive trust decision (or a prior session's recorded
+  one), never a config file granting itself trust. See
+  [the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md).
 * **TOCTOU.** Every check here resolves a path string at check time; nothing pins an open
   OS-level directory handle across the gap between that check and the caller's actual file I/O,
   so a directory rename or symlink swap in that window could redirect an approved operation to
@@ -260,7 +259,7 @@ own event loop, and returns once the user answers.
 * **Allow (always, in this workspace)** — additionally mutates `ProcessConfig.session.read_dirs`/
   `write_dirs` (so a `/clear`'d session in this same process inherits it too) and persists the
   grant to `${workspace_root}/.klorb/klorb-config.json`, auto-creating the file (and the
-  `.klorb/` directory) if neither exists yet. This does **not** set `is_workspace_trusted` —
+  `.klorb/` directory) if neither exists yet. This does **not** set `workspace.trusted` —
   granting r/w access to one directory is a much narrower action than trusting the whole
   workspace (see the read/trust ADR above); `ReadFile`'s hard workspace-root boundary is
   unaffected.
@@ -377,11 +376,10 @@ it has nothing to say about the harness's own trusted config-persistence code.
 
 * Bash-command and website-access `PermissionsTable`s — future resource kinds noted in
   `TODO.md`, not built here.
-* The "trust this workspace" bootstrap flow itself (interactively asking whether to treat a
-  directory as a project, creating its `.klorb/klorb-config.json` with sensible default grants,
-  and — eventually — setting `is_workspace_trusted`) is `TODO.md`'s "project bootstrapping"
-  item; not built here. `find_workspace_root()`'s ancestor-search algorithm is written to match
-  what that flow will need (step one of "project bootstrapping" is literally "attempts to
-  identify the workspace root").
+* The interactive workspace-trust bootstrap flow (asking whether to treat a directory as a
+  project, creating its `.klorb/klorb-config.json`, and setting `workspace.trusted`) lives in
+  [[projects-and-trust]], not here — this spec only covers how `workspace.trusted` and
+  `readDirs`/`writeDirs` are *evaluated* once resolved, not how a `Workspace` gets resolved in
+  the first place.
 * `EscalatePrivileges` — the future tool that would grant a temporary, user-confirmed exception
   to the `privileged_dirs()` read/write deny — is `TODO.md`'s item, not built here.

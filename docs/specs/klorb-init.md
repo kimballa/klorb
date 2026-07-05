@@ -93,5 +93,5 @@ toast instead of on stderr.
   automatically; see [[ship-reference-klorb-config-as-package-data]] for why absolute
   install-time host-path placement isn't reliably available to a `pip`/`uv`-installed wheel
   in the first place.
-* Per-project (`.klorb/`) bootstrapping and workspace trust prompts are a separate,
-  not-yet-built flow — see `TODO.md`'s `PLAN-003` item.
+* Per-project (`.klorb/`) bootstrapping and workspace trust prompts are a separate flow, built
+  on top of this one's config-file layers — see [[projects-and-trust]].
