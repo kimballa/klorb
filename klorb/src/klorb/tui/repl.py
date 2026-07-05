@@ -206,6 +206,7 @@ class PromptInput(TextArea):
         self._draft: str = ""
         self._palette_dismissed: bool = False
         self._suppress_palette_during_recall: bool = False
+        self._last_key: str | None = None
 
     def clear_input_history(self) -> None:
         """Drop the recorded prompt history and reset the recall position.
@@ -248,8 +249,20 @@ class PromptInput(TextArea):
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
         popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
         or leaves palette mode).
+
+        `self._last_key` records the key currently being processed for `on_text_area_changed`
+        to read: a mutation-binding key like backspace or delete (see
+        `_MUTATION_BINDING_KEYS`) is applied via a `TextArea` action (e.g.
+        `action_delete_left`) that Textual dispatches once this whole event — bubbling past
+        `_on_key` up to the `App`'s own binding check — has finished, which in practice lands
+        even later than a `call_after_refresh`/`call_later` callback scheduled from here would
+        run. So `_on_key` can't reliably read the *post*-edit `self.text` for those keys no
+        matter how it defers; only `TextArea.Changed` (posted once the edit has actually
+        landed, regardless of what caused it) can, which is why `_refresh_palette` is now
+        driven from `on_text_area_changed` instead of being called directly from here.
         """
         key = event.key
+        self._last_key = key
         if self._palette_mode:
             if key == "escape":
                 event.stop()
@@ -285,7 +298,6 @@ class PromptInput(TextArea):
             event.prevent_default()
             self._detach_from_history()
             self.replace("\n", *self.selection)
-            await self._refresh_palette(key)
             return
         if key == "up":
             # Once already mid-recall, further up-presses keep walking regardless of where
@@ -313,13 +325,27 @@ class PromptInput(TextArea):
             if key in self._MUTATION_BINDING_KEYS or event.is_printable:
                 self._detach_from_history()
         await super()._on_key(event)
-        await self._refresh_palette(key)
 
     async def _on_paste(self, event: events.Paste) -> None:
         """Detach from history before a paste inserts text, since pasting mutates the box."""
+        self._last_key = None
         self._detach_from_history()
         await super()._on_paste(event)
-        await self._refresh_palette(None)
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Refresh palette state whenever the text actually changes, regardless of what
+        changed it — typing, a `_MUTATION_BINDING_KEYS` action (backspace, delete, cut,
+        undo/redo, ...), paste, or `_recall_history`'s own `self.text = ...` assignment.
+        `TextArea` posts this exactly when a mutation actually lands, which sidesteps the
+        ordering problem `_on_key` has for anything applied via a bound action (see its
+        docstring): rather than guessing when that action has run, just react to the signal
+        that says it just did. A recalled entry is the one case that must *not* trigger a
+        palette refresh despite changing the text (see `_suppress_palette_during_recall`), so
+        it's checked first and skipped entirely.
+        """
+        if self._suppress_palette_during_recall:
+            return
+        self.call_later(self._refresh_palette, self._last_key)
 
     async def _refresh_palette(self, key: str | None) -> None:
         """Recompute palette mode from the current text and update the popup to match.

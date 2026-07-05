@@ -1555,6 +1555,45 @@ async def test_no_match_then_space_dismisses_the_palette() -> None:
         assert palette.display is False
 
 
+async def test_backspacing_the_leading_gt_to_empty_closes_the_palette() -> None:
+    """Regression test: backspace is dispatched via a bound `TextArea` action
+    (`action_delete_left`) that Textual applies *after* `_on_key` returns, not from within
+    it — so `_refresh_palette` can't reliably read the post-edit text if called directly from
+    `_on_key`. It's driven from `on_text_area_changed` instead (see that method's docstring),
+    since `TextArea.Changed` only fires once the edit has actually landed.
+    """
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        await pilot.press(">")
+        await pilot.pause()
+
+        palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+        assert palette.display is True
+
+        await pilot.press("backspace")
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        assert prompt_input.text == ""
+        assert palette.display is False
+        assert palette.option_count == 0  # type: ignore[unreachable]
+
+        # Up/down should now drive ordinary history recall again, not a (closed) popup.
+        prompt_input.text = "earlier prompt"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.press(">")
+        await pilot.press("backspace")
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "earlier prompt"
+
+
 async def test_palette_hint_shown_only_while_the_box_is_empty_or_bare_gt() -> None:
     app = ReplApp(session=_session(MagicMock()))
 
