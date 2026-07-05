@@ -184,4 +184,3 @@ you had just stuck to using the pre-approved "make" commands, even if `make test
 would run a larger number of tests or typecheck more files than an alternative you can
 generate.  CPU time is fast. User effort is slow. The user is very sad when you make him
 proofread bash statements if a clean alternative was already provided for you.
-
