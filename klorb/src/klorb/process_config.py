@@ -215,6 +215,23 @@ def persist_theme(theme_name: str) -> None:
         path, new_contents, schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)
 
 
+def persist_session_default(path: Path, on_disk_key: str, value: Any) -> None:
+    """Merge `sessionDefaults.<on_disk_key> = value` into the config file at `path`, preserving
+    every other key in the file untouched — auto-creating `path` (and its parent directory)
+    with a minimal schema envelope if it doesn't exist yet. Used by `klorb.tui.repl.ReplApp` to
+    make an interactively-selected setting (e.g. `select_model`) the default the next time
+    klorb starts, not just for the rest of the current process — see
+    docs/specs/process-and-session-config.md.
+    """
+    raw = read_versioned_json(path, expected_schema_name=CONFIG_SCHEMA_NAME)
+    session_defaults = dict(raw.get(SESSION_DEFAULTS_KEY, {}))
+    session_defaults[on_disk_key] = value
+    new_contents = dict(raw)
+    new_contents[SESSION_DEFAULTS_KEY] = session_defaults
+    write_versioned_json(
+        path, new_contents, schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)
+
+
 def _load_last_session_overrides(cwd: Path) -> dict[str, Any]:
     """Return config overrides carried over from the previous session's saved state.
 

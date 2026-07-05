@@ -521,3 +521,37 @@ def test_persist_theme_is_picked_up_by_a_later_load(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
 
     assert process_config.theme == "dracula"
+
+
+def test_persist_session_default_creates_a_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "klorb-config.json"
+
+    process_config_module.persist_session_default(path, "model", "other/model")
+
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["sessionDefaults"]["model"] == "other/model"
+    assert written["schema"] == {"name": "klorb-config", "version": "1.0.0"}
+
+
+def test_persist_session_default_preserves_other_keys(tmp_path: Path) -> None:
+    path = tmp_path / "klorb-config.json"
+    _write_config(path, {
+        "sessionDefaults": {"model": "old/model", "thinking.effort": "high"},
+        "shell.command": "/bin/zsh",
+    })
+
+    process_config_module.persist_session_default(path, "model", "new/model")
+
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["sessionDefaults"]["model"] == "new/model"
+    assert written["sessionDefaults"]["thinking.effort"] == "high"
+    assert written["shell.command"] == "/bin/zsh"
+
+
+def test_persist_session_default_is_picked_up_by_a_later_load(tmp_path: Path) -> None:
+    path = tmp_path / ".klorb" / "klorb-config.json"
+    process_config_module.persist_session_default(path, "model", "persisted/model")
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.model == "persisted/model"

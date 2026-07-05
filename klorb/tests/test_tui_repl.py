@@ -441,6 +441,21 @@ async def test_select_model_also_updates_process_config_template() -> None:
         assert app._process_config.session.model == "other/model"
 
 
+async def test_select_model_persists_to_the_user_config_file(tmp_path: Path) -> None:
+    config_path = tmp_path / "klorb-config.json"
+    config_path.write_text(json.dumps({"shell.command": "/bin/zsh"}), encoding="utf-8")
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+        async with app.run_test():
+            app.select_model("other/model")
+
+    written = json.loads(config_path.read_text(encoding="utf-8"))
+    assert written["sessionDefaults"]["model"] == "other/model"
+    assert written["shell.command"] == "/bin/zsh"
+
+
 async def test_set_thinking_enabled_also_updates_process_config_template() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))

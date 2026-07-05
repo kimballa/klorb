@@ -147,6 +147,15 @@ or slicing a superset.
   additionally persists it straight to `user_config_path()` via `process_config.persist_theme()`
   — the only one of these palette-editable settings written through to disk immediately rather
   than staying in-memory-only until some future explicit save.
+* `select_model` additionally persists the choice to the per-user config file
+  (`user_config_path()`, `sessionDefaults.model`) via
+  `process_config.persist_session_default(path, on_disk_key, value)`, so the new model is also
+  the default for the *next* klorb process, not just the rest of this one. That helper
+  read-modifies-writes just the one `sessionDefaults` key through `read_versioned_json`/
+  `write_versioned_json`, preserving every other key already in the file — the same
+  preserve-everything-else pattern `klorb.permissions.grant` uses for `readDirs`/`writeDirs`
+  grants, generalized to an arbitrary scalar key. Thinking enabled/effort aren't persisted to
+  disk this way (yet).
 * `ReplApp.clear_session()` (`klorb/src/klorb/tui/repl.py`) builds the new session's config
   as `self._process_config.session.model_copy()` — the *current* template, including any
   dual-written changes — rather than hand-picking individual fields. This is why `/clear`
