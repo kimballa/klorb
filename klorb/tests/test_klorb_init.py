@@ -9,15 +9,17 @@ import pytest
 
 from klorb import klorb_init
 from klorb import process_config as process_config_module
-from klorb.klorb_init import InitError
-from klorb.klorb_init import StepResult
-from klorb.klorb_init import config_target_path
-from klorb.klorb_init import create_symlink
-from klorb.klorb_init import default_scope
-from klorb.klorb_init import run_init
-from klorb.klorb_init import symlink_target_dir
-from klorb.klorb_init import template_config_text
-from klorb.klorb_init import write_config_file
+from klorb.klorb_init import (
+    InitError,
+    StepResult,
+    config_target_path,
+    create_symlink,
+    default_scope,
+    run_init,
+    symlink_target_dir,
+    template_config_text,
+    write_config_file,
+)
 
 
 def test_default_scope_is_user_when_not_root(monkeypatch: pytest.MonkeyPatch) -> None:

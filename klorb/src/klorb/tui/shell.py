@@ -6,9 +6,7 @@ directly into the REPL, via a configurable shell binary (`ProcessConfig.shell_co
 import subprocess
 import threading
 import time
-from typing import IO
-from typing import Callable
-from typing import Tuple
+from typing import IO, Callable, Tuple
 
 _POLL_INTERVAL_SECONDS = 0.1
 """How often `UserShellCommand.run()` wakes up to check `cancel_event`/its timeout deadline

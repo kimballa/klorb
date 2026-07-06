@@ -1,8 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.palette."""
 
-from textual.command import DiscoveryHit
-from textual.command import Hit
+from textual.command import DiscoveryHit, Hit
 
 from klorb.tui.palette import _sort_key
 

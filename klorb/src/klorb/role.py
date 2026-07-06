@@ -10,12 +10,10 @@ session's `Role` can never disagree with its `config.role_name`. See
 docs/specs/roles-and-system-prompts.md.
 """
 
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 from klorb.models.model import Model
-from klorb.system_prompts import ROLES_SUBDIR
-from klorb.system_prompts import resolve_prompt_file
+from klorb.system_prompts import ROLES_SUBDIR, resolve_prompt_file
 
 COORDINATOR_ROLE_NAME = "coordinator"
 """`SessionConfig.role_name`'s default: the top-level operating role a klorb session runs

@@ -15,11 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from klorb.permissions.directory_access import DirRules
-from klorb.process_config import CONFIG_SCHEMA_NAME
-from klorb.process_config import CONFIG_SCHEMA_VERSION
-from klorb.process_config import SESSION_DEFAULTS_KEY
-from klorb.process_config import SESSION_KEY_MAP
-from klorb.process_config import project_config_path
+from klorb.process_config import (
+    CONFIG_SCHEMA_NAME,
+    CONFIG_SCHEMA_VERSION,
+    SESSION_DEFAULTS_KEY,
+    SESSION_KEY_MAP,
+    project_config_path,
+)
 from klorb.schema_envelope import write_versioned_json
 from klorb.session import SessionConfig
 

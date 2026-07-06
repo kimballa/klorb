@@ -8,8 +8,7 @@ import pytest
 
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
-from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
-from klorb.process_config import ProcessConfig
+from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES, ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext

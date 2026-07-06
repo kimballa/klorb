@@ -7,8 +7,7 @@ from unittest.mock import MagicMock
 
 from klorb.message import Message
 from klorb.process_config import ProcessConfig
-from klorb.session import Session
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.workspace import Workspace
 
 

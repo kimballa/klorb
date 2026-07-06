@@ -7,35 +7,24 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
-from typing import Any
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from coolname import generate_slug
-from pydantic import BaseModel
-from pydantic import ConfigDict
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from klorb.api_provider import ApiProvider
-from klorb.api_provider import ProviderResponse
-from klorb.api_provider import ResponseAborted
-from klorb.message import Message
-from klorb.message import ToolCallRequest
+from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
+from klorb.message import Message, ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
-from klorb.openrouter import DEFAULT_MODEL
-from klorb.openrouter import OpenRouterApiProvider
+from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
-from klorb.role import COORDINATOR_ROLE_NAME
-from klorb.role import Role
-from klorb.role import get_role
-from klorb.system_prompts import DEFAULT_SYS_FILENAME
-from klorb.system_prompts import DEFAULT_SYSTEM_PROMPT
-from klorb.system_prompts import resolve_prompt_file
+from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
+from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
 from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
+    # isort: off
     # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
     # depends on `SessionConfig` from this module — importing it for real here would be
     # circular. Session only stores and calls methods on a `ToolRegistry` it's handed, so a
@@ -47,6 +36,7 @@ if TYPE_CHECKING:
     # (and reads a couple of fields off) a `ProcessConfig` it's handed, but never constructs one
     # itself, so a type-checking-only import is enough, same as `ToolRegistry` above.
     from klorb.process_config import ProcessConfig
+    # isort: on
 
 logger = logging.getLogger(__name__)
 

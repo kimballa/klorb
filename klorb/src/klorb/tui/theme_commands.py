@@ -4,18 +4,13 @@
 `App.available_themes` instead of a fixed tuple.
 """
 
-from typing import Protocol
-from typing import cast
+from typing import Protocol, cast
 
 from textual.app import ComposeResult
-from textual.command import DiscoveryHit
-from textual.command import Hit
-from textual.command import Hits
-from textual.command import Provider
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import OptionList
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 SELECT_THEME_LABEL = "Change Theme"
 THEME_HEADER_TEXT = "Theme:"

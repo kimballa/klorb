@@ -32,9 +32,11 @@
     "pip>=26.1.2",
     "uv>=0.11.25",
     "flake8>=6.0.0,<8.0.0",
+    "flake8-isort >= 6.0.0, < 8.0.0",
     "flake8-noqa >= 1.3.1, < 2.0.0",
     "flake8-plugin-utils >= 1.3.2, < 2.0.0",
     "flake8-pytest-style>=1.7.2,<3.0.0",
+    "isort >= 5.13.0, < 9.0.0",
     "mypy>=2.0.0,<3.0.0",
     "packaging>=26.2",
     "pep8-naming >= 0.13.3, < 2.0.0",
@@ -62,3 +64,14 @@
 asyncio_mode = "auto"
 filterwarnings = [
 ]
+
+[tool.isort]
+# Mirrors this repo's existing import style: one `from`/`import` block per module, wrapped in
+# parens with a hanging indent (and trailing comma) once it would exceed the same line length
+# flake8 enforces (see .flake8's max-line-length) rather than one-name-per-line or grid-wrapped.
+line_length = 110
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+known_first_party = ["klorb"]

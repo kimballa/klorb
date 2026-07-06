@@ -1,12 +1,10 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.init_commands."""
 
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from klorb.klorb_init import InitError
-from klorb.tui.init_commands import INIT_CONFIG_LABEL
-from klorb.tui.init_commands import InitCommandProvider
+from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 
 
 def test_run_init_calls_run_init_with_user_scope_and_shows_notice() -> None:

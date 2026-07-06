@@ -8,24 +8,27 @@ from pathlib import Path
 import pytest
 
 from klorb import process_config as process_config_module
-from klorb.openrouter import DEFAULT_MODEL
-from klorb.openrouter import OPENROUTER_BASE_URL
+from klorb.openrouter import DEFAULT_MODEL, OPENROUTER_BASE_URL
 from klorb.permissions.directory_access import DirectoryAccessTable
-from klorb.process_config import DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
-from klorb.process_config import DEFAULT_FIND_FILE_MAX_RESULTS
-from klorb.process_config import DEFAULT_GREP_MAX_RESULTS
-from klorb.process_config import DEFAULT_PROMPT_INPUT_MAX_LINES
-from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
-from klorb.process_config import DEFAULT_SHELL_COMMAND
-from klorb.process_config import PROCESS_KEY_MAP
-from klorb.process_config import SESSION_KEY_MAP
-from klorb.process_config import load_process_config
-from klorb.process_config import persist_theme
-from klorb.process_config import user_config_path
-from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_SESSION
-from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN
-from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS
-from klorb.session import SessionConfig
+from klorb.process_config import (
+    DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS,
+    DEFAULT_FIND_FILE_MAX_RESULTS,
+    DEFAULT_GREP_MAX_RESULTS,
+    DEFAULT_PROMPT_INPUT_MAX_LINES,
+    DEFAULT_READ_FILE_MAX_LINES,
+    DEFAULT_SHELL_COMMAND,
+    PROCESS_KEY_MAP,
+    SESSION_KEY_MAP,
+    load_process_config,
+    persist_theme,
+    user_config_path,
+)
+from klorb.session import (
+    DEFAULT_MAX_TOOL_CALLS_PER_SESSION,
+    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    THINKING_EFFORT_TOKEN_BUDGETS,
+    SessionConfig,
+)
 from klorb.workspace import Workspace
 
 

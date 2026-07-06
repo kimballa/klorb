@@ -18,8 +18,7 @@ from pydantic import BaseModel
 
 from klorb.paths import KLORB_DATA_DIR
 from klorb.permissions.directory_access import find_workspace_root
-from klorb.schema_envelope import read_versioned_json
-from klorb.schema_envelope import write_versioned_json
+from klorb.schema_envelope import read_versioned_json, write_versioned_json
 
 from . import Workspace
 

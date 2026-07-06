@@ -9,10 +9,6 @@
   on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
   as extensions that should be listed as Workspace Recommendations.
 
-* style nit: there are lots of repeated lines `from x import y; from x import y'; ...` etc.
-  We should collapse all of these to `from x import y, y', y'', ...` so there is a single
-  import group per package to load.
-
 # Feature backlog
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 

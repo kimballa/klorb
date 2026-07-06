@@ -7,67 +7,50 @@ import threading
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-from typing import Callable
-from typing import Literal
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from typing import Any, Callable, Literal
+from unittest.mock import MagicMock, patch
 
 import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
 from textual.containers import VerticalScroll
 from textual.pilot import Pilot
-from textual.widgets import Input
-from textual.widgets import Markdown
-from textual.widgets import OptionList
-from textual.widgets import Static
+from textual.widgets import Input, Markdown, OptionList, Static
 
 from klorb import process_config as process_config_module
-from klorb.api_provider import ProviderResponse
-from klorb.api_provider import ResponseAborted
+from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.logging_config import session_log_path
-from klorb.message import Message
-from klorb.message import ToolCallRequest
+from klorb.message import Message, ToolCallRequest
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
-from klorb.process_config import CONFIG_SCHEMA_NAME
-from klorb.process_config import SESSION_DEFAULTS_KEY
-from klorb.process_config import ProcessConfig
-from klorb.process_config import project_config_path
+from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
 from klorb.schema_envelope import read_versioned_json
-from klorb.session import PermissionAskContext
-from klorb.session import PermissionDecision
-from klorb.session import Session
-from klorb.session import SessionConfig
+from klorb.session import PermissionAskContext, PermissionDecision, Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
-from klorb.tui.confirm_screen import CONFIRM_NO_ID
-from klorb.tui.confirm_screen import CONFIRM_YES_ID
-from klorb.tui.confirm_screen import ConfirmScreen
-from klorb.tui.palette import PALETTE_PREFIX
-from klorb.tui.palette import PROMPT_PALETTE_ID
-from klorb.tui.palette import PaletteOption
-from klorb.tui.palette import PromptPalette
-from klorb.tui.permission_ask_screen import PERMISSION_ASK_INPUT_ID
-from klorb.tui.permission_ask_screen import PERMISSION_ASK_OPTIONS_ID
-from klorb.tui.permission_ask_screen import PermissionAskScreen
-from klorb.tui.repl import CONFIG_MISSING_MESSAGE
-from klorb.tui.repl import HISTORY_ID
-from klorb.tui.repl import PALETTE_HINT_ID
-from klorb.tui.repl import PALETTE_HINT_TEXT
-from klorb.tui.repl import PROMPT_INPUT_ID
-from klorb.tui.repl import STATUS_BAR_ID
-from klorb.tui.repl import THINKING_LABEL
-from klorb.tui.repl import TOOL_USE_LABEL
-from klorb.tui.repl import PromptInput
-from klorb.tui.repl import ReplApp
-from klorb.tui.repl import ToolCallLimitScreen
-from klorb.tui.repl import ToolCallStatic
-from klorb.tui.repl import format_token_count
+from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
+from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
+from klorb.tui.permission_ask_screen import (
+    PERMISSION_ASK_INPUT_ID,
+    PERMISSION_ASK_OPTIONS_ID,
+    PermissionAskScreen,
+)
+from klorb.tui.repl import (
+    CONFIG_MISSING_MESSAGE,
+    HISTORY_ID,
+    PALETTE_HINT_ID,
+    PALETTE_HINT_TEXT,
+    PROMPT_INPUT_ID,
+    STATUS_BAR_ID,
+    THINKING_LABEL,
+    TOOL_USE_LABEL,
+    PromptInput,
+    ReplApp,
+    ToolCallLimitScreen,
+    ToolCallStatic,
+    format_token_count,
+)
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
-from klorb.workspace import TrustManager
-from klorb.workspace import Workspace
-
+from klorb.workspace import TrustManager, Workspace
 
 TEST_SESSION_ID = "test-session-id"
 

@@ -2,8 +2,7 @@
 """Abstract interface for a tool that can be exposed to a model and invoked by name."""
 
 import json
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import Any
 
 from pydantic import BaseModel

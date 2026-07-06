@@ -3,16 +3,11 @@
 `klorb init --user` — see docs/specs/klorb-init.md.
 """
 
-from typing import Protocol
-from typing import cast
+from typing import Protocol, cast
 
-from textual.command import DiscoveryHit
-from textual.command import Hit
-from textual.command import Hits
-from textual.command import Provider
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 
-from klorb.klorb_init import InitError
-from klorb.klorb_init import run_init
+from klorb.klorb_init import InitError, run_init
 
 INIT_CONFIG_LABEL = "Init local klorb config"
 

@@ -4,14 +4,14 @@
 from pathlib import Path
 
 from klorb.permissions.directory_access import DirRules
-from klorb.process_config import CONFIG_SCHEMA_NAME
-from klorb.process_config import SESSION_DEFAULTS_KEY
-from klorb.process_config import project_config_path
+from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, project_config_path
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import SessionConfig
 from klorb.workspace import Workspace
-from klorb.workspace.workspace_init import write_initial_project_config
-from klorb.workspace.workspace_init import write_session_defaults_to_project_config
+from klorb.workspace.workspace_init import (
+    write_initial_project_config,
+    write_session_defaults_to_project_config,
+)
 
 
 def test_write_initial_project_config_untrusted_grants_read_only(tmp_path: Path) -> None:

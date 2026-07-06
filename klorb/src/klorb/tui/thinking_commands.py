@@ -2,19 +2,13 @@
 """Command palette provider for toggling thinking on/off and choosing its effort level."""
 
 from functools import partial
-from typing import Callable
-from typing import Protocol
-from typing import cast
+from typing import Callable, Protocol, cast
 
 from textual.app import ComposeResult
-from textual.command import DiscoveryHit
-from textual.command import Hit
-from textual.command import Hits
-from textual.command import Provider
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import OptionList
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 from klorb.session import ThinkingEffort
 

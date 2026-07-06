@@ -22,8 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from klorb.process_config import etc_config_path
-from klorb.process_config import user_config_path
+from klorb.process_config import etc_config_path, user_config_path
 
 InitScope = Literal["system", "user"]
 

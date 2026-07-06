@@ -3,8 +3,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from klorb.tools.tool import Tool
 

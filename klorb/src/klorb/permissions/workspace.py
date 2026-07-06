@@ -24,9 +24,7 @@ path string.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from klorb.permissions.directory_access import (
-    DirectoryAccessTable, canonicalize_dir, is_privileged_path,
-)
+from klorb.permissions.directory_access import DirectoryAccessTable, canonicalize_dir, is_privileged_path
 from klorb.permissions.table import Verdict
 
 if TYPE_CHECKING:

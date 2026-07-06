@@ -1,18 +1,17 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.thinking_commands."""
 
-from unittest.mock import MagicMock
-from unittest.mock import PropertyMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from textual.command import DiscoveryHit
-from textual.widgets import OptionList
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
-from klorb.tui.thinking_commands import THINKING_EFFORT_HEADER_TEXT
-from klorb.tui.thinking_commands import THINKING_EFFORT_LEVELS
-from klorb.tui.thinking_commands import ThinkingCommandProvider
-from klorb.tui.thinking_commands import ThinkingEffortScreen
+from klorb.tui.thinking_commands import (
+    THINKING_EFFORT_HEADER_TEXT,
+    THINKING_EFFORT_LEVELS,
+    ThinkingCommandProvider,
+    ThinkingEffortScreen,
+)
 
 
 def test_commands_lists_disable_and_set_effort_when_thinking_enabled() -> None:

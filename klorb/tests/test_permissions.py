@@ -10,12 +10,20 @@ import pytest
 
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.directory_access import (
-    DirectoryAccessTable, DirRules, canonicalize_dir, find_workspace_root, is_privileged_path,
+    DirectoryAccessTable,
+    DirRules,
+    canonicalize_dir,
+    find_workspace_root,
+    is_privileged_path,
     privileged_dirs,
 )
 from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
-from klorb.permissions.workspace import canonicalize_candidate, evaluate_write
-from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_within_workspace
+from klorb.permissions.workspace import (
+    canonicalize_candidate,
+    evaluate_write,
+    resolve_and_evaluate_read,
+    resolve_within_workspace,
+)
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext

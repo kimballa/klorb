@@ -1,13 +1,10 @@
 # © Copyright 2026 Aaron Kimball
 """Abstract interface for a model that klorb can send prompts to."""
 
-from abc import ABC
-from abc import abstractmethod
-from typing import Any
-from typing import Literal
+from abc import ABC, abstractmethod
+from typing import Any, Literal
 
-from klorb.system_prompts import mangle_model_name
-from klorb.system_prompts import resolve_prompt_file
+from klorb.system_prompts import mangle_model_name, resolve_prompt_file
 
 ThinkingBudgetStyle = Literal["effort", "tokens"]
 """How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a

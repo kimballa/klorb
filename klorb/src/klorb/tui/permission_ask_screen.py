@@ -9,12 +9,9 @@ from typing import Literal
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input
-from textual.widgets import OptionList
-from textual.widgets import Static
+from textual.widgets import Input, OptionList, Static
 
-from klorb.session import PermissionAskContext
-from klorb.session import PermissionDecision
+from klorb.session import PermissionAskContext, PermissionDecision
 
 _PermissionChoice = Literal["once", "session", "workspace", "homedir", "deny", "other"]
 """Mirrors `PermissionDecision.choice`'s Literal exactly, so indexing `_OPTION_CHOICES` below

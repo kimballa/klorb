@@ -4,8 +4,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,8 +13,7 @@ from klorb.klorb_init import InitError
 from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
-from klorb.session import ThinkingEffort
+from klorb.session import SessionConfig, ThinkingEffort
 from klorb.workspace import trust_manager as trust_manager_module
 
 

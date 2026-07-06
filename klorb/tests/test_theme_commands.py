@@ -1,18 +1,17 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.theme_commands."""
 
-from unittest.mock import MagicMock
-from unittest.mock import PropertyMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from textual.command import DiscoveryHit
-from textual.widgets import OptionList
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
-from klorb.tui.theme_commands import SELECT_THEME_LABEL
-from klorb.tui.theme_commands import THEME_HEADER_TEXT
-from klorb.tui.theme_commands import ThemeCommandProvider
-from klorb.tui.theme_commands import ThemeSelectionScreen
+from klorb.tui.theme_commands import (
+    SELECT_THEME_LABEL,
+    THEME_HEADER_TEXT,
+    ThemeCommandProvider,
+    ThemeSelectionScreen,
+)
 
 
 def test_theme_selection_screen_shows_header_and_marks_current_theme() -> None:

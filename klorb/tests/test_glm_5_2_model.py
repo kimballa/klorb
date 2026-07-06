@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from klorb.models.glm_5_2 import GLM_5_2_MODEL_NAME
-from klorb.models.glm_5_2 import Glm52Model
+from klorb.models.glm_5_2 import GLM_5_2_MODEL_NAME, Glm52Model
 
 
 def test_name_matches_the_openrouter_model_slug() -> None:

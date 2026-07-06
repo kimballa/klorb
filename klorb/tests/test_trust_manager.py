@@ -6,11 +6,8 @@ from pathlib import Path
 import pytest
 
 from klorb.schema_envelope import read_versioned_json
-from klorb.workspace import TrustManager
-from klorb.workspace import Workspace
-from klorb.workspace.trust_manager import PROJECTS_SCHEMA_NAME
-from klorb.workspace.trust_manager import ProjectRecord
-
+from klorb.workspace import TrustManager, Workspace
+from klorb.workspace.trust_manager import PROJECTS_SCHEMA_NAME, ProjectRecord
 
 # --- resolve_workspace ---
 

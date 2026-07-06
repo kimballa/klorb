@@ -6,17 +6,13 @@ import os
 import threading
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from klorb.api_provider import ApiProvider
-from klorb.api_provider import ProviderResponse
-from klorb.api_provider import ResponseAborted
-from klorb.message import Message
-from klorb.message import ToolCallRequest
+from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
+from klorb.message import Message, ToolCallRequest
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"

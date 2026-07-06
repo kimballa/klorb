@@ -6,10 +6,7 @@ from pathlib import Path
 import pytest
 from fixtures.sample_models.alpha_model import AlphaModel
 
-from klorb.role import COORDINATOR_ROLE_NAME
-from klorb.role import CoordinatorRole
-from klorb.role import NamedRole
-from klorb.role import get_role
+from klorb.role import COORDINATOR_ROLE_NAME, CoordinatorRole, NamedRole, get_role
 from klorb.system_prompts import SYSTEM_PROMPTS_SUBDIR
 
 

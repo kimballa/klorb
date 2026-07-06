@@ -9,11 +9,9 @@ docs/adrs/reuse-a-generic-confirmscreen-for-workspace-trust-prompts.md.
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 CONFIRM_YES_ID = "confirm-yes"
 CONFIRM_NO_ID = "confirm-no"

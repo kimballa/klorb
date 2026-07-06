@@ -4,13 +4,9 @@
 user (or a previous session) left untrusted. See docs/specs/projects-and-trust.md.
 """
 
-from typing import Protocol
-from typing import cast
+from typing import Protocol, cast
 
-from textual.command import DiscoveryHit
-from textual.command import Hit
-from textual.command import Hits
-from textual.command import Provider
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 
 TRUST_WORKSPACE_LABEL = "Trust workspace"
 

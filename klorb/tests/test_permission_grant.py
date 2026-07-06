@@ -12,11 +12,7 @@ import pytest
 
 from klorb import process_config as process_config_module
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.grant import (
-    _promote_table,
-    apply_permission_grant,
-    compute_grant_paths,
-)
+from klorb.permissions.grant import _promote_table, apply_permission_grant, compute_grant_paths
 from klorb.process_config import (
     CONFIG_SCHEMA_NAME,
     SESSION_DEFAULTS_KEY,

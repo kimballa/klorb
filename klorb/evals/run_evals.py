@@ -10,18 +10,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from klorb.openrouter import DEFAULT_MODEL
-from klorb.openrouter import OpenRouterApiProvider
+from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 
 from .cases import CASES
-from .colors import colorize
-from .colors import use_color
-from .harness import CaseResult
-from .harness import run_evaluation
-from .harness import tool_token_counts
-from .report import render_case_detail
-from .report import render_report
-from .report import render_summary
+from .colors import colorize, use_color
+from .harness import CaseResult, run_evaluation, tool_token_counts
+from .report import render_case_detail, render_report, render_summary
 
 EVAL_MODEL_ENV_VAR = "KLORB_EVAL_MODEL"
 EVAL_LOG_PATH = Path("evals.log")

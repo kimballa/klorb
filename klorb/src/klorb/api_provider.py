@@ -2,8 +2,7 @@
 """Abstract interface for LLM API providers."""
 
 import threading
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 

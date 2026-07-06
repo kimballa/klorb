@@ -8,9 +8,7 @@ from inspect import isclass
 from typing import Sequence
 
 from textual.app import App
-from textual.command import DiscoveryHit
-from textual.command import Hit
-from textual.command import Provider
+from textual.command import DiscoveryHit, Hit, Provider
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 

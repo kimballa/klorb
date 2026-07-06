@@ -9,10 +9,7 @@ from fixtures.sample_tools.echo_tool import EchoTool
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool
-from klorb.tools.tool import default_tool_call_detail
-from klorb.tools.tool import default_tool_call_summary
-from klorb.tools.tool import truncate_lines
+from klorb.tools.tool import Tool, default_tool_call_detail, default_tool_call_summary, truncate_lines
 
 
 def test_tool_cannot_be_instantiated_directly() -> None:

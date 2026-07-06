@@ -3,8 +3,7 @@
 
 from unittest.mock import MagicMock
 
-from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
-from klorb.tui.trust_commands import TrustWorkspaceCommandProvider
+from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
 
 
 def _screen(*, trust_management_enabled: bool, workspace_trusted: bool) -> MagicMock:

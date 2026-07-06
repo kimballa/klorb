@@ -7,8 +7,7 @@ from typing import Any
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import evaluate_write, resolve_within_workspace
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool
-from klorb.tools.tool import truncate_lines
+from klorb.tools.tool import Tool, truncate_lines
 
 logger = logging.getLogger(__name__)
 

@@ -10,8 +10,7 @@ import logging
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import tiktoken
@@ -20,8 +19,7 @@ import klorb.tools as tools_package
 from klorb.api_provider import ApiProvider
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
-from klorb.session import Session
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 

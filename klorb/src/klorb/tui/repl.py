@@ -11,70 +11,54 @@ from pathlib import Path
 
 from rich.markup import escape
 from rich.text import Text
-from textual import events
-from textual import work
-from textual.app import App
-from textual.app import ComposeResult
-from textual.app import SystemCommand
+from textual import events, work
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
-from textual.command import DiscoveryHit
-from textual.command import Hit
-from textual.containers import Horizontal
-from textual.containers import Vertical
-from textual.containers import VerticalScroll
+from textual.command import DiscoveryHit, Hit
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.message import Message
-from textual.screen import ModalScreen
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.types import IgnoreReturnCallbackType
-from textual.widgets import Button
-from textual.widgets import Footer
-from textual.widgets import Header
-from textual.widgets import Markdown
-from textual.widgets import Static
-from textual.widgets import TextArea
+from textual.widgets import Button, Footer, Header, Markdown, Static, TextArea
 
 from klorb.api_provider import ResponseAborted
-from klorb.logging_config import configure_logging
-from klorb.logging_config import session_log_path
+from klorb.logging_config import configure_logging, session_log_path
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
-from klorb.process_config import ProcessConfig
-from klorb.process_config import load_process_config
-from klorb.process_config import persist_session_default
-from klorb.process_config import persist_theme
-from klorb.process_config import project_config_path
-from klorb.process_config import user_config_path
-from klorb.session import PermissionAskContext
-from klorb.session import PermissionDecision
-from klorb.session import Session
-from klorb.session import ThinkingEffort
-from klorb.session import ToolCallEvent
-from klorb.session import TurnEventHandlers
+from klorb.process_config import (
+    ProcessConfig,
+    load_process_config,
+    persist_session_default,
+    persist_theme,
+    project_config_path,
+    user_config_path,
+)
+from klorb.session import (
+    PermissionAskContext,
+    PermissionDecision,
+    Session,
+    ThinkingEffort,
+    ToolCallEvent,
+    TurnEventHandlers,
+)
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.tool import default_tool_call_detail
-from klorb.tools.tool import default_tool_call_summary
+from klorb.tools.tool import default_tool_call_detail, default_tool_call_summary
 from klorb.tui.confirm_screen import ConfirmScreen
-from klorb.tui.init_commands import INIT_CONFIG_LABEL
-from klorb.tui.init_commands import InitCommandProvider
+from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
-from klorb.tui.palette import PALETTE_PREFIX
-from klorb.tui.palette import PROMPT_PALETTE_ID
-from klorb.tui.palette import PromptPalette
-from klorb.tui.palette import gather_palette_hits
+from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
 from klorb.tui.permission_ask_screen import PermissionAskScreen
 from klorb.tui.session_commands import SessionCommandProvider
-from klorb.tui.shell import ShellCommandCancelled
-from klorb.tui.shell import ShellCommandTimedOut
-from klorb.tui.shell import UserShellCommand
+from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShellCommand
 from klorb.tui.theme_commands import ThemeCommandProvider
 from klorb.tui.thinking_commands import ThinkingCommandProvider
-from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
-from klorb.tui.trust_commands import TrustWorkspaceCommandProvider
-from klorb.workspace import TrustManager
-from klorb.workspace import Workspace
-from klorb.workspace.workspace_init import write_initial_project_config
-from klorb.workspace.workspace_init import write_session_defaults_to_project_config
+from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
+from klorb.workspace import TrustManager, Workspace
+from klorb.workspace.workspace_init import (
+    write_initial_project_config,
+    write_session_defaults_to_project_config,
+)
 
 logger = logging.getLogger(__name__)
 

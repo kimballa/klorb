@@ -6,9 +6,7 @@ import time
 
 import pytest
 
-from klorb.tui.shell import ShellCommandCancelled
-from klorb.tui.shell import ShellCommandTimedOut
-from klorb.tui.shell import UserShellCommand
+from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShellCommand
 
 SHELL_PATH = "/bin/bash"
 

@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from klorb.system_prompts import DEFAULT_SYS_FILENAME
-from klorb.system_prompts import SYSTEM_PROMPTS_SUBDIR
-from klorb.system_prompts import mangle_model_name
-from klorb.system_prompts import resolve_prompt_file
+from klorb.system_prompts import (
+    DEFAULT_SYS_FILENAME,
+    SYSTEM_PROMPTS_SUBDIR,
+    mangle_model_name,
+    resolve_prompt_file,
+)
 
 
 @pytest.fixture
