@@ -62,7 +62,8 @@ instead of a bespoke picker widget.
   (or browsing the default list) switches models.
   `ReplApp.select_model(name)` updates the model used for subsequent
   `ApiProvider.send_prompt()` calls, updates the window's `sub_title` to the new model name
-  (shown in the `Header` widget), and shows a toast notification confirming the switch.
+  (shown in the `Header` widget), and appends a `.notice` item to the history scroll
+  confirming the switch (see [[avoid-toasts-prefer-history-notices]]).
 * [[session-and-turns]]'s `Session.active_model_name()` looks up `SessionConfig.model` in a
   `ModelRegistry` and, when it's registered, calls the resulting `Model.name()` to get the
   identifier passed to `ApiProvider.send_prompt()`; an unregistered model string is passed

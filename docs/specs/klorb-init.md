@@ -64,9 +64,10 @@ command reuses.
 * `klorb.tui.init_commands.InitCommandProvider` offers "Init local klorb config" via the
   command palette (`Ctrl+P`, or `>init` narrowed from the prompt — see
   [[command-palette-from-prompt]]), always running `run_init("user", force=False)` for the
-  REPL's own user and reporting the outcome via `App.notify()` — an `error`-severity toast if
-  `run_init` raised `InitError`, otherwise the join of its progress messages. It's registered
-  in `ReplApp.COMMANDS` alongside `ModelCommandProvider`/`SessionCommandProvider`/
+  REPL's own user and reporting the outcome via `App.show_notice()` — appending an `.error`
+  item to the history scroll if `run_init` raised `InitError`, otherwise a `.notice` item with
+  the join of its progress messages (see [[avoid-toasts-prefer-history-notices]]). It's
+  registered in `ReplApp.COMMANDS` alongside `ModelCommandProvider`/`SessionCommandProvider`/
   `ThinkingCommandProvider`.
 * `ReplApp.on_mount()` mounts a `Static` (CSS class `notice`) into the `#history` scroll the
   first time the REPL starts, if `klorb.process_config.user_config_path()` doesn't exist yet,
@@ -84,7 +85,7 @@ klorb init --force            # overwrite an existing config file/symlink instea
 
 Typing `>Init local klorb config` (or a narrowing prefix like `>init`) in the REPL prompt
 runs the equivalent of `klorb init --user` for the signed-in user, reporting the result as a
-toast instead of on stderr.
+history notice instead of on stderr.
 
 ## Out of scope
 

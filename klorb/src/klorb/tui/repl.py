@@ -868,7 +868,17 @@ class ReplApp(App[None]):
         persist_session_default(user_config_path(), "model", name)
         self.sub_title = name
         self._update_status_bar()
-        self.notify(f"Model set to {name}.")
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(f"Model set to {name}.", classes="notice"))
+
+    def show_notice(self, message: str, *, error: bool = False) -> None:
+        """Append `message` to the history scroll as a `.notice` (or `.error` if `error`)
+        item. Exposed for callers outside `ReplApp` (e.g. `InitCommandProvider`) that report a
+        one-off status/result but shouldn't otherwise depend on history-widget internals like
+        `HISTORY_ID`/`VerticalScroll`.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(message, classes="error" if error else "notice"))
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Every default system command except "Theme" — `ThemeCommandProvider` supersedes it
@@ -950,7 +960,8 @@ class ReplApp(App[None]):
         self._process_config.session.thinking_enabled = enabled
         persist_session_default(user_config_path(), "thinking.enabled", enabled)
         self._refresh_header_title()
-        self.notify(f"Thinking {'enabled' if enabled else 'disabled'}.")
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(f"Thinking {'enabled' if enabled else 'disabled'}.", classes="notice"))
 
     def set_thinking_effort(self, effort: ThinkingEffort) -> None:
         """Set the reasoning effort level used for subsequent prompts, when thinking is
@@ -963,7 +974,8 @@ class ReplApp(App[None]):
         self._process_config.session.thinking_effort = effort
         persist_session_default(user_config_path(), "thinking.effort", effort)
         self._refresh_header_title()
-        self.notify(f"Thinking effort set to {effort}.")
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(f"Thinking effort set to {effort}.", classes="notice"))
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the `abort_response` binding from the footer unless a response is currently
@@ -1396,12 +1408,12 @@ class ReplApp(App[None]):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
+        history.mount(Static("Session cleared.", classes="notice"))
 
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.clear_input_history()
         prompt_input.focus()
         self._update_status_bar()
-        self.notify("Session cleared.")
 
     def _submit_prompt(self, prompt_text: str) -> None:
         """Echo `prompt_text` into the history, disable the input, and dispatch it."""

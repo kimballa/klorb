@@ -9,7 +9,7 @@ from klorb.tui.init_commands import INIT_CONFIG_LABEL
 from klorb.tui.init_commands import InitCommandProvider
 
 
-def test_run_init_calls_run_init_with_user_scope_and_notifies_messages() -> None:
+def test_run_init_calls_run_init_with_user_scope_and_shows_notice() -> None:
     mock_screen = MagicMock()
     provider = InitCommandProvider(mock_screen)
 
@@ -17,17 +17,17 @@ def test_run_init_calls_run_init_with_user_scope_and_notifies_messages() -> None
         provider._run_init()
 
     mock_run_init.assert_called_once_with("user", force=False)
-    mock_screen.app.notify.assert_called_once_with("msg one\nmsg two")
+    mock_screen.app.show_notice.assert_called_once_with("msg one\nmsg two")
 
 
-def test_run_init_notifies_error_severity_on_init_error() -> None:
+def test_run_init_shows_error_notice_on_init_error() -> None:
     mock_screen = MagicMock()
     provider = InitCommandProvider(mock_screen)
 
     with patch("klorb.tui.init_commands.run_init", side_effect=InitError("boom")):
         provider._run_init()
 
-    mock_screen.app.notify.assert_called_once_with("boom", severity="error")
+    mock_screen.app.show_notice.assert_called_once_with("boom", error=True)
 
 
 async def test_discover_yields_init_config_hit() -> None:
