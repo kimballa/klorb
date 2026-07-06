@@ -15,17 +15,6 @@
 
 # Feature backlog
 
-* If you change the visual theme, the theme color should get baked into the ProcessConfig /
-  homedir-level settings file.
-
-* When you select a model, it should update the workspace's `sessionDefaults > model` config file 
-  setting so it remembers next time.
-
-* When you select a theme, the theme selection modal should put a `(*)` as a suffix next to
-  the currently-selected theme name.
-  * When you change to a new theme, a confirmation msg should show up in the main scroll "Changed
-    current theme to `foo bar theme name`."
-
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
