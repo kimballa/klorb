@@ -39,10 +39,12 @@ from klorb.tui.repl import (
     HISTORY_ID,
     PALETTE_HINT_ID,
     PALETTE_HINT_TEXT,
+    PERMISSION_BADGE_ID,
     PROMPT_INPUT_ID,
     STATUS_BAR_ID,
     THINKING_LABEL,
     TOOL_USE_LABEL,
+    PermissionBadge,
     PromptInput,
     ReplApp,
     ToolCallLimitScreen,
@@ -224,6 +226,55 @@ async def test_status_bar_omits_limit_when_model_unregistered() -> None:
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         assert status_bar.content == "0"
+
+
+async def test_permission_badge_shows_the_session_permission_framework() -> None:
+    mock_provider = MagicMock()
+    session = Session(
+        SessionConfig(model="some/model", permission_framework="auto"),
+        provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        assert str(badge.render()) == "[auto]"
+
+
+async def test_permission_badge_defaults_to_ask() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        assert str(badge.render()) == "[ask]"
+
+
+async def test_shift_tab_cycles_permission_framework() -> None:
+    """Wraps every read of `permission_framework` in `str(...)` -- comparing the same
+    `Literal["ask", "auto", "deny"]`-typed attribute against several different literals in
+    sequence, with no reassignment mypy can see in between (it happens inside `ReplApp`'s
+    key handling), would otherwise have mypy narrow the attribute to the first-asserted
+    literal and flag every later assertion as unreachable."""
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        assert str(session.config.permission_framework) == "ask"
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert str(session.config.permission_framework) == "auto"
+        badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        assert str(badge.render()) == "[auto]"
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert str(session.config.permission_framework) == "deny"
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert str(session.config.permission_framework) == "ask"
 
 
 async def test_shows_config_missing_notice_when_user_config_file_absent(tmp_path: Path) -> None:

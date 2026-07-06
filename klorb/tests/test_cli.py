@@ -175,6 +175,85 @@ def test_main_one_shot_config_is_not_interactive() -> None:
     assert config.interactive is False
 
 
+def test_main_one_shot_defaults_permission_framework_to_deny() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "-m", "hi"]):
+            cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.permission_framework == "deny"
+
+
+def test_main_repl_defaults_permission_framework_to_ask() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("klorb.cli.run_repl"):
+            with patch("sys.argv", ["klorb"]):
+                cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.permission_framework == "ask"
+
+
+def test_main_auto_approve_flag_sets_permission_framework_to_auto_one_shot() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "-y", "-m", "hi"]):
+            cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.permission_framework == "auto"
+
+
+def test_main_auto_approve_flag_sets_permission_framework_to_auto_interactively() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("klorb.cli.run_repl"):
+            with patch("sys.argv", ["klorb", "--auto-approve"]):
+                cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.permission_framework == "auto"
+
+
+def test_main_max_tool_calls_flags_override_process_config(stub_process_config: MagicMock) -> None:
+    process_config = ProcessConfig(
+        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
+    stub_process_config.return_value = process_config
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch(
+            "sys.argv",
+            ["klorb", "--max-tool-calls-per-turn", "5", "--max-tool-calls-per-session", "20", "-m", "hi"],
+        ):
+            cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.max_tool_calls_per_turn == 5
+    assert config.max_tool_calls_per_session == 20
+
+
+def test_main_max_tool_calls_flags_default_to_process_config_when_omitted(
+    stub_process_config: MagicMock,
+) -> None:
+    process_config = ProcessConfig(
+        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
+    stub_process_config.return_value = process_config
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "-m", "hi"]):
+            cli.main()
+
+    config = mock_session_cls.call_args.args[0]
+    assert config.max_tool_calls_per_turn == 3
+    assert config.max_tool_calls_per_session == 9
+
+
 def test_main_starts_repl_when_no_prompt_given() -> None:
     mock_session = MagicMock()
     with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:

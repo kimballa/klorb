@@ -1106,6 +1106,71 @@ def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Pat
     assert _tool_response_content(session) == f"Error: Permission requires confirmation: access {target}"
 
 
+def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_path: Path) -> None:
+    """`permission_framework="deny"` fails closed unconditionally -- it must not invoke
+    `on_permission_ask` even if a caller supplied one."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="deny")
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"Error: Permission requires confirmation: access {target}"
+    on_permission_ask.assert_not_called()
+
+
+def test_permission_framework_auto_approves_without_any_callback(tmp_path: Path) -> None:
+    """`permission_framework="auto"` auto-approves via a synthesized "session"-scope grant,
+    without ever invoking `on_permission_ask` (none is even given here)."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
+    process_config = ProcessConfig()
+    session = _session_with_ask_tool(config, mock_provider, process_config)
+
+    response = session.send_turn("try it")
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"granted:{target}"
+    assert config.read_dirs.allow == [tmp_path]
+    # "session" scope must not have rippled into the process-config template or disk.
+    assert process_config.session.read_dirs == DirRules()
+
+
+def test_permission_framework_auto_ignores_an_on_permission_ask_callback(tmp_path: Path) -> None:
+    """Even if a caller supplies `on_permission_ask`, `permission_framework="auto"` never
+    invokes it -- the auto-approval is unconditional."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
+
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    assert response == "done"
+    assert _tool_response_content(session) == f"granted:{target}"
+    on_permission_ask.assert_not_called()
+
+
 def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()

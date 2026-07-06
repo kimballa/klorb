@@ -30,6 +30,15 @@ config) has one place to live.
     user approves continuing past it — see below), so they live on `SessionConfig` rather
     than the process-wide `ProcessConfig`; see
     [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
+    `klorb.cli.build_parser()`'s `--max-tool-calls-per-turn`/`--max-tool-calls-per-session`
+    flags let a caller override either default without editing a config file.
+  * `permission_framework: PermissionFramework` (`"ask" | "auto" | "deny"`) — how
+    `Session._run_tool_calls()` resolves a `PermissionAskRequired` verdict, defaulting to
+    `"ask"`. See docs/specs/permissions.md's "Interactive `"ask"` confirmation" section for
+    the full three-way behavior. Deliberately absent from
+    `klorb.process_config.SESSION_KEY_MAP`, like `interactive`: its effective default
+    depends on whether the session is interactive, resolved by `klorb.cli.main()` rather
+    than a static config value — see [[default-permission-framework-to-deny-headlessly]].
 * `klorb.session.Session` is constructed with a `SessionConfig` (saved as `self.config`),
   and optionally an `ApiProvider` (defaults to a fresh `OpenRouterApiProvider`), a
   `ModelRegistry` (defaults to a fresh `ModelRegistry()`), and a
@@ -169,10 +178,15 @@ config) has one place to live.
     is a thin wrapper around `send_turn()`, named for the non-interactive entry point so
     callers don't need to know it's "just" a single turn.
 * `klorb.cli.main()` (`klorb/src/klorb/cli.py`) builds a `SessionConfig` from parsed CLI
-  arguments (`--model`, the resolved `--interactive` value, and the log path returned by
+  arguments (`--model`, the resolved `--interactive` value, `--max-tool-calls-per-turn`/
+  `--max-tool-calls-per-session` (each overriding the configured default when given), the
+  resolved `permission_framework` (see below), and the log path returned by
   `configure_logging()`), constructs a `Session`, and either calls
   `session.run_one_shot(prompt)` and prints the result, or calls
   [[terminal-repl]]'s `run_repl(session, initial_message=prompt)` to start the REPL.
+  `permission_framework` resolves to `"auto"` when `-y`/`--auto-approve` is given, else
+  `"deny"` when the resolved `interactive` is `False`, else the `SessionConfig` default
+  (`"ask"`) — see [[default-permission-framework-to-deny-headlessly]].
 * `klorb.tui.repl.ReplApp` (`klorb/src/klorb/tui/repl.py`) takes a `Session` instead of a
   raw provider/model pair. Every submitted prompt — typed by the user or passed in as
   `initial_message` — goes through `Session.send_turn()` on a background worker thread,

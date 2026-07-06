@@ -67,6 +67,38 @@ def build_parser() -> argparse.ArgumentParser:
             "one-shot prompt; use --no-session-log to disable it in the REPL."
         ),
     )
+    parser.add_argument(
+        "-y",
+        "--auto-approve",
+        dest="auto_approve",
+        action="store_true",
+        default=False,
+        help=(
+            "Auto-approve every tool-permission 'ask' verdict for this run (sets "
+            "permissionFramework to 'auto'). Defaults to off: permissionFramework is 'ask' "
+            "when interactive, 'deny' for a one-shot prompt."
+        ),
+    )
+    parser.add_argument(
+        "--max-tool-calls-per-turn",
+        dest="max_tool_calls_per_turn",
+        type=int,
+        default=None,
+        help=(
+            "Override the configured max tool calls allowed in a single turn before the "
+            "turn fails. Defaults to the configured/process value."
+        ),
+    )
+    parser.add_argument(
+        "--max-tool-calls-per-session",
+        dest="max_tool_calls_per_session",
+        type=int,
+        default=None,
+        help=(
+            "Override the configured max tool calls allowed across this session before the "
+            "turn fails. Defaults to the configured/process value."
+        ),
+    )
     return parser
 
 
@@ -145,8 +177,16 @@ def main() -> None:
 
     process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
     process_config.session.interactive = interactive
+    if args.auto_approve:
+        process_config.session.permission_framework = "auto"
+    elif not interactive:
+        process_config.session.permission_framework = "deny"
     if args.model is not None:
         process_config.session.model = args.model
+    if args.max_tool_calls_per_turn is not None:
+        process_config.session.max_tool_calls_per_turn = args.max_tool_calls_per_turn
+    if args.max_tool_calls_per_session is not None:
+        process_config.session.max_tool_calls_per_session = args.max_tool_calls_per_session
 
     provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
     session_config = process_config.session.model_copy()

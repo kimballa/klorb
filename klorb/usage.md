@@ -8,6 +8,7 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*] [`--config` *FILE*]
 [`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
+[`-y` | `--auto-approve`] [`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
 
 `klorb init` [`--system` | `--user`] [`--force`]
 
@@ -78,6 +79,25 @@ executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
   ENVIRONMENT below for `KLORB_STATE_DIR`); use `--no-session-log` to disable
   it in the REPL, or `--session-log` to enable it for a one-shot prompt.
 
+* `-y`, `--auto-approve`
+
+  Auto-approve every tool-permission "ask" verdict for this run (sets
+  `permissionFramework` to `auto`, in-memory only, for the rest of the
+  session). Without this flag, `permissionFramework` is `ask` (show the
+  interactive modal) when the session is interactive, or `deny` (fail closed)
+  for a one-shot prompt. See `docs/specs/permissions.md`.
+
+* `--max-tool-calls-per-turn` *N*
+
+  Override the max tool calls allowed in a single turn before it fails.
+  Defaults to the configured/process value (see
+  `docs/specs/process-and-session-config.md`).
+
+* `--max-tool-calls-per-session` *N*
+
+  Override the max tool calls allowed across the whole session before a turn
+  fails. Defaults to the configured/process value.
+
 ## ENVIRONMENT
 
 * `OPENROUTER_API_KEY`
@@ -143,6 +163,13 @@ Start the REPL with settings from an extra config file, on top of the usual
 
 ```
 klorb --config ./ci-defaults.json
+```
+
+Send a one-shot prompt that auto-approves any tool-permission "ask" verdict
+it hits, without an interactive prompt to confirm it:
+
+```
+klorb -y -m "Clean up this directory."
 ```
 
 Bootstrap a per-user config file and `~/.local/bin/klorb` symlink:

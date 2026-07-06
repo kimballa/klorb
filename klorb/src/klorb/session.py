@@ -74,6 +74,11 @@ ThinkingEffort = Literal["low", "medium", "high"]
 """User-facing thinking depth knob, independent of whether the active model wants an
 effort keyword or a numeric token budget (see `klorb.models.model.ThinkingBudgetStyle`)."""
 
+PermissionFramework = Literal["ask", "auto", "deny"]
+"""How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict — see
+`SessionConfig.permission_framework` and docs/specs/permissions.md's "Interactive 'ask'
+confirmation" section."""
+
 THINKING_EFFORT_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
     "low": 4_096,
     "medium": 16_384,
@@ -149,6 +154,17 @@ class SessionConfig(BaseModel):
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
     `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write` and
     docs/specs/permissions.md."""
+    permission_framework: PermissionFramework = "ask"
+    """How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict for every
+    tool-use approval (today, `readDirs`/`writeDirs` "ask" rules; more approval kinds may
+    exist in the future): `"ask"` uses `TurnEventHandlers.on_permission_ask` if the caller
+    gave one (e.g. the TUI's modal), else fails closed per call, same as `"deny"`; `"auto"`
+    auto-approves every ask with an in-memory-only `"session"`-scope grant, without ever
+    invoking `on_permission_ask`; `"deny"` fails closed per call without invoking
+    `on_permission_ask` even if one was given. Deliberately absent from
+    `klorb.process_config.SESSION_KEY_MAP` — like `interactive`, its default depends on
+    whether the session is interactive, resolved explicitly by `klorb.cli.main()` rather
+    than a static config default. See docs/specs/permissions.md."""
 
 
 class PermissionAskContext(BaseModel):
@@ -598,12 +614,16 @@ class Session:
         `ToolCallLimitExceeded` without executing this call (or any later call in
         `tool_use_message.tool_calls`).
 
-        If a call raises `PermissionAskRequired` and `callbacks.on_permission_ask` is given (and
-        the exception carries a `path`), the callback is asked for a `PermissionDecision` and the
-        call is retried or denied accordingly (see `_retry_after_permission_decision`). With no
-        callback (e.g. a headless one-shot run), or an exception with no `path` (a call site
-        that didn't supply one), this fails closed exactly like any other tool exception: the
-        error is reported back to the model as this call's `tool_response`.
+        If a call raises `PermissionAskRequired` with a `path`, how it's resolved depends on
+        `config.permission_framework` (see `SessionConfig.permission_framework`): `"deny"` fails
+        closed without invoking any callback; `"auto"` auto-approves via a synthesized
+        `PermissionDecision(choice="session")`, also without invoking any callback; `"ask"` asks
+        `callbacks.on_permission_ask`, if given, for a `PermissionDecision` and retries or denies
+        accordingly (see `_retry_after_permission_decision`) — with no callback (e.g. a headless
+        one-shot run left at the `"ask"` default), it fails closed the same as `"deny"`. An
+        exception with no `path` (a call site that didn't supply one) always fails closed,
+        regardless of `permission_framework`. Failing closed reports the error back to the model
+        as this call's `tool_response`, exactly like any other tool exception.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -643,7 +663,15 @@ class Session:
                 result = tool.apply(args)
                 logger.info("Tool call %s succeeded: %s", call.name, result)
             except PermissionAskRequired as ask_exc:
-                if callbacks.on_permission_ask is None or ask_exc.path is None:
+                if ask_exc.path is None or self.config.permission_framework == "deny":
+                    logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
+                    error = str(ask_exc)
+                elif self.config.permission_framework == "auto":
+                    logger.info(
+                        "Auto-approving permission ask under permissionFramework=auto: %s", ask_exc)
+                    decision = PermissionDecision(choice="session")
+                    result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                elif callbacks.on_permission_ask is None:
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                     error = str(ask_exc)
                 else:
@@ -953,6 +981,15 @@ class Session:
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
     ) -> str:
-        """Run a single, non-interactive turn and return the model's text response."""
+        """Run a single, non-interactive turn and return the model's text response.
+
+        Passes no `on_permission_ask`/`on_tool_call_limit_reached` callbacks — there's no
+        interactive surface to ask through here — so any `"ask"` permission verdict resolves
+        per `config.permission_framework` (see `SessionConfig.permission_framework`), and
+        hitting a tool-call limit always raises `ToolCallLimitExceeded`. `send_turn()` already
+        loops through every tool-call round on its own until the model returns a final
+        plain-text reply, so this call runs the whole task to completion, not just one
+        model round trip.
+        """
         return self.send_turn(
             prompt, TurnEventHandlers(on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk))

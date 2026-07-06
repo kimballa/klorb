@@ -85,10 +85,13 @@ SESSION_KEY_MAP: dict[str, str] = {
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
 inferred from CLI flags (`-m`/`--interactive`/`--no-interactive`), never config-file-driven.
-`role_name` is likewise deliberately absent: the operating role is set by code (defaulting
-to the coordinator role), never by a config file — see
-docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDirs` are also deliberately
-absent — they're merged by concatenation, not 1:1 scalar replacement, so
+`permission_framework` is likewise deliberately absent, for the same reason: its effective
+default depends on the CLI-resolved `interactive` value (`"ask"` interactively, `"deny"`
+headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md and
+[[default-permission-framework-to-deny-headlessly]]. `role_name` is likewise deliberately
+absent: the operating role is set by code (defaulting to the coordinator role), never by a
+config file — see docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDirs` are also
+deliberately absent — they're merged by concatenation, not 1:1 scalar replacement, so
 `load_process_config()` handles them separately, ahead of `_route_keys()` — see
 docs/specs/permissions.md. `workspace` is deliberately absent too: it has no on-disk key at
 all, by design — see `SessionConfig.workspace`/docs/specs/projects-and-trust.md — a project

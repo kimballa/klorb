@@ -228,17 +228,37 @@ Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are m
 
 ## Interactive "ask" confirmation
 
-When a tool call raises `PermissionAskRequired` and the interactive TUI is running, a modal
-(`klorb.tui.permission_ask_screen.PermissionAskScreen`) asks the user how to proceed, instead of
-failing closed. This is wired in as an optional callback, not a change to the fail-closed
-default: `Session.send_turn()`/`retry_last_turn()` take an `on_permission_ask` parameter
-(`klorb.session.PermissionAskContext -> klorb.session.PermissionDecision`), threaded through to
-`Session._run_tool_calls()`. With no callback given — every headless/one-shot run
-(`klorb.cli.main()` never passes one) — behavior is unchanged from the plain fail-closed case
-described above. `ReplApp._on_permission_ask` (`klorb.tui.repl`) is the TUI's implementation,
-mirroring the existing `on_tool_call_limit_reached`/`ToolCallLimitScreen` pattern: it blocks the
-worker thread running `Session.send_turn()` via `call_from_thread`, shows the modal on the app's
-own event loop, and returns once the user answers.
+When a tool call raises `PermissionAskRequired`, how it's resolved is governed by
+`SessionConfig.permission_framework` (`klorb.session.PermissionFramework`, `"ask" | "auto" |
+"deny"`), checked first in `Session._run_tool_calls()` before it ever looks at any callback:
+
+* **`"deny"`** — every ask fails closed, exactly like the plain fail-closed case described
+  above, without invoking any callback.
+* **`"auto"`** — every ask is auto-approved via a synthesized
+  `PermissionDecision(choice="session")`, applied through the same
+  `Session._retry_after_permission_decision()`/`apply_permission_grant()` path a real
+  "Allow (this session)" answer would take (see below) — an in-memory-only grant for the
+  rest of this session, nothing persisted to disk. No callback is invoked either.
+* **`"ask"`** (the `SessionConfig` default) — falls through to the optional callback
+  mechanism: when the interactive TUI is running, a modal
+  (`klorb.tui.permission_ask_screen.PermissionAskScreen`) asks the user how to proceed,
+  instead of failing closed. This is wired in as an optional callback, not a change to the
+  fail-closed default: `Session.send_turn()`/`retry_last_turn()` take an `on_permission_ask`
+  parameter (`klorb.session.PermissionAskContext -> klorb.session.PermissionDecision`),
+  threaded through to `Session._run_tool_calls()`. With no callback given, behavior is
+  unchanged from the plain fail-closed case described above. `ReplApp._on_permission_ask`
+  (`klorb.tui.repl`) is the TUI's implementation, mirroring the existing
+  `on_tool_call_limit_reached`/`ToolCallLimitScreen` pattern: it blocks the worker thread
+  running `Session.send_turn()` via `call_from_thread`, shows the modal on the app's own
+  event loop, and returns once the user answers.
+
+`permission_framework` defaults to `"ask"` when the session is interactive and `"deny"`
+otherwise — resolved by `klorb.cli.main()`, not config-file-driven, since it depends on the
+CLI-resolved `interactive` value (see docs/specs/session-and-turns.md and
+[[default-permission-framework-to-deny-headlessly]]). `-y`/`--auto-approve` forces `"auto"`
+regardless of interactivity, for both a one-shot prompt and the REPL. The REPL's status row
+shows the session's current `permission_framework` value as a small badge next to the token
+tally (see [[terminal-repl]]).
 
 ### The six choices
 

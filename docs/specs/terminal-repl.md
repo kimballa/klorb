@@ -26,11 +26,29 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   user types a leading `>` — see [[command-palette-from-prompt]]), a `PromptInput` (id
   `prompt-input`) for typing the next prompt, and a `Horizontal` (id `status-row`) docked to
   the bottom of the screen that holds a `Static` `> palette` hint, the `Footer` (key
-  bindings), and a `Static` token-tally widget (id `status-bar`) side by side in the same
-  row — so the tally reads like one more item alongside `^q Quit` rather than a separate
-  line. The history container is styled `height: 1fr` so it fills all available vertical
-  space above the input box, which is why the history scrolls "up" as content is added while
-  the input box stays pinned to the bottom of the screen.
+  bindings), a `PermissionBadge` (id `permission-badge`), and a `Static` token-tally widget
+  (id `status-bar`) side by side in the same row — so both read like one more item alongside
+  `^q Quit` rather than a separate line. The history container is styled `height: 1fr` so it
+  fills all available vertical space above the input box, which is why the history scrolls
+  "up" as content is added while the input box stays pinned to the bottom of the screen.
+* `PermissionBadge` (`klorb.tui.repl`) shows the session's current
+  `Session.config.permission_framework` value bracketed and right-justified (`[ask]`,
+  `[auto]`, or `[deny]`) within a fixed-width cell (`PERMISSION_BADGE_WIDTH` — the longest
+  value plus one, plus `PERMISSION_BADGE_HORIZONTAL_PADDING` since Textual's CSS `width` is
+  a border-box measurement that already includes the badge's own `padding: 0 1`) so a
+  shorter value is left-padded rather than a longer one ever clipping its trailing `]`.
+  `ReplApp._update_permission_badge()` sets the initial value (no flash) from `on_mount()`.
+  Shift+Tab cycles it through `PERMISSION_FRAMEWORK_CYCLE` (`"ask"` → `"auto"` → `"deny"` →
+  back to `"ask"`) via `PromptInput.CyclePermissionFramework` (intercepted ahead of
+  everything else in `PromptInput._on_key`, since Shift+Tab isn't otherwise meaningful in
+  this single-input-focus app) → `ReplApp._cycle_permission_framework()`, which flashes the
+  badge: a quick 150ms spark of bright yellow (the same `$footer-key-foreground` as the
+  footer's own key-binding chips), then a longer 400ms glow of bright/bold white, before
+  settling back to its normal color — an intentionally uneven two-step cadence (see
+  `PermissionBadge._FLASH_YELLOW_SECONDS`/`_FLASH_WHITE_SECONDS`), since two equal-length
+  steps read as mechanical rather than like a natural attention flash. See
+  docs/specs/permissions.md's "Interactive `"ask"` confirmation" section for what each
+  value means.
 * `ReplApp.format_title()` overrides `App.format_title()` to control what the `Header`
   displays, rather than relying on the default `title — sub_title` join: it shows the current
   workspace's path (`SessionConfig.workspace.path`), shortened to its last two path components
@@ -49,8 +67,9 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   nested inside `#status-row`, since Textual resolves a docked widget's position against
   its immediate parent: left docked, `Footer` would claim the entire row's height for
   itself (its dock arrangement is computed independently of siblings) and collide with
-  `#status-bar` instead of sharing the row. With the dock removed, `Footer` behaves as a
-  normal flex child that takes up the remaining space next to the fixed-width tally.
+  `#status-bar`/`#permission-badge` instead of sharing the row. With the dock removed,
+  `Footer` behaves as a normal flex child that takes up the remaining space next to its
+  fixed-width siblings.
 * The status bar shows a running token tally as `"<used> / <limit>"` (e.g. `"1.4k / 128k"`),
   where `<used>` is `Session.total_tokens_used()` (the sum of `num_tokens` across every
   message recorded so far — see [[session-and-turns]]) and `<limit>` is

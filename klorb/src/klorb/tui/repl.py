@@ -8,6 +8,7 @@ import logging
 import threading
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Literal
 
 from rich.markup import escape
 from rich.text import Text
@@ -37,6 +38,7 @@ from klorb.process_config import (
 from klorb.session import (
     PermissionAskContext,
     PermissionDecision,
+    PermissionFramework,
     Session,
     ThinkingEffort,
     ToolCallEvent,
@@ -83,6 +85,26 @@ PROMPT_INPUT_ID = "prompt-input"
 PALETTE_HINT_ID = "palette-hint"
 PALETTE_HINT_TEXT = f"{PALETTE_PREFIX} palette"
 STATUS_BAR_ID = "status-bar"
+PERMISSION_BADGE_ID = "permission-badge"
+PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
+"""The order Shift+Tab cycles `Session.config.permission_framework` through -- see
+`ReplApp._cycle_permission_framework`."""
+
+PERMISSION_BADGE_HORIZONTAL_PADDING = 2
+"""Matches `PermissionBadge`'s own `padding: 0 1` (1 cell each side) -- folded into
+`PERMISSION_BADGE_WIDTH` since Textual's CSS `width` is a border-box measurement that
+already includes padding, so the content area available for text is `width` minus this."""
+
+PERMISSION_BADGE_WIDTH = (
+    max(len(f"[{value}]") for value in PERMISSION_FRAMEWORK_CYCLE) + 1
+    + PERMISSION_BADGE_HORIZONTAL_PADDING
+)
+"""Fixed cell width (border-box, including padding) for `PermissionBadge`: the longest
+bracketed value (`"[auto]"`/`"[deny]"`, 6 characters) plus 1 for breathing room plus
+`PERMISSION_BADGE_HORIZONTAL_PADDING`. A fixed width sidesteps `width: auto` sizing a
+`Static` once (from whatever value is showing at mount) and never re-measuring on a later
+`refresh()` -- only `update()` does that -- which would otherwise clip a later, longer
+value's trailing `]`."""
 THINKING_LABEL = "<Thinking>"
 TOOL_USE_LABEL = "<Tool use>"
 CONFIG_MISSING_MESSAGE = (
@@ -241,6 +263,21 @@ class PromptInput(TextArea):
         def control(self) -> "PromptInput":
             return self.prompt_input
 
+    class CyclePermissionFramework(Message):
+        """Posted when the user presses Shift+Tab, to cycle
+        `Session.config.permission_framework` -- see
+        `ReplApp.on_prompt_input_cycle_permission_framework`. Handled at the `ReplApp` level
+        (rather than acted on directly here) since `PromptInput` has no reference to the
+        `Session`."""
+
+        def __init__(self, prompt_input: "PromptInput") -> None:
+            self.prompt_input = prompt_input
+            super().__init__()
+
+        @property
+        def control(self) -> "PromptInput":
+            return self.prompt_input
+
     def on_mount(self) -> None:
         """Initialize the per-instance input-history state.
 
@@ -296,7 +333,10 @@ class PromptInput(TextArea):
         everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
         popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
-        or leaves palette mode).
+        or leaves palette mode). Shift+Tab is intercepted ahead of all of that (even
+        `_palette_mode`) and posts `CyclePermissionFramework` instead of falling through to
+        `Screen`'s own default Shift+Tab binding (`"app.focus_previous"`), since this app has
+        nothing else meaningful to focus.
 
         `self._last_key` records the key currently being processed for `on_text_area_changed`
         to read: a mutation-binding key like backspace or delete (see
@@ -311,6 +351,11 @@ class PromptInput(TextArea):
         """
         key = event.key
         self._last_key = key
+        if key == "shift+tab":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.CyclePermissionFramework(self))
+            return
         if self._palette_mode:
             if key == "escape":
                 event.stop()
@@ -699,6 +744,88 @@ class PaletteHint(Static):
         self.refresh()
 
 
+_PermissionBadgeFlashStage = Literal["normal", "yellow", "white"]
+
+
+class PermissionBadge(Static):
+    """Shows `Session.config.permission_framework` as a bracketed, right-justified footer
+    chip (e.g. `[ask]`), styled like `PaletteHint`/`#status-bar` so it reads as one more item
+    in the status row. Its width is fixed at `PERMISSION_BADGE_WIDTH` rather than `auto`,
+    since a `Static`'s auto-width only re-measures on `update()`, not on the bare `refresh()`
+    a custom `render()` uses — a fixed width sized for the longest value
+    (`"[auto]"`/`"[deny]"`) plus one, with the text right-justified within it, means a
+    shorter value like `"[ask]"` is left-padded rather than ever clipping a longer one's
+    trailing `]`. `ReplApp._cycle_permission_framework()` (bound to Shift+Tab) calls
+    `flash_to()` whenever the value changes, which briefly flashes the chip bright yellow
+    (the same `$footer-key-foreground` used for the footer's own key-binding chips) for
+    `_FLASH_YELLOW_SECONDS`, then bright/bold white for the longer `_FLASH_WHITE_SECONDS`,
+    before settling back to its normal color -- a quick spark followed by a lingering glow
+    reads more like a natural attention flash than two equal-length steps would. `set_value()`
+    sets the displayed value without flashing, used for the initial render at startup.
+    """
+
+    COMPONENT_CLASSES = {"permission-badge--flash-yellow", "permission-badge--flash-white"}
+
+    DEFAULT_CSS = f"""
+    PermissionBadge {{
+        width: {PERMISSION_BADGE_WIDTH};
+        height: 1;
+        color: $footer-description-foreground;
+        background: $footer-background;
+        padding: 0 1;
+    }}
+    PermissionBadge .permission-badge--flash-yellow {{
+        color: $footer-key-foreground;
+        text-style: bold;
+    }}
+    PermissionBadge .permission-badge--flash-white {{
+        color: white;
+        text-style: bold;
+    }}
+    """
+
+    _FLASH_YELLOW_SECONDS = 0.15
+    _FLASH_WHITE_SECONDS = 0.4
+
+    def on_mount(self) -> None:
+        """Start showing `"ask"` until `set_value()`/`flash_to()` says otherwise."""
+        self._value: PermissionFramework = "ask"
+        self._flash_stage: _PermissionBadgeFlashStage = "normal"
+
+    def set_value(self, value: PermissionFramework) -> None:
+        """Set the displayed value with no flash -- used for the initial startup render."""
+        self._value = value
+        self.refresh()
+
+    def flash_to(self, value: PermissionFramework) -> None:
+        """Set the displayed value and flash it: a quick `_FLASH_YELLOW_SECONDS` spark of
+        bright yellow, then a longer `_FLASH_WHITE_SECONDS` glow of bright white, then back
+        to the normal footer-chip color.
+        """
+        self._value = value
+        self._flash_stage = "yellow"
+        self.refresh()
+        self.set_timer(self._FLASH_YELLOW_SECONDS, self._advance_flash_to_white)
+
+    def _advance_flash_to_white(self) -> None:
+        self._flash_stage = "white"
+        self.refresh()
+        self.set_timer(self._FLASH_WHITE_SECONDS, self._advance_flash_to_normal)
+
+    def _advance_flash_to_normal(self) -> None:
+        self._flash_stage = "normal"
+        self.refresh()
+
+    def render(self) -> Text:
+        text = f"[{self._value}]"
+        if self._flash_stage == "normal":
+            return Text(text, justify="right")
+        component = (
+            "permission-badge--flash-yellow" if self._flash_stage == "yellow"
+            else "permission-badge--flash-white")
+        return Text(text, style=self.get_component_rich_style(component), justify="right")
+
+
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
@@ -845,6 +972,7 @@ class ReplApp(App[None]):
         with Horizontal(id="status-row"):
             yield PaletteHint(id=PALETTE_HINT_ID)
             yield Footer(show_command_palette=False)
+            yield PermissionBadge(id=PERMISSION_BADGE_ID)
             yield Static(id=STATUS_BAR_ID)
 
     def select_model(self, name: str) -> None:
@@ -1026,6 +1154,7 @@ class ReplApp(App[None]):
         input_widget.styles.max_height = self._process_config.prompt_input_max_lines + 1
         input_widget.focus()
         self._update_status_bar()
+        self._update_permission_badge()
         self._update_palette_hint()
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -1248,6 +1377,36 @@ class ReplApp(App[None]):
         used = format_token_count(self._session.total_tokens_used())
         limit = self._session.max_context_window()
         status_bar.update(used if limit is None else f"{used} / {format_token_count(limit)}")
+
+    def _update_permission_badge(self) -> None:
+        """Set the permission badge to show `Session.config.permission_framework`
+        (`[ask]`/`[auto]`/`[deny]`), so the user always knows whether tool-permission asks
+        are being shown interactively, auto-approved, or auto-denied. Called once from
+        `on_mount()`, with no flash -- `_cycle_permission_framework()` is what changes the
+        value (and flashes the badge) after startup.
+        """
+        badge = self.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        badge.set_value(self._session.config.permission_framework)
+
+    def _cycle_permission_framework(self) -> None:
+        """Advance `Session.config.permission_framework` to the next value in
+        `PERMISSION_FRAMEWORK_CYCLE` (wrapping around), and flash the badge to draw the eye
+        to the change. Bound to Shift+Tab via `PromptInput.CyclePermissionFramework` (see
+        `on_prompt_input_cycle_permission_framework`) since Shift+Tab isn't otherwise
+        meaningful in this single-input-focus app.
+        """
+        current = self._session.config.permission_framework
+        next_index = (PERMISSION_FRAMEWORK_CYCLE.index(current) + 1) % len(PERMISSION_FRAMEWORK_CYCLE)
+        next_value = PERMISSION_FRAMEWORK_CYCLE[next_index]
+        self._session.config.permission_framework = next_value
+        badge = self.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        badge.flash_to(next_value)
+
+    def on_prompt_input_cycle_permission_framework(
+        self, event: "PromptInput.CyclePermissionFramework",
+    ) -> None:
+        """`PromptInput` posts this on Shift+Tab; hand off to `_cycle_permission_framework()`."""
+        self._cycle_permission_framework()
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model, or
