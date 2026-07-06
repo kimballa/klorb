@@ -9,12 +9,6 @@
   on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
   as extensions that should be listed as Workspace Recommendations.
 
-* Various updates are shown as brief toasts in the lower-rhs of the repl view. Given that we
-  have a history scroll, we should:
-  * Convert all existing toasts to messages that will appear in the history.
-    * "Model set to (model name)" is one of these. (Are there more?)
-  * Make a note in an ADR to avoid toasts in favor of history items going forward.  
-
 * style nit: there are lots of repeated lines `from x import y; from x import y'; ...` etc.
   We should collapse all of these to `from x import y, y', y'', ...` so there is a single
   import group per package to load.
