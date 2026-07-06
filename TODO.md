@@ -5,10 +5,6 @@
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
-* In tool limit increase modal there are yes and no buttons. You can [tab] between them
-  but you should also be able to use L/R arrow keys to get there.
-  * (This should be the case for all the yes/no selection modals we have.)
-
 * Some of the config for this repo must actually be settings in my User-specific vscode config
   on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
   as extensions that should be listed as Workspace Recommendations.

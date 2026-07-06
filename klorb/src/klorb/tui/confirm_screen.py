@@ -8,6 +8,7 @@ docs/adrs/reuse-a-generic-confirmscreen-for-workspace-trust-prompts.md.
 """
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -21,7 +22,8 @@ CONFIRM_NO_ID = "confirm-no"
 class ConfirmScreen(ModalScreen[bool]):
     """Shows `message` with Yes/No buttons; dismisses `True`/`False` accordingly. Escape (or
     the "No" button) always dismisses `False`. `yes_label`/`no_label` default to "Yes"/"No"
-    but can be overridden for a more specific affirmative/negative phrasing.
+    but can be overridden for a more specific affirmative/negative phrasing. Left/Right arrow
+    keys move focus between the two buttons, same as Tab/Shift+Tab.
     """
 
     CSS = """
@@ -51,7 +53,11 @@ class ConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    BINDINGS = [("escape", "decline", "No")]
+    BINDINGS = [
+        ("escape", "decline", "No"),
+        Binding("left", "app.focus_previous", "Focus Previous", show=False),
+        Binding("right", "app.focus_next", "Focus Next", show=False),
+    ]
 
     def __init__(self, message: str, *, yes_label: str = "Yes", no_label: str = "No") -> None:
         super().__init__()

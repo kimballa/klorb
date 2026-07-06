@@ -561,7 +561,8 @@ class PromptInput(TextArea):
 class ToolCallLimitScreen(ModalScreen[bool]):
     """Modal asking whether to double a tool-call safety limit and keep going, shown when
     `Session` reports one has been reached (see `ReplApp._on_tool_call_limit_reached`).
-    "Yes" or Enter (via the focused "Yes" button) confirms; "No" or Escape declines.
+    "Yes" or Enter (via the focused "Yes" button) confirms; "No" or Escape declines. Left/Right
+    arrow keys move focus between the two buttons, same as Tab/Shift+Tab.
     """
 
     CSS = """
@@ -591,7 +592,11 @@ class ToolCallLimitScreen(ModalScreen[bool]):
     }
     """
 
-    BINDINGS = [("escape", "decline", "No")]
+    BINDINGS = [
+        ("escape", "decline", "No"),
+        Binding("left", "app.focus_previous", "Focus Previous", show=False),
+        Binding("right", "app.focus_next", "Focus Next", show=False),
+    ]
 
     def __init__(self, message: str) -> None:
         super().__init__()

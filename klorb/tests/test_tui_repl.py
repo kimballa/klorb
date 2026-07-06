@@ -145,6 +145,11 @@ async def _wait_until(pilot: Pilot[None], predicate: Callable[[], bool], timeout
         await pilot.pause()
 
 
+def _focused_id(app: ReplApp) -> str | None:
+    focused = app.focused
+    return focused.id if focused is not None else None
+
+
 def _reply(content: str = "model reply") -> ProviderResponse:
     return ProviderResponse(
         message=Message(
@@ -739,6 +744,34 @@ async def test_tool_call_limit_modal_no_shows_error() -> None:
         error_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
         assert isinstance(error_widget, Static)
         assert "0 tool call" in str(error_widget.render())
+
+
+async def test_tool_call_limit_modal_arrow_keys_move_focus_between_buttons() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+    config = SessionConfig(model="some/model", max_tool_calls_per_turn=0)
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, ToolCallLimitScreen)
+
+        assert _focused_id(app) == "tool-call-limit-yes"
+        await pilot.press("right")
+        assert _focused_id(app) == "tool-call-limit-no"
+        await pilot.press("left")
+        assert _focused_id(app) == "tool-call-limit-yes"
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
 
 # --- tool call rendering ---
@@ -2155,6 +2188,28 @@ async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
     assert session_defaults["model"] == "burned/model"
     assert session_defaults["readDirs"]["allow"] == [str(project_root)]
     assert session_defaults["writeDirs"]["allow"] == [str(project_root)]
+
+
+@pytest.mark.usefixtures("_isolate_process_config_layers")
+async def test_confirm_screen_arrow_keys_move_focus_between_buttons(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=project_root)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+
+        assert _focused_id(app) == CONFIRM_YES_ID
+        await pilot.press("right")
+        assert _focused_id(app) == CONFIRM_NO_ID
+        await pilot.press("left")
+        assert _focused_id(app) == CONFIRM_YES_ID
+
+        await pilot.press("escape")
+        await pilot.pause()
 
 
 @pytest.mark.usefixtures("_isolate_process_config_layers")
