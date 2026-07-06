@@ -29,7 +29,7 @@
   homedir-level settings file.
 
 * When you select a model, it should update the workspace's `sessionDefaults > model` config file 
-  setting so it remembers next time, and write thru to the user homedir settings file.
+  setting so it remembers next time.
 
 * When you select a theme, the theme selection modal should put a `(*)` as a suffix next to
   the currently-selected theme name.

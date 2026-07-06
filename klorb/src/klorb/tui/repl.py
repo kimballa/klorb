@@ -41,6 +41,7 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
 from klorb.process_config import ProcessConfig
 from klorb.process_config import load_process_config
+from klorb.process_config import persist_session_default
 from klorb.process_config import persist_theme
 from klorb.process_config import project_config_path
 from klorb.process_config import user_config_path
@@ -858,11 +859,13 @@ class ReplApp(App[None]):
             yield Static(id=STATUS_BAR_ID)
 
     def select_model(self, name: str) -> None:
-        """Make `name` the active model used for subsequent prompts, and the default model
-        for any future session started in this process.
+        """Make `name` the active model used for subsequent prompts, the default model for any
+        future session started in this process, and — persisted to the per-user config file
+        (`sessionDefaults.model`) — the default for every future klorb process too.
         """
         self._session.config.model = name
         self._process_config.session.model = name
+        persist_session_default(user_config_path(), "model", name)
         self.sub_title = name
         self._update_status_bar()
         self.notify(f"Model set to {name}.")
@@ -938,21 +941,27 @@ class ReplApp(App[None]):
         return self._session.config.thinking_enabled
 
     def set_thinking_enabled(self, enabled: bool) -> None:
-        """Enable or disable extended-thinking requests for subsequent prompts, and for any
-        future session started in this process.
+        """Enable or disable extended-thinking requests for subsequent prompts, the default for
+        any future session started in this process, and — persisted to the per-user config
+        file (`sessionDefaults.thinking.enabled`) — the default for every future klorb process
+        too.
         """
         self._session.config.thinking_enabled = enabled
         self._process_config.session.thinking_enabled = enabled
+        persist_session_default(user_config_path(), "thinking.enabled", enabled)
         self._refresh_header_title()
         self.notify(f"Thinking {'enabled' if enabled else 'disabled'}.")
 
     def set_thinking_effort(self, effort: ThinkingEffort) -> None:
         """Set the reasoning effort level used for subsequent prompts, when thinking is
         enabled and the active model supports it. Also becomes the default effort level for
-        any future session started in this process.
+        any future session started in this process, and — persisted to the per-user config
+        file (`sessionDefaults.thinking.effort`) — the default for every future klorb process
+        too.
         """
         self._session.config.thinking_effort = effort
         self._process_config.session.thinking_effort = effort
+        persist_session_default(user_config_path(), "thinking.effort", effort)
         self._refresh_header_title()
         self.notify(f"Thinking effort set to {effort}.")
 
