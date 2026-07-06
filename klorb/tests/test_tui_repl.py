@@ -1367,7 +1367,7 @@ async def test_clear_replaces_session_and_resets_history() -> None:
         await _invoke_clear_session(pilot)
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert len(history.children) == 0
+        assert len(history.children) == 1  # Just the "Session cleared." notice.
         assert app._session.id != original_session_id
         assert app._session.config.model == "some/model"
         assert app._session.messages == []
@@ -1701,7 +1701,9 @@ async def test_enter_executes_the_highlighted_palette_command_and_clears_the_inp
         assert prompt_input.text == ""
         assert palette.display is False
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert len(history.children) == 0  # clear_session() ran, not a submitted prompt.
+        # clear_session() ran (not a submitted prompt), leaving only its own "Session cleared."
+        # notice behind.
+        assert len(history.children) == 1
 
 
 async def test_palette_selection_is_recorded_in_history_by_its_canonical_name() -> None:

@@ -204,11 +204,13 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry
   per `ThinkingEffort` level, which cluttered the palette). Selecting `"Enable
   thinking"`/`"Disable thinking"` calls `ReplApp.set_thinking_enabled(bool)` directly, which
-  mutates `Session.config.thinking_enabled` (same pattern as `select_model()`) and shows a
-  toast confirming the change. Selecting `"Set thinking effort"` instead reads the current
-  level via the new `ReplApp.get_thinking_effort()` getter and pushes `ThinkingEffortScreen`,
-  a `ModalScreen` with a `"Thinking effort level:"` header `Static` above the three
-  `ThinkingEffort` levels (`"low"`/`"medium"`/`"high"`) listed vertically in an `OptionList`,
+  mutates `Session.config.thinking_enabled` (same pattern as `select_model()`) and appends a
+  `.notice` item to the history scroll confirming the change (see
+  [[avoid-toasts-prefer-history-notices]]). Selecting `"Set thinking effort"` instead reads
+  the current level via the new `ReplApp.get_thinking_effort()` getter and pushes
+  `ThinkingEffortScreen`, a `ModalScreen` with a `"Thinking effort level:"` header `Static`
+  above the three `ThinkingEffort` levels (`"low"`/`"medium"`/`"high"`) listed vertically in
+  an `OptionList`,
   with the currently-active level's entry suffixed with `" *"`; the up/down arrow keys move
   the selection and Enter confirms it (`OptionList`'s built-in bindings), calling
   `ReplApp.set_thinking_effort(level)` and dismissing the modal, while Escape dismisses

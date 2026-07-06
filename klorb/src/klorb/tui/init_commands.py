@@ -17,17 +17,17 @@ from klorb.klorb_init import run_init
 INIT_CONFIG_LABEL = "Init local klorb config"
 
 
-class SupportsNotify(Protocol):
-    """Structural interface for an App that can show a toast notification."""
+class SupportsShowNotice(Protocol):
+    """Structural interface for an App that can append a status message to its history."""
 
-    def notify(self, message: str, *, severity: str = "information") -> None:
-        """Show `message` to the user, e.g. in a toast."""
+    def show_notice(self, message: str, *, error: bool = False) -> None:
+        """Show `message` to the user, e.g. as a `.notice`/`.error` item in the history scroll."""
 
 
 class InitCommandProvider(Provider):
     """Offers "Init local klorb config" via the command palette (`ctrl+p` or by typing
     `>init` in the prompt) — runs `klorb.klorb_init.run_init("user", force=False)` for the
-    user running this REPL, then reports the outcome via `App.notify()`.
+    user running this REPL, then reports the outcome via `App.show_notice()`.
     """
 
     async def search(self, query: str) -> Hits:
@@ -40,10 +40,10 @@ class InitCommandProvider(Provider):
         yield DiscoveryHit(INIT_CONFIG_LABEL, self._run_init)
 
     def _run_init(self) -> None:
-        app = cast(SupportsNotify, self.app)
+        app = cast(SupportsShowNotice, self.app)
         try:
             messages = run_init("user", force=False)
         except InitError as exc:
-            app.notify(str(exc), severity="error")
+            app.show_notice(str(exc), error=True)
             return
-        app.notify("\n".join(messages))
+        app.show_notice("\n".join(messages))
