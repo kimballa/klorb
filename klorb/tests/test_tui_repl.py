@@ -121,11 +121,18 @@ def _isolate_process_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
 
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
-    """Type `>clear` and press enter to select "Clear session" from the inline palette
-    (see docs/specs/command-palette-from-prompt.md), mirroring how a real user reaches it now
-    that the bare `/clear` prompt text is no longer special-cased.
+    """Select "Clear session" from the inline palette (see
+    docs/specs/command-palette-from-prompt.md), mirroring how a real user reaches it now that
+    the bare `/clear` prompt text is no longer special-cased.
+
+    Sets the prompt text directly rather than typing `>clear` key-by-key: each simulated
+    keystroke costs a real ~20-40ms of wall clock (`Pilot.press`'s `wait_for_idle` calls), which
+    adds up across the many tests that call this helper, and setting `.text` still fires the
+    same `TextArea.Changed` -> `_refresh_palette` path a real keystroke would.
     """
-    await pilot.press(*f"{PALETTE_PREFIX}clear")
+    prompt_input = pilot.app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+    prompt_input.text = f"{PALETTE_PREFIX}clear"
+    await pilot.pause()
     await pilot.press("enter")
     await pilot.pause()
 
@@ -1804,8 +1811,13 @@ async def test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt()
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        gibberish = f"{PALETTE_PREFIX}asd3434j2asdadkjfkjl34kj"
-        await pilot.press(*gibberish)
+        # Set directly rather than typed key-by-key: only the end state (a non-matching
+        # draft) matters here, and `.text =` still fires the same `TextArea.Changed` ->
+        # `_refresh_palette` path a real keystroke would, without paying `Pilot.press`'s real
+        # ~20-40ms-per-key `wait_for_idle` cost.
+        gibberish = f"{PALETTE_PREFIX}pxv"
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = gibberish
         await pilot.pause()
 
         palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
@@ -1824,18 +1836,23 @@ async def test_no_match_then_space_dismisses_the_palette() -> None:
     app = ReplApp(session=_session(MagicMock()))
 
     async with app.run_test() as pilot:
-        await pilot.press(*f"{PALETTE_PREFIX}zzzznomatch")
+        # Set directly rather than typed key-by-key (see
+        # test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt for why); only
+        # the "space" keystroke below needs to be a real key, since it's the one that latches
+        # `_palette_dismissed`.
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = f"{PALETTE_PREFIX}pxv"
         await pilot.pause()
 
         palette = app.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
         assert palette.display is False
 
         await pilot.press("space")
-        await pilot.press(*"more text")
+        await pilot.pause()
+        prompt_input.text = f"{PALETTE_PREFIX}pxv ok"
         await pilot.pause()
 
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        assert prompt_input.text == f"{PALETTE_PREFIX}zzzznomatch more text"
+        assert prompt_input.text == f"{PALETTE_PREFIX}pxv ok"
         assert palette.display is False
 
 
@@ -2277,7 +2294,10 @@ async def test_trust_workspace_command_persists_and_offers_config_init(
         await pilot.pause()
         assert len(app.screen_stack) == 1  # already registered: no bootstrap modal at mount
 
-        await pilot.press(*f"{PALETTE_PREFIX}trust")
+        # Set directly rather than typed key-by-key (see
+        # test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt for why).
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = f"{PALETTE_PREFIX}trust"
+        await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
 
@@ -2312,7 +2332,10 @@ async def test_trust_workspace_command_declining_config_init_leaves_no_file(
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        await pilot.press(*f"{PALETTE_PREFIX}trust")
+        # Set directly rather than typed key-by-key (see
+        # test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt for why).
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = f"{PALETTE_PREFIX}trust"
+        await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
 
