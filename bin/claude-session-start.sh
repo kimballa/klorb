@@ -31,6 +31,6 @@ echo "=== Claude session start (cloud setup) ==="
 PYTHON_VER=$(cut -d. -f1-2 "$REPO_ROOT/klorb/.python-version")
 
 cd "$REPO_ROOT"
-PYTHON="python${PYTHON_VER}" make cloud_setup
+APT_GET=apt-get PYTHON="python${PYTHON_VER}" make cloud_setup
 
 echo "=== Session start complete ==="

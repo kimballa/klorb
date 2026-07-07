@@ -5,6 +5,7 @@
 # * `make help` for all commands
 
 SHELL:=/bin/bash
+APT_GET=sudo apt-get
 
 COMMANDS=help cloud_setup
 
@@ -18,6 +19,9 @@ help:
 
 # Perform setup steps needed to set up shop in an ephemeral cloud env for development.
 cloud_setup:
+	# Install system dependencies
+	$(APT_GET) update -qq || true
+	$(APT_GET) -y --fix-missing install bubblewrap
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps
 
 .PHONY: ${COMMANDS}
