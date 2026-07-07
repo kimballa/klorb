@@ -5,7 +5,6 @@ stderr capture and spill), and the bash -i noise-stripping. See
 docs/specs/bash-tool-and-command-permissions.md.
 """
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +14,7 @@ from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
-from klorb.tools import bash as bash_module
+from klorb.session import Session, SessionConfig
 from klorb.tools.bash import BashTool, build_bash_env
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -29,21 +27,16 @@ def _context(
     read_dirs: DirRules | None = None,
     write_dirs: DirRules | None = None,
     process_config: ProcessConfig | None = None,
+    with_session: bool = True,
 ) -> ToolSetupContext:
+    session_config = SessionConfig(
+        workspace=Workspace(path=workspace_root, trusted=True),
+        read_dirs=read_dirs or DirRules(allow=[workspace_root]),
+        write_dirs=write_dirs or DirRules(allow=[workspace_root]),
+        command_rules=command_rules or CommandRules())
+    session = Session(config=session_config) if with_session else None
     return ToolSetupContext(
-        process_config=process_config or ProcessConfig(),
-        session_config=SessionConfig(
-            workspace=Workspace(path=workspace_root, trusted=True),
-            read_dirs=read_dirs or DirRules(allow=[workspace_root]),
-            write_dirs=write_dirs or DirRules(allow=[workspace_root]),
-            command_rules=command_rules or CommandRules()))
-
-
-@pytest.fixture(autouse=True)
-def _reset_sandbox_warnings() -> Iterator[None]:
-    bash_module._warned_sessions.clear()
-    yield
-    bash_module._warned_sessions.clear()
+        process_config=process_config or ProcessConfig(), session_config=session_config, session=session)
 
 
 def _apply(tool: BashTool, command: str, **extra: Any) -> Any:
@@ -214,6 +207,18 @@ def test_sandbox_notice_appears_once_per_session(tmp_path: Path) -> None:
     tool2 = BashTool(context)
     result2 = _apply(tool2, "true")
     assert "sandbox_notice" not in result2
+
+
+def test_sandbox_notice_without_a_session_degrades_gracefully(tmp_path: Path) -> None:
+    """A ToolSetupContext built with no Session (e.g. a caller that constructs one directly,
+    like most other tools' tests) has nowhere to record "already warned" -- BashTool must still
+    work, just without the per-session dedup."""
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["true"]]), with_session=False)
+    assert context.session is None
+    tool = BashTool(context)
+    result = _apply(tool, "true")
+    assert result["success"] is True
+    assert "sandbox_notice" in result
 
 
 # --- build_bash_env ---

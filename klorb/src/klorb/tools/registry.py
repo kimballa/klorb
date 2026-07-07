@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 import klorb.tools as default_tools_package
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 
@@ -41,13 +41,20 @@ class ToolRegistry:
     ) -> None:
         self._process_config = process_config
         self._session_config = session_config
+        self.session: Session | None = None
+        """Back-reference to the `Session` this registry belongs to, so `ToolSetupContext`s it
+        builds carry `session` for `Tool`s that use `session.tool_state` — set post-construction
+        by `Session.__init__`, since a `ToolRegistry` is always built before the `Session` it's
+        passed into (a plain constructor argument would be circular). `None` until that happens
+        (e.g. during `_discover_tools()` below, which only needs a throwaway `Tool` instance to
+        read its `name()`, never `apply()`)."""
         self._tool_classes: dict[str, type[Tool]] = {}
         self._discover_tools(package)
 
     def _context(self, permission_override: Path | None = None) -> ToolSetupContext:
         return ToolSetupContext(
             process_config=self._process_config, session_config=self._session_config,
-            permission_override=permission_override)
+            session=self.session, permission_override=permission_override)
 
     def _discover_tools(self, package: ModuleType) -> None:
         logger.debug("Discovering tools in package %s", package.__name__)
