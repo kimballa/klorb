@@ -77,6 +77,19 @@ class PermissionsTable(ABC, Generic[T]):
         return [rule for rule in rules if self._matches(rule, candidate)]
 
 
+_VERDICT_STRICTNESS: dict[Verdict, int] = {"deny": 0, "ask": 1, "allow": 2}
+
+
+def stricter_verdict(a: Verdict, b: Verdict) -> Verdict:
+    """The more restrictive of two verdicts: `deny` beats `ask` beats `allow`. The single shared
+    implementation of this ordering — `klorb.permissions.workspace.evaluate_write` (combining a
+    `readDirs`/`writeDirs` verdict pair) and `klorb.tools.bash.BashTool` (combining every simple
+    command's/redirection's own verdict for one parsed shell command) both fold their
+    contributions down via this same function, rather than each re-deriving the deny-beats-ask-
+    beats-allow ordering independently."""
+    return a if _VERDICT_STRICTNESS[a] <= _VERDICT_STRICTNESS[b] else b
+
+
 def raise_if_not_allowed(
     verdict: Verdict, *, resource_description: str,
     path: Path | None = None, is_write: bool = False,

@@ -107,9 +107,14 @@
   * Need to handle extra safeguards for writing into ${workspaceRoot}/.klorb/. This is
     implicitly denied; add a separate EscalatePrivileges tool that will unlock
     the dir (with a user ask prompt) for writes (thru the end of the turn? the session?)
-  * what bash commands can it run (or not)
   * what web sites can it access? (... what kind of prompt injection could happen here?)
-  * Use bubblewrap via https://github.com/anthropic-experimental/sandbox-runtime ?
+  * `klorb.sandbox.build_bwrap_argv()` is still a stub — `BashTool` runs every command
+    unsandboxed today (see docs/plans/ready/004-bash-permissions-and-bash-tool.md and
+    docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md). Building the real
+    `bwrap` argv needs a host where unprivileged user namespaces actually work, which this
+    project's own dev/cloud-agent environments don't provide; needs a WSL2 (or similar) instance
+    to develop and verify it against, including working out `bwrap`'s `--json-status-fd` schema
+    for signal/exit-status reporting.
   * TOCTOU: every permission check (klorb.permissions.workspace/directory_access) resolves a
     path string at check time; nothing holds an open OS-level directory handle across the gap
     between that check and the actual file I/O, so a rename/symlink swap in that window could
@@ -134,7 +139,6 @@
     across every path source (config file, and LLM-supplied tool-call `filename`s) instead of
     special-casing `~` alone.
 
-* BashTool
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)
 
 * Context auto-compaction

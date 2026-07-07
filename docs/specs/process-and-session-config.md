@@ -14,8 +14,9 @@ or slicing a superset.
 
 ## How it works
 
-* `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus
-  nine process-only fields today: `prompt_input_max_lines` (int, default `12` — the REPL
+* `ProcessConfig` (`process_config.py`) has one nested field, `session: SessionConfig`, plus a
+  number of process-only fields (the full list is `PROCESS_KEY_MAP`'s keys — see "Configuration"
+  below); the most load-bearing ones: `prompt_input_max_lines` (int, default `12` — the REPL
   prompt textarea's max grow height, applied via `input_widget.styles.max_height` in
   `ReplApp.on_mount()`), `thinking_token_budgets` (`dict[ThinkingEffort, int]`, default
   `session.THINKING_EFFORT_TOKEN_BUDGETS` — the token budgets `Session._reasoning_params()`
@@ -50,6 +51,11 @@ or slicing a superset.
   file tools consult (see docs/specs/permissions.md). These live on `SessionConfig` for the
   same reason as the tool-call caps above: a future "ask" flow will let a user approve a rule
   for the rest of the session, a per-session mutation `ProcessConfig` can't represent.
+  `command_rules` (`CommandRules`, on-disk `commandRules`) is the same shape of thing for
+  `BashTool` — see docs/specs/bash-tool-and-command-permissions.md. `share_env`/`set_env`
+  (on-disk `shareEnv`/`setEnv`) are the environment variables `BashTool` passes through/
+  overrides for the commands it runs — also `SessionConfig`, not `ProcessConfig`, fields, for
+  the same per-session-mutability reason.
 
   `SessionConfig.workspace` (a `klorb.workspace.Workspace`) is which directory this session
   considers its project root, whether it's a registered project, and whether it's trusted;
@@ -181,7 +187,10 @@ sit as flat keys alongside it at the top level:
     "tools.maxCallsPerTurn": 50,
     "tools.maxCallsPerSession": 200,
     "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo"]},
-    "writeDirs": {"deny": [], "ask": [], "allow": []}
+    "writeDirs": {"deny": [], "ask": [], "allow": []},
+    "commandRules": {"deny": [], "ask": [["git", "push", "*"]], "allow": [["git", "*"]]},
+    "shareEnv": ["NVM_DIR"],
+    "setEnv": {"CI": "true"}
   },
 
   "thinking.tokenBudgets": {"low": 4096, "medium": 16384, "high": 32768},
@@ -192,20 +201,29 @@ sit as flat keys alongside it at the top level:
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null,
+  "tools.bash.command": "/bin/bash",
+  "tools.bash.timeout": 120.0,
+  "tools.bash.spillBytes": 8192,
+  "tools.bash.shfmtCommand": "shfmt",
   "ui.theme": null
 }
 ```
 
-There are, as of `readDirs`/`writeDirs`, three distinct cross-layer merge behaviors in one
-file — a reader shouldn't assume there are only the first two:
+There are, as of `readDirs`/`writeDirs`/`commandRules`/`shareEnv`/`setEnv`, four distinct
+cross-layer merge behaviors in one file — a reader shouldn't assume there are only the first two:
 
 1. **Scalar replace** (most keys, e.g. `model`, `terminal.input.maxLines`): a later layer's
    value replaces an earlier layer's outright.
 2. **Wholesale object replace** (`thinking.tokenBudgets`): the whole nested object is replaced,
    not deep-merged — a layer overriding it must repeat every `ThinkingEffort` key it wants to
    keep.
-3. **Array concatenate** (`readDirs`/`writeDirs`): each of `deny`/`ask`/`allow` is extended,
-   not replaced, across every layer — see docs/specs/permissions.md.
+3. **Array concatenate** (`readDirs`/`writeDirs`/`commandRules`/`shareEnv`): each of
+   `deny`/`ask`/`allow` (or, for `shareEnv`, the list itself) is extended, not replaced, across
+   every layer — see docs/specs/permissions.md and
+   docs/specs/bash-tool-and-command-permissions.md.
+4. **Key-by-key merge** (`setEnv`): a later layer's value for a given key replaces an earlier
+   layer's for that same key, but keys from different layers accumulate — effectively
+   `dict.update()` scoped to this one nested object rather than the whole `sessionDefaults` dict.
 
 Within each of those two objects, keys are flat strings with dot-delineated namespaces in
 lowerCamelCase — e.g. `"thinking.tokenBudgets"`, `"terminal.input.maxLines"` (the key is the
@@ -254,7 +272,9 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
   `tools.findFile.maxResults`, `providers.openrouter.baseUrl`, `shell.command`,
-  `shell.timeout`, `compatibility.claudeMarkdown`, `ui.theme`) can be set at the top level.
+  `shell.timeout`, `tools.bash.command`, `tools.bash.timeout`, `tools.bash.spillBytes`,
+  `tools.bash.shfmtCommand`, `compatibility.claudeMarkdown`, `ui.theme`) can be set at the top
+  level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`
@@ -262,9 +282,12 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   inferred from CLI flags (`-m`/`--interactive`/`--no-interactive`), so a
   `sessionDefaults.interactive` key is dropped with a warning like any other unrecognized
   key.
-* `sessionDefaults.readDirs`/`writeDirs` are handled separately from `SESSION_KEY_MAP` — they
-  merge by concatenation, not the scalar replacement `_route_keys()` implements — see
-  docs/specs/permissions.md. `workspace` cannot be set from a config file at all, by design, for
+* `sessionDefaults.readDirs`/`writeDirs`/`commandRules`/`shareEnv`/`setEnv` are handled
+  separately from `SESSION_KEY_MAP` — `readDirs`/`writeDirs`/`commandRules`/`shareEnv` merge by
+  concatenation and `setEnv` merges key-by-key, not the scalar replacement `_route_keys()`
+  implements — see docs/specs/permissions.md and
+  docs/specs/bash-tool-and-command-permissions.md. `workspace` cannot be set from a config file
+  at all, by design, for
   the same reason `interactive` is CLI-only: unlike `interactive`, though, there's no CLI flag
   for it either — it's resolved by `klorb.workspace.TrustManager` and threaded into
   `load_process_config(workspace=...)` instead; see docs/specs/projects-and-trust.md.

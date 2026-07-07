@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from klorb.permissions.directory_access import DirectoryAccessTable, canonicalize_dir, is_privileged_path
-from klorb.permissions.table import Verdict
+from klorb.permissions.table import Verdict, stricter_verdict
 
 if TYPE_CHECKING:
     from klorb.tools.setup_context import ToolSetupContext
@@ -62,14 +62,6 @@ def resolve_within_workspace(context: "ToolSetupContext", filename: str) -> Path
             f"workspace root {root}")
 
     return resolved
-
-
-_VERDICT_STRICTNESS: dict[Verdict, int] = {"deny": 0, "ask": 1, "allow": 2}
-
-
-def _stricter(a: Verdict, b: Verdict) -> Verdict:
-    """The more restrictive of two verdicts: `deny` beats `ask` beats `allow`."""
-    return a if _VERDICT_STRICTNESS[a] <= _VERDICT_STRICTNESS[b] else b
 
 
 def _normalize_for_write(verdict: Verdict | None) -> Verdict:
@@ -110,7 +102,7 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
 
     read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
     write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
-    return _stricter(
+    return stricter_verdict(
         _normalize_for_write(read_table.evaluate(path)),
         _normalize_for_write(write_table.evaluate(path)))
 

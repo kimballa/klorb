@@ -9,8 +9,10 @@ how specific it is. The first concrete resource kind is directory access
 (`klorb.permissions.directory_access`), governing which directories the file tools
 (`ReadFile`, `EditFile`, `ReplaceAll`, `CreateFile`) may read from and write to, via two new
 `SessionConfig` fields, `read_dirs`/`write_dirs`, exposed on-disk as `readDirs`/`writeDirs`.
-`TODO.md`'s "Permissions" backlog item anticipates further resource kinds (bash commands,
-website access) built on the same abstraction. An `"ask"` verdict is no longer necessarily a
+`TODO.md`'s "Permissions" backlog item anticipated further resource kinds built on the same
+abstraction; bash-command access (`CommandPermissionsTable`, gating `BashTool`) is the first of
+those — see docs/specs/bash-tool-and-command-permissions.md — with website access still
+outstanding. An `"ask"` verdict is no longer necessarily a
 dead end either: the interactive TUI can route it through a modal (see "Interactive 'ask'
 confirmation" below) that lets the user grant access once, for the session, or persistently at
 the workspace or per-user level. See
@@ -394,8 +396,10 @@ it has nothing to say about the harness's own trusted config-persistence code.
 
 ## Out of scope
 
-* Bash-command and website-access `PermissionsTable`s — future resource kinds noted in
-  `TODO.md`, not built here.
+* Website-access `PermissionsTable` — a future resource kind noted in `TODO.md`, not built here.
+  Bash-command access (`CommandPermissionsTable`) is a second concrete resource kind built on the
+  same `PermissionsTable` abstraction described here — see
+  docs/specs/bash-tool-and-command-permissions.md.
 * The interactive workspace-trust bootstrap flow (asking whether to treat a directory as a
   project, creating its `.klorb/klorb-config.json`, and setting `workspace.trusted`) lives in
   [[projects-and-trust]], not here — this spec only covers how `workspace.trusted` and
