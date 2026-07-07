@@ -5,13 +5,13 @@ import importlib
 import inspect
 import logging
 import pkgutil
-from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from pydantic import BaseModel
 
 import klorb.tools as default_tools_package
+from klorb.permissions.table import PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
@@ -51,7 +51,7 @@ class ToolRegistry:
         self._tool_classes: dict[str, type[Tool]] = {}
         self._discover_tools(package)
 
-    def _context(self, permission_override: Path | None = None) -> ToolSetupContext:
+    def _context(self, permission_override: PermissionOverride | None = None) -> ToolSetupContext:
         return ToolSetupContext(
             process_config=self._process_config, session_config=self._session_config,
             session=self.session, permission_override=permission_override)
@@ -71,7 +71,7 @@ class ToolRegistry:
                 self._tool_classes[tool.name()] = candidate
         logger.info("Discovered %d tool(s) in %s", len(self._tool_classes), package.__name__)
 
-    def instantiate_tool(self, name: str, *, permission_override: Path | None = None) -> Tool:
+    def instantiate_tool(self, name: str, *, permission_override: PermissionOverride | None = None) -> Tool:
         """Factory method: construct a fresh instance of the named tool from a `ToolSetupContext`
         built from this registry's current `process_config`/`session_config`, raising
         `KeyError` if no tool with that name was discovered. `permission_override`, if given, is

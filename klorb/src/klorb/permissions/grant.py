@@ -1,10 +1,11 @@
 # © Copyright 2026 Aaron Kimball
 """Computes and persists permission grants for the interactive "ask" confirmation flow: what
-gets added to `readDirs`/`writeDirs.allow` and removed from `.ask`, in memory and on disk, when
-a user answers a `PermissionAskRequired` prompt with a persistent scope ("this session", "this
-workspace", or "always for me"). See docs/specs/permissions.md's "Interactive ask confirmation"
-section for the full design, including the granularity and cross-file rules this module
-implements.
+gets added to `readDirs`/`writeDirs.allow` (an "Allow" decision) or `.deny` (a "Deny" decision),
+and removed from `.ask` either way, in memory and on disk, when a user answers a
+`PermissionAskRequired`/`MultiPermissionAskRequired` prompt with a persistent scope ("this
+session", "this workspace", or "always for me"). See docs/specs/permissions.md's "Interactive
+ask confirmation" section for the full design, including the granularity and cross-file rules
+this module implements.
 
 This module writes directly to `klorb-config.json` files via `pathlib`/`json` (through
 `klorb.schema_envelope`), not through `CreateFileTool`/`EditFileTool` or any
@@ -31,9 +32,11 @@ from klorb.schema_envelope import read_versioned_json, write_versioned_json
 from klorb.session import SessionConfig
 
 GrantScope = Literal["session", "workspace", "homedir"]
-"""Where a persistent Allow grant is recorded. "once" isn't included here — it persists
-nothing, and is handled entirely via `ToolSetupContext.permission_override`, never through
-this module."""
+"""Where a persistent decision is recorded. "once" isn't included here — it persists nothing,
+and is handled entirely via `ToolSetupContext.permission_override`, never through this module."""
+
+GrantAction = Literal["allow", "deny"]
+"""Which rule category a persistent decision writes into."""
 
 _READ_DIRS_KEY = "readDirs"
 _WRITE_DIRS_KEY = "writeDirs"
@@ -42,11 +45,13 @@ _WRITE_DIRS_KEY = "writeDirs"
 def compute_grant_paths(
     read_dirs: DirRules, write_dirs: DirRules, workspace_root: Path, candidate: Path, is_write: bool,
 ) -> list[Path]:
-    """The canonicalized directory (or directories) an Allow grant for `candidate` should be
-    recorded at: every `ask`-category rule's own path that matches `candidate` in `read_dirs`
-    (always) unioned with `write_dirs` (only when `is_write` — a read-only access never
-    considers `write_dirs`, matching `resolve_and_evaluate_read()`'s own read-only semantics),
-    or `[candidate.parent]` if nothing matched at all ("the dir was never mentioned").
+    """The canonicalized directory (or directories) a grant for `candidate` should be recorded
+    at: every `ask`-category rule's own path that matches `candidate` in `read_dirs` (always)
+    unioned with `write_dirs` (only when `is_write` — a read-only access never considers
+    `write_dirs`, matching `resolve_and_evaluate_read()`'s own read-only semantics), or
+    `[candidate.parent]` if nothing matched at all ("the dir was never mentioned"). This
+    granularity computation is the same for an Allow or a Deny decision — only which rule
+    category the grant writes into differs (see `GrantAction`).
 
     Pure and read-only — safe to call twice per grant (once by the TUI to render the modal's
     copy before the user picks a scope, once inside `apply_permission_grant` to actually mutate
@@ -63,21 +68,30 @@ def compute_grant_paths(
     return matched if matched else [candidate.parent]
 
 
-def _promote_table(rules: DirRules, workspace_root: Path, granted_paths: list[Path]) -> DirRules:
-    """Return a NEW `DirRules`: `granted_paths` appended to `allow` (deduped by canonical
-    equality against existing `allow` entries), and any `ask` entry that canonicalizes into
-    `granted_paths` removed. `deny` is untouched. Never mutates `rules` in place, per
+def _apply_decision_to_table(
+    rules: DirRules, workspace_root: Path, granted_paths: list[Path], action: GrantAction,
+) -> DirRules:
+    """Return a NEW `DirRules`: `granted_paths` appended to `action`'s own list (`allow` or
+    `deny`, deduped by canonical equality against that list's existing entries), and any `ask`
+    entry that canonicalizes into `granted_paths` removed. The *other* category is left
+    untouched: an "Allow, always" decision never strips an existing `deny` entry (which would be
+    a security regression if a stricter admin-level deny already existed — `deny` still wins via
+    category order regardless), and a "Deny, always" decision never strips an existing `allow`
+    entry (the new `deny` entry already wins on its own). Never mutates `rules` in place, per
     `DirRules`'s documented immutable-by-convention contract.
     """
     granted_set = set(granted_paths)
-    existing_allow = {canonicalize_dir(p, workspace_root) for p in rules.allow}
-    new_allow = list(rules.allow)
+    target = rules.allow if action == "allow" else rules.deny
+    existing_target = {canonicalize_dir(p, workspace_root) for p in target}
+    new_target = list(target)
     for granted in granted_paths:
-        if granted not in existing_allow:
-            new_allow.append(granted)
-            existing_allow.add(granted)
+        if granted not in existing_target:
+            new_target.append(granted)
+            existing_target.add(granted)
     new_ask = [p for p in rules.ask if canonicalize_dir(p, workspace_root) not in granted_set]
-    return DirRules(deny=list(rules.deny), ask=new_ask, allow=new_allow)
+    if action == "allow":
+        return DirRules(deny=list(rules.deny), ask=new_ask, allow=new_target)
+    return DirRules(deny=new_target, ask=new_ask, allow=list(rules.allow))
 
 
 def _dir_rules_from_json(raw: dict[str, Any]) -> DirRules:
@@ -129,25 +143,27 @@ def _write_file_dir_rules(
 
 
 def _apply_grant_to_file(
-    path: Path, workspace_root: Path, granted_paths: list[Path], is_write: bool,
+    path: Path, workspace_root: Path, granted_paths: list[Path], is_write: bool, action: GrantAction,
 ) -> None:
-    """Promote `granted_paths` into `path`'s own `readDirs.allow` (always, removing any of its
-    own matching `readDirs.ask` entries) and `writeDirs.allow` (only when `is_write`, same
-    removal rule), then write `path` back — auto-creating it if it doesn't exist yet.
+    """Record `granted_paths` into `path`'s own `readDirs` (always, removing any of its own
+    matching `readDirs.ask` entries) and `writeDirs` (only when `is_write`, same removal rule) —
+    into `action`'s category (`allow`/`deny`) of each — then write `path` back, auto-creating it
+    if it doesn't exist yet.
     """
     raw, file_read_dirs, file_write_dirs = _load_file_dir_rules(path)
-    new_read_dirs = _promote_table(file_read_dirs, workspace_root, granted_paths)
+    new_read_dirs = _apply_decision_to_table(file_read_dirs, workspace_root, granted_paths, action)
     new_write_dirs = (
-        _promote_table(file_write_dirs, workspace_root, granted_paths) if is_write else file_write_dirs)
+        _apply_decision_to_table(file_write_dirs, workspace_root, granted_paths, action) if is_write
+        else file_write_dirs)
     _write_file_dir_rules(path, raw, new_read_dirs, new_write_dirs)
 
 
 def _clean_ask_entries_only(path: Path, workspace_root: Path, granted_paths: list[Path]) -> None:
     """Best-effort: if `path` exists and its own `readDirs`/`writeDirs.ask` contains an entry
     canonicalizing into `granted_paths`, remove it (independently, from both tables) and write
-    the file back — WITHOUT adding anything to either `allow` list. A no-op if `path` doesn't
-    exist, or if neither table has a matching `ask` entry (avoids a needless rewrite). Used only
-    for the homedir-grant-may-clean-a-stale-workspace-ask asymmetry — see
+    the file back — WITHOUT adding anything to either `allow`/`deny` list. A no-op if `path`
+    doesn't exist, or if neither table has a matching `ask` entry (avoids a needless rewrite).
+    Used only for the homedir-grant-may-clean-a-stale-workspace-ask asymmetry — see
     `apply_permission_grant`; never called the other direction.
     """
     if not path.is_file():
@@ -165,20 +181,27 @@ def _clean_ask_entries_only(path: Path, workspace_root: Path, granted_paths: lis
 
 
 def apply_permission_grant(
+    action: GrantAction,
     scope: GrantScope,
     session_config: SessionConfig,
     process_config: ProcessConfig | None,
     path: Path,
     is_write: bool,
 ) -> None:
-    """Record a permanent Allow grant for `path` at `scope`, per
+    """Record a permanent Allow or Deny decision for `path` at `scope`, per
     docs/specs/permissions.md's "Interactive ask confirmation" section:
 
-    - Always reassigns `session_config.read_dirs` (and `write_dirs`, when `is_write`) wholesale
-      — never mutates their lists in place — so the live session sees the grant immediately.
+    - An `"allow"` decision always reassigns `session_config.read_dirs` (and `write_dirs`, when
+      `is_write`) wholesale — never mutates their lists in place — so the live session sees the
+      grant immediately; write access requires both tables to say `allow` (see
+      docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md), which is why a write
+      grant always promotes read too. A `"deny"` decision only touches the one table matching
+      `is_write` (`write_dirs` for a write ask, `read_dirs` for a read ask) — denying a write
+      doesn't imply denying a read that was never in question, and `write_dirs.deny` alone
+      already forces the stricter-of-both-tables verdict to `"deny"` regardless of `read_dirs`.
     - `"session"` scope stops there: nothing else is touched.
-    - `"workspace"`/`"homedir"` additionally reassign `process_config.session.read_dirs`/
-      `write_dirs` the same way (so a future `/clear` in this process inherits the grant too) —
+    - `"workspace"`/`"homedir"` additionally reassign `process_config.session`'s matching
+      table(s) the same way (so a future `/clear` in this process inherits the decision too) —
       skipped when `process_config` is `None` (a caller, e.g. `Session`, with no live
       `ProcessConfig` to ripple into) — and persist it to the scope's target file —
       `project_config_path(session_config.workspace.path)` for `"workspace"`,
@@ -195,22 +218,30 @@ def apply_permission_grant(
     granted_paths = compute_grant_paths(
         session_config.read_dirs, session_config.write_dirs, workspace_root, path, is_write)
 
-    session_config.read_dirs = _promote_table(session_config.read_dirs, workspace_root, granted_paths)
-    if is_write:
-        session_config.write_dirs = _promote_table(session_config.write_dirs, workspace_root, granted_paths)
+    touch_read = action == "allow" or not is_write
+    touch_write = is_write
+
+    if touch_read:
+        session_config.read_dirs = _apply_decision_to_table(
+            session_config.read_dirs, workspace_root, granted_paths, action)
+    if touch_write:
+        session_config.write_dirs = _apply_decision_to_table(
+            session_config.write_dirs, workspace_root, granted_paths, action)
 
     if scope == "session":
         return
 
     if process_config is not None:
-        process_config.session.read_dirs = _promote_table(
-            process_config.session.read_dirs, workspace_root, granted_paths)
-        if is_write:
-            process_config.session.write_dirs = _promote_table(
-                process_config.session.write_dirs, workspace_root, granted_paths)
+        if touch_read:
+            process_config.session.read_dirs = _apply_decision_to_table(
+                process_config.session.read_dirs, workspace_root, granted_paths, action)
+        if touch_write:
+            process_config.session.write_dirs = _apply_decision_to_table(
+                process_config.session.write_dirs, workspace_root, granted_paths, action)
 
     if scope == "workspace":
-        _apply_grant_to_file(project_config_path(workspace_root), workspace_root, granted_paths, is_write)
+        _apply_grant_to_file(
+            project_config_path(workspace_root), workspace_root, granted_paths, is_write, action)
     else:
-        _apply_grant_to_file(user_config_path(), workspace_root, granted_paths, is_write)
+        _apply_grant_to_file(user_config_path(), workspace_root, granted_paths, is_write, action)
         _clean_ask_entries_only(project_config_path(workspace_root), workspace_root, granted_paths)

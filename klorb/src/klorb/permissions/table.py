@@ -38,6 +38,85 @@ class PermissionAskRequired(Exception):
         self.is_write = is_write
 
 
+class PermissionAskItem:
+    """One individual resource within a `MultiPermissionAskRequired`, needing its own ask/deny
+    decision — a single tool call can raise several of these at once (e.g. `BashTool`: several
+    simple commands and/or redirection targets found within one parsed shell command).
+
+    Exactly one of `path`/`command` is set, or neither: `path` (plus `is_write`) for a
+    directory-access item, matching `PermissionAskRequired`'s own shape; `command` (an argv
+    pattern) for a bash-command-rule item with no filesystem resource; neither for a structural
+    item (the walker couldn't classify something at all) that has no persistable rule of its own
+    — only "once"/"deny" make sense for that last case, never a session/workspace/homedir grant.
+    """
+
+    def __init__(
+        self, resource_description: str, *,
+        path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
+    ) -> None:
+        self.resource_description = resource_description
+        self.path = path
+        self.is_write = is_write
+        self.command = command
+
+
+class PermissionOverride:
+    """A one-shot "Allow (once)" bypass for a single retried tool call — the runtime counterpart
+    to `Session.PermissionDecision(action="allow", scope="once")` — persisting no rule-table
+    entry, so the identical resource asks again the next time it's encountered.
+
+    A single tool call can carry several once-scoped resources at once (see
+    `MultiPermissionAskRequired`), so each field is a set rather than a single value: `paths`
+    mirrors `PermissionAskItem.path` (checked via membership, e.g.
+    `klorb.permissions.workspace.evaluate_write`), `commands` mirrors `PermissionAskItem.command`
+    (each entry the exact argv tuple that was asked about, not a pattern — checked via membership
+    in `klorb.tools.bash.BashTool._classify`), and `reasons` mirrors a structural item's
+    `resource_description` (the deterministic forced-ask reason text `klorb.permissions.
+    shell_parse.parse_command` produces for the same command on every parse, since a structural
+    item has no other stable identifier to bypass by).
+    """
+
+    def __init__(
+        self, *,
+        paths: frozenset[Path] = frozenset(),
+        commands: frozenset[tuple[str, ...]] = frozenset(),
+        reasons: frozenset[str] = frozenset(),
+    ) -> None:
+        self.paths = paths
+        self.commands = commands
+        self.reasons = reasons
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, PermissionOverride):
+            return NotImplemented
+        return (
+            self.paths == other.paths
+            and self.commands == other.commands
+            and self.reasons == other.reasons)
+
+    def __repr__(self) -> str:
+        return (
+            f"PermissionOverride(paths={self.paths!r}, commands={self.commands!r}, "
+            f"reasons={self.reasons!r})")
+
+
+class MultiPermissionAskRequired(Exception):
+    """Raised when a single tool call's verdict computation identifies multiple independent
+    resources needing ask confirmation. Unlike `PermissionAskRequired`, an item here with no
+    `path` (a bare command-pattern or structural ask) is *not* automatically failed closed —
+    `Session._run_tool_calls` asks about every item in `items`, in order, via the same
+    `on_permission_ask` callback a single-resource ask uses, stopping at the first "deny" answer
+    (short-circuit: the whole tool call is denied, no further items are asked about). A
+    `permission_framework` of `"deny"` fails every item closed without asking; `"auto"`
+    auto-approves every item with an in-memory `"session"`-scope grant, the same as a single
+    `PermissionAskRequired` does.
+    """
+
+    def __init__(self, message: str, *, items: list[PermissionAskItem]) -> None:
+        super().__init__(message)
+        self.items = items
+
+
 class PermissionsTable(ABC, Generic[T]):
     """Governs access to one kind of resource via three rule lists — `deny`, `ask`, `allow` —
     evaluated in that fixed category order: the first category with any matching rule wins,

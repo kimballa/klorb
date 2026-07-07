@@ -19,7 +19,12 @@ from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.table import PermissionAskRequired
+from klorb.permissions.table import (
+    MultiPermissionAskRequired,
+    PermissionAskItem,
+    PermissionAskRequired,
+    PermissionOverride,
+)
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
 from klorb.workspace import Workspace
@@ -185,28 +190,41 @@ class SessionConfig(BaseModel):
 
 
 class PermissionAskContext(BaseModel):
-    """Passed to `on_permission_ask` when a tool call raises `PermissionAskRequired`: the
-    resolved candidate path, whether it was a write (vs. read) interrogation, and a
-    human-readable description of the access, for a UI to build its prompt from without
-    re-parsing `PermissionAskRequired`'s message string."""
+    """Passed to `on_permission_ask` once per item needing a decision — either from a plain
+    `PermissionAskRequired` (always exactly one item) or a `MultiPermissionAskRequired` (asked
+    about one at a time, in order — see `Session._run_tool_calls`): the resolved candidate
+    resource and a human-readable description of the access, for a UI to build its prompt from
+    without re-parsing the raised exception's message string.
 
-    path: Path
-    is_write: bool
+    Exactly one of `path`/`command` is set, or neither, mirroring
+    `klorb.permissions.table.PermissionAskItem`: `path` (plus `is_write`) for a directory-access
+    item; `command` (an argv pattern) for a bash-command-rule item with no filesystem resource;
+    neither for a structural item with no persistable rule at all (only `"once"`/deny make sense
+    for that last case — see `PermissionDecision`)."""
+
+    path: Path | None = None
+    is_write: bool = False
+    command: list[str] | None = None
     resource_description: str
 
 
 class PermissionDecision(BaseModel):
-    """The user's answer to a `PermissionAskContext` prompt, returned by `on_permission_ask`.
+    """The user's answer to one `PermissionAskContext` prompt, returned by `on_permission_ask`.
 
-    `"once"`/`"session"`/`"workspace"`/`"homedir"` all mean "retry the call"; for the latter
-    three, `Session._retry_after_permission_decision` applies the persistent grant itself (via
-    `klorb.permissions.grant.apply_permission_grant`, using `Session`'s own `ProcessConfig`
-    reference) before retrying — `on_permission_ask` only needs to ask the user and report their
-    choice back, not apply or persist anything itself. `"deny"`/`"other"` both decline;
-    `other_text` is only meaningful for `"other"`, and is surfaced to the model alongside the
-    generic denial."""
+    `action` and `scope` are independent axes: `"allow"`/`"deny"` cross with `"once"` (retries
+    without persisting anything — via a one-shot `ToolSetupContext.permission_override` for a
+    `path` item, or nothing at all for a `command`/structural item, which persists no rule
+    either way) and `"session"`/`"workspace"`/`"homedir"` (persistent — `Session.
+    _retry_after_permission_decision`/`_retry_after_multi_permission_decision` apply the grant
+    itself, via `klorb.permissions.grant.apply_permission_grant`/`klorb.permissions.
+    command_grant.apply_command_permission_grant`, before retrying — `on_permission_ask` only
+    needs to ask the user and report their choice back, never apply or persist anything itself).
+    `other_text`, if set, means the user typed free-text instead of picking a grid cell —
+    equivalent to `action="deny", scope="once"` but with the explanation surfaced to the model
+    alongside the denial, so it can act on the redirection without a second round trip."""
 
-    choice: Literal["once", "session", "workspace", "homedir", "deny", "other"]
+    action: Literal["allow", "deny"]
+    scope: Literal["once", "session", "workspace", "homedir"] = "once"
     other_text: str | None = None
 
 
@@ -590,36 +608,154 @@ class Session:
     ) -> tuple[Any, str | None]:
         """Resolve a `PermissionAskRequired` into a `(result, error)` pair (see
         `_format_tool_response_content` for how a caller turns this into `tool_response`
-        content): for `"session"`/`"workspace"`/`"homedir"`, first applies the grant `decision`
-        implies via `klorb.permissions.grant.apply_permission_grant` — passing `self.config` and
+        content): for a persistent `scope`, first applies the grant `decision` implies via
+        `klorb.permissions.grant.apply_permission_grant` — passing `self.config` and
         `self._process_config` (possibly `None`; that function skips the process-wide ripple,
         but still persists to disk, in that case) — then retries the call exactly once, same as
-        `"once"` (which instead retries via a one-shot `ToolSetupContext.permission_override`,
-        persisting nothing). Reports a denial for `"deny"`/`"other"` with no retry. Any exception
-        from the retried call (including a second `PermissionAskRequired`) is reported the same
-        generic way an ordinary tool failure is — never a second ask.
+        `scope="once"` (which instead retries via a one-shot `ToolSetupContext.
+        permission_override`, persisting nothing — only meaningful for `action="allow"`; a
+        `"once"` deny needs no override at all). Reports a denial for `action="deny"` (any
+        scope) or `other_text` with no retry. Any exception from the retried call (including a
+        second `PermissionAskRequired`) is reported the same generic way an ordinary tool
+        failure is — never a second ask.
         """
         assert ask_exc.path is not None
-        if decision.choice == "deny":
-            return None, f"Permission denied: {ask_exc}"
-        if decision.choice == "other":
+        if decision.other_text is not None:
             return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
-        if decision.choice in ("session", "workspace", "homedir"):
-            # Local import: `klorb.permissions.grant` imports `SessionConfig` from this module,
-            # so importing it at module scope here would be circular.
+        if decision.action == "deny":
+            if decision.scope != "once":
+                # Local import: `klorb.permissions.grant` imports `SessionConfig` from this
+                # module, so importing it at module scope here would be circular.
+                from klorb.permissions.grant import apply_permission_grant
+                apply_permission_grant(
+                    "deny", decision.scope, self.config, self._process_config,
+                    ask_exc.path, ask_exc.is_write)
+            return None, f"Permission denied: {ask_exc}"
+        if decision.scope in ("session", "workspace", "homedir"):
             from klorb.permissions.grant import apply_permission_grant
             apply_permission_grant(
-                decision.choice, self.config, self._process_config, ask_exc.path, ask_exc.is_write)
+                "allow", decision.scope, self.config, self._process_config,
+                ask_exc.path, ask_exc.is_write)
         assert self._tool_registry is not None
         try:
-            if decision.choice == "once":
-                tool = self._tool_registry.instantiate_tool(call.name, permission_override=ask_exc.path)
+            if decision.scope == "once":
+                override = PermissionOverride(paths=frozenset({ask_exc.path}))
+                tool = self._tool_registry.instantiate_tool(call.name, permission_override=override)
             else:
                 tool = self._tool_registry.instantiate_tool(call.name)
             return tool.apply(args), None
         except Exception as exc:
             logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
             return None, str(exc)
+
+    def _retry_after_multi_permission_decisions(
+        self,
+        call: ToolCallRequest,
+        args: dict[str, Any],
+        items: list[PermissionAskItem],
+        decisions: list[PermissionDecision],
+    ) -> tuple[Any, str | None]:
+        """Resolve a `MultiPermissionAskRequired`'s items into a `(result, error)` pair, given
+        one `PermissionDecision` already collected per item (`_run_tool_calls` stops collecting
+        — and calls this with a shorter `decisions` list than `items` — at the first `"deny"`
+        answer; see that method). Applies every persistent-scope `"allow"` decision's grant
+        (via `klorb.permissions.grant.apply_permission_grant` for a `path` item,
+        `klorb.permissions.command_grant.apply_command_permission_grant` for a `command` item —
+        a structural item with neither has no rule to persist, so any `decision` for it other
+        than `action="deny"` is a no-op grant-wise). Every `scope="once"` decision instead
+        contributes its item to a single `PermissionOverride` (see `ToolSetupContext.
+        permission_override`) covering all of them at once, since retrying happens exactly once
+        for the whole call — never once per item, as re-parsing/re-evaluating after each
+        individual grant would be wasted work. If `decisions` is shorter than `items` (an item
+        was denied), or any collected decision is itself a denial, reports that denial with no
+        retry at all.
+        """
+        for item, decision in zip(items, decisions):
+            if decision.action == "deny" or decision.other_text is not None:
+                reason = f"Permission denied: {item.resource_description}"
+                if decision.other_text is not None:
+                    reason += f". User note: {decision.other_text}"
+                return None, reason
+
+        if len(decisions) < len(items):
+            denied_item = items[len(decisions)]
+            return None, f"Permission denied: {denied_item.resource_description}"
+
+        # Local imports: both modules import `SessionConfig` from this module, so importing them
+        # at module scope here would be circular.
+        from klorb.permissions.command_grant import apply_command_permission_grant
+        from klorb.permissions.grant import apply_permission_grant
+
+        once_paths: set[Path] = set()
+        once_commands: set[tuple[str, ...]] = set()
+        once_reasons: set[str] = set()
+        for item, decision in zip(items, decisions):
+            if decision.scope == "once":
+                if item.path is not None:
+                    once_paths.add(item.path)
+                elif item.command is not None:
+                    once_commands.add(tuple(item.command))
+                else:
+                    once_reasons.add(item.resource_description)
+                continue
+            if item.path is not None:
+                apply_permission_grant(
+                    decision.action, decision.scope, self.config, self._process_config,
+                    item.path, item.is_write)
+            elif item.command is not None:
+                apply_command_permission_grant(
+                    decision.action, decision.scope, self.config, self._process_config, item.command)
+
+        override = None
+        if once_paths or once_commands or once_reasons:
+            override = PermissionOverride(
+                paths=frozenset(once_paths), commands=frozenset(once_commands),
+                reasons=frozenset(once_reasons))
+
+        assert self._tool_registry is not None
+        try:
+            tool = self._tool_registry.instantiate_tool(call.name, permission_override=override)
+            return tool.apply(args), None
+        except Exception as exc:
+            logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
+            return None, str(exc)
+
+    def _resolve_multi_permission_ask(
+        self,
+        call: ToolCallRequest,
+        args: dict[str, Any],
+        multi_ask_exc: MultiPermissionAskRequired,
+        callbacks: TurnEventHandlers,
+    ) -> tuple[Any, str | None]:
+        """Resolve a `MultiPermissionAskRequired` into a `(result, error)` pair, branching on
+        `config.permission_framework` exactly like the single-item `PermissionAskRequired` path
+        does — except an item with no `path` is never automatically failed closed here (see
+        `MultiPermissionAskRequired`'s own docstring for why). `"ask"` asks about every item in
+        order via `callbacks.on_permission_ask`, stopping at the first `action="deny"` (or
+        `other_text`-bearing) answer — the remaining items are never asked about, and
+        `_retry_after_multi_permission_decisions` reports that denial without retrying.
+        """
+        if self.config.permission_framework == "deny":
+            logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
+            return None, str(multi_ask_exc)
+        if self.config.permission_framework == "auto":
+            logger.info(
+                "Auto-approving permission ask under permissionFramework=auto: %s", multi_ask_exc)
+            decisions = [PermissionDecision(action="allow", scope="session") for _ in multi_ask_exc.items]
+            return self._retry_after_multi_permission_decisions(call, args, multi_ask_exc.items, decisions)
+        if callbacks.on_permission_ask is None:
+            logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
+            return None, str(multi_ask_exc)
+
+        decisions: list[PermissionDecision] = []
+        for item in multi_ask_exc.items:
+            decision = callbacks.on_permission_ask(PermissionAskContext(
+                path=item.path, is_write=item.is_write, command=item.command,
+                resource_description=item.resource_description))
+            decisions.append(decision)
+            if decision.action == "deny" or decision.other_text is not None:
+                break
+        return self._retry_after_multi_permission_decisions(call, args, multi_ask_exc.items, decisions)
 
     def _run_tool_calls(
         self,
@@ -645,13 +781,27 @@ class Session:
         If a call raises `PermissionAskRequired` with a `path`, how it's resolved depends on
         `config.permission_framework` (see `SessionConfig.permission_framework`): `"deny"` fails
         closed without invoking any callback; `"auto"` auto-approves via a synthesized
-        `PermissionDecision(choice="session")`, also without invoking any callback; `"ask"` asks
-        `callbacks.on_permission_ask`, if given, for a `PermissionDecision` and retries or denies
-        accordingly (see `_retry_after_permission_decision`) — with no callback (e.g. a headless
-        one-shot run left at the `"ask"` default), it fails closed the same as `"deny"`. An
-        exception with no `path` (a call site that didn't supply one) always fails closed,
-        regardless of `permission_framework`. Failing closed reports the error back to the model
-        as this call's `tool_response`, exactly like any other tool exception.
+        `PermissionDecision(action="allow", scope="session")`, also without invoking any
+        callback; `"ask"` asks `callbacks.on_permission_ask`, if given, for a `PermissionDecision`
+        and retries or denies accordingly (see `_retry_after_permission_decision`) — with no
+        callback (e.g. a headless one-shot run left at the `"ask"` default), it fails closed the
+        same as `"deny"`. An exception with no `path` (a call site that didn't supply one)
+        always fails closed, regardless of `permission_framework`.
+
+        A call that raises `MultiPermissionAskRequired` instead (today, only `BashTool`, whose
+        one parsed command can independently touch several commands/redirection targets) is
+        resolved item-by-item, in order, via the same `on_permission_ask` callback and the same
+        `permission_framework` branching — see `_resolve_multi_permission_ask`. Unlike a plain
+        `PermissionAskRequired`, an item here with no `path` (a bare command-pattern or
+        structural ask) is *not* automatically failed closed: it's asked about (or auto-approved
+        under `"auto"`) exactly like any other item, just persisted through `CommandRules`
+        grant machinery instead of `readDirs`/`writeDirs` when it has a `command`, or not
+        persisted at all when it has neither (see `PermissionAskItem`). The first item answered
+        `action="deny"` (or with `other_text` set) short-circuits: no further items are asked
+        about, and the whole call is denied.
+
+        Failing closed (either exception type) reports the error back to the model as this
+        call's `tool_response`, exactly like any other tool exception.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -690,6 +840,8 @@ class Session:
                 logger.debug("Tool call %s parsed arguments: %r", call.name, args)
                 result = tool.apply(args)
                 logger.info("Tool call %s succeeded: %s", call.name, result)
+            except MultiPermissionAskRequired as multi_ask_exc:
+                result, error = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
             except PermissionAskRequired as ask_exc:
                 if ask_exc.path is None or self.config.permission_framework == "deny":
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
@@ -697,7 +849,7 @@ class Session:
                 elif self.config.permission_framework == "auto":
                     logger.info(
                         "Auto-approving permission ask under permissionFramework=auto: %s", ask_exc)
-                    decision = PermissionDecision(choice="session")
+                    decision = PermissionDecision(action="allow", scope="session")
                     result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
                 elif callbacks.on_permission_ask is None:
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)

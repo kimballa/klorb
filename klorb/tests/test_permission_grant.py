@@ -12,7 +12,7 @@ import pytest
 
 from klorb import process_config as process_config_module
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.grant import _promote_table, apply_permission_grant, compute_grant_paths
+from klorb.permissions.grant import _apply_decision_to_table, apply_permission_grant, compute_grant_paths
 from klorb.process_config import (
     CONFIG_SCHEMA_NAME,
     SESSION_DEFAULTS_KEY,
@@ -100,18 +100,46 @@ def test_compute_grant_paths_multiple_overlapping_ask_rules_all_returned(tmp_pat
     assert set(granted) == {broad, narrow}
 
 
-# --- _promote_table ---
+# --- _apply_decision_to_table ---
 
 
-def test_promote_table_never_mutates_input_in_place(tmp_path: Path) -> None:
+def test_apply_decision_to_table_never_mutates_input_in_place(tmp_path: Path) -> None:
     original_ask = [tmp_path]
     original_allow: list[Path] = []
     rules = DirRules(ask=list(original_ask), allow=list(original_allow))
 
-    _promote_table(rules, tmp_path, [tmp_path])
+    _apply_decision_to_table(rules, tmp_path, [tmp_path], "allow")
 
     assert rules.ask == original_ask
     assert rules.allow == original_allow
+
+
+def test_apply_decision_to_table_deny_action_writes_deny_not_allow(tmp_path: Path) -> None:
+    rules = DirRules(ask=[tmp_path])
+
+    result = _apply_decision_to_table(rules, tmp_path, [tmp_path], "deny")
+
+    assert result.deny == [tmp_path]
+    assert result.allow == []
+    assert result.ask == []
+
+
+def test_apply_decision_to_table_deny_does_not_touch_existing_allow(tmp_path: Path) -> None:
+    other_dir = tmp_path / "other"
+    rules = DirRules(ask=[tmp_path], allow=[other_dir])
+
+    result = _apply_decision_to_table(rules, tmp_path, [tmp_path], "deny")
+
+    assert result.allow == [other_dir]
+
+
+def test_apply_decision_to_table_allow_does_not_touch_existing_deny(tmp_path: Path) -> None:
+    other_dir = tmp_path / "other"
+    rules = DirRules(ask=[tmp_path], deny=[other_dir])
+
+    result = _apply_decision_to_table(rules, tmp_path, [tmp_path], "allow")
+
+    assert result.deny == [other_dir]
 
 
 # --- apply_permission_grant: "session" scope ---
@@ -122,7 +150,7 @@ def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> 
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("session", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "session", session_config, process_config, target, is_write=True)
 
     assert session_config.read_dirs.allow == [target.parent]
     assert session_config.write_dirs.allow == [target.parent]
@@ -132,12 +160,36 @@ def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> 
     assert not user_config_path().exists()
 
 
+def test_session_scope_deny_write_only_touches_write_dirs(tmp_path: Path) -> None:
+    """A "Deny, always" decision on a write ask must not also deny read access that was never
+    in question -- only writeDirs.deny gets the new entry."""
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    process_config = ProcessConfig()
+    target = tmp_path / "sub" / "f.txt"
+
+    apply_permission_grant("deny", "session", session_config, process_config, target, is_write=True)
+
+    assert session_config.write_dirs.deny == [target.parent]
+    assert session_config.read_dirs == DirRules()
+
+
+def test_session_scope_deny_read_only_touches_read_dirs(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    process_config = ProcessConfig()
+    target = tmp_path / "sub" / "f.txt"
+
+    apply_permission_grant("deny", "session", session_config, process_config, target, is_write=False)
+
+    assert session_config.read_dirs.deny == [target.parent]
+    assert session_config.write_dirs == DirRules()
+
+
 def test_session_scope_read_only_never_touches_write_dirs(tmp_path: Path) -> None:
     session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("session", session_config, process_config, target, is_write=False)
+    apply_permission_grant("allow", "session", session_config, process_config, target, is_write=False)
 
     assert session_config.read_dirs.allow == [target.parent]
     assert session_config.write_dirs == DirRules()
@@ -151,7 +203,7 @@ def test_workspace_scope_mutates_session_and_process_template(tmp_path: Path) ->
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=True)
 
     assert session_config.read_dirs.allow == [target.parent]
     assert session_config.write_dirs.allow == [target.parent]
@@ -169,7 +221,7 @@ def test_workspace_scope_with_no_process_config_skips_the_ripple_but_still_persi
     session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("workspace", session_config, None, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, None, target, is_write=True)
 
     assert session_config.read_dirs.allow == [target.parent]
     assert session_config.write_dirs.allow == [target.parent]
@@ -184,7 +236,7 @@ def test_workspace_scope_creates_file_if_missing(tmp_path: Path) -> None:
     path = project_config_path(tmp_path)
     assert not path.exists()
 
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=True)
 
     assert path.is_file()
     session_defaults = _read_session_defaults(path)
@@ -203,7 +255,7 @@ def test_workspace_scope_preserves_unrelated_keys_in_existing_file(tmp_path: Pat
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=True)
 
     session_defaults = _read_session_defaults(path)
     assert session_defaults["model"] == "project/model"
@@ -226,7 +278,7 @@ def test_workspace_scope_promotes_matched_ask_rule_and_removes_it_from_the_same_
     process_config = ProcessConfig()
     target = ask_dir / "sub" / "f.txt"
 
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=True)
 
     assert session_config.read_dirs.ask == []
     assert session_config.read_dirs.allow == [ask_dir]
@@ -249,7 +301,7 @@ def test_workspace_scope_never_opens_the_homedir_file(tmp_path: Path) -> None:
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=False)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=False)
 
     assert homedir_path.stat().st_mtime_ns == homedir_mtime_before
     session_defaults = _read_session_defaults(homedir_path)
@@ -266,7 +318,7 @@ def test_homedir_scope_creates_file_if_missing(tmp_path: Path) -> None:
     path = user_config_path()
     assert not path.exists()
 
-    apply_permission_grant("homedir", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "homedir", session_config, process_config, target, is_write=True)
 
     assert path.is_file()
     session_defaults = _read_session_defaults(path)
@@ -281,7 +333,7 @@ def test_homedir_scope_with_no_process_config_skips_the_ripple_but_still_persist
     target = tmp_path / "sub" / "f.txt"
     path = user_config_path()
 
-    apply_permission_grant("homedir", session_config, None, target, is_write=True)
+    apply_permission_grant("allow", "homedir", session_config, None, target, is_write=True)
 
     assert path.is_file()
     assert session_config.read_dirs.allow == [target.parent]
@@ -300,7 +352,7 @@ def test_homedir_scope_cleans_matching_ask_entry_out_of_workspace_file(tmp_path:
     process_config = ProcessConfig()
     target = ask_dir / "sub" / "f.txt"
 
-    apply_permission_grant("homedir", session_config, process_config, target, is_write=False)
+    apply_permission_grant("allow", "homedir", session_config, process_config, target, is_write=False)
 
     # Removal only: the workspace file's ask entry is gone, but nothing was added to its allow.
     workspace_defaults = _read_session_defaults(workspace_path)
@@ -318,7 +370,7 @@ def test_homedir_scope_workspace_cleanup_is_a_noop_when_workspace_file_is_absent
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("homedir", session_config, process_config, target, is_write=True)  # must not raise
+    apply_permission_grant("allow", "homedir", session_config, process_config, target, is_write=True)  # must not raise
 
     assert not project_config_path(tmp_path).exists()
 
@@ -334,7 +386,7 @@ def test_write_access_grants_read_dirs_even_when_only_write_dirs_had_the_ask_rul
     process_config = ProcessConfig()
     target = ask_dir / "f.txt"
 
-    apply_permission_grant("session", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "session", session_config, process_config, target, is_write=True)
 
     assert session_config.read_dirs.allow == [ask_dir]
     assert session_config.write_dirs.allow == [ask_dir]
@@ -345,7 +397,7 @@ def test_read_only_access_never_mutates_write_dirs(tmp_path: Path) -> None:
     process_config = ProcessConfig()
     target = tmp_path / "f.txt"
 
-    apply_permission_grant("session", session_config, process_config, target, is_write=False)
+    apply_permission_grant("allow", "session", session_config, process_config, target, is_write=False)
 
     assert session_config.write_dirs == DirRules(ask=[tmp_path])  # untouched
 
@@ -358,8 +410,8 @@ def test_repeated_grant_does_not_duplicate_allow_entries(tmp_path: Path) -> None
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=True)
-    apply_permission_grant("workspace", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=True)
+    apply_permission_grant("allow", "workspace", session_config, process_config, target, is_write=True)
 
     assert session_config.read_dirs.allow == [target.parent]
     assert session_config.write_dirs.allow == [target.parent]

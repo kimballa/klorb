@@ -17,7 +17,7 @@ from klorb.permissions.directory_access import (
     is_privileged_path,
     privileged_dirs,
 )
-from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
+from klorb.permissions.table import PermissionAskRequired, PermissionOverride, raise_if_not_allowed
 from klorb.permissions.workspace import (
     canonicalize_candidate,
     evaluate_write,
@@ -548,7 +548,7 @@ def test_permission_override_short_circuits_evaluate_write_to_allow(tmp_path: Pa
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
-        permission_override=path)
+        permission_override=PermissionOverride(paths=frozenset({path})))
     assert evaluate_write(context, path) == "allow"
 
 
@@ -556,7 +556,7 @@ def test_permission_override_short_circuits_resolve_and_evaluate_read_to_allow(t
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
-        permission_override=path)
+        permission_override=PermissionOverride(paths=frozenset({path})))
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
     assert verdict == "allow"
 
@@ -566,7 +566,7 @@ def test_permission_override_has_no_effect_on_a_different_path(tmp_path: Path) -
     other_path = resolve_within_workspace(_context(tmp_path), "other.txt")
     context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
-        permission_override=other_path)
+        permission_override=PermissionOverride(paths=frozenset({other_path})))
     assert evaluate_write(context, path) == "ask"
 
 
@@ -576,11 +576,11 @@ def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path)
     path = resolve_within_workspace(_context(tmp_path), ".klorb/klorb-config.json")
     context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
-        permission_override=path)
+        permission_override=PermissionOverride(paths=frozenset({path})))
     assert evaluate_write(context, path) == "deny"
 
     read_context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
-        permission_override=path)
+        permission_override=PermissionOverride(paths=frozenset({path})))
     _, verdict = resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")
     assert verdict == "deny"

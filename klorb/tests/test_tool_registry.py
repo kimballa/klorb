@@ -17,7 +17,7 @@ def test_discovers_tools_in_package() -> None:
 
     names = {tool.name() for tool in registry.tools()}
 
-    assert names == {"echo", "add", "ask_permission"}
+    assert names == {"echo", "add", "ask_permission", "ask_multi_permission"}
 
 
 def test_instantiate_tool_returns_tool_by_name() -> None:

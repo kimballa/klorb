@@ -1,10 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """Configuration handed to every `Tool` at construction time."""
 
-from pathlib import Path
-
 from pydantic import BaseModel, ConfigDict
 
+from klorb.permissions.table import PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 
@@ -36,9 +35,10 @@ class ToolSetupContext(BaseModel):
     by `Session.__init__` (`ToolRegistry` is always built before the `Session` it's passed into,
     so this can't be a `ToolRegistry` constructor argument) and threaded into every
     `ToolSetupContext` `ToolRegistry` builds from then on."""
-    permission_override: Path | None = None
-    """When set, the exact resolved candidate path this one `Tool` instance is permitted to
-    bypass the `readDirs`/`writeDirs` tables for — a one-shot "Allow (once)" grant (see
-    `Session.PermissionDecision`) that persists no table entry, so the identical access asks
-    again next time. Never bypasses the unconditional `is_privileged_path()` deny — see
+    permission_override: PermissionOverride | None = None
+    """When set, the resources this one `Tool` instance is permitted to bypass the
+    `readDirs`/`writeDirs`/`commandRules` tables for — one or more one-shot "Allow (once)"
+    grants (see `Session.PermissionDecision`, `klorb.permissions.table.PermissionOverride`) that
+    persist no table entry, so the identical access asks again next time. Never bypasses the
+    unconditional `is_privileged_path()` deny — see
     `klorb.permissions.workspace.evaluate_write`/`resolve_and_evaluate_read`."""
