@@ -88,7 +88,7 @@ DEFAULT_BASH_SPILL_BYTES = 8192
 """Default per-stream size threshold above which `BashTool` spills `stdout`/`stderr` to a file
 (reporting `stdout_file`/`stderr_file` instead of inline text) rather than returning it directly
 in the tool result — see `ProcessConfig.bash_spill_bytes` and
-docs/plans/ready/004-bash-permissions-and-bash-tool.md's "stdout and stderr" section."""
+docs/specs/bash-tool-and-command-permissions.md."""
 
 DEFAULT_SHFMT_COMMAND = "shfmt"
 """Default `shfmt` binary name `BashTool` parses commands through (via
@@ -116,7 +116,7 @@ config file — see docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDir
 value for the same key replaces an earlier layer's), none of them the 1:1 scalar replacement
 `_route_keys()` implements — so `load_process_config()` handles all five separately, ahead of
 `_route_keys()` — see docs/specs/permissions.md and
-docs/plans/ready/004-bash-permissions-and-bash-tool.md. `workspace` is deliberately absent too:
+docs/specs/bash-tool-and-command-permissions.md. `workspace` is deliberately absent too:
 it has no on-disk key at all, by design — see `SessionConfig.workspace`/
 docs/specs/projects-and-trust.md — a project must never be able to grant itself trust via its
 own config file.
@@ -181,8 +181,7 @@ class ProcessConfig(BaseModel):
     bash_timeout_seconds: float = DEFAULT_BASH_TIMEOUT_SECONDS
     """Maximum wall-clock seconds one `BashTool` command may run before it's killed and reported
     back to the model as timed out. Unlike `shell_timeout_seconds`, always enforced (not
-    `None`-able) — see docs/plans/ready/004-bash-permissions-and-bash-tool.md's "timeout"
-    section."""
+    `None`-able)."""
     bash_spill_bytes: int = DEFAULT_BASH_SPILL_BYTES
     """Per-stream `stdout`/`stderr` byte threshold above which `BashTool` reports a file path
     (`stdout_file`/`stderr_file`) instead of the content itself, so a chatty command can't
@@ -340,7 +339,7 @@ def load_process_config(
     `sessionDefaults.setEnv` merges key-by-key instead (a later layer's value for the same key
     replaces an earlier layer's, same as `dict.update` but scoped to this one nested object
     rather than the whole `sessionDefaults` dict) — see
-    docs/plans/ready/004-bash-permissions-and-bash-tool.md's "env vars" section.
+    docs/specs/bash-tool-and-command-permissions.md.
 
     `workspace` identifies the current project root and whether it's trusted — see
     `klorb.workspace.Workspace` and docs/specs/projects-and-trust.md. When omitted (the common

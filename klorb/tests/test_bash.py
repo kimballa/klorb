@@ -2,11 +2,12 @@
 """Tests for klorb.tools.bash.BashTool: permission classification (CommandRules + readDirs/
 writeDirs on redirection targets), execution (env building, timeout, signal decoding, stdout/
 stderr capture and spill), and the bash -i noise-stripping. See
-docs/plans/ready/004-bash-permissions-and-bash-tool.md.
+docs/specs/bash-tool-and-command-permissions.md.
 """
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -45,13 +46,17 @@ def _reset_sandbox_warnings() -> Iterator[None]:
     bash_module._warned_sessions.clear()
 
 
+def _apply(tool: BashTool, command: str, **extra: Any) -> Any:
+    return tool.apply({"command": command, "shell_lifetime": "command", **extra})
+
+
 # --- permission classification ---
 
 
 def test_allowed_command_runs(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
-    result = tool.apply({"command": "echo hello"})
+    result = _apply(tool, "echo hello")
     assert result["success"] is True
     assert result["stdout"] == "hello\n"
     assert result["exit_status"] == 0
@@ -62,14 +67,14 @@ def test_command_with_no_matching_rule_asks(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules())
     tool = BashTool(context)
     with pytest.raises(PermissionAskRequired):
-        tool.apply({"command": "echo hello"})
+        _apply(tool, "echo hello")
 
 
 def test_denied_command_denies(tmp_path: Path) -> None:
-    context = _context(tmp_path, command_rules=CommandRules(deny=[["rm", "*"]]))
+    context = _context(tmp_path, command_rules=CommandRules(deny=[["rm", "?"]]))
     tool = BashTool(context)
     with pytest.raises(PermissionError):
-        tool.apply({"command": "rm -rf /tmp/whatever"})
+        _apply(tool, "rm -rf /tmp/whatever")
 
 
 def test_non_literal_argument_asks_even_with_broad_allow(tmp_path: Path) -> None:
@@ -78,7 +83,7 @@ def test_non_literal_argument_asks_even_with_broad_allow(tmp_path: Path) -> None
     context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
     with pytest.raises(PermissionAskRequired):
-        tool.apply({"command": "echo $HOME"})
+        _apply(tool, "echo $HOME")
 
 
 def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:
@@ -87,14 +92,14 @@ def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:
         write_dirs=DirRules())  # nothing explicitly allowed -> write normalizes to "ask"
     tool = BashTool(context)
     with pytest.raises(PermissionAskRequired):
-        tool.apply({"command": f"echo hi > {tmp_path / 'out.txt'}"})
+        _apply(tool, f"echo hi > {tmp_path / 'out.txt'}")
 
 
 def test_write_redirect_allowed_when_write_dirs_allows(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
     out_file = tmp_path / "out.txt"
-    result = tool.apply({"command": f"echo hi > {out_file}"})
+    result = _apply(tool, f"echo hi > {out_file}")
     assert result["success"] is True
     assert out_file.read_text() == "hi\n"
 
@@ -106,14 +111,21 @@ def test_write_redirect_outside_workspace_raises(tmp_path: Path) -> None:
     context = _context(workspace, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
     with pytest.raises(PermissionError):
-        tool.apply({"command": f"echo hi > {outside}"})
+        _apply(tool, f"echo hi > {outside}")
 
 
 def test_empty_command_raises_value_error(tmp_path: Path) -> None:
     context = _context(tmp_path)
     tool = BashTool(context)
     with pytest.raises(ValueError, match="empty"):
-        tool.apply({"command": "   "})
+        _apply(tool, "   ")
+
+
+def test_shell_lifetime_other_than_command_raises_value_error(tmp_path: Path) -> None:
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
+    tool = BashTool(context)
+    with pytest.raises(ValueError, match="shell_lifetime"):
+        tool.apply({"command": "echo hi", "shell_lifetime": "session"})
 
 
 # --- execution ---
@@ -122,7 +134,7 @@ def test_empty_command_raises_value_error(tmp_path: Path) -> None:
 def test_nonzero_exit_reports_failure(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["false"]]))
     tool = BashTool(context)
-    result = tool.apply({"command": "false"})
+    result = _apply(tool, "false")
     assert result["success"] is False
     assert result["exit_status"] == 1
     assert result["failure_reason"] == "Process completed normally with non-zero status"
@@ -133,11 +145,10 @@ def test_signal_death_is_decoded(tmp_path: Path) -> None:
     (tail-call optimization, verified empirically -- see BashTool._decode_exit's docstring), so
     Python observes a *negative* returncode here, not a positive 128+signum one; both shapes
     must decode to the same human-readable signal name."""
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["python3", "*"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["python3", "?"]]))
     tool = BashTool(context)
-    result = tool.apply({
-        "command": "python3 -c \"import os, signal; os.kill(os.getpid(), signal.SIGSEGV)\"",
-    })
+    result = _apply(
+        tool, "python3 -c \"import os, signal; os.kill(os.getpid(), signal.SIGSEGV)\"")
     assert result["success"] is False
     assert result["exit_status"] == -11
     assert "SEGV" in result["failure_reason"]
@@ -149,16 +160,16 @@ def test_timeout_kills_process_and_reports_it(tmp_path: Path) -> None:
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["sleep", "*"]]), process_config=process_config)
     tool = BashTool(context)
-    result = tool.apply({"command": "sleep 5"})
+    result = _apply(tool, "sleep 5")
     assert result["success"] is False
     assert "timed out" in result["failure_reason"]
     assert result["runtime"] < 2.0
 
 
 def test_stderr_is_captured(tmp_path: Path) -> None:
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "*"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "?"]]))
     tool = BashTool(context)
-    result = tool.apply({"command": "bash -c 'echo oops 1>&2'"})
+    result = _apply(tool, "bash -c 'echo oops 1>&2'")
     assert result["stderr"] == "oops\n"
 
 
@@ -167,7 +178,7 @@ def test_bash_startup_noise_is_stripped_from_stderr(tmp_path: Path) -> None:
     reach the model."""
     context = _context(tmp_path, command_rules=CommandRules(allow=[["true"]]))
     tool = BashTool(context)
-    result = tool.apply({"command": "true"})
+    result = _apply(tool, "true")
     assert result["stderr"] == ""
 
 
@@ -177,7 +188,7 @@ def test_output_over_spill_bytes_is_written_to_a_file(tmp_path: Path) -> None:
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]), process_config=process_config)
     tool = BashTool(context)
-    result = tool.apply({"command": "echo this-is-longer-than-ten-bytes"})
+    result = _apply(tool, "echo this-is-longer-than-ten-bytes")
     assert result["stdout"] is None
     assert result["stdout_file"] is not None
     assert Path(result["stdout_file"]).read_text().strip() == "this-is-longer-than-ten-bytes"
@@ -189,7 +200,7 @@ def test_spilled_output_dir_gets_an_automatic_read_grant(tmp_path: Path) -> None
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]), process_config=process_config)
     tool = BashTool(context)
-    result = tool.apply({"command": "echo hi"})
+    result = _apply(tool, "echo hi")
     spilled_dir = Path(result["stdout_file"]).parent
     assert spilled_dir in context.session_config.read_dirs.allow
 
@@ -197,40 +208,61 @@ def test_spilled_output_dir_gets_an_automatic_read_grant(tmp_path: Path) -> None
 def test_sandbox_notice_appears_once_per_session(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["true"]]))
     tool1 = BashTool(context)
-    result1 = tool1.apply({"command": "true"})
+    result1 = _apply(tool1, "true")
     assert "sandbox_notice" in result1
 
     tool2 = BashTool(context)
-    result2 = tool2.apply({"command": "true"})
+    result2 = _apply(tool2, "true")
     assert "sandbox_notice" not in result2
 
 
 # --- build_bash_env ---
 
 
-def test_build_bash_env_always_shares_home_and_user(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_bash_env_always_shares_home_and_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("HOME", "/home/someone")
     monkeypatch.setenv("USER", "someone")
     monkeypatch.delenv("UNRELATED_SECRET", raising=False)
-    env = build_bash_env(SessionConfig())
-    assert env == {"HOME": "/home/someone", "USER": "someone"}
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)))
+    assert env == {
+        "HOME": "/home/someone", "USER": "someone", "WORKSPACE_ROOT": str(tmp_path.resolve())}
 
 
-def test_build_bash_env_shares_configured_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_bash_env_always_sets_workspace_root(tmp_path: Path) -> None:
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)))
+    assert env["WORKSPACE_ROOT"] == str(tmp_path.resolve())
+
+
+def test_build_bash_env_set_env_can_override_workspace_root(tmp_path: Path) -> None:
+    env = build_bash_env(SessionConfig(
+        workspace=Workspace(path=tmp_path), set_env={"WORKSPACE_ROOT": "/overridden"}))
+    assert env["WORKSPACE_ROOT"] == "/overridden"
+
+
+def test_build_bash_env_shares_configured_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MY_TOOLCHAIN_VAR", "abc")
-    env = build_bash_env(SessionConfig(share_env=["MY_TOOLCHAIN_VAR"]))
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path), share_env=["MY_TOOLCHAIN_VAR"]))
     assert env.get("MY_TOOLCHAIN_VAR") == "abc"
 
 
-def test_build_bash_env_set_env_overrides_shared_value(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_bash_env_set_env_overrides_shared_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("FOO", "from-process")
-    env = build_bash_env(SessionConfig(share_env=["FOO"], set_env={"FOO": "overridden"}))
+    env = build_bash_env(SessionConfig(
+        workspace=Workspace(path=tmp_path), share_env=["FOO"], set_env={"FOO": "overridden"}))
     assert env["FOO"] == "overridden"
 
 
-def test_build_bash_env_does_not_share_unlisted_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_bash_env_does_not_share_unlisted_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("SOME_OTHER_VAR", "value")
-    env = build_bash_env(SessionConfig())
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)))
     assert "SOME_OTHER_VAR" not in env
 
 
@@ -240,10 +272,10 @@ def test_share_env_variable_is_visible_to_the_command(
     """Single-quoted inner command so $KLORB_TEST_VAR is only expanded once bash actually runs
     it (with the env we built), not by shfmt/the outer shell's own parse-time interpolation."""
     monkeypatch.setenv("KLORB_TEST_VAR", "visible-value")
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "*"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "?"]]))
     context.session_config.share_env = ["KLORB_TEST_VAR"]
     tool = BashTool(context)
-    result = tool.apply({"command": "bash -c 'echo $KLORB_TEST_VAR'"})
+    result = _apply(tool, "bash -c 'echo $KLORB_TEST_VAR'")
     assert result["stdout"] == "visible-value\n"
 
 
@@ -251,7 +283,7 @@ def test_unshared_variable_is_not_visible_to_the_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("KLORB_TEST_SECRET", "should-not-leak")
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "*"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "?"]]))
     tool = BashTool(context)
-    result = tool.apply({"command": "bash -c 'echo $KLORB_TEST_SECRET'"})
+    result = _apply(tool, "bash -c 'echo $KLORB_TEST_SECRET'")
     assert result["stdout"] == "\n"

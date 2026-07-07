@@ -157,10 +157,10 @@ class SessionConfig(BaseModel):
     docs/specs/permissions.md."""
     command_rules: CommandRules = Field(default_factory=CommandRules)
     """`commandRules`-config-driven allow/ask/deny rules `BashTool` consults — see
-    `klorb.permissions.command_access` and
-    docs/plans/ready/004-bash-permissions-and-bash-tool.md. Lives on `SessionConfig`, not
-    `ProcessConfig`, for the same reason `read_dirs`/`write_dirs` do: a future "ask" flow may let
-    a user approve a command pattern for the rest of the session."""
+    `klorb.permissions.command_access` and docs/specs/bash-tool-and-command-permissions.md.
+    Lives on `SessionConfig`, not `ProcessConfig`, for the same reason `read_dirs`/`write_dirs`
+    do: the interactive "ask" flow lets a user approve a command pattern for the rest of the
+    session."""
     share_env: list[str] = Field(default_factory=list)
     """Names of environment variables `BashTool` passes through from the klorb process's own
     environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see

@@ -47,7 +47,7 @@
       "ask": [],
       "allow": []
     },
-    "shareEnv": [],
+    "shareEnv": ["LANG", "LC_ALL", "TZ", "TERM", "COLORTERM"],
     "setEnv": {}
   },
   "thinking.tokenBudgets": {

@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.sandbox: the bwrap availability smoke test and its cache. See
-docs/plans/ready/004-bash-permissions-and-bash-tool.md's "Fallback when bwrap can't actually
-sandbox anything" section.
+docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section.
 """
 
 import subprocess

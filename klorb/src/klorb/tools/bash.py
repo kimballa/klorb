@@ -1,10 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that runs a shell command requested by the model, gated by two layers of defense: a
 `CommandRules`/`readDirs`/`writeDirs`-driven allow/ask/deny classification of the parsed command
-(never a regexp/lexical one — see `klorb.permissions.shell_parse`), and (once
-docs/plans/ready/004-bash-permissions-and-bash-tool.md's bubblewrap work lands) an OS-level
-sandbox boundary. See that plan doc for the full design; this module implements every part of it
-that doesn't require building the actual `bwrap` argv (see `klorb.sandbox`).
+(never a regexp/lexical one — see `klorb.permissions.shell_parse`), and (once its argv
+construction lands — see `klorb.sandbox`) an OS-level `bwrap` sandbox boundary. See
+docs/specs/bash-tool-and-command-permissions.md for the full design.
 """
 
 import atexit
@@ -48,11 +47,12 @@ informational notice on every call within the same session."""
 
 def build_bash_env(session_config: SessionConfig) -> dict[str, str]:
     """Build the environment `BashTool` runs a command with: `HOME`/`USER` are always shared
-    from the klorb process's own environment (per the plan's "pass-thru" section), followed by
-    every `session_config.share_env` name that's actually set in the klorb process's
-    environment, followed by `session_config.set_env`'s overrides (applied last, so they shadow
-    a shared value for the same name). Everything else in the klorb process's own environment is
-    left out, mirroring `bwrap --clearenv`'s intent even though no `bwrap` boundary actually
+    from the klorb process's own environment, `WORKSPACE_ROOT` is always set to the resolved
+    workspace root (unconditionally — not gated on any config), followed by every
+    `session_config.share_env` name that's actually set in the klorb process's environment,
+    followed by `session_config.set_env`'s overrides (applied last, so they shadow a shared or
+    always-set value for the same name). Everything else in the klorb process's own environment
+    is left out, mirroring `bwrap --clearenv`'s intent even though no `bwrap` boundary actually
     enforces it yet (see `klorb.sandbox`) — `subprocess.Popen(..., env=...)` receives exactly
     this dict, not `None` (which would inherit the entire parent environment), so the
     least-privilege intent doesn't silently evaporate while sandboxing is unimplemented.
@@ -61,6 +61,7 @@ def build_bash_env(session_config: SessionConfig) -> dict[str, str]:
     for name in ("HOME", "USER"):
         if name in os.environ:
             env[name] = os.environ[name]
+    env["WORKSPACE_ROOT"] = str(session_config.workspace.path.resolve())
     for name in session_config.share_env:
         if name in os.environ:
             env[name] = os.environ[name]
@@ -72,13 +73,13 @@ def _sandbox_notice() -> str:
     """One-time, human-readable explanation of why this command ran without an OS-level sandbox
     boundary — tailored by `klorb.sandbox.detect_bwrap_unavailable_reason()` when `bwrap` itself
     is the blocker, or noting plainly that klorb's sandboxed execution isn't built yet when
-    `bwrap` would otherwise work. See the plan's "One-time warning" section."""
+    `bwrap` would otherwise work."""
     if not bwrap_available():
         reason = detect_bwrap_unavailable_reason()
         if reason == "missing_binary":
             detail = (
                 "Sandbox layer unavailable; cannot launch a sandboxed shell. "
-                "Run `sudo apt-get install bubblewrap`.")
+                "Run `sudo apt-get install bubblewrap`, then restart klorb.")
         else:
             detail = (
                 "Sandbox layer unavailable: this environment does not permit unprivileged "
@@ -96,7 +97,7 @@ def _decode_exit(returncode: int) -> tuple[bool, str | None]:
     """Return `(success, failure_reason)` for a normal (non-timeout) process exit.
 
     A signal death shows up one of two ways here, verified directly against this project's own
-    dev/cloud environment (the plan's "process outcome" section anticipated only the first):
+    dev/cloud environment:
 
     * Positive, `128 + signum` — the outer `bash` we launch forked a real child for the target
       command (e.g. it's not the last thing in the script, or it's part of a pipeline/compound
@@ -137,9 +138,7 @@ against this project's own dev/cloud environment. The process-group line's paren
 varies by platform/session (observed as `-1` in some environments, an actual pid in others), so
 it's matched by prefix/suffix rather than a single exact string; `no job control in this shell`
 is otherwise always identical. Stripped from the *front* of captured stderr only (see
-`_strip_bash_shell_noise`) — this is filtering known harness-induced noise, not classifying a
-command's safety, so it doesn't conflict with this plan's "no regexp-based classification" rule
-elsewhere (see the plan doc's "env vars" section)."""
+`_strip_bash_shell_noise`)."""
 
 
 def _strip_bash_shell_noise(text: str) -> str:
@@ -190,6 +189,16 @@ class BashTool(Tool):
     `klorb.sandbox`); every call today runs unsandboxed, with a one-time notice the first time
     that happens in a given session (see `_sandbox_notice`) — the permission checks above are
     unaffected either way.
+
+    Each call spawns its own fresh, non-persistent shell that exits when the command finishes —
+    `apply()` requires the model to pass `shell_lifetime="command"` explicitly, the only
+    currently-valid value, so a future persistent-shell mode (one shell surviving across several
+    calls, keeping `cd`/exported-variable state) is an additive, opt-in change to this schema
+    rather than a silent behavior change for existing callers.
+
+    TODO(aaron): implement a `shell_lifetime="session"` mode that keeps one shell process alive
+    across multiple `Bash` calls (persisting `cd`, exported variables, and background jobs
+    between them), instead of always starting fresh.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -211,7 +220,10 @@ class BashTool(Tool):
             "with '&', a heredoc/pipe feeding an interpreter other than cat/less/git) is denied "
             "or requires confirmation rather than silently allowed. Returns exit_status, "
             "success, failure_reason (null on success), stdout/stderr (or stdout_file/"
-            "stderr_file if the output is large), and runtime in seconds."
+            "stderr_file if the output is large), and runtime in seconds. shell_lifetime must "
+            "be \"command\": each call starts a fresh, non-persistent shell that exits when the "
+            "command finishes; no state (cwd, env vars set by the command, background jobs) "
+            "carries over to the next call."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -222,13 +234,23 @@ class BashTool(Tool):
                     "type": "string",
                     "description": "The shell command to run.",
                 },
+                "shell_lifetime": {
+                    "type": "string",
+                    "enum": ["command"],
+                    "description": (
+                        "Must be \"command\": this shell is not persistent across calls."
+                    ),
+                },
             },
-            "required": ["command"],
+            "required": ["command", "shell_lifetime"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
         command = args["command"]
+        shell_lifetime = args["shell_lifetime"]
+        if shell_lifetime != "command":
+            raise ValueError(f"shell_lifetime must be 'command', got {shell_lifetime!r}")
         if not command.strip():
             raise ValueError("command must not be empty")
         logger.debug("Bash %r", command)
@@ -299,6 +321,8 @@ class BashTool(Tool):
         argv = [self._bash_command, "--rcfile", rcfile, "-i", "-c", full_command]
 
         tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
+        # Registered immediately after creation, before anything else can raise, so this
+        # directory is always swept on process exit even if klorb dies mid-command.
         atexit.register(shutil.rmtree, tmp_dir, ignore_errors=True)
         stdout_path = tmp_dir / "stdout"
         stderr_path = tmp_dir / "stderr"
@@ -312,6 +336,9 @@ class BashTool(Tool):
             _warned_sessions.add(session_id)
             sandbox_notice = _sandbox_notice()
 
+        # stdout_path/stderr_path are only read back (noise-stripping, spill) after this `with`
+        # block exits below -- by then process.wait()/kill()+wait() has already returned, so the
+        # child has finished writing before our own file handles close and we reopen for reading.
         start = time.monotonic()
         with open(stdout_path, "wb") as stdout_f, open(stderr_path, "wb") as stderr_f:
             try:

@@ -66,16 +66,22 @@ field, on-disk `commandRules` (nested under `sessionDefaults`, concatenated acro
 exactly like `readDirs`/`writeDirs` — see docs/specs/permissions.md and
 docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md).
 `CommandPermissionsTable(PermissionsTable[list[str]])` matches a rule against a candidate argv
-positionally: each rule token is either a literal (exact match at that position) or `"*"`, which
-matches exactly one arbitrary token — except as a rule's *last* token, where it additionally means
-"and any further tokens, including zero":
+positionally: each rule token is either a literal (exact match at that position), `"*"`
+(`WILDCARD_TOKEN`, matching exactly one arbitrary token — always, at any position, never
+special-cased by position), or `"?"` (`OPTIONAL_TOKEN`, matching zero-or-one arbitrary token at
+any position *except* the rule's own last token, where it instead matches any number of further
+tokens, including zero). See
+docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md for the
+reasoning behind splitting "exactly one" and "unbounded" onto two symbols.
 
 | Rule | Matches |
 | --- | --- |
 | `["foo"]` | `foo` only (no args at all — "forcibly no args") |
-| `["foo", "*"]` | `foo`, `foo bar`, `foo bar baz`, ... |
-| `["git", "status", "*"]` | `git status`, `git status -s`, ... |
-| `["git", "*", "status", "*"]` | `git <anything> status <anything...>` — the middle `*` is not optional |
+| `["foo", "*"]` | `foo bar` only — exactly one more token, never zero, never two |
+| `["foo", "?"]` | `foo`, `foo bar`, `foo bar baz`, ... — unbounded, since `?` is last |
+| `["git", "status", "?"]` | `git status`, `git status -s`, `git status -s -b`, ... |
+| `["git", "*", "status", "?"]` | `git <exactly-one-token> status <anything...>` |
+| `["git", "?", "status"]` | `git status` (zero) or `git --no-pager status` (one) — not two or more |
 | `["foo", "--bar", "--baz"]` | exactly `foo --bar --baz`, nothing more or less |
 
 A candidate argv with no matching rule in any list evaluates to `None` from
@@ -189,8 +195,8 @@ still fully enforced regardless.
   "sessionDefaults": {
     "commandRules": {
       "deny": [["rm", "-rf", "/"]],
-      "ask": [["git", "push", "*"]],
-      "allow": [["git", "*"], ["ls", "*"], ["cat", "*"]]
+      "ask": [["git", "push", "?"]],
+      "allow": [["git", "?"], ["ls", "?"], ["cat", "?"]]
     },
     "shareEnv": ["NVM_DIR", "PYENV_ROOT"],
     "setEnv": {"CI": "true"}
