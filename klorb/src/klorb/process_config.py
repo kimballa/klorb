@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
+from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.schema_envelope import parse_versioned_json, read_versioned_json, write_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig, ThinkingEffort
@@ -75,6 +76,25 @@ DEFAULT_SHELL_COMMAND = "/bin/bash"
 `UserShellCommand` takes `shell_path` as a required constructor argument rather than
 defaulting it itself, so this string isn't duplicated across the two modules."""
 
+DEFAULT_BASH_COMMAND = "/bin/bash"
+"""Default shell binary `BashTool` runs a model-requested command through; see
+`ProcessConfig.bash_command` and `klorb.tools.bash`."""
+
+DEFAULT_BASH_TIMEOUT_SECONDS = 120.0
+"""Default wall-clock seconds `BashTool` lets one command run before killing it; see
+`ProcessConfig.bash_timeout_seconds`."""
+
+DEFAULT_BASH_SPILL_BYTES = 8192
+"""Default per-stream size threshold above which `BashTool` spills `stdout`/`stderr` to a file
+(reporting `stdout_file`/`stderr_file` instead of inline text) rather than returning it directly
+in the tool result — see `ProcessConfig.bash_spill_bytes` and
+docs/plans/ready/004-bash-permissions-and-bash-tool.md's "stdout and stderr" section."""
+
+DEFAULT_SHFMT_COMMAND = "shfmt"
+"""Default `shfmt` binary name `BashTool` parses commands through (via
+`klorb.permissions.shell_parse.parse_command`) — resolved off `PATH` by default, since the
+`shfmt-py` pypi package installs it there; see `ProcessConfig.shfmt_command`."""
+
 SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
@@ -90,12 +110,16 @@ default depends on the CLI-resolved `interactive` value (`"ask"` interactively, 
 headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md and
 [[default-permission-framework-to-deny-headlessly]]. `role_name` is likewise deliberately
 absent: the operating role is set by code (defaulting to the coordinator role), never by a
-config file — see docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDirs` are also
-deliberately absent — they're merged by concatenation, not 1:1 scalar replacement, so
-`load_process_config()` handles them separately, ahead of `_route_keys()` — see
-docs/specs/permissions.md. `workspace` is deliberately absent too: it has no on-disk key at
-all, by design — see `SessionConfig.workspace`/docs/specs/projects-and-trust.md — a project
-must never be able to grant itself trust via its own config file.
+config file — see docs/specs/roles-and-system-prompts.md. `readDirs`/`writeDirs`/`commandRules`/
+`shareEnv`/`setEnv` are also deliberately absent — `readDirs`/`writeDirs`/`commandRules`/
+`shareEnv` are merged by list concatenation and `setEnv` merges key-by-key (a later layer's
+value for the same key replaces an earlier layer's), none of them the 1:1 scalar replacement
+`_route_keys()` implements — so `load_process_config()` handles all five separately, ahead of
+`_route_keys()` — see docs/specs/permissions.md and
+docs/plans/ready/004-bash-permissions-and-bash-tool.md. `workspace` is deliberately absent too:
+it has no on-disk key at all, by design — see `SessionConfig.workspace`/
+docs/specs/projects-and-trust.md — a project must never be able to grant itself trust via its
+own config file.
 """
 
 PROCESS_KEY_MAP: dict[str, str] = {
@@ -108,6 +132,10 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "providers.openrouter.baseUrl": "openrouter_base_url",
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
+    "tools.bash.command": "bash_command",
+    "tools.bash.timeout": "bash_timeout_seconds",
+    "tools.bash.spillBytes": "bash_spill_bytes",
+    "tools.bash.shfmtCommand": "shfmt_command",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
     THEME_CONFIG_KEY: "theme",
 }
@@ -145,6 +173,23 @@ class ProcessConfig(BaseModel):
     shell_timeout_seconds: float | None = None
     """Maximum wall-clock seconds a `!`-prefixed REPL command may run before it's killed.
     `None` (the default) means no timeout is enforced."""
+    bash_command: str = DEFAULT_BASH_COMMAND
+    """Shell binary `BashTool` runs a model-requested command through, e.g. `/bin/bash` — see
+    `klorb.tools.bash`. Distinct from `shell_command`: that one is for the user's own
+    `!`-prefixed REPL commands (trusted, unchecked), this one is for model-requested commands
+    (parsed and permission-checked before running)."""
+    bash_timeout_seconds: float = DEFAULT_BASH_TIMEOUT_SECONDS
+    """Maximum wall-clock seconds one `BashTool` command may run before it's killed and reported
+    back to the model as timed out. Unlike `shell_timeout_seconds`, always enforced (not
+    `None`-able) — see docs/plans/ready/004-bash-permissions-and-bash-tool.md's "timeout"
+    section."""
+    bash_spill_bytes: int = DEFAULT_BASH_SPILL_BYTES
+    """Per-stream `stdout`/`stderr` byte threshold above which `BashTool` reports a file path
+    (`stdout_file`/`stderr_file`) instead of the content itself, so a chatty command can't
+    overrun the model's context — see `klorb.tools.bash`."""
+    shfmt_command: str = DEFAULT_SHFMT_COMMAND
+    """`shfmt` binary `BashTool` parses a requested command through before evaluating it against
+    `SessionConfig.command_rules` — see `klorb.permissions.shell_parse`."""
     compatibility_claude_markdown: bool = False
     """Whether to read `CLAUDE.md` from the workspace root and inject it into the conversation
     alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
@@ -287,10 +332,15 @@ def load_process_config(
     argparse `Namespace` shape.
 
     One exception to the "`dict.update`, not a deep merge" rule above:
-    `sessionDefaults.readDirs`/`writeDirs` are concatenated across layers instead of replaced —
-    a layer's `deny`/`ask`/`allow` entries add to, rather than replace, every earlier layer's —
-    since a stricter rule from any layer must never be discardable by a looser rule from
-    another. See docs/specs/permissions.md.
+    `sessionDefaults.readDirs`/`writeDirs`/`commandRules` are concatenated across layers instead
+    of replaced — a layer's `deny`/`ask`/`allow` entries add to, rather than replace, every
+    earlier layer's — since a stricter rule from any layer must never be discardable by a
+    looser rule from another. See docs/specs/permissions.md. `sessionDefaults.shareEnv` is
+    likewise concatenated (a layer's env var names add to every earlier layer's);
+    `sessionDefaults.setEnv` merges key-by-key instead (a later layer's value for the same key
+    replaces an earlier layer's, same as `dict.update` but scoped to this one nested object
+    rather than the whole `sessionDefaults` dict) — see
+    docs/plans/ready/004-bash-permissions-and-bash-tool.md's "env vars" section.
 
     `workspace` identifies the current project root and whether it's trusted — see
     `klorb.workspace.Workspace` and docs/specs/projects-and-trust.md. When omitted (the common
@@ -314,6 +364,9 @@ def load_process_config(
     merged_session_defaults: dict[str, Any] = {}
     concatenated_read_dirs: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
     concatenated_write_dirs: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_command_rules: dict[str, list[list[str]]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_share_env: list[str] = []
+    merged_set_env: dict[str, str] = {}
 
     def merge_layer(layer: dict[str, Any]) -> None:
         session_layer = layer.pop(SESSION_DEFAULTS_KEY, None) or {}
@@ -323,6 +376,11 @@ def load_process_config(
             layer_dir_rules = session_layer.pop(key, None) or {}
             for category in ("deny", "ask", "allow"):
                 accumulator[category].extend(Path(entry) for entry in layer_dir_rules.get(category, []))
+        layer_command_rules = session_layer.pop("commandRules", None) or {}
+        for category in ("deny", "ask", "allow"):
+            concatenated_command_rules[category].extend(layer_command_rules.get(category, []))
+        concatenated_share_env.extend(session_layer.pop("shareEnv", None) or [])
+        merged_set_env.update(session_layer.pop("setEnv", None) or {})
         merged_session_defaults.update(session_layer)
         merged.update(layer)
 
@@ -339,6 +397,9 @@ def load_process_config(
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
     session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)
     session_overrides["write_dirs"] = DirRules(**concatenated_write_dirs)
+    session_overrides["command_rules"] = CommandRules(**concatenated_command_rules)
+    session_overrides["share_env"] = concatenated_share_env
+    session_overrides["set_env"] = merged_set_env
     session_overrides["workspace"] = workspace
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
     return ProcessConfig(session=SessionConfig(**session_overrides), **process_overrides)

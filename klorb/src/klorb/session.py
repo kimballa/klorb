@@ -17,6 +17,7 @@ from klorb.message import Message, ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
+from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
@@ -154,6 +155,22 @@ class SessionConfig(BaseModel):
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
     `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write` and
     docs/specs/permissions.md."""
+    command_rules: CommandRules = Field(default_factory=CommandRules)
+    """`commandRules`-config-driven allow/ask/deny rules `BashTool` consults — see
+    `klorb.permissions.command_access` and
+    docs/plans/ready/004-bash-permissions-and-bash-tool.md. Lives on `SessionConfig`, not
+    `ProcessConfig`, for the same reason `read_dirs`/`write_dirs` do: a future "ask" flow may let
+    a user approve a command pattern for the rest of the session."""
+    share_env: list[str] = Field(default_factory=list)
+    """Names of environment variables `BashTool` passes through from the klorb process's own
+    environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see
+    `klorb.tools.bash.build_bash_env`. On-disk `shareEnv`, concatenated across config layers
+    exactly like `read_dirs`/`write_dirs` (see `klorb.process_config.load_process_config`)."""
+    set_env: dict[str, str] = Field(default_factory=dict)
+    """Environment variable overrides `BashTool` sets for the shell command it runs, applied
+    after `share_env`'s pass-through so they shadow it — see `klorb.tools.bash.build_bash_env`.
+    On-disk `setEnv`, merged across config layers with a later layer's value for the same key
+    replacing an earlier layer's (see `klorb.process_config.load_process_config`)."""
     permission_framework: PermissionFramework = "ask"
     """How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict for every
     tool-use approval (today, `readDirs`/`writeDirs` "ask" rules; more approval kinds may

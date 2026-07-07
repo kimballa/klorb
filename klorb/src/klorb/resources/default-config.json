@@ -41,7 +41,14 @@
       "deny": [],
       "ask": [],
       "allow": []
-    }
+    },
+    "commandRules": {
+      "deny": [],
+      "ask": [],
+      "allow": []
+    },
+    "shareEnv": [],
+    "setEnv": {}
   },
   "thinking.tokenBudgets": {
     "low": 4096,
@@ -56,6 +63,10 @@
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null,
+  "tools.bash.command": "/bin/bash",
+  "tools.bash.timeout": 120.0,
+  "tools.bash.spillBytes": 8192,
+  "tools.bash.shfmtCommand": "shfmt",
   "compatibility.claudeMarkdown": false,
   "ui.theme": null
 }
