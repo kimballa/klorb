@@ -18,7 +18,7 @@ from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.message import Message, ToolCallRequest
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.table import PermissionAskRequired
+from klorb.permissions.table import PermissionAskRequired, PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.role import CoordinatorRole
 from klorb.session import (
@@ -719,7 +719,8 @@ def test_tool_definitions_offered_to_provider_when_tool_registry_set() -> None:
     session.send_turn("hi")
 
     _, kwargs = mock_provider.send_prompt.call_args
-    assert {d["function"]["name"] for d in kwargs["tools"]} == {"echo", "add", "ask_permission"}
+    assert {d["function"]["name"] for d in kwargs["tools"]} == {
+        "echo", "add", "ask_permission", "ask_multi_permission"}
 
 
 def test_tool_defs_message_inserted_before_first_turn() -> None:
@@ -1037,7 +1038,7 @@ def test_on_tool_call_fires_with_retried_result_after_permission_grant(tmp_path:
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)
     on_tool_call = MagicMock()
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 
     session.send_turn("try it", TurnEventHandlers(
         on_tool_call=on_tool_call, on_permission_ask=on_permission_ask))
@@ -1058,7 +1059,7 @@ def test_on_tool_call_fires_with_error_for_a_denied_permission_ask(tmp_path: Pat
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)
     on_tool_call = MagicMock()
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
 
     session.send_turn("try it", TurnEventHandlers(
         on_tool_call=on_tool_call, on_permission_ask=on_permission_ask))
@@ -1118,7 +1119,7 @@ def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_p
     config = SessionConfig(
         model="some/model", workspace=Workspace(path=tmp_path), permission_framework="deny")
     session = _session_with_ask_tool(config, mock_provider)
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1162,7 +1163,7 @@ def test_permission_framework_auto_ignores_an_on_permission_ask_callback(tmp_pat
     config = SessionConfig(
         model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
     session = _session_with_ask_tool(config, mock_provider)
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1180,7 +1181,7 @@ def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path
     ]
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1214,11 +1215,12 @@ def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_pa
     call = ToolCallRequest(id="call_1", name="ask_permission", arguments="{}")
 
     result, error = session._retry_after_permission_decision(
-        call, {}, ask_exc, PermissionDecision(choice="once"))
+        call, {}, ask_exc, PermissionDecision(action="allow"))
 
     assert result is None
     assert error == "still broken"
-    mock_registry.instantiate_tool.assert_called_once_with("ask_permission", permission_override=target)
+    mock_registry.instantiate_tool.assert_called_once_with(
+        "ask_permission", permission_override=PermissionOverride(paths=frozenset({target})))
 
 
 def test_permission_ask_session_scope_retries_after_applying_the_grant(tmp_path: Path) -> None:
@@ -1234,7 +1236,7 @@ def test_permission_ask_session_scope_retries_after_applying_the_grant(tmp_path:
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     session = _session_with_ask_tool(config, mock_provider, process_config)
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="session"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow", scope="session"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1267,7 +1269,7 @@ def test_permission_ask_workspace_and_homedir_scope_persist_the_grant(
         config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
         process_config = ProcessConfig()
         session = _session_with_ask_tool(config, mock_provider, process_config)
-        on_permission_ask = MagicMock(return_value=PermissionDecision(choice=scope))
+        on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow", scope=scope))
 
         response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1294,7 +1296,7 @@ def test_permission_ask_workspace_scope_without_process_config_skips_the_ripple(
     ]
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)  # no process_config
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="workspace"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow", scope="workspace"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1313,7 +1315,7 @@ def test_permission_ask_deny_denies_without_any_retry(tmp_path: Path) -> None:
     ]
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="deny"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1335,7 +1337,7 @@ def test_permission_ask_other_includes_free_text_in_denial(tmp_path: Path) -> No
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(
-        return_value=PermissionDecision(choice="other", other_text="use /tmp instead"))
+        return_value=PermissionDecision(action="deny", other_text="use /tmp instead"))
 
     session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
 
@@ -1353,7 +1355,7 @@ def test_retry_last_turn_threads_on_permission_ask(tmp_path: Path) -> None:
     ]
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_ask_tool(config, mock_provider)
-    on_permission_ask = MagicMock(return_value=PermissionDecision(choice="once"))
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
     callbacks = TurnEventHandlers(on_permission_ask=on_permission_ask)
 
     with pytest.raises(RuntimeError):
@@ -1367,3 +1369,108 @@ def test_retry_last_turn_threads_on_permission_ask(tmp_path: Path) -> None:
 
     assert response == "done"
     assert on_permission_ask.call_count == 2
+
+
+# --- MultiPermissionAskRequired: serial per-item asks (BashTool-shaped compound calls) ---
+
+
+def _ask_multi_permission_call(id_: str, paths: list[Path]) -> tuple[str, str, str]:
+    return id_, "ask_multi_permission", json.dumps({"paths": [str(p) for p in paths]})
+
+
+def test_multi_ask_headless_fails_closed_like_a_generic_error(tmp_path: Path) -> None:
+    targets = [tmp_path / "a.txt", tmp_path / "b.txt"]
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_ask_tool(config, mock_provider)
+
+    response = session.send_turn("try it")
+
+    assert response == "done"
+    assert "Permission requires confirmation" in _tool_response_content(session)
+
+
+def test_multi_ask_asks_about_every_item_in_order_and_retries_once_all_approved(
+    tmp_path: Path,
+) -> None:
+    targets = [tmp_path / "a.txt", tmp_path / "b.txt", tmp_path / "c.txt"]
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
+
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    assert response == "done"
+    assert _tool_response_content(session) == "granted:" + ",".join(str(p) for p in targets)
+    # Every item was asked about individually, in order -- not collapsed into one prompt.
+    assert on_permission_ask.call_count == 3
+    asked_paths = [call.args[0].path for call in on_permission_ask.call_args_list]
+    assert asked_paths == targets
+
+
+def test_multi_ask_stops_at_the_first_denial_and_never_asks_about_the_rest(tmp_path: Path) -> None:
+    targets = [tmp_path / "a.txt", tmp_path / "b.txt", tmp_path / "c.txt"]
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(side_effect=[
+        PermissionDecision(action="allow"),
+        PermissionDecision(action="deny"),
+    ])
+
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    assert response == "done"
+    assert "Permission denied" in _tool_response_content(session)
+    # Denied on the second item -- the third is never even asked about.
+    assert on_permission_ask.call_count == 2
+    assert config.write_dirs == DirRules()  # nothing was granted, not even the first, approved item
+
+
+def test_multi_ask_permission_framework_auto_approves_every_item(tmp_path: Path) -> None:
+    targets = [tmp_path / "a.txt", tmp_path / "b.txt"]
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
+    session = _session_with_ask_tool(config, mock_provider)
+
+    response = session.send_turn("try it")
+
+    assert response == "done"
+    assert _tool_response_content(session) == "granted:" + ",".join(str(p) for p in targets)
+
+
+def test_multi_ask_permission_framework_deny_fails_closed_without_asking(tmp_path: Path) -> None:
+    targets = [tmp_path / "a.txt", tmp_path / "b.txt"]
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
+        _reply("done"),
+    ]
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="deny")
+    session = _session_with_ask_tool(config, mock_provider)
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
+
+    response = session.send_turn("try it", TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    assert response == "done"
+    assert "Permission requires confirmation" in _tool_response_content(session)
+    on_permission_ask.assert_not_called()

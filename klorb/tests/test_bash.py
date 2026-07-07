@@ -12,7 +12,7 @@ import pytest
 
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.table import PermissionAskRequired
+from klorb.permissions.table import MultiPermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.bash import BashTool, build_bash_env
@@ -59,7 +59,7 @@ def test_allowed_command_runs(tmp_path: Path) -> None:
 def test_command_with_no_matching_rule_asks(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules())
     tool = BashTool(context)
-    with pytest.raises(PermissionAskRequired):
+    with pytest.raises(MultiPermissionAskRequired):
         _apply(tool, "echo hello")
 
 
@@ -75,7 +75,7 @@ def test_non_literal_argument_asks_even_with_broad_allow(tmp_path: Path) -> None
     the walker's own fail-closed 'ask' for non-literal tokens is a structural override."""
     context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
-    with pytest.raises(PermissionAskRequired):
+    with pytest.raises(MultiPermissionAskRequired):
         _apply(tool, "echo $HOME")
 
 
@@ -84,7 +84,7 @@ def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:
         tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]),
         write_dirs=DirRules())  # nothing explicitly allowed -> write normalizes to "ask"
     tool = BashTool(context)
-    with pytest.raises(PermissionAskRequired):
+    with pytest.raises(MultiPermissionAskRequired):
         _apply(tool, f"echo hi > {tmp_path / 'out.txt'}")
 
 

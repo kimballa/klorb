@@ -14,14 +14,13 @@ import signal
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.shell_parse import BashCommandAnalysis, RedirectTarget, parse_command
-from klorb.permissions.table import Verdict, raise_if_not_allowed, stricter_verdict
+from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, Verdict
 from klorb.permissions.workspace import evaluate_write, resolve_and_evaluate_read, resolve_within_workspace
 from klorb.sandbox import bwrap_available, detect_bwrap_unavailable_reason
 from klorb.session import SessionConfig
@@ -31,10 +30,6 @@ from klorb.tools.tool import Tool, truncate_lines
 logger = logging.getLogger(__name__)
 
 _TMP_DIR_PREFIX = "klorb-bash-"
-
-ConsiderVerdict = Callable[[Verdict, "Path | None", bool], None]
-"""Callback shape `BashTool._evaluate`/`_evaluate_redirect` use to fold one verdict/path/
-is-write contribution into the running overall verdict — see `BashTool._evaluate`."""
 
 _TOOL_STATE_KEY = "Bash"
 _SANDBOX_WARNED_KEY = "sandbox_warned"
@@ -256,61 +251,76 @@ class BashTool(Tool):
         logger.debug("Bash %r", command)
 
         analysis = parse_command(command, self._shfmt_command)
-        overall_verdict, overall_path, overall_is_write = self._evaluate(analysis)
-        raise_if_not_allowed(
-            overall_verdict, resource_description=f"run shell command: {command}",
-            path=overall_path, is_write=overall_is_write)
+        verdict, ask_items = self._classify(analysis)
+        if verdict == "deny":
+            raise PermissionError(f"Permission denied: run shell command: {command}")
+        if verdict == "ask":
+            raise MultiPermissionAskRequired(
+                f"Permission requires confirmation: run shell command: {command}", items=ask_items)
 
         return self._execute(command)
 
-    def _evaluate(self, analysis: BashCommandAnalysis) -> tuple[Verdict, Path | None, bool]:
-        """Combine every simple command's `CommandPermissionsTable` verdict, every redirection
-        target's directory-access verdict, and every reason the walker itself forced an "ask"
-        into one overall `(verdict, path, is_write)` via `stricter_verdict` — never more
-        permissive than any single contributor. `path`/`is_write` carry the specific resource
-        associated with the strictest contributor found, if any (a redirection target), so a
-        real directory-access "ask" still threads through `Session`'s existing interactive-grant
-        flow exactly like `EditFile`'s does; a bare command-pattern "ask" (no filesystem
-        resource involved) carries no `path`, which fails closed today per `Session._run_tool_calls`
-        (an ask with `path=None` always denies, regardless of `permission_framework`) — command-
-        rule-specific interactive grants are future work, not built here.
+    def _classify(self, analysis: BashCommandAnalysis) -> tuple[Verdict, list[PermissionAskItem]]:
+        """Evaluate every simple command's `CommandPermissionsTable` verdict, every redirection
+        target's directory-access verdict, and every reason the walker itself forced an "ask".
+
+        A single `"deny"` anywhere short-circuits: the whole command is denied outright, with no
+        `PermissionAskItem`s collected at all (nothing else needs asking about once the call is
+        already going to be refused). Otherwise, every individual `"ask"` contributor becomes its
+        own `PermissionAskItem` — not just the strictest one — so `Session` can ask about each
+        in series (see `MultiPermissionAskRequired`) rather than collapsing a compound command
+        with several independent concerns into one opaque prompt. `"allow"` (no deny, no ask
+        items at all) means the whole command is permitted to run as-is.
+
+        `context.permission_override`, when set, lets a previously-approved-once resource skip
+        straight past its check on this one retried call (see `PermissionOverride`): a simple
+        command whose exact argv is in `override.commands` never reaches `command_table`, and a
+        forced-ask reason in `override.reasons` is dropped rather than turned into another
+        `PermissionAskItem`. Redirection targets don't need an analogous check here — they're
+        `Path`s, already covered by `override.paths` inside `evaluate_write`/
+        `resolve_and_evaluate_read` themselves (see `_evaluate_redirect`).
         """
         command_table = CommandPermissionsTable(self.context.session_config.command_rules)
-
-        overall: Verdict = "allow"
-        overall_path: Path | None = None
-        overall_is_write = True
-
-        def consider(verdict: Verdict, path: Path | None, is_write: bool) -> None:
-            nonlocal overall, overall_path, overall_is_write
-            stricter = stricter_verdict(verdict, overall)
-            if stricter != overall:
-                overall, overall_path, overall_is_write = stricter, path, is_write
-            elif stricter == verdict and overall_path is None and path is not None:
-                overall_path, overall_is_write = path, is_write
+        override = self.context.permission_override
+        ask_items: list[PermissionAskItem] = []
+        denied = False
 
         for argv in analysis.simple_commands:
+            if override is not None and tuple(argv) in override.commands:
+                continue
             verdict = command_table.evaluate(argv)
-            consider(verdict if verdict is not None else "ask", None, True)
+            if verdict == "deny":
+                denied = True
+            elif verdict is None or verdict == "ask":
+                ask_items.append(PermissionAskItem(f"run command: {' '.join(argv)}", command=argv))
 
-        for _reason in analysis.forced_ask_reasons:
-            consider("ask", None, True)
+        for reason in analysis.forced_ask_reasons:
+            if override is not None and reason in override.reasons:
+                continue
+            ask_items.append(PermissionAskItem(reason))
 
         for redirect in analysis.redirects:
-            self._evaluate_redirect(redirect, consider)
+            redirect_verdict, path, is_write = self._evaluate_redirect(redirect)
+            if redirect_verdict == "deny":
+                denied = True
+            elif redirect_verdict == "ask":
+                action = "write to" if is_write else "read"
+                ask_items.append(PermissionAskItem(f"{action} {path}", path=path, is_write=is_write))
 
-        if analysis.forced_ask_reasons:
-            logger.info("Bash command forced to 'ask': %s", analysis.forced_ask_reasons)
+        if denied:
+            logger.info("Bash command denied outright: %s", analysis)
+            return "deny", []
+        if ask_items:
+            logger.info("Bash command has %d item(s) needing confirmation", len(ask_items))
+            return "ask", ask_items
+        return "allow", []
 
-        return overall, overall_path, overall_is_write
-
-    def _evaluate_redirect(self, redirect: RedirectTarget, consider: ConsiderVerdict) -> None:
+    def _evaluate_redirect(self, redirect: RedirectTarget) -> tuple[Verdict, Path, bool]:
         if redirect.direction == "write":
             path = resolve_within_workspace(self.context, redirect.target)
-            consider(evaluate_write(self.context, path), path, True)
-        else:
-            path, verdict = resolve_and_evaluate_read(self.context, redirect.target)
-            consider(verdict, path, False)
+            return evaluate_write(self.context, path), path, True
+        path, verdict = resolve_and_evaluate_read(self.context, redirect.target)
+        return verdict, path, False
 
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()
