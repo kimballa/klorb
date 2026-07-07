@@ -290,6 +290,17 @@ class Session:
             else THINKING_EFFORT_TOKEN_BUDGETS
         )
         self._tool_registry = tool_registry
+        if tool_registry is not None:
+            tool_registry.session = self
+        self.tool_state: dict[str, Any] = {}
+        """Per-session runtime state a `Tool` implementation wants to keep across calls within
+        this one session (e.g. `BashTool`'s one-time sandbox-fallback notice), keyed by tool
+        name (`tool_state["Bash"]`). Distinct from `config` (`SessionConfig`, user-configurable
+        settings only): this is ad hoc, tool-private bookkeeping, never read or written by
+        `Session` itself, and never persisted to disk. A `Tool` accesses it via
+        `self.context.session.tool_state` (see `klorb.tools.setup_context.ToolSetupContext.
+        session`) and must `.setdefault(...)` its own key rather than assuming it's pre-populated
+        — this dict starts empty for every new `Session`."""
         self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
         self._compatibility_claude_markdown = (

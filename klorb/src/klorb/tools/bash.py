@@ -36,13 +36,13 @@ ConsiderVerdict = Callable[[Verdict, "Path | None", bool], None]
 """Callback shape `BashTool._evaluate`/`_evaluate_redirect` use to fold one verdict/path/
 is-write contribution into the running overall verdict — see `BashTool._evaluate`."""
 
-_warned_sessions: set[int] = set()
-"""`id(session_config)` for every session `BashTool` has already emitted its one-time
-sandbox-fallback notice for (see `_sandbox_notice`) — a session gets a fresh `SessionConfig`
-instance (`ProcessConfig.session.model_copy()`) at startup and on every `/clear`, so keying on
-object identity naturally resets this exactly at session boundaries with no new plumbing. Not
-meant to survive process restarts or to be a security control — purely to avoid repeating an
-informational notice on every call within the same session."""
+_TOOL_STATE_KEY = "Bash"
+_SANDBOX_WARNED_KEY = "sandbox_warned"
+"""`session.tool_state["Bash"]["sandbox_warned"]`: whether the one-time sandbox-fallback notice
+(see `_sandbox_notice`) has already been emitted for this session — `session.tool_state` starts
+empty for every new `Session`, so this naturally resets at session boundaries (startup, `/clear`)
+with no extra plumbing. Not meant to survive process restarts or to be a security control —
+purely to avoid repeating an informational notice on every call within the same session."""
 
 
 def build_bash_env(session_config: SessionConfig) -> dict[str, str]:
@@ -330,11 +330,16 @@ class BashTool(Tool):
             path.touch()
             os.chmod(path, 0o600)
 
-        session_id = id(self.context.session_config)
         sandbox_notice = None
-        if session_id not in _warned_sessions:
-            _warned_sessions.add(session_id)
+        if self.context.session is None:
+            # No Session to dedupe against (e.g. a caller that built a ToolSetupContext
+            # directly) -- show it every call rather than silently dropping it.
             sandbox_notice = _sandbox_notice()
+        else:
+            bash_state = self.context.session.tool_state.setdefault(_TOOL_STATE_KEY, {})
+            if not bash_state.get(_SANDBOX_WARNED_KEY, False):
+                bash_state[_SANDBOX_WARNED_KEY] = True
+                sandbox_notice = _sandbox_notice()
 
         # stdout_path/stderr_path are only read back (noise-stripping, spill) after this `with`
         # block exits below -- by then process.wait()/kill()+wait() has already returned, so the

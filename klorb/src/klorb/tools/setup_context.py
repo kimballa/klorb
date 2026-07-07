@@ -3,10 +3,10 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 
 
 class ToolSetupContext(BaseModel):
@@ -19,11 +19,23 @@ class ToolSetupContext(BaseModel):
     setting reads it straight off one of these, no `ToolSetupContext` change required.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     process_config: ProcessConfig
     session_config: SessionConfig
     """The active `Session.config` — *not* `process_config.session`, which is only the
     template a new session's config is copied from (see docs/specs/process-and-session-config.md)
     and won't reflect changes made to the live session (e.g. via the TUI command palette)."""
+    session: Session | None = None
+    """The active `Session` itself, so a `Tool` can read/write `session.tool_state` for its own
+    per-session runtime bookkeeping (e.g. `BashTool`'s one-time sandbox-fallback notice) —
+    distinct from `session_config`, which only covers user-configurable settings, not ad hoc
+    tool-private state. `None` for a `ToolSetupContext` built without a real `Session` (most
+    unit tests construct one directly); a `Tool` that uses `session.tool_state` must handle that
+    case gracefully rather than assuming it's always set. Set on `ToolRegistry` post-construction
+    by `Session.__init__` (`ToolRegistry` is always built before the `Session` it's passed into,
+    so this can't be a `ToolRegistry` constructor argument) and threaded into every
+    `ToolSetupContext` `ToolRegistry` builds from then on."""
     permission_override: Path | None = None
     """When set, the exact resolved candidate path this one `Tool` instance is permitted to
     bypass the `readDirs`/`writeDirs` tables for — a one-shot "Allow (once)" grant (see
