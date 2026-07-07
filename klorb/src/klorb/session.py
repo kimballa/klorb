@@ -212,13 +212,15 @@ class PermissionDecision(BaseModel):
     """The user's answer to one `PermissionAskContext` prompt, returned by `on_permission_ask`.
 
     `action` and `scope` are independent axes: `"allow"`/`"deny"` cross with `"once"` (retries
-    without persisting anything — via a one-shot `ToolSetupContext.permission_override` for a
-    `path` item, or nothing at all for a `command`/structural item, which persists no rule
-    either way) and `"session"`/`"workspace"`/`"homedir"` (persistent — `Session.
-    _retry_after_permission_decision`/`_retry_after_multi_permission_decision` apply the grant
-    itself, via `klorb.permissions.grant.apply_permission_grant`/`klorb.permissions.
-    command_grant.apply_command_permission_grant`, before retrying — `on_permission_ask` only
-    needs to ask the user and report their choice back, never apply or persist anything itself).
+    without persisting anything, via a one-shot `ToolSetupContext.permission_override` covering
+    whichever of `path`/`command`/`resource_description` the item carries — see
+    `klorb.permissions.table.PermissionOverride`) and `"session"`/`"workspace"`/`"homedir"`
+    (persistent for a `path` or `command` item — `Session._retry_after_permission_decision`/
+    `_retry_after_multi_permission_decisions` apply the grant itself, via `klorb.permissions.
+    grant.apply_permission_grant`/`klorb.permissions.command_grant.apply_command_permission_grant`,
+    before retrying; a structural item has no rule to persist at any scope other than `"once"`,
+    since it identifies no filesystem path or command pattern — `on_permission_ask` only needs
+    to ask the user and report their choice back, never apply or persist anything itself).
     `other_text`, if set, means the user typed free-text instead of picking a grid cell —
     equivalent to `action="deny", scope="once"` but with the explanation surfaced to the model
     alongside the denial, so it can act on the redirection without a second round trip."""
@@ -741,8 +743,10 @@ class Session:
         if self.config.permission_framework == "auto":
             logger.info(
                 "Auto-approving permission ask under permissionFramework=auto: %s", multi_ask_exc)
-            decisions = [PermissionDecision(action="allow", scope="session") for _ in multi_ask_exc.items]
-            return self._retry_after_multi_permission_decisions(call, args, multi_ask_exc.items, decisions)
+            auto_decisions = [
+                PermissionDecision(action="allow", scope="session") for _ in multi_ask_exc.items]
+            return self._retry_after_multi_permission_decisions(
+                call, args, multi_ask_exc.items, auto_decisions)
         if callbacks.on_permission_ask is None:
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
             return None, str(multi_ask_exc)

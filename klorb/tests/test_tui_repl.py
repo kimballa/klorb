@@ -13,9 +13,10 @@ from unittest.mock import MagicMock, patch
 import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
+from textual.containers import Grid as GridContainer
 from textual.containers import VerticalScroll
 from textual.pilot import Pilot
-from textual.widgets import Input, Markdown, OptionList, Static
+from textual.widgets import Input, Markdown, Static
 
 from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
@@ -29,11 +30,7 @@ from klorb.session import PermissionAskContext, PermissionDecision, Session, Ses
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
-from klorb.tui.permission_ask_screen import (
-    PERMISSION_ASK_INPUT_ID,
-    PERMISSION_ASK_OPTIONS_ID,
-    PermissionAskScreen,
-)
+from klorb.tui.permission_ask_screen import PERMISSION_ASK_INPUT_ID, PermissionAskScreen
 from klorb.tui.repl import (
     CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
@@ -1201,70 +1198,95 @@ def test_permission_ask_screen_message_names_the_granted_directory(tmp_path: Pat
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
-    message, _ = container._pending_children
+    message, _grid, _hint = container._pending_children
 
     assert isinstance(message, Static)
     assert str(tmp_path) in str(message.render())
 
 
-def test_permission_ask_screen_lists_all_six_options_in_order(tmp_path: Path) -> None:
+def test_permission_ask_screen_grid_has_eight_cells_in_row_major_order(tmp_path: Path) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
-    _, option_list = container._pending_children
+    _message, grid, _hint = container._pending_children
 
-    assert isinstance(option_list, OptionList)
-    prompts = tuple(str(option.prompt) for option in option_list._options)
-    assert prompts == (
-        "Allow (once)", "Allow (this session)", "Allow (always, in this workspace)",
-        "Allow (always, for me)", "Deny", "Other...")
+    assert isinstance(grid, GridContainer)
+    labels = tuple(str(cell.render()) for cell in grid._pending_children)
+    assert labels == (
+        "Allow — Once", "Deny — Once",
+        "Allow — This session", "Deny — This session",
+        "Allow — Always, this workspace", "Deny — Always, this workspace",
+        "Allow — Always, for me", "Deny — Always, for me",
+    )
 
 
-@pytest.mark.parametrize(("option_index", "expected_choice"), [
-    (0, "once"), (1, "session"), (2, "workspace"), (3, "homedir"), (4, "deny"),
+@pytest.mark.parametrize(("column", "row", "expected_action", "expected_scope"), [
+    (0, 0, "allow", "once"), (1, 0, "deny", "once"),
+    (0, 1, "allow", "session"), (1, 3, "deny", "homedir"),
 ])
-def test_on_option_list_option_selected_dismisses_with_matching_choice(
-    tmp_path: Path, option_index: int,
-    expected_choice: Literal["once", "session", "workspace", "homedir", "deny"],
+def test_action_confirm_dismisses_with_the_selected_grid_cell(
+    tmp_path: Path, column: int, row: int,
+    expected_action: Literal["allow", "deny"],
+    expected_scope: Literal["once", "session", "workspace", "homedir"],
 ) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
-    event = MagicMock(option_index=option_index)
+    screen._column = column
+    screen._row = row
 
-    screen.on_option_list_option_selected(event)
+    screen.action_confirm()
 
-    screen.dismiss.assert_called_once_with(PermissionDecision(choice=expected_choice))
+    screen.dismiss.assert_called_once_with(
+        PermissionDecision(action=expected_action, scope=expected_scope))
 
 
-def test_selecting_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
+def test_action_move_column_wraps_around(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
+
+    screen.action_move_column(-1)
+
+    assert screen._column == 1  # wrapped from column 0 ("allow") to the last column ("deny")
+
+
+def test_action_move_row_wraps_around(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
+
+    screen.action_move_row(-1)
+
+    assert screen._row == 3  # wrapped from row 0 ("once") to the last row ("homedir")
+
+
+def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
-    event = MagicMock(option_index=5)
 
-    screen.on_option_list_option_selected(event)
+    screen.action_other()
 
     screen._reveal_other_input.assert_called_once()
     screen.dismiss.assert_not_called()
 
 
-def test_on_input_submitted_dismisses_with_other_choice_and_text(tmp_path: Path) -> None:
+def test_on_input_submitted_dismisses_with_a_once_scoped_denial_and_the_text(tmp_path: Path) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     event = MagicMock(value="use /tmp instead")
 
     screen.on_input_submitted(event)
 
-    screen.dismiss.assert_called_once_with(PermissionDecision(choice="other", other_text="use /tmp instead"))
+    screen.dismiss.assert_called_once_with(
+        PermissionDecision(action="deny", scope="once", other_text="use /tmp instead"))
 
 
-def test_action_decline_dismisses_with_deny(tmp_path: Path) -> None:
+def test_action_decline_dismisses_with_a_once_scoped_denial(tmp_path: Path) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
 
     screen.action_decline()
 
-    screen.dismiss.assert_called_once_with(PermissionDecision(choice="deny"))
+    screen.dismiss.assert_called_once_with(PermissionDecision(action="deny", scope="once"))
 
 
 # --- PermissionAskScreen end-to-end through ReplApp ---
@@ -1354,7 +1376,7 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
 
         screen = app.screen
         assert isinstance(screen, PermissionAskScreen)
-        screen.dismiss(PermissionDecision(choice="session"))
+        screen.dismiss(PermissionDecision(action="allow", scope="session"))
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -1394,9 +1416,7 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         screen = app.screen
         assert isinstance(screen, PermissionAskScreen)
 
-        option_list = screen.query_one(f"#{PERMISSION_ASK_OPTIONS_ID}", OptionList)
-        option_list.highlighted = 5  # "Other..."
-        await pilot.press("enter")
+        await pilot.press("o")
         await pilot.pause()
 
         other_input = screen.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
@@ -1408,6 +1428,96 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         assert len(app.screen_stack) == 1
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "use /tmp instead" in str(tool_response.content)
+        assert "Permission denied" in str(tool_response.content)
+
+
+def _ask_multi_permission_call(id_: str, paths: list[Path]) -> tuple[str, str, str]:
+    return id_, "ask_multi_permission", json.dumps({"paths": [str(p) for p in paths]})
+
+
+async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_remembers_last_selection(
+    tmp_path: Path,
+) -> None:
+    """Two independent paths in one `ask_multi_permission` call (see
+    `MultiPermissionAskRequired`) each get their own `PermissionAskScreen`, shown one after
+    another -- the second screen's grid cursor starts wherever the first one's selection
+    landed (see `ReplApp._last_permission_action`/`_last_permission_scope`), matching the
+    "pre-select the last spot" requirement for a run of several prompts in a row."""
+    target_a = tmp_path / "a.txt"
+    target_b = tmp_path / "b.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", [target_a, target_b])]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch two files"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        first_screen = app.screen
+        assert isinstance(first_screen, PermissionAskScreen)
+        assert (first_screen._column, first_screen._row) == (0, 0)  # default: allow/once
+
+        first_screen.dismiss(PermissionDecision(action="allow", scope="workspace"))
+        while len(app.screen_stack) != 1:
+            await asyncio.sleep(0.01)
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        second_screen = app.screen
+        assert isinstance(second_screen, PermissionAskScreen)
+        assert second_screen is not first_screen
+        assert (second_screen._column, second_screen._row) == (0, 2)  # remembered: allow/workspace
+
+        second_screen.dismiss(PermissionDecision(action="allow", scope="workspace"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        response_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
+        assert isinstance(response_widget, Markdown)
+        assert response_widget.source == "final answer"
+
+
+async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_about_the_rest(
+    tmp_path: Path,
+) -> None:
+    target_a = tmp_path / "a.txt"
+    target_b = tmp_path / "b.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_multi_permission_call("call_1", [target_a, target_b])]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch two files"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionAskScreen)
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Only one screen was ever shown -- the second item was never asked about.
+        assert len(app.screen_stack) == 1
+        tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "Permission denied" in str(tool_response.content)
 
 

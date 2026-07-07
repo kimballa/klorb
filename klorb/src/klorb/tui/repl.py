@@ -25,6 +25,7 @@ from textual.widgets import Button, Footer, Header, Markdown, Static, TextArea
 
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
+from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
 from klorb.process_config import (
@@ -956,6 +957,16 @@ class ReplApp(App[None]):
         workspace's trust/registration state changes) layers it back in identically."""
         self._cancel_event: threading.Event | None = None
         self._shell_cancel_event: threading.Event | None = None
+        self._last_permission_action: Literal["allow", "deny"] = "allow"
+        self._last_permission_scope: Literal["once", "session", "workspace", "homedir"] = "once"
+        """`PermissionAskScreen`'s grid cursor position after the most recent prompt this app
+        showed, seeded into the next one's `initial_action`/`initial_scope` (see
+        `_confirm_permission_ask`) so answering several asks in a row for one compound tool call
+        (see `klorb.permissions.table.MultiPermissionAskRequired`) doesn't require re-navigating
+        the grid to the same spot each time. Starts at the grid's default top-left cell; updated
+        after every dismissal, including "Other..." (which reports back as its
+        `action="deny"`/`scope="once"` regardless of what was selected before switching to free
+        text, since there's no meaningful grid cell an `Input` submission corresponds to)."""
         self._tool_call_widgets: list[ToolCallStatic] = []
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
@@ -1780,15 +1791,30 @@ class ReplApp(App[None]):
 
         Must be run on the app's own event loop, since it awaits the screen's dismissal —
         `_on_permission_ask` is what the worker thread actually calls, via `call_from_thread`,
-        to get here. `compute_grant_paths()` is recomputed here (rather than threaded in from
-        wherever `ask_ctx` was built) purely so the modal can show the directory a persistent
-        grant would actually cover; it's pure and read-only, so calling it again inside
-        `_on_permission_ask`/`apply_permission_grant` afterwards is safe and cheap.
+        to get here. `compute_grant_paths()`/`compute_command_grant_patterns()` are recomputed
+        here (rather than threaded in from wherever `ask_ctx` was built) purely so the modal can
+        show the directory/command pattern a persistent grant would actually cover; both are
+        pure and read-only, so calling them again inside `_on_permission_ask`/
+        `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap.
+        Seeds the screen's grid cursor from `_last_permission_action`/`_last_permission_scope`
+        and updates both from the returned decision, so a run of several asks for one compound
+        tool call starts each next prompt where the previous one left off.
         """
-        granted_paths = compute_grant_paths(
-            self._session.config.read_dirs, self._session.config.write_dirs,
-            self._session.config.workspace.path, ask_ctx.path, ask_ctx.is_write)
-        return await self.push_screen_wait(PermissionAskScreen(ask_ctx, granted_paths))
+        granted_paths = None
+        granted_command_patterns = None
+        if ask_ctx.path is not None:
+            granted_paths = compute_grant_paths(
+                self._session.config.read_dirs, self._session.config.write_dirs,
+                self._session.config.workspace.path, ask_ctx.path, ask_ctx.is_write)
+        elif ask_ctx.command is not None:
+            granted_command_patterns = compute_command_grant_patterns(
+                self._session.config.command_rules, ask_ctx.command)
+        decision = await self.push_screen_wait(PermissionAskScreen(
+            ask_ctx, granted_paths=granted_paths, granted_command_patterns=granted_command_patterns,
+            initial_action=self._last_permission_action, initial_scope=self._last_permission_scope))
+        self._last_permission_action = decision.action
+        self._last_permission_scope = decision.scope
+        return decision
 
     def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """`Session`'s `on_permission_ask` callback: block the worker thread running

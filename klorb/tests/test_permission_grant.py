@@ -370,7 +370,8 @@ def test_homedir_scope_workspace_cleanup_is_a_noop_when_workspace_file_is_absent
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
 
-    apply_permission_grant("allow", "homedir", session_config, process_config, target, is_write=True)  # must not raise
+    # must not raise
+    apply_permission_grant("allow", "homedir", session_config, process_config, target, is_write=True)
 
     assert not project_config_path(tmp_path).exists()
 
