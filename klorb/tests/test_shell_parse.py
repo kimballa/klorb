@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.shell_parse: the shfmt-AST-to-BashCommandAnalysis walker. See
-docs/plans/ready/004-bash-permissions-and-bash-tool.md.
+docs/specs/bash-tool-and-command-permissions.md.
 
 These tests invoke the real `shfmt` binary (installed by the pinned `shfmt-py` dependency) —
 not a mocked AST — since the whole point of this module is to walk *actual* `shfmt --to-json`
@@ -80,10 +80,20 @@ def test_pipe_into_unsafe_consumer_forces_ask() -> None:
     assert "pipe" in analysis.forced_ask_reasons[0]
 
 
-@pytest.mark.parametrize("consumer", ["cat", "less", "git"])
+@pytest.mark.parametrize(
+    "consumer", ["cat", "less", "more", "head", "tail", "grep", "sort", "uniq", "wc", "jq", "git"])
 def test_pipe_into_safe_consumer_does_not_force_ask(consumer: str) -> None:
     analysis = parse_command(f"echo hi | {consumer}", SHFMT)
     assert analysis.forced_ask_reasons == []
+
+
+@pytest.mark.parametrize("consumer", ["tee", "xargs"])
+def test_pipe_into_tee_or_xargs_forces_ask(consumer: str) -> None:
+    """`tee` writes stdin to a file (a write target this consumer-safety check doesn't itself
+    validate against writeDirs) and `xargs` constructs and runs commands from its input -- both
+    excluded from SAFE_STDIN_CONSUMERS on purpose."""
+    analysis = parse_command(f"echo hi | {consumer} out.txt", SHFMT)
+    assert len(analysis.forced_ask_reasons) == 1
 
 
 def test_multi_stage_pipe_checks_every_receiving_stage() -> None:
@@ -139,6 +149,45 @@ def test_subshell_and_block_and_if_and_for_and_case_are_walked() -> None:
 def test_function_body_is_walked() -> None:
     analysis = parse_command("foo() { echo hi; }", SHFMT)
     assert analysis.simple_commands == [["echo", "hi"]]
+
+
+def test_bare_cat_or_less_adds_an_implicit_read_target() -> None:
+    for consumer in ("cat", "less"):
+        analysis = parse_command(f"{consumer} foo.txt", SHFMT)
+        assert analysis.redirects == [RedirectTarget(target="foo.txt", direction="read")]
+        assert analysis.simple_commands == [[consumer, "foo.txt"]]
+
+
+def test_cat_with_multiple_files_adds_a_read_target_for_each() -> None:
+    analysis = parse_command("cat foo.txt bar.txt", SHFMT)
+    assert analysis.redirects == [
+        RedirectTarget(target="foo.txt", direction="read"),
+        RedirectTarget(target="bar.txt", direction="read"),
+    ]
+
+
+def test_cat_flags_are_not_treated_as_read_targets() -> None:
+    analysis = parse_command("cat -n foo.txt", SHFMT)
+    assert analysis.redirects == [RedirectTarget(target="foo.txt", direction="read")]
+
+
+def test_cat_piped_into_from_elsewhere_gets_no_implicit_read() -> None:
+    """`cat` on the receiving side of a pipe isn't reading foo.txt from disk in the way a bare
+    invocation is (whatever it does with a stray file argument there is not the common
+    ReadFile-equivalent case this enhancement targets)."""
+    analysis = parse_command("echo hi | cat foo.txt", SHFMT)
+    assert RedirectTarget(target="foo.txt", direction="read") not in analysis.redirects
+
+
+def test_cat_with_its_own_redirect_gets_no_implicit_read() -> None:
+    analysis = parse_command("cat foo.txt > out.txt", SHFMT)
+    assert RedirectTarget(target="foo.txt", direction="read") not in analysis.redirects
+    assert RedirectTarget(target="out.txt", direction="write") in analysis.redirects
+
+
+def test_cat_reading_a_heredoc_gets_no_implicit_read() -> None:
+    analysis = parse_command("cat foo.txt <<EOF\nhi\nEOF", SHFMT)
+    assert RedirectTarget(target="foo.txt", direction="read") not in analysis.redirects
 
 
 def test_declare_and_export_are_extracted_as_candidates() -> None:

@@ -1,14 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 """Detects whether `bwrap` (bubblewrap, https://github.com/containers/bubblewrap) can actually
 sandbox `BashTool`'s subprocesses on this host, and will eventually build the `bwrap` argv that
-does so. See docs/plans/ready/004-bash-permissions-and-bash-tool.md's "Layer 2: bubblewrap
-sandbox (execution boundary)" section.
+does so. See docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and
+docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md.
 
 Building the actual `bwrap` argv (mount list, namespace unshares, env plumbing) is a stub for
 now: developing and testing it requires a host where unprivileged user namespaces work, which
 this project's own dev/cloud-agent environments do not provide (`bwrap_available()` reports
-`False` there — confirmed directly; see the plan doc's "Known critical risk" note). `BashTool`
-runs unsandboxed everywhere until that work lands; see `klorb.tools.bash`.
+`False` there — confirmed directly). `BashTool` runs unsandboxed everywhere until that work
+lands; see `klorb.tools.bash`.
 """
 
 import logging
@@ -24,8 +24,9 @@ BwrapUnavailableReason = Literal["missing_binary", "no_userns"]
 """Why `bwrap_available()` returned `False`, for `BashTool`'s one-time fallback notice
 (`detect_bwrap_unavailable_reason()`): `"missing_binary"` (not installed) needs a different fix
 (`apt-get install bubblewrap`) than `"no_userns"` (installed, but this kernel/container policy
-refuses unprivileged user namespaces) does (reconfigure the host or outer container) — see the
-plan doc's "process outcome" section for the two distinct messages these map to."""
+refuses unprivileged user namespaces) does (reconfigure the host or outer container) — these are
+different failures with different fixes, so `klorb.tools.bash._sandbox_notice` must not collapse
+them into one generic message."""
 
 _SMOKE_TEST_ARGV = [
     BWRAP_BINARY_NAME, "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--", "true"]
@@ -36,9 +37,9 @@ real invocation would go on to `--unshare-*`. Deliberately not a real sandbox sh
 `BashTool` invocation once `build_bwrap_argv()` exists."""
 
 _availability_cache: bool | None = None
-"""Cached result of `bwrap_available()`'s smoke test, for the life of this process — the plan
-calls for running it once (at session start, or lazily on the first `BashTool` call) and reusing
-the boolean rather than re-probing on every command. `None` means not yet probed."""
+"""Cached result of `bwrap_available()`'s smoke test, for the life of this process — run once
+(at session start, or lazily on the first `BashTool` call) and reused rather than re-probed on
+every command. `None` means not yet probed."""
 
 
 def reset_availability_cache() -> None:
@@ -54,11 +55,10 @@ def bwrap_available() -> bool:
     exists on `PATH` and a minimal smoke-test invocation (`_SMOKE_TEST_ARGV`) succeeds. Cached
     for the life of this process after the first call — see `_availability_cache`.
 
-    This is the single source of truth for "can `BashTool` sandbox its subprocess," per the
-    plan's "Detection" section: no `/.dockerenv`/`cgroup` fingerprinting drives this decision,
-    only an actual attempt to do the thing. Those heuristics are still useful for tailoring the
-    unavailable-reason message (see `detect_bwrap_unavailable_reason()`), just never for the
-    go/no-go decision itself.
+    This is the single source of truth for "can `BashTool` sandbox its subprocess": no
+    `/.dockerenv`/`cgroup` fingerprinting drives this decision, only an actual attempt to do the
+    thing. Those heuristics are still useful for tailoring the unavailable-reason message (see
+    `detect_bwrap_unavailable_reason()`), just never for the go/no-go decision itself.
     """
     global _availability_cache
     if _availability_cache is not None:
@@ -90,8 +90,9 @@ def detect_bwrap_unavailable_reason() -> BwrapUnavailableReason | None:
 
 def build_bwrap_argv() -> list[str]:
     """Build the full `bwrap` argv for one `BashTool` invocation (mount list, namespace
-    unshares, hostname, env, workspace/homedir binds with denyholes over privileged paths) per
-    the plan's "bubblewrap args to use" section.
+    unshares, hostname, env, workspace/homedir binds with denyholes over privileged paths) — see
+    docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section for the shape this
+    should eventually take.
 
     Not implemented yet: developing this requires iterating against a host where unprivileged
     user namespaces actually work (this repo's own dev and cloud-agent environments do not

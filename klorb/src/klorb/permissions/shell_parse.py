@@ -3,13 +3,12 @@
 `CommandPermissionsTable` (and `klorb.permissions.workspace`'s `evaluate_write`/
 `resolve_and_evaluate_read`) can evaluate: every simple command's own argv, every redirection's
 file target, and every construct the walker can't confidently classify — escalated to "ask",
-never silently to "allow", per
-docs/plans/ready/004-bash-permissions-and-bash-tool.md's "shfmt should Fail closed on anything
-not confidently classified" section.
+never silently to "allow". See docs/specs/bash-tool-and-command-permissions.md.
 
 Parsing itself is delegated entirely to `shfmt --to-json` (the `shfmt-py` pypi package wrapping
-`mvdan/sh`'s `syntax` package) — never a regexp/lexical classifier; see that plan doc's "Things
-*not* to use" section for why. This module has no dependency on `klorb.tools`/`klorb.session`:
+`mvdan/sh`'s `syntax` package) — never a regexp/lexical classifier; see
+docs/adrs/shell-out-to-shfmt-for-bash-parsing.md for why. This module has no dependency on
+`klorb.tools`/`klorb.session`:
 it returns plain data (`BashCommandAnalysis`) for `klorb.tools.bash.BashTool` to combine with
 `CommandPermissionsTable`/`evaluate_write`/`resolve_and_evaluate_read`, mirroring the
 `directory_access`/`workspace` split.
@@ -26,16 +25,23 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-SAFE_STDIN_CONSUMERS = frozenset({"cat", "less", "git"})
-"""Commands that only ever consume stdin as inert data, per the plan's "Heredoc/pipe-into-
-interpreter rule": these may receive heredoc/herestring/piped content under ordinary
+SAFE_STDIN_CONSUMERS = frozenset({
+    "cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "sort", "uniq", "wc", "jq",
+    "git",
+})
+"""Commands that only ever consume stdin as inert data — read, search, filter, or summarize it,
+never execute it — so they may receive heredoc/herestring/piped content under ordinary
 `CommandRules` evaluation. Any other command on the receiving end of a pipe, heredoc, or
 herestring is escalated to "ask" regardless of what an allow-rule for its own argv0 would
-otherwise say — see `_check_stdin_consumer`."""
+otherwise say — see `_check_stdin_consumer`.
+
+Deliberately excludes `tee` (writes stdin to a file — that write target would need its own
+`writeDirs` check, which this consumer-safety check doesn't perform) and `xargs` (constructs and
+runs commands from its input, which is exactly the class of risk this check exists to catch)."""
 
 HIDDEN_EFFECT_COMMANDS = frozenset({"eval", "exec", "source", "."})
 """Commands whose real effect isn't visible in their own argv — always escalated to "ask",
-regardless of `CommandRules`, per the plan's "fail closed" section."""
+regardless of `CommandRules`."""
 
 _PIPE_OPS = frozenset({13, 14})
 """`BinaryCmd.Op` values for `|` (Pipe) and `|&` (PipeAll) — verified empirically against this
@@ -48,9 +54,9 @@ _WRITE_REDIR_OPS = frozenset({63, 64, 66, 68, 69, 74, 76})
 """`Redirect.Op` values whose `Word` names a filesystem target opened for writing: `>` (63),
 `>>` (64), `<>` (66), `>&`/dup (68 — see `_looks_like_fd_dup`, since the same op code is used for
 both `N>&file` and the numeric-fd-duplication form `N>&M`), `>|` (69), `&>` (74), `&>>` (76).
-Routed through `klorb.permissions.workspace.evaluate_write` by `klorb.tools.bash.BashTool`, per
-the plan: "a bash redirection is a filesystem write... governed by the same
-`DirectoryAccessTable`/`writeDirs` a model-invoked `EditFile` call already is.\""""
+Routed through `klorb.permissions.workspace.evaluate_write` by `klorb.tools.bash.BashTool` —
+a bash redirection is a filesystem write, governed by the same `DirectoryAccessTable`/
+`writeDirs` a model-invoked `EditFile` call already is."""
 
 _READ_REDIR_OPS = frozenset({65})
 """`Redirect.Op` for `<` (RdrIn) — the only redirection operator that opens its `Word` target
@@ -97,11 +103,14 @@ class BashCommandAnalysis:
 
 
 class ShellParseError(Exception):
-    """Raised when `shfmt --to-json` can't be run at all, or exits non-zero (a real shell syntax
-    error in the command string). Surfaced to the model as an ordinary tool error — per the
-    plan, "shfmt parse failure should be surfaced to the model as a normal tool error, so it can
-    retry with simpler syntax" — never routed through the permissions system: a syntax error
-    isn't a permission verdict."""
+    """Raised when `shfmt --to-json` can't be run at all, or exits non-zero — either because
+    `shfmt` itself couldn't handle the input, or because the model produced malformed shell
+    syntax; one exception type covers both, since the caller's response (surface it to the
+    model as an ordinary tool error so it can retry with simpler syntax) is the same either way.
+    Never routed through the permissions system: a syntax error isn't a permission verdict.
+    Every raise site also logs at `error` level (see `parse_command`), so recurring parse
+    failures are visible in klorb's own logs even though the model just sees a retryable error.
+    """
 
 
 def _resolve_shfmt_command(shfmt_command: str) -> str:
@@ -135,16 +144,21 @@ def parse_command(command: str, shfmt_command: str) -> BashCommandAnalysis:
         result = subprocess.run(
             [shfmt_command, "--to-json"], input=command, capture_output=True, text=True, timeout=10)
     except FileNotFoundError as exc:
+        logger.error("%r not found; cannot parse shell commands", shfmt_command)
         raise ShellParseError(f"{shfmt_command!r} not found; cannot parse shell commands") from exc
     except subprocess.TimeoutExpired as exc:
+        logger.error("%s --to-json timed out parsing command: %r", shfmt_command, command)
         raise ShellParseError(f"{shfmt_command} --to-json timed out parsing the command") from exc
 
     if result.returncode != 0:
+        logger.error(
+            "Failed to parse command %r: %s", command, result.stderr.strip())
         raise ShellParseError(f"Failed to parse command: {result.stderr.strip()}")
 
     try:
         ast = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
+        logger.error("%s --to-json produced unparseable output for %r: %s", shfmt_command, command, exc)
         raise ShellParseError(f"{shfmt_command} --to-json produced unparseable output: {exc}") from exc
 
     analysis = BashCommandAnalysis()
@@ -158,8 +172,8 @@ def _word_literal(word: dict[str, Any] | None) -> str | None:
     nested `Parts` are themselves all literal by this same rule (concatenated) — or `None` if
     `word` is `None`, isn't a plain Word at all (e.g. an `ArrayExpr`, which has no `Parts` key),
     or contains any part that isn't one of those three (`ParamExp`/`CmdSubst`/`ArithmExp`/etc.)
-    — the class of token GuardFall documents as the common bypass vector, per the plan's
-    fail-closed rule. Quoting alone (`"hello world"`, `'hello world'`) is not itself a bypass
+    — the class of token GuardFall documents as the common bypass vector. Quoting alone
+    (`"hello world"`, `'hello world'`) is not itself a bypass
     signal — treating every quoted argument as non-literal would make ordinary, safe commands
     (`git commit -m "a message"`) escalate to "ask" on every call, which is not what "fail
     closed on anything not confidently classified" is protecting against.
@@ -222,8 +236,7 @@ def _scan_for_cmdsubst(node: Any, analysis: BashCommandAnalysis) -> None:
 def _check_stdin_consumer(cmd: dict[str, Any] | None, analysis: BashCommandAnalysis, *, source: str) -> None:
     """Escalate to "ask" unless `cmd` is a `CallExpr` whose literal argv0 is in
     `SAFE_STDIN_CONSUMERS` — called for the receiving side of a pipe (`_handle_binary_cmd`) and
-    for the owning command of a heredoc/herestring (`_walk_stmt`), per the plan's
-    "Heredoc/pipe-into-interpreter rule"."""
+    for the owning command of a heredoc/herestring (`_walk_stmt`)."""
     argv0 = None
     if cmd is not None and cmd.get("Type") == "CallExpr":
         args = cmd.get("Args", [])
@@ -236,31 +249,63 @@ def _check_stdin_consumer(cmd: dict[str, Any] | None, analysis: BashCommandAnaly
             f"stdin-consumer allowlist {sorted(SAFE_STDIN_CONSUMERS)}")
 
 
+IMPLICIT_READ_COMMANDS = frozenset({"cat", "less"})
+"""Commands whose non-flag literal arguments are file paths to *display*, functionally
+equivalent to a `ReadFile` call — so a bare `cat foo.txt`/`less foo.txt` (not fed into anything
+else, and not itself redirected) checks each such argument against `readDirs` in addition to
+`CommandRules`, the same protection a real `ReadFile` call already gets. See
+`_maybe_add_implicit_reads`."""
+
+
 def _walk_stmts(stmts: list[dict[str, Any]], analysis: BashCommandAnalysis) -> None:
     for stmt in stmts:
         _walk_stmt(stmt, analysis)
 
 
-def _walk_stmt(stmt: dict[str, Any], analysis: BashCommandAnalysis) -> None:
+def _walk_stmt(
+    stmt: dict[str, Any], analysis: BashCommandAnalysis, *, is_piped_into: bool = False,
+) -> None:
     """Walk one `Stmt`-shaped node — this shape recurs identically for `File.Stmts` elements,
     `Subshell`/`Block`/`CmdSubst`'s own `Stmts`, `IfClause`/`WhileClause`/`ForClause`'s `Cond`/
     `Then`/`Else`/`Do` elements, `CaseClause` item `Stmts`, and a `BinaryCmd`'s own `X`/`Y` sides
     (verified empirically: `X`/`Y` each carry their own `Redirs`/`Background`, exactly like a
     top-level statement) — so this one function is the sole recursion point for all of them.
+    `is_piped_into` is set by `_handle_binary_cmd` only for the receiving (`Y`) side of a pipe —
+    see `_maybe_add_implicit_reads`.
     """
     if stmt.get("Background"):
         analysis.forced_ask_reasons.append(
-            "command is backgrounded with a top-level '&' (rejected at parse time; see the "
-            "plan's 'Explicit backgrounding' rule)")
+            "command is backgrounded with a top-level '&', which is rejected at parse time")
 
     cmd = stmt.get("Cmd")
-    for redir in stmt.get("Redirs", []):
+    redirs = stmt.get("Redirs", [])
+    for redir in redirs:
         _walk_redir(redir, analysis)
         if redir.get("Op") in _INLINE_CONTENT_REDIR_OPS:
             _check_stdin_consumer(cmd, analysis, source="a heredoc/herestring")
 
     if cmd is not None:
         _walk_cmd(cmd, analysis)
+        if not is_piped_into and not redirs:
+            _maybe_add_implicit_reads(cmd, analysis)
+
+
+def _maybe_add_implicit_reads(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
+    """A bare `cat`/`less` invocation (not piped into from elsewhere, not itself redirected —
+    both already ruled out by `_walk_stmt`'s caller) is functionally a file read: extract each
+    non-flag literal argument as an additional `RedirectTarget(direction="read")`, so it's
+    checked against `readDirs` the same way a real `ReadFile` call would be — on top of, not
+    instead of, the ordinary `CommandRules` check on the `cat`/`less` invocation itself.
+    """
+    if cmd.get("Type") != "CallExpr":
+        return
+    args = cmd.get("Args", [])
+    if not args or _word_literal(args[0]) not in IMPLICIT_READ_COMMANDS:
+        return
+    for arg_word in args[1:]:
+        literal = _word_literal(arg_word)
+        if literal is not None and not literal.startswith("-"):
+            analysis.redirects.append(RedirectTarget(target=literal, direction="read"))
 
 
 def _walk_redir(redir: dict[str, Any], analysis: BashCommandAnalysis) -> None:
@@ -325,12 +370,13 @@ def _handle_call_expr(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> Non
 
 def _handle_binary_cmd(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
     x_side, y_side = cmd.get("X"), cmd.get("Y")
-    if cmd.get("Op") in _PIPE_OPS and y_side is not None:
+    is_pipe = cmd.get("Op") in _PIPE_OPS
+    if is_pipe and y_side is not None:
         _check_stdin_consumer(y_side.get("Cmd"), analysis, source="a pipe")
     if x_side is not None:
         _walk_stmt(x_side, analysis)
     if y_side is not None:
-        _walk_stmt(y_side, analysis)
+        _walk_stmt(y_side, analysis, is_piped_into=is_pipe)
 
 
 def _handle_stmts_container(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
@@ -448,8 +494,7 @@ _CMD_HANDLERS = {
 """Dispatch table from a `Cmd` node's `Type` to its walker. Anything absent here (`CoprocClause`,
 `LetClause`, or a future `shfmt`/AST-shape change) falls through `_walk_cmd`'s `else` branch:
 forced to "ask" and generically scanned for embedded `CmdSubst`, never silently ignored — the
-plan's fail-closed rule applies to unrecognized *node types* exactly as it does to non-literal
-tokens."""
+fail-closed rule applies to unrecognized *node types* exactly as it does to non-literal tokens."""
 
 
 def _walk_cmd(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:

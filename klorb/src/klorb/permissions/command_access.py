@@ -1,9 +1,8 @@
 # © Copyright 2026 Aaron Kimball
-"""Bash-command access control: the second concrete `PermissionsTable` resource kind (after
-`klorb.permissions.directory_access`'s directory access), governing which shell commands
-`BashTool` (`klorb.tools.bash`) may run. See
-docs/plans/ready/004-bash-permissions-and-bash-tool.md's "`CommandRules` parsing / matching with
-shfmt" section and docs/specs/permissions.md.
+"""Bash-command access control: a `PermissionsTable` resource kind governing which shell
+commands `BashTool` (`klorb.tools.bash`) may run, matched against token patterns rather than
+canonicalized filesystem paths. See docs/specs/bash-tool-and-command-permissions.md and
+docs/specs/permissions.md.
 
 This module has no opinion on how a raw command *string* becomes the `argv`-shaped candidates it
 matches against — that's `klorb.permissions.shell_parse`'s job (parsing via `shfmt --to-json` and
@@ -17,9 +16,16 @@ from pydantic import BaseModel, Field
 from klorb.permissions.table import PermissionsTable
 
 WILDCARD_TOKEN = "*"
-"""A rule token that matches exactly one arbitrary candidate token at that position — except
-when it is the rule's own last token, where it additionally means "and any further tokens,
-including zero"; see `CommandPermissionsTable._matches`."""
+"""A rule token that matches exactly one arbitrary candidate token at that position — always,
+regardless of position (including a rule's own last token); see
+`CommandPermissionsTable._matches` and
+docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md."""
+
+OPTIONAL_TOKEN = "?"
+"""A rule token that matches zero or one arbitrary candidate token at that position — except
+when it is the rule's own *last* token, where it instead matches any number of further candidate
+tokens, including zero (an unbounded trailing match); see `CommandPermissionsTable._matches` and
+docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md."""
 
 
 class CommandRules(BaseModel):
@@ -41,41 +47,62 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
     candidate per the token-wildcard semantics documented in `_matches`.
 
     Unlike `DirectoryAccessTable`, rule tokens need no canonicalization step at construction
-    time — a command-rule token is either a literal string or the `*` wildcard, not a filesystem
-    path with `~`-expansion/symlink-resolution concerns, so `CommandRules`' lists are used
-    as-is.
+    time — a command-rule token is either a literal string or a wildcard, not a filesystem path
+    with `~`-expansion/symlink-resolution concerns, so `CommandRules`' lists are used as-is.
     """
 
     def __init__(self, rules: CommandRules) -> None:
         super().__init__(deny=list(rules.deny), ask=list(rules.ask), allow=list(rules.allow))
 
     def _matches(self, rule: list[str], candidate: list[str]) -> bool:
-        """Positional token match, per the plan's "Concrete pattern representation": each rule
-        token is either a literal (matched exactly against the candidate token at that
-        position) or `WILDCARD_TOKEN` (`"*"`), which matches exactly one arbitrary candidate
-        token at that position — except when it is the rule's *last* token, where it instead
-        means "and any further candidate tokens, including zero", so `["foo", "*"]` matches
-        `["foo"]`, `["foo", "bar"]`, `["foo", "bar", "baz"]`, etc. A rule with no `*` at all
-        matches only a candidate of the exact same length (`["foo"]` matches only the bare
-        `foo` invocation, with no arguments at all — deliberately different from `["foo", "*"]`,
-        per the plan's "argv0, with forcibly no args" case).
+        """Positional token match, backtracking where `OPTIONAL_TOKEN` (`"?"`) is involved:
 
-        `["git", "*", "status", "*"]` (`"argv0 any-args someTool any-more-args"`) matches
-        `["git", "foo", "status", "bar"]`: the middle `*` consumes exactly one token (`"foo"`),
-        it is not optional — a candidate with nothing between `git` and `status` does not match
-        this rule.
+        * A literal token must equal the candidate token at that position exactly.
+        * `WILDCARD_TOKEN` (`"*"`) matches exactly one arbitrary candidate token at that
+          position, always — including when it's the rule's last token: `["foo", "*"]` matches
+          `["foo", "bar"]` but not `["foo"]` (zero extra tokens) or `["foo", "bar", "baz"]` (two
+          extra tokens). A rule with no wildcard at all matches only a candidate of the exact
+          same length: `["foo"]` matches only the bare `foo` invocation, with no arguments.
+        * `OPTIONAL_TOKEN` (`"?"`) matches zero or one arbitrary candidate token at that
+          position — except as the rule's own *last* token, where it instead matches any number
+          of further candidate tokens, including zero: `["foo", "?"]` matches `["foo"]`,
+          `["foo", "bar"]`, `["foo", "bar", "baz"]`, etc. A non-last `"?"` requires backtracking
+          to resolve correctly, since whether it consumes a token depends on what the rest of the
+          pattern needs: `["git", "?", "status"]` matches both `["git", "status"]` (the `"?"`
+          consumes nothing) and `["git", "--no-pager", "status"]` (it consumes one token).
+
+        `["git", "*", "status", "*"]` matches `["git", "foo", "status", "bar"]`: each `*`
+        consumes exactly one token, neither is optional — a candidate with nothing between `git`
+        and `status`, or nothing after the final `status`, does not match this rule.
         """
-        candidate_index = 0
-        for position, token in enumerate(rule):
-            is_last = position == len(rule) - 1
-            if token == WILDCARD_TOKEN and is_last:
-                return True
-            if candidate_index >= len(candidate):
-                return False
-            if token == WILDCARD_TOKEN:
-                candidate_index += 1
-                continue
-            if candidate[candidate_index] != token:
-                return False
-            candidate_index += 1
-        return candidate_index == len(candidate)
+        memo: dict[tuple[int, int], bool] = {}
+
+        def match_from(rule_index: int, candidate_index: int) -> bool:
+            key = (rule_index, candidate_index)
+            cached = memo.get(key)
+            if cached is not None:
+                return cached
+
+            if rule_index == len(rule):
+                result = candidate_index == len(candidate)
+            else:
+                token = rule[rule_index]
+                is_last = rule_index == len(rule) - 1
+                if token == OPTIONAL_TOKEN and is_last:
+                    result = True
+                elif token == WILDCARD_TOKEN:
+                    result = candidate_index < len(candidate) and match_from(
+                        rule_index + 1, candidate_index + 1)
+                elif token == OPTIONAL_TOKEN:
+                    result = match_from(rule_index + 1, candidate_index) or (
+                        candidate_index < len(candidate)
+                        and match_from(rule_index + 1, candidate_index + 1))
+                else:
+                    result = (
+                        candidate_index < len(candidate) and candidate[candidate_index] == token
+                        and match_from(rule_index + 1, candidate_index + 1))
+
+            memo[key] = result
+            return result
+
+        return match_from(0, 0)
