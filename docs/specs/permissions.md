@@ -22,8 +22,13 @@ the workspace or per-user level. See
 [the ask-rule-promotion ADR](../adrs/promote-matched-ask-rule-path-not-candidate-on-grant.md),
 [the cross-file-cleanup ADR](../adrs/homedir-grants-can-clean-workspace-ask-never-reverse.md),
 [the once-grant ADR](../adrs/once-grants-bypass-via-tool-context-override-not-table.md),
-[the grant-granularity ADR](../adrs/grant-unmentioned-paths-at-containing-directory.md), and
-[the read/write-union ADR](../adrs/union-matched-ask-rules-across-read-and-write-tables.md) for
+[the grant-granularity ADR](../adrs/grant-unmentioned-paths-at-containing-directory.md),
+[the read/write-union ADR](../adrs/union-matched-ask-rules-across-read-and-write-tables.md),
+[the serial multi-item ask ADR](../adrs/ask-independent-items-serially-not-just-the-strictest.md),
+[the `PermissionOverride` generalization ADR](../adrs/generalize-permission-override-to-a-set-of-resources.md),
+[the grant-writer generalization ADR](../adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md),
+and
+[the permission-grid UI ADR](../adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md) for
 the reasoning behind the most consequential decisions here.
 
 ## How it works
@@ -230,15 +235,18 @@ Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are m
 
 ## Interactive "ask" confirmation
 
-When a tool call raises `PermissionAskRequired`, how it's resolved is governed by
-`SessionConfig.permission_framework` (`klorb.session.PermissionFramework`, `"ask" | "auto" |
-"deny"`), checked first in `Session._run_tool_calls()` before it ever looks at any callback:
+When a tool call raises `PermissionAskRequired` (exactly one resource needing a decision) or
+`MultiPermissionAskRequired` (several independent resources at once — see "Multi-item asks"
+below), how it's resolved is governed by `SessionConfig.permission_framework`
+(`klorb.session.PermissionFramework`, `"ask" | "auto" | "deny"`), checked first in
+`Session._run_tool_calls()` before it ever looks at any callback:
 
 * **`"deny"`** — every ask fails closed, exactly like the plain fail-closed case described
   above, without invoking any callback.
 * **`"auto"`** — every ask is auto-approved via a synthesized
-  `PermissionDecision(choice="session")`, applied through the same
-  `Session._retry_after_permission_decision()`/`apply_permission_grant()` path a real
+  `PermissionDecision(action="allow", scope="session")` per item, applied through the same
+  `Session._retry_after_permission_decision()`/`_retry_after_multi_permission_decisions()` +
+  `apply_permission_grant()`/`apply_command_permission_grant()` path a real
   "Allow (this session)" answer would take (see below) — an in-memory-only grant for the
   rest of this session, nothing persisted to disk. No callback is invoked either.
 * **`"ask"`** (the `SessionConfig` default) — falls through to the optional callback
@@ -262,56 +270,102 @@ regardless of interactivity, for both a one-shot prompt and the REPL. The REPL's
 shows the session's current `permission_framework` value as a small badge next to the token
 tally (see [[terminal-repl]]).
 
-### The six choices
+### Multi-item asks
 
-`PermissionAskScreen` offers exactly the six choices from `TODO.md`'s "Permissions" item:
+A single tool call can find more than one independent resource needing a decision — `BashTool`
+is the motivating case: a compound command can have several simple commands each needing their
+own `CommandRules` decision, one or more redirection targets each needing their own
+`readDirs`/`writeDirs` decision, and structural forced-ask reasons the parser itself raised (see
+docs/specs/bash-tool-and-command-permissions.md). Rather than collapsing all of that down to a
+single prompt for whichever contributor is strictest, a tool that finds several such items raises
+`klorb.permissions.table.MultiPermissionAskRequired`, carrying one `PermissionAskItem` per
+resource. `Session._resolve_multi_permission_ask` asks about each item in order via the same
+`on_permission_ask` callback a single-item ask uses — so the TUI shows a fresh
+`PermissionAskScreen` per item — stopping at the first item answered `action="deny"` (or with
+`other_text` set): the remaining items are never asked about, and the whole call is denied. See
+[the serial multi-item ask ADR](../adrs/ask-independent-items-serially-not-just-the-strictest.md)
+for the full reasoning, including why a bare command-pattern item (no filesystem resource at all)
+is no longer automatically failed closed the way a path-less single-item ask still is.
 
-* **Allow (once)** — bypasses the check for this one tool call only, persisting nothing at all,
-  not even in memory. Implemented via a new `ToolSetupContext.permission_override: Path | None`
-  field: `evaluate_write()`/`resolve_and_evaluate_read()` (`klorb.permissions.workspace`) check
-  it — after the unconditional `is_privileged_path()` deny, before consulting either table — and
-  short-circuit to `"allow"` on an exact match. `Session._retry_after_permission_decision()`
-  retries the call via `tool_registry.instantiate_tool(name, permission_override=ask_exc.path)`,
-  a fresh, one-shot `ToolSetupContext` discarded after that single retry — the identical access
-  asks again next time, since no `readDirs`/`writeDirs` entry was ever added.
-* **Allow (this session)** — mutates only the live `Session.config.read_dirs`/`write_dirs`
-  (whole-object reassignment, never `.append()`ed in place — see `DirRules`'s own
-  immutable-by-convention contract). Nothing is written to disk, and the process-config
-  template (`ProcessConfig.session`) is untouched, so a future `/clear` does not inherit it.
-* **Allow (always, in this workspace)** — additionally mutates `ProcessConfig.session.read_dirs`/
-  `write_dirs` (so a `/clear`'d session in this same process inherits it too) and persists the
-  grant to `${workspace_root}/.klorb/klorb-config.json`, auto-creating the file (and the
-  `.klorb/` directory) if neither exists yet. This does **not** set `workspace.trusted` —
-  granting r/w access to one directory is a much narrower action than trusting the whole
-  workspace (see the read/trust ADR above); `ReadFile`'s hard workspace-root boundary is
-  unaffected.
-* **Allow (always, for me)** — the same in-memory dual-write as "this workspace" (live session
-  config *and* the process-config template), but persists to the per-user file
+A `PermissionAskItem` carries exactly one of `path` (plus `is_write`, a directory-access item) or
+`command` (an argv pattern, a bash-command-rule item), or neither (a structural item with no
+persistable rule of its own — a decision for it can only ever be `"once"` or `"deny"`, never a
+persistent grant). Every collected `action="allow"` decision at a persistent scope is applied via
+`apply_permission_grant()` (for a `path` item) or
+`klorb.permissions.command_grant.apply_command_permission_grant()` (for a `command` item) before
+the whole call is retried exactly once — never once per item, since re-parsing/re-evaluating
+after each individual grant would be wasted work.
+
+### The permission grid: action × scope
+
+`PermissionAskScreen` presents a 2-column (`Allow`, `Deny`) by 4-row (`once`, `session`,
+`workspace`, `homedir`) grid, navigated with arrow keys — Left/Right cycles the action column,
+Up/Down cycles the scope row, Enter confirms the highlighted cell — plus a separate `Other...`
+escape hatch (the `O` key) outside the grid for free text. See
+[the permission-grid UI ADR](../adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md) for
+why the two axes are independent cursor dimensions rather than a flat list of choices, and how
+`ReplApp` remembers the previous prompt's cell to seed the next one when several asks are shown
+in a row for one compound call.
+
+* **Once** — bypasses the check for this one tool call only, persisting nothing at all, not even
+  in memory. Implemented via `ToolSetupContext.permission_override:
+  klorb.permissions.table.PermissionOverride | None` — a set-valued type covering every kind of
+  resource a retried call's items might carry (paths, command argvs, structural reason strings),
+  not just one path, since a single retry can honor several independent `"once"` decisions at
+  once for a multi-item ask. `evaluate_write()`/`resolve_and_evaluate_read()`
+  (`klorb.permissions.workspace`) check `path in override.paths` — after the unconditional
+  `is_privileged_path()` deny, before consulting either table — and `BashTool._classify` makes
+  the analogous checks against `override.commands`/`override.reasons`. See
+  [the `PermissionOverride` generalization ADR](../adrs/generalize-permission-override-to-a-set-of-resources.md).
+  Applies to both `Allow` and `Deny`: a once-scoped `Deny` simply reports the denial for this
+  call without persisting anything either, identical in effect to the fail-closed default.
+* **This session** — mutates only the live `Session.config` (`read_dirs`/`write_dirs` for a
+  `path` item, `command_rules` for a `command` item; whole-object reassignment, never
+  `.append()`ed in place — see `DirRules`'s/`CommandRules`' own immutable-by-convention
+  contract). Nothing is written to disk, and the process-config template (`ProcessConfig.session`)
+  is untouched, so a future `/clear` does not inherit it.
+* **Always, this workspace** — additionally mutates the matching `ProcessConfig.session` field
+  (so a `/clear`'d session in this same process inherits it too) and persists the grant to
+  `${workspace_root}/.klorb/klorb-config.json`, auto-creating the file (and the `.klorb/`
+  directory) if neither exists yet. For a `path` item, this does **not** set
+  `workspace.trusted` — granting r/w access to one directory is a much narrower action than
+  trusting the whole workspace (see the read/trust ADR above); `ReadFile`'s hard workspace-root
+  boundary is unaffected.
+* **Always, for me** — the same in-memory dual-write as "this workspace" (live session config
+  *and* the process-config template), but persists to the per-user file
   (`~/.config/klorb/klorb-config.json` by default — `klorb.process_config.user_config_path()`)
   instead of the project one, auto-creating it the same way. See "Cross-file cleanup" below for
   the one thing this scope does to the *workspace* file.
-* **Deny** — declines this one call, persisting nothing, ever (there is no "Deny (this
-  session)"/"(always)" variant — only Allow has graduated scopes).
-* **Other** — functionally identical to Deny (denies this one call, persists nothing), but the
-  free text the user typed is appended to the tool call's `tool_response` content alongside the
-  generic denial, so the model sees the redirection (e.g. "use `/tmp/scratch` instead") without
-  needing a second round trip.
+* **Deny**, at any of the four scopes above, persists exactly the same way `Allow` does, just
+  into `deny` instead of `allow` — a persistent `Deny` means the identical resource is refused
+  outright on a future ask, without prompting again. The one asymmetry: a `Deny` decision for a
+  write item only touches `writeDirs`, never `readDirs` — denying a write doesn't imply denying a
+  read that was never in question, unlike `Allow`, which always promotes the matching `readDirs`
+  entry too (see [the read/write-union ADR](../adrs/union-matched-ask-rules-across-read-and-write-tables.md)).
+  See [the grant-writer generalization ADR](../adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md).
+* **Other** — functionally identical to a once-scoped `Deny` (denies this one call, persists
+  nothing), but the free text the user typed is appended to the tool call's `tool_response`
+  content alongside the generic denial, so the model sees the redirection (e.g. "use
+  `/tmp/scratch` instead") without needing a second round trip.
 
 All of this is implemented in `klorb.permissions.grant`
-(`compute_grant_paths()`/`apply_permission_grant()`) and invoked by `Session` itself —
-`Session._retry_after_permission_decision` calls `apply_permission_grant()`, passing its own
-`config` (the live `SessionConfig`) and the `ProcessConfig` reference it was constructed with
-(see "Configuration" below), once `on_permission_ask` returns a persistent-scope decision, before
-retrying the call. `ReplApp._on_permission_ask` only shows the modal (`compute_grant_paths()` is
-also called there, read-only, purely so the modal's copy can name the directory a grant would
-cover) and returns the user's choice — it never applies or persists a grant itself. This keeps
-the grant-computation and file-persistence logic entirely inside the library layer, importable
-and unit-testable without Textual, and automatically available to any other consumer of
-`Session` (a future VSCode plugin, say) without reimplementing this dance — per this repo's
-CLI/library firewall (see `CLAUDE.md`). A `Session` constructed with no `ProcessConfig` at all
-(`process_config=None`) still gets a working grant — `apply_permission_grant()` just skips the
-process-wide ripple described below, since there's no in-memory `ProcessConfig.session` template
-to ripple into; the live `SessionConfig` mutation and the on-disk persistence, which only need
+(`compute_grant_paths()`/`apply_permission_grant()`) and its `CommandRules` mirror
+`klorb.permissions.command_grant` (`compute_command_grant_patterns()`/
+`apply_command_permission_grant()`), invoked by `Session` itself —
+`Session._retry_after_permission_decision`/`_retry_after_multi_permission_decisions` call these,
+passing `self.config` (the live `SessionConfig`) and the `ProcessConfig` reference `Session` was
+constructed with (see "Configuration" below), once `on_permission_ask` returns a persistent-scope
+decision, before retrying the call. `ReplApp._on_permission_ask` only shows the modal
+(`compute_grant_paths()`/`compute_command_grant_patterns()` are also called there, read-only,
+purely so the modal's copy can name the directory/command pattern a grant would cover) and
+returns the user's choice — it never applies or persists a grant itself. This keeps the
+grant-computation and file-persistence logic entirely inside the library layer, importable and
+unit-testable without Textual, and automatically available to any other consumer of `Session`
+(a future VSCode plugin, say) without reimplementing this dance — per this repo's CLI/library
+firewall (see `CLAUDE.md`). A `Session` constructed with no `ProcessConfig` at all
+(`process_config=None`) still gets a working grant — the process-wide ripple described below is
+just skipped, since there's no in-memory `ProcessConfig.session` template to ripple into; the
+live `SessionConfig` mutation and the on-disk persistence, which only need
 `SessionConfig.workspace.path`, still happen.
 
 ### Grant granularity: directory, not file

@@ -20,6 +20,19 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   [[process-and-session-config]]). See
   [the ToolSetupContext ADR](../adrs/tool-setup-context-carries-process-and-session-config.md)
   for why it holds the config objects themselves rather than flattened fields.
+* `ToolSetupContext.session: Session | None` is the active `Session` itself (`None` for a
+  `ToolSetupContext` built without a real `Session`, e.g. most unit tests), so a `Tool` can read
+  and write `session.tool_state: dict[str, Any]` — a per-session, per-tool-name (keyed by
+  `tool_state["<ToolName>"]`) scratch dict for ad hoc runtime bookkeeping a `Tool` wants to keep
+  across calls within one session (e.g. `BashTool`'s one-time sandbox-fallback notice — see
+  docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section), distinct from
+  `session_config` (user-configurable settings only) and never persisted to disk. `Session`
+  itself never reads or writes it — only the `Tool` that owns a given key does, via
+  `session.tool_state.setdefault("<ToolName>", {})` (never assuming the key is pre-populated,
+  since the dict starts empty for every new `Session`). `ToolSetupContext.session` is set on
+  `ToolRegistry` post-construction by `Session.__init__` (`ToolRegistry` is always built before
+  the `Session` it's passed into, so this can't be a `ToolRegistry` constructor argument) and
+  threaded into every `ToolSetupContext` `ToolRegistry` builds from then on.
 * `klorb.tools.tool.Tool` (`klorb/src/klorb/tools/tool.py`) is an abstract base class. Its
   `__init__(self, context: ToolSetupContext)` is concrete (not abstract) and imposes a
   standard constructor on every subclass: a `Tool` is always constructed with exactly one

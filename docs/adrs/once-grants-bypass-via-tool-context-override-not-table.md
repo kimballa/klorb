@@ -38,3 +38,9 @@
   need either several overrides or a different one-shot-bypass design entirely — not a blocker
   today, but worth remembering before assuming this pattern generalizes to every future tool
   without changes.
+
+  That hypothetical materialized once `BashTool`'s compound-command asks needed to bypass several
+  independent resources in a single retry — see
+  [the `PermissionOverride` generalization ADR](generalize-permission-override-to-a-set-of-resources.md),
+  which broadens `permission_override` from a single `Path` to a small set-valued type without
+  changing the mechanism described above.
