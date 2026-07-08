@@ -32,6 +32,15 @@ _SCOPE_LABELS: dict[_Scope, str] = {
 
 PERMISSION_ASK_GRID_ID = "permission-ask-grid"
 PERMISSION_ASK_INPUT_ID = "permission-ask-other-input"
+PERMISSION_ASK_OTHER_CELL_ID = "permission-ask-cell-other"
+
+_OTHER_ROW = len(_SCOPES)
+"""The grid's last row index — one row past the last real `_SCOPES` entry — occupied by a
+single cell spanning both columns (`PERMISSION_ASK_OTHER_CELL_ID`) rather than an
+action/scope pair; see `PermissionAskScreen._refresh_selection`/`action_confirm`."""
+_TOTAL_ROWS = len(_SCOPES) + 1
+"""`_SCOPES`'s rows plus the trailing `_OTHER_ROW` — the modulus `action_move_row` cycles
+`_row` through."""
 
 
 def _cell_id(column: int, row: int) -> str:
@@ -41,12 +50,17 @@ def _cell_id(column: int, row: int) -> str:
 class PermissionAskScreen(ModalScreen[PermissionDecision]):
     """Presents a 2D grid of `_ACTIONS` (columns: Allow, Deny) by `_SCOPES` (rows: once,
     session, workspace, homedir) that the user navigates with arrow keys — Left/Right cycles
-    the Allow/Deny column, Up/Down cycles the scope row — and confirms with Enter, dismissing
+    the Allow/Deny column, Up/Down cycles the row — and confirms with Enter, dismissing
     `PermissionDecision(action=_ACTIONS[column], scope=_SCOPES[row])`. Escape is a fast path to
     an outright `PermissionDecision(action="deny", scope="once")` without needing to navigate
-    there first. "Other..." (the `o` key) is a separate escape hatch outside the grid, for a
-    free-text response the grid's fixed cells can't express — it swaps the grid for a
-    single-line `Input`; submitting it (Enter) dismisses with
+    there first.
+
+    The grid's last row (`_OTHER_ROW`) is a single cell spanning both columns
+    (`PERMISSION_ASK_OTHER_CELL_ID`), reachable the same way as any other row (pressing Down
+    repeatedly from any column) since it isn't tied to a specific action. Confirming it with
+    Enter — or pressing `o` directly, a fast path that works regardless of the current
+    cursor position — reveals a free-text `Input` in place of the grid, for a response the
+    grid's fixed cells can't express; submitting it (Enter) dismisses with
     `PermissionDecision(action="deny", scope="once", other_text=...)`.
 
     `granted_paths`/`granted_command_patterns` are `klorb.permissions.grant.compute_grant_paths()`/
@@ -83,18 +97,23 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
     }
 
     #permission-ask-grid {
-        grid-size: 2 4;
+        grid-size: 2 5;
         grid-gutter: 0 1;
-        width: auto;
+        width: 65;
         height: auto;
         margin: 0 0 1 0;
     }
 
     #permission-ask-grid Static {
-        width: 28;
+        width: 32;
         height: 1;
         padding: 0 1;
-        content-align: center middle;
+        content-align: left middle;
+    }
+
+    #permission-ask-grid Static#permission-ask-cell-other {
+        column-span: 2;
+        width: 100%;
     }
 
     #permission-ask-grid Static.selected {
@@ -105,6 +124,10 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     #permission-ask-hint {
         color: $text-muted;
+    }
+
+    #permission-ask-other-input {
+        width: 65;
     }
     """
 
@@ -133,11 +156,12 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         self._row = _SCOPES.index(initial_scope)
 
     def compose(self) -> ComposeResult:
-        cells = [
+        cells: list[Static] = [
             Static(f"{_ACTION_LABELS[action]} — {_SCOPE_LABELS[scope]}", id=_cell_id(column, row))
             for row, scope in enumerate(_SCOPES)
             for column, action in enumerate(_ACTIONS)
         ]
+        cells.append(Static("Other...", id=PERMISSION_ASK_OTHER_CELL_ID))
         yield Vertical(
             Static(self._message_text(), id="permission-ask-message"),
             Grid(*cells, id=PERMISSION_ASK_GRID_ID),
@@ -170,16 +194,21 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
             for column in range(len(_ACTIONS)):
                 cell = grid.query_one(f"#{_cell_id(column, row)}", Static)
                 cell.set_class(column == self._column and row == self._row, "selected")
+        other_cell = grid.query_one(f"#{PERMISSION_ASK_OTHER_CELL_ID}", Static)
+        other_cell.set_class(self._row == _OTHER_ROW, "selected")
 
     def action_move_column(self, delta: int) -> None:
         self._column = (self._column + delta) % len(_ACTIONS)
         self._refresh_selection()
 
     def action_move_row(self, delta: int) -> None:
-        self._row = (self._row + delta) % len(_SCOPES)
+        self._row = (self._row + delta) % _TOTAL_ROWS
         self._refresh_selection()
 
     def action_confirm(self) -> None:
+        if self._row == _OTHER_ROW:
+            self._reveal_other_input()
+            return
         self.dismiss(PermissionDecision(action=_ACTIONS[self._column], scope=_SCOPES[self._row]))
 
     def action_decline(self) -> None:
