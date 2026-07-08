@@ -292,9 +292,8 @@ this field before constructing the turn's user `Message`: if set, it's wrapped i
 `<SystemInterjection subject="PermissionFramework">...</SystemInterjection>` tag pair (via
 the module-level `_wrap_system_interjection()` helper) and prepended onto `prompt`, then
 cleared, so it's applied exactly once, to the very next turn dispatched. The tag is what lets
-the model tell the harness notice apart from the user's own words without an explanatory
-lead-in sentence — the two are otherwise concatenated directly, with no `"During this turn
-the user said:"` or similar framing text in between.
+the model tell the harness notice apart from the user's own words; the two are concatenated
+directly, with no other framing text in between.
 
 Calling `set_permission_framework()` again before that next turn starts overwrites the
 pending interjection rather than queuing a second one — cycling through `"ask"` → `"auto"` →
