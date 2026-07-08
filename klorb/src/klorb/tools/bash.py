@@ -9,13 +9,18 @@ docs/specs/bash-tool-and-command-permissions.md for the full design.
 import atexit
 import logging
 import os
+import queue
+import re
 import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any, Callable
 
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
@@ -38,6 +43,299 @@ _SANDBOX_WARNED_KEY = "sandbox_warned"
 empty for every new `Session`, so this naturally resets at session boundaries (startup, `/clear`)
 with no extra plumbing. Not meant to survive process restarts or to be a security control —
 purely to avoid repeating an informational notice on every call within the same session."""
+
+_PERSISTENT_SHELL_KEY = "persistent_shell"
+"""`session.tool_state["Bash"]["persistent_shell"]`: the single live `PersistentShell` (or
+`None`) `shell_lifetime="session"`/`"new"` calls reuse — see `PersistentShell` and
+`BashTool._execute_persistent`. At most one persistent shell exists per `Session` at a time."""
+
+_STANDING_INTERJECTION_SUBJECT = "SessionTerminal"
+"""`Session.register_standing_interjection()` subject key `BashTool` registers under whenever it
+creates or reuses a persistent shell — see `_standing_interjection_provider` and
+docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md."""
+
+_TEARDOWN_SUBJECT = "Bash"
+"""`Session.register_teardown()` subject key `BashTool` registers under for killing a live
+persistent shell when the owning `Session` is closed — see `Session.close()`."""
+
+_TIMEOUT_GRACE_SECONDS = 3.0
+"""How long a persistent-shell command is given to finish after `SIGINT` before being escalated
+to `SIGKILL` on timeout — see `PersistentShell._run_raw`."""
+
+_PWD_TIMEOUT_SECONDS = 10.0
+"""Timeout for the `pwd` round-trip `PersistentShell` runs after every command to refresh its
+known cwd (see `PersistentShell._refresh_cwd`) — deliberately short and independent of
+`tools.bash.timeout`, since `pwd` itself never legitimately takes long."""
+
+
+def _pump_lines(stream: IO[str], stream_name: str, sink: "queue.Queue[tuple[str, str | None]]") -> None:
+    """Read `stream` line by line, putting `(stream_name, line)` onto `sink` for each one, then
+    `(stream_name, None)` once `stream` hits EOF (the process exited or closed this fd) — the
+    background pump-thread half of `PersistentShell`'s command-boundary detection, mirroring the
+    existing pump-thread pattern used elsewhere for shelled-out children (see
+    `klorb.tui.shell.UserShellCommand`)."""
+    for line in iter(stream.readline, ""):
+        sink.put((stream_name, line))
+    sink.put((stream_name, None))
+    stream.close()
+
+
+@dataclass
+class PersistentCommandResult:
+    """One `shell_lifetime="session"`/`"new"` command's outcome, returned by
+    `PersistentShell.run_command`."""
+
+    stdout: str
+    stderr: str
+    exit_status: int | None
+    """`None` if the shell died (EOF) or was killed before an exit status was observed."""
+    terminal_alive: bool
+    terminal_cwd: str | None
+    """The shell's cwd after this command (via a `pwd` round-trip), or `None` if `terminal_alive`
+    is `False`."""
+    timed_out: bool
+
+
+class PersistentShell:
+    """A single, long-lived plain `bash` process (no `-i`, no `--rcfile`) reused across `Bash`
+    calls within one `Session`, for `shell_lifetime="session"`/`"new"` (see docs/specs/bash-tool-
+    and-command-permissions.md's "Session-scoped terminals" section and
+    docs/plans/archive/005-session-scoped-bash-terminals.md).
+
+    Deliberately **not** launched with the one-shot path's `-i` (interactive): confirmed
+    empirically that an interactive bash reading a continuous stream of commands from a pipe (as
+    opposed to running a single `-c "<command>"`) writes a `PS1` prompt to stderr before every
+    read, corrupting the sentinel-delimited stderr stream with prompt text interleaved into it —
+    a problem the one-shot path never hits, since a `-c` invocation never enters bash's
+    interactive read loop at all. `_spawn_persistent_shell` (`klorb.tools.bash.BashTool`) instead
+    launches a plain, non-interactive `bash` and runs an explicit bootstrap command (dummying
+    `$PS1` just long enough to satisfy the `[ -z "$PS1" ] && return` guard most real `.bashrc`
+    files start with, `source`-ing the rcfile, then unsetting `PS1`/`PS2` again) through the
+    ordinary `run_command` channel as this shell's first command — see `BashTool._spawn_persistent_
+    shell` and docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why
+    the guard clause needs `$PS1` set at all. A non-interactive bash never prints prompts, so
+    nothing needs to be stripped from its stderr the way `_strip_bash_shell_noise` strips the
+    one-shot path's fixed `-i` startup lines.
+
+    Unlike the one-shot `bash -c "<command>"` path, this shell never exits between commands, so
+    there is no process-exit signal to wait on: each command is followed by a fresh, random
+    sentinel token (`uuid4().hex`, not a fixed string, so it can't collide with the command's own
+    output) written to the shell's own stdin, and two background reader threads
+    (`_pump_lines`, one per stream) watch for a matching `__KLORB_DONE_<token>__` line to know the
+    command has finished. `run_command` is not safe to call concurrently from multiple threads —
+    nothing in this codebase does that today, since `Session._run_tool_calls` dispatches every
+    tool call in a turn's round sequentially (see the plan's "Cleanup and lifecycle" section).
+    """
+
+    def __init__(self, argv: list[str], env: dict[str, str], cwd: str) -> None:
+        self.process = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env, cwd=cwd, start_new_session=True, text=True, bufsize=1)
+        self.cwd: str | None = cwd
+        self.alive = True
+        self._queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        self._stdout_thread = threading.Thread(
+            target=_pump_lines, args=(self.process.stdout, "stdout", self._queue), daemon=True)
+        self._stderr_thread = threading.Thread(
+            target=_pump_lines, args=(self.process.stderr, "stderr", self._queue), daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+        atexit.register(self.kill)
+
+    def _write_stdin(self, text: str) -> bool:
+        """Write `text` to the shell's stdin, returning whether it succeeded. A failure (the
+        shell's stdin is already closed, e.g. because the process died) marks this shell dead
+        rather than raising, since that's a normal, expected way to discover a dead shell."""
+        if self.process.stdin is None:
+            self._mark_dead()
+            return False
+        try:
+            self.process.stdin.write(text)
+            self.process.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError, ValueError):
+            self._mark_dead()
+            return False
+
+    def run_command(self, command: str, timeout_seconds: float) -> PersistentCommandResult:
+        """Run `command` in this shell and return its result, including a refreshed
+        `terminal_cwd` (a `pwd` round-trip run immediately afterward, via `_refresh_cwd`) when
+        the shell is still alive and the command didn't time out."""
+        stdout, stderr, exit_status, timed_out = self._run_raw(command, timeout_seconds)
+        cwd = self._refresh_cwd() if self.alive and not timed_out else self.cwd
+        return PersistentCommandResult(
+            stdout=stdout, stderr=stderr, exit_status=exit_status, terminal_alive=self.alive,
+            terminal_cwd=cwd if self.alive else None, timed_out=timed_out)
+
+    def _refresh_cwd(self) -> str | None:
+        stdout, _stderr, exit_status, timed_out = self._run_raw("pwd", _PWD_TIMEOUT_SECONDS)
+        if not self.alive or timed_out or exit_status != 0:
+            return self.cwd
+        self.cwd = stdout.strip()
+        return self.cwd
+
+    def _run_raw(self, command: str, timeout_seconds: float) -> tuple[str, str, int | None, bool]:
+        """Run `command` to completion (or timeout/death) and return raw
+        `(stdout, stderr, exit_status, timed_out)` — no cwd refresh, so `_refresh_cwd` can call
+        this itself without recursing into another cwd refresh.
+
+        See the module-level `PersistentShell` docstring for the sentinel-token protocol this
+        implements. On timeout: `SIGINT` is sent to the shell's whole process group first (the
+        same delivery `Ctrl-C` would use), and the sentinel wait continues for
+        `_TIMEOUT_GRACE_SECONDS` longer — an interactive `bash -i` normally survives `SIGINT`
+        itself (only the running foreground command dies), so a command that actually responds to
+        `SIGINT` finishes normally within the grace period and this shell stays alive. Only if the
+        sentinel still hasn't appeared by the end of the grace period (a command that ignores or
+        blocks `SIGINT`) is the whole process group escalated to `SIGKILL`, which cannot be
+        ignored and ends the persistent shell itself, not just the stuck command — there is no way
+        to kill only the stuck command without a pty/job-control layer this doesn't build.
+        """
+        if not self.alive:
+            return "", "", None, False
+
+        token = uuid.uuid4().hex
+        stdout_done_re = re.compile(rf"^__KLORB_DONE_{token}__ (-?\d+)\s*\Z")
+        stderr_done_line = f"__KLORB_DONE_{token}__"
+        script = (
+            f"{command}\n"
+            f"__klorb_ec=$?\n"
+            f'printf \'\\n%s %d\\n\' "__KLORB_DONE_{token}__" "$__klorb_ec"\n'
+            f'printf \'\\n%s\\n\' "__KLORB_DONE_{token}__" >&2\n'
+        )
+        if not self._write_stdin(script):
+            return "", "", None, False
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        exit_status: int | None = None
+        stdout_done = False
+        stderr_done = False
+        stderr_matched = False
+        eof = False
+        sent_sigint = False
+        timed_out = False
+        deadline = time.monotonic() + timeout_seconds
+
+        while not (stdout_done and stderr_done):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if not sent_sigint:
+                    self._send_signal(signal.SIGINT)
+                    sent_sigint = True
+                    timed_out = True
+                    deadline = time.monotonic() + _TIMEOUT_GRACE_SECONDS
+                    continue
+                self._kill_process_group()
+                eof = True
+                break
+            try:
+                stream_name, line = self._queue.get(timeout=remaining)
+            except queue.Empty:
+                continue
+            if line is None:
+                eof = True
+                if stream_name == "stdout":
+                    stdout_done = True
+                else:
+                    stderr_done = True
+                continue
+            if stream_name == "stdout":
+                match = stdout_done_re.match(line.rstrip("\n"))
+                if match is not None:
+                    exit_status = int(match.group(1))
+                    stdout_done = True
+                    continue
+                stdout_lines.append(line)
+            else:
+                if line.rstrip("\n") == stderr_done_line:
+                    stderr_done = True
+                    stderr_matched = True
+                    continue
+                stderr_lines.append(line)
+
+        if eof:
+            self._mark_dead()
+        elif sent_sigint and exit_status is not None:
+            # The sentinel showed up before the grace period ran out -- the command responded to
+            # SIGINT (or finished on its own in the meantime) and the shell is still usable.
+            timed_out = False
+
+        # Each `printf` in `script` above starts with a literal '\n' so the DONE marker always
+        # lands on its own line even if the command's own last line had no trailing newline --
+        # but that means one synthetic trailing '\n' is unconditionally present right before the
+        # marker whenever it was actually reached. Strip exactly that one character (not a whole
+        # "line", since a command with no trailing newline of its own merges it onto the tail of
+        # its last real line rather than producing a separate blank one) so a captured stream
+        # matches what the command actually wrote, not what this sentinel protocol added to it.
+        stdout_text = "".join(stdout_lines)
+        if exit_status is not None and stdout_text.endswith("\n"):
+            stdout_text = stdout_text[:-1]
+        stderr_text = "".join(stderr_lines)
+        if stderr_matched and stderr_text.endswith("\n"):
+            stderr_text = stderr_text[:-1]
+
+        return stdout_text, stderr_text, exit_status, timed_out
+
+    def _send_signal(self, sig: int) -> None:
+        try:
+            os.killpg(self.process.pid, sig)
+        except ProcessLookupError:
+            self._mark_dead()
+
+    def _kill_process_group(self) -> None:
+        try:
+            os.killpg(self.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            self.process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
+        self._mark_dead()
+
+    def _mark_dead(self) -> None:
+        if not self.alive:
+            return
+        self.alive = False
+        if self.process.stdin is not None:
+            try:
+                self.process.stdin.close()
+            except OSError:
+                pass
+        try:
+            self.process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def kill(self) -> None:
+        """Unconditionally end this shell: `SIGKILL` its whole process group and mark it dead.
+        Safe to call more than once, or on an already-dead shell (a no-op past the first call) --
+        registered directly against `atexit` in `__init__`, and also called from
+        `BashTool._execute_persistent` (`shell_lifetime="new"`) and `Session.close()` (via the
+        teardown callback `BashTool` registers)."""
+        if not self.alive:
+            return
+        self._kill_process_group()
+
+
+def _standing_interjection_provider(shell: PersistentShell) -> Callable[[], str | None]:
+    """Build the `Session.register_standing_interjection` provider for a live persistent shell:
+    a message reminding the model it has one open (and how to keep using or close it) for as long
+    as `shell.alive`, `None` forever after it dies -- see docs/adrs/standing-interjections-
+    complement-one-shot-for-level-triggered-state.md."""
+
+    def provider() -> str | None:
+        if not shell.alive:
+            return None
+        return (
+            f"You have a live session-scoped Bash terminal open (cwd: {shell.cwd}). Use "
+            "shell_lifetime=\"session\" to keep using it, or shell_lifetime=\"new\" to close it "
+            "and start fresh."
+        )
+
+    return provider
 
 
 def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str, str]:
@@ -189,15 +487,13 @@ class BashTool(Tool):
     that happens in a given session (see `_sandbox_notice`) — the permission checks above are
     unaffected either way.
 
-    Each call spawns its own fresh, non-persistent shell that exits when the command finishes —
-    `apply()` requires the model to pass `shell_lifetime="command"` explicitly, the only
-    currently-valid value, so a future persistent-shell mode (one shell surviving across several
-    calls, keeping `cd`/exported-variable state) is an additive, opt-in change to this schema
-    rather than a silent behavior change for existing callers.
-
-    TODO(aaron): implement a `shell_lifetime="session"` mode that keeps one shell process alive
-    across multiple `Bash` calls (persisting `cd`, exported variables, and background jobs
-    between them), instead of always starting fresh.
+    `shell_lifetime` selects how long the underlying shell process lives: `"command"` spawns a
+    fresh, non-persistent shell that exits when the command finishes (no state carries over to
+    the next call); `"session"` reuses the one live persistent shell for this `Session` if one
+    exists, or creates it otherwise; `"new"` kills any existing persistent shell first, then
+    creates a fresh one that becomes the persistent shell for subsequent `"session"` calls. At
+    most one persistent shell exists per `Session` at a time — see `PersistentShell` and
+    docs/specs/bash-tool-and-command-permissions.md's "Session-scoped terminals" section.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -219,10 +515,16 @@ class BashTool(Tool):
             "with '&', a heredoc/pipe feeding an interpreter other than cat/less/git) is denied "
             "or requires confirmation rather than silently allowed. Returns exit_status, "
             "success, failure_reason (null on success), stdout/stderr (or stdout_file/"
-            "stderr_file if the output is large), and runtime in seconds. shell_lifetime must "
-            "be \"command\": each call starts a fresh, non-persistent shell that exits when the "
-            "command finishes; no state (cwd, env vars set by the command, background jobs) "
-            "carries over to the next call."
+            "stderr_file if the output is large), and runtime in seconds. shell_lifetime "
+            "selects the shell's lifetime: \"command\" (default behavior) starts a fresh, "
+            "non-persistent shell that exits when the command finishes, with no state (cwd, "
+            "env vars, background jobs) carried over to the next call; \"session\" reuses this "
+            "session's one persistent shell if it has one, or creates it otherwise, so cwd/env/"
+            "background-job state persists across calls; \"new\" closes any existing "
+            "persistent shell and starts a fresh one that becomes the persistent shell for "
+            "subsequent \"session\" calls. \"session\"/\"new\" responses also include "
+            "terminal_alive (whether the persistent shell is still usable) and terminal_cwd "
+            "(its current directory, or null if terminal_alive is false)."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -235,9 +537,11 @@ class BashTool(Tool):
                 },
                 "shell_lifetime": {
                     "type": "string",
-                    "enum": ["command"],
+                    "enum": ["command", "session", "new"],
                     "description": (
-                        "Must be \"command\": this shell is not persistent across calls."
+                        "\"command\": fresh, non-persistent shell for this call only. "
+                        "\"session\": reuse (or create) this session's one persistent shell. "
+                        "\"new\": close any existing persistent shell and start a fresh one."
                     ),
                 },
             },
@@ -248,11 +552,12 @@ class BashTool(Tool):
     def apply(self, args: dict[str, Any]) -> Any:
         command = args["command"]
         shell_lifetime = args["shell_lifetime"]
-        if shell_lifetime != "command":
-            raise ValueError(f"shell_lifetime must be 'command', got {shell_lifetime!r}")
+        if shell_lifetime not in ("command", "session", "new"):
+            raise ValueError(
+                f"shell_lifetime must be one of 'command'/'session'/'new', got {shell_lifetime!r}")
         if not command.strip():
             raise ValueError("command must not be empty")
-        logger.debug("Bash %r", command)
+        logger.debug("Bash %r (shell_lifetime=%s)", command, shell_lifetime)
 
         analysis = parse_command(command, self._shfmt_command)
         verdict, ask_items = self._classify(analysis, command)
@@ -262,7 +567,9 @@ class BashTool(Tool):
             raise MultiPermissionAskRequired(
                 f"Permission requires confirmation: run shell command: {command}", items=ask_items)
 
-        return self._execute(command)
+        if shell_lifetime == "command":
+            return self._execute(command)
+        return self._execute_persistent(command, shell_lifetime)
 
     def _classify(
         self, analysis: BashCommandAnalysis, command: str,
@@ -356,16 +663,7 @@ class BashTool(Tool):
             path.touch()
             os.chmod(path, 0o600)
 
-        sandbox_notice = None
-        if self.context.session is None:
-            # No Session to dedupe against (e.g. a caller that built a ToolSetupContext
-            # directly) -- show it every call rather than silently dropping it.
-            sandbox_notice = _sandbox_notice()
-        else:
-            bash_state = self.context.session.tool_state.setdefault(_TOOL_STATE_KEY, {})
-            if not bash_state.get(_SANDBOX_WARNED_KEY, False):
-                bash_state[_SANDBOX_WARNED_KEY] = True
-                sandbox_notice = _sandbox_notice()
+        sandbox_notice = self._maybe_sandbox_notice()
 
         # stdout_path/stderr_path are only read back (noise-stripping, spill) after this `with`
         # block exits below -- by then process.wait()/kill()+wait() has already returned, so the
@@ -448,6 +746,129 @@ class BashTool(Tool):
         if sandbox_notice is not None:
             result["sandbox_notice"] = sandbox_notice
         return result
+
+    def _maybe_sandbox_notice(self) -> str | None:
+        """Return `_sandbox_notice()` the first time it's needed for the current `Session`
+        (tracked via `session.tool_state["Bash"]["sandbox_warned"]`), or every call if there's no
+        `Session` to dedupe against — shared by `_execute` and `_execute_persistent`."""
+        if self.context.session is None:
+            # No Session to dedupe against (e.g. a caller that built a ToolSetupContext
+            # directly) -- show it every call rather than silently dropping it.
+            return _sandbox_notice()
+        bash_state = self.context.session.tool_state.setdefault(_TOOL_STATE_KEY, {})
+        if not bash_state.get(_SANDBOX_WARNED_KEY, False):
+            bash_state[_SANDBOX_WARNED_KEY] = True
+            return _sandbox_notice()
+        return None
+
+    def _spawn_persistent_shell(self) -> PersistentShell:
+        workspace_root = self.context.session_config.workspace.path.resolve()
+        env = build_bash_env(self.context.session_config, self._bash_command)
+        home = env.get("HOME", str(Path.home()))
+        rcfile = str(Path(home) / ".bashrc")
+        shell = PersistentShell([self._bash_command], env, str(workspace_root))
+        # PS1='x' satisfies the `[ -z "$PS1" ] && return` guard most real .bashrc files start
+        # with (see PersistentShell's docstring and docs/adrs/bash-env-uses-clearenv-plus-
+        # shareenv-setenv-plus-forced-rcfile.md) without ever printing a prompt -- this shell was
+        # deliberately launched without -i, so nothing reads $PS1 as an actual prompt string.
+        # Discarding the result: this is harness bootstrapping, not a model-visible command: a
+        # missing/erroring rcfile shouldn't fail shell creation, just leave PATH/toolchain setup
+        # up to whatever build_bash_env already put in the environment.
+        bootstrap = f'PS1=x\n[ -f "{rcfile}" ] && source "{rcfile}"\nunset PS1 PS2\n'
+        shell.run_command(bootstrap, self._timeout_seconds)
+        return shell
+
+    def _execute_persistent(self, command: str, shell_lifetime: str) -> dict[str, Any]:
+        session = self.context.session
+        if session is None:
+            raise ValueError(
+                f"shell_lifetime={shell_lifetime!r} requires a Session to keep the persistent "
+                "shell in between calls; use shell_lifetime='command' without a Session.")
+
+        bash_state = session.tool_state.setdefault(_TOOL_STATE_KEY, {})
+        shell: PersistentShell | None = bash_state.get(_PERSISTENT_SHELL_KEY)
+        if shell is not None and not shell.alive:
+            shell = None
+        if shell_lifetime == "new" and shell is not None:
+            shell.kill()
+            shell = None
+        if shell is None:
+            shell = self._spawn_persistent_shell()
+            bash_state[_PERSISTENT_SHELL_KEY] = shell
+
+        session.register_standing_interjection(
+            _STANDING_INTERJECTION_SUBJECT, _standing_interjection_provider(shell))
+        session.register_teardown(_TEARDOWN_SUBJECT, shell.kill)
+
+        sandbox_notice = self._maybe_sandbox_notice()
+
+        start = time.monotonic()
+        result = shell.run_command(command, self._timeout_seconds)
+        runtime = time.monotonic() - start
+
+        if not result.terminal_alive:
+            bash_state[_PERSISTENT_SHELL_KEY] = None
+
+        if result.timed_out:
+            success = False
+            failure_reason: str | None = f"Command timed out at {self._timeout_seconds} seconds"
+        elif result.exit_status is None:
+            success = False
+            failure_reason = "Terminal closed before the command finished"
+        else:
+            success, failure_reason = _decode_exit(result.exit_status)
+
+        stdout_text, stdout_file, stderr_text, stderr_file = self._finalize_persistent_output(
+            result.stdout, result.stderr)
+
+        logger.info(
+            "Bash command (shell_lifetime=%s) finished: exit_status=%s success=%s "
+            "terminal_alive=%s runtime=%.2fs",
+            shell_lifetime, result.exit_status, success, result.terminal_alive, runtime)
+
+        response: dict[str, Any] = {
+            "command": command,
+            "exit_status": result.exit_status,
+            "success": success,
+            "failure_reason": failure_reason,
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+            "stdout_file": stdout_file,
+            "stderr_file": stderr_file,
+            "runtime": runtime,
+            "terminal_alive": result.terminal_alive,
+            "terminal_cwd": result.terminal_cwd,
+        }
+        if sandbox_notice is not None:
+            response["sandbox_notice"] = sandbox_notice
+        return response
+
+    def _finalize_persistent_output(
+        self, stdout: str, stderr: str,
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """Spill `stdout`/`stderr` (in-memory strings, unlike `_execute`'s already-on-disk
+        capture files) to a fresh per-call directory if either exceeds `bash_spill_bytes`,
+        mirroring `_execute`'s `stdout`/`stdout_file` (`None`/non-`None`, exactly one of each
+        pair) contract."""
+        stdout_over = len(stdout.encode("utf-8")) > self._spill_bytes
+        stderr_over = len(stderr.encode("utf-8")) > self._spill_bytes
+        if not stdout_over and not stderr_over:
+            return stdout, None, stderr, None
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
+        atexit.register(shutil.rmtree, tmp_dir, ignore_errors=True)
+        stdout_text, stdout_file = self._spill_text(stdout, tmp_dir / "stdout")
+        stderr_text, stderr_file = self._spill_text(stderr, tmp_dir / "stderr")
+        self._grant_tmp_dir_read_access(tmp_dir)
+        return stdout_text, stdout_file, stderr_text, stderr_file
+
+    def _spill_text(self, text: str, path: Path) -> tuple[str | None, str | None]:
+        data = text.encode("utf-8")
+        if len(data) <= self._spill_bytes:
+            return text, None
+        path.write_bytes(data)
+        os.chmod(path, 0o600)
+        return None, str(path)
 
     def _grant_tmp_dir_read_access(self, tmp_dir: Path) -> None:
         """Auto-grant read access to `tmp_dir` (this one invocation's own stdout/stderr capture

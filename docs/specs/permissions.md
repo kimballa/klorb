@@ -304,6 +304,12 @@ as a separate message (unlike `_ensure_context_files_message()`'s standing-conte
 — see docs/specs/workspace-context-files.md) and it is not queued for `retry_last_turn()`,
 since a retry resends an existing turn's content rather than starting a new one.
 
+This mechanism is edge-triggered and one-shot by design — it fires exactly once, for the very
+next turn, and is not meant for a condition that can stay true across many turns. `Session`
+also has a complementary, level-triggered mechanism (`register_standing_interjection()`) for
+that case — see docs/specs/bash-tool-and-command-permissions.md's "Session-scoped terminals"
+section and docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md.
+
 ### Multi-item asks
 
 A single tool call can find more than one independent resource needing a decision — `BashTool`

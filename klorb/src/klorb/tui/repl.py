@@ -1553,7 +1553,12 @@ class ReplApp(App[None]):
         """Replace the active Session with a fresh one (new id, config reset to the current
         process-level template), reset the visible history, and roll over the per-session
         log file if session logging is enabled for this REPL invocation.
+
+        Tears down the outgoing `Session` first (`Session.close()`) so a live resource it
+        registered a teardown for (e.g. `BashTool`'s persistent shell) doesn't leak past this
+        call — nothing else references the outgoing `Session` afterward.
         """
+        self._session.close()
         new_config = self._process_config.session.model_copy()
         self._session = Session(
             new_config,

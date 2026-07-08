@@ -18,6 +18,11 @@ listed at the end of this doc for the reasoning behind its most consequential de
 boundary — but building the actual sandbox argv is not implemented yet (`klorb.sandbox`); every
 command runs unsandboxed today. See "Sandboxing" below.
 
+Every call also chooses a `shell_lifetime`: `"command"` (a fresh, non-persistent shell for that
+one call) or `"session"`/`"new"` (a single persistent shell reused across calls within a
+`Session`, keeping `cd`/exported-variable/background-job state between them). See "Execution" and
+"Session-scoped terminals" below.
+
 ## How it works
 
 ### Parsing (`klorb.permissions.shell_parse`)
@@ -136,17 +141,18 @@ docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md.
 
 ### Execution
 
-`apply()` requires the model to pass `shell_lifetime="command"` — the only value the tool's
-JSON-schema `enum` currently accepts — so each call spawns its own fresh, non-persistent shell
-that exits when the command finishes: no `cd`, exported variable, or background job carries over
-to the next call. This is deliberately explicit in the schema rather than an implicit fact of the
-implementation, so a future `shell_lifetime="session"` mode (one shell surviving across several
-calls) is an additive, opt-in schema change for existing callers rather than a silent behavior
-change (`TODO.md`/an inline `TODO(aaron): ...` on `BashTool` tracks this as unbuilt).
+`shell_lifetime` selects how long the underlying shell process lives:
 
-Once permitted, the command runs as `bash --rcfile ${HOME}/.bashrc -i -c "unset PS1; unset PS2;
-<command>"` (no `--login`) — `-i --rcfile` is what makes bash source `~/.bashrc` despite being
-non-login (a plain `bash -c` silently skips it for the vast majority of real `.bashrc` files; see
+* `"command"` — each call spawns its own fresh, non-persistent shell that exits when the command
+  finishes: no `cd`, exported variable, or background job carries over to the next call.
+* `"session"` — reuse this `Session`'s one live persistent shell if it has one, or create it
+  otherwise, so `cd`/exported-variable/background-job state persists across calls.
+* `"new"` — kill any existing persistent shell first, then create a fresh one that becomes the
+  persistent shell for subsequent `"session"` calls.
+
+`"command"` runs as `bash --rcfile ${HOME}/.bashrc -i -c "unset PS1; unset PS2; <command>"` (no
+`--login`) — `-i --rcfile` is what makes bash source `~/.bashrc` despite being non-login (a plain
+`bash -c` silently skips it for the vast majority of real `.bashrc` files; see
 docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why), so PATH/
 toolchain setup gets recomputed the same way the user's own shell already does it. Two fixed,
 content-independent stderr lines `bash -i` always emits with no controlling tty are stripped from
@@ -154,6 +160,9 @@ the front of captured stderr (`klorb.tools.bash._strip_bash_shell_noise`) before
 returned to the model. The child runs via `start_new_session=True` (`setsid()` before `exec()`),
 so it has no controlling terminal at all regardless of whether klorb itself is running attached
 to one — see docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md.
+
+`"session"`/`"new"` run through a different execution path entirely — see "Session-scoped
+terminals" below.
 
 **Environment**: `klorb.tools.bash.build_bash_env(session_config, bash_command)` builds an
 explicit dict (never inherits the klorb process's full environment): `HOME`/`USER` always,
@@ -196,13 +205,77 @@ against this project's own environment, not assumed from documentation:
 
 Any other non-zero, non-signal exit reports `"Process completed normally with non-zero status"`.
 
+### Session-scoped terminals (`shell_lifetime="session"`/`"new"`)
+
+At most one persistent shell exists per `Session` at a time, held at
+`session.tool_state["Bash"]["persistent_shell"]` (`klorb.tools.bash.PersistentShell`) — see
+docs/adrs/cap-persistent-shells-at-one-per-session.md for why this first version doesn't support
+addressing several concurrent persistent shells.
+
+**Launch shape.** Unlike `"command"`, a persistent shell is launched as plain, non-interactive
+`bash` — no `-i`, no `--rcfile`. `BashTool._spawn_persistent_shell` instead runs an explicit
+bootstrap command through the shell's own ordinary execution channel as its first command:
+`PS1=x` (satisfying the `[ -z "$PS1" ] && return` guard most real `.bashrc` files start with),
+`source ~/.bashrc`, then `unset PS1 PS2` again. See
+docs/adrs/persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md for why this differs from
+`"command"`'s `-i --rcfile` invocation — in short, `-i` puts an interactively-fed, never-exiting
+shell into a real prompt-printing read loop, which corrupts the sentinel-delimited output stream
+below; a plain non-interactive `bash` never prints a prompt at all, so there's no analogous noise
+to strip.
+
+**Command-boundary detection.** The shell never exits between commands, so there's no process-exit
+signal to wait on. Each command is followed, in the same script written to the shell's stdin, by
+`__klorb_ec=$?` (captured before anything else can clobber `$?`) and two `printf` statements
+emitting a `__KLORB_DONE_<token>__[ <exit_code>]` line to stdout and stderr respectively, where
+`<token>` is a fresh `uuid4().hex` per call. Two background reader threads relay every line from
+each stream onto a shared queue; `PersistentShell._run_raw` consumes it until both sentinel lines
+are seen, treating everything before them as the command's output — see
+docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md for the full reasoning,
+including why a pty/OSC-133 approach was considered and deferred. After a command completes, the
+shell's cwd is refreshed via one more sentinel-delimited `pwd` round-trip
+(`PersistentShell._refresh_cwd`) and reported as `terminal_cwd` below.
+
+**Timeout.** `tools.bash.timeout` applies the same as `"command"`. On timeout, `SIGINT` is sent to
+the shell's whole process group first, with a `_TIMEOUT_GRACE_SECONDS` grace period for the
+sentinel to still appear before escalating to `SIGKILL` on the process group — which ends the
+persistent shell itself, not just the stuck command, since there's no way to kill only the stuck
+command without a pty/job-control layer. Because the shell runs non-interactively, its own default
+`SIGINT` disposition is to terminate (not survive it the way an interactive shell would), so a
+plain, non-trapping timed-out command ends the shell promptly on the first signal in the common
+case; only a command that explicitly makes itself immune to `SIGINT` consumes the full grace
+period before the `SIGKILL` escalation.
+
+**Death and revival.** If the shell dies (timeout escalation, the model's own `exit`, or any other
+reason) the response reports `terminal_alive: false`, and `tool_state["Bash"]["persistent_shell"]`
+is cleared — a following `shell_lifetime="session"` call transparently creates a brand new shell
+rather than erroring.
+
+**Standing reminder.** Whenever `BashTool` creates or reuses a persistent shell, it registers a
+`"SessionTerminal"` provider via `Session.register_standing_interjection()` — a message reminding
+the model it has a live terminal open (and how to keep using or close it), included on every
+subsequent turn for as long as the shell stays alive, even if the model doesn't call `Bash` again
+that turn. See docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md
+for how this differs from `docs/specs/permissions.md`'s one-shot `PermissionFramework` change
+interjection.
+
+**Cleanup.** `Session.close()` kills any live persistent shell via a `"Bash"`-keyed teardown
+callback `BashTool` registers through `Session.register_teardown()`; `klorb.tui.repl.ReplApp.
+clear_session()` calls `close()` on the outgoing `Session` before replacing it with a fresh one,
+and `PersistentShell.__init__` also registers its own `kill()` directly against `atexit`, so a
+klorb process exiting normally, via `^C`, or via an uncaught exception never leaves a bash process
+behind.
+
 ### Response shape
 
 `BashTool`'s result dict uses this codebase's ordinary snake_case tool-response convention:
 `command`, `exit_status`, `success`,
 `failure_reason` (`None` on success), `stdout`/`stderr` (`None` when spilled), `stdout_file`/
 `stderr_file` (`None` when not spilled — exactly one of each inline/file pair is non-`None`),
-`runtime` (seconds), and an optional `sandbox_notice` (see "Sandboxing" below).
+`runtime` (seconds), and an optional `sandbox_notice` (see "Sandboxing" below). For
+`shell_lifetime` in `{"session", "new"}`, the response also includes `terminal_alive` (`bool`:
+whether the persistent shell is still usable after this command) and `terminal_cwd` (`str | None`:
+the shell's cwd via the `pwd` round-trip described above, or `None` when `terminal_alive` is
+`False`).
 
 ## Sandboxing
 
@@ -267,8 +340,11 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * Structured audit logging of command requests/decisions/outcomes — a real goal, not required for
   this first version.
 * macOS support (`sandbox-exec`/Seatbelt in place of `bwrap`) — Linux only.
-* A `shell_lifetime="session"` mode keeping one shell process alive across multiple `Bash` calls
-  (persisting `cd`, exported variables, and background jobs between them) — see "Execution" above.
+* More than one concurrent session-scoped persistent shell per `Session`, and how the model would
+  address a specific one — see docs/adrs/cap-persistent-shells-at-one-per-session.md.
+* A real pty and OSC-133-style shell-integration escape codes for more robust persistent-shell
+  command-boundary detection and support for interactive programs through that channel — see
+  docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md.
 
 ## See also
 
@@ -287,3 +363,7 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md
 * docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md
 * docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md
+* docs/adrs/persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md
+* docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md
+* docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md
+* docs/adrs/cap-persistent-shells-at-one-per-session.md

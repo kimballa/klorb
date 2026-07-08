@@ -374,6 +374,17 @@ class Session:
         `set_permission_framework()`, so several changes before the next turn collapse to a
         single interjection reflecting only the final mode — see docs/specs/permissions.md's
         "Permission framework change interjection" section."""
+        self._standing_interjection_providers: dict[str, Callable[[], str | None]] = {}
+        """Providers registered via `register_standing_interjection()`, keyed by subject.
+        Distinct from `_pending_permission_framework_interjection`: that field is one-shot and
+        edge-triggered (set once, prepended once, cleared); every provider here is polled on
+        every `send_turn()` call for as long as it stays registered, for level-triggered,
+        standing conditions (e.g. `BashTool`'s live persistent shell) — see
+        `register_standing_interjection` and docs/adrs/standing-interjections-complement-one-
+        shot-for-level-triggered-state.md."""
+        self._teardown_callbacks: dict[str, Callable[[], None]] = {}
+        """Callbacks registered via `register_teardown()`, keyed by subject, invoked once each
+        by `close()`. See `register_teardown`/`close`."""
 
     @property
     def role(self) -> Role:
@@ -435,6 +446,50 @@ class Session:
                 f"{sorted(PERMISSION_FRAMEWORK_INTERJECTIONS)}, got {value!r}")
         self.config.permission_framework = value
         self._pending_permission_framework_interjection = PERMISSION_FRAMEWORK_INTERJECTIONS[value]
+
+    def register_standing_interjection(self, subject: str, provider: Callable[[], str | None]) -> None:
+        """Register `provider` to be polled by every future `send_turn()` call: whenever it
+        returns a message (rather than `None`), that message is wrapped in a
+        `<SystemInterjection subject="{subject}">` tag (see `_wrap_system_interjection`) and
+        prepended onto the next turn's `prompt` — every turn the condition still holds, not just
+        once. This is the standing, level-triggered counterpart to
+        `_pending_permission_framework_interjection`'s one-shot, edge-triggered field: use this
+        for a condition that can keep being true across many turns (e.g. `BashTool`'s live
+        session-scoped persistent shell), not a single change event.
+
+        Re-registering under the same `subject` overwrites the previous provider rather than
+        accumulating a second one, so a caller that constructs a fresh instance per call (e.g.
+        `ToolRegistry.instantiate_tool()`, per its own docstring) can safely (re)register on
+        every call without leaking entries. `provider` itself is responsible for deciding whether
+        its condition still holds — returning `None` once it no longer applies is what stops the
+        interjection from appearing; there is no separate unregister call. See
+        docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md.
+        """
+        self._standing_interjection_providers[subject] = provider
+
+    def register_teardown(self, subject: str, teardown: Callable[[], None]) -> None:
+        """Register `teardown` to be invoked once by `close()`, keyed by `subject`.
+        Re-registering under the same `subject` overwrites the previous callback rather than
+        accumulating a second one — the same idempotency contract as
+        `register_standing_interjection`, for the same reason (a caller that constructs a fresh
+        instance per call can safely re-register every time)."""
+        self._teardown_callbacks[subject] = teardown
+
+    def close(self) -> None:
+        """Tear down any live per-session resources a `Tool` registered via `register_teardown`
+        (currently, just `BashTool`'s persistent shell, if one is alive). Idempotent: calling
+        this when nothing is registered, or calling it twice, is a no-op the second time onward
+        since each teardown callback (e.g. `PersistentShell.kill`) is itself safe to call more
+        than once.
+
+        Callers that replace a `Session` outright (`klorb.tui.repl.ReplApp.clear_session()`) must
+        call this on the outgoing `Session` first — nothing else tears it down, and a live
+        `subprocess.Popen` handle would otherwise leak for the rest of the klorb process's
+        lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
+        """
+        for teardown in self._teardown_callbacks.values():
+            teardown()
+        self._teardown_callbacks.clear()
 
     def _active_model(self) -> Model | None:
         """Return the registered `Model` for `config.model`, or `None` if it isn't registered."""
@@ -1191,7 +1246,11 @@ class Session:
         subject="PermissionFramework">` tag (see `_wrap_system_interjection`) and prepended
         onto `prompt` before it's stored as the user `Message`'s content — see
         docs/specs/permissions.md's "Permission framework change interjection" section — and
-        the pending state is cleared, so it's applied exactly once.
+        the pending state is cleared, so it's applied exactly once. After that, every provider
+        registered via `register_standing_interjection()` is polled (in a fixed, deterministic
+        order — sorted by subject) and any non-`None` result is prepended the same way, but not
+        cleared: a standing interjection keeps appearing on every subsequent turn for as long as
+        its provider keeps returning a message.
         """
         tokens_before = self._tokens_recorded_so_far()
         if self._pending_permission_framework_interjection is not None:
@@ -1199,6 +1258,10 @@ class Session:
                 "PermissionFramework", self._pending_permission_framework_interjection)
             prompt = f"{interjection}\n{prompt}"
             self._pending_permission_framework_interjection = None
+        for subject in sorted(self._standing_interjection_providers):
+            message = self._standing_interjection_providers[subject]()
+            if message is not None:
+                prompt = f"{_wrap_system_interjection(subject, message)}\n{prompt}"
         user_message = Message(
             content=prompt,
             role="user",

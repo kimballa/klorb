@@ -5,6 +5,7 @@ stderr capture and spill), and the bash -i noise-stripping. See
 docs/specs/bash-tool-and-command-permissions.md.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -130,11 +131,11 @@ def test_empty_command_raises_value_error(tmp_path: Path) -> None:
         _apply(tool, "   ")
 
 
-def test_shell_lifetime_other_than_command_raises_value_error(tmp_path: Path) -> None:
+def test_unknown_shell_lifetime_raises_value_error(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
     with pytest.raises(ValueError, match="shell_lifetime"):
-        tool.apply({"command": "echo hi", "shell_lifetime": "session"})
+        tool.apply({"command": "echo hi", "shell_lifetime": "bogus"})
 
 
 # --- execution ---
@@ -328,3 +329,147 @@ def test_unshared_variable_is_not_visible_to_the_command(
     tool = BashTool(context)
     result = _apply(tool, "bash -c 'echo $KLORB_TEST_SECRET'")
     assert result["stdout"] == "\n"
+
+
+# --- session-scoped persistent shells (shell_lifetime="session"/"new") ---
+
+
+def _persistent_context(tmp_path: Path, **kwargs: Any) -> ToolSetupContext:
+    return _context(tmp_path, command_rules=CommandRules(allow=[["**"]]), **kwargs)
+
+
+def _run_session(tool: BashTool, command: str, shell_lifetime: str = "session") -> Any:
+    return tool.apply({"command": command, "shell_lifetime": shell_lifetime})
+
+
+def test_cd_and_env_persist_across_session_calls(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path)
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    tool1 = BashTool(context)
+    _run_session(tool1, f"cd {subdir} && export KLORB_TEST_VAR=persisted")
+
+    tool2 = BashTool(context)
+    result = _run_session(tool2, "pwd && printenv KLORB_TEST_VAR")
+
+    assert result["success"] is True
+    assert result["stdout"] == f"{subdir}\npersisted\n"
+    assert result["terminal_alive"] is True
+    assert result["terminal_cwd"] == str(subdir)
+
+
+def test_session_lifetime_reuses_the_same_shell_process(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path)
+    tool1 = BashTool(context)
+    pid1 = _run_session(tool1, "bash -c 'echo $PPID'")["stdout"].strip()
+    tool2 = BashTool(context)
+    pid2 = _run_session(tool2, "bash -c 'echo $PPID'")["stdout"].strip()
+    assert pid1 == pid2
+
+
+def test_new_lifetime_kills_the_prior_persistent_shell(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path)
+    tool1 = BashTool(context)
+    pid1 = _run_session(tool1, "bash -c 'echo $PPID'")["stdout"].strip()
+
+    tool2 = BashTool(context)
+    result = _run_session(tool2, "bash -c 'echo $PPID'", shell_lifetime="new")
+    pid2 = result["stdout"].strip()
+
+    assert pid1 != pid2
+    assert result["terminal_alive"] is True
+
+
+def test_timeout_kills_the_whole_persistent_shell(tmp_path: Path) -> None:
+    process_config = ProcessConfig()
+    process_config.bash_timeout_seconds = 0.5
+    context = _persistent_context(tmp_path, process_config=process_config)
+    tool = BashTool(context)
+
+    result = _run_session(tool, "sleep 5")
+
+    assert result["success"] is False
+    assert "timed out" in result["failure_reason"]
+    assert result["terminal_alive"] is False
+    assert result["terminal_cwd"] is None
+
+    # A following shell_lifetime="session" call transparently creates a new shell.
+    tool2 = BashTool(context)
+    revived = _run_session(tool2, "echo revived")
+    assert revived["success"] is True
+    assert revived["terminal_alive"] is True
+    assert revived["stdout"] == "revived\n"
+
+
+def test_exit_inside_persistent_shell_reports_dead_terminal(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path)
+    tool1 = BashTool(context)
+    _run_session(tool1, "true")  # create the shell
+
+    tool2 = BashTool(context)
+    result = _run_session(tool2, "exit 3")
+
+    assert result["terminal_alive"] is False
+    assert result["success"] is False
+    assert context.session is not None
+    assert context.session.tool_state["Bash"]["persistent_shell"] is None
+
+
+def test_session_lifetime_without_a_session_raises_value_error(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path, with_session=False)
+    tool = BashTool(context)
+    with pytest.raises(ValueError, match="Session"):
+        _run_session(tool, "true")
+
+
+def test_session_output_over_spill_bytes_is_written_to_a_file(tmp_path: Path) -> None:
+    process_config = ProcessConfig()
+    process_config.bash_spill_bytes = 10
+    context = _persistent_context(tmp_path, process_config=process_config)
+    tool = BashTool(context)
+
+    result = _run_session(tool, "echo this-is-longer-than-ten-bytes")
+
+    assert result["stdout"] is None
+    assert result["stdout_file"] is not None
+    assert Path(result["stdout_file"]).read_text().strip() == "this-is-longer-than-ten-bytes"
+
+
+def test_session_registers_a_standing_interjection_while_alive(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path)
+    tool = BashTool(context)
+    _run_session(tool, "cd /tmp")
+
+    assert context.session is not None
+    # pylint: disable-next=protected-access
+    provider = context.session._standing_interjection_providers["SessionTerminal"]
+    message = provider()
+    assert message is not None
+    assert "/tmp" in message
+    assert 'shell_lifetime="session"' in message
+
+
+def test_standing_interjection_disappears_once_the_shell_dies(tmp_path: Path) -> None:
+    process_config = ProcessConfig()
+    process_config.bash_timeout_seconds = 0.5
+    context = _persistent_context(tmp_path, process_config=process_config)
+    tool = BashTool(context)
+    _run_session(tool, "sleep 5")
+
+    assert context.session is not None
+    # pylint: disable-next=protected-access
+    provider = context.session._standing_interjection_providers["SessionTerminal"]
+    assert provider() is None
+
+
+def test_session_close_kills_a_live_persistent_shell(tmp_path: Path) -> None:
+    context = _persistent_context(tmp_path)
+    tool = BashTool(context)
+    pid = _run_session(tool, "bash -c 'echo $PPID'")["stdout"].strip()
+
+    assert context.session is not None
+    context.session.close()
+
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid), 0)

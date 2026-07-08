@@ -1194,6 +1194,118 @@ def test_pending_interjection_applied_exactly_once() -> None:
     assert user_messages[1].content == "second turn"
 
 
+def test_standing_interjection_appears_while_provider_returns_a_message() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.register_standing_interjection("SessionTerminal", lambda: "still open")
+    session.send_turn("first turn")
+    session.send_turn("second turn")
+
+    expected = (
+        '<SystemInterjection subject="SessionTerminal">\n'
+        "still open\n"
+        "</SystemInterjection>\n"
+    )
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[0].content == expected + "first turn"
+    assert user_messages[1].content == expected + "second turn"
+
+
+def test_standing_interjection_stops_once_provider_returns_none() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    live = {"alive": True}
+    session.register_standing_interjection(
+        "SessionTerminal", lambda: "still open" if live["alive"] else None)
+    session.send_turn("first turn")
+    live["alive"] = False
+    session.send_turn("second turn")
+
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert "SessionTerminal" in user_messages[0].content
+    assert user_messages[1].content == "second turn"
+
+
+def test_reregistering_standing_interjection_overwrites_not_accumulates() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.register_standing_interjection("SessionTerminal", lambda: "first version")
+    session.register_standing_interjection("SessionTerminal", lambda: "second version")
+    session.send_turn("do the thing")
+
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[0].content.count("SystemInterjection") == 2  # one open + one close tag
+    assert "second version" in user_messages[0].content
+    assert "first version" not in user_messages[0].content
+
+
+def test_standing_interjection_coexists_with_one_shot_permission_framework_interjection() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.set_permission_framework("auto")
+    session.register_standing_interjection("SessionTerminal", lambda: "still open")
+    session.send_turn("do the thing")
+
+    expected = (
+        '<SystemInterjection subject="SessionTerminal">\n'
+        "still open\n"
+        "</SystemInterjection>\n"
+        '<SystemInterjection subject="PermissionFramework">\n'
+        f"{PERMISSION_FRAMEWORK_INTERJECTIONS['auto']}\n"
+        "</SystemInterjection>\n"
+        "do the thing"
+    )
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[0].content == expected
+
+
+def test_close_invokes_registered_teardown_callbacks() -> None:
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=MagicMock())
+    calls: list[str] = []
+
+    session.register_teardown("Bash", lambda: calls.append("bash"))
+    session.close()
+
+    assert calls == ["bash"]
+
+
+def test_close_is_idempotent() -> None:
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=MagicMock())
+    calls: list[str] = []
+
+    session.register_teardown("Bash", lambda: calls.append("bash"))
+    session.close()
+    session.close()
+
+    assert calls == ["bash"]
+
+
+def test_reregistering_teardown_overwrites_not_accumulates() -> None:
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=MagicMock())
+    calls: list[str] = []
+
+    session.register_teardown("Bash", lambda: calls.append("first"))
+    session.register_teardown("Bash", lambda: calls.append("second"))
+    session.close()
+
+    assert calls == ["second"]
+
+
 def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_path: Path) -> None:
     """`permission_framework="deny"` fails closed unconditionally -- it must not invoke
     `on_permission_ask` even if a caller supplied one."""
