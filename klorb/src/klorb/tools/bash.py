@@ -596,7 +596,13 @@ class BashTool(Tool):
         `analysis.simple_commands`; see `BashCommandAnalysis.command_count`), so a UI can tell a
         decision about one simple command (`resource_description`) apart from the full command
         line it belongs to, even when that full line is short enough to display without
-        truncation (see `PermissionAskItem.is_compound`).
+        truncation (see `PermissionAskItem.is_compound`). Each item also gets its own
+        `item_command_text` — `analysis`'s `SimpleCommand`/`ForcedAskReason`/`RedirectTarget`
+        each carry their own `source_text`, the exact original source of the one statement this
+        particular item is actually about, distinct from `command_text`'s full raw command — so
+        a UI can show *this item's own command* as the prominent preview, not the whole compound
+        line every other item in the same batch would show identically (see
+        `PermissionAskItem.item_command_text`).
 
         `context.permission_override`, when set, lets a previously-approved-once resource skip
         straight past its check on this one retried call (see `PermissionOverride`): a simple
@@ -614,7 +620,8 @@ class BashTool(Tool):
         denied = False
         is_compound = analysis.command_count > 1
 
-        for argv in analysis.simple_commands:
+        for simple_command in analysis.simple_commands:
+            argv = simple_command.argv
             if override is not None and tuple(argv) in override.commands:
                 continue
             verdict = command_table.evaluate(argv)
@@ -623,13 +630,14 @@ class BashTool(Tool):
             elif verdict is None or verdict == "ask":
                 ask_items.append(PermissionAskItem(
                     f"run command: {' '.join(argv)}", command=argv, command_text=command,
-                    is_compound=is_compound))
+                    is_compound=is_compound, item_command_text=simple_command.source_text))
 
-        for reason in analysis.forced_ask_reasons:
-            if override is not None and reason in override.reasons:
+        for forced_reason in analysis.forced_ask_reasons:
+            if override is not None and forced_reason.reason in override.reasons:
                 continue
             ask_items.append(PermissionAskItem(
-                reason, command_text=command, is_compound=is_compound))
+                forced_reason.reason, command_text=command, is_compound=is_compound,
+                item_command_text=forced_reason.source_text))
 
         for redirect in analysis.redirects:
             redirect_verdict, path, is_write = self._evaluate_redirect(redirect)
@@ -639,7 +647,7 @@ class BashTool(Tool):
                 action = "write to" if is_write else "read"
                 ask_items.append(PermissionAskItem(
                     f"{action} {path}", path=path, is_write=is_write, command_text=command,
-                    is_compound=is_compound))
+                    is_compound=is_compound, item_command_text=redirect.source_text))
 
         if denied:
             logger.info("Bash command denied outright: %s", analysis)

@@ -1242,12 +1242,14 @@ def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
 
 def _command_ask_ctx(
     command_text: str, *, reason: str = "some reason", is_compound: bool = False,
+    item_command_text: str | None = None,
 ) -> PermissionAskContext:
     """A bash-command-ask context (no `path`, matching a structural item's shape), for testing
     the "Run command" header/command-preview path -- see `_ask_ctx` for the file-tool ("Read
     file"/"Write file" header) counterpart."""
     return PermissionAskContext(
-        command_text=command_text, resource_description=reason, is_compound=is_compound)
+        command_text=command_text, resource_description=reason, is_compound=is_compound,
+        item_command_text=item_command_text)
 
 
 def test_permission_ask_screen_header_says_run_command_when_command_text_is_set(
@@ -1324,6 +1326,36 @@ def test_permission_ask_screen_shows_more_indicator_for_a_short_compound_command
     assert str(more.render()) == "[more...]"
 
 
+def test_permission_ask_screen_preview_shows_the_items_own_command_not_the_full_compound(
+    tmp_path: Path,
+) -> None:
+    """Regression test for the compound-command permission-ask bug: `echo $SHELL; echo $HOME`
+    previously showed the identical full command_text in every item's preview, giving the user no
+    way to tell which approval request was about which command -- the preview must show this
+    item's own item_command_text instead. See docs/adrs/
+    permission-ask-item-shows-its-own-command-text-not-the-full-compound.md."""
+    screen = PermissionAskScreen(_command_ask_ctx(
+        "echo $SHELL; echo $HOME", is_compound=True, item_command_text="echo $SHELL"))
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+
+    assert isinstance(command_static, Static)
+    assert str(command_static.render()) == "echo $SHELL"
+
+
+def test_permission_ask_screen_preview_falls_back_to_command_text_with_no_item_command_text(
+    tmp_path: Path,
+) -> None:
+    screen = PermissionAskScreen(_command_ask_ctx("echo hi", item_command_text=None))
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+
+    assert isinstance(command_static, Static)
+    assert str(command_static.render()) == "echo hi"
+
+
 # --- PermissionAskScreen: command expansion, mounted (needs a real App to test key/click) ---
 
 
@@ -1362,6 +1394,21 @@ async def test_plus_key_opens_expanded_command_screen_with_the_full_untruncated_
         await pilot.pause()
 
         assert isinstance(app.screen, PermissionAskScreen)
+
+
+async def test_expand_shows_the_full_compound_command_not_just_this_items_own_command() -> None:
+    """Even though the per-item preview shows only this item's own command (item_command_text),
+    expanding it must still reveal the *whole* compound command_text -- that's the entire point
+    of `[more...]` existing for a short, already-fully-visible-looking item preview."""
+    app = _PermissionAskTestApp(_command_ask_ctx(
+        "echo $SHELL; echo $HOME", is_compound=True, item_command_text="echo $SHELL"))
+
+    async with app.run_test() as pilot:
+        await pilot.press("plus")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ExpandedCommandScreen)
+        assert str(app.screen.query_one(Static).render()) == "echo $SHELL; echo $HOME"
 
 
 async def test_clicking_the_more_indicator_opens_expanded_command_screen() -> None:

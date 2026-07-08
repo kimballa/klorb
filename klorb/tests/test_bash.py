@@ -133,6 +133,38 @@ def test_for_loop_body_with_non_literal_arguments_is_marked_compound(tmp_path: P
     assert all(item.is_compound is True for item in exc_info.value.items)
 
 
+def test_compound_command_ask_items_each_carry_their_own_item_command_text(tmp_path: Path) -> None:
+    """Regression test: `echo $SHELL; echo $HOME` previously gave every ask item the same
+    generic resource_description and the same full command_text, with no way for the user to
+    tell which item is about which command -- item_command_text now names each item's own
+    statement -- see docs/adrs/
+    permission-ask-item-shows-its-own-command-text-not-the-full-compound.md."""
+    context = _context(tmp_path, command_rules=CommandRules())
+    tool = BashTool(context)
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, "echo $SHELL; echo $HOME")
+
+    assert len(exc_info.value.items) == 2
+    assert [item.item_command_text for item in exc_info.value.items] == [
+        "echo $SHELL", "echo $HOME"]
+    assert all(item.command_text == "echo $SHELL; echo $HOME" for item in exc_info.value.items)
+
+
+def test_redirect_ask_item_command_text_is_the_whole_statement(tmp_path: Path) -> None:
+    """A redirect item's item_command_text should show the whole command line the redirect
+    belongs to (e.g. "echo hi > out.txt"), not just the bare target path -- so distinct redirect
+    items from a compound command are also individually distinguishable."""
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]), write_dirs=DirRules())
+    tool = BashTool(context)
+    out_file = tmp_path / "out.txt"
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, f"echo hi > {out_file}")
+
+    assert len(exc_info.value.items) == 1
+    assert exc_info.value.items[0].item_command_text == f"echo hi > {out_file}"
+
+
 def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]),

@@ -234,13 +234,18 @@ class PermissionAskContext(BaseModel):
     full raw command string the item's own `resource_description` detail belongs to — see
     `PermissionAskItem.command_text`. `is_compound` mirrors `PermissionAskItem.is_compound`
     alongside it: `True` when `command_text` is a compound command (more than one simple
-    command) that this one item is only a part of."""
+    command) that this one item is only a part of. `item_command_text` mirrors
+    `PermissionAskItem.item_command_text`: the exact source text of just the one statement this
+    item is actually about, distinct from `command_text`'s whole raw command — a UI should
+    prefer showing this as the prominent per-item preview (see `PermissionAskItem.
+    item_command_text` for why `command_text` alone isn't enough for a compound command)."""
 
     path: Path | None = None
     is_write: bool = False
     command: list[str] | None = None
     command_text: str | None = None
     is_compound: bool = False
+    item_command_text: str | None = None
     resource_description: str
 
 
@@ -881,6 +886,7 @@ class Session:
             decision = callbacks.on_permission_ask(PermissionAskContext(
                 path=item.path, is_write=item.is_write, command=item.command,
                 command_text=item.command_text, is_compound=item.is_compound,
+                item_command_text=item.item_command_text,
                 resource_description=item.resource_description))
             decisions.append(decision)
             if decision.action == "deny" or decision.other_text is not None:

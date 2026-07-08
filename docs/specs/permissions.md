@@ -351,20 +351,27 @@ in a row for one compound call.
 
 Above the grid, `PermissionAskScreen` shows a styled header naming the kind of access being
 requested ("Run command" for a `BashTool` item, "Read file"/"Write file" for a directory-access
-item), the command text or path itself (bold; a long command truncated to a fixed number of
-lines with a `[more...]` indicator — clickable, or reachable via the `+` key, never by Tab/focus,
-since an auto-focused `[more...]` would otherwise shadow every subsequent Enter keystroke meant
-for the grid below it — that opens a full-screen scrollable view of the complete text), and then
-the item's own specific detail (`PermissionAskContext.resource_description`) — see
+item), a command preview (bold; a long preview truncated to a fixed number of lines with a
+`[more...]` indicator — clickable, or reachable via the `+` key, never by Tab/focus, since an
+auto-focused `[more...]` would otherwise shadow every subsequent Enter keystroke meant for the
+grid below it), and then the item's own specific detail (`PermissionAskContext.
+resource_description`) — see
 [the ask-item command-text ADR](../adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md)
 and
 [the ask-screen layout ADR](../adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md).
-`[more...]` also appears for a command short enough to need no truncation at all, whenever
+
+The preview shows `PermissionAskContext.item_command_text` — the exact source text of just the
+one statement this particular item is about (e.g. `"echo $SHELL"` out of a bigger
+`"echo $SHELL; echo $HOME"`) — falling back to the full `command_text` only when
+`item_command_text` is unset. `[more...]`'s expand action (`+`/click) always opens a full-screen
+scrollable view of the *whole* `command_text` instead, regardless of which text the preview
+itself showed — see
+[the per-item command-text ADR](../adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md).
+It's shown even for a preview short enough to need no truncation at all, whenever
 `PermissionAskContext.is_compound` is set (`BashTool` sets it whenever a parsed command contains
-more than one simple command — `foo && bar`, `foo; bar`, `foo | bar`): `resource_description`
-names only the one simple command/redirect/reason this particular ask item is about, so a
-compound command's per-item asks always carry an explicit, deliberate path to the full command
-line even when it's already fully visible in the preview above — see
+more than one simple command — `foo && bar`, `foo; bar`, `foo | bar`): a compound command's
+per-item asks always carry an explicit, deliberate path to the full command line, even when the
+item's own piece is already fully visible in the preview above — see
 [the compound-command more-indicator ADR](../adrs/always-show-more-indicator-for-compound-command-ask-items.md).
 
 * **Once** — bypasses the check for this one tool call only, persisting nothing at all, not even

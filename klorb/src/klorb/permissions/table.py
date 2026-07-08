@@ -63,12 +63,24 @@ class PermissionAskItem:
     tells a UI that `resource_description` names only one piece of a larger command line the user
     still needs the full picture of, even when `command_text` itself is short enough to show
     without truncation — see `PermissionAskScreen`'s command-preview logic.
+
+    `item_command_text`, also set alongside `command_text`, is the exact original source text of
+    just the one statement *this* item is actually about (a `klorb.permissions.shell_parse.
+    SimpleCommand`/`ForcedAskReason`/`RedirectTarget`'s own `source_text`) — distinct from
+    `command_text`, which is always the *whole* raw command every item from the same call shares
+    identically. A UI should show `item_command_text` as its prominent, per-item preview (falling
+    back to `command_text` if unset, e.g. for a non-`BashTool` ask item) and reserve
+    `command_text` for the `[more...]`-reachable full picture: for a compound command
+    (`echo $SHELL; echo $HOME`), showing `command_text` in the per-item preview would make every
+    item's approval request look identical, with no way to tell which one is actually about
+    which command.
     """
 
     def __init__(
         self, resource_description: str, *,
         path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
         command_text: str | None = None, is_compound: bool = False,
+        item_command_text: str | None = None,
     ) -> None:
         self.resource_description = resource_description
         self.path = path
@@ -76,6 +88,7 @@ class PermissionAskItem:
         self.command = command
         self.command_text = command_text
         self.is_compound = is_compound
+        self.item_command_text = item_command_text
 
 
 class PermissionOverride:
