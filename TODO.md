@@ -11,14 +11,6 @@
 
 # Feature backlog
 
-* Now that a single session-durable bash terminal exists (`shell_lifetime='session'`/`'new'`, see
-  docs/specs/bash-tool-and-command-permissions.md), think ahead to a world where we let klorb run
-  multiple commands in parallel. Does that implicitly use lifetime=command for all of them?
-  (except up to one 'foreground' command?) ... or can the agent have multiple session-durable
-  shells? In which case, how does it know which is which, and assign various commands to them?
-  See docs/adrs/cap-persistent-shells-at-one-per-session.md for why this first version caps it
-  at one.
-
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
