@@ -1801,6 +1801,24 @@ async def test_clear_replaces_session_and_resets_history() -> None:
         assert app._session.messages == []
 
 
+async def test_clear_closes_the_outgoing_session() -> None:
+    """`clear_session()` must tear down the outgoing `Session` (e.g. killing any live
+    `BashTool` persistent shell it holds) before replacing it -- otherwise a registered
+    teardown callback would never run and the resource it guards would leak."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        outgoing_session = app._session
+        calls: list[str] = []
+        outgoing_session.register_teardown("Bash", lambda: calls.append("closed"))
+
+        await _invoke_clear_session(pilot)
+
+        assert calls == ["closed"]
+        assert app._session is not outgoing_session
+
+
 async def test_clear_carries_over_thinking_settings_from_process_config() -> None:
     """Regression test: `/clear` used to hand-pick `model`/`interactive` onto the new
     `SessionConfig`, silently dropping `thinking_enabled`/`thinking_effort` back to their

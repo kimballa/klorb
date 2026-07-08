@@ -11,14 +11,13 @@
 
 # Feature backlog
 
-* the bash tool runs each command in its own shell that has a shellLifetime='command'
-  scope defined in its tool request. Implement a shellLifetime='session' version where
-  a shell can be created that is persistent and reused from command to command. 
-  * Also add a shellLifetime='new' that kills the existing shell and starts a new one. 
-  * ... and think ahead to a world where we let klorb run multiple commands in parallel. Does that
-    implicitly use lifetime=command for all of them? (except up to one 'foreground' command?)
-    ... or can the agent have multiple session-durable shells? In which case, how does it know which
-    is which, and assign various commands to them?
+* Now that a single session-durable bash terminal exists (`shell_lifetime='session'`/`'new'`, see
+  docs/specs/bash-tool-and-command-permissions.md), think ahead to a world where we let klorb run
+  multiple commands in parallel. Does that implicitly use lifetime=command for all of them?
+  (except up to one 'foreground' command?) ... or can the agent have multiple session-durable
+  shells? In which case, how does it know which is which, and assign various commands to them?
+  See docs/adrs/cap-persistent-shells-at-one-per-session.md for why this first version caps it
+  at one.
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
