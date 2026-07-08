@@ -57,18 +57,25 @@ class PermissionAskItem:
     UI (`klorb.tui.permission_ask_screen.PermissionAskScreen`) to show what's actually being run,
     on top of `resource_description`'s per-item specific detail — never itself the resource a
     grant is checked or persisted against, unlike `path`/`command`.
+
+    `is_compound`, set alongside `command_text` by `BashTool._classify` (`True` when the parsed
+    command contains more than one simple command — `foo && bar`, `foo; bar`, `foo | bar`, etc.),
+    tells a UI that `resource_description` names only one piece of a larger command line the user
+    still needs the full picture of, even when `command_text` itself is short enough to show
+    without truncation — see `PermissionAskScreen`'s command-preview logic.
     """
 
     def __init__(
         self, resource_description: str, *,
         path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
-        command_text: str | None = None,
+        command_text: str | None = None, is_compound: bool = False,
     ) -> None:
         self.resource_description = resource_description
         self.path = path
         self.is_write = is_write
         self.command = command
         self.command_text = command_text
+        self.is_compound = is_compound
 
 
 class PermissionOverride:

@@ -50,7 +50,9 @@ _TOTAL_ROWS = len(_SCOPES) + 1
 
 _MAX_COMMAND_PREVIEW_LINES = 6
 """How many lines of a long `command_text` `PermissionAskScreen` shows inline before truncating
-to a `[more...]` indicator (`PERMISSION_ASK_MORE_ID`) — see `_command_preview`."""
+to a `[more...]` indicator (`PERMISSION_ASK_MORE_ID`) — see `_command_preview`. A command short
+enough to display in full still gets the same `[more...]` indicator if `ask_ctx.is_compound` is
+set — see `PermissionAskScreen.compose`."""
 
 _SECTION_END_CLASS = "ask-section-end"
 """CSS class carrying the trailing blank-line margin between one body section (header, command
@@ -146,7 +148,13 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
     `_MAX_COMMAND_PREVIEW_LINES` with a `[more...]` indicator — see `_command_preview`,
     `ExpandedCommandScreen`), then `ask_ctx.resource_description`'s own per-item detail (the
     specific argv/path/reason this one ask is about, which can differ from the full command text
-    for a compound command needing several independent decisions).
+    for a compound command needing several independent decisions). `[more...]` is also shown for
+    a command short enough to display without truncation, whenever `ask_ctx.is_compound` is set:
+    `resource_description` only ever names the one simple command/redirect/reason this particular
+    item is about, so a compound command (`foo && bar`) always gets an explicit path to the full
+    command line, even though it's already visible in the preview above — the user shouldn't have
+    to notice on their own that a fully-visible short preview is still only one piece of what will
+    actually run.
 
     The grid's last row (`_OTHER_ROW`) is a single cell spanning both columns
     (`PERMISSION_ASK_OTHER_CELL_ID`), reachable the same way as any other row (pressing Down
@@ -277,7 +285,8 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         command_text = self._ask_ctx.command_text
         if command_text is not None:
             preview, truncated = _command_preview(command_text)
-            if truncated:
+            show_more = truncated or self._ask_ctx.is_compound
+            if show_more:
                 widgets.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
                 widgets.append(_MoreIndicator(
                     on_activate=self.action_expand_command, classes=_SECTION_END_CLASS))

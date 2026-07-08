@@ -113,6 +113,7 @@ def test_non_literal_argument_forces_ask() -> None:
     analysis = parse_command("echo $FOO", SHFMT)
     assert analysis.simple_commands == []
     assert len(analysis.forced_ask_reasons) == 1
+    assert analysis.command_count == 1
 
 
 def test_command_substitution_is_extracted_as_its_own_candidate() -> None:
@@ -200,11 +201,69 @@ def test_bare_assignment_invokes_nothing() -> None:
     analysis = parse_command("FOO=bar", SHFMT)
     assert analysis.simple_commands == []
     assert analysis.forced_ask_reasons == []
+    assert analysis.command_count == 0
 
 
 def test_test_clause_and_arithm_cmd_are_transparent() -> None:
     assert parse_command("[[ -f foo.txt ]]", SHFMT).forced_ask_reasons == []
     assert parse_command("(( 1 + 2 ))", SHFMT).forced_ask_reasons == []
+    assert parse_command("[[ -f foo.txt ]]", SHFMT).command_count == 0
+    assert parse_command("(( 1 + 2 ))", SHFMT).command_count == 0
+
+
+# --- command_count: BashTool._classify's is_compound signal (see docs/adrs/
+# always-show-more-indicator-for-compound-command-ask-items.md) ---
+
+
+def test_command_count_matches_simple_commands_when_everything_is_literal() -> None:
+    assert parse_command("echo hi", SHFMT).command_count == 1
+    assert parse_command("echo hi && echo bye", SHFMT).command_count == 2
+
+
+def test_command_count_counts_a_non_literal_argument_command_even_though_it_is_not_a_simple_command() -> None:  # noqa: E501
+    """A command diverted to forced_ask_reasons for a non-literal argument still executes --
+    command_count must count it even though it never reaches simple_commands (len(simple_commands)
+    would silently undercount it -- see the ADR)."""
+    analysis = parse_command("echo $FOO && echo $BAR", SHFMT)
+    assert analysis.simple_commands == []
+    assert len(analysis.forced_ask_reasons) == 2
+    assert analysis.command_count == 2
+
+
+def test_command_count_for_if_with_a_test_command_condition() -> None:
+    """A POSIX `test`/`[` condition is an ordinary external-program CallExpr, so it and the
+    then-body are two commands that both really run."""
+    analysis = parse_command("if test -f foo; then cat foo; fi", SHFMT)
+    assert analysis.command_count == 2
+
+
+def test_command_count_for_if_with_a_non_literal_test_clause_condition() -> None:
+    """A `[[ ... ]]`/`(( ... ))` condition invokes no external program of its own (see
+    test_test_clause_and_arithm_cmd_are_transparent), so only the then-body's one real command
+    counts -- not compound, even with a non-literal argument in the body."""
+    analysis = parse_command('if [[ -f foo ]]; then cat "$FOO"; fi', SHFMT)
+    assert analysis.command_count == 1
+
+
+def test_command_count_for_loop_body_with_non_literal_argument_commands() -> None:
+    """Regression test: a `for` loop body of two non-literal-argument commands previously
+    computed len(simple_commands) == 0 (neither reaches simple_commands), so `is_compound` came
+    out False for a command that unambiguously runs two independent commands -- see the ADR."""
+    analysis = parse_command('for f in *.txt; do echo "$f"; rm "$f"; done', SHFMT)
+    assert analysis.simple_commands == []
+    assert len(analysis.forced_ask_reasons) == 2
+    assert analysis.command_count == 2
+
+
+def test_command_count_for_single_command_with_a_redirect_is_not_compound() -> None:
+    """A redirect target is a property of the one command it belongs to, not a second command."""
+    analysis = parse_command("cat file > out.txt", SHFMT)
+    assert analysis.command_count == 1
+
+
+def test_command_count_includes_decl_clause() -> None:
+    assert parse_command("export FOO=bar", SHFMT).command_count == 1
+    assert parse_command("export FOO=bar && export BAZ=$QUX", SHFMT).command_count == 2
 
 
 def test_unrecognized_syntax_error_raises_shell_parse_error() -> None:

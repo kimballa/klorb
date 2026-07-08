@@ -353,6 +353,13 @@ the item's own specific detail (`PermissionAskContext.resource_description`) —
 [the ask-item command-text ADR](../adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md)
 and
 [the ask-screen layout ADR](../adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md).
+`[more...]` also appears for a command short enough to need no truncation at all, whenever
+`PermissionAskContext.is_compound` is set (`BashTool` sets it whenever a parsed command contains
+more than one simple command — `foo && bar`, `foo; bar`, `foo | bar`): `resource_description`
+names only the one simple command/redirect/reason this particular ask item is about, so a
+compound command's per-item asks always carry an explicit, deliberate path to the full command
+line even when it's already fully visible in the preview above — see
+[the compound-command more-indicator ADR](../adrs/always-show-more-indicator-for-compound-command-ask-items.md).
 
 * **Once** — bypasses the check for this one tool call only, persisting nothing at all, not even
   in memory. Implemented via `ToolSetupContext.permission_override:
