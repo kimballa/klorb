@@ -79,19 +79,22 @@ docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md).
 `CommandPermissionsTable(PermissionsTable[list[str]])` matches a rule against a candidate argv
 positionally: each rule token is either a literal (exact match at that position), `"*"`
 (`WILDCARD_TOKEN`, matching exactly one arbitrary token — always, at any position, never
-special-cased by position), or `"?"` (`OPTIONAL_TOKEN`, matching zero-or-one arbitrary token at
-any position *except* the rule's own last token, where it instead matches any number of further
-tokens, including zero). See
-docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md for the
-reasoning behind splitting "exactly one" and "unbounded" onto two symbols.
+special-cased by position), `"?"` (`OPTIONAL_TOKEN`, matching zero-or-one arbitrary token — also
+always, at any position), or `"**"` (`UNBOUNDED_TOKEN`, matching any number of arbitrary tokens,
+including zero, at any position). See
+docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
+for the reasoning behind giving "exactly one," "zero-or-one," and "unbounded" three distinct
+symbols instead of overloading one of them by position.
 
 | Rule | Matches |
 | --- | --- |
 | `["foo"]` | `foo` only (no args at all — "forcibly no args") |
 | `["foo", "*"]` | `foo bar` only — exactly one more token, never zero, never two |
-| `["foo", "?"]` | `foo`, `foo bar`, `foo bar baz`, ... — unbounded, since `?` is last |
-| `["git", "status", "?"]` | `git status`, `git status -s`, `git status -s -b`, ... |
-| `["git", "*", "status", "?"]` | `git <exactly-one-token> status <anything...>` |
+| `["foo", "?"]` | `foo` or `foo bar` — zero or one more token, never two |
+| `["foo", "**"]` | `foo`, `foo bar`, `foo bar baz`, ... — unbounded, including zero |
+| `["git", "status", "**"]` | `git status`, `git status -s`, `git status -s -b`, ... |
+| `["git", "*", "status", "**"]` | `git <exactly-one-token> status <anything...>` |
+| `["git", "**", "status", "**"]` | `git status`, `git -C dir status -s`, ... — `**` on both sides |
 | `["git", "?", "status"]` | `git status` (zero) or `git --no-pager status` (one) — not two or more |
 | `["foo", "--bar", "--baz"]` | exactly `foo --bar --baz`, nothing more or less |
 
@@ -264,7 +267,7 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/reject-trap-debug-as-a-security-boundary.md
 * docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md
 * docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md
-* docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md
+* docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
 * docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md
 * docs/adrs/ask-independent-items-serially-not-just-the-strictest.md
 * docs/adrs/generalize-permission-override-to-a-set-of-resources.md

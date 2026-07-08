@@ -64,7 +64,7 @@ def test_command_with_no_matching_rule_asks(tmp_path: Path) -> None:
 
 
 def test_denied_command_denies(tmp_path: Path) -> None:
-    context = _context(tmp_path, command_rules=CommandRules(deny=[["rm", "?"]]))
+    context = _context(tmp_path, command_rules=CommandRules(deny=[["rm", "**"]]))
     tool = BashTool(context)
     with pytest.raises(PermissionError):
         _apply(tool, "rm -rf /tmp/whatever")
@@ -138,7 +138,7 @@ def test_signal_death_is_decoded(tmp_path: Path) -> None:
     (tail-call optimization, verified empirically -- see BashTool._decode_exit's docstring), so
     Python observes a *negative* returncode here, not a positive 128+signum one; both shapes
     must decode to the same human-readable signal name."""
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["python3", "?"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["python3", "**"]]))
     tool = BashTool(context)
     result = _apply(
         tool, "python3 -c \"import os, signal; os.kill(os.getpid(), signal.SIGSEGV)\"")
@@ -160,7 +160,7 @@ def test_timeout_kills_process_and_reports_it(tmp_path: Path) -> None:
 
 
 def test_stderr_is_captured(tmp_path: Path) -> None:
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "?"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "**"]]))
     tool = BashTool(context)
     result = _apply(tool, "bash -c 'echo oops 1>&2'")
     assert result["stderr"] == "oops\n"
@@ -277,7 +277,7 @@ def test_share_env_variable_is_visible_to_the_command(
     """Single-quoted inner command so $KLORB_TEST_VAR is only expanded once bash actually runs
     it (with the env we built), not by shfmt/the outer shell's own parse-time interpolation."""
     monkeypatch.setenv("KLORB_TEST_VAR", "visible-value")
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "?"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "**"]]))
     context.session_config.share_env = ["KLORB_TEST_VAR"]
     tool = BashTool(context)
     result = _apply(tool, "bash -c 'echo $KLORB_TEST_VAR'")
@@ -288,7 +288,7 @@ def test_unshared_variable_is_not_visible_to_the_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("KLORB_TEST_SECRET", "should-not-leak")
-    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "?"]]))
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "**"]]))
     tool = BashTool(context)
     result = _apply(tool, "bash -c 'echo $KLORB_TEST_SECRET'")
     assert result["stdout"] == "\n"
