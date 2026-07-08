@@ -45,10 +45,30 @@
     "commandRules": {
       "deny": [],
       "ask": [],
-      "allow": []
+      "allow": [
+        ["true", "**"],
+        ["false", "**"],
+        ["cat", "*"],
+        ["less", "*"],
+        ["more", "*"],
+        ["head", "*"],
+        ["head", "-n", "*", "*"],
+        ["tail", "*"],
+        ["tail", "-n", "*", "*"],
+        ["sort"],
+        ["sort", "-n"],
+        ["uniq"],
+        ["uniq", "-c"],
+        ["wc", "**"],
+        ["jq", "**"]
+      ]
     },
-    "shareEnv": ["LANG", "LC_ALL", "TZ", "TERM", "COLORTERM"],
-    "setEnv": {}
+    "shareEnv": [
+      "LANG", "LC_ALL", "LOCALE", "HOSTTYPE", "MACHTYPE", "TZ"
+    ],
+    "setEnv": {
+      "EDITOR": "false"
+    }
   },
   "thinking.tokenBudgets": {
     "low": 4096,

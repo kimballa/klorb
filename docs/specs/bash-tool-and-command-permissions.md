@@ -40,15 +40,16 @@ when klorb runs from an unactivated venv), parses the JSON, and walks the result
   is a bare digit/`-` (`2>&1`) is a file-descriptor duplication, not a filesystem path, and is
   skipped entirely. A heredoc/herestring (`<<`/`<<-`/`<<<`) has no filesystem target at all — its
   content is inline in the script — so instead of a `RedirectTarget`, the *owning* statement's
-  command is checked against the safe-stdin-consumer allowlist (see below). A `cat`/`less`
-  invocation that is neither piped into from elsewhere nor itself redirected — a plain
-  `cat file.txt`, not `foo | cat` or `cat < file.txt` — also produces a `RedirectTarget` with
-  `direction="read"` for each of its non-flag literal arguments (`klorb.permissions.shell_parse.
-  _maybe_add_implicit_reads`, `IMPLICIT_READ_COMMANDS`): these two commands are common enough as
-  simple file reads that checking their arguments against `readDirs` too — on top of, not instead
-  of, the ordinary `CommandRules` check on the `cat`/`less` invocation itself — gives them the
-  same protection a real `ReadFile` call already gets, rather than leaving `readDirs` blind to
-  file paths a `CommandRules` rule has no notion of.
+  command is checked against the safe-stdin-consumer allowlist (see below). An invocation of
+  `cat`/`less`/`more`/`head`/`tail`/`sort`/`uniq`/`wc`/`jq` (`IMPLICIT_READ_COMMANDS`) that is
+  neither piped into from elsewhere nor itself redirected — a plain `cat file.txt`, not
+  `foo | cat` or `cat < file.txt` — also produces a `RedirectTarget` with `direction="read"` for
+  each of its non-flag literal arguments (`klorb.permissions.shell_parse.
+  _maybe_add_implicit_reads`): these commands are common enough as simple file reads that
+  checking their arguments against `readDirs` too — on top of, not instead of, the ordinary
+  `CommandRules` check on the invocation itself — gives them the same protection a real
+  `ReadFile` call already gets, rather than leaving `readDirs` blind to file paths a
+  `CommandRules` rule has no notion of.
 * `forced_ask_reasons: list[str]` — every reason the walker itself escalated to `"ask"`:
   * A token (argv0 or any argument) that isn't a plain literal — built from a variable,
     parameter expansion, command/arithmetic substitution, or anything else that isn't a `Lit`/
@@ -151,13 +152,16 @@ returned to the model. The child runs via `start_new_session=True` (`setsid()` b
 so it has no controlling terminal at all regardless of whether klorb itself is running attached
 to one — see docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md.
 
-**Environment**: `klorb.tools.bash.build_bash_env(session_config)` builds an explicit dict (never
-inherits the klorb process's full environment): `HOME`/`USER` always, `WORKSPACE_ROOT`
-unconditionally set to the resolved workspace root (not gated on any config, so a command can
-always locate the workspace regardless of `shareEnv`), then every `SessionConfig.share_env` name
-(on-disk `shareEnv`, concatenated across layers) that's actually set in the klorb process's own
-environment, then `SessionConfig.set_env` (on-disk `setEnv`, merged key-by-key, later layers
-replacing earlier ones for the same key) as overrides applied last.
+**Environment**: `klorb.tools.bash.build_bash_env(session_config, bash_command)` builds an
+explicit dict (never inherits the klorb process's full environment): `HOME`/`USER` always,
+`WORKSPACE_ROOT` unconditionally set to the resolved workspace root (not gated on any config, so
+a command can always locate the workspace regardless of `shareEnv`), `SHELL`/`BASH` both
+unconditionally set to `bash_command` (`ProcessConfig.bash_command`, the actual bash binary the
+command runs under — not whatever `$SHELL`/`$BASH` happen to be in klorb's own environment), then
+every `SessionConfig.share_env` name (on-disk `shareEnv`, concatenated across layers) that's
+actually set in the klorb process's own environment, then `SessionConfig.set_env` (on-disk
+`setEnv`, merged key-by-key, later layers replacing earlier ones for the same key) as overrides
+applied last.
 
 **Timeout**: `ProcessConfig.bash_timeout_seconds` (`tools.bash.timeout`, default `120.0`) — always
 enforced (unlike the REPL's `!`-prefixed `shell_timeout_seconds`, which may be `None`). On
@@ -233,8 +237,8 @@ instead of silently dropping it.
   "sessionDefaults": {
     "commandRules": {
       "deny": [["rm", "-rf", "/"]],
-      "ask": [["git", "push", "?"]],
-      "allow": [["git", "?"], ["ls", "?"], ["cat", "?"]]
+      "ask": [["git", "push", "**"]],
+      "allow": [["git", "**"], ["ls", "**"], ["cat", "**"]]
     },
     "shareEnv": ["NVM_DIR", "PYENV_ROOT"],
     "setEnv": {"CI": "true"}

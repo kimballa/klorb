@@ -188,7 +188,7 @@ sit as flat keys alongside it at the top level:
     "tools.maxCallsPerSession": 200,
     "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo"]},
     "writeDirs": {"deny": [], "ask": [], "allow": []},
-    "commandRules": {"deny": [], "ask": [["git", "push", "?"]], "allow": [["git", "?"]]},
+    "commandRules": {"deny": [], "ask": [["git", "push", "**"]], "allow": [["git", "**"]]},
     "shareEnv": ["NVM_DIR"],
     "setEnv": {"CI": "true"}
   },
