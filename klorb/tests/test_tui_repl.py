@@ -30,7 +30,11 @@ from klorb.session import PermissionAskContext, PermissionDecision, Session, Ses
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
-from klorb.tui.permission_ask_screen import PERMISSION_ASK_INPUT_ID, PermissionAskScreen
+from klorb.tui.permission_ask_screen import (
+    PERMISSION_ASK_GRID_ID,
+    PERMISSION_ASK_INPUT_ID,
+    PermissionAskScreen,
+)
 from klorb.tui.repl import (
     CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
@@ -1204,7 +1208,9 @@ def test_permission_ask_screen_message_names_the_granted_directory(tmp_path: Pat
     assert str(tmp_path) in str(message.render())
 
 
-def test_permission_ask_screen_grid_has_eight_cells_in_row_major_order(tmp_path: Path) -> None:
+def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
+    tmp_path: Path,
+) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
@@ -1217,6 +1223,7 @@ def test_permission_ask_screen_grid_has_eight_cells_in_row_major_order(tmp_path:
         "Allow — This session", "Deny — This session",
         "Allow — Always, this workspace", "Deny — Always, this workspace",
         "Allow — Always, for me", "Deny — Always, for me",
+        "Other...",
     )
 
 
@@ -1255,7 +1262,17 @@ def test_action_move_row_wraps_around(tmp_path: Path) -> None:
 
     screen.action_move_row(-1)
 
-    assert screen._row == 3  # wrapped from row 0 ("once") to the last row ("homedir")
+    assert screen._row == 4  # wrapped from row 0 ("once") past "homedir" to the Other row
+
+
+def test_action_move_row_down_four_times_from_once_reaches_the_other_row(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
+
+    for _ in range(4):
+        screen.action_move_row(1)
+
+    assert screen._row == 4
 
 
 def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
@@ -1264,6 +1281,18 @@ def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> Non
     screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
 
     screen.action_other()
+
+    screen._reveal_other_input.assert_called_once()
+    screen.dismiss.assert_not_called()
+
+
+def test_action_confirm_on_other_row_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+    screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
+    screen._row = 4
+
+    screen.action_confirm()
 
     screen._reveal_other_input.assert_called_once()
     screen.dismiss.assert_not_called()
@@ -1415,11 +1444,16 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, PermissionAskScreen)
+        grid_width = screen.query_one(f"#{PERMISSION_ASK_GRID_ID}", GridContainer).outer_size.width
+        assert grid_width > 10  # regression guard: the grid must not collapse to ~1
 
         await pilot.press("o")
         await pilot.pause()
 
         other_input = screen.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
+        # Regression guard: the "Other" Input must not collapse to a sliver either -- it
+        # should stay as wide as the grid it replaced.
+        assert other_input.outer_size.width == grid_width
         other_input.value = "use /tmp instead"
         await pilot.press("enter")
         await app.workers.wait_for_complete()
@@ -1429,6 +1463,41 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "use /tmp instead" in str(tool_response.content)
         assert "Permission denied" in str(tool_response.content)
+
+
+async def test_permission_ask_modal_other_row_reachable_via_down_and_enter(
+    tmp_path: Path,
+) -> None:
+    """The grid's trailing double-wide "Other" cell (see `PermissionAskScreen`'s docstring) is
+    reachable by pressing Down repeatedly past the last scope row, not just the `o` shortcut."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        while len(app.screen_stack) < 2:
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PermissionAskScreen)
+
+        for _ in range(4):
+            await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        other_input = screen.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
+        assert other_input.has_focus
 
 
 def _ask_multi_permission_call(id_: str, paths: list[Path]) -> tuple[str, str, str]:
