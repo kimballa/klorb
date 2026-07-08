@@ -19,13 +19,22 @@ WILDCARD_TOKEN = "*"
 """A rule token that matches exactly one arbitrary candidate token at that position — always,
 regardless of position (including a rule's own last token); see
 `CommandPermissionsTable._matches` and
-docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md."""
+docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+"""
 
 OPTIONAL_TOKEN = "?"
-"""A rule token that matches zero or one arbitrary candidate token at that position — except
-when it is the rule's own *last* token, where it instead matches any number of further candidate
-tokens, including zero (an unbounded trailing match); see `CommandPermissionsTable._matches` and
-docs/adrs/command-rule-wildcards-bounded-star-trailing-unbounded-question-mark.md."""
+"""A rule token that matches zero or one arbitrary candidate token at that position — uniformly,
+regardless of position, including a rule's own last token; see `CommandPermissionsTable._matches`
+and
+docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+"""
+
+UNBOUNDED_TOKEN = "**"
+"""A rule token that matches any number of arbitrary candidate tokens at that position, including
+zero — at any position in a rule, not just as the last token; see
+`CommandPermissionsTable._matches` and
+docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+"""
 
 
 class CommandRules(BaseModel):
@@ -55,7 +64,8 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
         super().__init__(deny=list(rules.deny), ask=list(rules.ask), allow=list(rules.allow))
 
     def _matches(self, rule: list[str], candidate: list[str]) -> bool:
-        """Positional token match, backtracking where `OPTIONAL_TOKEN` (`"?"`) is involved:
+        """Positional token match, backtracking where `OPTIONAL_TOKEN` (`"?"`) or
+        `UNBOUNDED_TOKEN` (`"**"`) is involved:
 
         * A literal token must equal the candidate token at that position exactly.
         * `WILDCARD_TOKEN` (`"*"`) matches exactly one arbitrary candidate token at that
@@ -64,12 +74,16 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
           extra tokens). A rule with no wildcard at all matches only a candidate of the exact
           same length: `["foo"]` matches only the bare `foo` invocation, with no arguments.
         * `OPTIONAL_TOKEN` (`"?"`) matches zero or one arbitrary candidate token at that
-          position — except as the rule's own *last* token, where it instead matches any number
-          of further candidate tokens, including zero: `["foo", "?"]` matches `["foo"]`,
-          `["foo", "bar"]`, `["foo", "bar", "baz"]`, etc. A non-last `"?"` requires backtracking
-          to resolve correctly, since whether it consumes a token depends on what the rest of the
-          pattern needs: `["git", "?", "status"]` matches both `["git", "status"]` (the `"?"`
-          consumes nothing) and `["git", "--no-pager", "status"]` (it consumes one token).
+          position, uniformly regardless of position: `["foo", "?"]` matches `["foo"]` and
+          `["foo", "bar"]`, but not `["foo", "bar", "baz"]`. Whether it consumes a token depends
+          on what the rest of the pattern needs next, so resolving it requires backtracking:
+          `["git", "?", "status"]` matches both `["git", "status"]` (the `"?"` consumes nothing)
+          and `["git", "--no-pager", "status"]` (it consumes one token).
+        * `UNBOUNDED_TOKEN` (`"**"`) matches any number of arbitrary candidate tokens at that
+          position, including zero, at any position in a rule: `["git", "**", "status"]` matches
+          `["git", "status"]`, `["git", "-C", "dir", "status"]`, etc., and `["git", "**"]`
+          matches any candidate starting with `git`. Like `"?"`, resolving it requires
+          backtracking against the rest of the pattern.
 
         `["git", "*", "status", "*"]` matches `["git", "foo", "status", "bar"]`: each `*`
         consumes exactly one token, neither is optional — a candidate with nothing between `git`
@@ -87,16 +101,17 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
                 result = candidate_index == len(candidate)
             else:
                 token = rule[rule_index]
-                is_last = rule_index == len(rule) - 1
-                if token == OPTIONAL_TOKEN and is_last:
-                    result = True
-                elif token == WILDCARD_TOKEN:
+                if token == WILDCARD_TOKEN:
                     result = candidate_index < len(candidate) and match_from(
                         rule_index + 1, candidate_index + 1)
                 elif token == OPTIONAL_TOKEN:
                     result = match_from(rule_index + 1, candidate_index) or (
                         candidate_index < len(candidate)
                         and match_from(rule_index + 1, candidate_index + 1))
+                elif token == UNBOUNDED_TOKEN:
+                    result = match_from(rule_index + 1, candidate_index) or (
+                        candidate_index < len(candidate)
+                        and match_from(rule_index, candidate_index + 1))
                 else:
                     result = (
                         candidate_index < len(candidate) and candidate[candidate_index] == token
