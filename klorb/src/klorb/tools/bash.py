@@ -357,9 +357,20 @@ class BashTool(Tool):
         start = time.monotonic()
         with open(stdout_path, "wb") as stdout_f, open(stderr_path, "wb") as stderr_f:
             try:
+                # start_new_session=True (setsid() in the child before exec) detaches the child
+                # into a brand-new session with no controlling terminal at all -- not just no
+                # controlling terminal *as far as its own stdin/stdout/stderr fds reveal* (those
+                # are already redirected away from any tty above), but genuinely none, even if
+                # this klorb process itself is running attached to a real terminal. Without this,
+                # anything the sourced ~/.bashrc launches (a background ssh-agent/keychain job, a
+                # prompt framework's setup, anything that opens /dev/tty by name) still shares
+                # this process's session and can contend with it for the terminal's foreground
+                # process group -- which can suspend the *klorb* process itself, not just the
+                # child, when klorb is run interactively. setsid() also makes the child its own
+                # process group leader (pgid == pid), which the timeout-kill path below relies on.
                 process = subprocess.Popen(
                     argv, stdin=subprocess.DEVNULL, stdout=stdout_f, stderr=stderr_f,
-                    env=env, cwd=str(workspace_root))
+                    env=env, cwd=str(workspace_root), start_new_session=True)
             except FileNotFoundError as exc:
                 # stdout_f/stderr_f are still open here (this `with` block's __exit__ hasn't run
                 # yet). Safe on POSIX regardless: unlink() only removes a directory entry, not the
@@ -373,7 +384,12 @@ class BashTool(Tool):
             try:
                 process.wait(timeout=self._timeout_seconds)
             except subprocess.TimeoutExpired:
-                process.kill()
+                # Kill the whole process group, not just `process`'s own pid: a background job
+                # the command (or its sourced ~/.bashrc) started -- and that survived bash's own
+                # tail-call-exec optimization, so it's a distinct process from `process.pid` --
+                # would otherwise outlive the timeout as an orphan. Safe because
+                # start_new_session=True above made this child its own process group leader.
+                os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
                 timed_out = True
         runtime = time.monotonic() - start

@@ -3,6 +3,8 @@
 directly into the REPL, via a configurable shell binary (`ProcessConfig.shell_command`).
 """
 
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -56,9 +58,21 @@ class UserShellCommand:
         the process is killed before the exception is raised.
         """
         try:
+            # stdin=DEVNULL: this command's output is captured into the TUI history, not given
+            # real terminal control, so there's no case where it should read the user's live
+            # keystrokes off klorb's own stdin. start_new_session=True (setsid() before exec)
+            # detaches the child into its own session with no controlling terminal at all --
+            # klorb's TUI is actively depending on holding the real terminal to render itself,
+            # so a child (or a background job it launches) contending for that terminal's
+            # foreground process group is a more direct risk here than for BashTool's headless
+            # invocations; see
+            # docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md.
+            # setsid() also makes the child its own process group leader (pgid == pid), which the
+            # kill path below relies on.
             process = subprocess.Popen(
                 [self._shell_path, "--login", "-c", self._command],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1, start_new_session=True)
         except FileNotFoundError:
             message = f"{self._shell_path} not found; cannot execute command"
             if on_stderr is not None:
@@ -100,7 +114,10 @@ class UserShellCommand:
                     break
 
         if interrupted is not None:
-            process.kill()
+            # Kill the whole process group, not just `process`'s own pid, so a background job
+            # the command started doesn't survive as an orphan -- safe because
+            # start_new_session=True above made this child its own process group leader.
+            os.killpg(process.pid, signal.SIGKILL)
             process.wait()
         stdout_thread.join()
         stderr_thread.join()
