@@ -51,7 +51,7 @@ when klorb runs from an unactivated venv), parses the JSON, and walks the result
   heredoc/herestring (`<<`/`<<-`/`<<<`) has no filesystem target at all — its content is inline
   in the script — so instead of a `RedirectTarget`, the *owning* statement's command is checked
   against the safe-stdin-consumer allowlist (see below). An invocation of
-  `cat`/`less`/`more`/`head`/`tail`/`sort`/`uniq`/`wc`/`jq` (`IMPLICIT_READ_COMMANDS`) that is
+  `cat`/`less`/`more`/`head`/`tail`/`sort`/`uniq`/`wc`/`jq`/`ls` (`IMPLICIT_READ_COMMANDS`) that is
   neither piped into from elsewhere nor itself redirected — a plain `cat file.txt`, not
   `foo | cat` or `cat < file.txt` — also produces a `RedirectTarget` with `direction="read"` for
   each of its non-flag literal arguments (`klorb.permissions.shell_parse.
@@ -59,7 +59,9 @@ when klorb runs from an unactivated venv), parses the JSON, and walks the result
   checking their arguments against `readDirs` too — on top of, not instead of, the ordinary
   `CommandRules` check on the invocation itself — gives them the same protection a real
   `ReadFile` call already gets, rather than leaving `readDirs` blind to file paths a
-  `CommandRules` rule has no notion of.
+  `CommandRules` rule has no notion of. `ls`'s non-flag arguments are directory/file paths to
+  list rather than a stream to read line-by-line, but the same read-access check applies to them
+  either way.
 * `forced_ask_reasons: list[ForcedAskReason]` — every reason the walker itself escalated to
   `"ask"` (`reason`), paired with the exact source text of whichever node the reason is actually
   about (`source_text` — a `CallExpr`/`DeclClause` for a non-literal-argument or hidden-effect
