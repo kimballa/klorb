@@ -361,6 +361,11 @@ class BashTool(Tool):
                     argv, stdin=subprocess.DEVNULL, stdout=stdout_f, stderr=stderr_f,
                     env=env, cwd=str(workspace_root))
             except FileNotFoundError as exc:
+                # stdout_f/stderr_f are still open here (this `with` block's __exit__ hasn't run
+                # yet). Safe on POSIX regardless: unlink() only removes a directory entry, not the
+                # underlying inode, so rmtree can remove both files and the now-empty directory
+                # while fds to them are still live; the fds themselves stay valid until __exit__
+                # closes them moments later, as this exception propagates out of the `with`.
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 raise ValueError(f"{self._bash_command!r} not found; cannot run command") from exc
 
