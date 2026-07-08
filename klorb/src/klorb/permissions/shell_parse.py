@@ -95,11 +95,28 @@ class BashCommandAnalysis:
     own verdicts and `forced_ask_reasons` via the same strictest-wins rule
     `klorb.permissions.workspace.evaluate_write` already uses for read/write — see
     docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md.
+
+    `command_count` tallies every executable node the walker visits — every `CallExpr` with a
+    non-empty `Args` (`_handle_call_expr`), every `DeclClause` (`_handle_decl_clause`), and every
+    unrecognized construct `_walk_cmd` falls through on — regardless of whether that node's own
+    argv turned out fully literal (landing in `simple_commands`) or not (landing in
+    `forced_ask_reasons` instead, via the early-return branches in those same two handlers, still
+    incrementing this count first). This is deliberately a separate tally from
+    `len(simple_commands)`: a `for`/`if`/`case` body command with a non-literal argument (`cat
+    "$f"`) never reaches `simple_commands` at all, but it's still exactly one more real command
+    that will execute — undercounting it would make `BashTool._classify`'s `is_compound` signal
+    (see its own docstring) miss a command line that's genuinely made of more than one action just
+    because every action in it happened to need a non-literal-argument ask rather than a
+    `CommandRules` one. Bare variable-assignment statements (`FOO=bar`, no `Args` at all) invoke
+    nothing, so they're never counted; a `TestClause`/`ArithmCmd` guard (`[[ ... ]]`/`(( ... ))`)
+    likewise invokes no external program of its own and is never counted either — only a real
+    `[`/`test` invocation (an ordinary `CallExpr`) is.
     """
 
     simple_commands: list[list[str]] = field(default_factory=list)
     redirects: list[RedirectTarget] = field(default_factory=list)
     forced_ask_reasons: list[str] = field(default_factory=list)
+    command_count: int = 0
 
 
 class ShellParseError(Exception):
@@ -346,6 +363,7 @@ def _handle_call_expr(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> Non
     args = cmd.get("Args", [])
     if not args:
         return  # a bare assignment statement (`FOO=bar`) invokes nothing.
+    analysis.command_count += 1
 
     argv: list[str] = []
     non_literal = False
@@ -439,6 +457,7 @@ def _handle_decl_clause(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> N
     not a plain `CallExpr` — reconstructed here into an argv-shaped candidate (`["export",
     "FOO=bar", "BAZ"]`) so ordinary `CommandRules` patterns can still match it.
     """
+    analysis.command_count += 1
     variant = cmd.get("Variant", {}).get("Value")
     argv: list[str] = [variant] if variant else []
     non_literal = variant is None
@@ -502,6 +521,7 @@ def _walk_cmd(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
     cmd_type = cmd.get("Type")
     handler = _CMD_HANDLERS.get(cmd_type) if isinstance(cmd_type, str) else None
     if handler is None:
+        analysis.command_count += 1
         analysis.forced_ask_reasons.append(f"unrecognized shell construct: {cmd_type!r}")
         _scan_for_cmdsubst(cmd, analysis)
         return

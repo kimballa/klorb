@@ -118,6 +118,20 @@ def test_compound_command_ask_items_are_marked_compound(tmp_path: Path) -> None:
     assert all(item.command_text == "echo hello && echo goodbye" for item in exc_info.value.items)
 
 
+def test_for_loop_body_with_non_literal_arguments_is_marked_compound(tmp_path: Path) -> None:
+    """Regression test: a `for` loop body of two non-literal-argument commands (e.g. referencing
+    the loop variable) previously computed is_compound=False, since neither command reaches
+    analysis.simple_commands -- see docs/adrs/
+    always-show-more-indicator-for-compound-command-ask-items.md."""
+    context = _context(tmp_path, command_rules=CommandRules())
+    tool = BashTool(context)
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, 'for f in *.txt; do echo "$f"; rm "$f"; done')
+
+    assert len(exc_info.value.items) == 2
+    assert all(item.is_compound is True for item in exc_info.value.items)
+
+
 def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]),
