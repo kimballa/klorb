@@ -272,6 +272,7 @@ async def test_shift_tab_cycles_permission_framework() -> None:
         await pilot.press("shift+tab")
         await pilot.pause()
         assert str(session.config.permission_framework) == "auto"
+        assert session._pending_permission_framework_interjection is not None
         badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
         assert str(badge.render()) == "[auto]"
 

@@ -272,6 +272,32 @@ regardless of interactivity, for both a one-shot prompt and the REPL. The REPL's
 shows the session's current `permission_framework` value as a small badge next to the token
 tally (see [[terminal-repl]]).
 
+### Permission framework change interjection
+
+Changing `permission_framework` mid-conversation (today, only via the REPL's Shift+Tab
+cycling — `klorb.tui.repl.ReplApp._cycle_permission_framework`) takes effect for enforcement
+immediately, exactly as a direct assignment would, but the model itself is only told about
+the change once, at the start of the next turn: `Session.set_permission_framework(value)` is
+the one place that both mutates `config.permission_framework` and queues the notice, so any
+caller changing the mode mid-conversation must go through it rather than assigning the field
+directly. It sets `Session._pending_permission_framework_interjection` to
+`PERMISSION_FRAMEWORK_INTERJECTIONS[value]`, one of three fixed strings (one per
+`PermissionFramework` value) explaining the new mode's consequences to the model in its own
+terms (e.g. `"auto"`'s reads "Any tool call you issue will be approved, so you must only
+generate tool calls that will be safe without human review."). `Session.send_turn()` checks
+this field before constructing the turn's user `Message`: if set, it's prepended onto
+`prompt` (followed by `"During this turn the user said:"` and the prompt itself) and then
+cleared, so it's applied exactly once, to the very next turn dispatched.
+
+Calling `set_permission_framework()` again before that next turn starts overwrites the
+pending interjection rather than queuing a second one — cycling through `"ask"` → `"auto"` →
+`"deny"` several times before sending a message results in exactly one interjection,
+reflecting only the mode in effect when the turn is finally sent. The interjection is
+prepended into the same `role="user"` `Message` the turn's real prompt produces, not inserted
+as a separate message (unlike `_ensure_context_files_message()`'s standing-context insertion
+— see docs/specs/workspace-context-files.md) and it is not queued for `retry_last_turn()`,
+since a retry resends an existing turn's content rather than starting a new one.
+
 ### Multi-item asks
 
 A single tool call can find more than one independent resource needing a decision — `BashTool`

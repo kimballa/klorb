@@ -24,6 +24,7 @@ from klorb.role import CoordinatorRole
 from klorb.session import (
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
     MAX_TOOL_CALL_ROUNDS,
+    PERMISSION_FRAMEWORK_INTERJECTIONS,
     THINKING_EFFORT_TOKEN_BUDGETS,
     PermissionDecision,
     Session,
@@ -1105,6 +1106,77 @@ def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Pat
 
     assert response == "done"
     assert _tool_response_content(session) == f"Error: Permission requires confirmation: access {target}"
+
+
+def test_set_permission_framework_updates_config() -> None:
+    config = SessionConfig(model="some/model", permission_framework="ask")
+    session = Session(config, provider=MagicMock())
+
+    session.set_permission_framework("auto")
+
+    assert session.config.permission_framework == "auto"
+
+
+def test_set_permission_framework_queues_interjection_prepended_to_next_turn() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.set_permission_framework("auto")
+    session.send_turn("do the thing")
+
+    expected = (
+        f"{PERMISSION_FRAMEWORK_INTERJECTIONS['auto']}\n"
+        "During this turn the user said:\ndo the thing"
+    )
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[0].content == expected
+
+
+def test_send_turn_with_no_pending_change_leaves_prompt_untouched() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.send_turn("do the thing")
+
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[0].content == "do the thing"
+
+
+def test_multiple_permission_framework_changes_collapse_to_final_interjection() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.set_permission_framework("auto")
+    session.set_permission_framework("deny")
+    session.set_permission_framework("ask")
+    session.send_turn("do the thing")
+
+    expected = (
+        f"{PERMISSION_FRAMEWORK_INTERJECTIONS['ask']}\n"
+        "During this turn the user said:\ndo the thing"
+    )
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[0].content == expected
+
+
+def test_pending_interjection_applied_exactly_once() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider)
+
+    session.set_permission_framework("auto")
+    session.send_turn("first turn")
+    session.send_turn("second turn")
+
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[1].content == "second turn"
 
 
 def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_path: Path) -> None:
