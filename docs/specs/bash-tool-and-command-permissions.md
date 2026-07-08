@@ -147,7 +147,9 @@ docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for 
 toolchain setup gets recomputed the same way the user's own shell already does it. Two fixed,
 content-independent stderr lines `bash -i` always emits with no controlling tty are stripped from
 the front of captured stderr (`klorb.tools.bash._strip_bash_shell_noise`) before anything is
-returned to the model.
+returned to the model. The child runs via `start_new_session=True` (`setsid()` before `exec()`),
+so it has no controlling terminal at all regardless of whether klorb itself is running attached
+to one — see docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md.
 
 **Environment**: `klorb.tools.bash.build_bash_env(session_config)` builds an explicit dict (never
 inherits the klorb process's full environment): `HOME`/`USER` always, `WORKSPACE_ROOT`
@@ -158,8 +160,11 @@ environment, then `SessionConfig.set_env` (on-disk `setEnv`, merged key-by-key, 
 replacing earlier ones for the same key) as overrides applied last.
 
 **Timeout**: `ProcessConfig.bash_timeout_seconds` (`tools.bash.timeout`, default `120.0`) — always
-enforced (unlike the REPL's `!`-prefixed `shell_timeout_seconds`, which may be `None`). The
-process is killed with SIGKILL on timeout.
+enforced (unlike the REPL's `!`-prefixed `shell_timeout_seconds`, which may be `None`). On
+timeout, the child's whole process group is killed with SIGKILL (`os.killpg`, not a single-pid
+`kill`) — safe because `start_new_session=True` above made the child its own process group
+leader — so a background job the command (or its sourced `~/.bashrc`) started doesn't survive
+the timeout as an orphan.
 
 **stdout/stderr capture**: each invocation gets its own `mkdtemp()` directory (registered with
 `atexit` for cleanup if klorb itself dies mid-command); `stdout`/`stderr` files are `chmod 0600`
@@ -269,6 +274,7 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md
 * docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
 * docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md
+* docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md
 * docs/adrs/ask-independent-items-serially-not-just-the-strictest.md
 * docs/adrs/generalize-permission-override-to-a-set-of-resources.md
 * docs/adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md
