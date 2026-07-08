@@ -48,16 +48,27 @@ class PermissionAskItem:
     pattern) for a bash-command-rule item with no filesystem resource; neither for a structural
     item (the walker couldn't classify something at all) that has no persistable rule of its own
     — only "once"/"deny" make sense for that last case, never a session/workspace/homedir grant.
+
+    `command_text`, when set, is the full, unparsed command string a `BashTool` call originated
+    from — set on every ask item that call produces, regardless of which of `path`/`command`/
+    neither it also carries, since a compound command can need several independent decisions
+    (one per simple command and/or redirect target) that all still belong to the same one command
+    the user actually typed or the model actually submitted. Purely a display aid for a
+    UI (`klorb.tui.permission_ask_screen.PermissionAskScreen`) to show what's actually being run,
+    on top of `resource_description`'s per-item specific detail — never itself the resource a
+    grant is checked or persisted against, unlike `path`/`command`.
     """
 
     def __init__(
         self, resource_description: str, *,
         path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
+        command_text: str | None = None,
     ) -> None:
         self.resource_description = resource_description
         self.path = path
         self.is_write = is_write
         self.command = command
+        self.command_text = command_text
 
 
 class PermissionOverride:

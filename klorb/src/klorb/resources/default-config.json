@@ -43,7 +43,9 @@
       "allow": []
     },
     "commandRules": {
-      "deny": [],
+      "deny": [
+        ["rm", "-rf", "/"]
+      ],
       "ask": [],
       "allow": [
         ["true", "**"],

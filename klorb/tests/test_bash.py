@@ -79,6 +79,22 @@ def test_non_literal_argument_asks_even_with_broad_allow(tmp_path: Path) -> None
         _apply(tool, "echo $HOME")
 
 
+def test_non_literal_argument_ask_item_names_the_actual_command(tmp_path: Path) -> None:
+    """A structural (forced-ask-reason) item's command_text must show what command it's actually
+    about, not just an abstract resource_description reason with no command in sight -- see
+    docs/adrs/structural-ask-items-include-the-raw-command-text.md."""
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
+    tool = BashTool(context)
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, "echo $HOME")
+
+    structural_items = [
+        item for item in exc_info.value.items if item.path is None and item.command is None]
+    assert structural_items
+    assert all(item.command_text == "echo $HOME" for item in structural_items)
+    assert any("non-literal argument" in item.resource_description for item in structural_items)
+
+
 def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]),

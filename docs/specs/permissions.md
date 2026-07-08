@@ -302,12 +302,25 @@ after each individual grant would be wasted work.
 
 `PermissionAskScreen` presents a 2-column (`Allow`, `Deny`) by 4-row (`once`, `session`,
 `workspace`, `homedir`) grid, navigated with arrow keys — Left/Right cycles the action column,
-Up/Down cycles the scope row, Enter confirms the highlighted cell — plus a separate `Other...`
-escape hatch (the `O` key) outside the grid for free text. See
+Up/Down cycles the row, Enter confirms the highlighted cell. A 5th row, spanning both columns,
+holds `Other...`: reachable the same way as any other row (pressing Down repeatedly past
+`homedir`) since it isn't tied to a specific action, or via the `O` key as a fast path from
+anywhere — confirming it reveals a free-text `Input` in place of the grid. See
 [the permission-grid UI ADR](../adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md) for
 why the two axes are independent cursor dimensions rather than a flat list of choices, and how
 `ReplApp` remembers the previous prompt's cell to seed the next one when several asks are shown
 in a row for one compound call.
+
+Above the grid, `PermissionAskScreen` shows a styled header naming the kind of access being
+requested ("Run command" for a `BashTool` item, "Read file"/"Write file" for a directory-access
+item), the command text or path itself (bold; a long command truncated to a fixed number of
+lines with a `[more...]` indicator — clickable, or reachable via the `+` key, never by Tab/focus,
+since an auto-focused `[more...]` would otherwise shadow every subsequent Enter keystroke meant
+for the grid below it — that opens a full-screen scrollable view of the complete text), and then
+the item's own specific detail (`PermissionAskContext.resource_description`) — see
+[the ask-item command-text ADR](../adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md)
+and
+[the ask-screen layout ADR](../adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md).
 
 * **Once** — bypasses the check for this one tool call only, persisting nothing at all, not even
   in memory. Implemented via `ToolSetupContext.permission_override:

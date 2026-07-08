@@ -200,11 +200,15 @@ class PermissionAskContext(BaseModel):
     `klorb.permissions.table.PermissionAskItem`: `path` (plus `is_write`) for a directory-access
     item; `command` (an argv pattern) for a bash-command-rule item with no filesystem resource;
     neither for a structural item with no persistable rule at all (only `"once"`/deny make sense
-    for that last case — see `PermissionDecision`)."""
+    for that last case — see `PermissionDecision`). `command_text`, when set (any `BashTool`-
+    originated item, regardless of which of `path`/`command`/neither it also carries), is the
+    full raw command string the item's own `resource_description` detail belongs to — see
+    `PermissionAskItem.command_text`."""
 
     path: Path | None = None
     is_write: bool = False
     command: list[str] | None = None
+    command_text: str | None = None
     resource_description: str
 
 
@@ -755,7 +759,7 @@ class Session:
         for item in multi_ask_exc.items:
             decision = callbacks.on_permission_ask(PermissionAskContext(
                 path=item.path, is_write=item.is_write, command=item.command,
-                resource_description=item.resource_description))
+                command_text=item.command_text, resource_description=item.resource_description))
             decisions.append(decision)
             if decision.action == "deny" or decision.other_text is not None:
                 break
