@@ -362,10 +362,12 @@ def test_trusted_read_does_not_raise_merely_for_being_outside_workspace(tmp_path
     assert verdict == "allow"
 
 
-def test_trusted_read_fallback_denies_when_nothing_matches(tmp_path: Path) -> None:
+def test_trusted_read_fallback_asks_when_nothing_matches(tmp_path: Path) -> None:
+    """No implicit "inside the workspace" allow, but also no implicit outright deny -- an
+    unmentioned path reaches the same interactive-ask fallback evaluate_write() already uses."""
     context = _context(tmp_path, is_workspace_trusted=True)
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
-    assert verdict == "deny"
+    assert verdict == "ask"
 
 
 def test_trusted_read_denies_klorb_config_dir_even_with_readdirs_allow(tmp_path: Path) -> None:

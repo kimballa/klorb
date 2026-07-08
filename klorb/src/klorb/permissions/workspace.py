@@ -123,9 +123,12 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     - Trusted (set via the interactive workspace-trust flow — see
       `klorb.workspace`/docs/specs/projects-and-trust.md): resolves via
       `canonicalize_candidate()`, with no boundary raise, so `readDirs.allow` can grant access
-      outside `workspace_root`. Falls back to `"deny"` if nothing matches — no implicit
-      "inside the workspace" default is applied in this mode; default grants come from an
-      explicit `readDirs.allow` entry `klorb.workspace.workspace_init.write_initial_project_config()`
+      outside `workspace_root`. Falls back to `"ask"` if nothing matches — no implicit
+      "inside the workspace" default is applied in this mode, and no implicit "outside the
+      workspace" deny either; a path `readDirs` has no opinion on reaches the same interactive
+      confirmation flow `evaluate_write()`'s own no-match fallback uses, rather than being
+      refused outright. Default *allow* grants in this mode still come from an explicit
+      `readDirs.allow` entry `klorb.workspace.workspace_init.write_initial_project_config()`
       writes into `.klorb/klorb-config.json`, not from a rule baked into this evaluator.
 
     In both modes, `klorb.permissions.directory_access.is_privileged_path()` is checked next,
@@ -141,7 +144,7 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     workspace_root = context.session_config.workspace.path.resolve()
     if context.session_config.workspace.trusted:
         path = canonicalize_candidate(context, filename)
-        fallback: Verdict = "deny"
+        fallback: Verdict = "ask"
     else:
         path = resolve_within_workspace(context, filename)
         fallback = "allow"
