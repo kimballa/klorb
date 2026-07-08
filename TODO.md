@@ -17,8 +17,8 @@
   * Also add a shellLifetime='new' that kills the existing shell and starts a new one. 
   * ... and think ahead to a world where we let klorb run multiple commands in parallel. Does that
     implicitly use lifetime=command for all of them? (except up to one 'foreground' command?)
-    ... or can the agent have multiple durable shells? In which case, how does it know which is
-    which, and assign various commands to them?
+    ... or can the agent have multiple session-durable shells? In which case, how does it know which
+    is which, and assign various commands to them?
 
 * When the user changes permissionFramework mode, this should impact the next turn's 
   message from the user to the agent:

@@ -129,7 +129,10 @@ persistent-scope decision — it is *not* automatically failed closed the way a 
 single-item `PermissionAskRequired` still is, so a plain command like `make test` needing
 confirmation actually reaches a prompt instead of being refused outright. A `forced_ask_reasons`
 entry with neither a path nor a command becomes a structural item, for which only `"once"`/`deny`
-are meaningful (see `PermissionAskItem`'s own docstring).
+are meaningful (see `PermissionAskItem`'s own docstring). Every ask item a `BashTool` call
+produces — structural or not — also carries `command_text`, the full unparsed command string,
+separate from `resource_description`'s own per-item detail — see
+docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md.
 
 ### Execution
 
@@ -282,3 +285,5 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/ask-independent-items-serially-not-just-the-strictest.md
 * docs/adrs/generalize-permission-override-to-a-set-of-resources.md
 * docs/adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md
+* docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md
+* docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md

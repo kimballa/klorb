@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
+from textual.app import App
 from textual.containers import Grid as GridContainer
 from textual.containers import VerticalScroll
 from textual.pilot import Pilot
@@ -31,8 +32,13 @@ from klorb.tools.registry import ToolRegistry
 from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.permission_ask_screen import (
+    PERMISSION_ASK_COMMAND_ID,
+    PERMISSION_ASK_GRANTED_ID,
     PERMISSION_ASK_GRID_ID,
+    PERMISSION_ASK_HEADER_ID,
     PERMISSION_ASK_INPUT_ID,
+    PERMISSION_ASK_MORE_ID,
+    ExpandedCommandScreen,
     PermissionAskScreen,
 )
 from klorb.tui.repl import (
@@ -1198,14 +1204,20 @@ def _ask_ctx(tmp_path: Path, is_write: bool = True) -> PermissionAskContext:
     return PermissionAskContext(path=target, is_write=is_write, resource_description=f"write to {target}")
 
 
-def test_permission_ask_screen_message_names_the_granted_directory(tmp_path: Path) -> None:
+def _find_child(container: object, widget_id: str) -> object:
+    return next(
+        widget for widget in container._pending_children  # type: ignore[attr-defined]
+        if widget.id == widget_id)
+
+
+def test_permission_ask_screen_names_the_granted_directory(tmp_path: Path) -> None:
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
-    message, _grid, _hint = container._pending_children
+    granted = _find_child(container, PERMISSION_ASK_GRANTED_ID)
 
-    assert isinstance(message, Static)
-    assert str(tmp_path) in str(message.render())
+    assert isinstance(granted, Static)
+    assert str(tmp_path) in str(granted.render())
 
 
 def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
@@ -1214,7 +1226,7 @@ def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
     screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
-    _message, grid, _hint = container._pending_children
+    grid = _find_child(container, PERMISSION_ASK_GRID_ID)
 
     assert isinstance(grid, GridContainer)
     labels = tuple(str(cell.render()) for cell in grid._pending_children)
@@ -1225,6 +1237,146 @@ def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
         "Allow — Always, for me", "Deny — Always, for me",
         "Other...",
     )
+
+
+def _command_ask_ctx(command_text: str, *, reason: str = "some reason") -> PermissionAskContext:
+    """A bash-command-ask context (no `path`, matching a structural item's shape), for testing
+    the "Run command" header/command-preview path -- see `_ask_ctx` for the file-tool ("Read
+    file"/"Write file" header) counterpart."""
+    return PermissionAskContext(command_text=command_text, resource_description=reason)
+
+
+def test_permission_ask_screen_header_says_run_command_when_command_text_is_set(
+    tmp_path: Path,
+) -> None:
+    screen = PermissionAskScreen(_command_ask_ctx("echo hi"))
+
+    container = next(iter(screen.compose()))
+    header = _find_child(container, PERMISSION_ASK_HEADER_ID)
+
+    assert isinstance(header, Static)
+    assert str(header.render()) == "Permission requested: Run command"
+
+
+@pytest.mark.parametrize(("is_write", "expected_kind"), [(True, "Write file"), (False, "Read file")])
+def test_permission_ask_screen_header_names_read_or_write_when_path_is_set(
+    tmp_path: Path, is_write: bool, expected_kind: str,
+) -> None:
+    screen = PermissionAskScreen(_ask_ctx(tmp_path, is_write=is_write))
+
+    container = next(iter(screen.compose()))
+    header = _find_child(container, PERMISSION_ASK_HEADER_ID)
+
+    assert isinstance(header, Static)
+    assert str(header.render()) == f"Permission requested: {expected_kind}"
+
+
+def test_permission_ask_screen_shows_the_full_short_command_with_no_more_indicator(
+    tmp_path: Path,
+) -> None:
+    screen = PermissionAskScreen(_command_ask_ctx("echo hi"))
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+
+    assert isinstance(command_static, Static)
+    assert str(command_static.render()) == "echo hi"
+    with pytest.raises(StopIteration):
+        _find_child(container, PERMISSION_ASK_MORE_ID)
+
+
+def test_permission_ask_screen_truncates_a_long_command_with_a_more_indicator(
+    tmp_path: Path,
+) -> None:
+    long_command = "\n".join(f"line {i}" for i in range(1, 21))  # 20 lines
+    screen = PermissionAskScreen(_command_ask_ctx(long_command))
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+    more = _find_child(container, PERMISSION_ASK_MORE_ID)
+
+    assert isinstance(command_static, Static)
+    assert str(command_static.render()) == "\n".join(f"line {i}" for i in range(1, 7))
+    assert isinstance(more, Static)
+    assert str(more.render()) == "[more...]"
+
+
+# --- PermissionAskScreen: command expansion, mounted (needs a real App to test key/click) ---
+
+
+class _PermissionAskTestApp(App[None]):
+    """Minimal standalone harness for driving a real `PermissionAskScreen` through Textual's
+    `Pilot`, without needing a full `ReplApp`/`Session` -- the "+"/click-to-expand behavior only
+    exists on `PermissionAskScreen` and `ExpandedCommandScreen` themselves, so there's nothing
+    session- or tool-call-shaped for a heavier harness to add. `decision` records whatever
+    `PermissionAskScreen` is dismissed with, for tests that need to confirm Enter actually
+    reached `action_confirm` rather than just checking screen-stack state."""
+
+    def __init__(self, ctx: PermissionAskContext) -> None:
+        super().__init__()
+        self._ctx = ctx
+        self.decision: PermissionDecision | None = None
+
+    def on_mount(self) -> None:
+        self.push_screen(PermissionAskScreen(self._ctx), callback=self._set_decision)
+
+    def _set_decision(self, decision: PermissionDecision | None) -> None:
+        self.decision = decision
+
+
+async def test_plus_key_opens_expanded_command_screen_with_the_full_untruncated_text() -> None:
+    long_command = "\n".join(f"line {i}" for i in range(1, 21))
+    app = _PermissionAskTestApp(_command_ask_ctx(long_command))
+
+    async with app.run_test() as pilot:
+        await pilot.press("plus")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ExpandedCommandScreen)
+        assert str(app.screen.query_one(Static).render()) == long_command
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert isinstance(app.screen, PermissionAskScreen)
+
+
+async def test_clicking_the_more_indicator_opens_expanded_command_screen() -> None:
+    long_command = "\n".join(f"line {i}" for i in range(1, 21))
+    app = _PermissionAskTestApp(_command_ask_ctx(long_command))
+
+    async with app.run_test() as pilot:
+        await pilot.click(f"#{PERMISSION_ASK_MORE_ID}")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ExpandedCommandScreen)
+
+
+async def test_more_indicator_is_never_focused_so_it_cannot_steal_enter_from_the_grid() -> None:
+    """Regression test: `_MoreIndicator` briefly had `can_focus=True` with its own Enter
+    binding, and Textual's `Screen.AUTO_FOCUS` auto-focuses the first focusable descendant on
+    mount -- so it silently grabbed focus (and every subsequent Enter keystroke) the moment the
+    screen appeared, with no click needed, making the grid's Allow/Deny selection unconfirmable
+    by keyboard whenever a command was long enough to truncate. See
+    docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
+    long_command = "\n".join(f"line {i}" for i in range(1, 21))
+    app = _PermissionAskTestApp(_command_ask_ctx(long_command))
+
+    async with app.run_test() as pilot:
+        assert app.focused is None
+
+        await pilot.click(f"#{PERMISSION_ASK_MORE_ID}")
+        await pilot.pause()
+        assert isinstance(app.screen, ExpandedCommandScreen)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionAskScreen)
+        assert app.focused is None
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.decision == PermissionDecision(action="allow", scope="once")
 
 
 @pytest.mark.parametrize(("column", "row", "expected_action", "expected_scope"), [

@@ -4,12 +4,13 @@
 docs/specs/permissions.md's "Interactive ask confirmation" section)."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Grid, Vertical
+from textual.containers import Grid, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Input, Static
 
 from klorb.session import PermissionAskContext, PermissionDecision
@@ -30,6 +31,11 @@ _SCOPE_LABELS: dict[_Scope, str] = {
     "homedir": "Always, for me",
 }
 
+PERMISSION_ASK_HEADER_ID = "permission-ask-header"
+PERMISSION_ASK_COMMAND_ID = "permission-ask-command"
+PERMISSION_ASK_MORE_ID = "permission-ask-more"
+PERMISSION_ASK_DETAIL_ID = "permission-ask-detail"
+PERMISSION_ASK_GRANTED_ID = "permission-ask-granted"
 PERMISSION_ASK_GRID_ID = "permission-ask-grid"
 PERMISSION_ASK_INPUT_ID = "permission-ask-other-input"
 PERMISSION_ASK_OTHER_CELL_ID = "permission-ask-cell-other"
@@ -42,9 +48,88 @@ _TOTAL_ROWS = len(_SCOPES) + 1
 """`_SCOPES`'s rows plus the trailing `_OTHER_ROW` — the modulus `action_move_row` cycles
 `_row` through."""
 
+_MAX_COMMAND_PREVIEW_LINES = 6
+"""How many lines of a long `command_text` `PermissionAskScreen` shows inline before truncating
+to a `[more...]` indicator (`PERMISSION_ASK_MORE_ID`) — see `_command_preview`."""
+
+_SECTION_END_CLASS = "ask-section-end"
+"""CSS class carrying the trailing blank-line margin between one body section (header, command
+preview, detail, granted-directory info) and the next — applied to whichever widget actually
+ends a section, since that varies (the command preview itself if it fits inline, or the
+`[more...]` indicator instead if it's truncated) rather than being fixed at compose() time."""
+
 
 def _cell_id(column: int, row: int) -> str:
     return f"permission-ask-cell-{column}-{row}"
+
+
+def _command_preview(command_text: str) -> tuple[str, bool]:
+    """Return `(preview_text, truncated)`: the first `_MAX_COMMAND_PREVIEW_LINES` lines of
+    `command_text` (unchanged, with `truncated=False`, if it's no longer than that already), for
+    `PermissionAskScreen` to show inline instead of a command that might run to hundreds of lines
+    (a heredoc-embedded script, say) — the full text is always still reachable via
+    `ExpandedCommandScreen`."""
+    lines = command_text.splitlines() or [""]
+    if len(lines) <= _MAX_COMMAND_PREVIEW_LINES:
+        return command_text, False
+    return "\n".join(lines[:_MAX_COMMAND_PREVIEW_LINES]), True
+
+
+class _MoreIndicator(Static):
+    """The `[more...]` affordance shown below a truncated command preview: clicking it calls
+    `on_activate` (`PermissionAskScreen.action_expand_command`) to push `ExpandedCommandScreen`,
+    the same as the screen's own `+` binding does. Deliberately *not* focusable
+    (`can_focus` stays `False`, `Static`'s own default): a focusable widget is auto-focused the
+    moment a screen mounts if nothing else claims focus first (Textual's default `Screen.
+    AUTO_FOCUS` behavior), which — before this was caught — silently stole every subsequent
+    Enter keystroke via a widget-level binding, permanently breaking `PermissionAskScreen`'s own
+    Enter-to-confirm the moment any command was long enough to truncate. `+` is this feature's
+    only keyboard path for exactly that reason; a click is the only other one.
+    """
+
+    def __init__(self, on_activate: Callable[[], None], *, classes: str | None = None) -> None:
+        super().__init__("[more...]", id=PERMISSION_ASK_MORE_ID, classes=classes)
+        self._on_activate = on_activate
+
+    def on_click(self) -> None:
+        self._on_activate()
+
+
+class ExpandedCommandScreen(ModalScreen[None]):
+    """Full-screen, read-only, scrollable view of a permission ask's complete `command_text` —
+    reached from `PermissionAskScreen` via its `+` binding or the `[more...]` indicator
+    (`_MoreIndicator`) a long, truncated command preview shows. Dismissed with Escape or Enter,
+    returning to the ask modal underneath with its own state (grid cursor position, etc.)
+    untouched — pushing/popping a screen, rather than mutating `PermissionAskScreen` in place,
+    keeps that state automatically preserved for free."""
+
+    CSS = """
+    ExpandedCommandScreen {
+        align: center middle;
+    }
+
+    ExpandedCommandScreen VerticalScroll {
+        width: 90%;
+        height: 90%;
+        border: round $accent;
+        padding: 1 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("enter", "close", "Close"),
+    ]
+
+    def __init__(self, command_text: str) -> None:
+        super().__init__()
+        self._command_text = command_text
+
+    def compose(self) -> ComposeResult:
+        yield VerticalScroll(Static(self._command_text))
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 class PermissionAskScreen(ModalScreen[PermissionDecision]):
@@ -54,6 +139,14 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
     `PermissionDecision(action=_ACTIONS[column], scope=_SCOPES[row])`. Escape is a fast path to
     an outright `PermissionDecision(action="deny", scope="once")` without needing to navigate
     there first.
+
+    Above the grid: a styled header naming the kind of access being requested ("Run command" if
+    `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set — see
+    `_header_text`), then the command text or path itself (long commands truncated to
+    `_MAX_COMMAND_PREVIEW_LINES` with a `[more...]` indicator — see `_command_preview`,
+    `ExpandedCommandScreen`), then `ask_ctx.resource_description`'s own per-item detail (the
+    specific argv/path/reason this one ask is about, which can differ from the full command text
+    for a compound command needing several independent decisions).
 
     The grid's last row (`_OTHER_ROW`) is a single cell spanning both columns
     (`PERMISSION_ASK_OTHER_CELL_ID`), reachable the same way as any other row (pressing Down
@@ -92,7 +185,22 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         padding: 1 2;
     }
 
-    #permission-ask-message {
+    #permission-ask-header {
+        color: $text-warning;
+        text-style: bold;
+        margin: 0 0 1 0;
+    }
+
+    #permission-ask-command {
+        text-style: bold;
+    }
+
+    #permission-ask-more {
+        color: $accent;
+        text-style: underline;
+    }
+
+    .ask-section-end {
         margin: 0 0 1 0;
     }
 
@@ -139,6 +247,7 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         Binding("enter", "confirm", "Confirm"),
         Binding("escape", "decline", "Deny"),
         Binding("o", "other", "Other..."),
+        Binding("plus", "expand_command", "Expand", show=False),
     ]
 
     def __init__(
@@ -162,31 +271,61 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
             for column, action in enumerate(_ACTIONS)
         ]
         cells.append(Static("Other...", id=PERMISSION_ASK_OTHER_CELL_ID))
-        yield Vertical(
-            Static(self._message_text(), id="permission-ask-message"),
-            Grid(*cells, id=PERMISSION_ASK_GRID_ID),
-            Static(
-                "←/→ Allow/Deny   ↑/↓ scope   Enter confirm   "
-                "O other   Esc deny",
-                id="permission-ask-hint",
-            ),
-            id="permission-ask-body",
-        )
+
+        widgets: list[Widget] = [Static(self._header_text(), id=PERMISSION_ASK_HEADER_ID)]
+
+        command_text = self._ask_ctx.command_text
+        if command_text is not None:
+            preview, truncated = _command_preview(command_text)
+            if truncated:
+                widgets.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
+                widgets.append(_MoreIndicator(
+                    on_activate=self.action_expand_command, classes=_SECTION_END_CLASS))
+            else:
+                widgets.append(Static(
+                    preview, id=PERMISSION_ASK_COMMAND_ID, classes=_SECTION_END_CLASS))
+        elif self._ask_ctx.path is not None:
+            widgets.append(Static(
+                str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID, classes=_SECTION_END_CLASS))
+
+        widgets.append(Static(
+            self._ask_ctx.resource_description, id=PERMISSION_ASK_DETAIL_ID,
+            classes=_SECTION_END_CLASS))
+
+        granted_text = self._granted_text()
+        if granted_text is not None:
+            widgets.append(Static(
+                granted_text, id=PERMISSION_ASK_GRANTED_ID, classes=_SECTION_END_CLASS))
+
+        widgets.append(Grid(*cells, id=PERMISSION_ASK_GRID_ID))
+        widgets.append(Static(
+            "←/→ Allow/Deny   ↑/↓ scope   Enter confirm   O other   Esc deny",
+            id="permission-ask-hint"))
+
+        yield Vertical(*widgets, id="permission-ask-body")
 
     def on_mount(self) -> None:
         self._refresh_selection()
 
-    def _message_text(self) -> str:
-        lines = [f"Permission requested: {self._ask_ctx.resource_description}"]
+    def _header_text(self) -> str:
+        if self._ask_ctx.command_text is not None:
+            kind = "Run command"
+        elif self._ask_ctx.path is not None:
+            kind = "Write file" if self._ask_ctx.is_write else "Read file"
+        else:
+            kind = "Confirm"
+        return f"Permission requested: {kind}"
+
+    def _granted_text(self) -> str | None:
         if self._granted_paths:
             directories = ", ".join(str(path) for path in self._granted_paths)
-            lines.append(
-                "\nAny persistent Allow choice below grants access to the whole directory:\n"
+            return (
+                "Any persistent Allow choice below grants access to the whole directory:\n"
                 f"{directories}")
-        elif self._granted_command_patterns:
+        if self._granted_command_patterns:
             patterns = ", ".join(" ".join(pattern) for pattern in self._granted_command_patterns)
-            lines.append(f"\nAny persistent Allow choice below grants: {patterns}")
-        return "\n".join(lines)
+            return f"Any persistent Allow choice below grants: {patterns}"
+        return None
 
     def _refresh_selection(self) -> None:
         grid = self.query_one(f"#{PERMISSION_ASK_GRID_ID}", Grid)
@@ -216,6 +355,10 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     def action_other(self) -> None:
         self._reveal_other_input()
+
+    def action_expand_command(self) -> None:
+        if self._ask_ctx.command_text is not None:
+            self.app.push_screen(ExpandedCommandScreen(self._ask_ctx.command_text))
 
     def _reveal_other_input(self) -> None:
         self.query_one(f"#{PERMISSION_ASK_GRID_ID}", Grid).remove()

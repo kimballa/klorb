@@ -255,7 +255,7 @@ class BashTool(Tool):
         logger.debug("Bash %r", command)
 
         analysis = parse_command(command, self._shfmt_command)
-        verdict, ask_items = self._classify(analysis)
+        verdict, ask_items = self._classify(analysis, command)
         if verdict == "deny":
             raise PermissionError(f"Permission denied: run shell command: {command}")
         if verdict == "ask":
@@ -264,7 +264,9 @@ class BashTool(Tool):
 
         return self._execute(command)
 
-    def _classify(self, analysis: BashCommandAnalysis) -> tuple[Verdict, list[PermissionAskItem]]:
+    def _classify(
+        self, analysis: BashCommandAnalysis, command: str,
+    ) -> tuple[Verdict, list[PermissionAskItem]]:
         """Evaluate every simple command's `CommandPermissionsTable` verdict, every redirection
         target's directory-access verdict, and every reason the walker itself forced an "ask".
 
@@ -276,13 +278,21 @@ class BashTool(Tool):
         with several independent concerns into one opaque prompt. `"allow"` (no deny, no ask
         items at all) means the whole command is permitted to run as-is.
 
+        `command` (the model's original, unparsed command string) is set as every collected
+        item's `command_text` — `analysis` alone has no notion of the raw command text, and a UI
+        (`klorb.tui.permission_ask_screen.PermissionAskScreen`) needs it to show what's actually
+        being run, on top of each item's own specific `resource_description` detail (see
+        `PermissionAskItem.command_text`).
+
         `context.permission_override`, when set, lets a previously-approved-once resource skip
         straight past its check on this one retried call (see `PermissionOverride`): a simple
         command whose exact argv is in `override.commands` never reaches `command_table`, and a
-        forced-ask reason in `override.reasons` is dropped rather than turned into another
-        `PermissionAskItem`. Redirection targets don't need an analogous check here — they're
-        `Path`s, already covered by `override.paths` inside `evaluate_write`/
-        `resolve_and_evaluate_read` themselves (see `_evaluate_redirect`).
+        structural item's `resource_description` (the walker's own reason text — deterministic
+        across a retry, since `parse_command` is pure and `command` is identical) being in
+        `override.reasons` drops it rather than turning it into another `PermissionAskItem`.
+        Redirection targets don't need an analogous check here — they're `Path`s, already covered
+        by `override.paths` inside `evaluate_write`/`resolve_and_evaluate_read` themselves (see
+        `_evaluate_redirect`).
         """
         command_table = CommandPermissionsTable(self.context.session_config.command_rules)
         override = self.context.permission_override
@@ -296,12 +306,13 @@ class BashTool(Tool):
             if verdict == "deny":
                 denied = True
             elif verdict is None or verdict == "ask":
-                ask_items.append(PermissionAskItem(f"run command: {' '.join(argv)}", command=argv))
+                ask_items.append(PermissionAskItem(
+                    f"run command: {' '.join(argv)}", command=argv, command_text=command))
 
         for reason in analysis.forced_ask_reasons:
             if override is not None and reason in override.reasons:
                 continue
-            ask_items.append(PermissionAskItem(reason))
+            ask_items.append(PermissionAskItem(reason, command_text=command))
 
         for redirect in analysis.redirects:
             redirect_verdict, path, is_write = self._evaluate_redirect(redirect)
@@ -309,7 +320,8 @@ class BashTool(Tool):
                 denied = True
             elif redirect_verdict == "ask":
                 action = "write to" if is_write else "read"
-                ask_items.append(PermissionAskItem(f"{action} {path}", path=path, is_write=is_write))
+                ask_items.append(PermissionAskItem(
+                    f"{action} {path}", path=path, is_write=is_write, command_text=command))
 
         if denied:
             logger.info("Bash command denied outright: %s", analysis)
