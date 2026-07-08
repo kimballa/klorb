@@ -282,7 +282,11 @@ class BashTool(Tool):
         item's `command_text` — `analysis` alone has no notion of the raw command text, and a UI
         (`klorb.tui.permission_ask_screen.PermissionAskScreen`) needs it to show what's actually
         being run, on top of each item's own specific `resource_description` detail (see
-        `PermissionAskItem.command_text`).
+        `PermissionAskItem.command_text`). Every collected item also gets the same
+        `is_compound` (`len(analysis.simple_commands) > 1`), so a UI can tell a decision about
+        one simple command (`resource_description`) apart from the full command line it belongs
+        to, even when that full line is short enough to display without truncation (see
+        `PermissionAskItem.is_compound`).
 
         `context.permission_override`, when set, lets a previously-approved-once resource skip
         straight past its check on this one retried call (see `PermissionOverride`): a simple
@@ -298,6 +302,7 @@ class BashTool(Tool):
         override = self.context.permission_override
         ask_items: list[PermissionAskItem] = []
         denied = False
+        is_compound = len(analysis.simple_commands) > 1
 
         for argv in analysis.simple_commands:
             if override is not None and tuple(argv) in override.commands:
@@ -307,12 +312,14 @@ class BashTool(Tool):
                 denied = True
             elif verdict is None or verdict == "ask":
                 ask_items.append(PermissionAskItem(
-                    f"run command: {' '.join(argv)}", command=argv, command_text=command))
+                    f"run command: {' '.join(argv)}", command=argv, command_text=command,
+                    is_compound=is_compound))
 
         for reason in analysis.forced_ask_reasons:
             if override is not None and reason in override.reasons:
                 continue
-            ask_items.append(PermissionAskItem(reason, command_text=command))
+            ask_items.append(PermissionAskItem(
+                reason, command_text=command, is_compound=is_compound))
 
         for redirect in analysis.redirects:
             redirect_verdict, path, is_write = self._evaluate_redirect(redirect)
@@ -321,7 +328,8 @@ class BashTool(Tool):
             elif redirect_verdict == "ask":
                 action = "write to" if is_write else "read"
                 ask_items.append(PermissionAskItem(
-                    f"{action} {path}", path=path, is_write=is_write, command_text=command))
+                    f"{action} {path}", path=path, is_write=is_write, command_text=command,
+                    is_compound=is_compound))
 
         if denied:
             logger.info("Bash command denied outright: %s", analysis)

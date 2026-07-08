@@ -1240,11 +1240,14 @@ def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
     )
 
 
-def _command_ask_ctx(command_text: str, *, reason: str = "some reason") -> PermissionAskContext:
+def _command_ask_ctx(
+    command_text: str, *, reason: str = "some reason", is_compound: bool = False,
+) -> PermissionAskContext:
     """A bash-command-ask context (no `path`, matching a structural item's shape), for testing
     the "Run command" header/command-preview path -- see `_ask_ctx` for the file-tool ("Read
     file"/"Write file" header) counterpart."""
-    return PermissionAskContext(command_text=command_text, resource_description=reason)
+    return PermissionAskContext(
+        command_text=command_text, resource_description=reason, is_compound=is_compound)
 
 
 def test_permission_ask_screen_header_says_run_command_when_command_text_is_set(
@@ -1298,6 +1301,25 @@ def test_permission_ask_screen_truncates_a_long_command_with_a_more_indicator(
 
     assert isinstance(command_static, Static)
     assert str(command_static.render()) == "\n".join(f"line {i}" for i in range(1, 7))
+    assert isinstance(more, Static)
+    assert str(more.render()) == "[more...]"
+
+
+def test_permission_ask_screen_shows_more_indicator_for_a_short_compound_command(
+    tmp_path: Path,
+) -> None:
+    """A short `foo && bar` still gets `[more...]` when `is_compound` is set, even though the
+    full command already fits on screen without truncation -- see
+    docs/adrs/always-show-more-indicator-for-compound-command-ask-items.md."""
+    screen = PermissionAskScreen(_command_ask_ctx(
+        "echo hi && echo bye", reason="run command: echo hi", is_compound=True))
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+    more = _find_child(container, PERMISSION_ASK_MORE_ID)
+
+    assert isinstance(command_static, Static)
+    assert str(command_static.render()) == "echo hi && echo bye"
     assert isinstance(more, Static)
     assert str(more.render()) == "[more...]"
 
