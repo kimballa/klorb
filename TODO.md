@@ -11,6 +11,15 @@
 
 # Feature backlog
 
+* the bash tool runs each command in its own shell that has a shellLifetime='command'
+  scope defined in its tool request. Implement a shellLifetime='session' version where
+  a shell can be created that is persistent and reused from command to command. 
+  * Also add a shellLifetime='new' that kills the existing shell and starts a new one. 
+  * ... and think ahead to a world where we let klorb run multiple commands in parallel. Does that
+    implicitly use lifetime=command for all of them? (except up to one 'foreground' command?)
+    ... or can the agent have multiple durable shells? In which case, how does it know which is
+    which, and assign various commands to them?
+
 * When the user changes permissionFramework mode, this should impact the next turn's 
   message from the user to the agent:
   * "Message from system harness: The user has changed your permission framework to 'automatic'.
