@@ -189,6 +189,21 @@ def test_compatibility_claude_markdown_is_overridable_via_config_file(tmp_path: 
     assert process_config.compatibility_claude_markdown is True
 
 
+def test_log_tool_calls_is_overridable_via_config_file(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"tools.logCalls": True},
+    )
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.log_tool_calls is True
+
+
+def test_log_tool_calls_defaults_to_false(tmp_path: Path) -> None:
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.log_tool_calls is False
+
+
 def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:
     """Session-scoped settings live under `sessionDefaults`, not flattened alongside
     process-only keys — the on-disk file mirrors `ProcessConfig` nesting `session:

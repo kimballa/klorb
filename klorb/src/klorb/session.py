@@ -27,6 +27,7 @@ from klorb.permissions.table import (
 )
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
+from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
 from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -367,6 +368,16 @@ class Session:
         self._compatibility_claude_markdown = (
             process_config.compatibility_claude_markdown if process_config is not None else False
         )
+        self._log_tool_calls = tool_call_logging_enabled(
+            process_config.log_tool_calls if process_config is not None else False
+        )
+        """Whether to append every finished tool call to `tool-calls.log` via
+        `klorb.tool_call_log.log_tool_call` — resolved once, at construction time, from
+        `process_config.log_tool_calls` (itself set by the `tools.logCalls` config key or the
+        `--log-tool-calls` CLI flag) combined with the `LOG_TOOL_CALLS` environment variable via
+        `tool_call_logging_enabled()`, so a caller that constructs a `Session` without a
+        `ProcessConfig` at all (e.g. most unit tests) still gets the environment variable
+        honored."""
         self._messages: list[Message] = []
         self._context_files_seeded = False
         """Whether `_ensure_context_files_message()` has already inserted the workspace
@@ -903,7 +914,10 @@ class Session:
         per call — carrying that call's result, or a description of the error if the tool
         was unknown or raised — so the next round can send it back to the model. Also fires
         `callbacks.on_tool_call`, if given, once per call with a `ToolCallEvent` carrying the
-        same result-or-error outcome as raw data, for a UI to render.
+        same result-or-error outcome as raw data, for a UI to render. When `self._log_tool_calls`
+        is set, also appends the call's name/arguments and result/error to `tool-calls.log` via
+        `klorb.tool_call_log.log_tool_call` — an out-of-band record independent of both
+        `callbacks.on_tool_call` and the ordinary `logging` module.
 
         Before executing each call, checks it against `config.max_tool_calls_per_turn`
         (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`)
@@ -999,6 +1013,8 @@ class Session:
                 logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
                 error = str(exc)
             content = _format_tool_response_content(result, error)
+            if self._log_tool_calls:
+                log_tool_call(call.name, args, result, error)
             if callbacks.on_tool_call is not None:
                 callbacks.on_tool_call(ToolCallEvent(
                     call_id=call.id, name=call.name, args=args, result=result, error=error))

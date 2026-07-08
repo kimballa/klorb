@@ -18,6 +18,7 @@ from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.schema_envelope import parse_versioned_json, read_versioned_json, write_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig, ThinkingEffort
+from klorb.tool_call_log import LOG_TOOL_CALLS_CONFIG_KEY
 from klorb.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.spillBytes": "bash_spill_bytes",
     "tools.bash.shfmtCommand": "shfmt_command",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
+    LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
     THEME_CONFIG_KEY: "theme",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
@@ -194,6 +196,12 @@ class ProcessConfig(BaseModel):
     alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
     A compatibility shim for projects that carry Claude-Code-style instructions in a
     `CLAUDE.md` file; `AGENTS.md` is always read, since it's klorb's own convention."""
+    log_tool_calls: bool = False
+    """Whether to append an out-of-band, file-based record of every tool call to
+    `tool-calls.log` in the current working directory — see `klorb.tool_call_log`. Also
+    activated by the `LOG_TOOL_CALLS` environment variable (`"1"`/`"true"`) or the
+    `--log-tool-calls` CLI flag, independently of this field's value — see
+    `klorb.tool_call_log.tool_call_logging_enabled`."""
     theme: str | None = None
     """Name of the Textual theme selected via the TUI's theme picker (see
     `klorb.tui.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`

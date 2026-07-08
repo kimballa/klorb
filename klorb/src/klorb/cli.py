@@ -80,6 +80,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--log-tool-calls",
+        dest="log_tool_calls",
+        action="store_true",
+        default=False,
+        help=(
+            "Append every tool call's request/response to tool-calls.log in the current "
+            "working directory. Defaults to off; also enabled by the LOG_TOOL_CALLS=1/true "
+            "environment variable or the tools.logCalls config key."
+        ),
+    )
+    parser.add_argument(
         "--max-tool-calls-per-turn",
         dest="max_tool_calls_per_turn",
         type=int,
@@ -183,6 +194,8 @@ def main() -> None:
         process_config.session.permission_framework = "deny"
     if args.model is not None:
         process_config.session.model = args.model
+    if args.log_tool_calls:
+        process_config.log_tool_calls = True
     if args.max_tool_calls_per_turn is not None:
         process_config.session.max_tool_calls_per_turn = args.max_tool_calls_per_turn
     if args.max_tool_calls_per_session is not None:
