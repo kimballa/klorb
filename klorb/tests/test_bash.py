@@ -223,6 +223,10 @@ def test_sandbox_notice_without_a_session_degrades_gracefully(tmp_path: Path) ->
 
 # --- build_bash_env ---
 
+_BASH_COMMAND = "/opt/klorb-test/bash"
+"""A distinctive path (never a real default) so tests asserting `SHELL`/`BASH` pass through
+`build_bash_env`'s `bash_command` argument can't coincidentally match some other default."""
+
 
 def test_build_bash_env_always_shares_home_and_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -230,27 +234,43 @@ def test_build_bash_env_always_shares_home_and_user(
     monkeypatch.setenv("HOME", "/home/someone")
     monkeypatch.setenv("USER", "someone")
     monkeypatch.delenv("UNRELATED_SECRET", raising=False)
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)))
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert env == {
-        "HOME": "/home/someone", "USER": "someone", "WORKSPACE_ROOT": str(tmp_path.resolve())}
+        "HOME": "/home/someone", "USER": "someone", "WORKSPACE_ROOT": str(tmp_path.resolve()),
+        "SHELL": _BASH_COMMAND, "BASH": _BASH_COMMAND}
 
 
 def test_build_bash_env_always_sets_workspace_root(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)))
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert env["WORKSPACE_ROOT"] == str(tmp_path.resolve())
+
+
+def test_build_bash_env_always_sets_shell_and_bash_to_bash_command(tmp_path: Path) -> None:
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
+    assert env["SHELL"] == _BASH_COMMAND
+    assert env["BASH"] == _BASH_COMMAND
 
 
 def test_build_bash_env_set_env_can_override_workspace_root(tmp_path: Path) -> None:
     env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"WORKSPACE_ROOT": "/overridden"}))
+        workspace=Workspace(path=tmp_path), set_env={"WORKSPACE_ROOT": "/overridden"}), _BASH_COMMAND)
     assert env["WORKSPACE_ROOT"] == "/overridden"
+
+
+def test_build_bash_env_set_env_can_override_shell_and_bash(tmp_path: Path) -> None:
+    env = build_bash_env(SessionConfig(
+        workspace=Workspace(path=tmp_path),
+        set_env={"SHELL": "/overridden/shell", "BASH": "/overridden/bash"}), _BASH_COMMAND)
+    assert env["SHELL"] == "/overridden/shell"
+    assert env["BASH"] == "/overridden/bash"
 
 
 def test_build_bash_env_shares_configured_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MY_TOOLCHAIN_VAR", "abc")
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path), share_env=["MY_TOOLCHAIN_VAR"]))
+    env = build_bash_env(
+        SessionConfig(workspace=Workspace(path=tmp_path), share_env=["MY_TOOLCHAIN_VAR"]), _BASH_COMMAND)
     assert env.get("MY_TOOLCHAIN_VAR") == "abc"
 
 
@@ -259,7 +279,7 @@ def test_build_bash_env_set_env_overrides_shared_value(
 ) -> None:
     monkeypatch.setenv("FOO", "from-process")
     env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path), share_env=["FOO"], set_env={"FOO": "overridden"}))
+        workspace=Workspace(path=tmp_path), share_env=["FOO"], set_env={"FOO": "overridden"}), _BASH_COMMAND)
     assert env["FOO"] == "overridden"
 
 
@@ -267,7 +287,7 @@ def test_build_bash_env_does_not_share_unlisted_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SOME_OTHER_VAR", "value")
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)))
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert "SOME_OTHER_VAR" not in env
 
 
