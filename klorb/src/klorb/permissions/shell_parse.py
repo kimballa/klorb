@@ -76,10 +76,49 @@ RedirDirection = Literal["read", "write"]
 class RedirectTarget:
     """One redirection's file target extracted from the AST, and which permissions direction
     (`klorb.permissions.workspace.evaluate_write` for `"write"`, `resolve_and_evaluate_read` for
-    `"read"`) `BashTool` should check it against."""
+    `"read"`) `BashTool` should check it against.
+
+    `source_text` is the exact original source of the *owning statement* (the simple command
+    this redirect belongs to, including the redirect itself, e.g. `"cat file > out.txt"`) —
+    sliced directly from the raw command string via AST offsets, never reconstructed from parsed
+    parts, so original quoting/spacing survives. It's purely a display aid (see
+    `klorb.permissions.table.PermissionAskItem.item_command_text`), never itself the resource a
+    grant is checked or persisted against, unlike `target`/`direction`."""
 
     target: str
     direction: RedirDirection
+    source_text: str
+
+
+@dataclass(frozen=True)
+class SimpleCommand:
+    """One parsed simple command: `argv` (argv0 first) is what `CommandPermissionsTable` matches
+    against; `source_text` is the exact original source of the `CallExpr`/`DeclClause` node it
+    came from — sliced directly from the raw command string via AST offsets, not reconstructed
+    from `argv` (which would lose original quoting/spacing, e.g. `git commit -m "a message"`
+    losing its quotes if rejoined with spaces). Purely a display aid (see
+    `klorb.permissions.table.PermissionAskItem.item_command_text`), never itself the resource a
+    grant is checked or persisted against, unlike `argv`."""
+
+    argv: list[str]
+    source_text: str
+
+
+@dataclass(frozen=True)
+class ForcedAskReason:
+    """One reason the walker itself escalated to "ask", paired with the exact original source
+    text of whichever AST node the reason is actually about (a `CallExpr`/`DeclClause` for a
+    non-literal-argument or hidden-effect command, the owning `Stmt` for a backgrounded command,
+    an unsafe stdin consumer, or a redirect-level issue — see each `forced_ask_reasons.append`
+    call site) — sliced directly from the raw command string via AST offsets. Without this, a
+    structural item had nothing but the abstract `reason` text to show a UI
+    (`klorb.tui.permission_ask_screen.PermissionAskScreen`): two structural items from the same
+    compound command (e.g. `echo $SHELL; echo $HOME`, both non-literal-argument reasons) were
+    otherwise indistinguishable from each other in the UI, both showing the identical generic
+    reason string with no indication of which specific command each one is actually about."""
+
+    reason: str
+    source_text: str
 
 
 @dataclass
@@ -111,12 +150,19 @@ class BashCommandAnalysis:
     nothing, so they're never counted; a `TestClause`/`ArithmCmd` guard (`[[ ... ]]`/`(( ... ))`)
     likewise invokes no external program of its own and is never counted either — only a real
     `[`/`test` invocation (an ordinary `CallExpr`) is.
+
+    `raw_command` is the original command string `parse_command` was given, set once at
+    construction and never mutated afterward — every `source_text` field above (`SimpleCommand`/
+    `ForcedAskReason`/`RedirectTarget`'s own) is a slice of this same string, computed on demand
+    by `_node_text()` from a node's AST `Pos`/`End` byte offsets rather than threaded through
+    every walker function as a separate parameter.
     """
 
-    simple_commands: list[list[str]] = field(default_factory=list)
+    simple_commands: list[SimpleCommand] = field(default_factory=list)
     redirects: list[RedirectTarget] = field(default_factory=list)
-    forced_ask_reasons: list[str] = field(default_factory=list)
+    forced_ask_reasons: list[ForcedAskReason] = field(default_factory=list)
     command_count: int = 0
+    raw_command: str = ""
 
 
 class ShellParseError(Exception):
@@ -178,9 +224,18 @@ def parse_command(command: str, shfmt_command: str) -> BashCommandAnalysis:
         logger.error("%s --to-json produced unparseable output for %r: %s", shfmt_command, command, exc)
         raise ShellParseError(f"{shfmt_command} --to-json produced unparseable output: {exc}") from exc
 
-    analysis = BashCommandAnalysis()
+    analysis = BashCommandAnalysis(raw_command=command)
     _walk_stmts(ast.get("Stmts", []), analysis)
     return analysis
+
+
+def _node_text(node: dict[str, Any], analysis: BashCommandAnalysis) -> str:
+    """Exact original source text of `node` (any `Stmt`/`Cmd`-shaped dict — every such node
+    `shfmt --to-json` produces carries its own `Pos`/`End`, each an object with an integer byte
+    `Offset`), sliced directly from `analysis.raw_command` rather than reconstructed from parsed
+    parts — preserves original quoting/spacing a `' '.join(argv)`-style reconstruction would
+    lose. See `SimpleCommand`/`ForcedAskReason`/`RedirectTarget`'s own `source_text` fields."""
+    return analysis.raw_command[node["Pos"]["Offset"]:node["End"]["Offset"]]
 
 
 def _word_literal(word: dict[str, Any] | None) -> str | None:
@@ -250,10 +305,16 @@ def _scan_for_cmdsubst(node: Any, analysis: BashCommandAnalysis) -> None:
             _scan_for_cmdsubst(item, analysis)
 
 
-def _check_stdin_consumer(cmd: dict[str, Any] | None, analysis: BashCommandAnalysis, *, source: str) -> None:
+def _check_stdin_consumer(
+    cmd: dict[str, Any] | None, scope: dict[str, Any], analysis: BashCommandAnalysis, *, source: str,
+) -> None:
     """Escalate to "ask" unless `cmd` is a `CallExpr` whose literal argv0 is in
-    `SAFE_STDIN_CONSUMERS` — called for the receiving side of a pipe (`_handle_binary_cmd`) and
-    for the owning command of a heredoc/herestring (`_walk_stmt`)."""
+    `SAFE_STDIN_CONSUMERS` — called for the receiving side of a pipe (`_handle_binary_cmd`, where
+    `scope` is that side's own `Stmt`) and for the owning command of a heredoc/herestring
+    (`_walk_stmt`, where `scope` is the owning `Stmt` itself). `scope` supplies the
+    `ForcedAskReason.source_text` for display purposes — `cmd` alone can be `None` (a non-
+    `CallExpr` receiving command) or narrower than the whole statement, so `scope` is always the
+    `Stmt` whether or not `cmd` itself is usable."""
     argv0 = None
     if cmd is not None and cmd.get("Type") == "CallExpr":
         args = cmd.get("Args", [])
@@ -261,9 +322,11 @@ def _check_stdin_consumer(cmd: dict[str, Any] | None, analysis: BashCommandAnaly
             argv0 = _word_literal(args[0])
     if argv0 not in SAFE_STDIN_CONSUMERS:
         label = repr(argv0) if argv0 is not None else "a non-literal/complex command"
-        analysis.forced_ask_reasons.append(
-            f"{source} feeds stdin content into {label}, which is not in the safe "
-            f"stdin-consumer allowlist {sorted(SAFE_STDIN_CONSUMERS)}")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason=(
+                f"{source} feeds stdin content into {label}, which is not in the safe "
+                f"stdin-consumer allowlist {sorted(SAFE_STDIN_CONSUMERS)}"),
+            source_text=_node_text(scope, analysis)))
 
 
 IMPLICIT_READ_COMMANDS = frozenset({"cat", "less", "more", "grep", "head", "tail",
@@ -292,15 +355,16 @@ def _walk_stmt(
     see `_maybe_add_implicit_reads`.
     """
     if stmt.get("Background"):
-        analysis.forced_ask_reasons.append(
-            "command is backgrounded with a top-level '&', which is rejected at parse time")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason="command is backgrounded with a top-level '&', which is rejected at parse time",
+            source_text=_node_text(stmt, analysis)))
 
     cmd = stmt.get("Cmd")
     redirs = stmt.get("Redirs", [])
     for redir in redirs:
-        _walk_redir(redir, analysis)
+        _walk_redir(redir, stmt, analysis)
         if redir.get("Op") in _INLINE_CONTENT_REDIR_OPS:
-            _check_stdin_consumer(cmd, analysis, source="a heredoc/herestring")
+            _check_stdin_consumer(cmd, stmt, analysis, source="a heredoc/herestring")
 
     if cmd is not None:
         _walk_cmd(cmd, analysis)
@@ -320,13 +384,18 @@ def _maybe_add_implicit_reads(cmd: dict[str, Any], analysis: BashCommandAnalysis
     args = cmd.get("Args", [])
     if not args or _word_literal(args[0]) not in IMPLICIT_READ_COMMANDS:
         return
+    source_text = _node_text(cmd, analysis)
     for arg_word in args[1:]:
         literal = _word_literal(arg_word)
         if literal is not None and not literal.startswith("-"):
-            analysis.redirects.append(RedirectTarget(target=literal, direction="read"))
+            analysis.redirects.append(RedirectTarget(
+                target=literal, direction="read", source_text=source_text))
 
 
-def _walk_redir(redir: dict[str, Any], analysis: BashCommandAnalysis) -> None:
+def _walk_redir(redir: dict[str, Any], stmt: dict[str, Any], analysis: BashCommandAnalysis) -> None:
+    """`stmt` is the owning statement (the simple command this redirect belongs to) — used only
+    for `ForcedAskReason`/`RedirectTarget.source_text`, since a redirect target alone (`>out.txt`)
+    is meaningless to a user without the command it's attached to."""
     word = redir.get("Word")
     if word is not None:
         _scan_for_cmdsubst(word, analysis)
@@ -340,18 +409,23 @@ def _walk_redir(redir: dict[str, Any], analysis: BashCommandAnalysis) -> None:
 
     literal = _word_literal(word)
     if literal is None:
-        analysis.forced_ask_reasons.append(
-            "redirection target is not a literal path (variable/command substitution)")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason="redirection target is not a literal path (variable/command substitution)",
+            source_text=_node_text(stmt, analysis)))
         return
 
     if op in _WRITE_REDIR_OPS:
         if _looks_like_fd_dup(literal):
             return  # fd duplication (e.g. `2>&1`), not a filesystem path.
-        analysis.redirects.append(RedirectTarget(target=literal, direction="write"))
+        analysis.redirects.append(RedirectTarget(
+            target=literal, direction="write", source_text=_node_text(stmt, analysis)))
     elif op in _READ_REDIR_OPS:
-        analysis.redirects.append(RedirectTarget(target=literal, direction="read"))
+        analysis.redirects.append(RedirectTarget(
+            target=literal, direction="read", source_text=_node_text(stmt, analysis)))
     else:
-        analysis.forced_ask_reasons.append(f"unrecognized redirection operator {op!r}")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason=f"unrecognized redirection operator {op!r}",
+            source_text=_node_text(stmt, analysis)))
 
 
 def _handle_call_expr(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
@@ -364,6 +438,7 @@ def _handle_call_expr(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> Non
     if not args:
         return  # a bare assignment statement (`FOO=bar`) invokes nothing.
     analysis.command_count += 1
+    source_text = _node_text(cmd, analysis)
 
     argv: list[str] = []
     non_literal = False
@@ -376,22 +451,24 @@ def _handle_call_expr(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> Non
             argv.append(literal)
 
     if non_literal:
-        analysis.forced_ask_reasons.append(
-            "command has a non-literal argument (variable/command substitution/glob expansion)")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason="command has a non-literal argument (variable/command substitution/glob expansion)",
+            source_text=source_text))
         return
 
     if argv[0] in HIDDEN_EFFECT_COMMANDS:
-        analysis.forced_ask_reasons.append(
-            f"{argv[0]!r} can hide its real effect from its own argv")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason=f"{argv[0]!r} can hide its real effect from its own argv",
+            source_text=source_text))
 
-    analysis.simple_commands.append(argv)
+    analysis.simple_commands.append(SimpleCommand(argv=argv, source_text=source_text))
 
 
 def _handle_binary_cmd(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
     x_side, y_side = cmd.get("X"), cmd.get("Y")
     is_pipe = cmd.get("Op") in _PIPE_OPS
     if is_pipe and y_side is not None:
-        _check_stdin_consumer(y_side.get("Cmd"), analysis, source="a pipe")
+        _check_stdin_consumer(y_side.get("Cmd"), y_side, analysis, source="a pipe")
     if x_side is not None:
         _walk_stmt(x_side, analysis)
     if y_side is not None:
@@ -458,6 +535,7 @@ def _handle_decl_clause(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> N
     "FOO=bar", "BAZ"]`) so ordinary `CommandRules` patterns can still match it.
     """
     analysis.command_count += 1
+    source_text = _node_text(cmd, analysis)
     variant = cmd.get("Variant", {}).get("Value")
     argv: list[str] = [variant] if variant else []
     non_literal = variant is None
@@ -477,10 +555,11 @@ def _handle_decl_clause(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> N
             argv.append(token)
 
     if non_literal or not argv:
-        analysis.forced_ask_reasons.append(
-            f"{cmd.get('Type')} ({variant!r}) has a non-literal argument")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason=f"{cmd.get('Type')} ({variant!r}) has a non-literal argument",
+            source_text=source_text))
         return
-    analysis.simple_commands.append(argv)
+    analysis.simple_commands.append(SimpleCommand(argv=argv, source_text=source_text))
 
 
 def _handle_time_clause(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
@@ -522,7 +601,9 @@ def _walk_cmd(cmd: dict[str, Any], analysis: BashCommandAnalysis) -> None:
     handler = _CMD_HANDLERS.get(cmd_type) if isinstance(cmd_type, str) else None
     if handler is None:
         analysis.command_count += 1
-        analysis.forced_ask_reasons.append(f"unrecognized shell construct: {cmd_type!r}")
+        analysis.forced_ask_reasons.append(ForcedAskReason(
+            reason=f"unrecognized shell construct: {cmd_type!r}",
+            source_text=_node_text(cmd, analysis)))
         _scan_for_cmdsubst(cmd, analysis)
         return
     handler(cmd, analysis)

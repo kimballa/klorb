@@ -34,18 +34,23 @@ containing the running Python interpreter — see `_resolve_shfmt_command` — s
 when klorb runs from an unactivated venv), parses the JSON, and walks the resulting tree into a
 `BashCommandAnalysis`:
 
-* `simple_commands: list[list[str]]` — every command's own argv (argv0 first), extracted from
-  every pipeline stage, `&&`/`||`/`;` list member, subshell, `$(...)`/backtick command
-  substitution (including one embedded inside another word — e.g. a redirect target or a
-  `case` pattern — walked for defense in depth even when the *outer* construct isn't itself a
-  literal candidate), `if`/`while`/`for`/`case` body, function body, and `export`/`declare`/
-  `local` (`DeclClause`) invocation.
+* `simple_commands: list[SimpleCommand]` — every command's own argv (argv0 first, `argv`) plus
+  the exact original source text of the `CallExpr`/`DeclClause` node it came from (`source_text`,
+  sliced from the raw command string via AST byte offsets rather than reconstructed from `argv`,
+  which would lose original quoting/spacing) — extracted from every pipeline stage, `&&`/`||`/`;`
+  list member, subshell, `$(...)`/backtick command substitution (including one embedded inside
+  another word — e.g. a redirect target or a `case` pattern — walked for defense in depth even
+  when the *outer* construct isn't itself a literal candidate), `if`/`while`/`for`/`case` body,
+  function body, and `export`/`declare`/`local` (`DeclClause`) invocation.
 * `redirects: list[RedirectTarget]` — every redirection's file target (`target`, `direction`:
-  `"read"` for `<`, `"write"` for `>`/`>>`/`<>`/`>|`/`&>`/`&>>`). A redirect operator whose target
-  is a bare digit/`-` (`2>&1`) is a file-descriptor duplication, not a filesystem path, and is
-  skipped entirely. A heredoc/herestring (`<<`/`<<-`/`<<<`) has no filesystem target at all — its
-  content is inline in the script — so instead of a `RedirectTarget`, the *owning* statement's
-  command is checked against the safe-stdin-consumer allowlist (see below). An invocation of
+  `"read"` for `<`, `"write"` for `>`/`>>`/`<>`/`>|`/`&>`/`&>>`, and `source_text`: the exact
+  source of the *owning statement* — the whole command line the redirect belongs to, e.g.
+  `"cat file > out.txt"`, not just the bare target — since a redirect target alone is meaningless
+  without the command it's attached to). A redirect operator whose target is a bare digit/`-`
+  (`2>&1`) is a file-descriptor duplication, not a filesystem path, and is skipped entirely. A
+  heredoc/herestring (`<<`/`<<-`/`<<<`) has no filesystem target at all — its content is inline
+  in the script — so instead of a `RedirectTarget`, the *owning* statement's command is checked
+  against the safe-stdin-consumer allowlist (see below). An invocation of
   `cat`/`less`/`more`/`head`/`tail`/`sort`/`uniq`/`wc`/`jq` (`IMPLICIT_READ_COMMANDS`) that is
   neither piped into from elsewhere nor itself redirected — a plain `cat file.txt`, not
   `foo | cat` or `cat < file.txt` — also produces a `RedirectTarget` with `direction="read"` for
@@ -55,7 +60,11 @@ when klorb runs from an unactivated venv), parses the JSON, and walks the result
   `CommandRules` check on the invocation itself — gives them the same protection a real
   `ReadFile` call already gets, rather than leaving `readDirs` blind to file paths a
   `CommandRules` rule has no notion of.
-* `forced_ask_reasons: list[str]` — every reason the walker itself escalated to `"ask"`:
+* `forced_ask_reasons: list[ForcedAskReason]` — every reason the walker itself escalated to
+  `"ask"` (`reason`), paired with the exact source text of whichever node the reason is actually
+  about (`source_text` — a `CallExpr`/`DeclClause` for a non-literal-argument or hidden-effect
+  command, the owning `Stmt` for a backgrounded command/unsafe stdin consumer/redirect-level
+  issue):
   * A token (argv0 or any argument) that isn't a plain literal — built from a variable,
     parameter expansion, command/arithmetic substitution, or anything else that isn't a `Lit`/
     `SglQuoted`/all-literal-`DblQuoted` word. Quoting alone is **not** a bypass signal:
@@ -71,6 +80,13 @@ when klorb runs from an unactivated venv), parses the JSON, and walks the result
     `python`/etc., escalates regardless of what an allow-rule for its own argv0 would say.
   * An AST node type the walker doesn't recognize (protects against a `shfmt` version-shape
     drift surfacing a construct this walker predates).
+
+`source_text`, wherever it appears above, is computed on demand by `_node_text()` from a node's
+AST `Pos`/`End` byte offsets against `BashCommandAnalysis.raw_command` (the original command
+string, set once at construction) — see
+[the per-item command-text ADR](../adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md)
+for why each item needs its own scoped text rather than sharing the one whole-command
+`command_text` every `PermissionAskItem` from the same call also carries.
 
 A `shfmt --to-json` parse failure (real shell syntax error) raises `ShellParseError`, surfaced to
 the model as an ordinary tool error so it can retry with simpler syntax — not routed through the
@@ -137,7 +153,11 @@ entry with neither a path nor a command becomes a structural item, for which onl
 are meaningful (see `PermissionAskItem`'s own docstring). Every ask item a `BashTool` call
 produces — structural or not — also carries `command_text`, the full unparsed command string,
 separate from `resource_description`'s own per-item detail — see
-docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md.
+docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md — and
+`item_command_text`, the `SimpleCommand`/`ForcedAskReason`/`RedirectTarget`'s own `source_text`
+for just the one statement that particular item is about, distinct from every other item's from
+the same call even though they all share the identical `command_text` — see
+docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md.
 
 ### Execution
 

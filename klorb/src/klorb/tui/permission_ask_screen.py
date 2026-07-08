@@ -144,17 +144,19 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     Above the grid: a styled header naming the kind of access being requested ("Run command" if
     `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set — see
-    `_header_text`), then the command text or path itself (long commands truncated to
+    `_header_text`), then a command preview (long commands truncated to
     `_MAX_COMMAND_PREVIEW_LINES` with a `[more...]` indicator — see `_command_preview`,
     `ExpandedCommandScreen`), then `ask_ctx.resource_description`'s own per-item detail (the
-    specific argv/path/reason this one ask is about, which can differ from the full command text
-    for a compound command needing several independent decisions). `[more...]` is also shown for
-    a command short enough to display without truncation, whenever `ask_ctx.is_compound` is set:
-    `resource_description` only ever names the one simple command/redirect/reason this particular
-    item is about, so a compound command (`foo && bar`) always gets an explicit path to the full
-    command line, even though it's already visible in the preview above — the user shouldn't have
-    to notice on their own that a fully-visible short preview is still only one piece of what will
-    actually run.
+    specific argv/path/reason this one ask is about). The preview shows `ask_ctx.
+    item_command_text` — this one item's own statement, e.g. `"echo $SHELL"` out of a bigger
+    `"echo $SHELL; echo $HOME"` — falling back to the full `ask_ctx.command_text` only when
+    `item_command_text` is unset (a non-`BashTool` ask item never sets `command_text` at all, so
+    this branch is never reached for those). `[more...]` is always shown, regardless of whether
+    the preview itself needed truncation, whenever `ask_ctx.is_compound` is set: expanding it
+    (`action_expand_command`) pushes `ExpandedCommandScreen` with `command_text` — the *whole*
+    raw command, not just this item's own piece — so the user always has an explicit path to see
+    everything else this compound command also runs, beyond just the one statement its own
+    preview and `resource_description` describe.
 
     The grid's last row (`_OTHER_ROW`) is a single cell spanning both columns
     (`PERMISSION_ASK_OTHER_CELL_ID`), reachable the same way as any other row (pressing Down
@@ -284,7 +286,8 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
         command_text = self._ask_ctx.command_text
         if command_text is not None:
-            preview, truncated = _command_preview(command_text)
+            preview_source = self._ask_ctx.item_command_text or command_text
+            preview, truncated = _command_preview(preview_source)
             show_more = truncated or self._ask_ctx.is_compound
             if show_more:
                 widgets.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
