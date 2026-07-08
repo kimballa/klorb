@@ -39,6 +39,9 @@ config) has one place to live.
     `klorb.process_config.SESSION_KEY_MAP`, like `interactive`: its effective default
     depends on whether the session is interactive, resolved by `klorb.cli.main()` rather
     than a static config value — see [[default-permission-framework-to-deny-headlessly]].
+    Changed mid-conversation via `Session.set_permission_framework()`, not a direct field
+    assignment, so `send_turn()` can tell the model about the change on the next turn — see
+    docs/specs/permissions.md's "Permission framework change interjection" section.
 * `klorb.session.Session` is constructed with a `SessionConfig` (saved as `self.config`),
   and optionally an `ApiProvider` (defaults to a fresh `OpenRouterApiProvider`), a
   `ModelRegistry` (defaults to a fresh `ModelRegistry()`), and a

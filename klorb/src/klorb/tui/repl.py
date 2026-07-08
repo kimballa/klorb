@@ -1404,12 +1404,15 @@ class ReplApp(App[None]):
         `PERMISSION_FRAMEWORK_CYCLE` (wrapping around), and flash the badge to draw the eye
         to the change. Bound to Shift+Tab via `PromptInput.CyclePermissionFramework` (see
         `on_prompt_input_cycle_permission_framework`) since Shift+Tab isn't otherwise
-        meaningful in this single-input-focus app.
+        meaningful in this single-input-focus app. Goes through `Session.set_permission_
+        framework()`, not a direct assignment, so the model is told about the change via a
+        system-harness interjection prepended to the next turn — see
+        docs/specs/permissions.md's "Permission framework change interjection" section.
         """
         current = self._session.config.permission_framework
         next_index = (PERMISSION_FRAMEWORK_CYCLE.index(current) + 1) % len(PERMISSION_FRAMEWORK_CYCLE)
         next_value = PERMISSION_FRAMEWORK_CYCLE[next_index]
-        self._session.config.permission_framework = next_value
+        self._session.set_permission_framework(next_value)
         badge = self.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
         badge.flash_to(next_value)
 

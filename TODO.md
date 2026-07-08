@@ -20,20 +20,6 @@
     ... or can the agent have multiple session-durable shells? In which case, how does it know which
     is which, and assign various commands to them?
 
-* When the user changes permissionFramework mode, this should impact the next turn's 
-  message from the user to the agent:
-  * "Message from system harness: The user has changed your permission framework to 'automatic'.
-    Any tool call you issue will be approved, so you must only generate tool calls that will be safe
-    without human review.\nDuring this turn the user said:"
-  * "Message from system harness: The user has changed your permission framework to 'ask' mode. You
-    can propose any tool calls and the human will review them for approval if necessary."
-  * "Message from system harness: The user has changed your permission framework to 'deny approval
-    requests'. Any tool call you issue that is not already allow-listed will be denied."
-  * ... this is essentially an enqueued system message that waits for the next turn to start.
-    If the user changes the permission framework multiple times before the next turn, only
-    the final permission framework setting controls a pending message.
-  
-
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you

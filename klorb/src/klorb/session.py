@@ -85,6 +85,27 @@ PermissionFramework = Literal["ask", "auto", "deny"]
 `SessionConfig.permission_framework` and docs/specs/permissions.md's "Interactive 'ask'
 confirmation" section."""
 
+PERMISSION_FRAMEWORK_INTERJECTIONS: dict[PermissionFramework, str] = {
+    "auto": (
+        "The user has changed your permission framework to 'automatic'. Any tool call you "
+        "issue will be approved, so you must only generate tool calls that will be safe "
+        "without human review."
+    ),
+    "ask": (
+        "The user has changed your permission framework to 'ask' mode. You can propose any "
+        "tool calls and the human will review them for approval if necessary."
+    ),
+    "deny": (
+        "The user has changed your permission framework to 'deny approval requests'. Any "
+        "tool call you issue that is not already allow-listed will be denied."
+    ),
+}
+"""Text `Session.set_permission_framework()` queues for `send_turn()` to wrap in a
+`<SystemInterjection subject="PermissionFramework">` tag and prepend to the next user turn's
+prompt, keyed by the newly-set `PermissionFramework` value — see
+`Session._pending_permission_framework_interjection` and docs/specs/permissions.md's
+"Permission framework change interjection" section."""
+
 THINKING_EFFORT_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
     "low": 4_096,
     "medium": 16_384,
@@ -113,6 +134,14 @@ def _format_tool_response_content(result: Any, error: str | None) -> str:
     if error is not None:
         return f"Error: {error}"
     return result if isinstance(result, str) else json.dumps(result)
+
+
+def _wrap_system_interjection(subject: str, message: str) -> str:
+    """Wrap `message` in a `<SystemInterjection subject="{subject}">...</SystemInterjection>`
+    tag pair, so a model can tell an out-of-band harness notice apart from the user's own
+    turn content within the same `Message.content` — see `Session.send_turn()`'s handling of
+    `_pending_permission_framework_interjection`."""
+    return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
 
 
 class SessionConfig(BaseModel):
@@ -338,6 +367,13 @@ class Session:
         which can test for an existing `role="system"`/`role="tool_defs"` message, the
         context-files message is `role="user"` (it must look like a real user turn to the
         model), so idempotency is tracked with this flag instead."""
+        self._pending_permission_framework_interjection: str | None = None
+        """Set by `set_permission_framework()` to the harness message queued for the next
+        `send_turn()` call to prepend onto its `prompt`, or `None` if no permission-framework
+        change is pending. Overwritten (not accumulated) on every call to
+        `set_permission_framework()`, so several changes before the next turn collapse to a
+        single interjection reflecting only the final mode — see docs/specs/permissions.md's
+        "Permission framework change interjection" section."""
 
     @property
     def role(self) -> Role:
@@ -372,6 +408,33 @@ class Session:
     def messages(self) -> list[Message]:
         """Return the session's conversation history so far."""
         return list(self._messages)
+
+    def set_permission_framework(self, value: PermissionFramework) -> None:
+        """Change `config.permission_framework` to `value` and queue a system-harness
+        interjection (`PERMISSION_FRAMEWORK_INTERJECTIONS[value]`) for `send_turn()` to
+        prepend onto the prompt of the next turn it dispatches. Callers that let the user
+        change this mode mid-conversation (e.g. `klorb.tui.repl.ReplApp`'s Shift+Tab
+        cycling) should call this instead of assigning `config.permission_framework`
+        directly, so the model is told about the change. The enforcement value itself takes
+        effect immediately, exactly as a direct assignment would — only the model-facing
+        notice is deferred to the next turn. Calling this again before the next turn starts
+        overwrites the pending interjection rather than queuing a second one, so only the
+        final mode setting controls what's sent — see docs/specs/permissions.md's
+        "Permission framework change interjection" section.
+
+        Raises `ValueError` if `value` isn't one of `PERMISSION_FRAMEWORK_INTERJECTIONS`'
+        keys (every `PermissionFramework` literal) — `SessionConfig` doesn't validate
+        assignment, so a caller passing an untyped or externally-sourced string (rather than
+        a type-checked `PermissionFramework` literal) would otherwise leave `config` and the
+        pending interjection out of sync with each other, or raise an opaque `KeyError`
+        rather than a caller-actionable message.
+        """
+        if value not in PERMISSION_FRAMEWORK_INTERJECTIONS:
+            raise ValueError(
+                f"permission_framework must be one of "
+                f"{sorted(PERMISSION_FRAMEWORK_INTERJECTIONS)}, got {value!r}")
+        self.config.permission_framework = value
+        self._pending_permission_framework_interjection = PERMISSION_FRAMEWORK_INTERJECTIONS[value]
 
     def _active_model(self) -> Model | None:
         """Return the registered `Model` for `config.model`, or `None` if it isn't registered."""
@@ -1122,8 +1185,20 @@ class Session:
         `_confirm_limit_increase`; `on_permission_ask` is invoked when a tool call hits an
         `"ask"` permission verdict, to ask whether (and how broadly) to allow it — see
         `_run_tool_calls`.
+
+        If a permission-framework change is pending (`set_permission_framework()` was called
+        since the last turn), the queued interjection is wrapped in a `<SystemInterjection
+        subject="PermissionFramework">` tag (see `_wrap_system_interjection`) and prepended
+        onto `prompt` before it's stored as the user `Message`'s content — see
+        docs/specs/permissions.md's "Permission framework change interjection" section — and
+        the pending state is cleared, so it's applied exactly once.
         """
         tokens_before = self._tokens_recorded_so_far()
+        if self._pending_permission_framework_interjection is not None:
+            interjection = _wrap_system_interjection(
+                "PermissionFramework", self._pending_permission_framework_interjection)
+            prompt = f"{interjection}\n{prompt}"
+            self._pending_permission_framework_interjection = None
         user_message = Message(
             content=prompt,
             role="user",
