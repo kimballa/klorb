@@ -144,10 +144,10 @@ def test_klorb_dir_read_implicitly_denied(tmp_path: Path) -> None:
             {"dirname": ".klorb"})
 
 
-def test_trusted_empty_tables_deny_everything(tmp_path: Path) -> None:
+def test_trusted_empty_tables_ask_about_everything(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(PermissionAskRequired):
         ListDirTool(_context(tmp_path, is_workspace_trusted=True)).apply({"dirname": ""})
 
 

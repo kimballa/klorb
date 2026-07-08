@@ -18,6 +18,7 @@ confirmation" below) that lets the user grant access once, for the session, or p
 the workspace or per-user level. See
 [the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md),
 [the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md),
+[the trusted-read-fallback ADR](../adrs/trusted-read-no-match-fallback-is-ask-not-deny.md),
 [the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md),
 [the ask-rule-promotion ADR](../adrs/promote-matched-ask-rule-path-not-candidate-on-grant.md),
 [the cross-file-cleanup ADR](../adrs/homedir-grants-can-clean-workspace-ask-never-reverse.md),
@@ -142,11 +143,12 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
     own explicit grant).
   * **Trusted (set via the interactive workspace-trust flow — see [[projects-and-trust]])**:
     resolves via `canonicalize_candidate()`, no boundary raise — so `readDirs.allow` can reach
-    outside `workspace_root`. Falls back to `"deny"` if nothing matches: no implicit "inside the
-    workspace" default here. Default grants in this mode come from an explicit `readDirs.allow`
-    entry `klorb.workspace.workspace_init.write_initial_project_config()` writes into
-    `.klorb/klorb-config.json` when a workspace is opened as a trusted project, not from a rule
-    baked into this evaluator.
+    outside `workspace_root`. Falls back to `"ask"` if nothing matches: no implicit "inside the
+    workspace" default here, matching `evaluate_write()`'s own no-match fallback rather than
+    refusing an unmentioned path outright. Default *allow* grants in this mode come from an
+    explicit `readDirs.allow` entry `klorb.workspace.workspace_init.write_initial_project_config()`
+    writes into `.klorb/klorb-config.json` when a workspace is opened as a trusted project, not
+    from a rule baked into this evaluator.
 
   In both modes, `directory_access.is_privileged_path()` is then checked, unconditionally,
   before the table — the read-side counterpart of `evaluate_write()`'s hard deny, so no

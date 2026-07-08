@@ -224,13 +224,14 @@ def test_trusted_readdirs_allow_reaches_outside_workspace(tmp_path: Path) -> Non
     assert result["total_lines"] == 1
 
 
-def test_trusted_empty_tables_deny_everything(tmp_path: Path) -> None:
-    """No magic "inside the workspace" fallback in trusted mode: default grants are meant to
-    come from an explicit readDirs.allow entry a future project-bootstrap flow writes, not from
-    a rule baked into the evaluator."""
+def test_trusted_empty_tables_ask_about_everything(tmp_path: Path) -> None:
+    """No magic "inside the workspace" fallback in trusted mode: default *allow* grants are
+    meant to come from an explicit readDirs.allow entry a project-bootstrap flow writes, not
+    from a rule baked into the evaluator -- but an unmentioned path still reaches the
+    interactive-ask flow rather than being refused outright."""
     file_path = _write_lines(tmp_path, 3)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(PermissionAskRequired):
         ReadFileTool(_context(tmp_path, is_workspace_trusted=True)).apply(
             {"filename": str(file_path)})
 
