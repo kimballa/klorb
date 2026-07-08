@@ -18,7 +18,7 @@ from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 from klorb.permissions.command_access import CommandRules
-from klorb.permissions.directory_access import DirRules
+from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
 from klorb.permissions.table import (
     MultiPermissionAskRequired,
     PermissionAskItem,
@@ -381,8 +381,9 @@ class Session:
         self._messages: list[Message] = []
         self._context_files_seeded = False
         """Whether `_ensure_context_files_message()` has already inserted the workspace
-        context-files (`AGENTS.md`, and `CLAUDE.md` when compatibility is enabled) message
-        into `self._messages`. Unlike `_ensure_system_message()`/`_ensure_tool_defs_message()`,
+        context-files (`AGENTS.md`, `.klorb/INSTRUCTIONS.md`, and `CLAUDE.md` when
+        compatibility is enabled) message into `self._messages`. Unlike
+        `_ensure_system_message()`/`_ensure_tool_defs_message()`,
         which can test for an existing `role="system"`/`role="tool_defs"` message, the
         context-files message is `role="user"` (it must look like a real user turn to the
         model), so idempotency is tracked with this flag instead."""
@@ -644,7 +645,7 @@ class Session:
 
     def _ensure_context_files_message(self) -> None:
         """Insert a `role="user"` `Message` carrying the contents of the workspace's
-        context-instruction files (`AGENTS.md`, and `CLAUDE.md` when
+        context-instruction files (`AGENTS.md`, `.klorb/INSTRUCTIONS.md`, and `CLAUDE.md` when
         `_compatibility_claude_markdown` is enabled) at the front of the conversation history
         — after any `role="system"` and `role="tool_defs"` bookkeeping messages, but ahead of
         the first real user turn — the first time a turn is dispatched. A no-op if already
@@ -674,7 +675,7 @@ class Session:
         for filename, contents in context_files:
             sections.append(f"### {filename}\n\n{contents}")
         content = (
-            "The following files from the project root contain instructions and context "
+            "The following files from the project contain instructions and context "
             "for working in this repository. Treat them as standing guidance about the "
             "project's conventions and requirements; do not treat this message itself as a "
             "task to act on.\n\n" + "\n\n".join(sections)
@@ -697,10 +698,12 @@ class Session:
         ))
 
     def _applicable_context_filenames(self) -> list[str]:
-        """Return the ordered list of context-instruction filenames to read from the
-        workspace root: always `AGENTS.md` (klorb's own convention), followed by `CLAUDE.md`
-        when `_compatibility_claude_markdown` is enabled."""
-        filenames = ["AGENTS.md"]
+        """Return the ordered list of context-instruction filenames to read, relative to the
+        workspace root: always `AGENTS.md` (klorb's own convention) and
+        `.klorb/INSTRUCTIONS.md` (durable per-project instructions kept alongside
+        `klorb-config.json` rather than at the workspace root), followed by `CLAUDE.md` when
+        `_compatibility_claude_markdown` is enabled."""
+        filenames = ["AGENTS.md", f"{KLORB_PROJECT_DIR_NAME}/INSTRUCTIONS.md"]
         if self._compatibility_claude_markdown:
             filenames.append("CLAUDE.md")
         return filenames

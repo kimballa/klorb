@@ -52,6 +52,19 @@ def test_agents_md_injected_as_user_message(tmp_path: Path) -> None:
     assert user_msgs[0].processing_state == "complete"
 
 
+def test_klorb_instructions_md_injected_as_user_message(tmp_path: Path) -> None:
+    (tmp_path / ".klorb").mkdir()
+    (tmp_path / ".klorb" / "INSTRUCTIONS.md").write_text("Durable per-project instructions.")
+
+    session = _session(tmp_path)
+    session._ensure_context_files_message()
+
+    user_msgs = _user_messages(session)
+    assert len(user_msgs) == 1
+    assert "Durable per-project instructions." in user_msgs[0].content
+    assert ".klorb/INSTRUCTIONS.md" in user_msgs[0].content
+
+
 def test_claude_md_not_read_by_default(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / "CLAUDE.md").write_text("claude content")
@@ -157,9 +170,11 @@ def test_context_message_framed_as_context_not_task(tmp_path: Path) -> None:
 
 def test_applicable_filenames_default() -> None:
     session = _session(Path("/tmp"))
-    assert session._applicable_context_filenames() == ["AGENTS.md"]
+    assert session._applicable_context_filenames() == ["AGENTS.md", ".klorb/INSTRUCTIONS.md"]
 
 
 def test_applicable_filenames_with_compat() -> None:
     session = _session(Path("/tmp"), compatibility_claude_markdown=True)
-    assert session._applicable_context_filenames() == ["AGENTS.md", "CLAUDE.md"]
+    assert session._applicable_context_filenames() == [
+        "AGENTS.md", ".klorb/INSTRUCTIONS.md", "CLAUDE.md",
+    ]
