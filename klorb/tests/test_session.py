@@ -1117,6 +1117,17 @@ def test_set_permission_framework_updates_config() -> None:
     assert session.config.permission_framework == "auto"
 
 
+def test_set_permission_framework_rejects_an_invalid_value() -> None:
+    config = SessionConfig(model="some/model", permission_framework="ask")
+    session = Session(config, provider=MagicMock())
+
+    with pytest.raises(ValueError, match="not-a-real-mode"):
+        session.set_permission_framework("not-a-real-mode")  # type: ignore[arg-type]
+
+    assert session.config.permission_framework == "ask"
+    assert session._pending_permission_framework_interjection is None
+
+
 def test_set_permission_framework_queues_interjection_prepended_to_next_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
@@ -1127,8 +1138,10 @@ def test_set_permission_framework_queues_interjection_prepended_to_next_turn() -
     session.send_turn("do the thing")
 
     expected = (
+        '<SystemInterjection subject="PermissionFramework">\n'
         f"{PERMISSION_FRAMEWORK_INTERJECTIONS['auto']}\n"
-        "During this turn the user said:\ndo the thing"
+        "</SystemInterjection>\n"
+        "do the thing"
     )
     user_messages = [m for m in session.messages if m.role == "user"]
     assert user_messages[0].content == expected
@@ -1158,8 +1171,10 @@ def test_multiple_permission_framework_changes_collapse_to_final_interjection() 
     session.send_turn("do the thing")
 
     expected = (
+        '<SystemInterjection subject="PermissionFramework">\n'
         f"{PERMISSION_FRAMEWORK_INTERJECTIONS['ask']}\n"
-        "During this turn the user said:\ndo the thing"
+        "</SystemInterjection>\n"
+        "do the thing"
     )
     user_messages = [m for m in session.messages if m.role == "user"]
     assert user_messages[0].content == expected

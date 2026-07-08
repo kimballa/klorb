@@ -280,14 +280,21 @@ immediately, exactly as a direct assignment would, but the model itself is only 
 the change once, at the start of the next turn: `Session.set_permission_framework(value)` is
 the one place that both mutates `config.permission_framework` and queues the notice, so any
 caller changing the mode mid-conversation must go through it rather than assigning the field
-directly. It sets `Session._pending_permission_framework_interjection` to
+directly — a `value` outside `PermissionFramework`'s three literals raises `ValueError`
+rather than leaving `config` and the pending interjection out of sync, since `SessionConfig`
+doesn't validate assignment. `set_permission_framework()` sets
+`Session._pending_permission_framework_interjection` to
 `PERMISSION_FRAMEWORK_INTERJECTIONS[value]`, one of three fixed strings (one per
 `PermissionFramework` value) explaining the new mode's consequences to the model in its own
 terms (e.g. `"auto"`'s reads "Any tool call you issue will be approved, so you must only
 generate tool calls that will be safe without human review."). `Session.send_turn()` checks
-this field before constructing the turn's user `Message`: if set, it's prepended onto
-`prompt` (followed by `"During this turn the user said:"` and the prompt itself) and then
-cleared, so it's applied exactly once, to the very next turn dispatched.
+this field before constructing the turn's user `Message`: if set, it's wrapped in a
+`<SystemInterjection subject="PermissionFramework">...</SystemInterjection>` tag pair (via
+the module-level `_wrap_system_interjection()` helper) and prepended onto `prompt`, then
+cleared, so it's applied exactly once, to the very next turn dispatched. The tag is what lets
+the model tell the harness notice apart from the user's own words without an explanatory
+lead-in sentence — the two are otherwise concatenated directly, with no `"During this turn
+the user said:"` or similar framing text in between.
 
 Calling `set_permission_framework()` again before that next turn starts overwrites the
 pending interjection rather than queuing a second one — cycling through `"ask"` → `"auto"` →
