@@ -39,5 +39,6 @@
         ]
       ]
     }
-  }
+  },
+  "tools.logCalls": true
 }
