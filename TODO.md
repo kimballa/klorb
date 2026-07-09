@@ -2,6 +2,9 @@
 
 # Bugs:
 
+* Why is the scrollbar not just one big blocky column on the right, but it also has a little second
+  super-narrow scroll-bar further to the right that's somehow like a half a character wide?
+
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 

@@ -10,7 +10,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
-from rich.markup import escape
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
@@ -171,13 +170,6 @@ def _format_workspace_path(
     if len(full) <= max_chars or len(path.parts) < 2:
         return full
     return ".../" + "/".join(path.parts[-2:])
-
-
-def _italicized(text: str) -> str:
-    """Wrap `text` in Rich console markup for italics, escaping any literal `[`/`]` in
-    `text` first so it can't be misread as markup by the `Static` widget it's rendered in.
-    """
-    return f"[italic]{escape(text)}[/italic]"
 
 
 def _pinned_to_bottom(history: VerticalScroll) -> bool:
@@ -655,17 +647,20 @@ class ToolCallLimitScreen(ModalScreen[bool]):
 class ToolCallStatic(Static):
     """One finished tool call in the history, shown as either its one-line summary or its
     fuller detail view — toggled globally, across every `ToolCallStatic` at once, by Ctrl+O
-    (see `ReplApp.action_toggle_tool_call_detail`).
+    (see `ReplApp.action_toggle_tool_call_detail`). Constructed with `markup=False`: summary
+    and detail text are arbitrary tool output (JSON, file paths, shell output, ...) that must
+    render verbatim, not be parsed as Textual console markup — an unescaped `[` in that text
+    can otherwise be misread as the start of a markup tag and raise `MarkupError`.
     """
 
     def __init__(self, summary_text: str, detail_text: str) -> None:
-        super().__init__(escape(summary_text), classes="tool-call")
+        super().__init__(summary_text, classes="tool-call", markup=False)
         self._summary_text = summary_text
         self._detail_text = detail_text
 
     def set_detail_shown(self, show_detail: bool) -> None:
         """Update the rendered content to the detail view if `show_detail`, else the summary."""
-        self.update(escape(self._detail_text if show_detail else self._summary_text))
+        self.update(self._detail_text if show_detail else self._summary_text)
 
 
 class PaletteHint(Static):
@@ -879,6 +874,7 @@ class ReplApp(App[None]):
     .thinking-body {
         color: $text-muted;
         padding: 0 2;
+        text-style: italic;
     }
 
     .tool-call-label {
@@ -1003,10 +999,12 @@ class ReplApp(App[None]):
         """Append `message` to the history scroll as a `.notice` (or `.error` if `error`)
         item. Exposed for callers outside `ReplApp` (e.g. `InitCommandProvider`) that report a
         one-off status/result but shouldn't otherwise depend on history-widget internals like
-        `HISTORY_ID`/`VerticalScroll`.
+        `HISTORY_ID`/`VerticalScroll`. Constructed with `markup=False`: `message` can be
+        arbitrary (e.g. an exception's text), which must render verbatim rather than be parsed
+        as Textual console markup.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(message, classes="error" if error else "notice"))
+        history.mount(Static(message, classes="error" if error else "notice", markup=False))
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Every default system command except "Theme" — `ThemeCommandProvider` supersedes it
@@ -1286,15 +1284,19 @@ class ReplApp(App[None]):
 
     def _announce_workspace(self, workspace: Workspace) -> None:
         """Mount the one-line history notice docs/specs/projects-and-trust.md specifies for the
-        resulting workspace state: which directory, and whether it's trusted."""
+        resulting workspace state: which directory, and whether it's trusted. Constructed with
+        `markup=False` since `workspace.path` is a filesystem path that must render verbatim
+        rather than be parsed as Textual console markup.
+        """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         if workspace.trusted:
-            history.mount(Static(f"Working in project: {workspace.path}", classes="notice"))
+            history.mount(Static(
+                f"Working in project: {workspace.path}", classes="notice", markup=False))
         else:
             history.mount(Static(
                 f"The workspace at {workspace.path} is not trusted. "
                 f"Run `{PALETTE_PREFIX}{TRUST_WORKSPACE_LABEL}` to change this.",
-                classes="notice"))
+                classes="notice", markup=False))
 
     @work()
     async def trust_workspace(self) -> None:
@@ -1333,7 +1335,8 @@ class ReplApp(App[None]):
         self._apply_workspace_config(trusted_workspace)
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(f"Trusted workspace {trusted_workspace.path}.", classes="notice"))
+        history.mount(Static(
+            f"Trusted workspace {trusted_workspace.path}.", classes="notice", markup=False))
 
         config_path = project_config_path(trusted_workspace.path)
         if trusted_workspace.is_project and not config_path.is_file():
@@ -1341,7 +1344,8 @@ class ReplApp(App[None]):
                 "Initialize the project config file with your current session settings?"))
             if init_confirmed:
                 write_session_defaults_to_project_config(trusted_workspace.path, self._session.config)
-                history.mount(Static(f"Wrote project config to {config_path}.", classes="notice"))
+                history.mount(Static(
+                    f"Wrote project config to {config_path}.", classes="notice", markup=False))
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Keep the `> palette` hint in sync with the prompt input's content, including edits
@@ -1452,13 +1456,15 @@ class ReplApp(App[None]):
         thread (`_run_shell_command`) so a slow command can't block the UI. Only one shell
         command can be in flight at a time for this REPL: the input box stays disabled for the
         duration, exactly as it does for a model turn in `_submit_prompt`, so a user can't
-        start a second one while the first is still running.
+        start a second one while the first is still running. The echoed `Static` is
+        constructed with `markup=False`: `command` is arbitrary user input and must render
+        verbatim rather than be parsed as Textual console markup.
         """
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = True
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(f"!{command}", classes="prompt"))
+        history.mount(Static(f"!{command}", classes="prompt", markup=False))
         history.scroll_end(animate=False)
 
         self._shell_cancel_event = threading.Event()
@@ -1491,7 +1497,7 @@ class ReplApp(App[None]):
                     output_widget = self.call_from_thread(self._mount_shell_output_widget, accumulated)
                 else:
                     self.call_from_thread(
-                        self._update_shell_output_widget, output_widget, escape(accumulated))
+                        self._update_shell_output_widget, output_widget, accumulated)
 
         error_message: str | None = None
         try:
@@ -1516,22 +1522,22 @@ class ReplApp(App[None]):
         streaming model reply: shell output is plain text, not markdown, and `Markdown`'s
         CommonMark rendering collapses a single newline within a paragraph into a soft line
         break (a space), which mangles multi-line command output. `Static` renders text
-        verbatim, preserving every newline. `initial_text` is escaped so literal `[`/`]` in the
-        output (e.g. `[INFO]` log tags) can't be misread as Rich console markup.
+        verbatim, preserving every newline. Constructed with `markup=False` so a literal `[` in
+        the output (e.g. an `[INFO]` log tag) can't be misread as the start of a Textual
+        console markup tag and raise `MarkupError`.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
-        widget = Static(escape(initial_text))
+        widget = Static(initial_text, markup=False)
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
         return widget
 
     def _update_shell_output_widget(self, widget: Static, text: str) -> None:
         """Update a streaming shell command's output `Static` widget with the latest
-        accumulated `text` (already escaped), following the view to the bottom only if it was
-        already pinned there before this growth (see `_history_pinned_to_bottom`) — so a user
-        who's scrolled up to reread earlier output isn't yanked back down by every incoming
-        chunk.
+        accumulated `text`, following the view to the bottom only if it was already pinned
+        there before this growth (see `_history_pinned_to_bottom`) — so a user who's scrolled
+        up to reread earlier output isn't yanked back down by every incoming chunk.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -1583,12 +1589,15 @@ class ReplApp(App[None]):
         self._update_status_bar()
 
     def _submit_prompt(self, prompt_text: str) -> None:
-        """Echo `prompt_text` into the history, disable the input, and dispatch it."""
+        """Echo `prompt_text` into the history, disable the input, and dispatch it. The echoed
+        `Static` is constructed with `markup=False`: `prompt_text` is arbitrary user input and
+        must render verbatim rather than be parsed as Textual console markup.
+        """
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = True
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        prompt_widget = Static(prompt_text, classes="prompt")
+        prompt_widget = Static(prompt_text, classes="prompt", markup=False)
         history.mount(prompt_widget)
         history.scroll_end(animate=False)
 
@@ -1662,7 +1671,7 @@ class ReplApp(App[None]):
                     self._mount_thinking_widget, thinking_accumulated)
             else:
                 self.call_from_thread(
-                    self._update_thinking_widget, thinking_widget, _italicized(thinking_accumulated))
+                    self._update_thinking_widget, thinking_widget, thinking_accumulated)
 
         def handle_tool_call(event: ToolCallEvent) -> None:
             nonlocal round_index
@@ -1712,26 +1721,30 @@ class ReplApp(App[None]):
 
     def _mount_thinking_widget(self, initial_text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Thinking>` label followed by an italicized `Static`
-        widget for a streaming thinking block, and return `(body_widget, label_widget)`.
+        widget for a streaming thinking block, and return `(body_widget, label_widget)`. The
+        body is styled italic via the `.thinking-body` CSS class rather than markup, and
+        constructed with `markup=False`: model thinking text is arbitrary and must render
+        verbatim, not be parsed as Textual console markup (an unescaped `[` in it can
+        otherwise be misread as the start of a markup tag and raise `MarkupError`).
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         label_widget = Static(THINKING_LABEL, classes="thinking-label")
         history.mount(label_widget)
-        widget = Static(_italicized(initial_text), classes="thinking-body")
+        widget = Static(initial_text, classes="thinking-body", markup=False)
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
         return widget, label_widget
 
-    def _update_thinking_widget(self, widget: Static, italicized_text: str) -> None:
-        """Update a streaming `<Thinking>` `Static` widget with `italicized_text` (already run
-        through `_italicized`), following the view to the bottom only if it was already pinned
-        there before this change (see `_update_response_widget`) — the label mounted alongside
-        `widget` never changes after being set, so only the body needs updating here.
+    def _update_thinking_widget(self, widget: Static, text: str) -> None:
+        """Update a streaming `<Thinking>` `Static` widget with the latest accumulated `text`,
+        following the view to the bottom only if it was already pinned there before this
+        change (see `_update_response_widget`) — the label mounted alongside `widget` never
+        changes after being set, so only the body needs updating here.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
-        widget.update(italicized_text)
+        widget.update(text)
         self._scroll_if_pinned(history, was_pinned)
 
     def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
@@ -1854,10 +1867,14 @@ class ReplApp(App[None]):
         self._finish_turn(history, was_pinned)
 
     def _show_error(self, message: str) -> None:
-        """Append an error message to the history and re-enable the input box."""
+        """Append an error message to the history and re-enable the input box. Constructed
+        with `markup=False`: `message` is often an exception's text (e.g. `str(OSError(...))`
+        can read `[Errno 2] ...`), which must render verbatim rather than be parsed as Textual
+        console markup.
+        """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
-        history.mount(Static(f"Error: {message}", classes="error"))
+        history.mount(Static(f"Error: {message}", classes="error", markup=False))
         self._finish_turn(history, was_pinned)
 
     def _handle_aborted_response(
@@ -1877,7 +1894,7 @@ class ReplApp(App[None]):
         if response_widget is not None:
             response_widget.update(f"{response_text}\n\n*(interrupted)*")
         elif thinking_widget is not None:
-            thinking_widget.update(_italicized(f"{thinking_text}\n\n(interrupted)"))
+            thinking_widget.update(f"{thinking_text}\n\n(interrupted)")
         else:
             history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
             history.mount(Static("(interrupted)", classes="interrupted"))

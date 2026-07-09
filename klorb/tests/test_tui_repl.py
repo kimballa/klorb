@@ -1043,7 +1043,7 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
         # Each round gets its own thinking/response widgets, rather than one growing block
         # absorbing both rounds' text across the tool call in between.
         assert [w.content for w in thinking_bodies] == [
-            "[italic]Round one thinking.[/italic]", "[italic]Round two thinking.[/italic]"]
+            "Round one thinking.", "Round two thinking."]
         assert [w.source for w in response_widgets] == ["Round one reply.", "Round two reply."]
 
         # The tool call sits between the two rounds' blocks in the transcript, matching the
@@ -2421,7 +2421,7 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
 
         assert thinking_label.content == THINKING_LABEL
         assert len(thinking_widgets) == 1
-        assert thinking_widgets[0].content == "[italic]Let me think.[/italic]"
+        assert thinking_widgets[0].content == "Let me think."
         assert len(response_widgets) == 1
         assert response_widgets[0].source == "Hello"
 
@@ -2451,10 +2451,10 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
         thinking_widgets = list(history.query(".thinking-body").results(Static))
 
         assert len(thinking_widgets) == 1
-        assert thinking_widgets[0].content == "[italic]First paragraph.\n\nSecond paragraph.[/italic]"
+        assert thinking_widgets[0].content == "First paragraph.\n\nSecond paragraph."
 
 
-async def test_thinking_chunks_escape_literal_brackets() -> None:
+async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -2478,7 +2478,7 @@ async def test_thinking_chunks_escape_literal_brackets() -> None:
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         thinking_widgets = list(history.query(".thinking-body").results(Static))
 
-        assert thinking_widgets[0].content == r"[italic]check \[status][/italic]"
+        assert thinking_widgets[0].content == "check [status]"
 
 
 async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom() -> None:
