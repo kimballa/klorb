@@ -8,7 +8,8 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*] [`--config` *FILE*]
 [`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
-[`-y` | `--auto-approve`] [`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
+[`-y` | `--auto-approve`] [`--log-tool-calls`]
+[`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
 
 `klorb init` [`--system` | `--user`] [`--force`]
 
@@ -87,6 +88,14 @@ executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
   interactive modal) when the session is interactive, or `deny` (fail closed)
   for a one-shot prompt. See `docs/specs/permissions.md`.
 
+* `--log-tool-calls`
+
+  Append every tool call's request and response to `tool-calls.log` in the
+  current working directory, creating it (or appending to it, if it already
+  exists) as needed. Defaults to off; also enabled by the `LOG_TOOL_CALLS`
+  environment variable (`1` or `true`) or the `tools.logCalls` config key,
+  independently of this flag. See `docs/specs/tool-call-logging.md`.
+
 * `--max-tool-calls-per-turn` *N*
 
   Override the max tool calls allowed in a single turn before it fails.
@@ -119,6 +128,11 @@ executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
 
   Overrides klorb's state directory, under which session logs are written
   (`$KLORB_STATE_DIR/session-logs/`). Defaults to `~/.local/state/klorb`.
+
+* `LOG_TOOL_CALLS`
+
+  Set to `1` or `true` to enable `--log-tool-calls` without passing the flag.
+  See `docs/specs/tool-call-logging.md`.
 
 ## EXAMPLES
 
@@ -178,9 +192,16 @@ Bootstrap a per-user config file and `~/.local/bin/klorb` symlink:
 klorb init
 ```
 
+Send a one-shot prompt and record every tool call to `tool-calls.log`:
+
+```
+klorb --log-tool-calls -m "List the files in this directory."
+```
+
 ## SEE ALSO
 
 `docs/specs/openrouter-prompt-client.md`, `docs/specs/terminal-repl.md`,
 `docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`,
 `docs/specs/process-and-session-config.md`,
-`docs/specs/persisted-json-schema-versioning.md`, `docs/specs/klorb-init.md`
+`docs/specs/persisted-json-schema-versioning.md`, `docs/specs/klorb-init.md`,
+`docs/specs/tool-call-logging.md`

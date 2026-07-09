@@ -1029,6 +1029,98 @@ def test_on_tool_call_fires_with_error_for_unknown_tool_name() -> None:
     assert event.error is not None
 
 
+def test_log_tool_calls_disabled_by_default_writes_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    assert not (tmp_path / "tool-calls.log").exists()
+
+
+def test_log_tool_calls_enabled_via_process_config_writes_request_and_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(
+        config, provider=mock_provider, tool_registry=tool_registry,
+        process_config=ProcessConfig(log_tool_calls=True),
+    )
+
+    session.send_turn("please echo")
+
+    log_path = tmp_path / "tool-calls.log"
+    assert log_path.exists()
+    contents = log_path.read_text(encoding="utf-8")
+    assert contents.startswith("---\n")
+    assert "Request:" in contents
+    assert '"name": "echo"' in contents
+    assert '"message": "hi there"' in contents
+    assert "Response:" in contents
+    assert '"result": "hi there"' in contents
+
+
+def test_log_tool_calls_separates_entries_with_a_blank_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
+        _reply("first done"),
+        _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
+        _reply("second done"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(
+        config, provider=mock_provider, tool_registry=tool_registry,
+        process_config=ProcessConfig(log_tool_calls=True),
+    )
+
+    session.send_turn("first")
+    session.send_turn("second")
+
+    contents = (tmp_path / "tool-calls.log").read_text(encoding="utf-8")
+    assert contents.count("---") == 2
+    assert "\n\n---\n" in contents
+
+
+def test_log_tool_calls_enabled_via_env_var_with_no_process_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOG_TOOL_CALLS", "true")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    assert (tmp_path / "tool-calls.log").exists()
+
+
 def test_on_tool_call_fires_with_retried_result_after_permission_grant(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()

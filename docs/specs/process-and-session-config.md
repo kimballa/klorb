@@ -205,6 +205,8 @@ sit as flat keys alongside it at the top level:
   "tools.bash.timeout": 120.0,
   "tools.bash.spillBytes": 8192,
   "tools.bash.shfmtCommand": "shfmt",
+  "compatibility.claudeMarkdown": false,
+  "tools.logCalls": false,
   "ui.theme": null
 }
 ```
@@ -273,8 +275,8 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
   `tools.findFile.maxResults`, `providers.openrouter.baseUrl`, `shell.command`,
   `shell.timeout`, `tools.bash.command`, `tools.bash.timeout`, `tools.bash.spillBytes`,
-  `tools.bash.shfmtCommand`, `compatibility.claudeMarkdown`, `ui.theme`) can be set at the top
-  level.
+  `tools.bash.shfmtCommand`, `compatibility.claudeMarkdown`, `tools.logCalls`, `ui.theme`) can
+  be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`

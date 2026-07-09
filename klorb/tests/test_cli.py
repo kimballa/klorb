@@ -219,6 +219,33 @@ def test_main_auto_approve_flag_sets_permission_framework_to_auto_interactively(
     assert config.permission_framework == "auto"
 
 
+def test_main_log_tool_calls_flag_enables_process_config_setting(
+    stub_process_config: MagicMock,
+) -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "--log-tool-calls", "-m", "hi"]):
+            cli.main()
+
+    process_config = mock_session_cls.call_args.kwargs["process_config"]
+    assert process_config.log_tool_calls is True
+
+
+def test_main_defaults_log_tool_calls_to_process_config_when_flag_omitted(
+    stub_process_config: MagicMock,
+) -> None:
+    stub_process_config.return_value = ProcessConfig(log_tool_calls=True)
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "-m", "hi"]):
+            cli.main()
+
+    process_config = mock_session_cls.call_args.kwargs["process_config"]
+    assert process_config.log_tool_calls is True
+
+
 def test_main_max_tool_calls_flags_override_process_config(stub_process_config: MagicMock) -> None:
     process_config = ProcessConfig(
         session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
