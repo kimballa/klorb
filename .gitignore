@@ -20,3 +20,4 @@ tsconfig.tsbuildinfo
 **/.claude/settings.local.json
 .mypy_worker.*
 evals.log
+/tool-calls.log
