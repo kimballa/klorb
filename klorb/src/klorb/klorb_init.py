@@ -79,6 +79,21 @@ def symlink_target_dir(scope: InitScope) -> Path:
     return SYSTEM_BIN_DIR if scope == "system" else Path.home() / USER_BIN_SUBPATH
 
 
+def is_user_scope_initialized() -> bool:
+    """Whether both of `klorb init --user`'s targets already exist on disk: the config file
+    at `config_target_path("user")` and the `klorb` symlink at
+    `symlink_target_dir("user") / EXECUTABLE_NAME`. When this is `True`,
+    `run_init("user", force=False)` is a pure no-op (two "already exists" messages, no
+    writes), so the TUI's "Init local klorb config" palette command hides itself rather
+    test (`is_symlink() or exists()`), so a broken symlink still counts as already there,
+    matching `create_symlink`'s own "already exists; not overwriting" short-circuit.
+    """
+    config_ok = config_target_path("user").is_file()
+    link_path = symlink_target_dir("user") / EXECUTABLE_NAME
+    symlink_ok = link_path.is_symlink() or link_path.exists()
+    return config_ok and symlink_ok
+
+
 def template_config_text() -> str:
     """The packaged, spartan starter config's contents, read from `klorb.resources` via
     `importlib.resources` (see `docs/specs/klorb-init.md` and

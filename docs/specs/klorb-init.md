@@ -68,7 +68,14 @@ command reuses.
   item to the history scroll if `run_init` raised `InitError`, otherwise a `.notice` item with
   the join of its progress messages (see [[avoid-toasts-prefer-history-notices]]). It's
   registered in `ReplApp.COMMANDS` alongside `ModelCommandProvider`/`SessionCommandProvider`/
-  `ThinkingCommandProvider`.
+  `ThinkingCommandProvider`. It yields no hits at all when
+  `klorb.klorb_init.is_user_scope_initialized()` is `True` (both the user-scope config file
+  and the `klorb` symlink already exist on disk), since `run_init("user", force=False)`
+  would be a pure no-op in that case — the command hides itself rather than offering a
+  confusing "already exists" notice. `is_user_scope_initialized()` reuses
+  `config_target_path("user")` and `symlink_target_dir("user")`, and its symlink-existence
+  test mirrors `create_symlink`'s own (`is_symlink() or exists()`), so the two agree on
+  what "already there" means.
 * `ReplApp.on_mount()` mounts a `Static` (CSS class `notice`) into the `#history` scroll the
   first time the REPL starts, if `klorb.process_config.user_config_path()` doesn't exist yet,
   reading `CONFIG_MISSING_MESSAGE`: "Klorb configuration file not found. Run `>Init local

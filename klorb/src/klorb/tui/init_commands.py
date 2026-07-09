@@ -7,7 +7,7 @@ from typing import Protocol, cast
 
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 
-from klorb.klorb_init import InitError, run_init
+from klorb.klorb_init import InitError, is_user_scope_initialized, run_init
 
 INIT_CONFIG_LABEL = "Init local klorb config"
 
@@ -22,16 +22,24 @@ class SupportsShowNotice(Protocol):
 class InitCommandProvider(Provider):
     """Offers "Init local klorb config" via the command palette (`ctrl+p` or by typing
     `>init` in the prompt) — runs `klorb.klorb_init.run_init("user", force=False)` for the
-    user running this REPL, then reports the outcome via `App.show_notice()`.
+    user running this REPL, then reports the outcome via `App.show_notice()`. Yields no
+    hits at all when `klorb.klorb_init.is_user_scope_initialized()` is `True` (both the
+    user-scope config file and the `klorb` symlink already exist), since the command would
+    be a pure no-op in that case — a hidden command rather than a confusing "already
+    exists" notice.
     """
 
     async def search(self, query: str) -> Hits:
+        if is_user_scope_initialized():
+            return
         matcher = self.matcher(query)
         score = matcher.match(INIT_CONFIG_LABEL)
         if score > 0:
             yield Hit(score, matcher.highlight(INIT_CONFIG_LABEL), self._run_init)
 
     async def discover(self) -> Hits:
+        if is_user_scope_initialized():
+            return
         yield DiscoveryHit(INIT_CONFIG_LABEL, self._run_init)
 
     def _run_init(self) -> None:

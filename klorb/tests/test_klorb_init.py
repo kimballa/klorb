@@ -15,6 +15,7 @@ from klorb.klorb_init import (
     config_target_path,
     create_symlink,
     default_scope,
+    is_user_scope_initialized,
     run_init,
     symlink_target_dir,
     template_config_text,
@@ -224,3 +225,64 @@ def test_run_init_stops_at_first_error_without_attempting_symlink(
         run_init("user", force=False)
 
     assert symlink_called == []
+
+
+def test_is_user_scope_initialized_false_when_neither_target_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(klorb_init, "config_target_path", lambda scope: tmp_path / "klorb-config.json")
+    monkeypatch.setattr(klorb_init, "symlink_target_dir", lambda scope: tmp_path / "bin")
+
+    assert is_user_scope_initialized() is False
+
+
+def test_is_user_scope_initialized_false_when_only_config_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    (tmp_path / "klorb-config.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(klorb_init, "config_target_path", lambda scope: tmp_path / "klorb-config.json")
+    monkeypatch.setattr(klorb_init, "symlink_target_dir", lambda scope: tmp_path / "bin")
+
+    assert is_user_scope_initialized() is False
+
+
+def test_is_user_scope_initialized_false_when_only_symlink_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    target = tmp_path / "launcher"
+    target.write_text("#!/bin/sh", encoding="utf-8")
+    (bin_dir / "klorb").symlink_to(target)
+    monkeypatch.setattr(klorb_init, "config_target_path", lambda scope: tmp_path / "klorb-config.json")
+    monkeypatch.setattr(klorb_init, "symlink_target_dir", lambda scope: bin_dir)
+
+    assert is_user_scope_initialized() is False
+
+
+def test_is_user_scope_initialized_true_when_both_targets_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    (tmp_path / "klorb-config.json").write_text("{}", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    target = tmp_path / "launcher"
+    target.write_text("#!/bin/sh", encoding="utf-8")
+    (bin_dir / "klorb").symlink_to(target)
+    monkeypatch.setattr(klorb_init, "config_target_path", lambda scope: tmp_path / "klorb-config.json")
+    monkeypatch.setattr(klorb_init, "symlink_target_dir", lambda scope: bin_dir)
+
+    assert is_user_scope_initialized() is True
+
+
+def test_is_user_scope_initialized_true_when_symlink_is_broken(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    (tmp_path / "klorb-config.json").write_text("{}", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "klorb").symlink_to(tmp_path / "nonexistent-launcher")
+    monkeypatch.setattr(klorb_init, "config_target_path", lambda scope: tmp_path / "klorb-config.json")
+    monkeypatch.setattr(klorb_init, "symlink_target_dir", lambda scope: bin_dir)
+
+    assert is_user_scope_initialized() is True

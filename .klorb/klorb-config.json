@@ -17,6 +17,27 @@
       "allow": [
         "/home/dev/workspace/klorb"
       ]
+    },
+    "commandRules": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+        [
+          "grep",
+          "-i",
+          "*"
+        ],
+        [
+          "make",
+          "*"
+        ],
+        [
+          "make",
+          "-C",
+          "/home/dev/workspace/klorb/klorb",
+          "*"
+        ]
+      ]
     }
   }
 }
