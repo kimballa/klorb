@@ -826,6 +826,10 @@ class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
     CSS = """
+    Screen {
+        overflow-y: hidden;
+    }
+
     #history {
         height: 1fr;
     }
