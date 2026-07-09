@@ -192,10 +192,12 @@ class ProcessConfig(BaseModel):
     """`shfmt` binary `BashTool` parses a requested command through before evaluating it against
     `SessionConfig.command_rules` — see `klorb.permissions.shell_parse`."""
     compatibility_claude_markdown: bool = False
-    """Whether to read `CLAUDE.md` from the workspace root and inject it into the conversation
-    alongside `AGENTS.md` as initial context (see `Session._ensure_context_files_message`).
-    A compatibility shim for projects that carry Claude-Code-style instructions in a
-    `CLAUDE.md` file; `AGENTS.md` is always read, since it's klorb's own convention."""
+    """Whether to read `CLAUDE.md` from the workspace root and fold it into the
+    `ProjectGuidance` interjection alongside `AGENTS.md` and `.klorb/INSTRUCTIONS.md` (see
+    `Session._build_context_files_interjection`), when the workspace is trusted. A
+    compatibility shim for projects that carry Claude-Code-style instructions in a `CLAUDE.md`
+    file; `AGENTS.md` and `.klorb/INSTRUCTIONS.md` are always read (once trusted), since
+    they're klorb's own conventions."""
     log_tool_calls: bool = False
     """Whether to append an out-of-band, file-based record of every tool call to
     `tool-calls.log` in the current working directory — see `klorb.tool_call_log`. Also

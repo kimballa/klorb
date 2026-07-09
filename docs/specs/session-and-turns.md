@@ -127,11 +127,13 @@ config) has one place to live.
     recording what was offered. That message is bookkeeping only: it's never
     sent to the model as a chat message, since `tools=` is what actually offers them (see
     [[tool-framework]] and [[message-model]]).
-  * Also on the first turn dispatched, `_dispatch_turn()` inserts a `role="user"` `Message`
-    carrying the workspace's context-instruction files (`AGENTS.md`, `.klorb/INSTRUCTIONS.md`,
-    and `CLAUDE.md` when `compatibility.claudeMarkdown` is enabled), after the bookkeeping
-    messages and ahead of the first real user turn (`_ensure_context_files_message()`;
-    idempotent via a `self._context_files_seeded` flag). See [[workspace-context-files]].
+  * Also on the very first call to `send_turn()`, and only when the workspace is trusted, a
+    `ProjectGuidance` `<SystemInterjection>` carrying the workspace's context-instruction files
+    (`.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and `CLAUDE.md` when `compatibility.claudeMarkdown`
+    is enabled) is prepended onto that turn's prompt, ahead of any `PermissionFramework`/
+    standing interjection, before it's stored as the turn's `role="user"` `Message`
+    (`_build_context_files_interjection()`; idempotent via a `self._context_files_seeded`
+    flag). See [[workspace-context-files]].
   * If a round's reply requests tool calls, it's
     stored with `role="tool_use"` (instead of `"assistant"`) and `Message.tool_calls`
     populated; `_run_tool_calls()` dispatches each one via

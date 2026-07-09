@@ -301,9 +301,10 @@ pending interjection rather than queuing a second one — cycling through `"ask"
 `"deny"` several times before sending a message results in exactly one interjection,
 reflecting only the mode in effect when the turn is finally sent. The interjection is
 prepended into the same `role="user"` `Message` the turn's real prompt produces, not inserted
-as a separate message (unlike `_ensure_context_files_message()`'s standing-context insertion
-— see docs/specs/workspace-context-files.md) and it is not queued for `retry_last_turn()`,
-since a retry resends an existing turn's content rather than starting a new one.
+as a separate message — the same treatment `send_turn()` gives the one-shot `ProjectGuidance`
+interjection carrying the workspace's context files (see docs/specs/workspace-context-files.md)
+— and it is not queued for `retry_last_turn()`, since a retry resends an existing turn's
+content rather than starting a new one.
 
 This mechanism is edge-triggered and one-shot by design — it fires exactly once, for the very
 next turn, and is not meant for a condition that can stay true across many turns. `Session`

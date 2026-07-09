@@ -380,13 +380,14 @@ class Session:
         honored."""
         self._messages: list[Message] = []
         self._context_files_seeded = False
-        """Whether `_ensure_context_files_message()` has already inserted the workspace
-        context-files (`AGENTS.md`, `.klorb/INSTRUCTIONS.md`, and `CLAUDE.md` when
-        compatibility is enabled) message into `self._messages`. Unlike
-        `_ensure_system_message()`/`_ensure_tool_defs_message()`,
-        which can test for an existing `role="system"`/`role="tool_defs"` message, the
-        context-files message is `role="user"` (it must look like a real user turn to the
-        model), so idempotency is tracked with this flag instead."""
+        """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the
+        one-shot `ProjectGuidance` `<SystemInterjection>` carrying the workspace's
+        context-instruction files (`.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and `CLAUDE.md` when
+        compatibility is enabled) onto the very first turn's prompt — see
+        `_build_context_files_interjection()`. Set unconditionally the first time it's
+        checked, even when there was nothing to prepend (workspace untrusted, or no applicable
+        file exists on disk), so a later turn never re-reads the filesystem or re-prepends
+        anything."""
         self._pending_permission_framework_interjection: str | None = None
         """Set by `set_permission_framework()` to the harness message queued for the next
         `send_turn()` call to prepend onto its `prompt`, or `None` if no permission-framework
@@ -643,67 +644,55 @@ class Session:
             timestamp=datetime.now(),
         ))
 
-    def _ensure_context_files_message(self) -> None:
-        """Insert a `role="user"` `Message` carrying the contents of the workspace's
-        context-instruction files (`AGENTS.md`, `.klorb/INSTRUCTIONS.md`, and `CLAUDE.md` when
-        `_compatibility_claude_markdown` is enabled) at the front of the conversation history
-        — after any `role="system"` and `role="tool_defs"` bookkeeping messages, but ahead of
-        the first real user turn — the first time a turn is dispatched. A no-op if already
-        seeded (tracked via `self._context_files_seeded`, since the inserted message is
-        `role="user"` and so can't be distinguished from a real user turn by role alone), or if
-        none of the applicable context files exist on disk.
+    def _build_context_files_interjection(self) -> str | None:
+        """Return the body `send_turn()` wraps in a `<SystemInterjection subject=
+        "ProjectGuidance">` tag and prepends onto the very first turn's prompt, or `None` if
+        there's nothing to say.
 
-        The message is framed as context rather than a task, so the model treats it as
-        standing instructions about the project rather than something to act on directly. Its
-        `num_tokens` is left at `0`: like the system prompt, its token cost folds into the
-        first real turn's `num_tokens` delta (see `_dispatch_turn`)."""
-        if self._context_files_seeded:
-            return
+        Returns `None` outright, without touching the filesystem at all, whenever
+        `config.workspace.trusted` is `False`: `.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and
+        `CLAUDE.md` are project-supplied content, and a hostile, downloaded-and-unzipped
+        repository could ship any of them to smuggle instructions into the model's context the
+        moment the user runs klorb from inside it — the same risk `.klorb/klorb-config.json`'s
+        own trust gate exists to close (see docs/specs/projects-and-trust.md). So none of them
+        are ever read into the prompt until the user has explicitly trusted the workspace,
+        exactly like that config layer.
+
+        Otherwise reads each of `_applicable_context_filenames()` (in priority order) that
+        exists on disk, relative to `config.workspace.path`, and wraps each one's contents in
+        a `<ContextFile filename="..." priority="N">` tag, `N` starting at `1` in that same
+        priority order — giving the model an explicit signal for which file should win if two
+        ever conflict."""
+        if not self.config.workspace.trusted:
+            return None
 
         context_files: list[tuple[str, str]] = []
         for filename in self._applicable_context_filenames():
             path = self.config.workspace.path / filename
             if path.is_file():
-                contents = path.read_text()
-                context_files.append((filename, contents))
-
-        self._context_files_seeded = True
+                context_files.append((filename, path.read_text()))
         if not context_files:
-            return
+            return None
 
-        sections = []
-        for filename, contents in context_files:
-            sections.append(f"### {filename}\n\n{contents}")
-        content = (
-            "The following files from the project contain instructions and context "
-            "for working in this repository. Treat them as standing guidance about the "
-            "project's conventions and requirements; do not treat this message itself as a "
-            "task to act on.\n\n" + "\n\n".join(sections)
+        sections = [
+            f'<ContextFile filename="{filename}" priority="{index + 1}">\n{contents}\n'
+            f'</ContextFile>'
+            for index, (filename, contents) in enumerate(context_files)
+        ]
+        return (
+            "This workspace contains one or more files with instructions and context for "
+            "working in this repository. Treat them as standing guidance about the "
+            "project's conventions and requirements, not a task to act on directly.\n\n" +
+            "\n\n".join(sections)
         )
-
-        # Insert after any system/tool_defs bookkeeping messages, ahead of the first real
-        # user turn. Compute the insert index by skipping leading bookkeeping messages.
-        insert_index = 0
-        for message in self._messages:
-            if message.role in ("system", "tool_defs"):
-                insert_index += 1
-            else:
-                break
-        self._messages.insert(insert_index, Message(
-            content=content,
-            role="user",
-            num_tokens=0,
-            processing_state="complete",
-            timestamp=datetime.now(),
-        ))
 
     def _applicable_context_filenames(self) -> list[str]:
         """Return the ordered list of context-instruction filenames to read, relative to the
-        workspace root: always `AGENTS.md` (klorb's own convention) and
-        `.klorb/INSTRUCTIONS.md` (durable per-project instructions kept alongside
-        `klorb-config.json` rather than at the workspace root), followed by `CLAUDE.md` when
-        `_compatibility_claude_markdown` is enabled."""
-        filenames = ["AGENTS.md", f"{KLORB_PROJECT_DIR_NAME}/INSTRUCTIONS.md"]
+        workspace root, most authoritative first: `.klorb/INSTRUCTIONS.md` (priority 1 —
+        durable per-project instructions kept alongside `klorb-config.json` rather than at the
+        workspace root), then `AGENTS.md` (priority 2 — klorb's own root-level convention),
+        then `CLAUDE.md` (priority 3) when `_compatibility_claude_markdown` is enabled."""
+        filenames = [f"{KLORB_PROJECT_DIR_NAME}/INSTRUCTIONS.md", "AGENTS.md"]
         if self._compatibility_claude_markdown:
             filenames.append("CLAUDE.md")
         return filenames
@@ -1198,7 +1187,6 @@ class Session:
         callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
         self._ensure_tool_defs_message()
-        self._ensure_context_files_message()
         self._tool_calls_this_turn = 0
         model_name = self.active_model_name()
         system_prompt = self._resolve_system_prompt()
@@ -1280,6 +1268,15 @@ class Session:
         order — sorted by subject) and any non-`None` result is prepended the same way, but not
         cleared: a standing interjection keeps appearing on every subsequent turn for as long as
         its provider keeps returning a message.
+
+        Finally, the very first time `send_turn()` is ever called on this `Session`
+        (`self._context_files_seeded` still `False`), `_build_context_files_interjection()` is
+        consulted once; a non-`None` result is wrapped in a `<SystemInterjection
+        subject="ProjectGuidance">` tag and prepended last, so it ends up as the outermost —
+        i.e. first-read — preamble to the whole prompt, ahead of the `PermissionFramework`/
+        standing interjections above. `self._context_files_seeded` is then set unconditionally,
+        so this never runs again for the rest of the `Session`'s lifetime, matching every other
+        one-shot interjection's "fires once" contract — see docs/specs/workspace-context-files.md.
         """
         tokens_before = self._tokens_recorded_so_far()
         if self._pending_permission_framework_interjection is not None:
@@ -1291,6 +1288,11 @@ class Session:
             message = self._standing_interjection_providers[subject]()
             if message is not None:
                 prompt = f"{_wrap_system_interjection(subject, message)}\n{prompt}"
+        if not self._context_files_seeded:
+            self._context_files_seeded = True
+            project_guidance = self._build_context_files_interjection()
+            if project_guidance is not None:
+                prompt = f"{_wrap_system_interjection('ProjectGuidance', project_guidance)}\n{prompt}"
         user_message = Message(
             content=prompt,
             role="user",
