@@ -508,7 +508,7 @@ def test_session_output_over_spill_bytes_is_written_to_a_file(tmp_path: Path) ->
 def test_session_registers_a_standing_interjection_while_alive(tmp_path: Path) -> None:
     context = _persistent_context(tmp_path)
     tool = BashTool(context)
-    _run_session(tool, "cd /tmp")
+    _run_session(tool, f"cd {tmp_path}")
 
     assert context.session is not None
     # pylint: disable-next=protected-access
