@@ -199,9 +199,9 @@ def test_log_tool_calls_is_overridable_via_config_file(tmp_path: Path) -> None:
     assert process_config.log_tool_calls is True
 
 
-def test_log_tool_calls_defaults_to_false(tmp_path: Path) -> None:
+def test_log_tool_calls_defaults_to_none(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
-    assert process_config.log_tool_calls is False
+    assert process_config.log_tool_calls is None
 
 
 def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:

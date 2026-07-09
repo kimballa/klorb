@@ -95,6 +95,5 @@
   "tools.bash.spillBytes": 8192,
   "tools.bash.shfmtCommand": "shfmt",
   "compatibility.claudeMarkdown": false,
-  "tools.logCalls": false,
   "ui.theme": null
 }

@@ -198,12 +198,12 @@ class ProcessConfig(BaseModel):
     compatibility shim for projects that carry Claude-Code-style instructions in a `CLAUDE.md`
     file; `AGENTS.md` and `.klorb/INSTRUCTIONS.md` are always read (once trusted), since
     they're klorb's own conventions."""
-    log_tool_calls: bool = False
+    log_tool_calls: bool | None = None
     """Whether to append an out-of-band, file-based record of every tool call to
     `tool-calls.log` in the current working directory — see `klorb.tool_call_log`. Also
     activated by the `LOG_TOOL_CALLS` environment variable (`"1"`/`"true"`) or the
-    `--log-tool-calls` CLI flag, independently of this field's value — see
-    `klorb.tool_call_log.tool_call_logging_enabled`."""
+    `--log-tool-calls`/`--no-log-tool-calls` CLI flag pair, only when this field is
+    still `None` — see `klorb.tool_call_log.tool_call_logging_enabled`."""
     theme: str | None = None
     """Name of the Textual theme selected via the TUI's theme picker (see
     `klorb.tui.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`

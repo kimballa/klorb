@@ -35,16 +35,25 @@ def _env_var_truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() in ("1", "true")
 
 
-def tool_call_logging_enabled(config_enabled: bool) -> bool:
-    """Resolve whether out-of-band tool call logging is active for this process: `True` if
-    `config_enabled` (the `tools.logCalls` config key, or the `--log-tool-calls` CLI flag —
-    either way, surfaced as `ProcessConfig.log_tool_calls`) is set, or if the `LOG_TOOL_CALLS`
-    environment variable is `"1"` or `"true"` (case-insensitive). The environment variable is
-    read here, at call time, rather than folded into `ProcessConfig` when it's loaded, so it's
-    honored even by a caller that constructs a `ProcessConfig`/`Session` directly without going
-    through `klorb.cli.main()`.
+def tool_call_logging_enabled(config_enabled: bool | None) -> bool:
+    """Resolve whether out-of-band tool call logging is active for this process.
+
+    `config_enabled` is the value of `ProcessConfig.log_tool_calls`, which is itself
+    resolved (by `klorb.cli.main()`) from the `tools.logCalls` config key and the
+    `--log-tool-calls`/`--no-log-tool-calls` CLI flag pair. When that value is an
+    explicit `True` or `False`, it is authoritative and the `LOG_TOOL_CALLS`
+    environment variable is not consulted. Only when it is still `None` (no config
+    key and no CLI flag set) does the environment variable get a chance to enable
+    logging, so an explicit `--no-log-tool-calls` overrides `LOG_TOOL_CALLS=true`.
+
+    The environment variable is read here, at call time, rather than folded into
+    `ProcessConfig` when it's loaded, so it's honored even by a caller that
+    constructs a `ProcessConfig`/`Session` directly without going through
+    `klorb.cli.main()` (in which case `config_enabled` will be `None`).
     """
-    return config_enabled or _env_var_truthy(os.environ.get(LOG_TOOL_CALLS_ENV_VAR))
+    if config_enabled is not None:
+        return config_enabled
+    return _env_var_truthy(os.environ.get(LOG_TOOL_CALLS_ENV_VAR))
 
 
 def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | None) -> None:

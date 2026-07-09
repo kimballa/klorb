@@ -52,24 +52,27 @@ configuration. Disabled by default; enabled by any of three independent sources.
     every subsequent call that hits the same (or a different) `IOError` fails silently, so a
     persistently unwritable log file doesn't re-report the same failure on every single tool
     call for the rest of the process's life.
-  * `tool_call_logging_enabled(config_enabled: bool) -> bool` resolves whether logging is
-    active: `True` if `config_enabled` is `True`, or if the `LOG_TOOL_CALLS` environment
-    variable is `"1"` or `"true"` (case-insensitive, via `_env_var_truthy()`) — read at call
-    time (not cached at import time), so a `.env` file loaded by `klorb.cli.main()` before this
-    is checked is honored. `config_enabled` is expected to already be the OR of the
-    `tools.logCalls` config key and the `--log-tool-calls` CLI flag (see below) — this function
-    only adds the environment variable as a third, independent activation source.
-* `ProcessConfig.log_tool_calls: bool` (`process_config.py`, default `False`) is the
+  * `tool_call_logging_enabled(config_enabled: bool | None) -> bool` resolves whether logging
+    is active: when `config_enabled` is an explicit `True` or `False`, that value is
+    authoritative; only when it is `None` (neither the config key nor a CLI flag set it) does
+    the function fall back to the `LOG_TOOL_CALLS` environment variable, returning `True` if
+    it is `"1"` or `"true"` (case-insensitive, via `_env_var_truthy()`). The environment
+    variable is read at call time (not cached at import time), so a `.env` file loaded by
+    `klorb.cli.main()` before this is checked is honored.
+* `ProcessConfig.log_tool_calls: bool | None` (`process_config.py`, default `None`) is the
   config-file/CLI-flag-driven half of activation. Exposed on disk as the top-level
   `klorb-config.json` key `tools.logCalls` (`LOG_TOOL_CALLS_CONFIG_KEY`, mapped via
   `PROCESS_KEY_MAP`, same as every other process-only setting — see
   [[process-and-session-config]]).
-* `klorb.cli.main()`'s `--log-tool-calls` flag (`store_true`, default `False`) sets
-  `process_config.log_tool_calls = True` when passed — additive, like `-y`/`--auto-approve`: it
-  can only turn logging on, never override a config file's `true` back to `false`.
+* `klorb.cli.main()`'s `--log-tool-calls`/`--no-log-tool-calls` flag pair
+  (`argparse.BooleanOptionalAction`, default `None`) sets
+  `process_config.log_tool_calls` to `True` or `False` respectively when either is passed.
+  Omitting both leaves `process_config.log_tool_calls` at whatever the config file
+  resolved (or `None`), so `--no-log-tool-calls` can override a config file's `true` back
+  to `false` (unlike the purely-additive `-y`/`--auto-approve`).
 * `Session.__init__` resolves the three sources into one boolean once, at construction time:
   `self._log_tool_calls = tool_call_logging_enabled(process_config.log_tool_calls if
-  process_config is not None else False)`. This mirrors how `compatibility_claude_markdown` is
+  process_config is not None else None)`. This mirrors how `compatibility_claude_markdown` is
   pulled out of `process_config` in `__init__` (see [[workspace-context-files]]) — `Session`
   never holds a `ProcessConfig` reference itself (see
   [the `Session`/`ProcessConfig` split](../adrs/nest-sessionconfig-inside-a-process-scoped-processconfig.md)),
@@ -85,17 +88,21 @@ configuration. Disabled by default; enabled by any of three independent sources.
 
 ## Configuration
 
-* `tools.logCalls` (top-level `klorb-config.json` key, default `false`) — enables tool call
-  logging for every session in this process.
-* `--log-tool-calls` — CLI flag; enables tool call logging for this run regardless of
-  `tools.logCalls`'s value.
-* `LOG_TOOL_CALLS` (environment variable, `"1"` or `"true"`, case-insensitive) — enables tool
-  call logging regardless of the config key or CLI flag, checked independently by
-  `tool_call_logging_enabled()`.
+* `tools.logCalls` (top-level `klorb-config.json` key, default unset) — enables or disables
+  tool call logging for every session in this process. Sets `ProcessConfig.log_tool_calls`
+  to an explicit `True`/`False`.
+* `--log-tool-calls` / `--no-log-tool-calls` — CLI flag pair (`BooleanOptionalAction`,
+  default `None`); sets `ProcessConfig.log_tool_calls` to `True`/`False` respectively,
+  overriding the config key. Omitting both leaves the config-key value (or `None`) in place.
+* `LOG_TOOL_CALLS` (environment variable, `"1"` or `"true"`, case-insensitive) — enables
+  tool call logging only when `ProcessConfig.log_tool_calls` is still `None` (i.e. neither
+  the config key nor a CLI flag set it), checked by `tool_call_logging_enabled()`.
 
-All three are OR'd together — there is no precedence between them (unlike the layered
-config-file merge described in [[process-and-session-config]]); any one of them being "on" is
-enough to activate logging.
+The CLI flag (applied after config loading) and the config key both resolve to an explicit
+`True`/`False` on `ProcessConfig.log_tool_calls`, which is authoritative — the environment
+variable is consulted only as the fallback when that field is still `None`. So
+`--no-log-tool-calls` overrides `LOG_TOOL_CALLS=true`, and `tools.logCalls: true` overrides
+`LOG_TOOL_CALLS` the same way.
 
 ## Out of scope
 

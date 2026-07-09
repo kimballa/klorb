@@ -369,15 +369,17 @@ class Session:
             process_config.compatibility_claude_markdown if process_config is not None else False
         )
         self._log_tool_calls = tool_call_logging_enabled(
-            process_config.log_tool_calls if process_config is not None else False
+            process_config.log_tool_calls if process_config is not None else None
         )
         """Whether to append every finished tool call to `tool-calls.log` via
         `klorb.tool_call_log.log_tool_call` — resolved once, at construction time, from
-        `process_config.log_tool_calls` (itself set by the `tools.logCalls` config key or the
-        `--log-tool-calls` CLI flag) combined with the `LOG_TOOL_CALLS` environment variable via
-        `tool_call_logging_enabled()`, so a caller that constructs a `Session` without a
-        `ProcessConfig` at all (e.g. most unit tests) still gets the environment variable
-        honored."""
+        `process_config.log_tool_calls` (itself set by the `tools.logCalls` config key or
+        the `--log-tool-calls`/`--no-log-tool-calls` CLI flag pair) combined with the
+        `LOG_TOOL_CALLS` environment variable via `tool_call_logging_enabled()`: an
+        explicit `True`/`False` from config or CLI is authoritative, and the environment
+        variable is only consulted when `process_config.log_tool_calls` is `None` (e.g.
+        a caller that constructs a `Session` without a `ProcessConfig` at all, as most
+        unit tests do)."""
         self._messages: list[Message] = []
         self._context_files_seeded = False
         """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the

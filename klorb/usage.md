@@ -8,7 +8,7 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*] [`--config` *FILE*]
 [`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
-[`-y` | `--auto-approve`] [`--log-tool-calls`]
+[`-y` | `--auto-approve`] [`--log-tool-calls` | `--no-log-tool-calls`]
 [`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
 
 `klorb init` [`--system` | `--user`] [`--force`]
@@ -94,7 +94,8 @@ executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
   current working directory, creating it (or appending to it, if it already
   exists) as needed. Defaults to off; also enabled by the `LOG_TOOL_CALLS`
   environment variable (`1` or `true`) or the `tools.logCalls` config key,
-  independently of this flag. See `docs/specs/tool-call-logging.md`.
+  independently of this flag. `--no-log-tool-calls` forces logging off,
+  overriding those other sources. See `docs/specs/tool-call-logging.md`.
 
 * `--max-tool-calls-per-turn` *N*
 
@@ -131,7 +132,8 @@ executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
 
 * `LOG_TOOL_CALLS`
 
-  Set to `1` or `true` to enable `--log-tool-calls` without passing the flag.
+  Set to `1` or `true` to enable tool-call logging when neither `--log-tool-calls`
+  nor `tools.logCalls` is set; an explicit flag or config key overrides this.
   See `docs/specs/tool-call-logging.md`.
 
 ## EXAMPLES
@@ -196,6 +198,13 @@ Send a one-shot prompt and record every tool call to `tool-calls.log`:
 
 ```
 klorb --log-tool-calls -m "List the files in this directory."
+```
+
+Force tool-call logging off even though `LOG_TOOL_CALLS=1` is set in the
+environment:
+
+```
+klorb --no-log-tool-calls -m "List the files in this directory."
 ```
 
 ## SEE ALSO

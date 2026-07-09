@@ -246,6 +246,20 @@ def test_main_defaults_log_tool_calls_to_process_config_when_flag_omitted(
     assert process_config.log_tool_calls is True
 
 
+def test_main_no_log_tool_calls_flag_overrides_config_true(
+    stub_process_config: MagicMock,
+) -> None:
+    stub_process_config.return_value = ProcessConfig(log_tool_calls=True)
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
+        with patch("sys.argv", ["klorb", "--no-log-tool-calls", "-m", "hi"]):
+            cli.main()
+
+    process_config = mock_session_cls.call_args.kwargs["process_config"]
+    assert process_config.log_tool_calls is False
+
+
 def test_main_max_tool_calls_flags_override_process_config(stub_process_config: MagicMock) -> None:
     process_config = ProcessConfig(
         session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))

@@ -2,8 +2,6 @@
 
 # Bugs:
 
-* The --log-tool-calls cli arg should have a matching --no-log-tool-calls.
-
 * Why is the scrollbar not just one big blocky column on the right, but it also has a little second
   super-narrow scroll-bar further to the right that's somehow like a half a character wide?
 

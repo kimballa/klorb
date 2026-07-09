@@ -30,7 +30,7 @@ def test_tool_call_logging_enabled_false_when_neither_source_is_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(LOG_TOOL_CALLS_ENV_VAR, raising=False)
-    assert tool_call_logging_enabled(False) is False
+    assert tool_call_logging_enabled(None) is False
 
 
 @pytest.mark.parametrize("value", ["1", "true", "True", "TRUE"])
@@ -38,7 +38,7 @@ def test_tool_call_logging_enabled_true_for_recognized_env_values(
     value: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(LOG_TOOL_CALLS_ENV_VAR, value)
-    assert tool_call_logging_enabled(False) is True
+    assert tool_call_logging_enabled(None) is True
 
 
 @pytest.mark.parametrize("value", ["0", "false", "yes", ""])
@@ -46,7 +46,21 @@ def test_tool_call_logging_enabled_false_for_unrecognized_env_values(
     value: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(LOG_TOOL_CALLS_ENV_VAR, value)
+    assert tool_call_logging_enabled(None) is False
+
+
+def test_tool_call_logging_enabled_explicit_false_overrides_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(LOG_TOOL_CALLS_ENV_VAR, "true")
     assert tool_call_logging_enabled(False) is False
+
+
+def test_tool_call_logging_enabled_explicit_true_overrides_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(LOG_TOOL_CALLS_ENV_VAR, "false")
+    assert tool_call_logging_enabled(True) is True
 
 
 def test_log_tool_call_creates_file_in_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
