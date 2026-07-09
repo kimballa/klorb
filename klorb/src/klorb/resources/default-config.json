@@ -87,6 +87,7 @@
   "tools.editFile.driftSearchRadius": 20,
   "tools.grep.maxResults": 500,
   "tools.findFile.maxResults": 500,
+  "tools.scratchpad.contextLines": 2,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null,

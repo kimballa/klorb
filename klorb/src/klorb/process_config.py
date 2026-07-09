@@ -46,6 +46,12 @@ DEFAULT_FIND_FILE_MAX_RESULTS = 500
 `klorb.tools.find_file` has no constant of its own, it reads
 `ProcessConfig.find_file_max_results` via `ToolSetupContext` at construction time instead."""
 
+DEFAULT_SCRATCHPAD_CONTEXT_LINES = 2
+"""`ScratchpadSearchTool`'s per-match context-line count default (lines of surrounding content
+shown on each side of a match); the canonical source of this value — `klorb.tools.
+scratchpad_search` has no constant of its own, it reads `ProcessConfig.scratchpad_context_lines`
+via `ToolSetupContext` at construction time instead."""
+
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_SCHEMA_VERSION = "1.0.0"
 CONFIG_FILENAME = "klorb-config.json"
@@ -130,6 +136,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "tools.grep.maxResults": "grep_max_results",
     "tools.findFile.maxResults": "find_file_max_results",
+    "tools.scratchpad.contextLines": "scratchpad_context_lines",
     "providers.openrouter.baseUrl": "openrouter_base_url",
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
@@ -168,6 +175,9 @@ class ProcessConfig(BaseModel):
     edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     grep_max_results: int = DEFAULT_GREP_MAX_RESULTS
     find_file_max_results: int = DEFAULT_FIND_FILE_MAX_RESULTS
+    scratchpad_context_lines: int = DEFAULT_SCRATCHPAD_CONTEXT_LINES
+    """Number of lines of surrounding context `ScratchpadSearchTool` shows on each side of a
+    match — see `klorb.tools.scratchpad_search`."""
     openrouter_base_url: str = OPENROUTER_BASE_URL
     shell_command: str = DEFAULT_SHELL_COMMAND
     """Shell binary a `!`-prefixed REPL command is run through, e.g. `/bin/bash` or `/bin/zsh`
