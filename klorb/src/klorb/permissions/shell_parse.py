@@ -330,7 +330,7 @@ def _check_stdin_consumer(
 
 
 IMPLICIT_READ_COMMANDS = frozenset({"cat", "less", "more", "grep", "head", "tail",
-    "sort", "uniq", "wc", "jq"})
+    "sort", "uniq", "wc", "jq", "ls"})
 """Commands whose non-flag literal arguments are file paths to *read* (displayed, sorted,
 counted, or queried, but never modified) — so a bare invocation of one of these (not fed into
 anything else, and not itself redirected) checks each such argument against `readDirs` in

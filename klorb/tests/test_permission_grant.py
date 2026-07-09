@@ -60,6 +60,21 @@ def test_compute_grant_paths_falls_back_to_containing_directory_when_nothing_mat
         candidate.parent]
 
 
+def test_compute_grant_paths_falls_back_to_itself_when_candidate_is_a_directory(
+    tmp_path: Path,
+) -> None:
+    """A directory candidate (e.g. an `ls some/dir` implicit-read target — see
+    docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md) is already the
+    directory-scoped unit a grant should cover, so the no-match fallback must not widen it to its
+    own parent the way it does for a file candidate."""
+    candidate = tmp_path / "sub"
+    candidate.mkdir()
+    assert compute_grant_paths(DirRules(), DirRules(), tmp_path, candidate, is_write=False) == [
+        candidate]
+    assert compute_grant_paths(DirRules(), DirRules(), tmp_path, candidate, is_write=True) == [
+        candidate]
+
+
 def test_compute_grant_paths_promotes_matched_ask_rules_own_path(tmp_path: Path) -> None:
     ask_dir = tmp_path / "maybe"
     candidate = ask_dir / "sub" / "f.txt"

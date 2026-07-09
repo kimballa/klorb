@@ -24,6 +24,7 @@ the workspace or per-user level. See
 [the cross-file-cleanup ADR](../adrs/homedir-grants-can-clean-workspace-ask-never-reverse.md),
 [the once-grant ADR](../adrs/once-grants-bypass-via-tool-context-override-not-table.md),
 [the grant-granularity ADR](../adrs/grant-unmentioned-paths-at-containing-directory.md),
+[the directory-candidate grant ADR](../adrs/grant-directory-candidate-at-itself-not-its-parent.md),
 [the read/write-union ADR](../adrs/union-matched-ask-rules-across-read-and-write-tables.md),
 [the serial multi-item ask ADR](../adrs/ask-independent-items-serially-not-just-the-strictest.md),
 [the `PermissionOverride` generalization ADR](../adrs/generalize-permission-override-to-a-set-of-resources.md),
@@ -437,7 +438,7 @@ live `SessionConfig` mutation and the on-disk persistence, which only need
 
 ### Grant granularity: directory, not file
 
-An Allow grant is never recorded at the exact file the model happened to touch. Two cases:
+An Allow grant is never recorded narrower than a directory. Two cases:
 
 * **A matching `ask` rule already exists** (`readDirs.ask`/`writeDirs.ask` — checked via the new
   `PermissionsTable.matching_rules(category, candidate)`, which reports *which* rule(s) matched,
@@ -447,14 +448,18 @@ An Allow grant is never recorded at the exact file the model happened to touch. 
   with `writeDirs` too, see below), all of them are promoted.
 * **Nothing matched at all** ("the dir was never mentioned" — e.g. a bare write interrogation's
   `None`-normalized-to-`"ask"` default): the grant is recorded at the *containing directory* of
-  the accessed path (`path.parent`), not the single file. `PermissionAskScreen`'s copy states
-  this explicitly before the user picks a scope, since the user is granting more than what they
-  see the model touching right now.
+  the accessed path (`candidate.parent`) when `candidate` is a file, or at `candidate` itself when
+  `candidate` is already a directory (e.g. an `ls some/dir` implicit-read target — see
+  docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md). `PermissionAskScreen`'s copy
+  states whichever of the two this resolves to explicitly before the user picks a scope, since a
+  file candidate's grant covers more than what the user sees the model touching right now.
 
 Granting the narrower, single accessed file instead of its directory (in the no-match case)
 would mean a subsequent access to any *other* file in the same directory triggers a fresh ask —
 for `writeDirs`, forever, one file at a time, since write's own no-match fallback is `"ask"`, not
-a permissive default. Recording the grant at the directory avoids that.
+a permissive default. Recording the grant at the directory avoids that — and, symmetrically, a
+directory candidate is already that directory-scoped unit, so widening further to its parent
+would grant access to unrelated siblings the model never touched.
 
 ### Write grants an equivalent read grant; read never implies write
 

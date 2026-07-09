@@ -48,10 +48,12 @@ def compute_grant_paths(
     """The canonicalized directory (or directories) a grant for `candidate` should be recorded
     at: every `ask`-category rule's own path that matches `candidate` in `read_dirs` (always)
     unioned with `write_dirs` (only when `is_write` — a read-only access never considers
-    `write_dirs`, matching `resolve_and_evaluate_read()`'s own read-only semantics), or
-    `[candidate.parent]` if nothing matched at all ("the dir was never mentioned"). This
-    granularity computation is the same for an Allow or a Deny decision — only which rule
-    category the grant writes into differs (see `GrantAction`).
+    `write_dirs`, matching `resolve_and_evaluate_read()`'s own read-only semantics), or, if
+    nothing matched at all ("the dir was never mentioned"), `[candidate]` when `candidate` is
+    itself a directory or `[candidate.parent]` when it's a file — see
+    docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md. This granularity computation
+    is the same for an Allow or a Deny decision — only which rule category the grant writes into
+    differs (see `GrantAction`).
 
     Pure and read-only — safe to call twice per grant (once by the TUI to render the modal's
     copy before the user picks a scope, once inside `apply_permission_grant` to actually mutate
@@ -65,7 +67,9 @@ def compute_grant_paths(
         for rule in write_table.matching_rules("ask", candidate):
             if rule not in matched:
                 matched.append(rule)
-    return matched if matched else [candidate.parent]
+    if matched:
+        return matched
+    return [candidate] if candidate.is_dir() else [candidate.parent]
 
 
 def _apply_decision_to_table(

@@ -177,7 +177,7 @@ def test_function_body_is_walked() -> None:
 
 
 def test_bare_cat_or_less_adds_an_implicit_read_target() -> None:
-    for consumer in ("cat", "less"):
+    for consumer in ("cat", "less", "ls"):
         analysis = parse_command(f"{consumer} foo.txt", SHFMT)
         assert _targets(analysis.redirects) == [("foo.txt", "read")]
         assert _argvs(analysis.simple_commands) == [[consumer, "foo.txt"]]

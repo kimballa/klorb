@@ -32,3 +32,7 @@
   did match, its own path is promoted instead — see
   [the promotion ADR](promote-matched-ask-rule-path-not-candidate-on-grant.md), which can be
   broader or narrower than a bare directory depending on how that rule was originally written.
+
+  This ADR's own "containing directory" framing assumed `candidate` is always a file leaf; see
+  [the directory-candidate grant ADR](grant-directory-candidate-at-itself-not-its-parent.md) for
+  the case where `candidate` is already a directory in its own right.
