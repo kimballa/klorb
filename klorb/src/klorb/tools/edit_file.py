@@ -43,22 +43,30 @@ class EditFileTool(Tool):
     def description(self) -> str:
         return (
             "Replaces the inclusive 1-indexed line range [start_line, end_line] of a text "
-            "file with new_text. start_text, end_text, new_text, context_before, and "
-            "context_after are all raw file content: never include the 'N|' line-number "
-            "prefix that ReadFile prepends to each line for display purposes. start_text "
-            "and end_text are each one line of text: the contents of the first and last "
-            "lines to replace, and must match the first and last lines exactly, without "
-            "any trailing newline ('\\n'). The associated line numbers are given in "
-            "start_line and end_line. start_line/end_line are only a location hint, not "
-            "exact coordinates: some offset drift (e.g. from an earlier edit) is "
-            "tolerated — if start_text/end_text don't match exactly at the hint but "
-            "match together, at the same relative offset, within a few lines of it, the "
-            "edit is applied there. The response will report the corrected "
-            "start_line/end_line plus line_hint_matched=false. re-ReadFile is only "
-            "needed when no matching location is found nearby. When more than one "
-            "match is found ('Ambiguous match' error), retry with context_before / "
-            "context_after arguments (lines of raw content immediately before "
-            "start_line / after end_line, unique to the intended location) to "
+            "file with new_text. Most common mistake: pasting the whole multi-line block "
+            "being replaced into start_text/end_text. Don't — start_text and end_text are "
+            "each exactly ONE line of the file's CURRENT content: the literal first and "
+            "last lines of the range named by start_line/end_line, verbatim and without a "
+            "trailing newline ('\\n'), used only to verify you're editing the right spot. "
+            "Every other old line, and all of the new content (any number of lines, or "
+            "none), goes in new_text instead — new_text is the only field that may be "
+            "multi-line. Example: to replace lines 10-12 (`def foo():` / `    x = 1` / "
+            "`    return x`) with a two-line body, call start_line=10, "
+            "start_text=\"def foo():\", end_line=12, end_text=\"    return x\", "
+            "new_text=\"def foo():\\n    return x * 2\". start_text, end_text, new_text, "
+            "context_before, and context_after are all raw file content: never include "
+            "the 'N|' line-number prefix that ReadFile prepends to each line for display "
+            "purposes, and type special characters (em dashes, curly quotes, etc.) "
+            "literally rather than as an escape sequence like \"\\u2014\". "
+            "start_line/end_line are only a location hint, not exact coordinates: some "
+            "offset drift (e.g. from an earlier edit) is tolerated — if start_text/end_text "
+            "don't match exactly at the hint but match together, at the same relative "
+            "offset, within a few lines of it, the edit is applied there. The response "
+            "will report the corrected start_line/end_line plus line_hint_matched=false. "
+            "re-ReadFile is only needed when no matching location is found nearby. When "
+            "more than one match is found ('Ambiguous match' error), retry with "
+            "context_before / context_after arguments (lines of raw content immediately "
+            "before start_line / after end_line, unique to the intended location) to "
             "disambiguate, exactly as reported in the error. To insert new content "
             "into a non-empty file without deleting anything set start_line == "
             "end_line to an existing line number and fold that line's original text "
@@ -89,19 +97,26 @@ class EditFileTool(Tool):
                 "start_text": {
                     "type": "string",
                     "description": (
-                        "Expected current single-line content of start_line, for drift verification."
+                        "The file's CURRENT content at start_line — exactly one line, verbatim, "
+                        "no trailing newline. Never the multi-line block being replaced (that's "
+                        "new_text) and never the replacement's first line either; this is only "
+                        "for verifying you're editing the right spot."
                     ),
                 },
                 "end_text": {
                     "type": "string",
                     "description": (
-                        "Expected current content of end_line."
+                        "The file's CURRENT content at end_line — exactly one line, verbatim, "
+                        "no trailing newline. Same rule as start_text: never the multi-line "
+                        "block being replaced, and never the replacement's last line either."
                     ),
                 },
                 "new_text": {
                     "type": "string",
                     "description": (
-                        "Replacement content for the range. Empty string deletes the range."
+                        "Full replacement content for [start_line, end_line], as raw text with "
+                        "'\\n' between lines. Unlike start_text/end_text, this may span any "
+                        "number of lines, including zero (an empty string deletes the range)."
                     ),
                 },
                 "context_before": {
