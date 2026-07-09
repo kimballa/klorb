@@ -1157,7 +1157,8 @@ class ReplApp(App[None]):
         the history's scroll position (see `_on_history_scroll_changed`), show the initial
         `> palette` hint (the box starts empty), greet the user with the klorb mascot (see
         `MASCOT_ART`/`MASCOT_GREETING`), note in the history if no per-user config file exists
-        yet (see `CONFIG_MISSING_MESSAGE`), then hand off to
+        yet (see `CONFIG_MISSING_MESSAGE`), reports any config layer that failed to parse (see
+        `ProcessConfig.config_warnings`), then hand off to
         `_run_startup_workspace_and_initial_message` to resolve (and, if this is a brand-new
         workspace, interactively bootstrap) workspace trust before submitting any initial
         message as the first turn.
@@ -1177,6 +1178,9 @@ class ReplApp(App[None]):
 
         if not user_config_path().is_file():
             history.mount(Static(CONFIG_MISSING_MESSAGE, classes="notice"))
+
+        for warning in self._process_config.config_warnings:
+            history.mount(Static(warning, classes="error", markup=False))
 
         self._run_startup_workspace_and_initial_message()
 
@@ -1263,9 +1267,18 @@ class ReplApp(App[None]):
         `self._process_config.session` template — the same pattern `select_model()`/
         `set_thinking_enabled()` already use for session-scoped settings — so a future `/clear`
         in this process inherits the resolved trust state instead of re-bootstrapping it.
+
+        This reload can surface a `config_warnings` entry that `on_mount()`'s startup pass never
+        saw — the project config layer is only read once `workspace.trusted` is `True`, which
+        for a brand-new workspace is only resolved here — so any warning not already shown is
+        posted to the history via `show_notice()` below.
         """
         reloaded = load_process_config(
             config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
+        new_warnings = [
+            warning for warning in reloaded.config_warnings
+            if warning not in self._process_config.config_warnings
+        ]
 
         for field_name in ProcessConfig.model_fields:
             if field_name == "session":
@@ -1283,6 +1296,9 @@ class ReplApp(App[None]):
             self._process_config.session.read_dirs, reloaded.session.read_dirs)
         self._process_config.session.write_dirs = _concat_dir_rules(
             self._process_config.session.write_dirs, reloaded.session.write_dirs)
+
+        for warning in new_warnings:
+            self.show_notice(warning, error=True)
 
         self._refresh_header_title()
 

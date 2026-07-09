@@ -40,10 +40,15 @@ this exists.
       (returns `{}`) and a warning is logged — it's probably the wrong file type in the
       wrong place.
     * If the file's contents aren't valid JSON at all, the data is likewise discarded
-      (returns `{}`) and an error is logged naming the file and the parse failure, rather than
-      raising and taking down the caller. This matters most for `klorb-config.json`, which is
-      hand-authored and layered — see [[process-and-session-config]] — so a typo in one layer
-      must not prevent every other layer (and the process) from loading.
+      (returns `{}`) and an error is logged naming the file, the parse failure, and a small
+      excerpt of the lines around it (`_format_json_error_context`), rather than raising and
+      taking down the caller. This matters most for `klorb-config.json`, which is hand-authored
+      and layered — see [[process-and-session-config]] — so a typo in one layer must not
+      prevent every other layer (and the process) from loading. Passing a `warnings: list[str]`
+      collects this same message so a caller can surface it somewhere a user will actually
+      see it, not just the log — `klorb.process_config.load_process_config` does this via
+      `ProcessConfig.config_warnings`, which `klorb.tui.repl.ReplApp` posts to the history
+      scroll at startup.
     * There is currently no version-upgrade logic: every schema in use today is `"1.0.0"`.
       When a format changes, the upgrade path belongs inside `read_versioned_json` (or a
       dedicated per-type migration step it calls out to), keyed on `schema.version`, so

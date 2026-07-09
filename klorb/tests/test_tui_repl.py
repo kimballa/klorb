@@ -109,7 +109,7 @@ def _isolate_process_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     monkeypatch.setenv(
         process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
     monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
-    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda: {})
+    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
 
 
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
