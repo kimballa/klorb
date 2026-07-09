@@ -43,6 +43,15 @@ configuration. Disabled by default; enabled by any of three independent sources.
     prior entry from this run, or a previous run — the file is never rotated or cleared), a
     blank line is written first to separate the new entry from what's already there; the very
     first entry in a fresh file has no leading blank line.
+
+    `log_tool_call()` never raises: an `IOError` (e.g. an unwritable working directory, a full
+    disk) is caught and reported via `logger.error()` instead of propagating, since this is a
+    best-effort audit trail — a tool call's own success must never depend on whether its log
+    entry could be written. Only the *first* `IOError` encountered by the process is logged
+    (tracked by the module-level `_io_error_already_logged` flag, set once and never reset);
+    every subsequent call that hits the same (or a different) `IOError` fails silently, so a
+    persistently unwritable log file doesn't re-report the same failure on every single tool
+    call for the rest of the process's life.
   * `tool_call_logging_enabled(config_enabled: bool) -> bool` resolves whether logging is
     active: `True` if `config_enabled` is `True`, or if the `LOG_TOOL_CALLS` environment
     variable is `"1"` or `"true"` (case-insensitive, via `_env_var_truthy()`) — read at call

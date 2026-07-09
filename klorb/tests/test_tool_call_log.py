@@ -1,16 +1,25 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tool_call_log."""
 
+import logging
 from pathlib import Path
 
 import pytest
 
+import klorb.tool_call_log as tool_call_log_module
 from klorb.tool_call_log import (
     LOG_TOOL_CALLS_ENV_VAR,
     TOOL_CALLS_LOG_FILENAME,
     log_tool_call,
     tool_call_logging_enabled,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_io_error_logged_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset the module-level "have we already logged an IOError" flag before every test in
+    this module, so a test that triggers one doesn't leave state behind for a later test."""
+    monkeypatch.setattr(tool_call_log_module, "_io_error_already_logged", False)
 
 
 def test_tool_call_logging_enabled_true_when_config_enabled() -> None:
@@ -116,3 +125,45 @@ def test_log_tool_call_does_not_truncate_existing_file(
 
     contents = log_path.read_text(encoding="utf-8")
     assert contents.startswith("pre-existing content\n\n---\n")
+
+
+def _raise_io_error(self: Path, *args: object, **kwargs: object) -> None:
+    raise IOError("disk full")
+
+
+def test_log_tool_call_swallows_io_error_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "open", _raise_io_error)
+
+    log_tool_call("ReadFile", {"filename": "a.py"}, {"content": "a"}, None)
+
+
+def test_log_tool_call_reports_first_io_error_via_logger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "open", _raise_io_error)
+
+    with caplog.at_level(logging.ERROR, logger=tool_call_log_module.logger.name):
+        log_tool_call("ReadFile", {"filename": "a.py"}, {"content": "a"}, None)
+
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(error_records) == 1
+    assert "disk full" in error_records[0].getMessage()
+
+
+def test_log_tool_call_only_reports_the_first_io_error_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "open", _raise_io_error)
+
+    with caplog.at_level(logging.ERROR, logger=tool_call_log_module.logger.name):
+        log_tool_call("ReadFile", {"filename": "a.py"}, {"content": "a"}, None)
+        log_tool_call("ReadFile", {"filename": "b.py"}, {"content": "b"}, None)
+        log_tool_call("ReadFile", {"filename": "c.py"}, {"content": "c"}, None)
+
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(error_records) == 1
