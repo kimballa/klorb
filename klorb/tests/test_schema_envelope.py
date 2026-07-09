@@ -47,3 +47,16 @@ def test_mismatched_schema_name_is_ignored_and_logged(
 
     assert result == {}
     assert "klorb-session" in caplog.text
+
+
+def test_malformed_json_is_skipped_and_logged_rather_than_raising(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "klorb-config.json"
+    path.write_text('{"model": "some/model",}', encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR, logger="klorb.schema_envelope"):
+        result = read_versioned_json(path, expected_schema_name="klorb-config")
+
+    assert result == {}
+    assert str(path) in caplog.text

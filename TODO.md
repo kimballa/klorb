@@ -2,6 +2,8 @@
 
 # Bugs:
 
+* The --log-tool-calls cli arg should have a matching --no-log-tool-calls.
+
 * Why is the scrollbar not just one big blocky column on the right, but it also has a little second
   super-narrow scroll-bar further to the right that's somehow like a half a character wide?
 
@@ -15,6 +17,10 @@
   as extensions that should be listed as Workspace Recommendations.
 
 # Feature backlog
+
+* If a json config file has a json syntax error, it is replaced by `{}` so it doesn't take
+  down the whole process. The syntax error is logged to stderr, but that doesn't actually
+  create a History scroll entry, so the user probably won't actually see it.
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.

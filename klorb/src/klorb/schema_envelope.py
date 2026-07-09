@@ -45,8 +45,19 @@ def parse_versioned_json(text: str, *, expected_schema_name: str, source: str) -
     (which yields text, not a `Path`) should use directly, e.g.
     `klorb.process_config`'s built-in-defaults layer. `source` identifies `text`'s origin
     (a `Path`, or a resource name) for the log messages below only.
+
+    Text that isn't valid JSON at all (a hand-edited config file with a typo, a torn write from
+    a crashed process, etc.) is treated the same as a schema-name mismatch: an error is logged
+    naming `source` and the parse exception, and `{}` is returned rather than letting
+    `json.JSONDecodeError` propagate — one malformed layer must not take down the whole process,
+    since every caller of this helper merges several independently-sourced layers (see
+    `klorb.process_config.load_process_config`) where the rest are still worth loading.
     """
-    contents: dict[str, Any] = json.loads(text)
+    try:
+        contents: dict[str, Any] = json.loads(text)
+    except json.JSONDecodeError as exc:
+        logger.error("%s is not valid JSON (%s); ignoring its contents.", source, exc)
+        return {}
 
     schema_block = contents.pop(SCHEMA_KEY, None)
     if schema_block is None:
@@ -72,7 +83,8 @@ def read_versioned_json(path: Path, *, expected_schema_name: str) -> dict[str, A
     since it's probably the wrong file type. A file with no `schema` block at all is still
     accepted, with its keys returned as-is, since files like `klorb-config.json` are
     hand-authored and may omit it; this is logged at debug level rather than treated as an
-    error.
+    error. A file that isn't valid JSON at all logs an error and is likewise discarded (`{}`)
+    rather than raising — see `parse_versioned_json`, which this delegates to.
     """
     if not path.is_file():
         logger.debug("No file at %s; skipping.", path)

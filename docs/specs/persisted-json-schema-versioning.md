@@ -39,6 +39,11 @@ this exists.
     * If `schema.name` doesn't match `expected_schema_name`, the file's data is discarded
       (returns `{}`) and a warning is logged — it's probably the wrong file type in the
       wrong place.
+    * If the file's contents aren't valid JSON at all, the data is likewise discarded
+      (returns `{}`) and an error is logged naming the file and the parse failure, rather than
+      raising and taking down the caller. This matters most for `klorb-config.json`, which is
+      hand-authored and layered — see [[process-and-session-config]] — so a typo in one layer
+      must not prevent every other layer (and the process) from loading.
     * There is currently no version-upgrade logic: every schema in use today is `"1.0.0"`.
       When a format changes, the upgrade path belongs inside `read_versioned_json` (or a
       dedicated per-type migration step it calls out to), keyed on `schema.version`, so

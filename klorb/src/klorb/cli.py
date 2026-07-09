@@ -24,7 +24,8 @@ INIT_SUBCOMMAND = "init"
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the klorb CLI."""
-    parser = argparse.ArgumentParser(prog="klorb", description="Send a prompt to a model via OpenRouter.")
+    parser = argparse.ArgumentParser(prog="klorb",
+        description="Klorb is your friendly neighborhood agent.")
     parser.add_argument(
         "-m",
         "--message",

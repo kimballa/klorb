@@ -323,6 +323,24 @@ def test_config_file_with_mismatched_schema_name_is_skipped(tmp_path: Path) -> N
     assert process_config.session.model == DEFAULT_MODEL
 
 
+def test_malformed_config_layer_is_skipped_rather_than_crashing_startup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hand-edited `klorb-config.json` with a JSON syntax error must not take down the whole
+    process — see klorb.schema_envelope.parse_versioned_json. The rest of that layer's keys are
+    lost (there's no way to salvage a syntactically-broken file), but every other layer still
+    loads and the process still starts with defaults for the broken layer."""
+    path = tmp_path / ".klorb" / "klorb-config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"sessionDefaults": {"model": "project/model",}}', encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR, logger="klorb.schema_envelope"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.model == DEFAULT_MODEL
+    assert str(path) in caplog.text
+
+
 def test_readdirs_and_writedirs_concatenate_across_layers(tmp_path: Path) -> None:
     """See docs/specs/permissions.md: a later layer's readDirs/writeDirs entries add to,
     rather than replace, every earlier layer's — unlike every other config key."""
