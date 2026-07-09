@@ -67,7 +67,7 @@ def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setenv(
         process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
     monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
-    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda: {})
+    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
 
 
 def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
@@ -92,13 +92,13 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
 
 
 def test_default_config_layer_reads_the_packaged_resource() -> None:
-    layer = _real_default_config_layer()
+    layer = _real_default_config_layer([])
     assert layer["sessionDefaults"]["model"] == DEFAULT_MODEL
     assert "~/.ssh" in layer["sessionDefaults"]["readDirs"]["deny"]
 
 
 def test_default_config_layer_strips_the_schema_envelope() -> None:
-    layer = _real_default_config_layer()
+    layer = _real_default_config_layer([])
     assert "schema" not in layer
 
 
@@ -339,6 +339,23 @@ def test_malformed_config_layer_is_skipped_rather_than_crashing_startup(
 
     assert process_config.session.model == DEFAULT_MODEL
     assert str(path) in caplog.text
+
+
+def test_malformed_config_layer_is_collected_into_config_warnings(tmp_path: Path) -> None:
+    """`ProcessConfig.config_warnings` is how a malformed layer's parse failure reaches a
+    user-visible surface (`klorb.tui.repl.ReplApp.on_mount`) rather than only `logger.error`,
+    which an interactive user is likely to never see."""
+    path = tmp_path / ".klorb" / "klorb-config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"sessionDefaults": {\n  "model": "project/model",\n}}', encoding="utf-8")
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert len(process_config.config_warnings) == 1
+    warning = process_config.config_warnings[0]
+    assert str(path) in warning
+    assert '"model": "project/model",' in warning
+    assert "^" in warning
 
 
 def test_readdirs_and_writedirs_concatenate_across_layers(tmp_path: Path) -> None:

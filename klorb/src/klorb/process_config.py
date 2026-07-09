@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
@@ -209,16 +209,26 @@ class ProcessConfig(BaseModel):
     `klorb.tui.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`
     so it's restored on the next klorb session. `None` (the default) means no persisted choice
     exists yet; `ReplApp` falls back to Textual's own built-in default theme in that case."""
+    config_warnings: list[str] = Field(default_factory=list)
+    """Human-readable messages describing any config layer `load_process_config()` had to skip
+    over while assembling this `ProcessConfig` — today, only a layer whose file isn't valid
+    JSON at all (see `klorb.schema_envelope.parse_versioned_json`'s `warnings` parameter).
+    `klorb.tui.repl.ReplApp` posts each of these to the history scroll at startup (and again for
+    any newly-discovered ones after `_apply_workspace_config`'s reload), since a `logger.error`
+    call alone is easy for an interactive user to miss entirely."""
 
 
-def _default_config_layer() -> dict[str, Any]:
+def _default_config_layer(warnings: list[str]) -> dict[str, Any]:
     """The packaged built-in-defaults layer: `klorb.resources/default-config.json`
     (`DEFAULT_CONFIG_RESOURCE_NAME`), read via `importlib.resources` and parsed the same way
     an on-disk `klorb-config.json` layer is. Unlike every other layer `load_process_config()`
     merges, this one is never missing — it ships inside every klorb install — so it always
     contributes a value for every key it lists, e.g. `sessionDefaults.readDirs.deny`'s
     dotfile denylist, which used to only exist in an uninstalled reference file nobody was
-    guaranteed to actually load. See docs/specs/process-and-session-config.md.
+    guaranteed to actually load. See docs/specs/process-and-session-config.md. `warnings`
+    collects a message (see `ProcessConfig.config_warnings`) if this packaged file somehow
+    isn't valid JSON — a packaging bug, not a user error, but still worth surfacing rather
+    than silently starting with no built-in defaults at all.
     """
     text = (
         importlib.resources.files("klorb.resources")
@@ -226,7 +236,8 @@ def _default_config_layer() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     source = f"klorb.resources/{DEFAULT_CONFIG_RESOURCE_NAME}"
-    return parse_versioned_json(text, expected_schema_name=CONFIG_SCHEMA_NAME, source=source)
+    return parse_versioned_json(
+        text, expected_schema_name=CONFIG_SCHEMA_NAME, source=source, warnings=warnings)
 
 
 def etc_config_path() -> Path:
@@ -328,6 +339,10 @@ def load_process_config(
     5. The file named by `--config` (`config_flag_path`), if given.
     6. Last-session state overrides (not yet implemented; always empty for now).
 
+    Any layer (1-5) whose file isn't valid JSON at all contributes nothing and is skipped, with
+    a message describing the parse failure collected into the returned `ProcessConfig`'s
+    `config_warnings` — see `klorb.schema_envelope.parse_versioned_json`'s `warnings` parameter.
+
     Each layer is one JSON object with process-only settings as flat top-level keys and all
     session-scoped settings nested under a `sessionDefaults` key (see
     docs/specs/process-and-session-config.md). Both the top-level object and the
@@ -369,6 +384,7 @@ def load_process_config(
     cwd = cwd if cwd is not None else Path.cwd()
     workspace = workspace if workspace is not None else Workspace(path=find_workspace_root(cwd))
 
+    config_warnings: list[str] = []
     merged: dict[str, Any] = {}
     merged_session_defaults: dict[str, Any] = {}
     concatenated_read_dirs: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
@@ -393,14 +409,18 @@ def load_process_config(
         merged_session_defaults.update(session_layer)
         merged.update(layer)
 
-    merge_layer(_default_config_layer())
-    merge_layer(read_versioned_json(etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
-    merge_layer(read_versioned_json(user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME))
+    merge_layer(_default_config_layer(config_warnings))
+    merge_layer(read_versioned_json(
+        etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
+    merge_layer(read_versioned_json(
+        user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
     if workspace.trusted:
         merge_layer(read_versioned_json(
-            project_config_path(workspace.path), expected_schema_name=CONFIG_SCHEMA_NAME))
+            project_config_path(workspace.path), expected_schema_name=CONFIG_SCHEMA_NAME,
+            warnings=config_warnings))
     if config_flag_path is not None:
-        merge_layer(read_versioned_json(config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME))
+        merge_layer(read_versioned_json(
+            config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
     merge_layer(_load_last_session_overrides(cwd))
 
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
@@ -411,4 +431,6 @@ def load_process_config(
     session_overrides["set_env"] = merged_set_env
     session_overrides["workspace"] = workspace
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
-    return ProcessConfig(session=SessionConfig(**session_overrides), **process_overrides)
+    return ProcessConfig(
+        session=SessionConfig(**session_overrides), config_warnings=config_warnings,
+        **process_overrides)

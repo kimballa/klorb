@@ -60,3 +60,29 @@ def test_malformed_json_is_skipped_and_logged_rather_than_raising(
 
     assert result == {}
     assert str(path) in caplog.text
+
+
+def test_malformed_json_warning_includes_line_context_around_the_error(tmp_path: Path) -> None:
+    """The `warnings` list collects a message naming the file and a small excerpt of the lines
+    around the parse error (see `klorb.schema_envelope._format_json_error_context`), not just
+    a bare byte offset — this is what `klorb.tui.repl.ReplApp` posts to the history scroll."""
+    path = tmp_path / "klorb-config.json"
+    path.write_text('{\n  "model": "some/model",\n  "thinking.effort": "high",\n}\n', encoding="utf-8")
+
+    warnings: list[str] = []
+    result = read_versioned_json(path, expected_schema_name="klorb-config", warnings=warnings)
+
+    assert result == {}
+    assert len(warnings) == 1
+    assert str(path) in warnings[0]
+    assert '"thinking.effort": "high",' in warnings[0]
+    assert "^" in warnings[0]
+
+
+def test_no_warnings_collected_when_warnings_arg_omitted(tmp_path: Path) -> None:
+    """`warnings` is optional — a caller that doesn't pass it (e.g. `persist_theme`) still gets
+    the permissive `{}`-on-parse-failure behavior, just without a collected message."""
+    path = tmp_path / "klorb-config.json"
+    path.write_text('{"model": "some/model",}', encoding="utf-8")
+
+    assert read_versioned_json(path, expected_schema_name="klorb-config") == {}

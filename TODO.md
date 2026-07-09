@@ -11,10 +11,6 @@
 
 # Feature backlog
 
-* If a json config file has a json syntax error, it is replaced by `{}` so it doesn't take
-  down the whole process. The syntax error is logged to stderr, but that doesn't actually
-  create a History scroll entry, so the user probably won't actually see it.
-
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you

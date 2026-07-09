@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_KEY = "schema"
 
+JSON_ERROR_CONTEXT_LINES = 2
+"""Number of source lines shown before and after the offending line in the snippet
+`_format_json_error_context` builds for a `json.JSONDecodeError` — enough to orient a user
+skimming a hand-edited config file without dumping the whole thing."""
+
 
 class SchemaInfo(BaseModel):
     """Identifies a persisted JSON file's type (`name`) and format (`version`)."""
@@ -37,7 +42,26 @@ class SchemaInfo(BaseModel):
     version: str
 
 
-def parse_versioned_json(text: str, *, expected_schema_name: str, source: str) -> dict[str, Any]:
+def _format_json_error_context(text: str, exc: json.JSONDecodeError) -> str:
+    """Render a small excerpt of `text` around `exc.lineno` (1-indexed, per the `json` module),
+    with a `^` caret under `exc.colno`, for a human reading the parse error rather than staring
+    at a bare byte offset. Used to build both the log line (`parse_versioned_json`) and the
+    user-visible history notice (see `klorb.process_config.ProcessConfig.config_warnings`).
+    """
+    lines = text.splitlines()
+    first = max(exc.lineno - 1 - JSON_ERROR_CONTEXT_LINES, 0)
+    last = min(exc.lineno + JSON_ERROR_CONTEXT_LINES, len(lines))
+    excerpt_lines: list[str] = []
+    for lineno in range(first + 1, last + 1):
+        excerpt_lines.append(f"{lineno:>5} | {lines[lineno - 1]}")
+        if lineno == exc.lineno:
+            excerpt_lines.append(f"      | {' ' * (exc.colno - 1)}^")
+    return "\n".join(excerpt_lines)
+
+
+def parse_versioned_json(
+    text: str, *, expected_schema_name: str, source: str, warnings: list[str] | None = None,
+) -> dict[str, Any]:
     """Parse already-read `text` as a schema-enveloped JSON document (see module docstring),
     validating and stripping its `schema` block exactly like `read_versioned_json` does for an
     on-disk file — this is what that function delegates to once it has the file's contents in
@@ -48,15 +72,25 @@ def parse_versioned_json(text: str, *, expected_schema_name: str, source: str) -
 
     Text that isn't valid JSON at all (a hand-edited config file with a typo, a torn write from
     a crashed process, etc.) is treated the same as a schema-name mismatch: an error is logged
-    naming `source` and the parse exception, and `{}` is returned rather than letting
-    `json.JSONDecodeError` propagate — one malformed layer must not take down the whole process,
-    since every caller of this helper merges several independently-sourced layers (see
-    `klorb.process_config.load_process_config`) where the rest are still worth loading.
+    naming `source`, the parse exception, and a `_format_json_error_context` excerpt of the
+    surrounding lines, and `{}` is returned rather than letting `json.JSONDecodeError`
+    propagate — one malformed layer must not take down the whole process, since every caller of
+    this helper merges several independently-sourced layers (see
+    `klorb.process_config.load_process_config`) where the rest are still worth loading. If
+    `warnings` is given, the same human-readable message is appended to it so a caller can
+    surface it somewhere a user will actually see it (a log line alone is easy to miss) — see
+    `ProcessConfig.config_warnings`.
     """
     try:
         contents: dict[str, Any] = json.loads(text)
     except json.JSONDecodeError as exc:
-        logger.error("%s is not valid JSON (%s); ignoring its contents.", source, exc)
+        message = (
+            f"{source} is not valid JSON ({exc.msg} at line {exc.lineno}, column {exc.colno}); "
+            f"ignoring its contents.\n{_format_json_error_context(text, exc)}"
+        )
+        logger.error(message)
+        if warnings is not None:
+            warnings.append(message)
         return {}
 
     schema_block = contents.pop(SCHEMA_KEY, None)
@@ -75,7 +109,9 @@ def parse_versioned_json(text: str, *, expected_schema_name: str, source: str) -
     return contents
 
 
-def read_versioned_json(path: Path, *, expected_schema_name: str) -> dict[str, Any]:
+def read_versioned_json(
+    path: Path, *, expected_schema_name: str, warnings: list[str] | None = None,
+) -> dict[str, Any]:
     """Read a schema-enveloped JSON file's data, or `{}` if `path` doesn't exist.
 
     The `schema` key, if present, is validated against `expected_schema_name` and then
@@ -84,14 +120,16 @@ def read_versioned_json(path: Path, *, expected_schema_name: str) -> dict[str, A
     accepted, with its keys returned as-is, since files like `klorb-config.json` are
     hand-authored and may omit it; this is logged at debug level rather than treated as an
     error. A file that isn't valid JSON at all logs an error and is likewise discarded (`{}`)
-    rather than raising — see `parse_versioned_json`, which this delegates to.
+    rather than raising — see `parse_versioned_json`, which this delegates to, including for
+    what `warnings` (if given) collects.
     """
     if not path.is_file():
         logger.debug("No file at %s; skipping.", path)
         return {}
 
     return parse_versioned_json(
-        path.read_text(encoding="utf-8"), expected_schema_name=expected_schema_name, source=str(path))
+        path.read_text(encoding="utf-8"), expected_schema_name=expected_schema_name,
+        source=str(path), warnings=warnings)
 
 
 def write_versioned_json(
