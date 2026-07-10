@@ -2,6 +2,10 @@
 
 # Bugs:
 
+* After a grep tool call, I got "Error: Expecting ',' delimeter: line 1 column 34 (char 33)"
+  in the history and the agent's activity stopped. It's not clear what caused the error?
+  (agent-generated tool call json? a config file it tried to read?)
+
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
@@ -9,12 +13,28 @@
   on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
   as extensions that should be listed as Workspace Recommendations.
 
+* In theory, we are tokenizing every single message (including tool call requests and
+  responses??) but the footer badge with context consumption info just stays at `0 / 1M` for
+  long periods of back-and-forth exchange. The footer should update after every new message
+  is added to the conversation, including tool uses. Right now, it just happens when the
+  turn completes.
+
+* I had already explicitly worked to remove the "global" scrollbar so that only the "history"
+  scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
+  are still both present on a long enough session. Or maybe re-introdced if I use ^o to see
+  the details for all the tool calls?
+  (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
+
+* If you use ^o to expand from the main history to "details", it currently brings you all
+  the way to the top of the detailed history. It should anchor the screen's scroll at the
+  detailed version of whatever history element is the first one visible on the screen. The
+  same is true for when you use ^o ("hide") to go back from detailed-view to normal-view.
+
 # Feature backlog
 
 * ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
   that readfile and editfile can interact in a loop. 
-
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
@@ -70,8 +90,10 @@
     * TodoList tool
     * TodoWrite tool
 * Memories in ~/.klorb/memory, projRoot/.klorb/memory/
-  * UpdateMemory tool
-  * Remember tool
+  * ListMemories
+  * ReadMemory
+  * EditMemory tool
+  * CreateMemory tool
 
 * Subagent spawning
   * When an agent spawns a subagent for a different role, the subagent gets a new child

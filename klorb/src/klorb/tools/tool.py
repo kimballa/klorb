@@ -22,11 +22,10 @@ def default_tool_call_detail(
     name: str, args: dict[str, Any], result: Any, error: str | None,
 ) -> str:
     """`Tool.detail_view()`'s default body, and what a caller renders for a tool call whose
-    name isn't recognized by a `ToolRegistry`: pretty-printed JSON of `args` alongside `result`
-    (on success) or `error` (on failure). `name` is accepted for symmetry with
-    `default_tool_call_summary()` but isn't part of the rendered JSON.
+    name isn't recognized by a `ToolRegistry`: pretty-printed JSON of `name` and `args`
+    alongside `result` (on success) or `error` (on failure).
     """
-    payload: dict[str, Any] = {"args": args}
+    payload: dict[str, Any] = {"name": name, "args": args}
     payload["error" if error is not None else "result"] = error if error is not None else result
     return json.dumps(payload, indent=2, default=str)
 

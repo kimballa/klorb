@@ -45,7 +45,7 @@ def test_default_detail_view_on_success_is_pretty_printed_json_of_args_and_resul
 
     detail = tool.detail_view({"message": "hi"}, result="hi", error=None)
 
-    assert json.loads(detail) == {"args": {"message": "hi"}, "result": "hi"}
+    assert json.loads(detail) == {"name": "echo", "args": {"message": "hi"}, "result": "hi"}
 
 
 def test_default_detail_view_on_failure_is_pretty_printed_json_of_args_and_error() -> None:
@@ -54,7 +54,7 @@ def test_default_detail_view_on_failure_is_pretty_printed_json_of_args_and_error
 
     detail = tool.detail_view({"message": "hi"}, result=None, error="boom")
 
-    assert json.loads(detail) == {"args": {"message": "hi"}, "error": "boom"}
+    assert json.loads(detail) == {"name": "echo", "args": {"message": "hi"}, "error": "boom"}
 
 
 def test_default_tool_call_summary_and_detail_are_usable_without_a_tool_instance() -> None:
@@ -63,9 +63,9 @@ def test_default_tool_call_summary_and_detail_are_usable_without_a_tool_instance
     assert default_tool_call_summary("Bogus", {"x": 1}, None) == "Bogus"
     assert default_tool_call_summary("Bogus", {"x": 1}, "no such tool") == "Bogus: no such tool"
     assert json.loads(default_tool_call_detail("Bogus", {"x": 1}, "ok", None)) == {
-        "args": {"x": 1}, "result": "ok"}
+        "name": "Bogus", "args": {"x": 1}, "result": "ok"}
     assert json.loads(default_tool_call_detail("Bogus", {"x": 1}, None, "nope")) == {
-        "args": {"x": 1}, "error": "nope"}
+        "name": "Bogus", "args": {"x": 1}, "error": "nope"}
 
 
 def test_truncate_lines_leaves_short_text_unchanged() -> None:
