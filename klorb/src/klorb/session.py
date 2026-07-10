@@ -28,6 +28,7 @@ from klorb.permissions.table import (
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
+from klorb.tools.scratchpad.common import Scratchpad
 from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -335,6 +336,7 @@ class Session:
         session_id: str | None = None,
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
+        scratchpad_path: str | None = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
@@ -408,6 +410,13 @@ class Session:
         self._teardown_callbacks: dict[str, Callable[[], None]] = {}
         """Callbacks registered via `register_teardown()`, keyed by subject, invoked once each
         by `close()`. See `register_teardown`/`close`."""
+        self.scratchpad = Scratchpad(scratchpad_path)
+        """This session's scratchpad file (see `klorb.tools.scratchpad.common.Scratchpad`,
+        which does all the work of resolving `scratchpad_path` — a caller-supplied path to
+        reuse, or a freshly provisioned one — and of cleaning it up again below). A `Tool`
+        reads it via `self.context.session.scratchpad.path` (see `klorb.tools.scratchpad.common.
+        scratchpad_path`), the same access pattern as `tool_state` above."""
+        self.register_teardown("Scratchpad", self.scratchpad.cleanup)
 
     @property
     def role(self) -> Role:
@@ -499,11 +508,12 @@ class Session:
         self._teardown_callbacks[subject] = teardown
 
     def close(self) -> None:
-        """Tear down any live per-session resources a `Tool` registered via `register_teardown`
-        (currently, just `BashTool`'s persistent shell, if one is alive). Idempotent: calling
-        this when nothing is registered, or calling it twice, is a no-op the second time onward
-        since each teardown callback (e.g. `PersistentShell.kill`) is itself safe to call more
-        than once.
+        """Tear down any live per-session resources registered via `register_teardown` --
+        `BashTool`'s persistent shell, if one is alive, and `self.scratchpad`'s cleanup (see
+        `klorb.tools.scratchpad.common.Scratchpad.cleanup`, registered in `__init__`). Idempotent:
+        calling this when nothing is registered, or calling it twice, is a no-op the second time
+        onward since each teardown callback (e.g. `PersistentShell.kill`, `Scratchpad.cleanup`)
+        is itself safe to call more than once.
 
         Callers that replace a `Session` outright (`klorb.tui.repl.ReplApp.clear_session()`) must
         call this on the outgoing `Session` first — nothing else tears it down, and a live
