@@ -34,4 +34,5 @@ def test_capabilities_includes_standard_keys() -> None:
     assert capabilities["vision"] is False
     assert capabilities["thinking"] is True
     assert capabilities["thinking_budget_style"] == "effort"
-    assert capabilities["max_context_window"] == 256_000
+    assert capabilities["max_context_window"] == 1_000_000
+    assert capabilities["max_output_tokens"] == 131_072

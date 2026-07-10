@@ -22,8 +22,8 @@ class Glm52Model(Model):
             "vision": False,
             "thinking": True,
             "thinking_budget_style": "effort",
-            "max_context_window": 256_000,
-            "max_output_tokens": 32_000,
+            "max_context_window": 1_000_000,
+            "max_output_tokens": 131_072,
             "function_calling": True,
             "streaming": True,
         }
