@@ -47,9 +47,9 @@ DEFAULT_FIND_FILE_MAX_RESULTS = 500
 `ProcessConfig.find_file_max_results` via `ToolSetupContext` at construction time instead."""
 
 DEFAULT_SCRATCHPAD_CONTEXT_LINES = 2
-"""`ScratchpadSearchTool`'s per-match context-line count default (lines of surrounding content
+"""`SearchScratchpadTool`'s per-match context-line count default (lines of surrounding content
 shown on each side of a match); the canonical source of this value — `klorb.tools.
-scratchpad_search` has no constant of its own, it reads `ProcessConfig.scratchpad_context_lines`
+scratchpad.search` has no constant of its own, it reads `ProcessConfig.scratchpad_context_lines`
 via `ToolSetupContext` at construction time instead."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
@@ -176,8 +176,8 @@ class ProcessConfig(BaseModel):
     grep_max_results: int = DEFAULT_GREP_MAX_RESULTS
     find_file_max_results: int = DEFAULT_FIND_FILE_MAX_RESULTS
     scratchpad_context_lines: int = DEFAULT_SCRATCHPAD_CONTEXT_LINES
-    """Number of lines of surrounding context `ScratchpadSearchTool` shows on each side of a
-    match — see `klorb.tools.scratchpad_search`."""
+    """Number of lines of surrounding context `SearchScratchpadTool` shows on each side of a
+    match — see `klorb.tools.scratchpad.search`."""
     openrouter_base_url: str = OPENROUTER_BASE_URL
     shell_command: str = DEFAULT_SHELL_COMMAND
     """Shell binary a `!`-prefixed REPL command is run through, e.g. `/bin/bash` or `/bin/zsh`

@@ -1,10 +1,10 @@
 # © Copyright 2026 Aaron Kimball
-"""Shared row-extent line-replacement mechanic behind `EditFileTool` and `ScratchpadWriteTool`:
+"""Shared row-extent line-replacement mechanic behind `EditFileTool` and `EditScratchpadTool`:
 locating a possibly-drifted `[start_line, end_line]` span via `start_text`/`end_text`/
 `context_before`/`context_after` and substituting `new_text` for it, tolerating up to
 `drift_search_radius` lines of drift the same way `EditFileTool` always has -- see
 `klorb.tools.edit_file.EditFileTool` for the full user-facing contract this is the shared core
-of. Factored out so `klorb.tools.scratchpad_write.ScratchpadWriteTool` gets the identical
+of. Factored out so `klorb.tools.scratchpad.edit.EditScratchpadTool` gets the identical
 drift-tolerant substitution mechanic without duplicating it.
 """
 
@@ -36,8 +36,8 @@ def resolve_line_range_edit(
     `subject` names the thing being edited for the empty-subject error message (e.g. a
     filename, or `"the scratchpad"`). `reread_hint` is substituted into every raised
     `ValueError`'s suggestion for what to do next (e.g. `"re-ReadFile foo.py"` or
-    `"re-ScratchpadRead your scratchpad"`), so the message stays accurate for whichever caller
-    (`EditFileTool`/`ScratchpadWriteTool`) invoked this.
+    `"re-ReadScratchpad your scratchpad"`), so the message stays accurate for whichever caller
+    (`EditFileTool`/`EditScratchpadTool`) invoked this.
 
     Raises `ValueError` for an out-of-range span, a `start_text`/`end_text` mismatch with no
     nearby drift candidate, or an ambiguous match among more than one drift candidate.

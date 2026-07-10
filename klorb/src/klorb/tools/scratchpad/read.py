@@ -4,16 +4,16 @@
 import logging
 from typing import Any
 
-from klorb.tools.scratchpad_common import scratchpad_path
+from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool, truncate_lines
 
 logger = logging.getLogger(__name__)
 
 
-class ScratchpadReadTool(Tool):
+class ReadScratchpadTool(Tool):
     """Reads up to `max_lines` lines from the active session's scratchpad file (see
-    `klorb.session.Session.scratchpad_path`), each prefixed with its 1-indexed line number
+    `klorb.tools.scratchpad.common.Scratchpad`), each prefixed with its 1-indexed line number
     followed by `'|'`, exactly like `ReadFile` -- but pinned to that one file, so there is no
     `filename` argument and no `readDirs` permission check to perform: the scratchpad is
     harness-managed session state, not a model-nameable path.
@@ -24,7 +24,7 @@ class ScratchpadReadTool(Tool):
         self._max_lines = context.process_config.read_file_max_lines
 
     def name(self) -> str:
-        return "ScratchpadRead"
+        return "ReadScratchpad"
 
     def description(self) -> str:
         return (
@@ -64,7 +64,7 @@ class ScratchpadReadTool(Tool):
     def apply(self, args: dict[str, Any]) -> Any:
         start_line = args.get("start_line")
         end_line = args.get("end_line")
-        logger.debug("ScratchpadRead (start_line=%s, end_line=%s)", start_line, end_line)
+        logger.debug("ReadScratchpad (start_line=%s, end_line=%s)", start_line, end_line)
 
         if start_line is not None and start_line < 0:
             raise ValueError(
@@ -95,7 +95,7 @@ class ScratchpadReadTool(Tool):
         returned_end = effective_start + len(selected_lines) - \
             1 if selected_lines else effective_start - 1
         logger.debug(
-            "ScratchpadRead returned lines %d-%d of %d (truncated=%s)",
+            "ReadScratchpad returned lines %d-%d of %d (truncated=%s)",
             effective_start, returned_end, total_lines, returned_end < total_lines,
         )
 
@@ -119,7 +119,7 @@ class ScratchpadReadTool(Tool):
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with `result["content"]` capped to 8
-        lines — a full-length `ScratchpadRead` result can be up to `self._max_lines` (200 by
+        lines — a full-length `ReadScratchpad` result can be up to `self._max_lines` (200 by
         default) lines, far more than is useful to show inline.
         """
         if error is not None or not isinstance(result, dict) or "content" not in result:

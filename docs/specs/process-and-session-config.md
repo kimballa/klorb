@@ -324,7 +324,7 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `DEFAULT_FIND_FILE_MAX_RESULTS` in `process_config.py` are their sole canonical defaults — see
   [[tool-framework]].
 * `scratchpad_context_lines` (`tools.scratchpad.contextLines`) is consumed the same way by
-  `ScratchpadSearchTool` via `context.process_config.scratchpad_context_lines`;
+  `SearchScratchpadTool` via `context.process_config.scratchpad_context_lines`;
   `DEFAULT_SCRATCHPAD_CONTEXT_LINES` in `process_config.py` is its sole canonical default — see
   [[tool-framework]] and docs/specs/scratchpad.md.
 * `last-session.json` (`TODO.md`) doesn't exist yet; `_load_last_session_overrides()` is a

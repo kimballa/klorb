@@ -24,10 +24,11 @@ class ToolRegistry:
     """Discovers Tool subclasses defined in a package once, and acts as a factory for them
     for as long as this registry (and the `Session` it belongs to) lives.
 
-    By default, walks the klorb.tools package itself; pass a different package to
-    discover tools defined elsewhere (e.g. for testing). Discovery only collects each
-    concrete `Tool` subclass, not an instance of it — the module scan (`pkgutil.iter_modules`)
-    runs once, in `__init__`, never again for this registry's lifetime. Every call to
+    By default, walks the klorb.tools package itself, recursively into any subpackage (e.g.
+    `klorb.tools.scratchpad`) — pass a different package to discover tools defined elsewhere
+    (e.g. for testing). Discovery only collects each concrete `Tool` subclass, not an instance
+    of it — the module scan (`pkgutil.walk_packages`) runs once, in `__init__`, never again for
+    this registry's lifetime. Every call to
     `instantiate_tool()` (directly, or via `tools()`/`tool_definitions()`) builds a fresh
     `Tool` instance from a `ToolSetupContext` assembled from this registry's `process_config`
     and `session_config`, so a tool never carries state over between calls and always sees
@@ -59,7 +60,7 @@ class ToolRegistry:
     def _discover_tools(self, package: ModuleType) -> None:
         logger.debug("Discovering tools in package %s", package.__name__)
         prefix = f"{package.__name__}."
-        for module_info in pkgutil.iter_modules(package.__path__, prefix):
+        for module_info in pkgutil.walk_packages(package.__path__, prefix):
             module = importlib.import_module(module_info.name)
             for _, candidate in inspect.getmembers(module, inspect.isclass):
                 if candidate is Tool or not issubclass(candidate, Tool):

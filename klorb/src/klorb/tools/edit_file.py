@@ -22,7 +22,7 @@ class EditFileTool(Tool):
     .edit_file_drift_search_radius` lines of the hint for a unique location where
     `start_text`/`end_text` still match at the same relative span, and edits there instead of
     failing — see `klorb.tools.line_range_edit.resolve_line_range_edit`, the shared mechanic
-    this also powers for `ScratchpadWriteTool`. No match within that radius, or more than one,
+    this also powers for `EditScratchpadTool`. No match within that radius, or more than one,
     still raises `ValueError`.
 
     There is no separate insert or delete tool: insert without deleting by setting

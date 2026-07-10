@@ -6,14 +6,14 @@ import logging
 from typing import Any
 
 from klorb.tools.line_range_edit import resolve_line_range_edit
-from klorb.tools.scratchpad_common import scratchpad_path
+from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool, truncate_lines
 
 logger = logging.getLogger(__name__)
 
 
-class ScratchpadWriteTool(Tool):
+class EditScratchpadTool(Tool):
     """Replaces the inclusive line range `[start_line, end_line]` of the active session's
     scratchpad file with `new_text`, after locating `start_text`/`end_text` at (or near) those
     lines -- the same drift-tolerant row-extent substitution mechanic `EditFile` uses (see
@@ -34,7 +34,7 @@ class ScratchpadWriteTool(Tool):
         self._drift_search_radius = context.process_config.edit_file_drift_search_radius
 
     def name(self) -> str:
-        return "ScratchpadWrite"
+        return "EditScratchpad"
 
     def description(self) -> str:
         return (
@@ -49,13 +49,13 @@ class ScratchpadWriteTool(Tool):
             "line, and all of the new content (any number of lines, or none), goes in "
             "new_text instead — new_text is the only field that may be multi-line. "
             "start_text, end_text, new_text, context_before, and context_after are all raw "
-            "content: never include the 'N|' line-number prefix that ScratchpadRead prepends "
+            "content: never include the 'N|' line-number prefix that ReadScratchpad prepends "
             "to each line for display purposes. start_line/end_line are only a location hint, "
             "not exact coordinates: some offset drift (e.g. from an earlier edit) is "
             "tolerated — if start_text/end_text don't match exactly at the hint but match "
             "together, at the same relative offset, within a few lines of it, the edit is "
             "applied there. The response will report the corrected start_line/end_line plus "
-            "line_hint_matched=false. re-ScratchpadRead is only needed when no matching "
+            "line_hint_matched=false. re-ReadScratchpad is only needed when no matching "
             "location is found nearby. When more than one match is found ('Ambiguous match' "
             "error), retry with context_before / context_after arguments (lines of raw "
             "content immediately before start_line / after end_line, unique to the intended "
@@ -135,7 +135,7 @@ class ScratchpadWriteTool(Tool):
         new_text = args["new_text"]
         context_before = args.get("context_before")
         context_after = args.get("context_after")
-        logger.debug("ScratchpadWrite (start_line=%s, end_line=%s)", start_line, end_line)
+        logger.debug("EditScratchpad (start_line=%s, end_line=%s)", start_line, end_line)
 
         for label, value in (("start_line", start_line), ("end_line", end_line)):
             if not isinstance(value, int) or isinstance(value, bool):
@@ -160,7 +160,7 @@ class ScratchpadWriteTool(Tool):
             all_lines, start_line=start_line, end_line=end_line, start_text=start_text,
             end_text=end_text, new_text=new_text, context_before=context_before,
             context_after=context_after, drift_search_radius=self._drift_search_radius,
-            subject="the scratchpad", reread_hint="re-ScratchpadRead your scratchpad")
+            subject="the scratchpad", reread_hint="re-ReadScratchpad your scratchpad")
         resolved_start_line = edit.resolved_start_line
         resolved_end_line = edit.resolved_end_line
         line_hint_matched = edit.line_hint_matched
@@ -183,7 +183,7 @@ class ScratchpadWriteTool(Tool):
             f"{resolved_start_line + i}|{line}" for i, line in enumerate(new_text.splitlines()))
 
         logger.debug(
-            "ScratchpadWrite replaced lines %d-%d (now %d-%d) of what is now a %d-line "
+            "EditScratchpad replaced lines %d-%d (now %d-%d) of what is now a %d-line "
             "scratchpad", resolved_start_line, resolved_end_line, resolved_start_line,
             snippet_end, new_total_lines,
         )
@@ -199,7 +199,7 @@ class ScratchpadWriteTool(Tool):
         }
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """`"Write scratchpad (+A/-R)"`, where the added/removed line counts are computed from
+        """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts are computed from
         the call's own `start_line`/`end_line`/`new_text` args (not `result`), so the summary
         is identical on success and failure and unaffected by drift relocation, which preserves
         the requested span's length.
@@ -210,7 +210,7 @@ class ScratchpadWriteTool(Tool):
             removed = end_line - start_line + 1
             added = new_text.count("\n") + 1 if new_text else 0
             diff = f" (+{added}/-{removed})"
-        base = f"Write scratchpad{diff}"
+        base = f"Edit scratchpad{diff}"
         return base if error is None else f"{base} failed: {error}"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:

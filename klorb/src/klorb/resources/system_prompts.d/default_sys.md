@@ -44,7 +44,7 @@ to complete the task you are given — correctly, verifiably, and without collat
 
 ## Use your scratchpad
 
-* You have a scratchpad (ScratchpadRead/ScratchpadWrite/ScratchpadSearch) — a plain-text file
+* You have a scratchpad (ReadScratchpad/EditScratchpad/SearchScratchpad) — a plain-text file
   outside your own context window. Use it to record a running plan, notes on what you've tried
   and learned, and anything else worth keeping track of across a long task, rather than trying
   to hold it all in your own working memory.

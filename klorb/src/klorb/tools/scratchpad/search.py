@@ -6,14 +6,14 @@ import logging
 import re
 from typing import Any
 
-from klorb.tools.scratchpad_common import scratchpad_path
+from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
 
 
-class ScratchpadSearchTool(Tool):
+class SearchScratchpadTool(Tool):
     """Searches the active session's scratchpad file for every line matching any of `queries` --
     each treated as a regular expression, combined into one case-insensitive alternation
     (equivalent to `grep -i -e '(seq1)|(seq2)|...'` against the scratchpad file) -- and returns
@@ -28,7 +28,7 @@ class ScratchpadSearchTool(Tool):
         self._context_lines = context.process_config.scratchpad_context_lines
 
     def name(self) -> str:
-        return "ScratchpadSearch"
+        return "SearchScratchpad"
 
     def description(self) -> str:
         return (
@@ -65,7 +65,7 @@ class ScratchpadSearchTool(Tool):
         for query in queries:
             if not isinstance(query, str):
                 raise ValueError(f"each entry in queries must be a string, got {query!r}")
-        logger.debug("ScratchpadSearch %r", queries)
+        logger.debug("SearchScratchpad %r", queries)
 
         combined_pattern = "|".join(f"(?:{query})" for query in queries)
         try:
@@ -102,7 +102,7 @@ class ScratchpadSearchTool(Tool):
         ]
 
         logger.debug(
-            "ScratchpadSearch found %d match(es) in %d block(s)", len(matched_indices), len(blocks))
+            "SearchScratchpad found %d match(es) in %d block(s)", len(matched_indices), len(blocks))
 
         return {
             "queries": queries,

@@ -135,35 +135,21 @@ def test_session_uses_explicitly_given_id() -> None:
     assert session.id == "my-custom-id"
 
 
-def test_session_creates_a_fresh_scratchpad_by_default() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
-
-    assert session.scratchpad_path.name == "SCRATCHPAD.md"
-    assert session.scratchpad_path.is_file()
-    assert session.scratchpad_path.read_text() == ""
-
-
-def test_session_scratchpads_are_independent_across_sessions() -> None:
-    first = Session(SessionConfig(), provider=MagicMock())
-    second = Session(SessionConfig(), provider=MagicMock())
-
-    assert first.scratchpad_path != second.scratchpad_path
-    assert first.scratchpad_path.parent != second.scratchpad_path.parent
-
-
-def test_session_reuses_a_given_scratchpad_path(tmp_path: Path) -> None:
+def test_session_scratchpad_path_delegates_to_scratchpad(tmp_path: Path) -> None:
+    """Session itself does no scratchpad provisioning of its own -- it just owns a
+    `klorb.tools.scratchpad.common.Scratchpad` and exposes its `.path`. Detailed provisioning
+    behavior (fresh-vs-reused, tempdir independence) is covered by test_scratchpad_common.py."""
     shared = tmp_path / "team-scratchpad.md"
     shared.write_text("existing notes\n")
 
     session = Session(SessionConfig(), provider=MagicMock(), scratchpad_path=str(shared))
 
     assert session.scratchpad_path == shared
-    assert session.scratchpad_path.read_text() == "existing notes\n"
 
 
 def test_session_scratchpad_grants_no_readdirs_writedirs_access() -> None:
     """A freshly created scratchpad's directory is not added to config.read_dirs/write_dirs --
-    see docs/adrs/scratchpad-tools-bypass-permission-tables.md -- the dedicated Scratchpad*
+    see docs/adrs/scratchpad-tools-bypass-permission-tables.md -- the dedicated Scratchpad
     tools reach it directly, with no permission-table check, instead."""
     config = SessionConfig()
 

@@ -3,7 +3,6 @@
 
 import json
 import logging
-import tempfile
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -29,6 +28,7 @@ from klorb.permissions.table import (
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
+from klorb.tools.scratchpad.common import Scratchpad
 from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -63,13 +63,6 @@ DEFAULT_MAX_TOOL_CALLS_PER_SESSION = 200
 """Default value of `SessionConfig.max_tool_calls_per_session`: how many individual tool
 calls a `Session` will execute across its entire lifetime (every turn combined) before asking
 the user whether to keep going (see `Session._confirm_limit_increase`)."""
-
-
-SCRATCHPAD_FILENAME = "SCRATCHPAD.md"
-"""Filename `Session.__init__` gives a freshly created scratchpad file, within a fresh
-`tempfile.mkdtemp()` directory, whenever it isn't handed an existing `scratchpad_path` to reuse
-— see `Session._init_scratchpad` and the `ScratchpadRead`/`ScratchpadWrite`/`ScratchpadSearch`
-tools."""
 
 
 class ToolCallLimitExceeded(Exception):
@@ -417,40 +410,20 @@ class Session:
         self._teardown_callbacks: dict[str, Callable[[], None]] = {}
         """Callbacks registered via `register_teardown()`, keyed by subject, invoked once each
         by `close()`. See `register_teardown`/`close`."""
-        self._scratchpad_path = self._init_scratchpad(scratchpad_path)
-        """This session's scratchpad file — see `scratchpad_path` and the `ScratchpadRead`/
-        `ScratchpadWrite`/`ScratchpadSearch` tools. Resolved once, here, from the
-        `scratchpad_path` constructor argument (see `_init_scratchpad`)."""
-
-    def _init_scratchpad(self, scratchpad_path: str | None) -> Path:
-        """Resolve this session's scratchpad file: `scratchpad_path` unchanged (as a `Path`) if
-        given -- the caller's own file, already presumed to exist, e.g. a scratchpad shared by
-        several sessions in an agent team so they can coordinate through it -- otherwise a
-        fresh `SCRATCHPAD_FILENAME` file inside a brand new `tempfile.mkdtemp()` directory,
-        touched into existence immediately so `ScratchpadWrite`'s first call has a real,
-        zero-length file to edit rather than a `FileNotFoundError`.
-
-        This grants no `readDirs`/`writeDirs` access: the `ScratchpadRead`/`ScratchpadWrite`/
-        `ScratchpadSearch` tools read/write this path directly, with no permission-table check
-        at all (see docs/adrs/scratchpad-tools-bypass-permission-tables.md) -- there's nothing
-        for such a grant to enable that isn't already available through those tools.
-        """
-        if scratchpad_path is not None:
-            return Path(scratchpad_path)
-        scratchpad_dir = Path(tempfile.mkdtemp(prefix="klorb-scratchpad-"))
-        path = scratchpad_dir / SCRATCHPAD_FILENAME
-        path.touch()
-        return path
+        self._scratchpad = Scratchpad(scratchpad_path)
+        """Owns this session's scratchpad file — see `scratchpad_path` and
+        `klorb.tools.scratchpad.common.Scratchpad`, which does all the work of resolving
+        `scratchpad_path` (a caller-supplied path to reuse, or a freshly provisioned one)."""
 
     @property
     def scratchpad_path(self) -> Path:
         """Return this session's scratchpad file — a private-to-this-session (or, when
         `scratchpad_path` was supplied to the constructor, shared-with-a-team) plain-text file
-        the `ScratchpadRead`/`ScratchpadWrite`/`ScratchpadSearch` tools read and write, for
+        the `ReadScratchpad`/`EditScratchpad`/`SearchScratchpad` tools read and write, for
         recording plans and notes that need to persist or be shared outside the model's own
-        context window. See `_init_scratchpad`.
+        context window. See `klorb.tools.scratchpad.common.Scratchpad`.
         """
-        return self._scratchpad_path
+        return self._scratchpad.path
 
     @property
     def role(self) -> Role:
