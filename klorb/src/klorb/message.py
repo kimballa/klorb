@@ -42,6 +42,19 @@ class Message(BaseModel):
 
     role: MessageRole
     num_tokens: int
+    estimated_tokens: int | None = None
+    """A cheap, client-side token-count estimate (`klorb.token_estimate.estimate_tokens`) for
+    this message's current content, or `None` once its true cost is accounted for by a real,
+    server-reported count. Populated the moment content exists for a message -- at
+    construction for a bookkeeping/user/tool-response message, and on every streamed chunk for
+    an in-progress assistant/thinking placeholder -- so `Session.total_tokens_used()` has a
+    live number to report before any round trip completes. Cleared back to `None` for every
+    message in one sweep (`Session._settle_estimated_tokens()`) the moment any round
+    completes, since that round's real `prompt_tokens` already covers every message sent as
+    its input, however many earlier rounds contributed to it -- except a reply/thinking
+    placeholder left `"aborted"` mid-stream, which was never part of a completed round's
+    input or output and keeps this estimate permanently. See
+    docs/adrs/null-estimated-tokens-when-a-real-count-supersedes-them.md."""
     timestamp: datetime
     "Timestamp user msg was sent, or beginning of streaming response was received."
     processing_state: ProcessingState

@@ -145,6 +145,114 @@ def test_total_tokens_used_sums_recorded_message_tokens() -> None:
     assert session.total_tokens_used() == 10 + 5
 
 
+def test_estimated_tokens_contribute_to_total_before_settlement() -> None:
+    mock_provider = MagicMock()
+    seen_totals: list[int] = []
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+    ):
+        seen_totals.append(session.total_tokens_used())
+        on_chunk("hello")
+        seen_totals.append(session.total_tokens_used())
+        on_chunk(" there, world")
+        seen_totals.append(session.total_tokens_used())
+        return _reply("hello there, world", num_tokens=5, prompt_tokens=10)
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert seen_totals[0] > 0
+    assert seen_totals[1] > seen_totals[0]
+    assert seen_totals[2] > seen_totals[1]
+    assert session.total_tokens_used() == 10 + 5
+    assert all(message.estimated_tokens is None for message in session.messages)
+
+
+def test_aborted_placeholder_keeps_its_estimate_permanently() -> None:
+    mock_provider = MagicMock()
+
+    def aborting_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+    ):
+        on_chunk("partial rep")
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = aborting_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    with pytest.raises(ResponseAborted):
+        session.send_turn("hi")
+
+    _system_message, user_message, assistant_message = session.messages
+    assert assistant_message.processing_state == "aborted"
+    assert assistant_message.estimated_tokens is not None
+    assert assistant_message.estimated_tokens > 0
+    assert user_message.num_tokens == 0
+    assert session.total_tokens_used() == sum(
+        message.estimated_tokens or 0 for message in session.messages)
+
+
+def test_completed_round_clears_reply_estimate_before_turn_settles() -> None:
+    mock_provider = MagicMock()
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    calls_made = 0
+
+    def scripted_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+    ):
+        nonlocal calls_made
+        calls_made += 1
+        if calls_made == 1:
+            on_chunk("calling tool")
+            return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+        # The first round's real prompt_tokens/completion_tokens already settled every
+        # message that existed as of that round (bookkeeping, user, the streamed reply)
+        # before this second round is even sent, rather than waiting for the whole turn to
+        # finish. The tool_response appended just now (after round 1, before round 2) hasn't
+        # been covered by any real count yet, so it's the one message still holding an
+        # estimate at this point.
+        assert all(
+            m.estimated_tokens is None for m in session.messages if m.role != "tool_response")
+        tool_response = next(m for m in session.messages if m.role == "tool_response")
+        assert tool_response.estimated_tokens is not None
+        return _reply("final answer", num_tokens=4, prompt_tokens=20)
+
+    mock_provider.send_prompt.side_effect = scripted_send_prompt
+
+    response = session.send_turn("please echo")
+
+    assert response == "final answer"
+    assert all(m.estimated_tokens is None for m in session.messages)
+
+
+def test_total_tokens_used_does_not_double_count_a_replayed_round() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3, prompt_tokens=10),
+        _reply("final answer", num_tokens=4, prompt_tokens=20),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    # Round 2's prompt_tokens (20) already includes round 1's reply (completion_tokens=3)
+    # resent as history, so the running total must be the latest round's own
+    # prompt_tokens + completion_tokens (24), not a sum across every round's individually
+    # recorded num_tokens (0 + 0 + 20 + 3 + 0 + 4 = 27), which would double-count round 1's
+    # reply once directly and once folded into round 2's delta.
+    assert session.total_tokens_used() == 20 + 4
+
+
 def test_max_context_window_reads_registered_model_capabilities() -> None:
     config = SessionConfig(model="alpha")
     registry = ModelRegistry(package=sample_models_package)

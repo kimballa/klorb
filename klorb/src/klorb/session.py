@@ -27,6 +27,7 @@ from klorb.permissions.table import (
 )
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
+from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
 from klorb.tools.scratchpad.common import Scratchpad
 from klorb.workspace import Workspace
@@ -383,6 +384,16 @@ class Session:
         a caller that constructs a `Session` without a `ProcessConfig` at all, as most
         unit tests do)."""
         self._messages: list[Message] = []
+        self._last_known_real_tokens = 0
+        """The most recent `prompt_tokens + completion_tokens` reported for any completed
+        round (`_send_and_receive`'s success path) -- always the exact current size of the
+        whole conversation, since a round's `prompt_tokens` already reflects every message
+        sent as input to it, however many earlier rounds contributed to that history. This is
+        what `total_tokens_used()` reports as the settled portion of its total, instead of
+        summing every message's own `num_tokens`, which would double-count an earlier round's
+        reply: its completion tokens are billed once as that round's own output, then billed
+        again as prompt tokens once resent as history to the next round. See
+        docs/adrs/null-estimated-tokens-when-a-real-count-supersedes-them.md."""
         self._context_files_seeded = False
         """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the
         one-shot `ProjectGuidance` `<SystemInterjection>` carrying the workspace's
@@ -546,9 +557,32 @@ class Session:
         """Sum of `num_tokens` across all messages currently in the buffer."""
         return sum(message.num_tokens for message in self._messages)
 
+    def _settle_estimated_tokens(self) -> None:
+        """Clear `estimated_tokens` on every message in the buffer: called right after
+        `_last_known_real_tokens` is updated from a just-completed round's real
+        `prompt_tokens`/`completion_tokens` (see `_send_and_receive`), since that round's
+        `prompt_tokens` already reflects every message currently in history as this round's
+        input -- there's nothing left for any message's own estimate to cover. Only ever
+        called from that success path, so a message can't be `"aborted"` here: aborting
+        raises out of `_send_and_receive` before this point, leaving that round's
+        placeholder(s) with their estimate intact instead (see
+        docs/adrs/null-estimated-tokens-when-a-real-count-supersedes-them.md).
+        """
+        for message in self._messages:
+            message.estimated_tokens = None
+
     def total_tokens_used(self) -> int:
-        """Return the running total of tokens consumed by the conversation so far."""
-        return self._tokens_recorded_so_far()
+        """Return the running total of tokens consumed by the conversation so far:
+        `_last_known_real_tokens` (the last completed round's real, server-reported
+        `prompt_tokens + completion_tokens` -- already the exact size of the whole
+        conversation as of that round, see `_last_known_real_tokens`), plus `estimated_tokens`
+        for any message not yet covered by that report -- content streaming in for the round
+        currently in flight, or (before the first round of the session completes) the initial
+        system/tool_defs/user content. This gives the context-usage footer a live number that
+        updates as content streams in, without double-counting an earlier round's reply once
+        it's resent as history to a later one."""
+        return self._last_known_real_tokens + sum(
+            message.estimated_tokens or 0 for message in self._messages)
 
     def max_context_window(self) -> int | None:
         """Return the active model's max context window in tokens, or `None` if the
@@ -625,6 +659,7 @@ class Session:
             content=system_prompt,
             role="system",
             num_tokens=0,
+            estimated_tokens=estimate_tokens(system_prompt),
             processing_state="complete",
             timestamp=datetime.now(),
         ))
@@ -647,11 +682,13 @@ class Session:
         definitions = self._tool_registry.tool_definitions()
         if not definitions:
             return
+        definitions_json = json.dumps(definitions)
         insert_index = 1 if self._messages and self._messages[0].role == "system" else 0
         self._messages.insert(insert_index, Message(
-            content=json.dumps(definitions),
+            content=definitions_json,
             role="tool_defs",
             num_tokens=0,
+            estimated_tokens=estimate_tokens(definitions_json),
             processing_state="complete",
             timestamp=datetime.now(),
         ))
@@ -1026,6 +1063,7 @@ class Session:
                 content=content,
                 role="tool_response",
                 num_tokens=0,
+                estimated_tokens=estimate_tokens(content),
                 processing_state="complete",
                 timestamp=datetime.now(),
                 tool_call_id=call.id,
@@ -1063,6 +1101,16 @@ class Session:
         already folded into the reply message's `num_tokens` via `result.message.num_tokens`,
         so giving the thinking message its own count would double-count them.
 
+        Both placeholders' `estimated_tokens` are refreshed from `klorb.token_estimate.
+        estimate_tokens` on every chunk while streaming (so `Session.total_tokens_used()` has
+        a live number before this round trip completes). On success, every message currently
+        in history -- not just these two placeholders -- has `estimated_tokens` cleared back
+        to `None` via `_settle_estimated_tokens()`, and `Session._last_known_real_tokens` is
+        updated to `result.prompt_tokens + result.message.num_tokens`: that sum is already the
+        exact size of the whole conversation as of this round, since `prompt_tokens` reflects
+        every message just sent as this round's input, however many earlier rounds
+        contributed to it.
+
         On any exception other than `ResponseAborted`, whichever placeholder(s) were created
         are mutated to `processing_state="error"`/`last_error` (partial `streaming_content`
         left intact) before re-raising, mirroring how the caller is expected to mark the
@@ -1089,6 +1137,7 @@ class Session:
                 self._messages.append(placeholder)
             assert placeholder.streaming_content is not None
             placeholder.streaming_content.append(delta_text)
+            placeholder.estimated_tokens = estimate_tokens("".join(placeholder.streaming_content))
             if callbacks.on_chunk is not None:
                 callbacks.on_chunk(delta_text)
 
@@ -1106,6 +1155,8 @@ class Session:
                 self._messages.append(thinking_placeholder)
             assert thinking_placeholder.streaming_content is not None
             thinking_placeholder.streaming_content.append(delta_text)
+            thinking_placeholder.estimated_tokens = estimate_tokens(
+                "".join(thinking_placeholder.streaming_content))
             if callbacks.on_thinking_chunk is not None:
                 callbacks.on_thinking_chunk(delta_text)
 
@@ -1153,6 +1204,9 @@ class Session:
 
         if placeholder.tool_calls:
             placeholder.role = "tool_use"
+
+        self._last_known_real_tokens = result.prompt_tokens + result.message.num_tokens
+        self._settle_estimated_tokens()
 
         return placeholder, result
 
@@ -1309,6 +1363,7 @@ class Session:
             content=prompt,
             role="user",
             num_tokens=0,
+            estimated_tokens=estimate_tokens(prompt),
             processing_state="pending",
             timestamp=datetime.now(),
         )

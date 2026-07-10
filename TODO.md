@@ -11,10 +11,6 @@
 
 # Feature backlog
 
-* Count all of the tokens client-side and assign an 'estimated\_tokens' field to every
-  message, so we can do a reasonable job of intermediate context buffer fill-up estimation
-  and advertising to the user in the "nn / 260k" footer widget.
-
 * ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
   that readfile and editfile can interact in a loop. 

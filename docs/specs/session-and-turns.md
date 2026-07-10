@@ -227,7 +227,11 @@ klorb                                    # REPL, no initial message (default)
 * The system prompt's token cost is folded into the first user turn's `num_tokens` delta
   rather than given its own count on the bookkeeping `role="system"` `Message` (which always
   has `num_tokens=0`) — an intentional v1 approximation, since there's no per-message
-  tokenizer to attribute tokens precisely without a round trip to the model.
+  tokenizer to attribute tokens precisely without a round trip to the model. Until that round
+  trip settles, `total_tokens_used()` reports a client-side estimate of the same cost instead
+  (see [[message-model]]'s `estimated_tokens` and
+  [[null-estimated-tokens-when-a-real-count-supersedes-them]]), so the context-usage footer
+  has a live number to show even mid-turn.
 * `retry_last_turn()` exists on `Session` but isn't yet exposed through the TUI or CLI.
 * Persisting `SessionConfig` across invocations is not implemented yet.
 * `retry_last_turn()` restarts a tool-calling turn from scratch (resending the original user
