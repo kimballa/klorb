@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Library logic behind `klorb init`: copies the packaged, spartan `template-config.json` into
-place and points a `klorb` executable symlink at the running process's own launcher script.
+place, points a `klorb` executable symlink at the running process's own launcher script, and
+copies the packaged tiktoken cache tree into `$KLORB_DATA_DIR` (see `klorb.token_estimate`).
 Shared by the CLI subcommand (`klorb.cli`) and the "Init local klorb config" command palette
 action (`klorb.tui.init_commands`) — see docs/specs/klorb-init.md.
 
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Literal
 
 from klorb.process_config import etc_config_path, user_config_path
+from klorb.token_estimate import install_tiktoken_cache
 
 InitScope = Literal["system", "user"]
 
@@ -157,20 +159,37 @@ def create_symlink(scope: InitScope, *, force: bool) -> StepResult:
     return StepResult(messages)
 
 
-def run_init(scope: InitScope, *, force: bool) -> list[str]:
-    """Run both `klorb init` steps for `scope` — write the starter config file, then create
-    the executable symlink — stopping at the first one that raises `InitError` rather than
-    attempting the next. Refuses a `"system"` scope outright, before either step, unless
-    running as root (effective uid 0).
+def copy_tiktoken_cache() -> StepResult:
+    """Copy the packaged tiktoken cache tree into `klorb.token_estimate.
+    tiktoken_cache_target_dir()` (`$KLORB_DATA_DIR/tiktoken-cache`), creating it as needed, so
+    a later klorb process start can point tiktoken at it without needing network access — see
+    `klorb.token_estimate.configure_tiktoken_cache_env()`, called from `klorb.cli.main()`.
+    Unlike `write_config_file`/`create_symlink`, not scoped to `"system"`/`"user"` — `$KLORB_
+    DATA_DIR` has no `"system"`-scope counterpart — so `run_init()` runs this step once
+    regardless of `scope`. Raises `InitError` if the target can't be created or written.
+    """
+    try:
+        messages = install_tiktoken_cache()
+    except OSError as exc:
+        raise InitError(f"Failed to copy tiktoken cache: {exc}") from exc
+    return StepResult(messages)
 
-    Returns the combined, ordered progress messages from every step that ran. Neither step's
-    own "already exists; not overwriting" outcome is an error: each is independent and
-    idempotent, so an already-initialized machine can safely re-run `klorb init` and see the
-    other step still complete.
+
+def run_init(scope: InitScope, *, force: bool) -> list[str]:
+    """Run every `klorb init` step for `scope` — write the starter config file, create the
+    executable symlink, then copy the packaged tiktoken cache tree — stopping at the first one
+    that raises `InitError` rather than attempting the next. Refuses a `"system"` scope
+    outright, before any step, unless running as root (effective uid 0).
+
+    Returns the combined, ordered progress messages from every step that ran. Neither
+    scoped step's own "already exists; not overwriting" outcome is an error: each is
+    independent and idempotent, so an already-initialized machine can safely re-run `klorb
+    init` and see the other steps still complete.
     """
     if scope == "system" and os.geteuid() != 0:
         raise InitError(f"klorb init --system must be run as root (target: {config_target_path(scope)}).")
 
     messages = list(write_config_file(scope, force=force).messages)
     messages.extend(create_symlink(scope, force=force).messages)
+    messages.extend(copy_tiktoken_cache().messages)
     return messages

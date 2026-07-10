@@ -69,6 +69,8 @@ paths or calling `logging.basicConfig` itself.
 
 * Log rotation/pruning of old files under `session-logs/` is not implemented; every run
   leaves its log file in place indefinitely.
-* `KLORB_CONFIG_DIR` is now read from, by `klorb.process_config` — see
-  [[process-and-session-config]]. `KLORB_DATA_DIR` still has no reader or writer; it exists
-  so a future feature (e.g. cached data) has a conventional location to build on.
+* `KLORB_CONFIG_DIR` is read from by `klorb.process_config` — see
+  [[process-and-session-config]]. `KLORB_DATA_DIR` is written to by `klorb.klorb_init`'s
+  `copy_tiktoken_cache()` step and read back by `klorb.token_estimate`'s
+  `configure_tiktoken_cache_env()` — see [[klorb-init]] — the first feature to build on it as
+  a conventional location for cached data.

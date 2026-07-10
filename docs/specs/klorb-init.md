@@ -14,8 +14,8 @@ command reuses.
 ## How it works
 
 * `klorb.klorb_init` (`klorb/src/klorb/klorb_init.py`) holds the library logic, independent
-  of both the CLI and the TUI, as two independent, idempotent steps, each scoped to either
-  `"system"` or `"user"`:
+  of both the CLI and the TUI. `run_init()` runs three independent, idempotent steps: two
+  scoped to either `"system"` or `"user"`, and a third, unscoped step:
   * `write_config_file(scope, force=...)` copies the packaged, spartan starter file
     `template-config.json` (`template_config_text()`, read from `klorb.resources` via
     `importlib.resources` — see [[ship-reference-klorb-config-as-package-data]] and
@@ -34,16 +34,26 @@ command reuses.
     pointing at `sys.argv[0]` resolved to an absolute path — whatever launcher script the
     running `klorb` process was actually invoked as (ordinarily the `pip`/`uv`-installed
     console-script shim).
-  * Each step is a no-op if its target already exists — it returns a single "already exists;
-    not overwriting" message and leaves the target untouched — unless `force=True`, in which
-    case it removes the existing file/symlink first (with its own preceding warning message)
-    before writing the fresh one.
-  * `run_init(scope, force=...)` runs both steps in that order and returns their combined,
-    ordered progress messages. It refuses a `"system"` scope outright, before either step
-    runs, unless the process's effective uid is `0` (raises `InitError`). Either step's own
+  * Each of these two scoped steps is a no-op if its target already exists — it returns a
+    single "already exists; not overwriting" message and leaves the target untouched — unless
+    `force=True`, in which case it removes the existing file/symlink first (with its own
+    preceding warning message) before writing the fresh one.
+  * `copy_tiktoken_cache()` recursively copies the packaged `tiktoken-cache` resource tree
+    (`klorb.resources/tiktoken-cache/`, one subdirectory per tiktoken encoding name — today,
+    only `o200k_base`) into `klorb.token_estimate.tiktoken_cache_target_dir()`
+    (`$KLORB_DATA_DIR/tiktoken-cache`), creating it as needed, via
+    `klorb.token_estimate.install_tiktoken_cache()`. Not scoped to `"system"`/`"user"` and has
+    no `force` gate: `$KLORB_DATA_DIR` has no `"system"`-scope counterpart, and it's package
+    data the running klorb version ships with (not something a user hand-edits), so it's
+    cheap and safe to re-copy on every `klorb init` run. See [[paths-and-logging]] for
+    `$KLORB_DATA_DIR` and `klorb.cli.main()`'s `configure_tiktoken_cache_env()` call below for
+    how this copy gets used.
+  * `run_init(scope, force=...)` runs all three steps in that order and returns their
+    combined, ordered progress messages. It refuses a `"system"` scope outright, before any
+    step runs, unless the process's effective uid is `0` (raises `InitError`). Any step's own
     `InitError` (e.g. a permission-denied `mkdir`) also propagates immediately out of
-    `run_init`, so a failure in the config-file step means the symlink step never runs — but
-    a step's own "already exists" outcome is not an error and never blocks the other step.
+    `run_init`, stopping the remaining steps — but a scoped step's own "already exists"
+    outcome is not an error and never blocks the others.
   * `default_scope()` returns `"system"` when the effective uid is `0`, `"user"` otherwise —
     the same check `run_init` itself uses to reject `"system"`, so the unqualified `klorb
     init` never picks a scope it would then immediately refuse.
@@ -80,6 +90,17 @@ command reuses.
   first time the REPL starts, if `klorb.process_config.user_config_path()` doesn't exist yet,
   reading `CONFIG_MISSING_MESSAGE`: "Klorb configuration file not found. Run `>Init local
   klorb config` to set up."
+* `klorb.cli.main()` calls `klorb.token_estimate.configure_tiktoken_cache_env()` once per
+  process, right after `configure_logging()` runs (so its log message is actually visible) and
+  before either the REPL or a one-shot prompt can trigger a token estimate. It checks whether
+  `klorb.token_estimate.tiktoken_cache_encoding_dir()` (`$KLORB_DATA_DIR/tiktoken-cache/
+  o200k_base`, populated by `copy_tiktoken_cache()` above) exists; if so, it sets the
+  `TIKTOKEN_CACHE_DIR` environment variable to that directory and logs (`logger.info`) that it
+  did, so `klorb.token_estimate.estimate_tokens()`'s first `tiktoken.get_encoding("o200k_base")`
+  call reads the bundled BPE file from disk instead of downloading it from OpenAI's blob
+  storage. A no-op — no env var set, nothing logged — on a fresh install that hasn't run
+  `klorb init` yet; tiktoken falls back to its own default cache/download behavior in that
+  case.
 
 ## Usage
 

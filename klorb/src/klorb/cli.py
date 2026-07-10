@@ -13,6 +13,7 @@ from klorb.logging_config import configure_logging, session_log_path
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import load_process_config
 from klorb.session import Session
+from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.repl import run_repl
 from klorb.workspace import TrustManager
@@ -168,6 +169,10 @@ def main() -> None:
     fresh `TrustManager` before `load_process_config()` runs, so both a headless one-shot
     prompt and the REPL honor whatever trust decision a previous interactive session recorded
     for this directory. See docs/specs/projects-and-trust.md.
+
+    Calls `klorb.token_estimate.configure_tiktoken_cache_env()` once logging is configured (so
+    its log message is actually visible), pointing tiktoken at the `klorb init`-installed
+    cache if one is present.
     """
     load_dotenv()
 
@@ -218,6 +223,8 @@ def main() -> None:
     log_path = session_log_path(session.id) if session_log else None
     configure_logging(repl_mode=interactive, log_path=log_path)
     logger.debug("Logging to %s", log_path)
+
+    configure_tiktoken_cache_env()
 
     if interactive:
         run_repl(

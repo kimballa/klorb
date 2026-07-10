@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from klorb import cli
+from klorb import token_estimate as token_estimate_module
 from klorb.klorb_init import InitError
 from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
@@ -20,9 +21,12 @@ from klorb.workspace import trust_manager as trust_manager_module
 @pytest.fixture(autouse=True)
 def _isolate_projects_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point `klorb.workspace.trust_manager.projects_path()` (and so the real `TrustManager()`
-    `cli.main()` constructs) at an empty location under `tmp_path`, so no test in this module
-    reads or writes the developer's own `$KLORB_DATA_DIR/projects.json`."""
+    `cli.main()` constructs) and `klorb.token_estimate.tiktoken_cache_target_dir()` (and so
+    `cli.main()`'s `configure_tiktoken_cache_env()` call) at an empty location under
+    `tmp_path`, so no test in this module reads or writes the developer's own
+    `$KLORB_DATA_DIR/projects.json` or `$KLORB_DATA_DIR/tiktoken-cache/`."""
     monkeypatch.setattr(trust_manager_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(token_estimate_module, "KLORB_DATA_DIR", tmp_path / "data")
 
 
 @pytest.fixture(autouse=True)

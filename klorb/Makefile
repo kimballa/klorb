@@ -8,7 +8,7 @@
 #   * `make sync_deps` to resolve and update dependency locks from the pkg manager.
 
 COMMANDS=help lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test evals venv
+	install_deps install_dev_deps test evals venv init
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
@@ -30,6 +30,9 @@ PYTHON_VERSION := $(shell cut -d. -f1-2 .python-version)
 PYTHON_LIB_DIR := python$(PYTHON_VERSION)
 # Python executable to use for execution inside the virtual environment.
 VENV_PYTHON=$(CURDIR)/venv/bin/python3
+# `klorb` console-script entry point installed into the venv by the `venv` target (see
+# pyproject.toml's [project.scripts]).
+KLORB_BIN=$(CURDIR)/venv/bin/klorb
 
 PYPROJECT=pyproject.toml
 # Dependencies needed at runtime:
@@ -112,6 +115,13 @@ install_dev_deps: venv
 	$(LOAD_VENV); "$(UV)" pip install -r "$(LOCAL_REQUIREMENTS)"
 	@echo ""
 	@echo "Installed runtime and development dependencies."
+
+# Bootstrap a klorb-config.json, a klorb executable symlink, and the bundled tiktoken cache
+# for this venv's own klorb (see docs/specs/klorb-init.md). `--force` overwrites an existing
+# config file/symlink rather than leaving it alone, so re-running this target (e.g. a repeated
+# cloud_setup) always ends up with the freshly-installed version's files.
+init: venv
+	$(LOAD_VENV); "$(KLORB_BIN)" init --force
 
 clean:
 	find src -name "*.pyo" -delete

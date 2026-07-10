@@ -22,6 +22,6 @@ cloud_setup:
 	# Install system dependencies
 	$(APT_GET) update -qq || true
 	$(APT_GET) -y --fix-missing install bubblewrap
-	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps
+	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
 
 .PHONY: ${COMMANDS}

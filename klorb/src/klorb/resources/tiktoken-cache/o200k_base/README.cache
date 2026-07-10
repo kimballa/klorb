@@ -1,0 +1,5 @@
+The o200k_base file is renamed after the sha1sum of the URL where it was retrieved:
+
+echo -n 'https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken' | sha1sum
+# Output: fb374d419588a4632f3f557e76b4b70aebbca790  -
+

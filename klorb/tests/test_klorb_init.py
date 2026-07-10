@@ -13,6 +13,7 @@ from klorb.klorb_init import (
     InitError,
     StepResult,
     config_target_path,
+    copy_tiktoken_cache,
     create_symlink,
     default_scope,
     is_user_scope_initialized,
@@ -186,7 +187,9 @@ def test_run_init_refuses_system_scope_when_not_root(monkeypatch: pytest.MonkeyP
         run_init("system", force=False)
 
 
-def test_run_init_runs_config_then_symlink_and_combines_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_init_runs_config_then_symlink_then_tiktoken_cache_and_combines_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     call_order: list[str] = []
 
     def _fake_write_config_file(scope: str, *, force: bool) -> StepResult:
@@ -197,34 +200,62 @@ def test_run_init_runs_config_then_symlink_and_combines_messages(monkeypatch: py
         call_order.append("symlink")
         return StepResult(["symlink-msg"])
 
+    def _fake_copy_tiktoken_cache() -> StepResult:
+        call_order.append("tiktoken-cache")
+        return StepResult(["tiktoken-cache-msg"])
+
     monkeypatch.setattr(klorb_init, "write_config_file", _fake_write_config_file)
     monkeypatch.setattr(klorb_init, "create_symlink", _fake_create_symlink)
+    monkeypatch.setattr(klorb_init, "copy_tiktoken_cache", _fake_copy_tiktoken_cache)
 
     messages = run_init("user", force=False)
 
-    assert call_order == ["config", "symlink"]
-    assert messages == ["config-msg", "symlink-msg"]
+    assert call_order == ["config", "symlink", "tiktoken-cache"]
+    assert messages == ["config-msg", "symlink-msg", "tiktoken-cache-msg"]
 
 
-def test_run_init_stops_at_first_error_without_attempting_symlink(
+def test_run_init_stops_at_first_error_without_attempting_later_steps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    symlink_called: list[bool] = []
+    later_steps_called: list[str] = []
 
     def _fail(scope: str, *, force: bool) -> StepResult:
         raise InitError("boom")
 
     def _fake_create_symlink(scope: str, *, force: bool) -> StepResult:
-        symlink_called.append(True)
+        later_steps_called.append("symlink")
+        return StepResult([])
+
+    def _fake_copy_tiktoken_cache() -> StepResult:
+        later_steps_called.append("tiktoken-cache")
         return StepResult([])
 
     monkeypatch.setattr(klorb_init, "write_config_file", _fail)
     monkeypatch.setattr(klorb_init, "create_symlink", _fake_create_symlink)
+    monkeypatch.setattr(klorb_init, "copy_tiktoken_cache", _fake_copy_tiktoken_cache)
 
     with pytest.raises(InitError, match="boom"):
         run_init("user", force=False)
 
-    assert symlink_called == []
+    assert later_steps_called == []
+
+
+def test_copy_tiktoken_cache_returns_install_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(klorb_init, "install_tiktoken_cache", lambda: ["copied-msg"])
+
+    result = copy_tiktoken_cache()
+
+    assert result.messages == ["copied-msg"]
+
+
+def test_copy_tiktoken_cache_wraps_os_error_as_init_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fail() -> list[str]:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(klorb_init, "install_tiktoken_cache", _fail)
+
+    with pytest.raises(InitError, match="disk full"):
+        copy_tiktoken_cache()
 
 
 def test_is_user_scope_initialized_false_when_neither_target_exists(

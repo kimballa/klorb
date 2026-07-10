@@ -62,8 +62,13 @@
   # file, copied to disk by `klorb init`) the same way, so both are read via
   # importlib.resources at runtime. See docs/specs/process-and-session-config.md and
   # docs/specs/klorb-init.md.
+  #
+  # tiktoken-cache/*/* ships the bundled tiktoken BPE cache (klorb.token_estimate) that
+  # `klorb init` copies to $KLORB_DATA_DIR, one subdirectory per tiktoken encoding name
+  # (today, only o200k_base).
   "klorb.resources" = [
     "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", "default-config.json", "template-config.json",
+    "tiktoken-cache/*/*",
   ]
 
 [tool.pytest.ini_options]
