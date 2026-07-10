@@ -9,6 +9,7 @@
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 50,
     "tools.maxCallsPerSession": 200,
+    "tools.scratchpad.contextLines": 2,
     "readDirs": {
       "deny": [
         "~/.ssh",

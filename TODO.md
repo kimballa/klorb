@@ -11,6 +11,15 @@
 
 # Feature backlog
 
+* Count all of the tokens client-side and assign an 'estimated\_tokens' field to every
+  message, so we can do a reasonable job of intermediate context buffer fill-up estimation
+  and advertising to the user in the "nn / 260k" footer widget.
+
+* ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
+  just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
+  that readfile and editfile can interact in a loop. 
+
+
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
@@ -67,12 +76,6 @@
 * Memories in ~/.klorb/memory, projRoot/.klorb/memory/
   * UpdateMemory tool
   * Remember tool
-* "Team scratchpad" is a file where all agents on the team can read and write
-  * ephemeral; survives for the length of a session.
-  * ReadScratchpad tool -- reads range from the file.
-  * EditScratchpad tool -- updates file
-  * SearchScratchpad tool -- grep it.
-
 
 * Subagent spawning
   * When an agent spawns a subagent for a different role, the subagent gets a new child
