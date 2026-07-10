@@ -67,8 +67,11 @@ scope") coordinate through one shared file rather than each keeping a private on
   Reaching the scratchpad file through `ReadFile`/`EditFile`/`Bash` instead of the dedicated
   tools still goes through the ordinary tables like any other path, and is denied/asked exactly
   as it would be for any other path outside `readDirs`/`writeDirs`.
-* `klorb.tools.util` holds the two mechanics `ReadFile`/`ReadScratchpad` and `EditFile`/
-  `EditScratchpad` share, so each pair is written and tested once rather than duplicated:
+* `klorb.tools.util` (a package: `read_file_core.py` and `edit_file_core.py`, both re-exported
+  from `__init__.py` so callers always write `from klorb.tools.util import ReadFileCore,
+  EditFileCore` regardless of which submodule defines them) holds the two mechanics `ReadFile`/
+  `ReadScratchpad` and `EditFile`/`EditScratchpad` share, so each pair is written and tested once
+  rather than duplicated:
   * `ReadFileCore` (constructed with `max_lines: int`) implements the `start_line`/`end_line`
     paging and `"N|"` line-number-prefixed `content` both `ReadFileTool` and
     `ReadScratchpadTool` return. Each tool holds one as `self.read_file_core`, calls
