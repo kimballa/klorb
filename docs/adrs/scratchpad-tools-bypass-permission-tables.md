@@ -2,7 +2,7 @@
 
 * Date: 2026-07-09 00:00
 * Question: `ReadScratchpad`/`EditScratchpad`/`SearchScratchpad` operate on
-  `Session.scratchpad_path`, a file the harness itself creates and manages, not one a model
+  `Session.scratchpad.path`, a file the harness itself creates and manages, not one a model
   names via a `filename`/`dirname` argument. Every other file tool (`ReadFile`, `EditFile`,
   `Grep`, ...) resolves its path argument and checks it against `readDirs`/`writeDirs` (see
   docs/specs/permissions.md) before touching disk. Should the Scratchpad tools do the same —

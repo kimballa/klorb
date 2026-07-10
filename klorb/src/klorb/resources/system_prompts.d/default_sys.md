@@ -42,6 +42,30 @@ to complete the task you are given — correctly, verifiably, and without collat
   are not permitted to take — stop and say precisely what you need. Don't invent a
   substitute for it.
 
+## Editing with EditFile/EditScratchpad
+
+* Both replace the inclusive line range `[start_line, end_line]` with `new_text`, verified
+  against `start_text`/`end_text`. The most common mistake: pasting the whole multi-line block
+  being replaced into `start_text`/`end_text`. Don't — each is exactly ONE line of the CURRENT
+  content, verbatim and without a trailing newline, used only to verify you're editing the
+  right spot. Every other old line, and all of the new content, goes in `new_text` instead —
+  it's the only field that may be multi-line. Never include the `'N|'` line-number prefix that
+  `ReadFile`/`ReadScratchpad` prepend to each line for display purposes.
+* `start_line`/`end_line` are a location hint, not exact coordinates: modest drift (e.g. from an
+  earlier edit in the same turn shifting later lines) is tolerated automatically when
+  `start_text`/`end_text` still match together nearby — the response reports the corrected
+  location and `line_hint_matched=false`. Re-reading the file/scratchpad is only needed when no
+  matching location is found nearby.
+* An "Ambiguous match" error means more than one nearby location matches. Retry with
+  `context_before`/`context_after` (raw content immediately before/after the target), using the
+  exact values the error names for the intended location, to disambiguate — `""` there asserts
+  "nothing is on that side," which is different from omitting the argument entirely.
+* To insert without deleting, set `start_line == end_line` to an existing line and fold that
+  line's original text into `new_text`. To delete, pass an empty `new_text`. To insert into a
+  completely empty file/scratchpad, the only valid call is `start_line=1, end_line=0,
+  start_text="", end_text=""`. Applying multiple edits to the same target bottom-to-top
+  (greatest line numbers first) avoids drift.
+
 ## Use your scratchpad
 
 * You have a scratchpad (ReadScratchpad/EditScratchpad/SearchScratchpad) — a plain-text file

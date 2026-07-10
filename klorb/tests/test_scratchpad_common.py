@@ -50,6 +50,55 @@ def test_reused_path_is_not_touched_or_modified(tmp_path: Path) -> None:
     assert shared.stat().st_mtime_ns == original_mtime
 
 
+def test_cleanup_removes_a_freshly_created_scratchpad_directory() -> None:
+    scratchpad = Scratchpad(None)
+    scratchpad_dir = scratchpad.path.parent
+
+    scratchpad.cleanup()
+
+    assert not scratchpad_dir.exists()
+
+
+def test_cleanup_is_a_noop_for_a_reused_path(tmp_path: Path) -> None:
+    """cleanup() must never remove a caller-supplied scratchpad -- that file's lifecycle
+    belongs to whatever created it, not to this Scratchpad."""
+    shared = tmp_path / "team-scratchpad.md"
+    shared.write_text("existing notes\n")
+    scratchpad = Scratchpad(str(shared))
+
+    scratchpad.cleanup()
+
+    assert shared.is_file()
+    assert shared.read_text() == "existing notes\n"
+
+
+def test_cleanup_is_idempotent() -> None:
+    scratchpad = Scratchpad(None)
+
+    scratchpad.cleanup()
+    scratchpad.cleanup()  # must not raise
+
+
+def test_session_close_cleans_up_a_freshly_created_scratchpad() -> None:
+    session = Session(SessionConfig(), provider=MagicMock())
+    scratchpad_dir = session.scratchpad.path.parent
+
+    session.close()
+
+    assert not scratchpad_dir.exists()
+
+
+def test_session_close_does_not_remove_a_reused_scratchpad(tmp_path: Path) -> None:
+    shared = tmp_path / "team-scratchpad.md"
+    shared.write_text("existing notes\n")
+    session = Session(SessionConfig(), provider=MagicMock(), scratchpad_path=str(shared))
+
+    session.close()
+
+    assert shared.is_file()
+    assert shared.read_text() == "existing notes\n"
+
+
 def test_scratchpad_path_helper_returns_the_session_scratchpad(tmp_path: Path) -> None:
     scratchpad_file = tmp_path / "SCRATCHPAD.md"
     scratchpad_file.write_text("")

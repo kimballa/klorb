@@ -92,11 +92,16 @@ def test_no_matches_returns_empty_blocks(tmp_path: Path) -> None:
     assert result["blocks"] == []
 
 
-def test_invalid_regex_raises_value_error(tmp_path: Path) -> None:
-    scratchpad = _write(tmp_path, "a\n")
+def test_query_with_regex_metacharacters_is_treated_literally(tmp_path: Path) -> None:
+    """queries are literal substrings, never regular expressions: "(" and "a.b" must not be
+    interpreted as regex syntax, either raising a compile error or matching unintended text."""
+    scratchpad = _write(tmp_path, "a(b\naXb\n")
 
-    with pytest.raises(ValueError, match="Invalid search sequence"):
-        SearchScratchpadTool(_context(str(scratchpad))).apply({"queries": ["("]})
+    result = SearchScratchpadTool(_context(str(scratchpad))).apply({"queries": ["a(b"]})
+
+    assert result["match_count"] == 1
+    matched_lines = [line for block in result["blocks"] for line in block["lines"] if line["matched"]]
+    assert matched_lines[0]["line"] == "a(b"
 
 
 def test_empty_queries_raises(tmp_path: Path) -> None:
@@ -143,9 +148,9 @@ def test_summary_on_failure_includes_the_error() -> None:
     assert tool.summary({"queries": ["x"]}, error="boom") == "Search scratchpad: ['x'] failed: boom"
 
 
-def test_detail_view_caps_blocks_to_20(tmp_path: Path) -> None:
+def test_detail_view_caps_blocks_to_12(tmp_path: Path) -> None:
     lines: list[str] = []
-    for i in range(30):
+    for i in range(20):
         lines.append(f"MATCH{i}")
         lines.extend(["filler"] * 5)
     scratchpad = _write(tmp_path, "\n".join(lines) + "\n")
@@ -154,5 +159,5 @@ def test_detail_view_caps_blocks_to_20(tmp_path: Path) -> None:
 
     detail = json.loads(tool.detail_view({"queries": ["MATCH"]}, result))
 
-    assert len(detail["result"]["blocks"]) == 20
-    assert detail["result"]["blocks_omitted"] == 10
+    assert len(detail["result"]["blocks"]) == 12
+    assert detail["result"]["blocks_omitted"] == 8

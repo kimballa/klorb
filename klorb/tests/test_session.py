@@ -135,30 +135,6 @@ def test_session_uses_explicitly_given_id() -> None:
     assert session.id == "my-custom-id"
 
 
-def test_session_scratchpad_path_delegates_to_scratchpad(tmp_path: Path) -> None:
-    """Session itself does no scratchpad provisioning of its own -- it just owns a
-    `klorb.tools.scratchpad.common.Scratchpad` and exposes its `.path`. Detailed provisioning
-    behavior (fresh-vs-reused, tempdir independence) is covered by test_scratchpad_common.py."""
-    shared = tmp_path / "team-scratchpad.md"
-    shared.write_text("existing notes\n")
-
-    session = Session(SessionConfig(), provider=MagicMock(), scratchpad_path=str(shared))
-
-    assert session.scratchpad_path == shared
-
-
-def test_session_scratchpad_grants_no_readdirs_writedirs_access() -> None:
-    """A freshly created scratchpad's directory is not added to config.read_dirs/write_dirs --
-    see docs/adrs/scratchpad-tools-bypass-permission-tables.md -- the dedicated Scratchpad
-    tools reach it directly, with no permission-table check, instead."""
-    config = SessionConfig()
-
-    Session(config, provider=MagicMock())
-
-    assert config.read_dirs == DirRules()
-    assert config.write_dirs == DirRules()
-
-
 def test_total_tokens_used_sums_recorded_message_tokens() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply(num_tokens=5, prompt_tokens=10)

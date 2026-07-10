@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that searches the active session's scratchpad file for lines matching any of several
-search sequences, returning each match plus surrounding context lines."""
+"""A Tool that searches the active session's scratchpad file for lines containing any of
+several literal search strings, returning each match plus surrounding context lines."""
 
 import logging
 import re
@@ -14,13 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class SearchScratchpadTool(Tool):
-    """Searches the active session's scratchpad file for every line matching any of `queries` --
-    each treated as a regular expression, combined into one case-insensitive alternation
-    (equivalent to `grep -i -e '(seq1)|(seq2)|...'` against the scratchpad file) -- and returns
-    each match together with `context_lines` (see `ProcessConfig.scratchpad_context_lines`)
-    lines of surrounding content on each side. Overlapping or adjacent matches' context windows
-    are merged into a single block, the same way `grep -C` collapses them, rather than
-    reported as separate, redundantly-overlapping results.
+    """Searches the active session's scratchpad file for every line containing any of
+    `queries` -- each matched as a literal, case-insensitive substring (never a regular
+    expression), combined into one alternation for a single pass over the file (equivalent to
+    `grep -i -F -e 'seq1' -e 'seq2' ...` against the scratchpad file) -- and returns each match
+    together with `context_lines` (see `ProcessConfig.scratchpad_context_lines`) lines of
+    surrounding content on each side. Overlapping or adjacent matches' context windows are
+    merged into a single block, the same way `grep -C` collapses them, rather than reported as
+    separate, redundantly-overlapping results.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -32,12 +33,11 @@ class SearchScratchpadTool(Tool):
 
     def description(self) -> str:
         return (
-            "Searches your scratchpad for lines matching any of the given search sequences, "
-            "case-insensitively -- equivalent to `grep -i -e '(seq1)' -e '(seq2)' ...` against "
-            "the scratchpad -- and returns each match with "
-            f"{self._context_lines} lines of surrounding context on each side, merging "
-            "overlapping/adjacent matches into a single block. Each entry in queries is a "
-            "regular expression; a line matching any one of them is returned."
+            "Searches your scratchpad for lines containing any of the given search strings, "
+            "each matched as a literal, case-insensitive substring (not a regular expression) "
+            "-- equivalent to `grep -i -F -e 'seq1' -e 'seq2' ...` against the scratchpad -- "
+            f"and returns each match with {self._context_lines} lines of surrounding context "
+            "on each side, merging overlapping/adjacent matches into a single block."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -49,8 +49,8 @@ class SearchScratchpadTool(Tool):
                     "items": {"type": "string"},
                     "minItems": 1,
                     "description": (
-                        "One or more search sequences (regular expressions, matched "
-                        "case-insensitively); a line matching any one of them is returned."
+                        "One or more literal search strings, matched case-insensitively (not "
+                        "regular expressions); a line containing any one of them is returned."
                     ),
                 },
             },
@@ -67,11 +67,8 @@ class SearchScratchpadTool(Tool):
                 raise ValueError(f"each entry in queries must be a string, got {query!r}")
         logger.debug("SearchScratchpad %r", queries)
 
-        combined_pattern = "|".join(f"(?:{query})" for query in queries)
-        try:
-            compiled = re.compile(combined_pattern, re.IGNORECASE)
-        except re.error as exc:
-            raise ValueError(f"Invalid search sequence in {queries!r}: {exc}") from exc
+        combined_pattern = "|".join(re.escape(query) for query in queries)
+        compiled = re.compile(combined_pattern, re.IGNORECASE)
 
         path = scratchpad_path(self.context)
         all_lines = path.read_text(encoding="utf-8").splitlines()
@@ -123,15 +120,15 @@ class SearchScratchpadTool(Tool):
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with `result["blocks"]` capped to its
-        first 20 entries -- a scratchpad with many scattered matches could otherwise dump far
+        first 12 entries -- a scratchpad with many scattered matches could otherwise dump far
         more context than useful to show inline.
         """
         if error is not None or not isinstance(result, dict) or "blocks" not in result:
             return super().detail_view(args, result, error)
         blocks = result["blocks"]
-        if len(blocks) <= 20:
+        if len(blocks) <= 12:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
-        capped_result["blocks"] = blocks[:20]
-        capped_result["blocks_omitted"] = len(blocks) - 20
+        capped_result["blocks"] = blocks[:12]
+        capped_result["blocks_omitted"] = len(blocks) - 12
         return super().detail_view(args, capped_result, error)
