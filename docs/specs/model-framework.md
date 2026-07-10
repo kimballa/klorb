@@ -51,6 +51,10 @@ instead of a bespoke picker widget.
   docs describe "tool calling and reasoning" support but don't spell out the request
   parameter shape) — worth double-checking against a real response if thinking output
   doesn't show up for this model in practice.
+* `klorb.models.claude_sonnet_5.ClaudeSonnet5Model`
+  (`klorb/src/klorb/models/claude_sonnet_5.py`) is a built-in `Model` for
+  `anthropic/claude-sonnet-5`, Anthropic's Sonnet-tier coding and agentic model,
+  available via OpenRouter.
 * `klorb.tui.model_commands.ModelCommandProvider`
   (`klorb/src/klorb/tui/model_commands.py`) is a Textual `command.Provider`. It builds a
   fresh `ModelRegistry()` per search, lists a `"Select model: <name>"` command per
