@@ -174,19 +174,26 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   `detail_view()` override, same reasoning as `ReplaceAll`.
 * `klorb.tools.grep.GrepTool` (`klorb/src/klorb/tools/grep.py`), name `Grep`. Recursively
   searches the directory tree rooted at `dirname` (`""` means the whole project root) for lines
-  matching `pattern` — a literal substring by default, or a Python regular expression when
-  `is_regex` is true (an invalid regex raises `ValueError`). `case_insensitive` and the optional
-  `file_glob` (matched against each file's bare name, e.g. `"*.py"`) narrow the search further.
-  Walks via `klorb.tools.dir_walk.walk_readable_tree()` (see "Recursive tree walks" below) rather
-  than a single `resolve_and_evaluate_read()` call, since the search spans however many
-  directories the tree actually has. A file that fails to decode as UTF-8 (or fails to open at
-  all) is skipped silently, matching common `grep -I` behavior. At most
-  `context.process_config.grep_max_results` matches (default
+  matching any of `queries` — each matched as a literal substring by default, or as a distinct
+  Python regular expression when `is_regex` is true (an invalid regex raises `ValueError`); a
+  line matching any one query counts as a hit, equivalent to `grep -e query1 -e query2 ...`.
+  `case_insensitive` and the optional `file_glob` (matched against each file's bare name, e.g.
+  `"*.py"`) narrow the search further. Walks via `klorb.tools.dir_walk.walk_readable_tree()`
+  (see "Recursive tree walks" below) rather than a single `resolve_and_evaluate_read()` call,
+  since the search spans however many directories the tree actually has. A file that fails to
+  decode as UTF-8 (or fails to open at all) is skipped silently, matching common `grep -I`
+  behavior. Each hit is reported with `context.process_config.grep_context_lines` (default
+  `process_config.DEFAULT_GREP_CONTEXT_LINES`, 2) lines of surrounding context on each side, like
+  `grep -C`; overlapping or adjacent context windows within the same file are merged into a
+  single block rather than reported as separately-overlapping results. At most
+  `context.process_config.grep_max_results` matching lines (default
   `process_config.DEFAULT_GREP_MAX_RESULTS`, 500) are returned per call. The result is a dict:
-  `root` (the resolved search root), `pattern`, `is_regex`, `case_insensitive`, `file_glob`,
-  `matches` (a list of `{filename, line_number, line}`), and `truncated`. `summary()` names the
-  pattern, root, and match count; `detail_view()` caps `matches` to its first 20 entries (adding
-  a `matches_omitted` count), since a full result can hold up to `grep_max_results` matches.
+  `root` (the resolved search root), `queries`, `is_regex`, `case_insensitive`, `file_glob`,
+  `context_lines`, `blocks` (a list of `{filename, start_line, end_line, lines}`, where `lines`
+  is `{line_number, line, matched}` for every line in the block), `match_count`, and `truncated`.
+  `summary()` names the queries, root, and match count; `detail_view()` caps `blocks` to its
+  first 20 entries (adding a `blocks_omitted` count), since a full result can hold up to
+  `grep_max_results` matching lines spread across that many blocks.
 * `klorb.tools.find_file.FindFileTool` (`klorb/src/klorb/tools/find_file.py`), name `FindFile`.
   Recursively searches the directory tree rooted at `dirname` (`""` means the whole project
   root) for files whose bare name matches a glob `pattern` (e.g. `"*.py"` or `"*_context*"`;

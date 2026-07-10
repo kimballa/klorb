@@ -9,7 +9,6 @@
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 50,
     "tools.maxCallsPerSession": 200,
-    "tools.scratchpad.contextLines": 2,
     "readDirs": {
       "deny": [
         "~/.ssh",
@@ -84,18 +83,20 @@
     "high": 32768
   },
   "terminal.input.maxLines": 12,
-  "tools.readFile.maxLines": 200,
-  "tools.editFile.driftSearchRadius": 20,
-  "tools.grep.maxResults": 500,
-  "tools.findFile.maxResults": 500,
-  "tools.scratchpad.contextLines": 2,
-  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
-  "shell.command": "/bin/bash",
-  "shell.timeout": null,
   "tools.bash.command": "/bin/bash",
   "tools.bash.timeout": 120.0,
   "tools.bash.spillBytes": 8192,
   "tools.bash.shfmtCommand": "shfmt",
+  "tools.editFile.driftSearchRadius": 20,
+  "tools.findFile.maxResults": 500,
+  "tools.grep.maxResults": 500,
+  "tools.grep.contextLines": 2,
+  "tools.logCalls": null,
+  "tools.readFile.maxLines": 200,
+  "tools.scratchpad.contextLines": 2,
+  "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
+  "shell.command": "/bin/bash",
+  "shell.timeout": null,
   "compatibility.claudeMarkdown": false,
   "ui.theme": null
 }

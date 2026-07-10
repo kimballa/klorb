@@ -197,6 +197,7 @@ sit as flat keys alongside it at the top level:
   "terminal.input.maxLines": 12,
   "tools.readFile.maxLines": 200,
   "tools.grep.maxResults": 500,
+  "tools.grep.contextLines": 2,
   "tools.findFile.maxResults": 500,
   "tools.scratchpad.contextLines": 2,
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
@@ -274,7 +275,8 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
-  `tools.findFile.maxResults`, `tools.scratchpad.contextLines`, `providers.openrouter.baseUrl`, `shell.command`,
+  `tools.grep.contextLines`, `tools.findFile.maxResults`, `tools.scratchpad.contextLines`,
+  `providers.openrouter.baseUrl`, `shell.command`,
   `shell.timeout`, `tools.bash.command`, `tools.bash.timeout`, `tools.bash.spillBytes`,
   `tools.bash.shfmtCommand`, `compatibility.claudeMarkdown`, `tools.logCalls`, `ui.theme`) can
   be set at the top level.
@@ -318,9 +320,10 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS` in `process_config.py` is its sole canonical default —
   see [[tool-framework]] and
   [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
-* `grep_max_results` (`tools.grep.maxResults`) and `find_file_max_results`
-  (`tools.findFile.maxResults`) are consumed the same way by `GrepTool`/`FindFileTool` via
-  `context.process_config.grep_max_results`/`find_file_max_results`; `DEFAULT_GREP_MAX_RESULTS`/
+* `grep_max_results` (`tools.grep.maxResults`), `grep_context_lines` (`tools.grep.contextLines`),
+  and `find_file_max_results` (`tools.findFile.maxResults`) are consumed the same way by
+  `GrepTool`/`FindFileTool` via `context.process_config.grep_max_results`/`grep_context_lines`/
+  `find_file_max_results`; `DEFAULT_GREP_MAX_RESULTS`/`DEFAULT_GREP_CONTEXT_LINES`/
   `DEFAULT_FIND_FILE_MAX_RESULTS` in `process_config.py` are their sole canonical defaults — see
   [[tool-framework]].
 * `scratchpad_context_lines` (`tools.scratchpad.contextLines`) is consumed the same way by

@@ -41,6 +41,12 @@ DEFAULT_GREP_MAX_RESULTS = 500
 `klorb.tools.grep` has no constant of its own, it reads `ProcessConfig.grep_max_results` via
 `ToolSetupContext` at construction time instead."""
 
+DEFAULT_GREP_CONTEXT_LINES = 2
+"""`GrepTool`'s per-match context-line count default (lines of surrounding content shown on
+each side of a match); the canonical source of this value — `klorb.tools.grep` has no constant
+of its own, it reads `ProcessConfig.grep_context_lines` via `ToolSetupContext` at construction
+time instead."""
+
 DEFAULT_FIND_FILE_MAX_RESULTS = 500
 """`FindFileTool`'s per-call match cap default; the canonical source of this value —
 `klorb.tools.find_file` has no constant of its own, it reads
@@ -135,6 +141,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.readFile.maxLines": "read_file_max_lines",
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "tools.grep.maxResults": "grep_max_results",
+    "tools.grep.contextLines": "grep_context_lines",
     "tools.findFile.maxResults": "find_file_max_results",
     "tools.scratchpad.contextLines": "scratchpad_context_lines",
     "providers.openrouter.baseUrl": "openrouter_base_url",
@@ -174,6 +181,9 @@ class ProcessConfig(BaseModel):
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
     edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     grep_max_results: int = DEFAULT_GREP_MAX_RESULTS
+    grep_context_lines: int = DEFAULT_GREP_CONTEXT_LINES
+    """Number of lines of surrounding context `GrepTool` shows on each side of a matching
+    line — see `klorb.tools.grep`."""
     find_file_max_results: int = DEFAULT_FIND_FILE_MAX_RESULTS
     scratchpad_context_lines: int = DEFAULT_SCRATCHPAD_CONTEXT_LINES
     """Number of lines of surrounding context `SearchScratchpadTool` shows on each side of a
