@@ -83,14 +83,16 @@ catch-in-`Session`-and-callback plumbing rather than inventing a second mechanis
   reminder not to keep guessing or re-asking the same thing a different way.
 * `ReplApp._on_ask_user_questions`/`_confirm_ask_user_questions` (`klorb.tui.repl`) is the
   TUI's implementation, mirroring `_on_permission_ask`/`_confirm_permission_ask`: it blocks the
-  worker thread running `Session.send_turn()` via `call_from_thread`, shows
-  `klorb.tui.ask_user_questions_screen.AskUserQuestionsScreen` for one question at a time on
-  the app's own event loop, and returns once the user answers.
+  worker thread running `Session.send_turn()` via `call_from_thread`, mounts
+  `klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel` for one question at a time into
+  the REPL's `#interaction-panel` (see [[terminal-repl]]'s "Interaction panel" section and
+  docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md) on the app's own
+  event loop, and returns once the user answers.
 
-### `AskUserQuestionsScreen`
+### `AskUserQuestionsPanel`
 
-One question per modal (rather than one combined multi-question screen), matching how a
-`MultiPermissionAskRequired`'s items are each shown via their own `PermissionAskScreen`. A
+One question per panel (rather than one combined multi-question view), matching how a
+`MultiPermissionAskRequired`'s items are each shown via their own `PermissionAskPanel`. A
 single-column, Up/Down-navigable list of the question's `options` (the first one badged
 `"(Recommended)"` when marked so) plus a trailing "Other..." row, always present. Confirming an
 option with Enter dismisses with that option's rendered `answer`; confirming "Other..." (or
@@ -98,7 +100,8 @@ pressing `o`, a fast path from any row) reveals a free-text `Input` whose submis
 with the typed text as `answer`. Escape dismisses with `cancelled=True` from any state,
 including from inside the revealed `Input`. A question with zero `options` skips the list
 entirely and reveals the `Input` immediately on mount, since there's nothing else to navigate
-to.
+to. Once dismissed, `ReplApp` leaves a permanent record of the question and the chosen answer
+in the history scroll (`ReplApp._record_interaction_history`) — see [[terminal-repl]].
 
 ## Why this bypasses the permission tables
 

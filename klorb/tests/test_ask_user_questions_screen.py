@@ -1,19 +1,20 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.ask_user_questions_screen.AskUserQuestionsScreen."""
+"""Tests for klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel."""
 
 from unittest.mock import MagicMock
 
-from textual.app import App
+from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Input, Static
 
 from klorb.session import AskUserQuestionsAnswer, AskUserQuestionsItemContext
 from klorb.tools.ask.common import QuestionOption
-from klorb.tui.ask_user_questions_screen import (
+from klorb.tui.ask_user_questions_panel import (
     ASK_USER_QUESTIONS_HEADER_ID,
     ASK_USER_QUESTIONS_INPUT_ID,
     ASK_USER_QUESTIONS_LIST_ID,
     ASK_USER_QUESTIONS_OTHER_ROW_ID,
-    AskUserQuestionsScreen,
+    AskUserQuestionsPanel,
 )
 
 
@@ -40,9 +41,9 @@ def _find_child(container: object, widget_id: str) -> object:
 
 
 def test_header_names_question_index_and_header() -> None:
-    screen = AskUserQuestionsScreen(_ctx(header="Auth", index=1, total=3))
+    panel = AskUserQuestionsPanel(_ctx(header="Auth", index=1, total=3))
 
-    container = next(iter(screen.compose()))
+    container = next(iter(panel.compose()))
     header = _find_child(container, ASK_USER_QUESTIONS_HEADER_ID)
 
     assert isinstance(header, Static)
@@ -50,9 +51,9 @@ def test_header_names_question_index_and_header() -> None:
 
 
 def test_option_rows_plus_a_trailing_other_row() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[_option("JWT"), _option("Cookie")]))
+    panel = AskUserQuestionsPanel(_ctx(options=[_option("JWT"), _option("Cookie")]))
 
-    container = next(iter(screen.compose()))
+    container = next(iter(panel.compose()))
     option_list = _find_child(container, ASK_USER_QUESTIONS_LIST_ID)
 
     labels = [child.id for child in option_list._pending_children]  # type: ignore[attr-defined]
@@ -60,11 +61,11 @@ def test_option_rows_plus_a_trailing_other_row() -> None:
 
 
 def test_recommended_option_is_badged_in_its_row_text() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[
+    panel = AskUserQuestionsPanel(_ctx(options=[
         _option("JWT", description="Stateless", recommended=True), _option("Cookie"),
     ]))
 
-    container = next(iter(screen.compose()))
+    container = next(iter(panel.compose()))
     option_list = _find_child(container, ASK_USER_QUESTIONS_LIST_ID)
     first_row = _find_child(option_list, "ask-user-questions-row-0")
 
@@ -73,9 +74,9 @@ def test_recommended_option_is_badged_in_its_row_text() -> None:
 
 
 def test_option_with_no_description_renders_just_the_label() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[_option("JWT"), _option("Cookie")]))
+    panel = AskUserQuestionsPanel(_ctx(options=[_option("JWT"), _option("Cookie")]))
 
-    container = next(iter(screen.compose()))
+    container = next(iter(panel.compose()))
     option_list = _find_child(container, ASK_USER_QUESTIONS_LIST_ID)
     second_row = _find_child(option_list, "ask-user-questions-row-1")
 
@@ -84,9 +85,9 @@ def test_option_with_no_description_renders_just_the_label() -> None:
 
 
 def test_zero_options_skips_the_list_entirely() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[]))
+    panel = AskUserQuestionsPanel(_ctx(options=[]))
 
-    container = next(iter(screen.compose()))
+    container = next(iter(panel.compose()))
 
     assert not any(
         getattr(child, "id", None) == ASK_USER_QUESTIONS_LIST_ID
@@ -94,74 +95,90 @@ def test_zero_options_skips_the_list_entirely() -> None:
     )
 
 
-# --- action_* unit tests (mirroring PermissionAskScreen's test style) ---
+# --- action_* unit tests (mirroring PermissionAskPanel's test style) ---
 
 
 def test_action_confirm_dismisses_with_the_selected_options_answer() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[
+    panel = AskUserQuestionsPanel(_ctx(options=[
         _option("JWT", description="Stateless"), _option("Cookie"),
     ]))
-    screen.dismiss = MagicMock()  # type: ignore[method-assign]
-    screen._row = 0
+    panel.dismiss = MagicMock()  # type: ignore[method-assign]
+    panel._row = 0
 
-    screen.action_confirm()
+    panel.action_confirm()
 
-    screen.dismiss.assert_called_once_with(AskUserQuestionsAnswer(answer="JWT: Stateless"))
+    panel.dismiss.assert_called_once_with(AskUserQuestionsAnswer(answer="JWT: Stateless"))
 
 
 def test_action_confirm_on_other_row_reveals_input_instead_of_dismissing() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[_option("JWT"), _option("Cookie")]))
-    screen.dismiss = MagicMock()  # type: ignore[method-assign]
-    screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
-    screen._row = screen._other_row
+    panel = AskUserQuestionsPanel(_ctx(options=[_option("JWT"), _option("Cookie")]))
+    panel.dismiss = MagicMock()  # type: ignore[method-assign]
+    panel._reveal_other_input = MagicMock()  # type: ignore[method-assign]
+    panel._row = panel._other_row
 
-    screen.action_confirm()
+    panel.action_confirm()
 
-    screen._reveal_other_input.assert_called_once()
-    screen.dismiss.assert_not_called()
+    panel._reveal_other_input.assert_called_once()
+    panel.dismiss.assert_not_called()
 
 
 def test_action_cancel_dismisses_with_cancelled() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[_option("JWT"), _option("Cookie")]))
-    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+    panel = AskUserQuestionsPanel(_ctx(options=[_option("JWT"), _option("Cookie")]))
+    panel.dismiss = MagicMock()  # type: ignore[method-assign]
 
-    screen.action_cancel()
+    panel.action_cancel()
 
-    screen.dismiss.assert_called_once_with(AskUserQuestionsAnswer(cancelled=True))
+    panel.dismiss.assert_called_once_with(AskUserQuestionsAnswer(cancelled=True))
 
 
 def test_action_move_row_wraps_around_past_the_other_row() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[_option("JWT"), _option("Cookie")]))
-    screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
+    panel = AskUserQuestionsPanel(_ctx(options=[_option("JWT"), _option("Cookie")]))
+    panel._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
-    screen.action_move_row(-1)
+    panel.action_move_row(-1)
 
-    assert screen._row == 2  # wrapped from row 0 past the trailing "Other" row (index 2)
+    assert panel._row == 2  # wrapped from row 0 past the trailing "Other" row (index 2)
 
 
 def test_on_input_submitted_dismisses_with_the_typed_text() -> None:
-    screen = AskUserQuestionsScreen(_ctx(options=[]))
-    screen.dismiss = MagicMock()  # type: ignore[method-assign]
+    panel = AskUserQuestionsPanel(_ctx(options=[]))
+    panel.dismiss = MagicMock()  # type: ignore[method-assign]
     event = MagicMock(value="my free-text answer")
 
-    screen.on_input_submitted(event)
+    panel.on_input_submitted(event)
 
-    screen.dismiss.assert_called_once_with(AskUserQuestionsAnswer(answer="my free-text answer"))
+    panel.dismiss.assert_called_once_with(AskUserQuestionsAnswer(answer="my free-text answer"))
+
+
+def test_dismiss_with_no_callback_is_a_no_op() -> None:
+    """`dismiss()` is only ever meaningfully wired up by `ReplApp` -- a standalone panel (as
+    every test above constructs) has no `on_dismiss` callback and must not raise."""
+    panel = AskUserQuestionsPanel(_ctx(options=[_option("JWT"), _option("Cookie")]))
+
+    panel.dismiss(AskUserQuestionsAnswer(cancelled=True))
 
 
 # --- mounted, through a real App (needs Pilot for key handling) ---
 
 
 class _AskUserQuestionsTestApp(App[None]):
+    """Minimal standalone harness mounting a real `AskUserQuestionsPanel` directly onto the
+    screen (rather than through `ReplApp`'s `#interaction-panel`) so tests can drive its key
+    bindings through Textual's `Pilot` without needing a full `ReplApp`/`Session`."""
+
     def __init__(self, ctx: AskUserQuestionsItemContext) -> None:
         super().__init__()
         self._ctx = ctx
         self.answer: AskUserQuestionsAnswer | None = None
 
-    def on_mount(self) -> None:
-        self.push_screen(AskUserQuestionsScreen(self._ctx), callback=self._set_answer)
+    def compose(self) -> ComposeResult:
+        yield Vertical()
 
-    def _set_answer(self, answer: AskUserQuestionsAnswer | None) -> None:
+    async def on_mount(self) -> None:
+        panel = AskUserQuestionsPanel(self._ctx, on_dismiss=self._set_answer)
+        await self.query_one(Vertical).mount(panel)
+
+    def _set_answer(self, answer: AskUserQuestionsAnswer) -> None:
         self.answer = answer
 
 
@@ -171,8 +188,8 @@ async def test_zero_options_question_reveals_input_on_mount() -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        assert isinstance(app.screen, AskUserQuestionsScreen)
-        app.screen.query_one(f"#{ASK_USER_QUESTIONS_INPUT_ID}", Input)
+        app.query_one(AskUserQuestionsPanel)
+        app.query_one(f"#{ASK_USER_QUESTIONS_INPUT_ID}", Input)
 
 
 async def test_escape_cancels_from_the_option_list() -> None:
@@ -202,7 +219,7 @@ async def test_o_key_reveals_other_input_and_submitting_answers_with_free_text()
         await pilot.press("o")
         await pilot.pause()
 
-        input_widget = app.screen.query_one(f"#{ASK_USER_QUESTIONS_INPUT_ID}", Input)
+        input_widget = app.query_one(f"#{ASK_USER_QUESTIONS_INPUT_ID}", Input)
         input_widget.value = "custom answer"
         await pilot.press("enter")
         await pilot.pause()

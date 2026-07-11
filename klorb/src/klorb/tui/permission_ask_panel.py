@@ -1,8 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Modal shown when a tool call hits an `"ask"` permission verdict (see
+"""Panel shown in the history scroll when a tool call hits an `"ask"` permission verdict (see
 `klorb.session.PermissionAskContext`/`PermissionDecision` and
 docs/specs/permissions.md's "Interactive ask confirmation" section)."""
 
+import textwrap
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -19,9 +20,9 @@ _Action = Literal["allow", "deny"]
 _Scope = Literal["once", "session", "workspace", "homedir"]
 
 _ACTIONS: tuple[_Action, ...] = ("allow", "deny")
-"""Grid columns, left to right — indexed by the screen's `_column` cursor."""
+"""Grid columns, left to right — indexed by the panel's `_column` cursor."""
 _SCOPES: tuple[_Scope, ...] = ("once", "session", "workspace", "homedir")
-"""Grid rows, top to bottom — indexed by the screen's `_row` cursor."""
+"""Grid rows, top to bottom — indexed by the panel's `_row` cursor."""
 
 _ACTION_LABELS: dict[_Action, str] = {"allow": "Allow", "deny": "Deny"}
 _SCOPE_LABELS: dict[_Scope, str] = {
@@ -43,16 +44,16 @@ PERMISSION_ASK_OTHER_CELL_ID = "permission-ask-cell-other"
 _OTHER_ROW = len(_SCOPES)
 """The grid's last row index — one row past the last real `_SCOPES` entry — occupied by a
 single cell spanning both columns (`PERMISSION_ASK_OTHER_CELL_ID`) rather than an
-action/scope pair; see `PermissionAskScreen._refresh_selection`/`action_confirm`."""
+action/scope pair; see `PermissionAskPanel._refresh_selection`/`action_confirm`."""
 _TOTAL_ROWS = len(_SCOPES) + 1
 """`_SCOPES`'s rows plus the trailing `_OTHER_ROW` — the modulus `action_move_row` cycles
 `_row` through."""
 
 _MAX_COMMAND_PREVIEW_LINES = 6
-"""How many lines of a long `command_text` `PermissionAskScreen` shows inline before truncating
+"""How many lines of a long `command_text` `PermissionAskPanel` shows inline before truncating
 to a `[more...]` indicator (`PERMISSION_ASK_MORE_ID`) — see `_command_preview`. A command short
 enough to display in full still gets the same `[more...]` indicator if `ask_ctx.is_compound` is
-set — see `PermissionAskScreen.compose`."""
+set — see `PermissionAskPanel.compose`."""
 
 _SECTION_END_CLASS = "ask-section-end"
 """CSS class carrying the trailing blank-line margin between one body section (header, command
@@ -65,28 +66,74 @@ def _cell_id(column: int, row: int) -> str:
     return f"permission-ask-cell-{column}-{row}"
 
 
-def _command_preview(command_text: str) -> tuple[str, bool]:
-    """Return `(preview_text, truncated)`: the first `_MAX_COMMAND_PREVIEW_LINES` lines of
-    `command_text` (unchanged, with `truncated=False`, if it's no longer than that already), for
-    `PermissionAskScreen` to show inline instead of a command that might run to hundreds of lines
-    (a heredoc-embedded script, say) — the full text is always still reachable via
-    `ExpandedCommandScreen`."""
+def format_ask_context_body(ask_ctx: PermissionAskContext) -> str:
+    """Render `ask_ctx`'s command/path preview plus its own `resource_description` detail as a
+    flat block of text, for the history-scroll record `ReplApp` leaves behind once a
+    `PermissionAskPanel` is dismissed (see `ReplApp._record_interaction_history`) — the same two
+    pieces of information `PermissionAskPanel.compose()` shows as two separate `Static`
+    widgets, here joined by a newline instead."""
+    lines: list[str] = []
+    if ask_ctx.command_text is not None:
+        lines.append(ask_ctx.item_command_text or ask_ctx.command_text)
+    elif ask_ctx.path is not None:
+        lines.append(str(ask_ctx.path))
+    lines.append(ask_ctx.resource_description)
+    return "\n".join(lines)
+
+
+def format_permission_decision(decision: PermissionDecision) -> str:
+    """Render `decision` for the history-scroll record `ReplApp` leaves behind once a
+    `PermissionAskPanel` is dismissed — the same `"Allow — This session"` phrasing its own grid
+    cell reads, or `"Other: <text>"` for a free-text submission (always
+    `action="deny"`/`scope="once"` on its own, so that pairing alone isn't informative)."""
+    if decision.other_text:
+        return f"Other: {decision.other_text}"
+    return f"{_ACTION_LABELS[decision.action]} — {_SCOPE_LABELS[decision.scope]}"
+
+
+def _command_preview(command_text: str, *, wrap_width: int | None = None) -> tuple[str, bool]:
+    """Return `(preview_text, truncated)`: as much of `command_text` as fits within
+    `_MAX_COMMAND_PREVIEW_LINES` for `PermissionAskPanel` to show inline instead of a command
+    that might run to hundreds of lines (a heredoc-embedded script, say) — the full text is
+    always still reachable via `ExpandedCommandScreen`.
+
+    With `wrap_width` unset (the default — used by every caller that never mounts this panel
+    into a real, sized terminal, e.g. a unit test calling `.compose()` directly), truncation
+    counts only explicit `\\n`-delimited lines via `str.splitlines()`, matching how the preview
+    reads when there's no rendering width to reason about. With `wrap_width` given (the
+    `ReplApp`-driven path — see `ReplApp._confirm_permission_ask`), each logical line is also
+    budgeted by how many `wrap_width`-wide visual rows it would soft-wrap to once rendered, so a
+    single very long line with no `\\n` at all is truncated too, rather than silently blowing
+    past `_MAX_COMMAND_PREVIEW_LINES` worth of vertical space and pushing the grid below it off
+    screen.
+    """
     lines = command_text.splitlines() or [""]
-    if len(lines) <= _MAX_COMMAND_PREVIEW_LINES:
-        return command_text, False
-    return "\n".join(lines[:_MAX_COMMAND_PREVIEW_LINES]), True
+    if wrap_width is None or wrap_width <= 0:
+        if len(lines) <= _MAX_COMMAND_PREVIEW_LINES:
+            return command_text, False
+        return "\n".join(lines[:_MAX_COMMAND_PREVIEW_LINES]), True
+
+    kept: list[str] = []
+    rows_used = 0
+    for line in lines:
+        wrapped_rows = textwrap.wrap(
+            line, width=wrap_width, break_long_words=True, replace_whitespace=False) or [""]
+        if rows_used + len(wrapped_rows) > _MAX_COMMAND_PREVIEW_LINES:
+            remaining = _MAX_COMMAND_PREVIEW_LINES - rows_used
+            if remaining > 0:
+                kept.append(" ".join(wrapped_rows[:remaining]))
+            return "\n".join(kept), True
+        kept.append(line)
+        rows_used += len(wrapped_rows)
+    return command_text, False
 
 
 class _MoreIndicator(Static):
     """The `[more...]` affordance shown below a truncated command preview: clicking it calls
-    `on_activate` (`PermissionAskScreen.action_expand_command`) to push `ExpandedCommandScreen`,
-    the same as the screen's own `+` binding does. Deliberately *not* focusable
-    (`can_focus` stays `False`, `Static`'s own default): a focusable widget is auto-focused the
-    moment a screen mounts if nothing else claims focus first (Textual's default `Screen.
-    AUTO_FOCUS` behavior), which — before this was caught — silently stole every subsequent
-    Enter keystroke via a widget-level binding, permanently breaking `PermissionAskScreen`'s own
-    Enter-to-confirm the moment any command was long enough to truncate. `+` is this feature's
-    only keyboard path for exactly that reason; a click is the only other one.
+    `on_activate` (`PermissionAskPanel.action_expand_command`) to push `ExpandedCommandScreen`,
+    the same as the panel's own `+` binding does. Deliberately *not* focusable (`can_focus`
+    stays `False`, `Static`'s own default): `+` is this feature's only keyboard path for that
+    reason, a click the only other one.
     """
 
     def __init__(self, on_activate: Callable[[], None], *, classes: str | None = None) -> None:
@@ -99,11 +146,10 @@ class _MoreIndicator(Static):
 
 class ExpandedCommandScreen(ModalScreen[None]):
     """Full-screen, read-only, scrollable view of a permission ask's complete `command_text` —
-    reached from `PermissionAskScreen` via its `+` binding or the `[more...]` indicator
+    reached from `PermissionAskPanel` via its `+` binding or the `[more...]` indicator
     (`_MoreIndicator`) a long, truncated command preview shows. Dismissed with Escape or Enter,
-    returning to the ask modal underneath with its own state (grid cursor position, etc.)
-    untouched — pushing/popping a screen, rather than mutating `PermissionAskScreen` in place,
-    keeps that state automatically preserved for free."""
+    returning to the ask panel underneath with its own state (grid cursor position, etc.)
+    untouched."""
 
     CSS = """
     ExpandedCommandScreen {
@@ -134,7 +180,7 @@ class ExpandedCommandScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-class PermissionAskScreen(ModalScreen[PermissionDecision]):
+class PermissionAskPanel(Vertical):
     """Presents a 2D grid of `_ACTIONS` (columns: Allow, Deny) by `_SCOPES` (rows: once,
     session, workspace, homedir) that the user navigates with arrow keys — Left/Right cycles
     the Allow/Deny column, Up/Down cycles the row — and confirms with Enter, dismissing
@@ -142,9 +188,17 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
     an outright `PermissionDecision(action="deny", scope="once")` without needing to navigate
     there first.
 
+    `ReplApp` mounts this into its full-width `#interaction-panel` container, below the history
+    scroll and above the (disabled, visually muted) prompt input, rather than as a floating
+    modal — see docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md. This
+    widget has no opinion on where it's mounted or what happens once it's dismissed; `dismiss()`
+    just invokes the `on_dismiss` callback given at construction (`ReplApp` resolves a pending
+    `asyncio.Future` with it), and `ReplApp` is responsible for unmounting it and recording a
+    permanent record of the exchange into the history scroll afterward.
+
     Above the grid: a styled header naming the kind of access being requested ("Run command" if
     `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set — see
-    `_header_text`), then a command preview (long commands truncated to
+    `header_text`), then a command preview (long commands truncated to
     `_MAX_COMMAND_PREVIEW_LINES` with a `[more...]` indicator — see `_command_preview`,
     `ExpandedCommandScreen`), then `ask_ctx.resource_description`'s own per-item detail (the
     specific argv/path/reason this one ask is about). The preview shows `ask_ctx.
@@ -169,7 +223,7 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
     `granted_paths`/`granted_command_patterns` are `klorb.permissions.grant.compute_grant_paths()`/
     `klorb.permissions.command_grant.compute_command_grant_patterns()`'s pre-computed results —
     the directory (or directories)/command pattern(s) a persistent Allow would actually be
-    recorded at — so the modal's copy can name the real scope of the grant up front: per the
+    recorded at — so the panel's copy can name the real scope of the grant up front: per the
     design decision behind this feature, an unmentioned path is always granted at its
     *containing directory* (never the single file the model happens to be touching right now),
     and an unmentioned command is granted at its exact argv. At most one of the two is set,
@@ -180,19 +234,24 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
     threads through the previous prompt's final selection here (see
     `ReplApp._last_permission_selection`) when several asks are shown back-to-back for one
     compound tool call, so the user doesn't have to re-navigate to the same spot for every item.
+
+    `preview_wrap_width`, when given, is `_command_preview`'s soft-wrap budget — see that
+    function's docstring for why it's `None` by default and only ever set by `ReplApp`.
     """
 
+    can_focus = True
+
     CSS = """
-    PermissionAskScreen {
-        align: center middle;
+    PermissionAskPanel {
+        width: 1fr;
+        height: auto;
+        border-top: solid $accent;
+        padding: 1 2;
     }
 
-    PermissionAskScreen Vertical {
-        width: auto;
-        max-width: 84;
+    #permission-ask-body {
+        width: 1fr;
         height: auto;
-        border: round $accent;
-        padding: 1 2;
     }
 
     #permission-ask-header {
@@ -203,6 +262,7 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     #permission-ask-command {
         text-style: bold;
+        width: 1fr;
     }
 
     #permission-ask-more {
@@ -212,6 +272,10 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     .ask-section-end {
         margin: 0 0 1 0;
+    }
+
+    #permission-ask-detail, #permission-ask-granted {
+        width: 1fr;
     }
 
     #permission-ask-grid {
@@ -266,6 +330,8 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         granted_command_patterns: list[list[str]] | None = None,
         initial_action: _Action = "allow",
         initial_scope: _Scope = "once",
+        preview_wrap_width: int | None = None,
+        on_dismiss: Callable[[PermissionDecision], None] | None = None,
     ) -> None:
         super().__init__()
         self._ask_ctx = ask_ctx
@@ -273,6 +339,8 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         self._granted_command_patterns = granted_command_patterns
         self._column = _ACTIONS.index(initial_action)
         self._row = _SCOPES.index(initial_scope)
+        self._preview_wrap_width = preview_wrap_width
+        self._on_dismiss = on_dismiss
 
     def compose(self) -> ComposeResult:
         cells: list[Static] = [
@@ -282,12 +350,12 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
         ]
         cells.append(Static("Other...", id=PERMISSION_ASK_OTHER_CELL_ID))
 
-        widgets: list[Widget] = [Static(self._header_text(), id=PERMISSION_ASK_HEADER_ID)]
+        widgets: list[Widget] = [Static(self.header_text(), id=PERMISSION_ASK_HEADER_ID)]
 
         command_text = self._ask_ctx.command_text
         if command_text is not None:
             preview_source = self._ask_ctx.item_command_text or command_text
-            preview, truncated = _command_preview(preview_source)
+            preview, truncated = _command_preview(preview_source, wrap_width=self._preview_wrap_width)
             show_more = truncated or self._ask_ctx.is_compound
             if show_more:
                 widgets.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
@@ -318,8 +386,9 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     def on_mount(self) -> None:
         self._refresh_selection()
+        self.focus()
 
-    def _header_text(self) -> str:
+    def header_text(self) -> str:
         if self._ask_ctx.command_text is not None:
             kind = "Run command"
         elif self._ask_ctx.path is not None:
@@ -382,3 +451,12 @@ class PermissionAskScreen(ModalScreen[PermissionDecision]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.dismiss(PermissionDecision(action="deny", scope="once", other_text=event.value))
+
+    def dismiss(self, decision: PermissionDecision) -> None:
+        """Report `decision` to whoever mounted this panel, via the `on_dismiss` callback given
+        at construction — this widget has no opinion on what happens next (unmounting itself,
+        recording a history entry, ...); that's entirely `ReplApp._confirm_permission_ask`'s
+        job. A no-op with no callback given (e.g. a standalone unit test constructing this panel
+        directly to exercise its actions in isolation)."""
+        if self._on_dismiss is not None:
+            self._on_dismiss(decision)

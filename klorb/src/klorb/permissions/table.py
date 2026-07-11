@@ -54,7 +54,7 @@ class PermissionAskItem:
     neither it also carries, since a compound command can need several independent decisions
     (one per simple command and/or redirect target) that all still belong to the same one command
     the user actually typed or the model actually submitted. Purely a display aid for a
-    UI (`klorb.tui.permission_ask_screen.PermissionAskScreen`) to show what's actually being run,
+    UI (`klorb.tui.permission_ask_panel.PermissionAskPanel`) to show what's actually being run,
     on top of `resource_description`'s per-item specific detail — never itself the resource a
     grant is checked or persisted against, unlike `path`/`command`.
 
@@ -62,7 +62,7 @@ class PermissionAskItem:
     command contains more than one simple command — `foo && bar`, `foo; bar`, `foo | bar`, etc.),
     tells a UI that `resource_description` names only one piece of a larger command line the user
     still needs the full picture of, even when `command_text` itself is short enough to show
-    without truncation — see `PermissionAskScreen`'s command-preview logic.
+    without truncation — see `PermissionAskPanel`'s command-preview logic.
 
     `item_command_text`, also set alongside `command_text`, is the exact original source text of
     just the one statement *this* item is actually about (a `klorb.permissions.shell_parse.

@@ -588,7 +588,7 @@ class BashTool(Tool):
 
         `command` (the model's original, unparsed command string) is set as every collected
         item's `command_text` — `analysis` alone has no notion of the raw command text, and a UI
-        (`klorb.tui.permission_ask_screen.PermissionAskScreen`) needs it to show what's actually
+        (`klorb.tui.permission_ask_panel.PermissionAskPanel`) needs it to show what's actually
         being run, on top of each item's own specific `resource_description` detail (see
         `PermissionAskItem.command_text`). Every collected item also gets the same
         `is_compound` (`analysis.command_count > 1` — every executable node the walker visited,

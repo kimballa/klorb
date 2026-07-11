@@ -112,7 +112,7 @@ class ForcedAskReason:
     an unsafe stdin consumer, or a redirect-level issue — see each `forced_ask_reasons.append`
     call site) — sliced directly from the raw command string via AST offsets. Without this, a
     structural item had nothing but the abstract `reason` text to show a UI
-    (`klorb.tui.permission_ask_screen.PermissionAskScreen`): two structural items from the same
+    (`klorb.tui.permission_ask_panel.PermissionAskPanel`): two structural items from the same
     compound command (e.g. `echo $SHELL; echo $HOME`, both non-literal-argument reasons) were
     otherwise indistinguishable from each other in the UI, both showing the identical generic
     reason string with no indication of which specific command each one is actually about."""

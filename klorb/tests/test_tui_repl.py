@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.containers import Grid as GridContainer
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Input, Markdown, Static
 
@@ -31,7 +31,7 @@ from klorb.session import PermissionAskContext, PermissionDecision, Session, Ses
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
-from klorb.tui.permission_ask_screen import (
+from klorb.tui.permission_ask_panel import (
     PERMISSION_ASK_COMMAND_ID,
     PERMISSION_ASK_GRANTED_ID,
     PERMISSION_ASK_GRID_ID,
@@ -39,11 +39,12 @@ from klorb.tui.permission_ask_screen import (
     PERMISSION_ASK_INPUT_ID,
     PERMISSION_ASK_MORE_ID,
     ExpandedCommandScreen,
-    PermissionAskScreen,
+    PermissionAskPanel,
 )
 from klorb.tui.repl import (
     CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
+    INTERACTION_PANEL_ID,
     PALETTE_HINT_ID,
     PALETTE_HINT_TEXT,
     PERMISSION_BADGE_ID,
@@ -519,6 +520,53 @@ async def test_prompt_input_max_height_comes_from_process_config() -> None:
         max_height = prompt_input.styles.max_height
         assert max_height is not None
         assert int(max_height.value) == 4
+
+
+async def test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input() -> None:
+    """`_enter_interaction_mode` is what `ReplApp` wraps every permission ask and
+    ask-user-questions panel in: while active, the prompt input is disabled, visually muted,
+    and collapsed back down to its default single-row height even if it was holding an
+    in-progress multi-line draft -- the draft text itself is left untouched underneath."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "line one\nline two\nline three"
+        await pilot.pause()
+        assert prompt_input.outer_size.height > 1
+
+        panel_container = app._enter_interaction_mode()
+        await pilot.pause()
+
+        assert panel_container.id == INTERACTION_PANEL_ID
+        assert prompt_input.disabled
+        assert prompt_input.has_class("interaction-active")
+        assert prompt_input.outer_size.height == 1
+        assert prompt_input.text == "line one\nline two\nline three"
+
+
+async def test_exiting_interaction_mode_restores_the_prompt_input() -> None:
+    """The other half of `test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input`:
+    `_exit_interaction_mode` undoes every bit of that -- re-enabling, un-muting, and expanding
+    the prompt input back to fit its (untouched) draft text once a panel is dismissed."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "line one\nline two\nline three"
+        await pilot.pause()
+
+        app._enter_interaction_mode()
+        await pilot.pause()
+        app._exit_interaction_mode()
+        await pilot.pause()
+
+        assert prompt_input.disabled is False
+        assert prompt_input.has_class("interaction-active") is False
+        assert prompt_input.outer_size.height > 1
+        assert prompt_input.text == "line one\nline two\nline three"
 
 
 async def test_select_model_also_updates_process_config_template() -> None:
@@ -1277,7 +1325,7 @@ def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tupl
     return id_, "ask_permission", json.dumps({"path": str(path), "is_write": is_write})
 
 
-# --- PermissionAskScreen (unit-level, mirroring ThinkingEffortScreen's test style) ---
+# --- PermissionAskPanel (unit-level, mirroring ThinkingEffortScreen's test style) ---
 
 
 def _ask_ctx(tmp_path: Path, is_write: bool = True) -> PermissionAskContext:
@@ -1292,7 +1340,7 @@ def _find_child(container: object, widget_id: str) -> object:
 
 
 def test_permission_ask_screen_names_the_granted_directory(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
     granted = _find_child(container, PERMISSION_ASK_GRANTED_ID)
@@ -1304,7 +1352,7 @@ def test_permission_ask_screen_names_the_granted_directory(tmp_path: Path) -> No
 def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
     tmp_path: Path,
 ) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
 
     container = next(iter(screen.compose()))
     grid = _find_child(container, PERMISSION_ASK_GRID_ID)
@@ -1335,7 +1383,7 @@ def _command_ask_ctx(
 def test_permission_ask_screen_header_says_run_command_when_command_text_is_set(
     tmp_path: Path,
 ) -> None:
-    screen = PermissionAskScreen(_command_ask_ctx("echo hi"))
+    screen = PermissionAskPanel(_command_ask_ctx("echo hi"))
 
     container = next(iter(screen.compose()))
     header = _find_child(container, PERMISSION_ASK_HEADER_ID)
@@ -1348,7 +1396,7 @@ def test_permission_ask_screen_header_says_run_command_when_command_text_is_set(
 def test_permission_ask_screen_header_names_read_or_write_when_path_is_set(
     tmp_path: Path, is_write: bool, expected_kind: str,
 ) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path, is_write=is_write))
+    screen = PermissionAskPanel(_ask_ctx(tmp_path, is_write=is_write))
 
     container = next(iter(screen.compose()))
     header = _find_child(container, PERMISSION_ASK_HEADER_ID)
@@ -1360,7 +1408,7 @@ def test_permission_ask_screen_header_names_read_or_write_when_path_is_set(
 def test_permission_ask_screen_shows_the_full_short_command_with_no_more_indicator(
     tmp_path: Path,
 ) -> None:
-    screen = PermissionAskScreen(_command_ask_ctx("echo hi"))
+    screen = PermissionAskPanel(_command_ask_ctx("echo hi"))
 
     container = next(iter(screen.compose()))
     command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
@@ -1375,7 +1423,7 @@ def test_permission_ask_screen_truncates_a_long_command_with_a_more_indicator(
     tmp_path: Path,
 ) -> None:
     long_command = "\n".join(f"line {i}" for i in range(1, 21))  # 20 lines
-    screen = PermissionAskScreen(_command_ask_ctx(long_command))
+    screen = PermissionAskPanel(_command_ask_ctx(long_command))
 
     container = next(iter(screen.compose()))
     command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
@@ -1387,13 +1435,55 @@ def test_permission_ask_screen_truncates_a_long_command_with_a_more_indicator(
     assert str(more.render()) == "[more...]"
 
 
+def test_permission_ask_screen_truncates_a_long_single_line_when_wrap_width_is_given(
+    tmp_path: Path,
+) -> None:
+    """A single very long line with no explicit newline still gets truncated (and its
+    `[more...]` indicator shown) once `preview_wrap_width` is given -- otherwise, once
+    actually rendered, it would soft-wrap to many more rows than `_MAX_COMMAND_PREVIEW_LINES`
+    and push the grid below it off screen. `ReplApp._confirm_permission_ask` is the only real
+    caller that ever supplies this."""
+    long_line = " ".join(f"word{i}" for i in range(200))  # one very long line, no "\n" at all
+    screen = PermissionAskPanel(_command_ask_ctx(long_line), preview_wrap_width=40)
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+    more = _find_child(container, PERMISSION_ASK_MORE_ID)
+
+    assert isinstance(command_static, Static)
+    rendered = str(command_static.render())
+    assert rendered != long_line
+    assert len(rendered) < len(long_line)
+    assert isinstance(more, Static)
+    assert str(more.render()) == "[more...]"
+
+
+def test_permission_ask_screen_does_not_truncate_a_long_single_line_with_no_wrap_width(
+    tmp_path: Path,
+) -> None:
+    """Without `preview_wrap_width` (the default -- every caller that never mounts this panel
+    into a real, sized terminal, e.g. every other unit test in this file), truncation only
+    counts explicit newlines, matching the line-count-only behavior every other test here
+    already assumes."""
+    long_line = " ".join(f"word{i}" for i in range(200))
+    screen = PermissionAskPanel(_command_ask_ctx(long_line))
+
+    container = next(iter(screen.compose()))
+    command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
+
+    assert isinstance(command_static, Static)
+    assert str(command_static.render()) == long_line
+    with pytest.raises(StopIteration):
+        _find_child(container, PERMISSION_ASK_MORE_ID)
+
+
 def test_permission_ask_screen_shows_more_indicator_for_a_short_compound_command(
     tmp_path: Path,
 ) -> None:
     """A short `foo && bar` still gets `[more...]` when `is_compound` is set, even though the
     full command already fits on screen without truncation -- see
     docs/adrs/always-show-more-indicator-for-compound-command-ask-items.md."""
-    screen = PermissionAskScreen(_command_ask_ctx(
+    screen = PermissionAskPanel(_command_ask_ctx(
         "echo hi && echo bye", reason="run command: echo hi", is_compound=True))
 
     container = next(iter(screen.compose()))
@@ -1414,7 +1504,7 @@ def test_permission_ask_screen_preview_shows_the_items_own_command_not_the_full_
     way to tell which approval request was about which command -- the preview must show this
     item's own item_command_text instead. See docs/adrs/
     permission-ask-item-shows-its-own-command-text-not-the-full-compound.md."""
-    screen = PermissionAskScreen(_command_ask_ctx(
+    screen = PermissionAskPanel(_command_ask_ctx(
         "echo $SHELL; echo $HOME", is_compound=True, item_command_text="echo $SHELL"))
 
     container = next(iter(screen.compose()))
@@ -1427,7 +1517,7 @@ def test_permission_ask_screen_preview_shows_the_items_own_command_not_the_full_
 def test_permission_ask_screen_preview_falls_back_to_command_text_with_no_item_command_text(
     tmp_path: Path,
 ) -> None:
-    screen = PermissionAskScreen(_command_ask_ctx("echo hi", item_command_text=None))
+    screen = PermissionAskPanel(_command_ask_ctx("echo hi", item_command_text=None))
 
     container = next(iter(screen.compose()))
     command_static = _find_child(container, PERMISSION_ASK_COMMAND_ID)
@@ -1436,26 +1526,30 @@ def test_permission_ask_screen_preview_falls_back_to_command_text_with_no_item_c
     assert str(command_static.render()) == "echo hi"
 
 
-# --- PermissionAskScreen: command expansion, mounted (needs a real App to test key/click) ---
+# --- PermissionAskPanel: command expansion, mounted (needs a real App to test key/click) ---
 
 
 class _PermissionAskTestApp(App[None]):
-    """Minimal standalone harness for driving a real `PermissionAskScreen` through Textual's
+    """Minimal standalone harness for driving a real `PermissionAskPanel` through Textual's
     `Pilot`, without needing a full `ReplApp`/`Session` -- the "+"/click-to-expand behavior only
-    exists on `PermissionAskScreen` and `ExpandedCommandScreen` themselves, so there's nothing
+    exists on `PermissionAskPanel` and `ExpandedCommandScreen` themselves, so there's nothing
     session- or tool-call-shaped for a heavier harness to add. `decision` records whatever
-    `PermissionAskScreen` is dismissed with, for tests that need to confirm Enter actually
-    reached `action_confirm` rather than just checking screen-stack state."""
+    `PermissionAskPanel` is dismissed with, for tests that need to confirm Enter actually
+    reached `action_confirm` rather than just checking mounted-widget state."""
 
     def __init__(self, ctx: PermissionAskContext) -> None:
         super().__init__()
         self._ctx = ctx
         self.decision: PermissionDecision | None = None
 
-    def on_mount(self) -> None:
-        self.push_screen(PermissionAskScreen(self._ctx), callback=self._set_decision)
+    def compose(self) -> ComposeResult:
+        yield Vertical()
 
-    def _set_decision(self, decision: PermissionDecision | None) -> None:
+    async def on_mount(self) -> None:
+        panel = PermissionAskPanel(self._ctx, on_dismiss=self._set_decision)
+        await self.query_one(Vertical).mount(panel)
+
+    def _set_decision(self, decision: PermissionDecision) -> None:
         self.decision = decision
 
 
@@ -1473,7 +1567,7 @@ async def test_plus_key_opens_expanded_command_screen_with_the_full_untruncated_
         await pilot.press("escape")
         await pilot.pause()
 
-        assert isinstance(app.screen, PermissionAskScreen)
+        app.query_one(PermissionAskPanel)
 
 
 async def test_expand_shows_the_full_compound_command_not_just_this_items_own_command() -> None:
@@ -1504,16 +1598,18 @@ async def test_clicking_the_more_indicator_opens_expanded_command_screen() -> No
 
 async def test_more_indicator_is_never_focused_so_it_cannot_steal_enter_from_the_grid() -> None:
     """Regression test: `_MoreIndicator` briefly had `can_focus=True` with its own Enter
-    binding, and Textual's `Screen.AUTO_FOCUS` auto-focuses the first focusable descendant on
-    mount -- so it silently grabbed focus (and every subsequent Enter keystroke) the moment the
-    screen appeared, with no click needed, making the grid's Allow/Deny selection unconfirmable
-    by keyboard whenever a command was long enough to truncate. See
+    binding, and mounting a `PermissionAskPanel` focuses the panel itself (see
+    `PermissionAskPanel.on_mount`) -- if the indicator were focusable instead, it would grab
+    focus (and every subsequent Enter keystroke) the moment the panel mounted, with no click
+    needed, making the grid's Allow/Deny selection unconfirmable by keyboard whenever a command
+    was long enough to truncate. See
     docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
     long_command = "\n".join(f"line {i}" for i in range(1, 21))
     app = _PermissionAskTestApp(_command_ask_ctx(long_command))
 
     async with app.run_test() as pilot:
-        assert app.focused is None
+        panel = app.query_one(PermissionAskPanel)
+        assert app.focused is panel
 
         await pilot.click(f"#{PERMISSION_ASK_MORE_ID}")
         await pilot.pause()
@@ -1521,8 +1617,8 @@ async def test_more_indicator_is_never_focused_so_it_cannot_steal_enter_from_the
 
         await pilot.press("escape")
         await pilot.pause()
-        assert isinstance(app.screen, PermissionAskScreen)
-        assert app.focused is None
+        app.query_one(PermissionAskPanel)
+        assert app.focused is panel
 
         await pilot.press("enter")
         await pilot.pause()
@@ -1538,7 +1634,7 @@ def test_action_confirm_dismisses_with_the_selected_grid_cell(
     expected_action: Literal["allow", "deny"],
     expected_scope: Literal["once", "session", "workspace", "homedir"],
 ) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._column = column
     screen._row = row
@@ -1550,7 +1646,7 @@ def test_action_confirm_dismisses_with_the_selected_grid_cell(
 
 
 def test_action_move_column_wraps_around(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
     screen.action_move_column(-1)
@@ -1559,7 +1655,7 @@ def test_action_move_column_wraps_around(tmp_path: Path) -> None:
 
 
 def test_action_move_row_wraps_around(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
     screen.action_move_row(-1)
@@ -1568,7 +1664,7 @@ def test_action_move_row_wraps_around(tmp_path: Path) -> None:
 
 
 def test_action_move_row_down_four_times_from_once_reaches_the_other_row(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
     for _ in range(4):
@@ -1578,7 +1674,7 @@ def test_action_move_row_down_four_times_from_once_reaches_the_other_row(tmp_pat
 
 
 def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
 
@@ -1589,7 +1685,7 @@ def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> Non
 
 
 def test_action_confirm_on_other_row_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
     screen._row = 4
@@ -1601,7 +1697,7 @@ def test_action_confirm_on_other_row_reveals_input_instead_of_dismissing(tmp_pat
 
 
 def test_on_input_submitted_dismisses_with_a_once_scoped_denial_and_the_text(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     event = MagicMock(value="use /tmp instead")
 
@@ -1612,7 +1708,7 @@ def test_on_input_submitted_dismisses_with_a_once_scoped_denial_and_the_text(tmp
 
 
 def test_action_decline_dismisses_with_a_once_scoped_denial(tmp_path: Path) -> None:
-    screen = PermissionAskScreen(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
 
     screen.action_decline()
@@ -1620,7 +1716,7 @@ def test_action_decline_dismisses_with_a_once_scoped_denial(tmp_path: Path) -> N
     screen.dismiss.assert_called_once_with(PermissionDecision(action="deny", scope="once"))
 
 
-# --- PermissionAskScreen end-to-end through ReplApp ---
+# --- PermissionAskPanel end-to-end through ReplApp ---
 
 
 async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path) -> None:
@@ -1638,11 +1734,13 @@ async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path)
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
 
-        assert isinstance(app.screen, PermissionAskScreen)
+        panel = app.query_one(PermissionAskPanel)
+        assert panel.parent is app.query_one(f"#{INTERACTION_PANEL_ID}", Vertical)
+        assert app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
 async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path) -> None:
@@ -1661,20 +1759,85 @@ async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        assert isinstance(app.screen, PermissionAskScreen)
+        app.query_one(PermissionAskPanel)
 
         await pilot.press("escape")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(app.screen_stack) == 1
+        assert not app.query(PermissionAskPanel)
+        assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "Permission denied" in str(tool_response.content)
         assert config.read_dirs == DirRules()
         assert config.write_dirs == DirRules()
+
+
+async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_and_decided(
+    tmp_path: Path,
+) -> None:
+    """Once a `PermissionAskPanel` is dismissed, `ReplApp` leaves a permanent card in the
+    history scroll naming what was asked and what the user decided -- so scrolling back
+    through the session shows the approval in context, not just that one happened."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        while not app.query(PermissionAskPanel):
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history_text = "\n".join(
+            str(child.render()) for child in app.query_one(f"#{HISTORY_ID}", VerticalScroll).children
+            if isinstance(child, Static))
+        assert str(target) in history_text
+        assert "Decision: Deny — Once" in history_text
+
+
+async def test_confirm_permission_ask_truncates_a_long_single_line_command_to_fit_the_terminal() -> None:
+    """Regression test: a single very long line with no explicit newline must still be
+    truncated once shown through a real, sized `ReplApp` -- `_confirm_permission_ask` computes
+    `PermissionAskPanel`'s `preview_wrap_width` from the app's own terminal size (see
+    `_command_preview`'s docstring), so this no longer soft-wraps to many more rows than
+    `_MAX_COMMAND_PREVIEW_LINES` and pushes the grid below it off screen."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+    long_line = " ".join(f"word{i}" for i in range(200))
+    ctx = PermissionAskContext(command_text=long_line, resource_description="run a long command")
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
+        while not app.query(PermissionAskPanel):
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        panel = app.query_one(PermissionAskPanel)
+        command_static = panel.query_one(f"#{PERMISSION_ASK_COMMAND_ID}", Static)
+        rendered = str(command_static.render())
+        assert rendered != long_line
+        assert len(rendered) < len(long_line)
+        panel.query_one(f"#{PERMISSION_ASK_MORE_ID}", Static)
+
+        panel.dismiss(PermissionDecision(action="deny", scope="once"))
+        await task
 
 
 async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: Path) -> None:
@@ -1700,18 +1863,16 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        assert isinstance(app.screen, PermissionAskScreen)
 
-        screen = app.screen
-        assert isinstance(screen, PermissionAskScreen)
-        screen.dismiss(PermissionDecision(action="allow", scope="session"))
+        panel = app.query_one(PermissionAskPanel)
+        panel.dismiss(PermissionDecision(action="allow", scope="session"))
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(app.screen_stack) == 1
+        assert not app.query(PermissionAskPanel)
         response_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
         assert isinstance(response_widget, Markdown)
         assert response_widget.source == "final answer"
@@ -1741,18 +1902,17 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, PermissionAskScreen)
-        grid_width = screen.query_one(f"#{PERMISSION_ASK_GRID_ID}", GridContainer).outer_size.width
+        panel = app.query_one(PermissionAskPanel)
+        grid_width = panel.query_one(f"#{PERMISSION_ASK_GRID_ID}", GridContainer).outer_size.width
         assert grid_width > 10  # regression guard: the grid must not collapse to ~1
 
         await pilot.press("o")
         await pilot.pause()
 
-        other_input = screen.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
+        other_input = panel.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
         # Regression guard: the "Other" Input must not collapse to a sliver either -- it
         # should stay as wide as the grid it replaced.
         assert other_input.outer_size.width == grid_width
@@ -1761,7 +1921,7 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(app.screen_stack) == 1
+        assert not app.query(PermissionAskPanel)
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "use /tmp instead" in str(tool_response.content)
         assert "Permission denied" in str(tool_response.content)
@@ -1770,7 +1930,7 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
 async def test_permission_ask_modal_other_row_reachable_via_down_and_enter(
     tmp_path: Path,
 ) -> None:
-    """The grid's trailing double-wide "Other" cell (see `PermissionAskScreen`'s docstring) is
+    """The grid's trailing double-wide "Other" cell (see `PermissionAskPanel`'s docstring) is
     reachable by pressing Down repeatedly past the last scope row, not just the `o` shortcut."""
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
@@ -1787,18 +1947,17 @@ async def test_permission_ask_modal_other_row_reachable_via_down_and_enter(
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, PermissionAskScreen)
+        panel = app.query_one(PermissionAskPanel)
 
         for _ in range(4):
             await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
 
-        other_input = screen.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
+        other_input = panel.query_one(f"#{PERMISSION_ASK_INPUT_ID}", Input)
         assert other_input.has_focus
 
 
@@ -1810,7 +1969,7 @@ async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_rem
     tmp_path: Path,
 ) -> None:
     """Two independent paths in one `ask_multi_permission` call (see
-    `MultiPermissionAskRequired`) each get their own `PermissionAskScreen`, shown one after
+    `MultiPermissionAskRequired`) each get their own `PermissionAskPanel`, shown one after
     another -- the second screen's grid cursor starts wherever the first one's selection
     landed (see `ReplApp._last_permission_action`/`_last_permission_scope`), matching the
     "pre-select the last spot" requirement for a run of several prompts in a row."""
@@ -1830,29 +1989,27 @@ async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_rem
         prompt_input.text = "please touch two files"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        first_screen = app.screen
-        assert isinstance(first_screen, PermissionAskScreen)
-        assert (first_screen._column, first_screen._row) == (0, 0)  # default: allow/once
+        first_panel = app.query_one(PermissionAskPanel)
+        assert (first_panel._column, first_panel._row) == (0, 0)  # default: allow/once
 
-        first_screen.dismiss(PermissionDecision(action="allow", scope="workspace"))
-        while len(app.screen_stack) != 1:
+        first_panel.dismiss(PermissionDecision(action="allow", scope="workspace"))
+        while app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        second_screen = app.screen
-        assert isinstance(second_screen, PermissionAskScreen)
-        assert second_screen is not first_screen
-        assert (second_screen._column, second_screen._row) == (0, 2)  # remembered: allow/workspace
+        second_panel = app.query_one(PermissionAskPanel)
+        assert second_panel is not first_panel
+        assert (second_panel._column, second_panel._row) == (0, 2)  # remembered: allow/workspace
 
-        second_screen.dismiss(PermissionDecision(action="allow", scope="workspace"))
+        second_panel.dismiss(PermissionDecision(action="allow", scope="workspace"))
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(app.screen_stack) == 1
+        assert not app.query(PermissionAskPanel)
         response_widget = app.query_one(f"#{HISTORY_ID}", VerticalScroll).children[-1]
         assert isinstance(response_widget, Markdown)
         assert response_widget.source == "final answer"
@@ -1877,17 +2034,17 @@ async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_ab
         prompt_input.text = "please touch two files"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
+        while not app.query(PermissionAskPanel):
             await asyncio.sleep(0.01)
         await pilot.pause()
-        assert isinstance(app.screen, PermissionAskScreen)
+        app.query_one(PermissionAskPanel)
 
         await pilot.press("escape")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        # Only one screen was ever shown -- the second item was never asked about.
-        assert len(app.screen_stack) == 1
+        # Only one panel was ever shown -- the second item was never asked about.
+        assert not app.query(PermissionAskPanel)
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "Permission denied" in str(tool_response.content)
 
