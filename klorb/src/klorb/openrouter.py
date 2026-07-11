@@ -60,6 +60,8 @@ class OpenRouterApiProvider(ApiProvider):
         session_id: str | None = None,
         reasoning: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        timeout: float | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
@@ -74,6 +76,14 @@ class OpenRouterApiProvider(ApiProvider):
         `function.arguments` accumulated piecemeal), reassembled here, and reported as
         `ToolCallRequest`s on the returned reply's `Message.tool_calls`.
 
+        `response_format`, if given, is folded into `extra_body` alongside `session_id`/
+        `reasoning` (the same additive-request-body pattern all three already use), asking the
+        underlying model for a structured-output reply rather than free-form text.
+
+        `timeout`, if given, is passed straight through to the OpenAI SDK's own per-request
+        `timeout` kwarg, bounding this one call's wall-clock time independent of any client-wide
+        default.
+
         If `cancel_event` is given and set while the stream is being consumed, the
         underlying HTTP stream is closed and `ResponseAborted` is raised.
         """
@@ -82,12 +92,14 @@ class OpenRouterApiProvider(ApiProvider):
         logger.info("Sending %d-message turn to %s", len(api_messages), resolved_model)
         client = self.build_client()
         extra_body: dict[str, Any] | None = None
-        if session_id is not None or reasoning is not None:
+        if session_id is not None or reasoning is not None or response_format is not None:
             extra_body = {}
             if session_id is not None:
                 extra_body["session_id"] = session_id
             if reasoning is not None:
                 extra_body["reasoning"] = reasoning
+            if response_format is not None:
+                extra_body["response_format"] = response_format
         create_kwargs: dict[str, Any] = {
             "model": resolved_model,
             "messages": api_messages,
@@ -97,6 +109,8 @@ class OpenRouterApiProvider(ApiProvider):
         }
         if tools:
             create_kwargs["tools"] = tools
+        if timeout is not None:
+            create_kwargs["timeout"] = timeout
         stream = client.chat.completions.create(**create_kwargs)
 
         content_parts: list[str] = []

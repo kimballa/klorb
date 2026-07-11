@@ -254,7 +254,21 @@ class PermissionAskContext(BaseModel):
     `PermissionAskItem.item_command_text`: the exact source text of just the one statement this
     item is actually about, distinct from `command_text`'s whole raw command — a UI should
     prefer showing this as the prominent per-item preview (see `PermissionAskItem.
-    item_command_text` for why `command_text` alone isn't enough for a compound command)."""
+    item_command_text` for why `command_text` alone isn't enough for a compound command).
+
+    `sibling_items`, set by `Session._resolve_multi_permission_ask` to the full
+    `MultiPermissionAskRequired.items` list (including the item this context is itself about, in
+    the same order), lets a UI batch work across a whole compound command's several asks even
+    though they're each still asked about one at a time, in series — e.g.
+    `klorb.tui.repl.ReplApp._confirm_permission_ask` uses it to send `klorb.permissions.
+    risk_classifier.classify_command_risk()` every item in one request the first time any of
+    them is seen, rather than once per item. `None` for a plain single-item
+    `PermissionAskRequired` ask (that path never has `command_text` set at all, so there is
+    nothing for a command-risk classifier to batch there in the first place). `Session` itself
+    never reads this field back — it only threads data it already has for whichever callback
+    consumes it."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     path: Path | None = None
     is_write: bool = False
@@ -263,6 +277,7 @@ class PermissionAskContext(BaseModel):
     is_compound: bool = False
     item_command_text: str | None = None
     resource_description: str
+    sibling_items: list[PermissionAskItem] | None = None
 
 
 class PermissionDecision(BaseModel):
@@ -992,7 +1007,8 @@ class Session:
                 path=item.path, is_write=item.is_write, command=item.command,
                 command_text=item.command_text, is_compound=item.is_compound,
                 item_command_text=item.item_command_text,
-                resource_description=item.resource_description))
+                resource_description=item.resource_description,
+                sibling_items=multi_ask_exc.items))
             decisions.append(decision)
             if decision.action == "deny" or decision.other_text is not None:
                 break

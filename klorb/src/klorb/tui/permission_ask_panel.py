@@ -33,8 +33,10 @@ _SCOPE_LABELS: dict[_Scope, str] = {
 }
 
 PERMISSION_ASK_HEADER_ID = "permission-ask-header"
+PERMISSION_ASK_RISK_BADGE_ID = "permission-ask-risk-badge"
 PERMISSION_ASK_COMMAND_ID = "permission-ask-command"
 PERMISSION_ASK_MORE_ID = "permission-ask-more"
+PERMISSION_ASK_RATIONALE_ID = "permission-ask-rationale"
 PERMISSION_ASK_DETAIL_ID = "permission-ask-detail"
 PERMISSION_ASK_GRANTED_ID = "permission-ask-granted"
 PERMISSION_ASK_GRID_ID = "permission-ask-grid"
@@ -60,6 +62,25 @@ _SECTION_END_CLASS = "ask-section-end"
 preview, detail, granted-directory info) and the next — applied to whichever widget actually
 ends a section, since that varies (the command preview itself if it fits inline, or the
 `[more...]` indicator instead if it's truncated) rather than being fixed at compose() time."""
+
+_RISK_BAND_CLASSES: tuple[tuple[int, str], ...] = (
+    (9, "ask-risk-critical"), (7, "ask-risk-high"), (5, "ask-risk-medium"))
+"""`(minimum_score, css_class)` pairs, checked highest-first, for `_risk_band_class()`: a
+`risk_score` of 9-10 is `"ask-risk-critical"` (styled red), 7-8 is `"ask-risk-high"` (orange),
+5-6 is `"ask-risk-medium"` (yellow), and 0-4 gets no class at all (default/unstyled text color —
+still italic, per `#permission-ask-rationale`'s own base style). See
+docs/plans/archive/008-llm-command-risk-scoring.md's "UI changes" section for the score-to-color
+table this implements; the exact Textual color tokens behind each class are picked from
+Textual's own auto-generated `$warning`/`$error` shade variants (every named theme color gets
+`-lighten-N`/`-darken-N` variants for free — see Textual's `design.py`), not a new palette,
+matching whatever tokens `PermissionAskPanel`'s existing styling already uses."""
+
+
+def _risk_band_class(risk_score: int) -> str | None:
+    for minimum, css_class in _RISK_BAND_CLASSES:
+        if risk_score >= minimum:
+            return css_class
+    return None
 
 
 def _cell_id(column: int, row: int) -> str:
@@ -237,6 +258,18 @@ class PermissionAskPanel(Vertical):
 
     `preview_wrap_width`, when given, is `_command_preview`'s soft-wrap budget — see that
     function's docstring for why it's `None` by default and only ever set by `ReplApp`.
+
+    `risk_score`/`risk_rationale` are `klorb.permissions.risk_classifier.ItemRiskAssessment`'s
+    own fields for this one item, when `ReplApp._classify_bash_risk` produced one — `None`/`None`
+    (the default) when the classifier is disabled, this isn't a `BashTool` ask, or classification
+    failed, in which case no risk badge or rationale line is shown at all. When set, a `"Risk:
+    N/10"` badge is shown near the header, and `risk_rationale` is shown beneath the command
+    preview, always in italics (regardless of score) and additionally colored by score band (0-4
+    unstyled, 5-6 yellow, 7-8 orange, 9-10 red — see `_risk_band_class`) so severity reads at a
+    glance without parsing the sentence itself. Purely a UX signal: every grid cell stays
+    reachable and confirmable no matter the score — see `ReplApp._confirm_permission_ask` for the
+    one behavioral effect a high score has (biasing the *starting* cursor cell, never removing or
+    disabling an option).
     """
 
     can_focus = True
@@ -260,6 +293,12 @@ class PermissionAskPanel(Vertical):
         margin: 0 0 1 0;
     }
 
+    #permission-ask-risk-badge {
+        color: $text-muted;
+        text-style: bold;
+        margin: 0 0 1 0;
+    }
+
     #permission-ask-command {
         text-style: bold;
         width: 1fr;
@@ -268,6 +307,23 @@ class PermissionAskPanel(Vertical):
     #permission-ask-more {
         color: $accent;
         text-style: underline;
+    }
+
+    #permission-ask-rationale {
+        text-style: italic;
+        width: 1fr;
+    }
+
+    .ask-risk-medium {
+        color: $warning-lighten-2;
+    }
+
+    .ask-risk-high {
+        color: $warning;
+    }
+
+    .ask-risk-critical {
+        color: $error;
     }
 
     .ask-section-end {
@@ -330,6 +386,8 @@ class PermissionAskPanel(Vertical):
         granted_command_patterns: list[list[str]] | None = None,
         initial_action: _Action = "allow",
         initial_scope: _Scope = "once",
+        risk_score: int | None = None,
+        risk_rationale: str | None = None,
         preview_wrap_width: int | None = None,
         on_dismiss: Callable[[PermissionDecision], None] | None = None,
     ) -> None:
@@ -339,6 +397,8 @@ class PermissionAskPanel(Vertical):
         self._granted_command_patterns = granted_command_patterns
         self._column = _ACTIONS.index(initial_action)
         self._row = _SCOPES.index(initial_scope)
+        self._risk_score = risk_score
+        self._risk_rationale = risk_rationale
         self._preview_wrap_width = preview_wrap_width
         self._on_dismiss = on_dismiss
 
@@ -351,22 +411,30 @@ class PermissionAskPanel(Vertical):
         cells.append(Static("Other...", id=PERMISSION_ASK_OTHER_CELL_ID))
 
         widgets: list[Widget] = [Static(self.header_text(), id=PERMISSION_ASK_HEADER_ID)]
+        if self._risk_score is not None:
+            badge_classes = _risk_band_class(self._risk_score)
+            widgets.append(Static(
+                f"Risk: {self._risk_score}/10", id=PERMISSION_ASK_RISK_BADGE_ID,
+                classes=badge_classes))
 
+        preview_section: list[Widget] = []
         command_text = self._ask_ctx.command_text
         if command_text is not None:
             preview_source = self._ask_ctx.item_command_text or command_text
             preview, truncated = _command_preview(preview_source, wrap_width=self._preview_wrap_width)
             show_more = truncated or self._ask_ctx.is_compound
+            preview_section.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
             if show_more:
-                widgets.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
-                widgets.append(_MoreIndicator(
-                    on_activate=self.action_expand_command, classes=_SECTION_END_CLASS))
-            else:
-                widgets.append(Static(
-                    preview, id=PERMISSION_ASK_COMMAND_ID, classes=_SECTION_END_CLASS))
+                preview_section.append(_MoreIndicator(on_activate=self.action_expand_command))
         elif self._ask_ctx.path is not None:
-            widgets.append(Static(
-                str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID, classes=_SECTION_END_CLASS))
+            preview_section.append(Static(str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID))
+        if self._risk_rationale is not None:
+            preview_section.append(Static(
+                self._risk_rationale, id=PERMISSION_ASK_RATIONALE_ID,
+                classes=_risk_band_class(self._risk_score) if self._risk_score is not None else None))
+        if preview_section:
+            preview_section[-1].add_class(_SECTION_END_CLASS)
+        widgets.extend(preview_section)
 
         widgets.append(Static(
             self._ask_ctx.resource_description, id=PERMISSION_ASK_DETAIL_ID,

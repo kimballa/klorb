@@ -20,6 +20,7 @@ from klorb.process_config import (
     DEFAULT_SHELL_COMMAND,
     PROCESS_KEY_MAP,
     SESSION_KEY_MAP,
+    ProcessConfig,
     load_process_config,
     persist_theme,
     user_config_path,
@@ -710,3 +711,48 @@ def test_persist_session_default_is_picked_up_by_a_later_load(tmp_path: Path) ->
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
     assert process_config.session.model == "persisted/model"
+
+
+# --- tools.bash.riskClassifier.* (PLAN-008) ---
+
+
+def test_bash_risk_classifier_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.bash_risk_classifier_enabled is True
+    assert process_config.bash_risk_classifier_model == "openai/gpt-5-nano"
+    assert process_config.bash_risk_classifier_timeout_seconds == 5.0
+    assert process_config.bash_risk_classifier_too_risky_threshold == 9
+
+
+def test_default_config_layer_matches_bash_risk_classifier_field_defaults() -> None:
+    """The packaged `default-config.json`'s `tools.bash.riskClassifier.*` values must match
+    `ProcessConfig`'s own pydantic field defaults -- both are supposed to describe the same
+    "nothing configured" behavior, and drifting apart would make the packaged file lie about
+    what actually happens when it's missing entirely (e.g. `ProcessConfig()` constructed
+    directly by a test, or a caller that bypasses `load_process_config`)."""
+    layer = _real_default_config_layer([])
+    defaults = ProcessConfig()
+
+    assert layer["tools.bash.riskClassifier.enabled"] == defaults.bash_risk_classifier_enabled
+    assert layer["tools.bash.riskClassifier.model"] == defaults.bash_risk_classifier_model
+    assert layer["tools.bash.riskClassifier.timeout"] == defaults.bash_risk_classifier_timeout_seconds
+    assert (
+        layer["tools.bash.riskClassifier.tooRiskyThreshold"]
+        == defaults.bash_risk_classifier_too_risky_threshold)
+
+
+def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path: Path) -> None:
+    _write_config(tmp_path / "etc" / "klorb-config.json", {
+        "tools.bash.riskClassifier.enabled": False,
+        "tools.bash.riskClassifier.model": "openai/other-model",
+        "tools.bash.riskClassifier.timeout": 2.5,
+        "tools.bash.riskClassifier.tooRiskyThreshold": 6,
+    })
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.bash_risk_classifier_enabled is False
+    assert process_config.bash_risk_classifier_model == "openai/other-model"
+    assert process_config.bash_risk_classifier_timeout_seconds == 2.5
+    assert process_config.bash_risk_classifier_too_risky_threshold == 6

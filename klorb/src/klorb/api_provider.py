@@ -48,6 +48,8 @@ class ApiProvider(ABC):
         session_id: str | None = None,
         reasoning: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        timeout: float | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
@@ -64,6 +66,18 @@ class ApiProvider(ABC):
         the prompt; omitted, `None`, or empty means no tools are offered. If the model
         requests one or more tool calls, they're reported on the returned reply's
         `Message.tool_calls`.
+
+        `response_format`, if given, is an OpenAI-compatible structured-output request body
+        (e.g. `{"type": "json_schema", "json_schema": {...}}`) asking the model to reply with
+        JSON conforming to a schema, rather than free-form text — see
+        `klorb.permissions.risk_classifier.classify_command_risk` for the one caller that uses
+        this today. Omitted or `None` means no structured-output constraint is requested.
+
+        `timeout`, if given, bounds this one request's wall-clock time (seconds), overriding
+        whatever default timeout the underlying client would otherwise use; omitted or `None`
+        means the client's own default applies. Meant for a caller with its own latency budget
+        distinct from the main conversation's (e.g. an interactive approval-flow side call that
+        must fail fast rather than stall a modal), not for the main conversation turn loop.
 
         If `on_chunk` is given, it is invoked once per non-empty text delta as the response
         streams in, in addition to the final reply being returned as usual. If

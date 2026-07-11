@@ -29,6 +29,8 @@ from klorb.logging_config import configure_logging, session_log_path
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
+from klorb.permissions.risk_classifier import ItemRiskAssessment, classify_command_risk
+from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import (
     ProcessConfig,
     load_process_config,
@@ -133,6 +135,25 @@ actual rendered width for `PermissionAskPanel`'s `preview_wrap_width` (see
 _MIN_COMMAND_PREVIEW_WRAP_WIDTH = 20
 """Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable
 (if aggressively wrapped) preview rather than a degenerate near-zero width."""
+
+_BASH_RISK_CLASSIFIER_STATE_KEY = "BashRiskClassifier"
+"""`Session.tool_state` key `ReplApp._classify_bash_risk` caches `ItemRiskAssessment`s under,
+keyed by each item's own `item_command_text` — see that method."""
+
+
+def _sibling_items_for(ask_ctx: PermissionAskContext) -> list[PermissionAskItem]:
+    """`ask_ctx.sibling_items` when set (the normal `MultiPermissionAskRequired` path — see
+    `Session._resolve_multi_permission_ask`), else a single-item list synthesized from `ask_ctx`
+    itself: a defensive fallback for a `command_text`-bearing context built some other way (e.g.
+    directly, in a test) rather than via a real `BashTool` multi-item ask."""
+    if ask_ctx.sibling_items is not None:
+        return ask_ctx.sibling_items
+    return [PermissionAskItem(
+        ask_ctx.resource_description, path=ask_ctx.path, is_write=ask_ctx.is_write,
+        command=ask_ctx.command, command_text=ask_ctx.command_text,
+        is_compound=ask_ctx.is_compound, item_command_text=ask_ctx.item_command_text)]
+
+
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
 MASCOT_ART = """\
@@ -2131,6 +2152,43 @@ class ReplApp(App[None]):
             f"Decision: {decision_text}", classes="interaction-record-decision", markup=False))
         self._scroll_if_pinned(history, was_pinned)
 
+    def _classify_bash_risk(self, ask_ctx: PermissionAskContext) -> ItemRiskAssessment | None:
+        """This item's `ItemRiskAssessment` from `klorb.permissions.risk_classifier.
+        classify_command_risk()`, or `None` if `tools.bash.riskClassifier.enabled` is off,
+        `ask_ctx` isn't a `BashTool` ask at all (`command_text` unset — a plain directory-access
+        ask has nothing for a command-risk classifier to say), or classification failed.
+
+        Classifies every item in `_sibling_items_for(ask_ctx)` in one request the first time any
+        of them is looked up in this session, caching each result in
+        `session.tool_state["BashRiskClassifier"]` keyed by its own `item_command_text` — so the
+        remaining items of the same compound command, each asked about in its own panel right
+        after this one (see `Session._resolve_multi_permission_ask`), reuse the cached report
+        instead of spending a second classifier round trip, and a byte-identical item asked about
+        again later in the session (e.g. a retried "once" decision) does too.
+        """
+        if ask_ctx.command_text is None or not self._process_config.bash_risk_classifier_enabled:
+            return None
+        cache: dict[str, ItemRiskAssessment] = self._session.tool_state.setdefault(
+            _BASH_RISK_CLASSIFIER_STATE_KEY, {})
+        item_key = ask_ctx.item_command_text or ask_ctx.resource_description
+        cached = cache.get(item_key)
+        if cached is not None:
+            return cached
+
+        items = _sibling_items_for(ask_ctx)
+        report = classify_command_risk(
+            ask_ctx.command_text, items, api_provider=self._session.provider,
+            model=self._process_config.bash_risk_classifier_model,
+            timeout=self._process_config.bash_risk_classifier_timeout_seconds)
+        if report is None:
+            return None
+        for index, item in enumerate(items):
+            assessment = next(
+                (a for a in report.items if a.item_id == f"item-{index}"), None)
+            if assessment is not None:
+                cache[item.item_command_text or item.resource_description] = assessment
+        return cache.get(item_key)
+
     async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """Mount a `PermissionAskPanel` for `ask_ctx` into `#interaction-panel` and wait for the
         user's choice.
@@ -2144,8 +2202,13 @@ class ReplApp(App[None]):
         `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap.
         Seeds the panel's grid cursor from `_last_permission_action`/`_last_permission_scope`
         and updates both from the returned decision, so a run of several asks for one compound
-        tool call starts each next prompt where the previous one left off.
+        tool call starts each next prompt where the previous one left off — unless
+        `_classify_bash_risk` rates this item at or above `tools.bash.riskClassifier.
+        tooRiskyThreshold`, which pre-selects `Deny, once` instead (still just a starting cursor
+        position; every cell stays reachable and confirmable regardless).
         """
+        risk_assessment = self._classify_bash_risk(ask_ctx)
+
         granted_paths = None
         granted_command_patterns = None
         if ask_ctx.path is not None:
@@ -2153,15 +2216,27 @@ class ReplApp(App[None]):
                 self._session.config.read_dirs, self._session.config.write_dirs,
                 self._session.config.workspace.path, ask_ctx.path, ask_ctx.is_write)
         elif ask_ctx.command is not None:
-            granted_command_patterns = compute_command_grant_patterns(
-                self._session.config.command_rules, ask_ctx.command)
+            if risk_assessment is not None and risk_assessment.suggested_pattern:
+                granted_command_patterns = [risk_assessment.suggested_pattern]
+            else:
+                granted_command_patterns = compute_command_grant_patterns(
+                    self._session.config.command_rules, ask_ctx.command)
 
         decision_future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         preview_wrap_width = max(
             _MIN_COMMAND_PREVIEW_WRAP_WIDTH, self.size.width - _COMMAND_PREVIEW_WIDTH_PADDING)
+        initial_action = self._last_permission_action
+        initial_scope = self._last_permission_scope
+        if (
+            risk_assessment is not None
+            and risk_assessment.risk_score >= self._process_config.bash_risk_classifier_too_risky_threshold
+        ):
+            initial_action, initial_scope = "deny", "once"
         panel = PermissionAskPanel(
             ask_ctx, granted_paths=granted_paths, granted_command_patterns=granted_command_patterns,
-            initial_action=self._last_permission_action, initial_scope=self._last_permission_scope,
+            initial_action=initial_action, initial_scope=initial_scope,
+            risk_score=risk_assessment.risk_score if risk_assessment is not None else None,
+            risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,
             preview_wrap_width=preview_wrap_width, on_dismiss=decision_future.set_result)
 
         panel_container = self._enter_interaction_mode()
@@ -2172,6 +2247,9 @@ class ReplApp(App[None]):
 
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
+        # TODO(aaron): once a structured audit log for permission decisions exists, record an
+        # entry here pairing `risk_assessment` (if any) with `decision` -- this is the first
+        # point both are in scope together.
         self._record_interaction_history(
             panel.header_text(), format_ask_context_body(ask_ctx), format_permission_decision(decision))
         return decision
