@@ -1722,12 +1722,18 @@ class ReplApp(App[None]):
                 self.call_from_thread(self._show_response, response_text)
 
     def _mount_response_widget(self, initial_text: str) -> Markdown:
-        """Mount a new `Markdown` widget for a streaming response and return it."""
+        """Mount a new `Markdown` widget for a streaming response and return it. Also refreshes
+        the status bar's token tally (see `_update_status_bar`): a new placeholder `Message`
+        with its own `estimated_tokens` was just appended to the session for this chunk (see
+        `Session._send_and_receive.handle_chunk`), so the footer should reflect it immediately
+        rather than only once the whole turn finishes.
+        """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget = Markdown(initial_text, classes="response")
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
+        self._update_status_bar()
         return widget
 
     def _update_response_widget(self, widget: Markdown, text: str) -> None:
@@ -1737,12 +1743,15 @@ class ReplApp(App[None]):
         isn't yanked back down by every incoming chunk. `widget` is always still the last thing
         mounted in the history at this point: `_send_prompt` starts a fresh widget rather than
         reusing this one once a round boundary (a tool call) has passed, so there's nothing
-        mounted after it left to get stuck behind.
+        mounted after it left to get stuck behind. Also refreshes the status bar (see
+        `_mount_response_widget`): the placeholder message's `estimated_tokens` grew along with
+        `text`.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
         self._scroll_if_pinned(history, was_pinned)
+        self._update_status_bar()
 
     def _mount_thinking_widget(self, initial_text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Thinking>` label followed by an italicized `Static`
@@ -1750,7 +1759,9 @@ class ReplApp(App[None]):
         body is styled italic via the `.thinking-body` CSS class rather than markup, and
         constructed with `markup=False`: model thinking text is arbitrary and must render
         verbatim, not be parsed as Textual console markup (an unescaped `[` in it can
-        otherwise be misread as the start of a markup tag and raise `MarkupError`).
+        otherwise be misread as the start of a markup tag and raise `MarkupError`). Also
+        refreshes the status bar (see `_mount_response_widget`): a new `role="thinking"`
+        placeholder message with its own `estimated_tokens` was just appended to the session.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -1759,18 +1770,21 @@ class ReplApp(App[None]):
         widget = Static(initial_text, classes="thinking-body", markup=False)
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
+        self._update_status_bar()
         return widget, label_widget
 
     def _update_thinking_widget(self, widget: Static, text: str) -> None:
         """Update a streaming `<Thinking>` `Static` widget with the latest accumulated `text`,
         following the view to the bottom only if it was already pinned there before this
         change (see `_update_response_widget`) — the label mounted alongside `widget` never
-        changes after being set, so only the body needs updating here.
+        changes after being set, so only the body needs updating here. Also refreshes the
+        status bar: the placeholder message's `estimated_tokens` grew along with `text`.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
         self._scroll_if_pinned(history, was_pinned)
+        self._update_status_bar()
 
     def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
         """Render `event` as `(summary_text, detail_text)` via its tool's `summary()`/
@@ -1806,7 +1820,10 @@ class ReplApp(App[None]):
         by a `ToolCallStatic` for one finished tool call, and return `(widget, label_widget)`.
         Applies the current global detail-shown state (see `action_toggle_tool_call_detail`)
         so a call rendered while detail view is already active shows detail immediately rather
-        than a summary the user would have to toggle past.
+        than a summary the user would have to toggle past. Also refreshes the status bar (see
+        `_mount_response_widget`): `Session._run_tool_calls` has already appended this call's
+        `role="tool_response"` message (with its own `estimated_tokens`) by the time
+        `callbacks.on_tool_call` — and so this method — runs.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -1817,6 +1834,7 @@ class ReplApp(App[None]):
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
         self._tool_call_widgets.append(widget)
+        self._update_status_bar()
         return widget, label_widget
 
     async def _confirm_tool_call_limit(self, message: str) -> bool:

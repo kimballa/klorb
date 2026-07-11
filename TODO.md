@@ -11,12 +11,6 @@
   on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
   as extensions that should be listed as Workspace Recommendations.
 
-* In theory, we are tokenizing every single message (including tool call requests and
-  responses??) but the footer badge with context consumption info just stays at `0 / 1M` for
-  long periods of back-and-forth exchange. The footer should update after every new message
-  is added to the conversation, including tool uses. Right now, it just happens when the
-  turn completes.
-
 * I had already explicitly worked to remove the "global" scrollbar so that only the "history"
   scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
   are still both present on a long enough session. Or maybe re-introdced if I use ^o to see

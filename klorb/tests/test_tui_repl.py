@@ -226,6 +226,54 @@ async def test_status_bar_updates_after_a_turn_completes() -> None:
         assert status_bar.content == f"{session.total_tokens_used()} / 8k"
 
 
+async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None:
+    """The footer's token tally must track each incoming chunk, not just settle once the
+    whole turn is done.
+    """
+    mock_provider = MagicMock()
+    first_chunk_rendered = threading.Event()
+    release_second_chunk = threading.Event()
+
+    def fake_send_prompt(
+        messages: Any, system_prompt: Any = None, model: Any = None, session_id: Any = None,
+        reasoning: Any = None, tools: Any = None, on_chunk: Any = None, on_thinking_chunk: Any = None,
+        cancel_event: Any = None,
+    ) -> Any:
+        on_chunk("Hello")
+        first_chunk_rendered.set()
+        assert release_second_chunk.wait(timeout=5)
+        on_chunk(" world")
+        return _reply("Hello world")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    registry = ModelRegistry(package=sample_models_package)
+    session = Session(
+        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+
+        while not first_chunk_rendered.is_set():
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
+        mid_stream_tally = status_bar.content
+        assert mid_stream_tally != "0 / 8k"
+        assert mid_stream_tally == f"{format_token_count(session.total_tokens_used())} / 8k"
+
+        release_second_chunk.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert status_bar.content == f"{format_token_count(session.total_tokens_used())} / 8k"
+        assert status_bar.content != mid_stream_tally
+
+
 async def test_status_bar_omits_limit_when_model_unregistered() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
