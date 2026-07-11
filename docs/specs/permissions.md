@@ -7,12 +7,16 @@ resource: three rule lists (`deny`, `ask`, `allow`), evaluated in that fixed cat
 the strictest applicable rule always wins regardless of which config layer contributed it or
 how specific it is. The first concrete resource kind is directory access
 (`klorb.permissions.directory_access`), governing which directories the file tools
-(`ReadFile`, `EditFile`, `ReplaceAll`, `CreateFile`) may read from and write to, via two new
+(`ReadFile`, `EditFile`, `ReplaceAll`, `CreateFile`) may read from and write to, via two
 `SessionConfig` fields, `read_dirs`/`write_dirs`, exposed on-disk as `readDirs`/`writeDirs`.
-`TODO.md`'s "Permissions" backlog item anticipated further resource kinds built on the same
-abstraction; bash-command access (`CommandPermissionsTable`, gating `BashTool`) is the first of
-those — see docs/specs/bash-tool-and-command-permissions.md — with website access still
-outstanding. An `"ask"` verdict is no longer necessarily a
+`klorb.permissions.file_access` is a second, file-scoped resource kind built on the same
+abstraction: `read_files`/`write_files` (on-disk `readFiles`/`writeFiles`) name individual files
+by exact path rather than directories by containment, and are checked ahead of, and
+independently from, the directory-level tables and the workspace-root boundary itself — see
+"File access" below. `TODO.md`'s "Permissions" backlog item anticipated further resource kinds
+built on the same abstraction; bash-command access (`CommandPermissionsTable`, gating
+`BashTool`) is another of those — see docs/specs/bash-tool-and-command-permissions.md — with
+website access still outstanding. An `"ask"` verdict is no longer necessarily a
 dead end either: the interactive TUI can route it through a modal (see "Interactive 'ask'
 confirmation" below) that lets the user grant access once, for the session, or persistently at
 the workspace or per-user level. See
@@ -102,6 +106,39 @@ the reasoning behind the most consequential decisions here.
   own `Field(default_factory=lambda: Workspace(path=Path.cwd()))` is the fallback for callers
   constructing `SessionConfig` directly (tests).
 
+### File access (`klorb.permissions.file_access`)
+
+* `FileRules` is a pydantic model: `deny`/`ask`/`allow`, each `list[Path]`, defaulting to
+  empty — the same shape as `DirRules`, just naming individual files instead of directories.
+* `FileAccessTable(PermissionsTable[Path])` canonicalizes every rule path at construction time
+  via the same `canonicalize_dir(path, workspace_root)` `DirectoryAccessTable` uses, but matches
+  a candidate by **exact equality only** (`candidate == rule`), never containment: a `writeFiles`
+  entry for `/dev/null` matches only `/dev/null` itself, never `/dev/null/anything`.
+* `resolve_and_evaluate_read()`/`resolve_and_evaluate_write()` (`klorb.permissions.workspace`,
+  below) each build a `FileAccessTable` from `read_files`/`write_files` and check it against the
+  canonicalized candidate *before* the workspace-root boundary check and before consulting
+  `readDirs`/`writeDirs` at all. If the table has any opinion — `deny`, `ask`, or `allow` — that
+  verdict is returned immediately, with no further directory-level evaluation. If it has no
+  opinion (`FileAccessTable.evaluate()` returns `None`), evaluation falls through to the
+  workspace-root boundary and `readDirs`/`writeDirs` exactly as if `readFiles`/`writeFiles` had
+  never been consulted.
+* This exact-match check runs *before* the workspace-root boundary raise, not just before the
+  directory tables — so a `readFiles`/`writeFiles` entry can name a path outside
+  `workspace_root` entirely and still resolve to a verdict, rather than being rejected by the
+  boundary check before ever reaching the rule meant to grant it. This is what lets
+  `klorb.resources/default-config.json` carry `readFiles.allow`/`writeFiles.allow` entries for
+  `/dev/null`, `/dev/zero`, `/dev/random`, and `/dev/urandom` — every one of them outside any
+  workspace root by definition, so no `readDirs`/`writeDirs` rule could ever reach them.
+* `is_privileged_path()` is still checked first, unconditionally, ahead of even `readFiles`/
+  `writeFiles` — exactly as it's checked ahead of `readDirs`/`writeDirs` — so no `readFiles`/
+  `writeFiles.allow` entry can re-enable access to `${workspace_root}/.klorb/` or the
+  process-wide `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations either.
+* The interactive "ask" grant flow (`klorb.permissions.grant`, see "Interactive 'ask'
+  confirmation" below) only ever persists a grant into `readDirs`/`writeDirs` — there is no UI
+  path yet that writes a `readFiles`/`writeFiles` entry. `readFiles`/`writeFiles` are populated
+  by hand-editing a `klorb-config.json` layer (most notably the packaged
+  `default-config.json`), not by any runtime grant mechanism.
+
 ### Path resolution and enforcement (`klorb.permissions.workspace`)
 
 (Formerly `klorb.tools._path_safety`; moved here because `SessionConfig` now holds a `DirRules`
@@ -118,8 +155,9 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   nonexistent in-workspace path.
 * `resolve_within_workspace(context, filename) -> Path` — canonicalizes via the above, then
   raises `PermissionError` if the result isn't `workspace_root` or beneath it. Unchanged
-  behavior from before this feature; still used by the three write tools as their first,
-  hard, non-config-overridable check.
+  behavior from before this feature; still used by `resolve_and_evaluate_write()` and (in
+  untrusted mode) `resolve_and_evaluate_read()` as their hard, non-config-overridable check once
+  `readFiles`/`writeFiles` has no opinion on the candidate.
 * `evaluate_write(context, path) -> Verdict` — called on a path that has already passed
   `resolve_within_workspace()`. Checks `directory_access.is_privileged_path()` first (not part
   of either table — no `allow` entry, even one covering the whole workspace, can re-enable it;
@@ -132,10 +170,19 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   a permissive default, so write is `"allow"` only when *both* tables explicitly say `allow`.
   With both tables empty, this normalizes to `"ask"` everywhere in the workspace — see the ADR
   for the reasoning behind that default.
-* `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — evaluates `path` against
-  `readDirs` alone; `writeDirs` is never consulted for a read (a write grant does not imply a
-  read grant — see `evaluate_write()` for the converse relationship). Branches on
-  `context.session_config.workspace.trusted`:
+* `resolve_and_evaluate_write(context, filename) -> (Path, Verdict)` — the entry point the write
+  tools and `BashTool`'s write-direction redirects actually call. Canonicalizes `filename` (no
+  boundary check yet), checks `is_privileged_path()`, then checks `write_files` via
+  `FileAccessTable` (see "File access" above) — an opinion there is returned immediately. Only
+  once `write_files` has no opinion does it call `resolve_within_workspace()` (the boundary
+  raise) followed by `evaluate_write()`, exactly as if `write_files` were empty.
+* `resolve_and_evaluate_read(context, filename) -> (Path, Verdict)` — canonicalizes `filename`
+  (no boundary check yet), checks `is_privileged_path()`, then checks `read_files` via
+  `FileAccessTable` the same way — an opinion there is returned immediately, before the
+  workspace-root boundary or `readDirs` are ever consulted. Only once `read_files` has no
+  opinion does it evaluate against `readDirs` alone; `writeDirs`/`write_files` are never
+  consulted for a read (a write grant does not imply a read grant — see `evaluate_write()` for
+  the converse relationship). Branches on `context.session_config.workspace.trusted`:
   * **Untrusted (default)**: resolves via `resolve_within_workspace()` (same hard boundary as
     the write tools), then evaluates `readDirs` on that already-in-workspace path, falling back
     to `"allow"` if nothing matches — a permissive default that's safe here because the hard
@@ -151,16 +198,10 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
     writes into `.klorb/klorb-config.json` when a workspace is opened as a trusted project, not
     from a rule baked into this evaluator.
 
-  In both modes, `directory_access.is_privileged_path()` is then checked, unconditionally,
-  before the table — the read-side counterpart of `evaluate_write()`'s hard deny, so no
-  `readDirs.allow` entry (trusted mode) or table fallback (untrusted mode) can grant access to
-  `${workspace_root}/.klorb/` or the process-wide `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/
-  `KLORB_STATE_DIR`.
-
 ### Tool integration
 
-* `EditFile`/`ReplaceAll`/`CreateFile`: `resolve_within_workspace()` (unchanged) →
-  `raise_if_not_allowed(evaluate_write(...))` → disk I/O.
+* `EditFile`/`ReplaceAll`/`CreateFile`: `resolve_and_evaluate_write()` →
+  `raise_if_not_allowed(verdict)` → disk I/O.
 * `ReadFile`: `resolve_and_evaluate_read()` → `raise_if_not_allowed(verdict)` → `open()`. This
   is `ReadFile`'s first-ever confinement — previously it called `open(filename)` directly, with
   no resolution or boundary check at all.
@@ -193,15 +234,17 @@ today the deny is absolute.
 
 ## Configuration
 
-`readDirs`/`writeDirs`, each `{"deny": [...], "ask": [...], "allow": [...]}` (lists of path
-strings), nest under `sessionDefaults` — see `docs/specs/process-and-session-config.md`'s
-"On-disk key naming" for the full file shape:
+`readDirs`/`writeDirs`/`readFiles`/`writeFiles`, each `{"deny": [...], "ask": [...], "allow":
+[...]}` (lists of path strings), nest under `sessionDefaults` — see
+`docs/specs/process-and-session-config.md`'s "On-disk key naming" for the full file shape:
 
 ```json
 {
   "sessionDefaults": {
     "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo", "/goforit"]},
-    "writeDirs": {"deny": [], "ask": [], "allow": []}
+    "writeDirs": {"deny": [], "ask": [], "allow": []},
+    "readFiles": {"deny": [], "ask": [], "allow": ["/dev/null"]},
+    "writeFiles": {"deny": [], "ask": [], "allow": ["/dev/null"]}
   }
 }
 ```
@@ -210,9 +253,12 @@ Note that with `writeDirs` empty as above, `/yolo` and `/goforit` are readable b
 `evaluate_write()` requires an explicit `allow` in *both* tables (see
 [the write-verdict ADR](../adrs/write-verdict-is-stricter-of-read-and-write-tables.md)), so a
 broad `readDirs.allow` with no corresponding `writeDirs.allow` entry never implies write access.
+`readFiles`/`writeFiles` have no such coupling to each other — each is checked, and can grant or
+deny, entirely on its own; an entry in one implies nothing about the other.
 
-Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs` are merged by
-**concatenating** each category's array across all five config layers (not replaced) — see
+Unlike every other `sessionDefaults`/top-level key, `readDirs`/`writeDirs`/`readFiles`/
+`writeFiles` are merged by **concatenating** each category's array across all five config layers
+(not replaced) — see
 [the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md).
 `SessionConfig.workspace` has no on-disk key at all, anywhere — see "Known risks" below.
 

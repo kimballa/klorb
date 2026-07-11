@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
-from klorb.permissions.workspace import evaluate_write, resolve_within_workspace
+from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 from klorb.tools.util import CreateFileCore
@@ -21,8 +21,9 @@ class CreateFileTool(Tool):
     mechanic to `self.create_file_core` (a `klorb.tools.util.CreateFileCore`), the same one
     `CreateMemoryTool` uses.
 
-    `filename` is confined to `SessionConfig.workspace.path` and further checked against
-    `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
+    `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
+    `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
+    `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -57,10 +58,9 @@ class CreateFileTool(Tool):
         filename = args["filename"]
         logger.debug("CreateFile %s (%d bytes)", filename, len(args["content"]))
 
-        path = resolve_within_workspace(self.context, filename)
+        path, verdict = resolve_and_evaluate_write(self.context, filename)
         raise_if_not_allowed(
-            evaluate_write(self.context, path), resource_description=f"write to {path}",
-            path=path, is_write=True)
+            verdict, resource_description=f"write to {path}", path=path, is_write=True)
 
         result = self.create_file_core.apply(path, args, subject=filename, edit_hint="EditFile")
         result["filename"] = filename

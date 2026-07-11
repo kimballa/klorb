@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
-from klorb.permissions.workspace import evaluate_write, resolve_within_workspace
+from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -17,8 +17,9 @@ class ReplaceAllTool(Tool):
     a literal substring or (`is_regex=True`) a regex pattern supporting `\\1`-style
     backreferences in `new_text`.
 
-    `filename` is confined to `SessionConfig.workspace.path` and further checked against
-    `writeDirs` (see `klorb.permissions.workspace.evaluate_write`) before any disk I/O.
+    `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
+    `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
+    `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
     """
 
     def name(self) -> str:
@@ -83,10 +84,9 @@ class ReplaceAllTool(Tool):
             filename, is_regex, case_insensitive, multiline,
         )
 
-        path = resolve_within_workspace(self.context, filename)
+        path, verdict = resolve_and_evaluate_write(self.context, filename)
         raise_if_not_allowed(
-            evaluate_write(self.context, path), resource_description=f"write to {path}",
-            path=path, is_write=True)
+            verdict, resource_description=f"write to {path}", path=path, is_write=True)
 
         content = path.read_text(encoding="utf-8")
 

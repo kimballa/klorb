@@ -33,7 +33,7 @@ def test_resolve_prompt_file_reads_packaged_default(user_config_dir: Path) -> No
     content = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
     assert content is not None
-    assert "klorb" in content
+    assert "Klorb" in content
 
 
 def test_default_sys_prompt_documents_memories(user_config_dir: Path) -> None:

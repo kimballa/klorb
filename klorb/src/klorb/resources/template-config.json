@@ -13,6 +13,16 @@
       "deny": [],
       "ask": [],
       "allow": []
+    },
+    "readFiles": {
+      "deny": [],
+      "ask": [],
+      "allow": []
+    },
+    "writeFiles": {
+      "deny": [],
+      "ask": [],
+      "allow": []
     }
   },
   "compatibility.claudeMarkdown": false

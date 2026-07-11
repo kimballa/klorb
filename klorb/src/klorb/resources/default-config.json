@@ -42,6 +42,26 @@
       "ask": [],
       "allow": []
     },
+    "readFiles": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+        "/dev/null",
+        "/dev/zero",
+        "/dev/random",
+        "/dev/urandom"
+      ]
+    },
+    "writeFiles": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+        "/dev/null",
+        "/dev/zero",
+        "/dev/random",
+        "/dev/urandom"
+      ]
+    },
     "commandRules": {
       "deny": [
         ["rm", "-rf", "/"]

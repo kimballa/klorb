@@ -1,15 +1,17 @@
 # © Copyright 2026 Aaron Kimball
 """Resolves a filename argument supplied by a model tool call into a canonical on-disk path,
-and evaluates that path against the workspace-root boundary and the `readDirs`/`writeDirs`
-`DirectoryAccessTable`s to decide whether the operation is allowed. See
+and evaluates that path against the `readFiles`/`writeFiles` `FileAccessTable`s (an exact-match
+check, consulted first), then the workspace-root boundary and the `readDirs`/`writeDirs`
+`DirectoryAccessTable`s, to decide whether the operation is allowed. See
 docs/specs/permissions.md, docs/adrs/confine-file-tools-to-workspace-root.md, and
 docs/adrs/gate-read-hard-boundary-on-workspace-trust.md.
 
 This module takes a `ToolSetupContext` parameter purely as a type annotation (never
 instantiates or introspects it beyond attribute access), so the import is `TYPE_CHECKING`-only
 — a real import here would cycle, since `ToolSetupContext` pulls in `klorb.session`, which
-itself depends on `klorb.permissions.directory_access` for `DirRules`. `klorb.tools`' own file
-tools import from this module, not the other way around.
+itself depends on `klorb.permissions.directory_access` for `DirRules` and
+`klorb.permissions.file_access` for `FileRules`. `klorb.tools`' own file tools import from this
+module, not the other way around.
 
 Note (TOCTOU): every path this module returns is canonical only as of the moment it's resolved
 — nothing here holds an open OS-level handle across the gap between a permission check and the
@@ -25,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from klorb.permissions.directory_access import DirectoryAccessTable, canonicalize_dir, is_privileged_path
+from klorb.permissions.file_access import FileAccessTable
 from klorb.permissions.table import Verdict, stricter_verdict
 
 if TYPE_CHECKING:
@@ -109,9 +112,25 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
 
 
 def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tuple[Path, Verdict]:
-    """Resolve `filename` and evaluate it against `readDirs` only (never `writeDirs` — a write
-    grant does not imply a read grant; see `evaluate_write()` for the converse), branching on
-    `context.session_config.workspace.trusted`:
+    """Resolve `filename` and evaluate it against `readFiles` (exact match) then `readDirs`
+    (never `writeDirs`/`writeFiles` — a write grant does not imply a read grant; see
+    `evaluate_write()` for the converse).
+
+    `filename` is canonicalized via `canonicalize_candidate()` first, with no boundary check
+    yet. `klorb.permissions.directory_access.is_privileged_path()` is checked immediately
+    against that candidate — unconditional, before even `readFiles`, so no `readFiles.allow`
+    entry can grant access to `${workspace_root}/.klorb/` or the process-wide
+    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations. Next, a `FileAccessTable`
+    built from `context.session_config.read_files` is checked against the same candidate: if it
+    has any opinion at all (`FileAccessTable.evaluate()` returns non-`None`), that verdict is
+    returned as-is — no workspace-root boundary check and no `readDirs` fallback are ever
+    reached for that candidate. This is deliberate: an exact `readFiles` entry must be able to
+    name a path outside `workspace_root` (e.g. a special device file — see
+    `klorb.resources.default-config.json`) and still resolve to a verdict, rather than being
+    rejected by the boundary check below before `readFiles` ever gets a say.
+
+    If `readFiles` has no opinion, this falls through to the existing `readDirs` behavior,
+    branching on `context.session_config.workspace.trusted`:
 
     - Untrusted (default — see `SessionConfig.workspace`): resolves via
       `resolve_within_workspace()`, which raises `PermissionError` if the result falls outside
@@ -131,26 +150,30 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
       `readDirs.allow` entry `klorb.workspace.workspace_init.write_initial_project_config()`
       writes into `.klorb/klorb-config.json`, not from a rule baked into this evaluator.
 
-    In both modes, `klorb.permissions.directory_access.is_privileged_path()` is checked next,
-    unconditionally, before the table — mirroring `evaluate_write()`'s hard deny — so no
-    `readDirs.allow` entry can grant access to `${workspace_root}/.klorb/` or the process-wide
-    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations. `context.permission_override`
-    is then checked, exactly as in `evaluate_write()`: `path` being a member of its `paths`
-    short-circuits to `"allow"` without consulting `readDirs`.
+    `context.permission_override` is then checked, exactly as in `evaluate_write()`: `path`
+    being a member of its `paths` short-circuits to `"allow"` without consulting `readDirs`.
 
     Returns `(path, verdict)` so the caller can enforce the verdict and then open the same
     canonicalized path that was actually checked.
     """
     workspace_root = context.session_config.workspace.path.resolve()
+    candidate = canonicalize_candidate(context, filename)
+
+    if is_privileged_path(candidate, workspace_root):
+        return candidate, "deny"
+
+    file_table = FileAccessTable(context.session_config.read_files, workspace_root)
+    file_verdict = file_table.evaluate(candidate)
+    if file_verdict is not None:
+        return candidate, file_verdict
+
     if context.session_config.workspace.trusted:
-        path = canonicalize_candidate(context, filename)
+        path = candidate
         fallback: Verdict = "ask"
     else:
         path = resolve_within_workspace(context, filename)
         fallback = "allow"
 
-    if is_privileged_path(path, workspace_root):
-        return path, "deny"
     if context.permission_override is not None and path in context.permission_override.paths:
         return path, "allow"
 
@@ -159,3 +182,39 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     if verdict is None:
         verdict = fallback
     return path, verdict
+
+
+def resolve_and_evaluate_write(context: "ToolSetupContext", filename: str) -> tuple[Path, Verdict]:
+    """Resolve `filename` and decide whether writing to it is allowed, consulting `writeFiles`
+    (exact match) before the workspace-root boundary and `readDirs`/`writeDirs` `evaluate_write()`
+    applies.
+
+    `filename` is canonicalized via `canonicalize_candidate()` first, with no boundary check
+    yet. `is_privileged_path()` is checked immediately against that candidate — unconditional,
+    before even `writeFiles`, exactly as in `resolve_and_evaluate_read()`. Next, a
+    `FileAccessTable` built from `context.session_config.write_files` is checked: if it has any
+    opinion at all, that verdict is returned as-is, with no workspace-root boundary check and no
+    `evaluate_write()` fallback — the same rationale as `resolve_and_evaluate_read()`'s own
+    `readFiles` short-circuit (see its docstring), letting an exact `writeFiles` entry name a
+    path outside `workspace_root`.
+
+    If `writeFiles` has no opinion, this falls through to the existing behavior exactly:
+    `resolve_within_workspace()` (raising `PermissionError` if the candidate falls outside
+    `workspace_root`) followed by `evaluate_write()`'s `readDirs`/`writeDirs` merge.
+
+    Returns `(path, verdict)` so the caller can enforce the verdict and then write to the same
+    canonicalized path that was actually checked.
+    """
+    workspace_root = context.session_config.workspace.path.resolve()
+    candidate = canonicalize_candidate(context, filename)
+
+    if is_privileged_path(candidate, workspace_root):
+        return candidate, "deny"
+
+    file_table = FileAccessTable(context.session_config.write_files, workspace_root)
+    file_verdict = file_table.evaluate(candidate)
+    if file_verdict is not None:
+        return candidate, file_verdict
+
+    path = resolve_within_workspace(context, filename)
+    return path, evaluate_write(context, path)

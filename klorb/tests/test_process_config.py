@@ -471,6 +471,88 @@ def test_session_key_map_deliberately_excludes_readdirs_and_writedirs() -> None:
     assert "write_dirs" not in SESSION_KEY_MAP.values()
 
 
+# --- readFiles/writeFiles: mirrors the readDirs/writeDirs tests above ---
+
+
+def test_readfiles_and_writefiles_concatenate_across_layers(tmp_path: Path) -> None:
+    """See docs/specs/permissions.md: a later layer's readFiles/writeFiles entries add to,
+    rather than replace, every earlier layer's — unlike every other config key."""
+    _write_config(
+        tmp_path / "user-config" / "klorb-config.json",
+        {"sessionDefaults": {"readFiles": {"allow": ["/a", "/b", "/c"]}}})
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"readFiles": {"allow": ["/d", "/e", "/f"]}}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.session.read_files.allow == [
+        Path(p) for p in ["/a", "/b", "/c", "/d", "/e", "/f"]]
+
+
+def test_readfiles_writefiles_merge_concatenates_per_category_independently(tmp_path: Path) -> None:
+    """A layer contributing only `deny` and another contributing only `allow` for the same
+    direction must not clobber each other's category."""
+    _write_config(
+        tmp_path / "user-config" / "klorb-config.json",
+        {"sessionDefaults": {"writeFiles": {"deny": ["/nope"]}}})
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"writeFiles": {"allow": ["/dev/null"]}}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.session.write_files.deny == [Path("/nope")]
+    assert process_config.session.write_files.allow == [Path("/dev/null")]
+
+
+def test_readfiles_writefiles_bypass_session_key_map_routing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """readFiles/writeFiles must be popped out and handled bespoke before _route_keys() ever
+    sees them — a regression here would either drop the settings silently or spam a false
+    "unrecognized key" warning."""
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"readFiles": {"allow": ["/a"]}}})
+
+    with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.read_files.allow == [Path("/a")]
+    assert "readFiles" not in caplog.text
+
+
+def test_session_key_map_deliberately_excludes_readfiles_and_writefiles() -> None:
+    """Mirrors test_session_key_map_deliberately_excludes_readdirs_and_writedirs above:
+    readFiles/writeFiles must never appear in SESSION_KEY_MAP, on either side, because they're
+    merged by concatenation, not _route_keys()'s 1:1 scalar replacement."""
+    assert "readFiles" not in SESSION_KEY_MAP
+    assert "writeFiles" not in SESSION_KEY_MAP
+    assert "read_files" not in SESSION_KEY_MAP.values()
+    assert "write_files" not in SESSION_KEY_MAP.values()
+
+
+def test_default_config_layer_readfiles_writefiles_allow_the_special_device_files() -> None:
+    """The packaged default layer carves out the four special character devices in both
+    `readFiles.allow`/`writeFiles.allow` — see docs/specs/permissions.md's "File access"
+    section for why these, specifically, need a file-level (not directory-level) exception."""
+    layer = _real_default_config_layer([])
+    device_paths = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"]
+    for device_path in device_paths:
+        assert device_path in layer["sessionDefaults"]["readFiles"]["allow"]
+        assert device_path in layer["sessionDefaults"]["writeFiles"]["allow"]
+
+
+def test_default_config_layer_readfiles_writefiles_merged_into_process_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(process_config_module, "_default_config_layer", _real_default_config_layer)
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    for device_path in ("/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"):
+        assert Path(device_path) in process_config.session.read_files.allow
+        assert Path(device_path) in process_config.session.write_files.allow
+
+
 def test_workspace_trust_has_no_on_disk_key(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:

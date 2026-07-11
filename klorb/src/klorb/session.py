@@ -19,6 +19,7 @@ from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
+from klorb.permissions.file_access import FileRules
 from klorb.permissions.table import (
     MultiPermissionAskRequired,
     PermissionAskItem,
@@ -191,6 +192,17 @@ class SessionConfig(BaseModel):
     """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
     `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write` and
+    docs/specs/permissions.md."""
+    read_files: FileRules = Field(default_factory=FileRules)
+    """`readFiles`-config-driven allow/ask/deny rules for individual files, consulted by
+    `klorb.permissions.workspace.resolve_and_evaluate_read` ahead of, and independently from,
+    `read_dirs` and the workspace-root boundary — an exact match here is used as-is, with no
+    directory-level fallback. See `klorb.permissions.file_access` and
+    docs/specs/permissions.md."""
+    write_files: FileRules = Field(default_factory=FileRules)
+    """`writeFiles`-config-driven allow/ask/deny rules for individual files, consulted by
+    `klorb.permissions.workspace.resolve_and_evaluate_write` ahead of, and independently from,
+    `write_dirs` and the workspace-root boundary — see `klorb.permissions.file_access` and
     docs/specs/permissions.md."""
     command_rules: CommandRules = Field(default_factory=CommandRules)
     """`commandRules`-config-driven allow/ask/deny rules `BashTool` consults — see

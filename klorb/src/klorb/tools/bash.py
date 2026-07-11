@@ -26,7 +26,7 @@ from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.shell_parse import BashCommandAnalysis, RedirectTarget, parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, Verdict
-from klorb.permissions.workspace import evaluate_write, resolve_and_evaluate_read, resolve_within_workspace
+from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_and_evaluate_write
 from klorb.sandbox import bwrap_available, detect_bwrap_unavailable_reason
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
@@ -476,8 +476,9 @@ class BashTool(Tool):
     pipelines, `&&`/`||`/`;` lists, subshells, command substitutions, control-flow bodies, etc.)
     is evaluated against `context.session_config.command_rules`
     (`klorb.permissions.command_access.CommandPermissionsTable`); every redirection's file target
-    is evaluated against `readDirs`/`writeDirs` via the same `evaluate_write`/
-    `resolve_and_evaluate_read` the file tools use. The overall verdict is the strictest of all
+    is evaluated against `readFiles`/`writeFiles` and `readDirs`/`writeDirs` via the same
+    `resolve_and_evaluate_write`/`resolve_and_evaluate_read` the file tools use. The overall
+    verdict is the strictest of all
     of these (`klorb.permissions.table.stricter_verdict`) — never more permissive than any single
     contributor — enforced through the same `raise_if_not_allowed()` seam every other tool uses.
 
@@ -659,8 +660,8 @@ class BashTool(Tool):
 
     def _evaluate_redirect(self, redirect: RedirectTarget) -> tuple[Verdict, Path, bool]:
         if redirect.direction == "write":
-            path = resolve_within_workspace(self.context, redirect.target)
-            return evaluate_write(self.context, path), path, True
+            path, verdict = resolve_and_evaluate_write(self.context, redirect.target)
+            return verdict, path, True
         path, verdict = resolve_and_evaluate_read(self.context, redirect.target)
         return verdict, path, False
 

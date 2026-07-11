@@ -13,6 +13,7 @@ import pytest
 
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.file_access import FileRules
 from klorb.permissions.table import MultiPermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
@@ -27,6 +28,8 @@ def _context(
     command_rules: CommandRules | None = None,
     read_dirs: DirRules | None = None,
     write_dirs: DirRules | None = None,
+    read_files: FileRules | None = None,
+    write_files: FileRules | None = None,
     process_config: ProcessConfig | None = None,
     with_session: bool = True,
 ) -> ToolSetupContext:
@@ -34,6 +37,7 @@ def _context(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=read_dirs or DirRules(allow=[workspace_root]),
         write_dirs=write_dirs or DirRules(allow=[workspace_root]),
+        read_files=read_files or FileRules(), write_files=write_files or FileRules(),
         command_rules=command_rules or CommandRules())
     session = Session(config=session_config) if with_session else None
     return ToolSetupContext(
@@ -191,6 +195,26 @@ def test_write_redirect_outside_workspace_raises(tmp_path: Path) -> None:
     tool = BashTool(context)
     with pytest.raises(PermissionError):
         _apply(tool, f"echo hi > {outside}")
+
+
+def test_write_redirect_to_device_file_allowed_by_writefiles_bypasses_workspace_boundary(
+    tmp_path: Path,
+) -> None:
+    """The motivating case for readFiles/writeFiles: a redirect to a path outside the
+    workspace root (like a character device) succeeds when writeFiles.allow names it exactly,
+    even though the same target would otherwise hit the hard workspace-root boundary raise --
+    see test_write_redirect_outside_workspace_raises above for that boundary without the
+    writeFiles carve-out."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    device = tmp_path / "outside-device"
+    context = _context(
+        workspace, command_rules=CommandRules(allow=[["echo", "*"]]),
+        write_files=FileRules(allow=[device]))
+    tool = BashTool(context)
+    result = _apply(tool, f"echo hi > {device}")
+    assert result["success"] is True
+    assert device.read_text() == "hi\n"
 
 
 def test_empty_command_raises_value_error(tmp_path: Path) -> None:

@@ -21,9 +21,6 @@
 
 # Feature backlog
 
-* Special-case redirects to or from /dev/null as always-OK; the user always has permission to
-  read or write /dev/null, /dev/zero, /dev/random, and /dev/urandom.
-
 * ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
   that readfile and editfile can interact in a loop. 

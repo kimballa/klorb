@@ -17,11 +17,13 @@ from klorb.permissions.directory_access import (
     is_privileged_path,
     privileged_dirs,
 )
+from klorb.permissions.file_access import FileRules
 from klorb.permissions.table import PermissionAskRequired, PermissionOverride, raise_if_not_allowed
 from klorb.permissions.workspace import (
     canonicalize_candidate,
     evaluate_write,
     resolve_and_evaluate_read,
+    resolve_and_evaluate_write,
     resolve_within_workspace,
 )
 from klorb.process_config import ProcessConfig
@@ -36,12 +38,15 @@ def _context(
     is_workspace_trusted: bool = False,
     read_dirs: DirRules | None = None,
     write_dirs: DirRules | None = None,
+    read_files: FileRules | None = None,
+    write_files: FileRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
         process_config=ProcessConfig(),
         session_config=SessionConfig(
             workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
-            read_dirs=read_dirs or DirRules(), write_dirs=write_dirs or DirRules()),
+            read_dirs=read_dirs or DirRules(), write_dirs=write_dirs or DirRules(),
+            read_files=read_files or FileRules(), write_files=write_files or FileRules()),
     )
 
 
@@ -291,6 +296,112 @@ def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_pat
     context = _context(tmp_path, write_dirs=DirRules(allow=[KLORB_STATE_DIR]))
     path = (KLORB_STATE_DIR / "session-logs" / "a.log").resolve(strict=False)
     assert evaluate_write(context, path) == "deny"
+
+
+# --- resolve_and_evaluate_write ---
+
+
+def test_resolve_and_evaluate_write_falls_through_to_evaluate_write_when_no_file_rule_matches(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        tmp_path, read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    path, verdict = resolve_and_evaluate_write(context, "f.txt")
+    assert path == tmp_path / "f.txt"
+    assert verdict == "allow"
+
+
+def test_resolve_and_evaluate_write_raises_outside_workspace_when_no_file_rule_matches(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+
+    context = _context(workspace)
+    with pytest.raises(PermissionError):
+        resolve_and_evaluate_write(context, str(outside))
+
+
+def test_writefiles_allow_bypasses_the_workspace_root_boundary(tmp_path: Path) -> None:
+    """The motivating case: an exact writeFiles.allow entry for a path outside the workspace
+    root (e.g. a character device) must resolve to "allow" rather than being rejected by the
+    hard boundary resolve_within_workspace() would otherwise raise for it."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    device = tmp_path / "outside-device"
+
+    context = _context(workspace, write_files=FileRules(allow=[device]))
+    path, verdict = resolve_and_evaluate_write(context, str(device))
+
+    assert path == device
+    assert verdict == "allow"
+
+
+def test_writefiles_deny_short_circuits_even_when_writedirs_would_allow(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    context = _context(
+        tmp_path, write_dirs=DirRules(allow=[tmp_path]), read_dirs=DirRules(allow=[tmp_path]),
+        write_files=FileRules(deny=[target]))
+    _, verdict = resolve_and_evaluate_write(context, "f.txt")
+    assert verdict == "deny"
+
+
+def test_writefiles_ask_short_circuits_even_when_writedirs_would_deny(tmp_path: Path) -> None:
+    """An exact writeFiles.ask entry is authoritative -- it is used as-is, not merged/stricter'd
+    against a writeDirs.deny for the same path, unlike evaluate_write()'s own readDirs/writeDirs
+    merge."""
+    target = tmp_path / "f.txt"
+    context = _context(tmp_path, write_dirs=DirRules(deny=[tmp_path]), write_files=FileRules(ask=[target]))
+    _, verdict = resolve_and_evaluate_write(context, "f.txt")
+    assert verdict == "ask"
+
+
+def test_writefiles_privileged_path_still_denied_even_with_writefiles_allow(tmp_path: Path) -> None:
+    """is_privileged_path() is checked before writeFiles -- no writeFiles.allow entry can
+    re-enable access to .klorb/, mirroring evaluate_write()'s own unconditional deny."""
+    target = tmp_path / ".klorb" / "klorb-config.json"
+    context = _context(tmp_path, write_files=FileRules(allow=[target]))
+    _, verdict = resolve_and_evaluate_write(context, ".klorb/klorb-config.json")
+    assert verdict == "deny"
+
+
+# --- readFiles: file-level short-circuit ahead of readDirs/the workspace boundary ---
+
+
+def test_readfiles_allow_bypasses_the_workspace_root_boundary(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    device = tmp_path / "outside-device"
+
+    context = _context(workspace, read_files=FileRules(allow=[device]))
+    path, verdict = resolve_and_evaluate_read(context, str(device))
+
+    assert path == device
+    assert verdict == "allow"
+
+
+def test_readfiles_deny_short_circuits_even_when_readdirs_would_allow(tmp_path: Path) -> None:
+    target = tmp_path / "f.txt"
+    context = _context(tmp_path, read_dirs=DirRules(allow=[tmp_path]), read_files=FileRules(deny=[target]))
+    _, verdict = resolve_and_evaluate_read(context, "f.txt")
+    assert verdict == "deny"
+
+
+def test_readfiles_has_no_opinion_falls_through_to_readdirs(tmp_path: Path) -> None:
+    """A readFiles entry for a different file must not affect evaluation of this one -- it
+    falls through to the ordinary readDirs/workspace-boundary flow untouched."""
+    other = tmp_path / "other.txt"
+    context = _context(tmp_path, read_dirs=DirRules(deny=[tmp_path]), read_files=FileRules(allow=[other]))
+    _, verdict = resolve_and_evaluate_read(context, "f.txt")
+    assert verdict == "deny"
+
+
+def test_readfiles_privileged_path_still_denied_even_with_readfiles_allow(tmp_path: Path) -> None:
+    target = tmp_path / ".klorb" / "klorb-config.json"
+    context = _context(tmp_path, read_files=FileRules(allow=[target]))
+    _, verdict = resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
+    assert verdict == "deny"
 
 
 # --- resolve_and_evaluate_read: untrusted (default) ---
