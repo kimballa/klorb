@@ -25,13 +25,11 @@
   "evenBetterToml.formatter.indentEntries": true,
   "evenBetterToml.formatter.indentString": "  ",
   "python.defaultInterpreterPath": "${workspaceFolder}/klorb/venv",
-  "python.envFile": "${workspaceFolder}/klorb/.python-env",
+  "python.envFile": "${workspaceFolder}/.env",
   "python.testing.cwd": "${workspaceFolder}/klorb",
   "python.analysis.typeCheckingMode": "standard",
   "python-envs.workspaceSearchPaths": [
-    ".venv",
-    "*/.venv",
-    "*/venv"
+    "${workspaceFolder}/klorb/venv",
   ],
   "[python]": {
     "editor.defaultFormatter": "ms-python.autopep8"
