@@ -123,7 +123,8 @@ DEFAULT_SHFMT_COMMAND = "shfmt"
 
 DEFAULT_BASH_RISK_CLASSIFIER_ENABLED = True
 """Default for `ProcessConfig.bash_risk_classifier_enabled`; see
-`klorb.permissions.risk_classifier` and docs/plans/archive/008-llm-command-risk-scoring.md."""
+`klorb.permissions.risk_classifier` and docs/specs/bash-tool-and-command-permissions.md's "LLM
+risk classifier" section."""
 
 DEFAULT_BASH_RISK_CLASSIFIER_MODEL = "openai/gpt-5-nano"
 """Default for `ProcessConfig.bash_risk_classifier_model` — independent of

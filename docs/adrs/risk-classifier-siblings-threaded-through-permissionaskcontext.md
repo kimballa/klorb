@@ -11,16 +11,21 @@
   items in the same compound command even are. Where should the "whole batch, one round trip"
   property actually live: inside `Session` (which has the full `MultiPermissionAskRequired.items`
   list up front, before its per-item loop starts), or somewhere in the TUI layer the plan names?
-* Answer: Keep the actual classifier call in `ReplApp._confirm_permission_ask`, exactly as the
-  plan says, but add a new optional field to `klorb.session.PermissionAskContext`:
+* Answer: Keep the actual classifier call triggered from `ReplApp._confirm_permission_ask`,
+  exactly as the plan says, but add a new optional field to `klorb.session.PermissionAskContext`:
   `sibling_items: list[PermissionAskItem] | None`, set by `Session._resolve_multi_permission_ask`
   to the full `MultiPermissionAskRequired.items` list (including the item this context is itself
   about) on every context it constructs. `Session` still never calls the classifier, imports
   `klorb.permissions.risk_classifier`, or knows `tools.bash.riskClassifier.*` exists — it only
-  threads data it already has. `ReplApp` classifies once per distinct `command_text`, caching
-  each `ItemRiskAssessment` in `session.tool_state["BashRiskClassifier"]` keyed by
-  `item_command_text`; every subsequent item in the same batch (and a byte-identical retried
-  item later in the session) hits that cache instead of re-classifying.
+  threads data it already has. `ReplApp` doesn't classify anything itself either: it calls
+  `klorb.permissions.risk_classifier.resolve_item_risk_assessment(ask_ctx, session=..., 
+  process_config=...)`, which owns the gating, batching (once per distinct `command_text`), and
+  caching (each `ItemRiskAssessment` in `session.tool_state["BashRiskClassifier"]` keyed by
+  `item_command_text`) — every subsequent item in the same batch (and a byte-identical retried
+  item later in the session) hits that cache instead of re-classifying. Keeping this logic out of
+  `klorb.tui.repl` means any other UI layer driving `Session` (a future non-TUI consumer, e.g. a
+  VSCode plugin) can call the exact same function rather than re-implementing it against its own
+  UI.
 * Reasoning: The alternative — computing the whole-batch classification inside
   `Session._resolve_multi_permission_ask` itself, since that is where the full item list is
   naturally in hand before any per-item asking starts — was rejected because `Session` already

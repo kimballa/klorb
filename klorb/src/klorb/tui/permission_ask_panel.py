@@ -69,10 +69,11 @@ _RISK_BAND_CLASSES: tuple[tuple[int, str], ...] = (
 `risk_score` of 9-10 is `"ask-risk-critical"` (styled red), 7-8 is `"ask-risk-high"` (orange),
 5-6 is `"ask-risk-medium"` (yellow), and 0-4 gets no class at all (default/unstyled text color —
 still italic, per `#permission-ask-rationale`'s own base style). See
-docs/plans/archive/008-llm-command-risk-scoring.md's "UI changes" section for the score-to-color
-table this implements; the exact Textual color tokens behind each class are picked from
-Textual's own auto-generated `$warning`/`$error` shade variants (every named theme color gets
-`-lighten-N`/`-darken-N` variants for free — see Textual's `design.py`), not a new palette,
+docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section for the
+score-to-color table this implements; the exact Textual color tokens behind each class are
+picked from Textual's own auto-generated `$warning`/`$error` shade variants (every named theme
+color gets `-lighten-N`/`-darken-N` variants for free — see Textual's `design.py`), not a new
+palette,
 matching whatever tokens `PermissionAskPanel`'s existing styling already uses."""
 
 

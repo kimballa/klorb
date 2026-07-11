@@ -165,11 +165,15 @@ docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.m
 
 Once a `BashTool` call has resolved to `"ask"`, `klorb.tui.repl.ReplApp._confirm_permission_ask`
 (never `BashTool`/`Session` themselves) optionally sends the whole compound command plus every
-one of its `PermissionAskItem`s to a small, cheap model via
-`klorb.permissions.risk_classifier.classify_command_risk()`, before `PermissionAskPanel` is
-shown. This is a UX layer on top of, never a replacement for, the deterministic pipeline above:
-the classifier only ever runs on an item that has already resolved to `"ask"`, and never itself
-promotes anything to `"allow"` or `"deny"` — see
+one of its `PermissionAskItem`s to a small, cheap model, via
+`klorb.permissions.risk_classifier.resolve_item_risk_assessment()`, before `PermissionAskPanel`
+is shown. `resolve_item_risk_assessment()` — not `ReplApp` — owns gating (is the classifier even
+enabled? is this a `BashTool` ask at all?), batching, and caching; `ReplApp` just pulls an
+`ItemRiskAssessment` out of it, so any other UI layer driving `Session` (a future non-TUI
+consumer, e.g. a VSCode plugin) can call the exact same function rather than re-implementing this
+logic against its own UI. This is a UX layer on top of, never a replacement for, the
+deterministic pipeline above: the classifier only ever runs on an item that has already resolved
+to `"ask"`, and never itself promotes anything to `"allow"` or `"deny"` — see
 docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md for the same reasoning
 applied to a different probabilistic layer (`bwrap`).
 
@@ -186,14 +190,16 @@ regardless of score.
 Because `MultiPermissionAskRequired`'s several items are asked about serially, one panel at a
 time (see "Multi-item asks" in docs/specs/permissions.md), `Session._resolve_multi_permission_ask`
 threads the full sibling-item list onto every `PermissionAskContext` it builds
-(`PermissionAskContext.sibling_items`) so `ReplApp` can classify a whole compound command in one
-request the first time any of its items is looked up, caching each `ItemRiskAssessment` in
-`session.tool_state["BashRiskClassifier"]` keyed by its own `item_command_text` — every other
-item in the same batch, and a byte-identical item asked about again later in the session (e.g. a
-retried "once" decision), reuses the cached result instead of spending another round trip. See
-docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md for why this lives in
-`ReplApp` rather than `Session`, despite `Session` being where the full item list is first
-available.
+(`PermissionAskContext.sibling_items`) so `resolve_item_risk_assessment()` can classify a whole
+compound command in one request the first time any of its items is looked up, caching each
+`ItemRiskAssessment` in `session.tool_state["BashRiskClassifier"]` keyed by its own
+`item_command_text` — every other item in the same batch, and a byte-identical item asked about
+again later in the session (e.g. a retried "once" decision), reuses the cached result instead of
+spending another round trip. See
+docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md for why the actual
+classifier call site is `ReplApp` rather than `Session`, despite `Session` being where the full
+item list is first available, and why the gating/batching/caching logic itself instead lives in
+`klorb.permissions.risk_classifier` rather than `klorb.tui.repl`.
 
 `tools.bash.riskClassifier.enabled` (default `true`) is a full escape hatch: `false` sends no
 command text to a second LLM call at all, and behavior is exactly as if the classifier didn't
@@ -207,8 +213,9 @@ model to score upward), not by escalating to a costlier model.
 separate from `tools.bash.timeout` (which bounds the shell command's own runtime once it
 actually runs).
 
-Structured audit logging of a `CommandRiskReport`/`PermissionDecision` pair is not built yet —
-see `ReplApp._confirm_permission_ask`'s own `TODO(aaron)` marker.
+Structured audit logging of a command's risk assessment and of the user's own decision are both
+not built yet — see the `TODO(aaron)` markers in `klorb.permissions.risk_classifier.
+classify_command_risk` and `ReplApp._confirm_permission_ask` respectively.
 
 ### Execution
 
