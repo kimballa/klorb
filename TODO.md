@@ -2,9 +2,7 @@
 
 # Bugs:
 
-* After a grep tool call, I got "Error: Expecting ',' delimeter: line 1 column 34 (char 33)"
-  in the history and the agent's activity stopped. It's not clear what caused the error?
-  (agent-generated tool call json? a config file it tried to read?)
+* the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.

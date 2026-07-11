@@ -45,7 +45,12 @@ from klorb.session import (
     TurnEventHandlers,
 )
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.tool import default_tool_call_detail, default_tool_call_summary
+from klorb.tools.tool import (
+    default_invalid_tool_call_detail,
+    default_invalid_tool_call_summary,
+    default_tool_call_detail,
+    default_tool_call_summary,
+)
 from klorb.tui.confirm_screen import ConfirmScreen
 from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
@@ -1774,7 +1779,16 @@ class ReplApp(App[None]):
         docs/adrs/tool-registry-instantiates-a-fresh-tool-per-call.md) — or via the shared
         default formatters if `event.name` isn't a registered tool (e.g. a hallucinated tool
         name, which `Session._run_tool_calls` already turned into `event.error`).
+
+        `event.raw_arguments is not None` means the model's `arguments` string failed to
+        parse as JSON before any tool ever ran (see `ToolCallEvent.raw_arguments`); that's
+        rendered via `default_invalid_tool_call_summary()`/`default_invalid_tool_call_detail()`
+        instead, showing the raw malformed text rather than the always-empty `event.args`.
         """
+        if event.raw_arguments is not None:
+            assert event.error is not None
+            return (default_invalid_tool_call_summary(event.name, event.error),
+                    default_invalid_tool_call_detail(event.name, event.raw_arguments, event.error))
         registry = self._session.tool_registry
         try:
             if registry is None:

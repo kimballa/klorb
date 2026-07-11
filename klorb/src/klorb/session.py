@@ -296,6 +296,12 @@ class ToolCallEvent(BaseModel):
     error: str | None = None
     """Human-readable failure description when the call failed, `None` on success — the sole
     success/failure discriminant, since a successful call may legitimately return `None`."""
+    raw_arguments: str | None = None
+    """The model's unparsed `arguments` string, set only when it failed to parse as JSON (so
+    `args` is `{}` and `error` describes the parse failure) — lets a consumer show the model's
+    actual malformed output instead of just the parse error. `None` in every other case,
+    including a syntactically valid-but-wrong-shaped `args`, since `apply()` reports that
+    failure itself."""
 
 
 class TurnEventHandlers(BaseModel):
@@ -993,6 +999,13 @@ class Session:
 
         Failing closed (either exception type) reports the error back to the model as this
         call's `tool_response`, exactly like any other tool exception.
+
+        `call.arguments` is parsed as JSON before any of the above: a model-generated
+        `arguments` string that fails to parse (`json.JSONDecodeError`) is reported back the
+        same way — as this call's `tool_response`, with `args={}` (no tool ever runs) — rather
+        than propagating out and aborting the whole turn, so a single malformed tool call
+        doesn't take down every other call/round in flight. `ToolCallEvent.raw_arguments`
+        carries the unparsed string in this case, for a UI to display.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -1023,42 +1036,54 @@ class Session:
                 self._tool_calls_this_session, self.config.max_tool_calls_per_session,
                 call.name, call.arguments, call.id,
             )
-            args = json.loads(call.arguments) if call.arguments else {}
+            args: dict[str, Any] = {}
             result: Any = None
             error: str | None = None
+            raw_arguments: str | None = None
             try:
-                tool = self._tool_registry.instantiate_tool(call.name)
-                logger.debug("Tool call %s parsed arguments: %r", call.name, args)
-                result = tool.apply(args)
-                logger.info("Tool call %s succeeded: %s", call.name, result)
-            except MultiPermissionAskRequired as multi_ask_exc:
-                result, error = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
-            except PermissionAskRequired as ask_exc:
-                if ask_exc.path is None or self.config.permission_framework == "deny":
-                    logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
-                    error = str(ask_exc)
-                elif self.config.permission_framework == "auto":
-                    logger.info(
-                        "Auto-approving permission ask under permissionFramework=auto: %s", ask_exc)
-                    decision = PermissionDecision(action="allow", scope="session")
-                    result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
-                elif callbacks.on_permission_ask is None:
-                    logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
-                    error = str(ask_exc)
-                else:
-                    decision = callbacks.on_permission_ask(PermissionAskContext(
-                        path=ask_exc.path, is_write=ask_exc.is_write,
-                        resource_description=str(ask_exc)))
-                    result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
-            except Exception as exc:
-                logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
-                error = str(exc)
+                args = json.loads(call.arguments) if call.arguments else {}
+            except json.JSONDecodeError as json_exc:
+                logger.warning(
+                    "Tool call %s had malformed JSON arguments (%s): %s",
+                    call.name, json_exc, call.arguments)
+                raw_arguments = call.arguments
+                error = f"Invalid JSON in tool call arguments: {json_exc}"
+
+            if error is None:
+                try:
+                    tool = self._tool_registry.instantiate_tool(call.name)
+                    logger.debug("Tool call %s parsed arguments: %r", call.name, args)
+                    result = tool.apply(args)
+                    logger.info("Tool call %s succeeded: %s", call.name, result)
+                except MultiPermissionAskRequired as multi_ask_exc:
+                    result, error = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
+                except PermissionAskRequired as ask_exc:
+                    if ask_exc.path is None or self.config.permission_framework == "deny":
+                        logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
+                        error = str(ask_exc)
+                    elif self.config.permission_framework == "auto":
+                        logger.info(
+                            "Auto-approving permission ask under permissionFramework=auto: %s", ask_exc)
+                        decision = PermissionDecision(action="allow", scope="session")
+                        result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                    elif callbacks.on_permission_ask is None:
+                        logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
+                        error = str(ask_exc)
+                    else:
+                        decision = callbacks.on_permission_ask(PermissionAskContext(
+                            path=ask_exc.path, is_write=ask_exc.is_write,
+                            resource_description=str(ask_exc)))
+                        result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                except Exception as exc:
+                    logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
+                    error = str(exc)
             content = _format_tool_response_content(result, error)
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)
             if callbacks.on_tool_call is not None:
                 callbacks.on_tool_call(ToolCallEvent(
-                    call_id=call.id, name=call.name, args=args, result=result, error=error))
+                    call_id=call.id, name=call.name, args=args, result=result, error=error,
+                    raw_arguments=raw_arguments))
             self._messages.append(Message(
                 content=content,
                 role="tool_response",

@@ -30,6 +30,7 @@ from klorb.session import (
     Session,
     SessionConfig,
     ThinkingEffort,
+    ToolCallEvent,
     ToolCallLimitExceeded,
     TurnEventHandlers,
     generate_session_id,
@@ -928,6 +929,49 @@ def test_unknown_tool_call_reports_error_to_model() -> None:
     tool_response_message = session.messages[4]
     assert tool_response_message.role == "tool_response"
     assert tool_response_message.content.startswith("Error:")
+
+
+def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"')]),  # missing closing brace
+        _reply("recovered"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    response = session.send_turn("call a tool with malformed arguments")
+
+    assert response == "recovered"
+    tool_response_message = session.messages[4]
+    assert tool_response_message.role == "tool_response"
+    assert tool_response_message.content.startswith("Error:")
+    assert "Invalid JSON" in tool_response_message.content
+    user_message = session.messages[2]
+    assert user_message.processing_state == "complete"
+
+
+def test_on_tool_call_fires_with_raw_arguments_for_malformed_json() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"')]),
+        _reply("recovered"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    events: list[ToolCallEvent] = []
+
+    session.send_turn("call a tool with malformed arguments", TurnEventHandlers(
+        on_tool_call=events.append))
+
+    assert len(events) == 1
+    assert events[0].name == "echo"
+    assert events[0].args == {}
+    assert events[0].raw_arguments == '{"message": "hi"'
+    assert events[0].error is not None
+    assert "Invalid JSON" in events[0].error
 
 
 def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:

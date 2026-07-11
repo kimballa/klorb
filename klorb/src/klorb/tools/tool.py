@@ -30,6 +30,26 @@ def default_tool_call_detail(
     return json.dumps(payload, indent=2, default=str)
 
 
+def default_invalid_tool_call_summary(name: str, error: str) -> str:
+    """What a caller renders for a tool call whose `arguments` string failed to parse as
+    JSON (see `klorb.session.ToolCallEvent.raw_arguments`) — there's no parsed `args` dict
+    to hand to a `Tool`'s own `summary()`, so this is used unconditionally rather than as a
+    per-tool default.
+    """
+    return f"Invalid tool call generated: {name}: {error}"
+
+
+def default_invalid_tool_call_detail(name: str, raw_arguments: str, error: str) -> str:
+    """`default_invalid_tool_call_summary()`'s detail-view counterpart: the model's raw,
+    unparsed `arguments` string alongside the JSON decode error.
+    """
+    return (
+        f"Invalid tool call generated: {name}\n\n"
+        f"Arguments (raw, malformed JSON):\n{raw_arguments}\n\n"
+        f"Error: {error}"
+    )
+
+
 def truncate_lines(text: str, max_lines: int) -> str:
     """Return `text` unchanged if it has at most `max_lines` lines, otherwise its first
     `max_lines` lines followed by a trailing `"..."` line — used by a `detail_view()` override

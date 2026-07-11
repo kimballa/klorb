@@ -9,7 +9,14 @@ from fixtures.sample_tools.echo_tool import EchoTool
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool, default_tool_call_detail, default_tool_call_summary, truncate_lines
+from klorb.tools.tool import (
+    Tool,
+    default_invalid_tool_call_detail,
+    default_invalid_tool_call_summary,
+    default_tool_call_detail,
+    default_tool_call_summary,
+    truncate_lines,
+)
 
 
 def test_tool_cannot_be_instantiated_directly() -> None:
@@ -66,6 +73,19 @@ def test_default_tool_call_summary_and_detail_are_usable_without_a_tool_instance
         "name": "Bogus", "args": {"x": 1}, "result": "ok"}
     assert json.loads(default_tool_call_detail("Bogus", {"x": 1}, None, "nope")) == {
         "name": "Bogus", "args": {"x": 1}, "error": "nope"}
+
+
+def test_default_invalid_tool_call_summary_and_detail_show_the_raw_arguments() -> None:
+    """The fallback formatters for a tool call whose `arguments` string failed to parse as
+    JSON -- there's no parsed `args` dict to render, so the raw text is shown instead."""
+    summary = default_invalid_tool_call_summary("Grep", "Expecting ',' delimiter: line 1 column 34")
+    assert summary == "Invalid tool call generated: Grep: Expecting ',' delimiter: line 1 column 34"
+
+    detail = default_invalid_tool_call_detail(
+        "Grep", '{"pattern": "foo" "path": "."}', "Expecting ',' delimiter: line 1 column 34")
+    assert "Invalid tool call generated: Grep" in detail
+    assert '{"pattern": "foo" "path": "."}' in detail
+    assert "Expecting ',' delimiter: line 1 column 34" in detail
 
 
 def test_truncate_lines_leaves_short_text_unchanged() -> None:
