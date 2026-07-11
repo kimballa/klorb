@@ -987,6 +987,56 @@ async def test_ctrl_o_footer_label_reads_detail_then_hide() -> None:
         assert app.active_bindings["ctrl+o"].binding.description == "Detail"
 
 
+async def test_ctrl_o_preserves_the_topmost_visible_history_element() -> None:
+    """Toggling tool-call detail must not reset the view to the top of history: whichever
+    element was topmost in the viewport before the toggle should still be topmost afterward,
+    at the same on-screen line -- not wherever `scroll_y` happens to land once every
+    `ToolCallStatic` above it changes height.
+    """
+    mock_provider = MagicMock()
+    tool_calls = [(f"call_{i}", "echo", json.dumps({"message": f"msg{i}"})) for i in range(6)]
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply(tool_calls),
+        _reply("all done"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test(size=(80, 10)) as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo six times"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        # Padding well below the last tool call so a mid-content scroll target is never
+        # clamped down by `max_scroll_y`, regardless of how tall the mascot banner is.
+        for i in range(20):
+            history.mount(Static(f"padding line {i}"))
+        await pilot.pause()
+
+        tool_call_widgets = list(history.query(ToolCallStatic))
+        assert len(tool_call_widgets) == 6
+
+        # Scroll so a middle tool-call widget sits at the very top of the viewport.
+        anchor_widget = tool_call_widgets[3]
+        target_y = anchor_widget.virtual_region.y
+        history.scroll_to(y=target_y, animate=False, immediate=True)
+        await pilot.pause()
+        assert history.scroll_y == target_y
+
+        await pilot.press("ctrl+o")
+        await _wait_until(pilot, lambda: str(anchor_widget.render()) != "echo")
+        region = anchor_widget.virtual_region
+        assert region.y <= history.scroll_y < region.y + region.height
+
+        await pilot.press("ctrl+o")
+        await _wait_until(pilot, lambda: str(anchor_widget.render()) == "echo")
+        region = anchor_widget.virtual_region
+        assert region.y <= history.scroll_y < region.y + region.height
+
+
 async def test_unregistered_tool_name_renders_via_default_formatters() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [

@@ -13,14 +13,11 @@
 
 * I had already explicitly worked to remove the "global" scrollbar so that only the "history"
   scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
-  are still both present on a long enough session. Or maybe re-introdced if I use ^o to see
-  the details for all the tool calls?
+  are still both present on a long enough session.
   (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
-
-* If you use ^o to expand from the main history to "details", it currently brings you all
-  the way to the top of the detailed history. It should anchor the screen's scroll at the
-  detailed version of whatever history element is the first one visible on the screen. The
-  same is true for when you use ^o ("hide") to go back from detailed-view to normal-view.
+  ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
+  done by Textual's draw-over algorithm? This may not be fixable.
+  
 
 # Feature backlog
 

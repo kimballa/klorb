@@ -20,6 +20,7 @@ from textual.content import Content
 from textual.message import Message
 from textual.screen import ModalScreen, Screen
 from textual.types import IgnoreReturnCallbackType
+from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Markdown, Static, TextArea
 
 from klorb.api_provider import ResponseAborted
@@ -1149,6 +1150,9 @@ class ReplApp(App[None]):
         instance; `refresh_bindings()` is Textual's documented hook for prompting `Footer` to
         redraw after such a change.
         """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        anchor = self._capture_scroll_anchor(history)
+
         self._tool_call_detail_shown = not self._tool_call_detail_shown
         for widget in self._tool_call_widgets:
             widget.set_detail_shown(self._tool_call_detail_shown)
@@ -1156,6 +1160,43 @@ class ReplApp(App[None]):
         self._bindings.key_to_bindings["ctrl+o"] = [
             Binding("ctrl+o", "toggle_tool_call_detail", label)]
         self.refresh_bindings()
+
+        if anchor is not None:
+            anchor_widget, line_offset = anchor
+            self.call_after_refresh(self._restore_scroll_anchor, history, anchor_widget, line_offset)
+
+    @staticmethod
+    def _capture_scroll_anchor(history: VerticalScroll) -> tuple[Widget, int] | None:
+        """Identify whichever direct child of `history` currently occupies the top of the
+        viewport, and how many of its own lines are already scrolled past, so a layout change
+        that resizes other children (e.g. `Ctrl+O` toggling tool-call detail — see
+        `action_toggle_tool_call_detail`) can restore that same child to that same on-screen
+        line afterward instead of leaving `scroll_y` pointing at whatever unrelated content
+        now happens to occupy that offset. Returns `None` only when `history` has no children
+        to anchor to.
+        """
+        children = list(history.children)
+        if not children:
+            return None
+        scroll_y = int(history.scroll_y)
+        for child in children:
+            region = child.virtual_region
+            if region.y + region.height > scroll_y:
+                return child, max(0, scroll_y - region.y)
+        last = children[-1]
+        return last, max(0, last.virtual_region.height - 1)
+
+    @staticmethod
+    def _restore_scroll_anchor(history: VerticalScroll, anchor_widget: Widget, line_offset: int) -> None:
+        """Scroll `history` so `anchor_widget` sits at the same on-screen line it held when
+        `_capture_scroll_anchor` recorded `line_offset`. Runs via `call_after_refresh` (see
+        caller), which is what makes `anchor_widget.virtual_region` reflect the widget's
+        post-change height rather than a stale pre-refresh layout; `scroll_to` itself clamps
+        to the valid scroll range, so an offset past the (possibly now-shorter) content simply
+        lands at the bottom instead of overshooting.
+        """
+        region = anchor_widget.virtual_region
+        history.scroll_to(y=region.y + line_offset, animate=False, immediate=True)
 
     def on_mount(self) -> None:
         """Label and focus the input box, cap its growth at the configured max height, watch
