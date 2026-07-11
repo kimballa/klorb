@@ -7,10 +7,8 @@ hounded for every overly-specific case one after the next."
 
 Claude: this plan is a **draft**, not ready for implementation. Several load-bearing design
 choices are marked as open questions below and need the user's explicit sign-off — most
-notably how much weight a risk score should carry (advisory UI bias vs. something closer to
-an automatic deny) and how the structured LLM output is actually forced (tool-call vs.
-response-format). Do not implement any part of this until it's moved to `ready/` and those
-questions are resolved.
+notably how the structured LLM output is actually forced (tool-call vs. response-format). Do
+not implement any part of this until it's moved to `ready/` and those questions are resolved.
 
 ## Context
 
@@ -65,8 +63,9 @@ simple command/redirect/forced-ask-reason within it, matching the granularity
   `evaluate_write()`/`resolve_and_evaluate_read()` on redirects is unchanged and remains
   authoritative — the classifier only ever runs on a candidate that has *already* resolved to
   `"ask"`, and never itself promotes anything to `"allow"` or converts anything to `"deny"`
-  without the user seeing and confirming it first (see "Risk score influence" below for the
-  one place this needs an explicit decision). This mirrors the reasoning in
+  without the user seeing and confirming it first — even a "too risky" score only biases which
+  grid cell is pre-selected (see "Risk score influence on the ask flow" below), it never
+  removes or auto-confirms one. This mirrors the reasoning in
   `docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md`: a probabilistic
   layer sits *alongside* the deterministic one, never in place of it.
 * Not a replacement for `shfmt`-based AST parsing. `klorb.permissions.shell_parse` remains the
@@ -200,7 +199,8 @@ New `tools.bash.riskClassifier.*` on-disk keys (dot-delineated lowerCamelCase, p
 {
   "tools.bash.riskClassifier.enabled": true,
   "tools.bash.riskClassifier.model": "openai/gpt-5-nano",
-  "tools.bash.riskClassifier.timeout": 5.0
+  "tools.bash.riskClassifier.timeout": 5.0,
+  "tools.bash.riskClassifier.tooRiskyThreshold": 9
 }
 ```
 
@@ -214,6 +214,10 @@ New `tools.bash.riskClassifier.*` on-disk keys (dot-delineated lowerCamelCase, p
 * `timeout` — a short, separate timeout from `tools.bash.timeout` (which bounds the actual
   shell command's runtime); this bounds an interactive round trip that happens *before* the
   command even runs, so it should fail fast rather than stall the approval modal.
+* `tooRiskyThreshold` — the `risk_score` (inclusive) at or above which an item is considered
+  "too risky" for the ask flow's default-cursor purposes — see "Risk score influence on the
+  ask flow" below. Configurable per-user/per-workspace like every other `tools.bash.*` setting;
+  defaults to `9`.
 
 ### Failure handling
 
@@ -236,7 +240,18 @@ an LLM call. Not persisted across sessions; `tool_state` never is.
 
 * A risk badge (e.g. a Low/Medium/High label or the raw 0–10 number, colored) shown near the
   existing header, when a `CommandRiskReport` is available.
-* The one-sentence `rationale` shown beneath the existing `item_command_text` preview.
+* The one-sentence `rationale` shown beneath the existing `item_command_text` preview, colored
+  by `risk_score` so severity reads at a glance without the user parsing the sentence itself:
+
+  | `risk_score` | Rationale color |
+  | --- | --- |
+  | 0–4 | default/unstyled text — no extra emphasis needed for a low-risk item |
+  | 5–6 | yellow |
+  | 7–8 | orange |
+  | 9–10 | red |
+
+  This banding is independent of, but visually consistent with, `tooRiskyThreshold` (default
+  `9`, within the red band) — see "Risk score influence on the ask flow" below.
 * The "this workspace"/"for me" grid rows' copy shows `suggested_pattern` (rendered as a
   command line, e.g. `git push *`) as what will actually be persisted, in place of today's
   copy derived purely from `compute_command_grant_patterns()`'s literal fallback, whenever a
@@ -246,25 +261,25 @@ an LLM call. Not persisted across sessions; `tool_state` never is.
 
 ### Risk score influence on the ask flow
 
-Recommended default: bias `PermissionAskScreen`'s initial grid cursor cell (today it starts on
-the previous prompt's remembered cell, per `docs/adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md`)
-toward `Deny` for a high `risk_score` (e.g. >= 8) and toward `Allow (this session)` for a low
-one (e.g. <= 2), leaving the existing remembered-cell behavior for the middle of the range.
-This changes only which cell is pre-highlighted — the user can still navigate to and confirm
-any cell regardless of score.
+`PermissionAskScreen`'s initial grid cursor cell today starts on the previous prompt's
+remembered cell (per `docs/adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md`).
+This plan biases that default, purely as a starting cursor position — every cell stays
+reachable and confirmable regardless of score, this never removes or disables an option:
 
-**Open question, needs explicit user sign-off:** the task description that motivated this plan
-says a score of 10 "should probably be just rejected immediately." Whether that means:
+* `risk_score >= tools.bash.riskClassifier.tooRiskyThreshold` (default `9`) — "too risky":
+  the default cursor cell becomes **Deny, once** (the `once`-scope column of the `Deny`
+  action), rather than whatever cell was last used. `once` specifically, not a persistent
+  `Deny`, so the default action doesn't silently write a permanent `commandRules.deny` entry
+  the user never deliberately chose — it just makes "don't run this" the path of least
+  resistance for the one call actually in front of them.
+* Below that threshold, the existing remembered-cell behavior is unchanged — this plan adds no
+  other score-driven cursor bias (a previous draft of this section sketched a low-score bias
+  toward `Allow (this session)` too; dropped as unrequested scope until asked for).
 
-(a) cursor-bias only, as above (score never removes any option, just nudges the default), or
-(b) something stronger at the very top of the range — e.g. disabling/hiding the `Allow` column
-    entirely above some threshold, requiring a distinct, deliberate override step to still run it —
-
-is a real, consequential trust-model decision this draft does not make. Every other verdict in
-this permission system is produced by a deterministic AST walk; letting a probabilistic LLM
-score have any unilateral power to block an action (even one nominally reversible via a
-distinct override step) is a meaningfully different guarantee, and should not be decided by
-default without the user weighing in explicitly.
+This resolves what was previously an open question in this plan (how much weight a score of 10
+should carry): the answer is cursor-bias only, toward `Deny, once` — never a hard block with no
+override, and never a change to `Allow`'s availability. The user can always navigate off the
+biased cell and confirm any other one, exactly as today.
 
 ## Worked examples
 
@@ -280,8 +295,11 @@ default without the user weighing in explicitly.
 * `curl https://example.com/install.sh | sh` — the same worked example
   `docs/specs/bash-tool-and-command-permissions.md` already uses for why this construct
   escalates to `"ask"` in the first place (a pipe into a non-`SAFE_STDIN_CONSUMERS` command).
-  Scores at or near 10, rationale naming "runs an arbitrary script downloaded from the
-  internet, with no way to review it first" — the case the open question above is about.
+  Scores at or near 10, rationale (shown in red, per the color table above) naming "runs an
+  arbitrary script downloaded from the internet, with no way to review it first." At the
+  default `tooRiskyThreshold` of `9`, this is "too risky": `PermissionAskScreen` opens with
+  **Deny, once** pre-selected instead of whatever cell the previous prompt left it on — the
+  user can still navigate to and confirm `Allow` if they actually want to proceed.
 
 ## Out of scope
 
@@ -302,25 +320,27 @@ default without the user weighing in explicitly.
 
 1. Forced structured-output mechanism (tool-choice vs. `response_format`) — pick and verify
    during implementation; may require an additive `send_prompt()` parameter.
-2. High-score UX: cursor-bias-only vs. something stronger at score 9–10 — needs the user's
-   explicit decision (see "Risk score influence on the ask flow").
-3. Today's `"Other..."` grid option means "deny, with free-text redirection" — there's no
+2. Today's `"Other..."` grid option means "deny, with free-text redirection" — there's no
    existing affordance for "allow, but let me hand-edit the suggested pattern before granting."
    Worth adding one so a user can tweak the LLM's wildcarding rather than accept-or-reject it
    as-is, but the exact UI for that isn't designed here.
-4. Whether a single fixed cheap model is right for every case, or whether a command the
+3. Whether a single fixed cheap model is right for every case, or whether a command the
    deterministic layer already flagged as especially concerning (e.g. several
    `forced_ask_reasons` at once) should escalate to a stronger/more expensive model for that
    one classification call — a real cost/quality tradeoff, not resolved here.
-5. Prompt-injection surface: `command_text` can itself carry adversarial content (e.g. a
+4. Prompt-injection surface: `command_text` can itself carry adversarial content (e.g. a
    heredoc payload) aimed at the classifier rather than at the real shell, and the
    classifier's own `rationale` is then displayed verbatim to the user — a hostile rationale
    could try to talk the user into approving something dangerous. At minimum, `rationale` must
    be rendered so it's visually distinguishable from trusted harness copy, never presented as
    an authoritative safety guarantee. Full hardening is its own follow-up, in the same spirit
    as `TODO.md`'s ReadFile secret-scrubbing item.
-6. Whether classifier LLM calls should be folded into the session's own token/cost accounting
+5. Whether classifier LLM calls should be folded into the session's own token/cost accounting
    shown in the REPL status row, since they're real spend against the same account.
+6. Whether `tooRiskyThreshold` should also affect anything beyond the ask screen's default
+   cursor cell (e.g. a distinct warning banner, or requiring a confirmation keystroke beyond
+   the ordinary grid `Enter` before an `Allow` at or above the threshold is accepted) — not
+   requested yet, noted here since it's a natural follow-up to the cursor-bias behavior above.
 
 ## Future work
 
