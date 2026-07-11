@@ -8,6 +8,7 @@
       "deny": [],
       "ask": [],
       "allow": [
+        "/home/aaron/src/klorb",
         "/home/dev/workspace/klorb"
       ]
     },
@@ -15,6 +16,7 @@
       "deny": [],
       "ask": [],
       "allow": [
+        "/home/aaron/src/klorb",
         "/home/dev/workspace/klorb"
       ]
     },
@@ -29,13 +31,7 @@
         ],
         [
           "make",
-          "*"
-        ],
-        [
-          "make",
-          "-C",
-          "/home/dev/workspace/klorb/klorb",
-          "*"
+          "**"
         ]
       ]
     }

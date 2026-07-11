@@ -60,6 +60,8 @@ from klorb.tui.repl import (
 )
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.workspace import TrustManager, Workspace
+from klorb.workspace import input_history as input_history_module
+from klorb.workspace.input_history import project_history_path
 
 TEST_SESSION_ID = "test-session-id"
 
@@ -2208,6 +2210,227 @@ async def test_clear_resets_input_history() -> None:
         await pilot.press("up")
         await pilot.pause()
         assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
+
+
+# --- file-backed input history (persistence across sessions) ---
+
+
+def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point `klorb.workspace.input_history` (and the `TrustManager`) at an empty
+    `$KLORB_DATA_DIR` under `tmp_path` and return it, so persistence tests never touch the
+    developer's own `~/.local/share/klorb/`."""
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(input_history_module, "KLORB_DATA_DIR", data_dir)
+    return data_dir
+
+
+
+def _repl_app_with_mock_provider(
+    workspace: Workspace, trust_manager: TrustManager, model: str = "some/model",
+) -> tuple[ReplApp, MagicMock]:
+    """Build a `ReplApp` whose `Session` uses a `MagicMock` provider the caller keeps a
+    typed reference to, so configuring `mock.send_prompt.return_value` satisfies mypy
+    (`Session.provider` is typed as a real `ApiProvider`, so reaching for `.return_value`
+    through it is an `attr-defined` error — see `_session` for the same pattern)."""
+    mock_provider = MagicMock()
+    process_config = _process_config_for_workspace(workspace, model)
+    session = Session(
+        process_config.session.model_copy(), provider=mock_provider, session_id=TEST_SESSION_ID,
+        process_config=process_config)
+    return ReplApp(session=session, process_config=process_config, trust_manager=trust_manager), mock_provider
+
+
+async def test_submitted_prompt_persists_to_history_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prompt submitted in one session is appended to the on-disk `history` file under the
+    project's per-project directory."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app, mock_provider = _repl_app_with_mock_provider(workspace, trust_manager)
+    mock_provider.send_prompt.return_value = _reply()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "persisted prompt"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+    history_file = project_history_path(app._session.config.workspace)
+    assert history_file.is_file()
+    assert history_file.read_text(encoding="utf-8") == "persisted prompt\n"
+
+
+async def test_history_seeds_from_file_on_startup_so_prior_sessions_are_recallable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prompt submitted in an earlier session is recallable via up-arrow in a fresh session
+    opened in the same project — the in-memory history is seeded from the on-disk file at
+    startup (see `PromptInput.set_history_store`)."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+
+    # First session: submit a prompt so it lands on disk.
+    app, mock_provider = _repl_app_with_mock_provider(workspace, trust_manager)
+    mock_provider.send_prompt.return_value = _reply()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "older prompt"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+    history_file = project_history_path(workspace)
+    assert history_file.is_file()
+
+    # Second session: a fresh ReplApp in the same (registered) project seeds from the file.
+    app2, _ = _repl_app_with_mock_provider(workspace, trust_manager)
+    async with app2.run_test() as pilot:
+        await pilot.pause()
+        await app2.workers.wait_for_complete()
+        await pilot.pause()
+        prompt_input2 = app2.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        # No new submission yet — up-arrow should recall the prompt from the *first* session.
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input2.text == "older prompt"
+
+
+# --- Ctrl+R reverse-incremental-search ---
+
+
+async def test_ctrl_r_finds_the_most_recent_matching_prompt() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hello world"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = "goodbye world"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = ""
+        await pilot.pause()
+        # Ctrl+R then type "hello" — should find "hello world" (the only entry containing it).
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        for ch in "hello":
+            await pilot.press(ch)
+        await pilot.pause()
+        assert prompt_input.text == "hello world"
+
+
+async def test_ctrl_r_search_is_case_insensitive() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "Fix the Bug"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = ""
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        for ch in "bug":
+            await pilot.press(ch)
+        await pilot.pause()
+        assert prompt_input.text == "Fix the Bug"
+
+
+async def test_repeated_ctrl_r_advances_to_older_match() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "search me alpha"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+        prompt_input.text = "search me beta"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = ""
+        await pilot.pause()
+        # Type the common substring, then press Ctrl+R again for the next-older match.
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        for ch in "search me":
+            await pilot.press(ch)
+        await pilot.pause()
+        assert prompt_input.text == "search me beta"
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert prompt_input.text == "search me alpha"
+
+
+async def test_ctrl_r_enter_exits_search_and_submits() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "find me"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = ""
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        for ch in "find":
+            await pilot.press(ch)
+        await pilot.pause()
+        assert prompt_input.text == "find me"
+        # Enter exits the search and submits the recalled match.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert prompt_input.text == ""
+        assert prompt_input._isearch_active is False
+
+
+async def test_ctrl_r_escape_exits_search_without_submitting() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "find me"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        prompt_input.text = ""
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        for ch in "find":
+            await pilot.press(ch)
+        await pilot.pause()
+        assert prompt_input.text == "find me"
+        # Escape exits the search, leaving the match in the box (not submitted).
+        await pilot.press("escape")
+        await pilot.pause()
+        assert prompt_input.text == "find me"
+        assert prompt_input._isearch_active is False
 
 
 # --- command palette from the prompt (a leading ">" in the prompt input) ---

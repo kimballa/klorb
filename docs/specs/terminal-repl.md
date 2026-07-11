@@ -351,6 +351,58 @@ user recall them into the box for editing and resending via the arrow keys:
   conversation history. A leading `>` in the recalled text is handled separately — see
   [[command-palette-from-prompt]]'s "History browsing" section.
 
+### File-backed persistence
+
+The input history is also persisted to disk so it survives across klorb sessions in the
+same project. Each registered project (`Workspace.id`, the uuid4 key into `projects.json`)
+gets one per-project directory under `$KLORB_DATA_DIR/projects/<uuid>-<basename>/`, where
+`<basename>` is the last path element of the workspace root — e.g. a workspace at
+`/home/aaron/src/foobar` registered as `abcd-1234` maps to
+`…/projects/abcd-1234-foobar/`. An unregistered workspace (one the user declined to open
+as a project, or one klorb was launched into before any bootstrap) falls back to a stable
+12-hex-char hash of its canonical path so two instances opened in the *same* folder still
+converge on one history file without a `projects.json` entry. The history file itself is
+named `history`.
+
+* **Format.** One previously-submitted prompt per line. Because a prompt can itself contain
+  newlines (Ctrl+Enter inserts a literal newline), each entry is escaped before it's written
+  (`\` → `\\`, `\n` → `\n`-literal-seq, `\r` → `\r`-literal-seq) and unescaped on the way
+  back into the input box, so a recalled multi-line prompt round-trips verbatim. The trailing
+  newline after the last entry is the record separator, not a blank final entry.
+* **Append-only.** Every submitted message opens the file in append mode, writes its escaped
+  entry plus a trailing `\n`, flushes, and closes — no caller ever rewrites the whole file.
+  This is the key concurrency guarantee: multiple klorb instances editing in the same folder
+  concurrently each just append their own most-recent message and never clobber one another's
+  history, since each process only ever knows its own in-memory view; the file is the shared,
+  append-only log.
+* **Seeding.** `PromptInput.set_history_store(path)` is called once at startup (from
+  `ReplApp._resolve_workspace_trust`, after the workspace is resolved) and seeds the in-memory
+  `self._history` from the on-disk file so up/down-arrow recall reaches prompts submitted in
+  earlier sessions. A `ReplApp` constructed without a `TrustManager` (e.g. every test) never
+  sets a store, so it keeps purely in-memory recall and never touches a real `$KLORB_DATA_DIR`.
+  `clear_session` deliberately does *not* re-seed: a cleared session's input history is reset
+  to empty in memory to match its empty conversation history, and re-seeding would re-introduce
+  every prior prompt and break that "fresh session starts empty" contract. The on-disk file is
+  not touched by a clear — it's an append-only shared log that may have other instances writing
+  to it.
+
+### Reverse incremental search (Ctrl+R)
+
+Pressing `Ctrl+R` enters a Readline-style reverse-incremental-search of the in-memory history
+(which, after startup seeding, includes entries from prior sessions in this project). While the
+search is active:
+
+* Printable characters extend the query and re-run a newest-first, case-insensitive substring
+  search, loading the match into the box.
+* `Ctrl+R` again advances to the next-older match for the current query.
+* `Backspace`/`Ctrl+H` shrinks the query and re-searches.
+* `Enter` exits the search and submits the current match.
+* `Escape` exits the search, leaving the current match in the box as an editable draft.
+* Any other key (arrows, home/end, etc.) also exits the search, leaving the match in the box.
+
+With no match, the box shows the (partial) query text, matching Readline's failing-i-search
+behavior of keeping the typed search text visible.
+
 ## Out of scope
 
 * `:q`/`/quit`/`/exit`, a leading `>` (the inline command palette, see

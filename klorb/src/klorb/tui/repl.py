@@ -66,6 +66,7 @@ from klorb.tui.theme_commands import ThemeCommandProvider
 from klorb.tui.thinking_commands import ThinkingCommandProvider
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
 from klorb.workspace import TrustManager, Workspace
+from klorb.workspace.input_history import append_history, load_history, project_history_path
 from klorb.workspace.workspace_init import (
     write_initial_project_config,
     write_session_defaults_to_project_config,
@@ -294,18 +295,55 @@ class PromptInput(TextArea):
         self._palette_dismissed: bool = False
         self._suppress_palette_during_recall: bool = False
         self._last_key: str | None = None
+        self._history_path: Path | None = None
+        # Reverse-incremental-search state (Ctrl+R). When `_isearch_active` is True, typed
+        # printable characters extend `_isearch_query` and each extension re-runs a
+        # newest-first, case-insensitive substring search of `self._history`, loading the
+        # match into the box (see `_isearch_step`/`_exit_isearch`). Enter/Escape or any
+        # non-printable navigation exits the search, leaving the current match in the box
+        # (Enter leaves it as a draft to edit/resend; Escape would restore the pre-search
+        # draft, but for simplicity both just commit the match — see `_on_key`).
+        self._isearch_active: bool = False
+        self._isearch_query: str = ""
+        self._isearch_match_index: int | None = None
+
+    def set_history_store(self, path: Path | None) -> None:
+        """Point this widget at the on-disk `history` file for the current project and seed
+        `self._history` from it so up/down-arrow recall reaches prompts submitted in earlier
+        klorb sessions in the same folder. `path is None` disables file-backed persistence
+        entirely (in-memory recall only, nothing written), which is what a `ReplApp`
+        without a resolved workspace wants so tests never touch a real `$KLORB_DATA_DIR`.
+
+        Seeding happens here, exactly once at startup (from
+        `ReplApp._resolve_workspace_trust`'s wake), rather than in `on_mount` because the
+        workspace isn't resolved yet at `on_mount` time. `clear_session` deliberately does
+        *not* re-seed: a cleared session's input history is reset to empty in memory (see
+        `clear_input_history`), and re-seeding would re-introduce every prior prompt and
+        break the "fresh session starts empty" contract (see
+        `test_clear_resets_input_history`).
+        """
+        self._history_path = path
+        if path is not None:
+            self._history = load_history(path)
+            self._history_index = None
 
     def clear_input_history(self) -> None:
         """Drop the recorded prompt history and reset the recall position.
 
         Called by `ReplApp.clear_session()` so a fresh `Session` starts with an empty input
-        history to match its empty conversation history.
+        history to match its empty conversation history. The on-disk `history` file, if any,
+        is *not* touched here: it's an append-only shared log that multiple klorb instances
+        may be writing to concurrently (see `klorb.workspace.input_history`), so rewriting
+        or truncating it from one instance would clobber the others' history. A cleared
+        session simply stops seeing prior entries in memory until a fresh submission is
+        appended (which then also goes to the file, keeping it growing across sessions).
         """
         self._history.clear()
         self._history_index = None
         self._draft = ""
         self._palette_dismissed = False
         self._suppress_palette_during_recall = False
+        self._exit_isearch()
         self._palette_widget().hide()
 
     @property
@@ -357,6 +395,41 @@ class PromptInput(TextArea):
             event.stop()
             event.prevent_default()
             self.post_message(self.CyclePermissionFramework(self))
+            return
+        if self._isearch_active:
+            # While a reverse-i-search is in progress, the keystroke vocabulary narrows to
+            # what readline accepts mid-search: printable characters extend the query,
+            # Ctrl+R advances to the next-older match, Enter/Escape commit the current match
+            # and exit, and everything else (arrows, home/end, deletion bindings, ...) also
+            # exits, leaving the match in the box to edit or resend. Ctrl+H (backspace's
+            # control-byte form) shrinks the query.
+            event.stop()
+            event.prevent_default()
+            if key == "escape" or key == "enter":
+                self._exit_isearch()
+                if key == "enter":
+                    self._record_and_submit()
+                return
+            if key == "ctrl+r":
+                match_idx = self._isearch_match_index
+                start = match_idx if match_idx is not None else len(self._history)
+                self._isearch_step(start)
+                return
+            if key in ("ctrl+h", "backspace"):
+                if self._isearch_query:
+                    self._isearch_query = self._isearch_query[:-1]
+                    self._isearch_step(len(self._history))
+                return
+            if event.is_printable and event.character:
+                self._isearch_query += event.character
+                self._isearch_step(len(self._history))
+                return
+            self._exit_isearch()
+            return
+        if key == "ctrl+r":
+            event.stop()
+            event.prevent_default()
+            self._enter_isearch()
             return
         if self._palette_mode:
             if key == "escape":
@@ -512,8 +585,10 @@ class PromptInput(TextArea):
         result = command()
         if inspect.isawaitable(result):
             await result
-        self._history.append(f"{PALETTE_PREFIX}{canonical_text}")
+        entry = f"{PALETTE_PREFIX}{canonical_text}"
+        self._history.append(entry)
         self._history_index = None
+        self._persist_history_entry(entry)
 
     def _detach_from_history(self) -> None:
         """Mark the current text as no longer rooted at a position in the input history, so a
@@ -524,6 +599,64 @@ class PromptInput(TextArea):
         """
         self._history_index = None
         self._suppress_palette_during_recall = False
+        self._exit_isearch()
+
+    def _persist_history_entry(self, entry: str) -> None:
+        """Append `entry` to the on-disk `history` file when one has been attached (see
+        `set_history_store`); a no-op otherwise (in-memory-only recall). The file is opened
+        in append mode and never rewritten, so concurrent klorb instances in the same folder
+        each just append their own most-recent message (see `klorb.workspace.input_history`)."""
+        if self._history_path is not None:
+            append_history(self._history_path, entry)
+
+    def _enter_isearch(self) -> None:
+        """Begin a Ctrl+R reverse-incremental-search: stash the current draft (so a later
+        Escape can restore it), reset the query, and search the history for the empty query —
+        which matches the most recent entry, loading it into the box the way readline does."""
+        self._isearch_active = True
+        self._isearch_query = ""
+        self._isearch_match_index = None
+        self._draft = self.text
+        self._isearch_step(0)
+
+    def _isearch_step(self, start_index: int) -> None:
+        """Run one newest-first, case-insensitive substring search of `self._history` for
+        `_isearch_query`, beginning just *before* `start_index` (so repeated presses of Ctrl+R
+        without changing the query advance to the next-older match), and load the match — if
+        any — into the box. No match leaves the box showing the (partial) query, matching
+        readline's "failing-i-search" behavior of keeping the typed search text visible."""
+        if not self._history:
+            self._isearch_match_index = None
+            self.text = self._isearch_query
+            self.move_cursor(self._last_location())
+            return
+        query = self._isearch_query.casefold()
+        # Walk newest-first, starting at the index just before `start_index` so a fresh
+        # query (start_index=0) finds the newest match and a repeated Ctrl+R advances.
+        i = start_index - 1
+        while i >= 0:
+            if query in self._history[i].casefold():
+                self._isearch_match_index = i
+                self._suppress_palette_during_recall = True
+                self.text = self._history[i]
+                self.move_cursor(self._last_location())
+                return
+            i -= 1
+        self._isearch_match_index = None
+        self.text = self._isearch_query
+        self.move_cursor(self._last_location())
+
+    def _exit_isearch(self) -> None:
+        """Leave reverse-i-search mode, keeping whatever match (or typed query) is currently
+        in the box as an ordinary editable draft. Does not restore the pre-search draft: in
+        readline, Enter accepts the match while Escape cancels back to the draft, but klorb
+        commits the match in both cases for simplicity — the draft is preserved on the box
+        itself only when the search found nothing (the query text remains)."""
+        if not self._isearch_active:
+            return
+        self._isearch_active = False
+        self._isearch_query = ""
+        self._isearch_match_index = None
 
     def _record_and_submit(self) -> None:
         """Record the current (non-empty) text into the input history and post `Submitted`.
@@ -538,6 +671,7 @@ class PromptInput(TextArea):
             self.post_message(self.Submitted(self, value))
             return
         self._history.append(value)
+        self._persist_history_entry(value)
         self._history_index = None
         self.post_message(self.Submitted(self, value))
 
@@ -1270,6 +1404,13 @@ class ReplApp(App[None]):
             workspace = await self._bootstrap_new_workspace(workspace)
             self._apply_workspace_config(workspace)
         self._announce_workspace(workspace)
+        # Now that the workspace is resolved (and, if it was brand-new, registered), attach
+        # the file-backed input-history store so up/down-arrow recall reaches prior sessions
+        # and new submissions persist. Done only here (gated on `trust_manager`, i.e. a real
+        # `cli.main()` run) so a `ReplApp` constructed without one (every existing test) keeps
+        # purely in-memory recall and never touches a real `$KLORB_DATA_DIR`.
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.set_history_store(project_history_path(workspace))
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:
         """Ask the two workspace-bootstrap questions from docs/specs/projects-and-trust.md for
