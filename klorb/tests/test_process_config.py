@@ -51,24 +51,9 @@ def _trusted_workspace(path: Path) -> Workspace:
 
 _real_default_config_layer = process_config_module._default_config_layer
 """A handle to the genuine, packaged-resource-reading `_default_config_layer`, captured at
-collection time before `_isolate_config_layers` (below) monkeypatches the module attribute of
-the same name for every test. The `test_default_config_layer_*` tests restore it explicitly
+collection time before `_isolate_config_layers` (conftest.py) monkeypatches the module attribute
+of the same name for every test. The `test_default_config_layer_*` tests restore it explicitly
 to exercise the real packaged `default-config.json`."""
-
-
-@pytest.fixture(autouse=True)
-def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point every file-backed config layer at empty locations under `tmp_path`, and blank out
-    the packaged built-in-defaults layer, so tests never accidentally read a real
-    `/etc/klorb/klorb-config.json`, the developer's own `~/.config/klorb/klorb-config.json`,
-    or the packaged `default-config.json`'s own `readDirs`/session-default values. Tests that
-    specifically cover the packaged layer (see `test_default_config_layer_*` below) restore
-    the real `_default_config_layer` themselves.
-    """
-    monkeypatch.setenv(
-        process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
-    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
 
 
 def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:

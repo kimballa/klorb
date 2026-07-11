@@ -99,21 +99,6 @@ def _user_config_present(tmp_path: Path) -> Iterator[None]:
         yield
 
 
-@pytest.fixture
-def _isolate_process_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point the `/etc`- and per-user-scope `klorb-config.json` layers `load_process_config()`
-    reads at empty locations under `tmp_path`, and blank out the packaged built-in-defaults
-    layer -- for the workspace-bootstrap/"Trust workspace" tests below, whose
-    `ReplApp._apply_workspace_config` calls the real `load_process_config()` (unlike every
-    other test in this file, which never reaches it). Mirrors
-    `test_process_config.py`'s `_isolate_config_layers` fixture.
-    """
-    monkeypatch.setenv(
-        process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
-    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
-
-
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
     """Select "Clear session" from the inline palette (see
     docs/specs/command-palette-from-prompt.md), mirroring how a real user reaches it now that
@@ -608,7 +593,6 @@ async def test_set_thinking_effort_persists_to_the_user_config_file(tmp_path: Pa
     assert written["shell.command"] == "/bin/zsh"
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_select_theme_updates_live_theme_and_process_config_template() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
@@ -619,7 +603,6 @@ async def test_select_theme_updates_live_theme_and_process_config_template() -> 
         assert app._process_config.theme == "nord"
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_select_theme_persists_to_user_config() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
@@ -631,7 +614,6 @@ async def test_select_theme_persists_to_user_config() -> None:
     assert raw["ui.theme"] == "nord"
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_select_theme_announces_change_in_history_scroll() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
@@ -681,7 +663,6 @@ async def test_available_theme_names_returns_sorted_registered_themes() -> None:
         assert "nord" in names
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_get_current_theme_name_reflects_active_theme() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
@@ -740,7 +721,6 @@ async def test_format_title_shortens_a_long_workspace_path_to_its_last_two_parts
         assert title == ".../tree/root - gpt-5"
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -> None:
     mock_provider = MagicMock()
     config = SessionConfig(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
@@ -2945,7 +2925,6 @@ async def test_no_trust_manager_skips_bootstrap_and_announcement_entirely(tmp_pa
         assert _notice_texts(app) == []
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
     tmp_path: Path,
 ) -> None:
@@ -2981,7 +2960,6 @@ async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
     assert session_defaults["writeDirs"]["allow"] == [str(project_root)]
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_confirm_screen_arrow_keys_move_focus_between_buttons(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -3003,7 +2981,6 @@ async def test_confirm_screen_arrow_keys_move_focus_between_buttons(tmp_path: Pa
         await pilot.pause()
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_bootstrap_declining_project_but_trusting_keeps_it_in_memory_only(
     tmp_path: Path,
 ) -> None:
@@ -3031,7 +3008,6 @@ async def test_bootstrap_declining_project_but_trusting_keeps_it_in_memory_only(
     assert not project_config_path(project_root).is_file()
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
     tmp_path: Path,
 ) -> None:
@@ -3056,7 +3032,6 @@ async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
     assert not project_config_path(tmp_path).is_file()
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_trust_workspace_command_persists_and_offers_config_init(
     tmp_path: Path,
 ) -> None:
@@ -3095,7 +3070,6 @@ async def test_trust_workspace_command_persists_and_offers_config_init(
     assert project_config_path(tmp_path).is_file()
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_trust_workspace_command_declining_config_init_leaves_no_file(
     tmp_path: Path,
 ) -> None:
@@ -3127,7 +3101,6 @@ async def test_trust_workspace_command_declining_config_init_leaves_no_file(
     assert not project_config_path(tmp_path).is_file()
 
 
-@pytest.mark.usefixtures("_isolate_process_config_layers")
 async def test_trust_workspace_for_non_project_workspace_skips_config_init_prompt(
     tmp_path: Path,
 ) -> None:

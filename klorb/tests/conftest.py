@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from klorb import logging_config
+from klorb import process_config as process_config_module
 from klorb.token_estimate import configure_tiktoken_cache_env
 
 
@@ -13,6 +14,22 @@ from klorb.token_estimate import configure_tiktoken_cache_env
 def _redirect_session_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests from writing session log files into the real KLORB_STATE_DIR."""
     monkeypatch.setattr(logging_config, "SESSION_LOGS_DIR", tmp_path / "session-logs")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point every file-backed config layer at empty locations under `tmp_path`, and blank out
+    the packaged built-in-defaults layer, so no test anywhere in the suite can accidentally read
+    a real `/etc/klorb/klorb-config.json`, the developer's own `~/.config/klorb/klorb-config.json`,
+    or the packaged `default-config.json`'s own `readDirs`/session-default values via
+    `load_process_config()`. Tests that specifically cover the packaged layer (see
+    `test_default_config_layer_*` in test_process_config.py) restore the real
+    `_default_config_layer` themselves.
+    """
+    monkeypatch.setenv(
+        process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
+    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
+    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
 
 
 @pytest.fixture(scope="session", autouse=True)
