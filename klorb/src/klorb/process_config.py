@@ -16,6 +16,7 @@ from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
+from klorb.permissions.table import Verdict
 from klorb.schema_envelope import parse_versioned_json, read_versioned_json, write_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig, ThinkingEffort
 from klorb.tool_call_log import LOG_TOOL_CALLS_CONFIG_KEY
@@ -57,6 +58,17 @@ DEFAULT_SCRATCHPAD_CONTEXT_LINES = 2
 shown on each side of a match); the canonical source of this value — `klorb.tools.
 scratchpad.search` has no constant of its own, it reads `ProcessConfig.scratchpad_context_lines`
 via `ToolSetupContext` at construction time instead."""
+
+DEFAULT_MEMORY_READ_PERMISSION: Verdict = "allow"
+DEFAULT_MEMORY_EDIT_PERMISSION: Verdict = "allow"
+DEFAULT_MEMORY_CREATE_PERMISSION: Verdict = "ask"
+DEFAULT_MEMORY_DELETE_PERMISSION: Verdict = "ask"
+"""Per-operation default `Verdict`s for the Memory tools (`ListMemories`/`SearchMemories`
+[read], `EditMemory`, `CreateMemory`, `DeleteMemory`) — see `ProcessConfig.
+memory_read_permission` et al. and docs/specs/memories.md. Read and edit default to `"allow"`
+since a memory is harness-managed session-spanning notes, not a workspace file a model can
+redirect through; create and delete default to `"ask"` since those are less easily reversed
+(a created file needs an explicit follow-up `DeleteMemory`; a deleted one is simply gone)."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_SCHEMA_VERSION = "1.0.0"
@@ -144,6 +156,10 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.grep.contextLines": "grep_context_lines",
     "tools.findFile.maxResults": "find_file_max_results",
     "tools.scratchpad.contextLines": "scratchpad_context_lines",
+    "tools.memory.readPermission": "memory_read_permission",
+    "tools.memory.editPermission": "memory_edit_permission",
+    "tools.memory.createPermission": "memory_create_permission",
+    "tools.memory.deletePermission": "memory_delete_permission",
     "providers.openrouter.baseUrl": "openrouter_base_url",
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
@@ -188,6 +204,14 @@ class ProcessConfig(BaseModel):
     scratchpad_context_lines: int = DEFAULT_SCRATCHPAD_CONTEXT_LINES
     """Number of lines of surrounding context `SearchScratchpadTool` shows on each side of a
     match — see `klorb.tools.scratchpad.search`."""
+    memory_read_permission: Verdict = DEFAULT_MEMORY_READ_PERMISSION
+    """Governs `ListMemories`/`SearchMemories`/`ReadMemory` — see `klorb.tools.memory`."""
+    memory_edit_permission: Verdict = DEFAULT_MEMORY_EDIT_PERMISSION
+    """Governs `EditMemory` — see `klorb.tools.memory`."""
+    memory_create_permission: Verdict = DEFAULT_MEMORY_CREATE_PERMISSION
+    """Governs `CreateMemory` — see `klorb.tools.memory`."""
+    memory_delete_permission: Verdict = DEFAULT_MEMORY_DELETE_PERMISSION
+    """Governs `DeleteMemory` — see `klorb.tools.memory`."""
     openrouter_base_url: str = OPENROUTER_BASE_URL
     shell_command: str = DEFAULT_SHELL_COMMAND
     """Shell binary a `!`-prefixed REPL command is run through, e.g. `/bin/bash` or `/bin/zsh`

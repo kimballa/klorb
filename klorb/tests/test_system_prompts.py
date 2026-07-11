@@ -36,6 +36,14 @@ def test_resolve_prompt_file_reads_packaged_default(user_config_dir: Path) -> No
     assert "klorb" in content
 
 
+def test_default_sys_prompt_documents_memories(user_config_dir: Path) -> None:
+    content = resolve_prompt_file(DEFAULT_SYS_FILENAME)
+
+    assert content is not None
+    assert "## Memories" in content
+    assert "ListMemories" in content
+
+
 def test_resolve_prompt_file_reads_packaged_coordinator_role_prompt(user_config_dir: Path) -> None:
     content = resolve_prompt_file("roles/coordinator/default.md")
 

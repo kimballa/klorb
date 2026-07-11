@@ -61,6 +61,10 @@ def test_default_registry_discovers_production_tools() -> None:
 
     assert "ReadFile" in names
     assert "Bash" in names
+    assert {
+        "ListMemories", "SearchMemories", "ReadMemory", "EditMemory", "CreateMemory",
+        "DeleteMemory",
+    } <= names
 
 
 def test_registry_has_no_session_before_one_is_constructed() -> None:

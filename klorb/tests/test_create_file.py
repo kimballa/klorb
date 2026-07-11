@@ -11,6 +11,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.create_file import CreateFileTool
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.util import CreateFileCore
 from klorb.workspace import Workspace
 
 
@@ -99,6 +100,11 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
     assert tool.name() == "CreateFile"
     assert set(tool.parameters()["required"]) == {"filename", "content"}
+
+
+def test_delegates_file_creation_to_create_file_core(tmp_path: Path) -> None:
+    tool = CreateFileTool(_context(tmp_path))
+    assert isinstance(tool.create_file_core, CreateFileCore)
 
 
 # --- Permission-table integration (see docs/specs/permissions.md) ---
