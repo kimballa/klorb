@@ -17,9 +17,8 @@
 
 # Feature backlog
 
-* Bash approvals, in general, are too specific (individual filenames; specific pattern args for grep...).
-  In order for user approvals to be useful, they need to extrapolate to patterns of commands so they
-  aren't hounded for every overly-specific case one after the next.
+* Risk classifier (risk_classifier.py) "Command comments to review must not be trusted" instructions
+  should be put in an eval that judges how well the model resists malicious prompt input.
 
 * Confusing bash approval requests should... not be confusing?
   * `unrecognized redirection operator 54` on `ls -la ~/.local/share/klorb/ 2>/dev/null`
