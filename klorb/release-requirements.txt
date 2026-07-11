@@ -11,7 +11,7 @@ certifi==2026.6.17
     #   httpcore
     #   httpx
     #   requests
-charset-normalizer==3.4.8
+charset-normalizer==3.4.9
     # via requests
 coolname==5.0.0
     # via klorb (pyproject.toml)
@@ -41,7 +41,7 @@ mdit-py-plugins==0.6.1
     # via textual
 mdurl==0.1.2
     # via markdown-it-py
-openai==2.44.0
+openai==2.45.0
     # via klorb (pyproject.toml)
 platformdirs==4.10.0
     # via textual
@@ -57,7 +57,7 @@ pygments==2.20.0
     #   textual
 python-dotenv==1.2.2
     # via klorb (pyproject.toml)
-regex==2026.6.28
+regex==2026.7.10
     # via tiktoken
 requests==2.34.2
     # via tiktoken
@@ -71,7 +71,7 @@ textual==8.2.8
     # via klorb (pyproject.toml)
 tiktoken==0.13.0
     # via klorb (pyproject.toml)
-tqdm==4.68.3
+tqdm==4.68.4
     # via openai
 typing-extensions==4.16.0
     # via
