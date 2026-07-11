@@ -7,10 +7,6 @@
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
-* Some of the config for this repo must actually be settings in my User-specific vscode config
-  on my home PC. Do a sweep thru the settings that should be pulled into the repo, as well
-  as extensions that should be listed as Workspace Recommendations.
-
 * I had already explicitly worked to remove the "global" scrollbar so that only the "history"
   scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
   are still both present on a long enough session.
@@ -23,7 +19,8 @@
 
 * ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
-  that readfile and editfile can interact in a loop. 
+  that readfile and editfile can interact in a loop even with field masking making literal context
+  matching in EditFile impossible.)
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
   and you should be allowed to type before it's actually your turn to send.
@@ -66,7 +63,6 @@
     * Session can get the current Provider from the ProviderFactory.
     * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
 * More tools:
-    * AskUserQuestionsTool
     * Add Evals for GrepTool and FindFileTool.
 
     * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans

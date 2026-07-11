@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tools.dir_walk."""
+"""Tests for klorb.tools.util.dir_walk."""
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
-from klorb.tools.dir_walk import walk_readable_tree
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.util import walk_readable_tree
 from klorb.workspace import Workspace
 
 

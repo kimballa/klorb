@@ -16,15 +16,20 @@ file-creation algorithm, and building the result dict) lives in this package: `r
 import ReadFileCore, EditFileCore, CreateFileCore` regardless of which submodule actually
 defines them.
 
-Unlike `klorb.tools.scratchpad`, this package's `__init__.py` re-exporting its classes creates
-no import cycle: none of `ReadFileCore`/`EditFileCore`/`CreateFileCore` takes a
-`ToolSetupContext` or otherwise imports `klorb.tools.setup_context`/`klorb.session` — each is
-constructed from plain arguments (an `int`, or nothing at all) and operates on a `pathlib.Path`
-its caller already resolved.
+Unlike `klorb.tools.scratchpad`, this package's `__init__.py` re-exporting `ReadFileCore`/
+`EditFileCore`/`CreateFileCore` creates no import cycle: none of them takes a `ToolSetupContext`
+or otherwise imports `klorb.tools.setup_context`/`klorb.session` — each is constructed from
+plain arguments (an `int`, or nothing at all) and operates on a `pathlib.Path` its caller
+already resolved. `walk_readable_tree` (`dir_walk.py`) is different — it does take a
+`ToolSetupContext`, since walking a directory tree has to re-check `readDirs` at every
+subdirectory — but re-exporting it here is still safe: nothing that needs to avoid the
+`klorb.session` cycle (e.g. `klorb.session` itself, or `klorb.tools.ask.common`) imports
+`klorb.tools.util`, only tool implementations (`GrepTool`, `FindFileTool`, ...) do.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
+from klorb.tools.util.dir_walk import walk_readable_tree
 from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit
 from klorb.tools.util.read_file_core import ReadFileCore
 
-__all__ = ["CreateFileCore", "EditFileCore", "LineRangeEdit", "ReadFileCore"]
+__all__ = ["CreateFileCore", "EditFileCore", "LineRangeEdit", "ReadFileCore", "walk_readable_tree"]

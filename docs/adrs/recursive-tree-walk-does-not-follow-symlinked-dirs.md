@@ -1,7 +1,7 @@
 # Recursive tree walk never descends into a symlinked subdirectory
 
 * Date: 2026-07-04 01:19
-* Question: `klorb.tools.dir_walk.walk_readable_tree()` (shared by `GrepTool` and
+* Question: `klorb.tools.util.walk_readable_tree()` (shared by `GrepTool` and
   `FindFileTool`) recurses depth-first through however many directory levels a tree has. Nothing
   about the permission checks alone (`readDirs` containment, the workspace-root boundary) stops a
   symlinked subdirectory from pointing back at one of its own ancestors, which would make an

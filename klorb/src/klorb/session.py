@@ -30,6 +30,7 @@ from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
 from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
 from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
+from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
 from klorb.tools.scratchpad.common import Scratchpad
 from klorb.workspace import Workspace
 
@@ -286,6 +287,36 @@ class PermissionDecision(BaseModel):
     other_text: str | None = None
 
 
+class AskUserQuestionsItemContext(BaseModel):
+    """Passed to `on_ask_user_questions` once per question in an `AskUserQuestionsRequired`
+    batch, asked about one at a time, in order (see `Session._resolve_ask_user_questions`) —
+    mirroring how a `MultiPermissionAskRequired`'s items are asked about one at a time via
+    `on_permission_ask`. `index`/`total` (e.g. `1`/`3`) let a UI render "Question 2 of 3"
+    without re-deriving it from a running count of its own calls."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    header: str
+    question: str
+    options: list[QuestionOption]
+    index: int
+    total: int
+
+
+class AskUserQuestionsAnswer(BaseModel):
+    """The user's answer to one `AskUserQuestionsItemContext` prompt, returned by
+    `on_ask_user_questions`. `answer` is the final rendered string for a selected option
+    (`"label"`, or `"label: description"` when the option has one — see
+    `klorb.tools.ask.common.format_answer`) or the user's raw free-text answer;
+    it is `None` only when `cancelled` is set, since there is no deny/allow axis to fall back
+    to here the way `PermissionDecision` has — Escape means "stop asking me this", not "deny
+    this one item", so `Session._resolve_ask_user_questions` short-circuits the rest of the
+    batch instead of recording a per-item denial."""
+
+    answer: str | None = None
+    cancelled: bool = False
+
+
 class ToolCallEvent(BaseModel):
     """Reports one finished tool call to `TurnEventHandlers.on_tool_call`, fired once per call
     from `_run_tool_calls` right after it completes (including after an `on_permission_ask`-
@@ -321,8 +352,9 @@ class TurnEventHandlers(BaseModel):
     supply for one turn: `on_chunk`/`on_thinking_chunk` (streamed response text),
     `cancel_event` (abort a turn mid-stream), `on_tool_call_limit_reached` (ask whether to
     raise a safety cap), `on_permission_ask` (ask how to resolve an `"ask"` permission
-    verdict), and `on_tool_call` (report one finished tool call, for display). Replaces passing
-    these as separate keyword arguments through `send_turn()`/`retry_last_turn()`/
+    verdict), `on_ask_user_questions` (ask the user one `AskUserQuestions` tool-call
+    question), and `on_tool_call` (report one finished tool call, for display). Replaces
+    passing these as separate keyword arguments through `send_turn()`/`retry_last_turn()`/
     `_dispatch_turn()` and everything they call — a single object here means a future addition
     only touches this class, not every method's signature along the chain. `frozen=True` since
     a `TurnEventHandlers` is built once per turn and never mutated; `arbitrary_types_allowed=True`
@@ -336,6 +368,9 @@ class TurnEventHandlers(BaseModel):
     cancel_event: threading.Event | None = None
     on_tool_call_limit_reached: Callable[[str], bool] | None = None
     on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None
+    on_ask_user_questions: (
+        Callable[[AskUserQuestionsItemContext], AskUserQuestionsAnswer] | None
+    ) = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
 
 
@@ -963,6 +998,54 @@ class Session:
                 break
         return self._retry_after_multi_permission_decisions(call, args, multi_ask_exc.items, decisions)
 
+    def _resolve_ask_user_questions(
+        self,
+        call: ToolCallRequest,
+        ask_exc: AskUserQuestionsRequired,
+        callbacks: TurnEventHandlers,
+    ) -> tuple[Any, str | None]:
+        """Resolve an `AskUserQuestionsRequired` into a `(result, error)` pair: asks
+        `callbacks.on_ask_user_questions` about each of `ask_exc.questions` in turn, building
+        `result["answers"]` from the collected `AskUserQuestionsAnswer`s. Unlike a permission
+        ask, there is no `config.permission_framework` branching (asking the user isn't a
+        resource-access verdict an "auto"/"deny" framework applies to — see
+        `docs/adrs/ask-user-questions-tool-bypasses-permission-tables.md`) and no "retry
+        `tool.apply()`" step afterward: asking the question was this tool's entire job, so the
+        collected answers directly become the result.
+
+        With no callback given (e.g. a headless one-shot run — see `_send_and_receive`'s
+        prompt-path callers), fails closed the same as an unhandled `PermissionAskRequired`
+        would, since there is nobody to ask. A `cancelled` answer for any question
+        short-circuits the rest of the batch: the call fails, naming the cancelled question and
+        echoing back any answers already collected for earlier questions in the same call, so
+        that information isn't silently lost.
+        """
+        if callbacks.on_ask_user_questions is None:
+            logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
+            return None, str(ask_exc)
+
+        total = len(ask_exc.questions)
+        answers: list[dict[str, Any]] = []
+        for index, question in enumerate(ask_exc.questions):
+            answer = callbacks.on_ask_user_questions(AskUserQuestionsItemContext(
+                header=question.header, question=question.question, options=question.options,
+                index=index, total=total))
+            if answer.cancelled:
+                collected = ", ".join(a["header"] for a in answers) or "none"
+                return None, (
+                    f"User declined to answer question {index + 1}/{total} "
+                    f"('{question.header}': {question.question}). Answers already collected "
+                    f"for earlier questions in this call: {collected}. Don't keep guessing or "
+                    "re-asking the same thing a different way -- reconsider your approach, or "
+                    "ask a clearer, narrower question."
+                )
+            answers.append({
+                "header": question.header,
+                "question": question.question,
+                "answer": answer.answer,
+            })
+        return {"answers": answers}, None
+
     def _run_tool_calls(
         self,
         tool_use_message: Message,
@@ -1008,6 +1091,13 @@ class Session:
         persisted at all when it has neither (see `PermissionAskItem`). The first item answered
         `action="deny"` (or with `other_text` set) short-circuits: no further items are asked
         about, and the whole call is denied.
+
+        A call that raises `AskUserQuestionsRequired` (only `AskUserQuestionsTool`) is resolved
+        by `_resolve_ask_user_questions`: each question is asked in turn via
+        `callbacks.on_ask_user_questions`, with no `permission_framework` branching (asking the
+        user isn't a resource-access verdict) and no callback means it fails closed exactly like
+        an unhandled `PermissionAskRequired` would. A `cancelled` answer for any question
+        short-circuits the remaining ones and fails the whole call.
 
         Failing closed (either exception type) reports the error back to the model as this
         call's `tool_response`, exactly like any other tool exception.
@@ -1069,6 +1159,8 @@ class Session:
                     logger.info("Tool call %s succeeded: %s", call.name, result)
                 except MultiPermissionAskRequired as multi_ask_exc:
                     result, error = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
+                except AskUserQuestionsRequired as ask_questions_exc:
+                    result, error = self._resolve_ask_user_questions(call, ask_questions_exc, callbacks)
                 except PermissionAskRequired as ask_exc:
                     if ask_exc.path is None or self.config.permission_framework == "deny":
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
@@ -1444,10 +1536,12 @@ class Session:
     ) -> str:
         """Run a single, non-interactive turn and return the model's text response.
 
-        Passes no `on_permission_ask`/`on_tool_call_limit_reached` callbacks — there's no
-        interactive surface to ask through here — so any `"ask"` permission verdict resolves
-        per `config.permission_framework` (see `SessionConfig.permission_framework`), and
-        hitting a tool-call limit always raises `ToolCallLimitExceeded`. `send_turn()` already
+        Passes no `on_permission_ask`/`on_tool_call_limit_reached`/`on_ask_user_questions`
+        callbacks — there's no interactive surface to ask through here — so any `"ask"`
+        permission verdict resolves per `config.permission_framework` (see
+        `SessionConfig.permission_framework`), hitting a tool-call limit always raises
+        `ToolCallLimitExceeded`, and an `AskUserQuestions` tool call always fails closed (there
+        is nobody to ask). `send_turn()` already
         loops through every tool-call round on its own until the model returns a final
         plain-text reply, so this call runs the whole task to completion, not just one
         model round trip.

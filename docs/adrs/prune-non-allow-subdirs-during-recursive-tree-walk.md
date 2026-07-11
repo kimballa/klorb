@@ -17,7 +17,7 @@
   `ListDir`'s `dirname`, raising `PermissionError`/`PermissionAskRequired` if *that* path isn't
   `"allow"`. Once inside an already-permitted root, every subdirectory the walk is about to
   descend into gets its own independent `resolve_and_evaluate_read()` call
-  (`klorb.tools.dir_walk._is_descendable()`); anything other than `"allow"` — `"deny"`, `"ask"`,
+  (`klorb.tools.util.dir_walk._is_descendable()`); anything other than `"allow"` — `"deny"`, `"ask"`,
   or even a `PermissionError` from a symlink that resolves outside the workspace root — removes
   that subdirectory from the walk's `subdir_names` and skips recursing into it, silently, with
   no exception raised and no partial-result flag set.

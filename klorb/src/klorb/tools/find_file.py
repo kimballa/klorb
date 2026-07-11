@@ -6,9 +6,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from klorb.tools.dir_walk import walk_readable_tree
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
+from klorb.tools.util import walk_readable_tree
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class FindFileTool(Tool):
     """Recursively searches a directory tree for files whose bare name (not full path) matches
     a glob `pattern` (e.g. `*.py` or `*_context*`), reusing
-    `klorb.tools.dir_walk.walk_readable_tree` so the walk obeys `readDirs` at every directory
+    `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory
     level, not just at `dirname` itself — see that function's docstring for how a denied,
     ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search.
     """

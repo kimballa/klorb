@@ -207,7 +207,7 @@ field, so `klorb.session` must not import anything that imports `klorb.session` 
   no resolution or boundary check at all.
 * `ListDir`: `resolve_and_evaluate_read()` on `dirname` → `raise_if_not_allowed(verdict)` →
   `iterdir()`, same single-path shape as `ReadFile`.
-* `Grep`/`FindFile`: `klorb.tools.dir_walk.walk_readable_tree()` applies the same
+* `Grep`/`FindFile`: `klorb.tools.util.walk_readable_tree()` applies the same
   `resolve_and_evaluate_read()` check to `dirname` itself (raising exactly like `ListDir` if it
   isn't `"allow"`), then re-applies it to every subdirectory the recursive walk considers
   descending into — one that isn't `"allow"` is excluded from the walk rather than raising, so a

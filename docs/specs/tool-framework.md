@@ -178,7 +178,7 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   Python regular expression when `is_regex` is true (an invalid regex raises `ValueError`); a
   line matching any one query counts as a hit, equivalent to `grep -e query1 -e query2 ...`.
   `case_insensitive` and the optional `file_glob` (matched against each file's bare name, e.g.
-  `"*.py"`) narrow the search further. Walks via `klorb.tools.dir_walk.walk_readable_tree()`
+  `"*.py"`) narrow the search further. Walks via `klorb.tools.util.walk_readable_tree()`
   (see "Recursive tree walks" below) rather than a single `resolve_and_evaluate_read()` call,
   since the search spans however many directories the tree actually has. A file that fails to
   decode as UTF-8 (or fails to open at all) is skipped silently, matching common `grep -I`
@@ -207,7 +207,7 @@ feature: individual tools (file search, shell exec, etc.) will be added under
 ## Recursive tree walks
 
 `Grep` and `FindFile` both need to walk a whole directory tree rather than resolve one path, so
-the permission-aware traversal lives once in `klorb.tools.dir_walk.walk_readable_tree(context,
+the permission-aware traversal lives once in `klorb.tools.util.walk_readable_tree(context,
 dirname)` rather than being duplicated between them. It resolves and checks `dirname` itself
 exactly like `ListDir`'s `dirname` (`resolve_and_evaluate_read()`, raising
 `PermissionError`/`PermissionAskRequired` if not `"allow"`), then yields

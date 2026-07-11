@@ -37,6 +37,8 @@ from klorb.process_config import (
     user_config_path,
 )
 from klorb.session import (
+    AskUserQuestionsAnswer,
+    AskUserQuestionsItemContext,
     PermissionAskContext,
     PermissionDecision,
     PermissionFramework,
@@ -52,6 +54,7 @@ from klorb.tools.tool import (
     default_tool_call_detail,
     default_tool_call_summary,
 )
+from klorb.tui.ask_user_questions_screen import AskUserQuestionsScreen
 from klorb.tui.confirm_screen import ConfirmScreen
 from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
@@ -1749,7 +1752,8 @@ class ReplApp(App[None]):
             response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
                 on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
                 cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
-                on_permission_ask=self._on_permission_ask, on_tool_call=handle_tool_call))
+                on_permission_ask=self._on_permission_ask,
+                on_ask_user_questions=self._on_ask_user_questions, on_tool_call=handle_tool_call))
         except ResponseAborted:
             self.call_from_thread(
                 self._handle_aborted_response, response_widget, accumulated,
@@ -1944,6 +1948,29 @@ class ReplApp(App[None]):
         callback = self._confirm_permission_ask
         decision: PermissionDecision = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
         return decision
+
+    async def _confirm_ask_user_questions(
+        self, ask_ctx: AskUserQuestionsItemContext,
+    ) -> AskUserQuestionsAnswer:
+        """Show `AskUserQuestionsScreen` for one question and wait for the user's answer.
+
+        Must be run on the app's own event loop, since it awaits the screen's dismissal —
+        `_on_ask_user_questions` is what the worker thread actually calls, via
+        `call_from_thread`, to get here.
+        """
+        return await self.push_screen_wait(AskUserQuestionsScreen(ask_ctx))
+
+    def _on_ask_user_questions(self, ask_ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
+        """`Session`'s `on_ask_user_questions` callback: block the worker thread running
+        `Session.send_turn()` until the user answers `AskUserQuestionsScreen` for this one
+        question, then return that answer as-is — `Session._resolve_ask_user_questions` calls
+        this once per question in an `AskUserQuestionsRequired` batch and assembles the
+        results itself.
+        """
+        # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
+        callback = self._confirm_ask_user_questions
+        answer: AskUserQuestionsAnswer = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
+        return answer
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""

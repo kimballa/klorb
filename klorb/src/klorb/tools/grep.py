@@ -8,9 +8,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from klorb.tools.dir_walk import walk_readable_tree
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
+from klorb.tools.util import walk_readable_tree
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class GrepTool(Tool):
     """Recursively searches a directory tree for lines matching any of `queries` (each matched
     as a literal substring by default, or as a distinct Python regex when `is_regex` is true —
     a line matching any one of them counts as a hit, equivalent to `grep -e 'seq1' -e 'seq2'
-    ...`), reusing `klorb.tools.dir_walk.walk_readable_tree` so the walk obeys `readDirs` at
+    ...`), reusing `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at
     every directory level, not just at `dirname` itself — see that function's docstring for how
     a denied, ask-gated, or symlinked subdirectory is pruned rather than aborting the whole
     search.
