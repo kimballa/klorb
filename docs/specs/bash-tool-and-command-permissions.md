@@ -161,6 +161,62 @@ for just the one statement that particular item is about, distinct from every ot
 the same call even though they all share the identical `command_text` — see
 docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md.
 
+### LLM risk classifier (`klorb.permissions.risk_classifier`)
+
+Once a `BashTool` call has resolved to `"ask"`, `klorb.tui.repl.ReplApp._confirm_permission_ask`
+(never `BashTool`/`Session` themselves) optionally sends the whole compound command plus every
+one of its `PermissionAskItem`s to a small, cheap model, via
+`klorb.permissions.risk_classifier.resolve_item_risk_assessment()`, before `PermissionAskPanel`
+is shown. `resolve_item_risk_assessment()` — not `ReplApp` — owns gating (is the classifier even
+enabled? is this a `BashTool` ask at all?), batching, and caching; `ReplApp` just pulls an
+`ItemRiskAssessment` out of it, so any other UI layer driving `Session` (a future non-TUI
+consumer, e.g. a VSCode plugin) can call the exact same function rather than re-implementing this
+logic against its own UI. This is a UX layer on top of, never a replacement for, the
+deterministic pipeline above: the classifier only ever runs on an item that has already resolved
+to `"ask"`, and never itself promotes anything to `"allow"` or `"deny"` — see
+docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md for the same reasoning
+applied to a different probabilistic layer (`bwrap`).
+
+For each item, it returns a `risk_score` (0-10), a one-sentence plain-English `rationale`, and a
+`suggested_pattern` (the same `*`/`?`/`**` token grammar `CommandPermissionsTable` matches
+against) that replaces `klorb.permissions.command_grant.compute_command_grant_patterns()`'s
+literal-argv fallback as the pattern a persistent-scope grant actually records, when a report is
+available. `PermissionAskPanel` shows the score as a badge near its header and the rationale
+always in italics (additionally colored by score band) beneath the command preview; a score at or
+above `tools.bash.riskClassifier.tooRiskyThreshold` pre-selects `Deny, once` as the panel's
+starting cursor cell — a nudge, never a block: every grid cell stays reachable and confirmable
+regardless of score.
+
+Because `MultiPermissionAskRequired`'s several items are asked about serially, one panel at a
+time (see "Multi-item asks" in docs/specs/permissions.md), `Session._resolve_multi_permission_ask`
+threads the full sibling-item list onto every `PermissionAskContext` it builds
+(`PermissionAskContext.sibling_items`) so `resolve_item_risk_assessment()` can classify a whole
+compound command in one request the first time any of its items is looked up, caching each
+`ItemRiskAssessment` in `session.tool_state["BashRiskClassifier"]` keyed by its own
+`item_command_text` — every other item in the same batch, and a byte-identical item asked about
+again later in the session (e.g. a retried "once" decision), reuses the cached result instead of
+spending another round trip. See
+docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md for why the actual
+classifier call site is `ReplApp` rather than `Session`, despite `Session` being where the full
+item list is first available, and why the gating/batching/caching logic itself instead lives in
+`klorb.permissions.risk_classifier` rather than `klorb.tui.repl`.
+
+`tools.bash.riskClassifier.enabled` (default `true`) is a full escape hatch: `false` sends no
+command text to a second LLM call at all, and behavior is exactly as if the classifier didn't
+exist. `tools.bash.riskClassifier.model` (default `openai/gpt-5-nano`) is independent of the main
+conversation's own model — an ask can happen regardless of which model is driving the
+conversation — and is the one model used for every classification request regardless of how
+concerning the deterministic layer's own findings are; conservatism for an item carrying a
+`ForcedAskReason` is achieved by varying the prompt (naming the specific reason and asking the
+model to score upward), not by escalating to a costlier model.
+`tools.bash.riskClassifier.timeout` (default `5.0`) bounds this one request's wall-clock time,
+separate from `tools.bash.timeout` (which bounds the shell command's own runtime once it
+actually runs).
+
+Structured audit logging of a command's risk assessment and of the user's own decision are both
+not built yet — see the `TODO(aaron)` markers in `klorb.permissions.risk_classifier.
+classify_command_risk` and `ReplApp._confirm_permission_ask` respectively.
+
 ### Execution
 
 `shell_lifetime` selects how long the underlying shell process lives:
@@ -344,7 +400,11 @@ instead of silently dropping it.
   "tools.bash.command": "/bin/bash",
   "tools.bash.timeout": 120.0,
   "tools.bash.spillBytes": 8192,
-  "tools.bash.shfmtCommand": "shfmt"
+  "tools.bash.shfmtCommand": "shfmt",
+  "tools.bash.riskClassifier.enabled": true,
+  "tools.bash.riskClassifier.model": "openai/gpt-5-nano",
+  "tools.bash.riskClassifier.timeout": 5.0,
+  "tools.bash.riskClassifier.tooRiskyThreshold": 9
 }
 ```
 
@@ -389,3 +449,4 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md
 * docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md
 * docs/adrs/cap-persistent-shells-at-one-per-session.md
+* docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md

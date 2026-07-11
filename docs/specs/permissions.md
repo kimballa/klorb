@@ -384,6 +384,12 @@ persistent grant). Every collected `action="allow"` decision at a persistent sco
 the whole call is retried exactly once — never once per item, since re-parsing/re-evaluating
 after each individual grant would be wasted work.
 
+Every `PermissionAskContext` `_resolve_multi_permission_ask` builds also carries
+`sibling_items`: the full `MultiPermissionAskRequired.items` list (including the item that
+context is itself about), so a UI asking about several items serially can still batch work
+across the whole compound command — see docs/specs/bash-tool-and-command-permissions.md's "LLM
+risk classifier" section for the one consumer today.
+
 ### The permission grid: action × scope
 
 `PermissionAskPanel` presents a 2-column (`Allow`, `Deny`) by 4-row (`once`, `session`,
@@ -408,6 +414,13 @@ resource_description`) — see
 [the ask-item command-text ADR](../adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md)
 and
 [the ask-screen layout ADR](../adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md).
+
+For a `BashTool` item, when `klorb.permissions.risk_classifier.classify_command_risk()` produced
+a result (see docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section), a
+`"Risk: N/10"` badge appears near the header and a one-sentence rationale appears beneath the
+command preview, always italicized and additionally colored by score band. A sufficiently high
+score biases the grid's *starting* cursor cell to `Deny, once`, overriding the usual
+remembered-previous-cell seeding for that one prompt — every cell still stays reachable.
 
 Truncation accounts for soft-wrapping, not just explicit newlines: `ReplApp` passes the panel a
 `preview_wrap_width` estimated from the terminal's own width, so a single very long line with

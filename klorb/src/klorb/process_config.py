@@ -121,6 +121,28 @@ DEFAULT_SHFMT_COMMAND = "shfmt"
 `klorb.permissions.shell_parse.parse_command`) — resolved off `PATH` by default, since the
 `shfmt-py` pypi package installs it there; see `ProcessConfig.shfmt_command`."""
 
+DEFAULT_BASH_RISK_CLASSIFIER_ENABLED = True
+"""Default for `ProcessConfig.bash_risk_classifier_enabled`; see
+`klorb.permissions.risk_classifier` and docs/specs/bash-tool-and-command-permissions.md's "LLM
+risk classifier" section."""
+
+DEFAULT_BASH_RISK_CLASSIFIER_MODEL = "openai/gpt-5-nano"
+"""Default for `ProcessConfig.bash_risk_classifier_model` — independent of
+`SessionConfig.model` (the main conversation's own model), since an ask can happen regardless of
+which model is driving the conversation; see `klorb.permissions.risk_classifier`."""
+
+DEFAULT_BASH_RISK_CLASSIFIER_TIMEOUT_SECONDS = 5.0
+"""Default for `ProcessConfig.bash_risk_classifier_timeout_seconds` — a short, separate timeout
+from `bash_timeout_seconds` (which bounds the actual shell command's own runtime): this bounds an
+interactive round trip that happens before the command even runs, so it should fail fast rather
+than stall the approval panel."""
+
+DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD = 9
+"""Default for `ProcessConfig.bash_risk_classifier_too_risky_threshold` — the `risk_score`
+(inclusive) at or above which `klorb.tui.repl.ReplApp._confirm_permission_ask` pre-selects
+`PermissionAskPanel`'s `Deny, once` cell instead of the remembered previous cell; see
+`klorb.permissions.risk_classifier.CommandRiskReport`."""
+
 SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
@@ -169,6 +191,10 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.timeout": "bash_timeout_seconds",
     "tools.bash.spillBytes": "bash_spill_bytes",
     "tools.bash.shfmtCommand": "shfmt_command",
+    "tools.bash.riskClassifier.enabled": "bash_risk_classifier_enabled",
+    "tools.bash.riskClassifier.model": "bash_risk_classifier_model",
+    "tools.bash.riskClassifier.timeout": "bash_risk_classifier_timeout_seconds",
+    "tools.bash.riskClassifier.tooRiskyThreshold": "bash_risk_classifier_too_risky_threshold",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
     LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
     THEME_CONFIG_KEY: "theme",
@@ -237,6 +263,25 @@ class ProcessConfig(BaseModel):
     shfmt_command: str = DEFAULT_SHFMT_COMMAND
     """`shfmt` binary `BashTool` parses a requested command through before evaluating it against
     `SessionConfig.command_rules` — see `klorb.permissions.shell_parse`."""
+    bash_risk_classifier_enabled: bool = DEFAULT_BASH_RISK_CLASSIFIER_ENABLED
+    """Whether `klorb.tui.repl.ReplApp._confirm_permission_ask` classifies a `BashTool` ask's
+    risk via `klorb.permissions.risk_classifier.classify_command_risk()` before showing
+    `PermissionAskPanel` — an escape hatch for a user who doesn't want command text sent to a
+    second LLM call at all (cost, latency, or data-sensitivity reasons). `False` means exactly
+    today's behavior: no risk badge/rationale, `klorb.permissions.command_grant.
+    compute_command_grant_patterns()`'s literal-argv fallback used as-is."""
+    bash_risk_classifier_model: str = DEFAULT_BASH_RISK_CLASSIFIER_MODEL
+    """Model `classify_command_risk()` sends its request to, via the same `ApiProvider` instance
+    the main conversation uses. One fixed model classifies every request regardless of how
+    concerning the deterministic layer's own findings are — see `klorb.permissions.
+    risk_classifier._build_system_prompt` for how conservatism for a `ForcedAskReason`-carrying
+    item is instead achieved by varying the prompt, not by escalating to a costlier model."""
+    bash_risk_classifier_timeout_seconds: float = DEFAULT_BASH_RISK_CLASSIFIER_TIMEOUT_SECONDS
+    """Wall-clock seconds `classify_command_risk()`'s request is allowed to take before it's
+    treated as a failure (falling back to no risk badge/rationale) — separate from
+    `bash_timeout_seconds`, which bounds the shell command's own runtime instead."""
+    bash_risk_classifier_too_risky_threshold: int = DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD
+    """See `DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD`."""
     compatibility_claude_markdown: bool = False
     """Whether to read `CLAUDE.md` from the workspace root and fold it into the
     `ProjectGuidance` interjection alongside `AGENTS.md` and `.klorb/INSTRUCTIONS.md` (see

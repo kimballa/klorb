@@ -29,6 +29,7 @@ from klorb.logging_config import configure_logging, session_log_path
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
+from klorb.permissions.risk_classifier import resolve_item_risk_assessment
 from klorb.process_config import (
     ProcessConfig,
     load_process_config,
@@ -133,6 +134,7 @@ actual rendered width for `PermissionAskPanel`'s `preview_wrap_width` (see
 _MIN_COMMAND_PREVIEW_WRAP_WIDTH = 20
 """Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable
 (if aggressively wrapped) preview rather than a degenerate near-zero width."""
+
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
 MASCOT_ART = """\
@@ -2144,8 +2146,18 @@ class ReplApp(App[None]):
         `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap.
         Seeds the panel's grid cursor from `_last_permission_action`/`_last_permission_scope`
         and updates both from the returned decision, so a run of several asks for one compound
-        tool call starts each next prompt where the previous one left off.
+        tool call starts each next prompt where the previous one left off — unless
+        `klorb.permissions.risk_classifier.resolve_item_risk_assessment` rates this item at or
+        above `tools.bash.riskClassifier.tooRiskyThreshold`, which pre-selects `Deny, once`
+        instead (still just a starting cursor position; every cell stays reachable and
+        confirmable regardless). `ReplApp` itself never constructs an `ItemRiskAssessment` or
+        talks to the classifier directly — `resolve_item_risk_assessment` owns the gating,
+        batching (across a compound command's several serially-asked items), and caching, so
+        this same call would work identically from any other UI layer driving `Session`.
         """
+        risk_assessment = resolve_item_risk_assessment(
+            ask_ctx, session=self._session, process_config=self._process_config)
+
         granted_paths = None
         granted_command_patterns = None
         if ask_ctx.path is not None:
@@ -2153,15 +2165,27 @@ class ReplApp(App[None]):
                 self._session.config.read_dirs, self._session.config.write_dirs,
                 self._session.config.workspace.path, ask_ctx.path, ask_ctx.is_write)
         elif ask_ctx.command is not None:
-            granted_command_patterns = compute_command_grant_patterns(
-                self._session.config.command_rules, ask_ctx.command)
+            if risk_assessment is not None and risk_assessment.suggested_pattern:
+                granted_command_patterns = [risk_assessment.suggested_pattern]
+            else:
+                granted_command_patterns = compute_command_grant_patterns(
+                    self._session.config.command_rules, ask_ctx.command)
 
         decision_future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         preview_wrap_width = max(
             _MIN_COMMAND_PREVIEW_WRAP_WIDTH, self.size.width - _COMMAND_PREVIEW_WIDTH_PADDING)
+        initial_action = self._last_permission_action
+        initial_scope = self._last_permission_scope
+        if (
+            risk_assessment is not None
+            and risk_assessment.risk_score >= self._process_config.bash_risk_classifier_too_risky_threshold
+        ):
+            initial_action, initial_scope = "deny", "once"
         panel = PermissionAskPanel(
             ask_ctx, granted_paths=granted_paths, granted_command_patterns=granted_command_patterns,
-            initial_action=self._last_permission_action, initial_scope=self._last_permission_scope,
+            initial_action=initial_action, initial_scope=initial_scope,
+            risk_score=risk_assessment.risk_score if risk_assessment is not None else None,
+            risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,
             preview_wrap_width=preview_wrap_width, on_dismiss=decision_future.set_result)
 
         panel_container = self._enter_interaction_mode()
@@ -2172,6 +2196,11 @@ class ReplApp(App[None]):
 
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
+        # TODO(aaron): once a structured audit log for permission decisions exists, record an
+        # entry here pairing `ask_ctx` (this command/path being asked about) with the user's own
+        # `decision` -- this is the "this command _____ got this decision: _____" injection
+        # point (a separate concern from pairing a command with its own risk assessment, whose
+        # injection point is in klorb.permissions.risk_classifier.classify_command_risk).
         self._record_interaction_history(
             panel.header_text(), format_ask_context_body(ask_ctx), format_permission_decision(decision))
         return decision
