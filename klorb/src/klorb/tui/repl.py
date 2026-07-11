@@ -617,6 +617,7 @@ class PromptInput(TextArea):
         self._isearch_query = ""
         self._isearch_match_index = None
         self._draft = self.text
+        self.border_title = "(history)"
         self._isearch_step(0)
 
     def _isearch_step(self, start_index: int) -> None:
@@ -657,6 +658,7 @@ class PromptInput(TextArea):
         self._isearch_active = False
         self._isearch_query = ""
         self._isearch_match_index = None
+        self.border_title = "message"
 
     def _record_and_submit(self) -> None:
         """Record the current (non-empty) text into the input history and post `Submitted`.

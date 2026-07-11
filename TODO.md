@@ -17,6 +17,14 @@
 
 # Feature backlog
 
+* Bash approvals, in general, are too specific (individual filenames; specific pattern args for grep...).
+  In order for user approvals to be useful, they need to extrapolate to patterns of commands so they
+  aren't hounded for every overly-specific case one after the next.
+
+* Confusing bash approval requests should... not be confusing?
+  * `unrecognized redirection operator 54` on `ls -la ~/.local/share/klorb/ 2>/dev/null`
+  * `unrecognized redirection operator 59` on `./venv/bin/python -m pytest tests/test_tui_repl.py -x -q 2>&1`
+
 * ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
   that readfile and editfile can interact in a loop even with field masking making literal context
