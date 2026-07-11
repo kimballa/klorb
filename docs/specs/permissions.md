@@ -17,9 +17,9 @@ independently from, the directory-level tables and the workspace-root boundary i
 built on the same abstraction; bash-command access (`CommandPermissionsTable`, gating
 `BashTool`) is another of those — see docs/specs/bash-tool-and-command-permissions.md — with
 website access still outstanding. An `"ask"` verdict is no longer necessarily a
-dead end either: the interactive TUI can route it through a modal (see "Interactive 'ask'
-confirmation" below) that lets the user grant access once, for the session, or persistently at
-the workspace or per-user level. See
+dead end either: the interactive TUI can route it through an in-history panel (see "Interactive
+'ask' confirmation" below) that lets the user grant access once, for the session, or
+persistently at the workspace or per-user level. See
 [the category-order ADR](../adrs/evaluate-permission-categories-deny-then-ask-then-allow.md),
 [the read/trust ADR](../adrs/gate-read-hard-boundary-on-workspace-trust.md),
 [the trusted-read-fallback ADR](../adrs/trusted-read-no-match-fallback-is-ask-not-deny.md),
@@ -299,16 +299,16 @@ below), how it's resolved is governed by `SessionConfig.permission_framework`
   "Allow (this session)" answer would take (see below) — an in-memory-only grant for the
   rest of this session, nothing persisted to disk. No callback is invoked either.
 * **`"ask"`** (the `SessionConfig` default) — falls through to the optional callback
-  mechanism: when the interactive TUI is running, a modal
-  (`klorb.tui.permission_ask_screen.PermissionAskScreen`) asks the user how to proceed,
-  instead of failing closed. This is wired in as an optional callback, not a change to the
-  fail-closed default: `Session.send_turn()`/`retry_last_turn()` take an `on_permission_ask`
-  parameter (`klorb.session.PermissionAskContext -> klorb.session.PermissionDecision`),
-  threaded through to `Session._run_tool_calls()`. With no callback given, behavior is
-  unchanged from the plain fail-closed case described above. `ReplApp._on_permission_ask`
-  (`klorb.tui.repl`) is the TUI's implementation, mirroring the existing
-  `on_tool_call_limit_reached`/`ToolCallLimitScreen` pattern: it blocks the worker thread
-  running `Session.send_turn()` via `call_from_thread`, shows the modal on the app's own
+  mechanism: when the interactive TUI is running, a panel mounted into the history scroll
+  (`klorb.tui.permission_ask_panel.PermissionAskPanel` — see [[terminal-repl]]'s "Interaction
+  panel" section) asks the user how to proceed, instead of failing closed. This is wired in as
+  an optional callback, not a change to the fail-closed default: `Session.send_turn()`/
+  `retry_last_turn()` take an `on_permission_ask` parameter (`klorb.session.PermissionAskContext
+  -> klorb.session.PermissionDecision`), threaded through to `Session._run_tool_calls()`. With
+  no callback given, behavior is unchanged from the plain fail-closed case described above.
+  `ReplApp._on_permission_ask` (`klorb.tui.repl`) is the TUI's implementation, mirroring the
+  existing `on_tool_call_limit_reached`/`ToolCallLimitScreen` pattern: it blocks the worker
+  thread running `Session.send_turn()` via `call_from_thread`, shows the panel on the app's own
   event loop, and returns once the user answers.
 
 `permission_framework` defaults to `"ask"` when the session is interactive and `"deny"`
@@ -369,7 +369,7 @@ single prompt for whichever contributor is strictest, a tool that finds several 
 `klorb.permissions.table.MultiPermissionAskRequired`, carrying one `PermissionAskItem` per
 resource. `Session._resolve_multi_permission_ask` asks about each item in order via the same
 `on_permission_ask` callback a single-item ask uses — so the TUI shows a fresh
-`PermissionAskScreen` per item — stopping at the first item answered `action="deny"` (or with
+`PermissionAskPanel` per item — stopping at the first item answered `action="deny"` (or with
 `other_text` set): the remaining items are never asked about, and the whole call is denied. See
 [the serial multi-item ask ADR](../adrs/ask-independent-items-serially-not-just-the-strictest.md)
 for the full reasoning, including why a bare command-pattern item (no filesystem resource at all)
@@ -386,7 +386,7 @@ after each individual grant would be wasted work.
 
 ### The permission grid: action × scope
 
-`PermissionAskScreen` presents a 2-column (`Allow`, `Deny`) by 4-row (`once`, `session`,
+`PermissionAskPanel` presents a 2-column (`Allow`, `Deny`) by 4-row (`once`, `session`,
 `workspace`, `homedir`) grid, navigated with arrow keys — Left/Right cycles the action column,
 Up/Down cycles the row, Enter confirms the highlighted cell. A 5th row, spanning both columns,
 holds `Other...`: reachable the same way as any other row (pressing Down repeatedly past
@@ -397,16 +397,23 @@ why the two axes are independent cursor dimensions rather than a flat list of ch
 `ReplApp` remembers the previous prompt's cell to seed the next one when several asks are shown
 in a row for one compound call.
 
-Above the grid, `PermissionAskScreen` shows a styled header naming the kind of access being
+Above the grid, `PermissionAskPanel` shows a styled header naming the kind of access being
 requested ("Run command" for a `BashTool` item, "Read file"/"Write file" for a directory-access
-item), a command preview (bold; a long preview truncated to a fixed number of lines with a
-`[more...]` indicator — clickable, or reachable via the `+` key, never by Tab/focus, since an
-auto-focused `[more...]` would otherwise shadow every subsequent Enter keystroke meant for the
-grid below it), and then the item's own specific detail (`PermissionAskContext.
+item), a command preview (bold; truncated to a fixed number of rendered rows with a
+`[more...]` indicator — clickable, or reachable via the `+` key, never by Tab/focus, since a
+focusable `[more...]` would otherwise shadow every subsequent Enter keystroke meant for the
+grid below it — see `klorb.tui.permission_ask_panel._MoreIndicator`), and then the item's own
+specific detail (`PermissionAskContext.
 resource_description`) — see
 [the ask-item command-text ADR](../adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md)
 and
 [the ask-screen layout ADR](../adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md).
+
+Truncation accounts for soft-wrapping, not just explicit newlines: `ReplApp` passes the panel a
+`preview_wrap_width` estimated from the terminal's own width, so a single very long line with
+no `\n` at all still gets truncated once it would soft-wrap past the row budget, rather than
+silently overflowing and pushing the grid off the bottom of the screen — see
+docs/adrs/estimate-command-preview-wrap-width-from-terminal-size.md.
 
 The preview shows `PermissionAskContext.item_command_text` — the exact source text of just the
 one statement this particular item is about (e.g. `"echo $SHELL"` out of a bigger
@@ -470,9 +477,9 @@ All of this is implemented in `klorb.permissions.grant`
 `Session._retry_after_permission_decision`/`_retry_after_multi_permission_decisions` call these,
 passing `self.config` (the live `SessionConfig`) and the `ProcessConfig` reference `Session` was
 constructed with (see "Configuration" below), once `on_permission_ask` returns a persistent-scope
-decision, before retrying the call. `ReplApp._on_permission_ask` only shows the modal
+decision, before retrying the call. `ReplApp._on_permission_ask` only shows the panel
 (`compute_grant_paths()`/`compute_command_grant_patterns()` are also called there, read-only,
-purely so the modal's copy can name the directory/command pattern a grant would cover) and
+purely so the panel's copy can name the directory/command pattern a grant would cover) and
 returns the user's choice — it never applies or persists a grant itself. This keeps the
 grant-computation and file-persistence logic entirely inside the library layer, importable and
 unit-testable without Textual, and automatically available to any other consumer of `Session`
@@ -497,7 +504,7 @@ An Allow grant is never recorded narrower than a directory. Two cases:
   `None`-normalized-to-`"ask"` default): the grant is recorded at the *containing directory* of
   the accessed path (`candidate.parent`) when `candidate` is a file, or at `candidate` itself when
   `candidate` is already a directory (e.g. an `ls some/dir` implicit-read target — see
-  docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md). `PermissionAskScreen`'s copy
+  docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md). `PermissionAskPanel`'s copy
   states whichever of the two this resolves to explicitly before the user picks a scope, since a
   file candidate's grant covers more than what the user sees the model touching right now.
 

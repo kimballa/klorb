@@ -3,6 +3,7 @@
 box pinned to the bottom of the screen.
 """
 
+import asyncio
 import inspect
 import logging
 import threading
@@ -54,12 +55,16 @@ from klorb.tools.tool import (
     default_tool_call_detail,
     default_tool_call_summary,
 )
-from klorb.tui.ask_user_questions_screen import AskUserQuestionsScreen
+from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel, format_ask_user_questions_answer
 from klorb.tui.confirm_screen import ConfirmScreen
 from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
-from klorb.tui.permission_ask_screen import PermissionAskScreen
+from klorb.tui.permission_ask_panel import (
+    PermissionAskPanel,
+    format_ask_context_body,
+    format_permission_decision,
+)
 from klorb.tui.session_commands import SessionCommandProvider
 from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShellCommand
 from klorb.tui.theme_commands import ThemeCommandProvider
@@ -91,6 +96,7 @@ def _concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
 
 
 HISTORY_ID = "history"
+INTERACTION_PANEL_ID = "interaction-panel"
 PROMPT_INPUT_ID = "prompt-input"
 PALETTE_HINT_ID = "palette-hint"
 PALETTE_HINT_TEXT = f"{PALETTE_PREFIX} palette"
@@ -117,6 +123,16 @@ bracketed value (`"[auto]"`/`"[deny]"`, 6 characters) plus 1 for breathing room 
 value's trailing `]`."""
 THINKING_LABEL = "<Thinking>"
 TOOL_USE_LABEL = "<Tool use>"
+INTERACTION_RECORD_LABEL = "<Approval>"
+
+_COMMAND_PREVIEW_WIDTH_PADDING = 4
+"""Horizontal space `PermissionAskPanel`'s own `padding: 1 2` (2 columns each side) consumes
+around its command preview — subtracted from the app's terminal width to estimate the preview's
+actual rendered width for `PermissionAskPanel`'s `preview_wrap_width` (see
+`ReplApp._confirm_permission_ask` and `klorb.tui.permission_ask_panel._command_preview`)."""
+_MIN_COMMAND_PREVIEW_WRAP_WIDTH = 20
+"""Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable
+(if aggressively wrapped) preview rather than a degenerate near-zero width."""
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
 MASCOT_ART = """\
@@ -979,11 +995,20 @@ class ReplApp(App[None]):
         height: 1fr;
     }
 
+    #interaction-panel {
+        height: auto;
+    }
+
     #prompt-input, #prompt-input:focus {
         border: none;
         border-top: solid $accent;
         height: auto;
         padding: 0 1;
+    }
+
+    #prompt-input.interaction-active {
+        height: 1;
+        color: $text-muted;
     }
 
     #status-row {
@@ -1034,6 +1059,22 @@ class ReplApp(App[None]):
     .tool-call {
         color: $text-muted;
         padding: 0 2;
+    }
+
+    .interaction-record-label {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
+
+    .interaction-record-body {
+        color: $text-muted;
+        padding: 0 2;
+    }
+
+    .interaction-record-decision {
+        color: $text;
+        padding: 0 2;
+        text-style: bold;
     }
 
     .response {
@@ -1104,7 +1145,7 @@ class ReplApp(App[None]):
         self._shell_cancel_event: threading.Event | None = None
         self._last_permission_action: Literal["allow", "deny"] = "allow"
         self._last_permission_scope: Literal["once", "session", "workspace", "homedir"] = "once"
-        """`PermissionAskScreen`'s grid cursor position after the most recent prompt this app
+        """`PermissionAskPanel`'s grid cursor position after the most recent prompt this app
         showed, seeded into the next one's `initial_action`/`initial_scope` (see
         `_confirm_permission_ask`) so answering several asks in a row for one compound tool call
         (see `klorb.permissions.table.MultiPermissionAskRequired`) doesn't require re-navigating
@@ -1123,6 +1164,7 @@ class ReplApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id=HISTORY_ID)
+        yield Vertical(id=INTERACTION_PANEL_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         with Horizontal(id="status-row"):
@@ -2047,17 +2089,60 @@ class ReplApp(App[None]):
         confirmed: bool = self.call_from_thread(callback, message)  # type: ignore[arg-type]
         return confirmed
 
-    async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
-        """Show `PermissionAskScreen` for `ask_ctx` and wait for the user's choice.
+    def _enter_interaction_mode(self) -> Vertical:
+        """Disable and visually mute/collapse the prompt input while an interaction panel (a
+        permission ask or an ask-user-questions prompt) is active, returning the
+        `#interaction-panel` container for the caller to mount that panel's content into.
 
-        Must be run on the app's own event loop, since it awaits the screen's dismissal —
+        Collapsing to `height: 1` (via the `interaction-active` CSS class — see `ReplApp.CSS`)
+        shrinks any in-progress multi-line draft back down to its default single-row size
+        rather than leaving it competing with the panel for vertical space; the draft text
+        itself is untouched underneath, so `_exit_interaction_mode` restoring `height: auto`
+        brings it back exactly as the user left it.
+        """
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.disabled = True
+        prompt_input.add_class("interaction-active")
+        return self.query_one(f"#{INTERACTION_PANEL_ID}", Vertical)
+
+    def _exit_interaction_mode(self) -> None:
+        """Undo `_enter_interaction_mode`: re-enable, un-mute, and refocus the prompt input."""
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.remove_class("interaction-active")
+        prompt_input.disabled = False
+        prompt_input.focus()
+
+    def _record_interaction_history(self, header_text: str, body: str, decision_text: str) -> None:
+        """Leave a permanent record of a just-finished permission ask or ask-user-questions
+        exchange in the history scroll: `header_text` (e.g. `"Permission requested: Run
+        command"` or the question's own `"Question 2 of 3 · Auth"` header), `body` (the
+        command/path/detail or question text the panel showed), and `decision_text` (the user's
+        rendered choice) — so scrolling back through the session shows not just that an
+        approval happened, but what was asked and what was decided. Constructed with
+        `markup=False`: `body` can be arbitrary command text or file paths, which must render
+        verbatim.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        history.mount(Static(INTERACTION_RECORD_LABEL, classes="interaction-record-label"))
+        history.mount(Static(header_text, classes="interaction-record-body", markup=False))
+        history.mount(Static(body, classes="interaction-record-body", markup=False))
+        history.mount(Static(
+            f"Decision: {decision_text}", classes="interaction-record-decision", markup=False))
+        self._scroll_if_pinned(history, was_pinned)
+
+    async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
+        """Mount a `PermissionAskPanel` for `ask_ctx` into `#interaction-panel` and wait for the
+        user's choice.
+
+        Must be run on the app's own event loop, since it awaits the panel's dismissal —
         `_on_permission_ask` is what the worker thread actually calls, via `call_from_thread`,
         to get here. `compute_grant_paths()`/`compute_command_grant_patterns()` are recomputed
-        here (rather than threaded in from wherever `ask_ctx` was built) purely so the modal can
+        here (rather than threaded in from wherever `ask_ctx` was built) purely so the panel can
         show the directory/command pattern a persistent grant would actually cover; both are
         pure and read-only, so calling them again inside `_on_permission_ask`/
         `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap.
-        Seeds the screen's grid cursor from `_last_permission_action`/`_last_permission_scope`
+        Seeds the panel's grid cursor from `_last_permission_action`/`_last_permission_scope`
         and updates both from the returned decision, so a run of several asks for one compound
         tool call starts each next prompt where the previous one left off.
         """
@@ -2070,16 +2155,30 @@ class ReplApp(App[None]):
         elif ask_ctx.command is not None:
             granted_command_patterns = compute_command_grant_patterns(
                 self._session.config.command_rules, ask_ctx.command)
-        decision = await self.push_screen_wait(PermissionAskScreen(
+
+        decision_future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        preview_wrap_width = max(
+            _MIN_COMMAND_PREVIEW_WRAP_WIDTH, self.size.width - _COMMAND_PREVIEW_WIDTH_PADDING)
+        panel = PermissionAskPanel(
             ask_ctx, granted_paths=granted_paths, granted_command_patterns=granted_command_patterns,
-            initial_action=self._last_permission_action, initial_scope=self._last_permission_scope))
+            initial_action=self._last_permission_action, initial_scope=self._last_permission_scope,
+            preview_wrap_width=preview_wrap_width, on_dismiss=decision_future.set_result)
+
+        panel_container = self._enter_interaction_mode()
+        await panel_container.mount(panel)
+        decision = await decision_future
+        await panel.remove()
+        self._exit_interaction_mode()
+
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
+        self._record_interaction_history(
+            panel.header_text(), format_ask_context_body(ask_ctx), format_permission_decision(decision))
         return decision
 
     def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """`Session`'s `on_permission_ask` callback: block the worker thread running
-        `Session.send_turn()` until the user answers `PermissionAskScreen`, then return that
+        `Session.send_turn()` until the user answers `PermissionAskPanel`, then return that
         choice as-is. Applying (and, for "workspace"/"homedir", persisting to disk) any grant
         the choice implies is `Session`'s own responsibility —
         `Session._retry_after_permission_decision`, via
@@ -2095,17 +2194,29 @@ class ReplApp(App[None]):
     async def _confirm_ask_user_questions(
         self, ask_ctx: AskUserQuestionsItemContext,
     ) -> AskUserQuestionsAnswer:
-        """Show `AskUserQuestionsScreen` for one question and wait for the user's answer.
+        """Mount an `AskUserQuestionsPanel` for one question into `#interaction-panel` and wait
+        for the user's answer.
 
-        Must be run on the app's own event loop, since it awaits the screen's dismissal —
+        Must be run on the app's own event loop, since it awaits the panel's dismissal —
         `_on_ask_user_questions` is what the worker thread actually calls, via
         `call_from_thread`, to get here.
         """
-        return await self.push_screen_wait(AskUserQuestionsScreen(ask_ctx))
+        answer_future: asyncio.Future[AskUserQuestionsAnswer] = asyncio.get_running_loop().create_future()
+        panel = AskUserQuestionsPanel(ask_ctx, on_dismiss=answer_future.set_result)
+
+        panel_container = self._enter_interaction_mode()
+        await panel_container.mount(panel)
+        answer = await answer_future
+        await panel.remove()
+        self._exit_interaction_mode()
+
+        self._record_interaction_history(
+            panel.header_text(), ask_ctx.question, format_ask_user_questions_answer(answer))
+        return answer
 
     def _on_ask_user_questions(self, ask_ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
         """`Session`'s `on_ask_user_questions` callback: block the worker thread running
-        `Session.send_turn()` until the user answers `AskUserQuestionsScreen` for this one
+        `Session.send_turn()` until the user answers `AskUserQuestionsPanel` for this one
         question, then return that answer as-is — `Session._resolve_ask_user_questions` calls
         this once per question in an `AskUserQuestionsRequired` batch and assembles the
         results itself.

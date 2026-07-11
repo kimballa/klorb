@@ -20,10 +20,12 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   prompt uses. `session_log_enabled` records whether `cli.main()` turned on per-session
   logging for this invocation, so clearing the session (below) knows whether to roll the log
   file over.
-* `ReplApp.compose()` lays out five widgets/regions top-to-bottom: a `Header` showing the
+* `ReplApp.compose()` lays out six widgets/regions top-to-bottom: a `Header` showing the
   current workspace and model (see below), a `VerticalScroll` (id `history`) that
-  holds the conversation so far, a `PromptPalette` (id `prompt-palette`, hidden until the
-  user types a leading `>` — see [[command-palette-from-prompt]]), a `PromptInput` (id
+  holds the conversation so far, a `Vertical` (id `interaction-panel`) that stays empty (and,
+  with `height: auto`, invisible) except while a permission ask or `AskUserQuestions` prompt is
+  active — see "Interaction panel" below — a `PromptPalette` (id `prompt-palette`, hidden until
+  the user types a leading `>` — see [[command-palette-from-prompt]]), a `PromptInput` (id
   `prompt-input`) for typing the next prompt, and a `Horizontal` (id `status-row`) docked to
   the bottom of the screen that holds a `Static` `> palette` hint, the `Footer` (key
   bindings), a `PermissionBadge` (id `permission-badge`), and a `Static` token-tally widget
@@ -31,6 +33,27 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `^q Quit` rather than a separate line. The history container is styled `height: 1fr` so it
   fills all available vertical space above the input box, which is why the history scrolls
   "up" as content is added while the input box stays pinned to the bottom of the screen.
+* **Interaction panel.** A permission ask (see docs/specs/permissions.md's "Interactive `"ask"`
+  confirmation" section) or an `AskUserQuestions` prompt (see [[ask-user-questions]]) renders as
+  a full-width band mounted into `#interaction-panel`, between the history scroll and the
+  prompt input, rather than as a floating modal dialog — see
+  docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md for why. Concretely,
+  `ReplApp` mounts a `klorb.tui.permission_ask_panel.PermissionAskPanel` or
+  `klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel` into `#interaction-panel` and
+  `await`s an `asyncio.Future` its `on_dismiss` callback resolves — see those modules' own
+  docstrings for each panel's own content/keyboard-navigation shape (the Allow/Deny × scope
+  grid, the options list, the `+`/`[more...]` full-screen command expansion, and so on, which
+  are unchanged from before this layout became non-modal). While a panel is active
+  (`ReplApp._enter_interaction_mode()`), the prompt input is disabled, visually muted (`color:
+  $text-muted`), and collapsed to `height: 1` via the `interaction-active` CSS class — shrinking
+  a multi-line draft back down to its default single-row size (without discarding the draft
+  text itself, which is exactly what it was before once the class is removed) so the panel has
+  the vertical room it needs. `ReplApp._exit_interaction_mode()` undoes all of that once the
+  panel is dismissed. `ReplApp._record_interaction_history()` then mounts a small permanent
+  record into the history scroll — the panel's header line, the command/path/question body it
+  showed, and `"Decision: ..."` — so scrolling back through the session later shows not just
+  that an approval or a question happened, but what was asked and what was decided, in context
+  with the rest of the conversation.
 * `PermissionBadge` (`klorb.tui.repl`) shows the session's current
   `Session.config.permission_framework` value bracketed and right-justified (`[ask]`,
   `[auto]`, or `[deny]`) within a fixed-width cell (`PERMISSION_BADGE_WIDTH` — the longest
