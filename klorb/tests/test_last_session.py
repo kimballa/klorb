@@ -13,6 +13,7 @@ from klorb.workspace import Workspace
 from klorb.workspace import input_history as input_history_module
 from klorb.workspace.last_session import (
     LAST_SESSION_SCHEMA_NAME,
+    LAST_SESSION_SCHEMA_VERSION,
     last_session_path,
     read_last_session,
     write_last_session,
@@ -87,6 +88,30 @@ def test_read_last_session_returns_none_for_wrong_schema_name(tmp_path: Path) ->
 
     assert read_last_session(workspace) is None
     assert LAST_SESSION_SCHEMA_NAME == "klorb-session"
+
+
+def test_read_last_session_returns_none_when_messages_key_is_missing(tmp_path: Path) -> None:
+    """A correctly-schema-named file that's still missing a required `LastSessionState` field
+    (here, `messages`) is a `pydantic.ValidationError` on `model_validate` -- treated the same
+    as "nothing to restore" rather than raised, so a corrupted or hand-edited save file can't
+    crash startup."""
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_versioned_json(
+        last_session_path(workspace), {"config": {}},
+        schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
+
+    assert read_last_session(workspace) is None
+
+
+def test_read_last_session_returns_none_for_wrong_shaped_field(tmp_path: Path) -> None:
+    """A field present but with a value of the wrong shape (here, `messages` is a string
+    instead of a list) is likewise a `ValidationError`, not a crash."""
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_versioned_json(
+        last_session_path(workspace), {"config": {}, "messages": "not-a-list"},
+        schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
+
+    assert read_last_session(workspace) is None
 
 
 def test_tool_call_messages_round_trip(tmp_path: Path) -> None:

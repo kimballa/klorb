@@ -53,8 +53,13 @@ of `_resolve_workspace_trust()` first), so a `klorb -m "..."` invocation's messa
 next turn of the restored conversation rather than racing it.
 
 `klorb.workspace.last_session.read_last_session(workspace)` returns `None` (a no-op) if no
-file exists yet, or if it exists but its `schema.name` doesn't match (`read_versioned_json`
-already discards and warns in that case). Otherwise:
+file exists yet, if it exists but its `schema.name` doesn't match (`read_versioned_json`
+already discards and warns in that case), or if its data doesn't validate as
+`LastSessionState` at all — a required field (`config`, `messages`) missing entirely, or
+present with a value of the wrong shape (a hand-edited or otherwise corrupted file). That last
+case is a `pydantic.ValidationError`, caught by `read_last_session` and logged as a warning
+rather than propagated, so a corrupted save file is a no-restore condition, the same as a
+missing one, instead of crashing `ReplApp` at startup. Otherwise:
 
 1. The saved `SessionConfig` is copied with `workspace` overridden to the just-resolved
    `Workspace` (not the one recorded at save time) — trust and registration state are always

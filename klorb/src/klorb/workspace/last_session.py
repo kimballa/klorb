@@ -9,15 +9,18 @@ workspace itself — see docs/adrs/store-last-session-under-klorb-data-dir-not-w
 why.
 """
 
+import logging
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from klorb.message import Message
 from klorb.schema_envelope import read_versioned_json, write_versioned_json
 from klorb.session import SessionConfig
 from klorb.workspace import Workspace
 from klorb.workspace.input_history import project_history_dir
+
+logger = logging.getLogger(__name__)
 
 LAST_SESSION_FILENAME = "last-session.json"
 """Name of the saved-session-state file within a per-project directory (see
@@ -55,9 +58,20 @@ def write_last_session(workspace: Workspace, config: SessionConfig, messages: li
 def read_last_session(workspace: Workspace) -> LastSessionState | None:
     """Load `workspace`'s previously-saved session state, or `None` if none exists (no file),
     it belongs to a different schema (`read_versioned_json` already logs a warning and
-    discards it in that case), or it's otherwise unparseable as `LastSessionState`."""
+    discards it in that case), or its data doesn't validate as `LastSessionState` at all — a
+    required key (`config`, `messages`) missing entirely, or a present field with a value of
+    the wrong shape, e.g. from a hand-edited or otherwise corrupted file. That last case is a
+    `pydantic.ValidationError`, caught here and treated the same as "nothing to restore" rather
+    than propagating: a malformed save file must not crash `ReplApp` at startup, the same
+    principle `klorb.schema_envelope.parse_versioned_json` already applies to invalid JSON."""
     data = read_versioned_json(
         last_session_path(workspace), expected_schema_name=LAST_SESSION_SCHEMA_NAME)
     if not data:
         return None
-    return LastSessionState.model_validate(data)
+    try:
+        return LastSessionState.model_validate(data)
+    except ValidationError as exc:
+        logger.warning(
+            "%s failed to validate as a %s save file; ignoring it: %s",
+            last_session_path(workspace), LAST_SESSION_SCHEMA_NAME, exc)
+        return None
