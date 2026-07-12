@@ -5,7 +5,7 @@ docs/specs/bash-tool-and-command-permissions.md and
 docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
 """
 
-from klorb.permissions.command_access import CommandPermissionsTable, CommandRules
+from klorb.permissions.command_access import CommandPermissionsTable, CommandRules, pattern_matches_argv
 
 
 def _table(**kwargs: list[list[str]]) -> CommandPermissionsTable:
@@ -122,3 +122,33 @@ def test_matching_rules_reports_every_matching_rule_in_a_category() -> None:
     table = _table(ask=[["git", "**"], ["git", "push", "**"]])
     matches = table.matching_rules("ask", ["git", "push", "origin"])
     assert matches == [["git", "**"], ["git", "push", "**"]]
+
+
+# --- pattern_matches_argv: the standalone matcher CommandPermissionsTable._matches delegates to ---
+
+
+def test_pattern_matches_argv_agrees_with_the_table_across_the_grammar() -> None:
+    """The standalone entry point is the exact matcher `_matches` delegates to, so a single
+    `allow` rule's table verdict and the bare `pattern_matches_argv` call must never disagree --
+    exercised across every special token so an accidental divergence in the extraction is caught."""
+    cases: list[tuple[list[str], list[str]]] = [
+        (["foo"], ["foo"]),
+        (["foo"], ["foo", "bar"]),
+        (["foo", "*"], ["foo", "bar"]),
+        (["foo", "*"], ["foo"]),
+        (["git", "?", "status"], ["git", "status"]),
+        (["git", "?", "status"], ["git", "--no-pager", "status"]),
+        (["git", "**", "status", "**"], ["git", "-C", "dir", "status", "-s"]),
+        (["git", "push", "**"], ["git", "commit"]),
+    ]
+    for pattern, argv in cases:
+        table_verdict = _table(allow=[pattern]).evaluate(argv)
+        assert pattern_matches_argv(pattern, argv) == (table_verdict == "allow")
+
+
+def test_pattern_matches_argv_rejects_a_pattern_missing_a_required_literal() -> None:
+    """A hallucinated abstraction the risk classifier must catch: a pattern that drops or mistypes
+    a token the actual command carries does not match that command's argv."""
+    assert not pattern_matches_argv(["git", "status"], ["git", "log"])
+    assert not pattern_matches_argv(["grep", "-rn", "TODO"], ["grep", "-rn", "TODO", "src/foo.py"])
+    assert pattern_matches_argv(["grep", "-rn", "TODO", "**"], ["grep", "-rn", "TODO", "src/foo.py"])

@@ -71,6 +71,66 @@ def test_classify_command_risk_returns_report_on_success() -> None:
     provider.send_prompt.assert_called_once()
 
 
+def test_classify_command_risk_keeps_a_suggested_pattern_that_matches_the_argv() -> None:
+    items = [_command_item(["grep", "-rn", "TODO", "src/foo.py"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 1, "overall_rationale": "reads only",
+        "items": [{
+            "item_id": "item-0", "risk_score": 1, "rationale": "reads only",
+            "suggested_pattern": ["grep", "-rn", "TODO", "*"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        "grep -rn TODO src/foo.py", items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == ["grep", "-rn", "TODO", "*"]
+
+
+def test_classify_command_risk_discards_a_suggested_pattern_that_does_not_match_the_argv() -> None:
+    """A hallucinated abstraction -- here the model dropped the trailing path argument, so the
+    pattern would never re-approve the very command it was proposed for -- is blanked, so the
+    caller falls back to the deterministic literal-argv grant."""
+    items = [_command_item(["grep", "-rn", "TODO", "src/foo.py"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 1, "overall_rationale": "reads only",
+        "items": [{
+            "item_id": "item-0", "risk_score": 1, "rationale": "reads only",
+            "suggested_pattern": ["grep", "-rn", "TODO"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        "grep -rn TODO src/foo.py", items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == []
+
+
+def test_classify_command_risk_leaves_a_structural_items_pattern_untouched() -> None:
+    """A structural (non-`command`) item has no argv to validate against, so even a non-empty
+    pattern the model returned for it is left as-is -- it's meaningless downstream regardless (the
+    consumer only reads `suggested_pattern` for an item whose own `command` is set)."""
+    items = [PermissionAskItem("a non-literal argument", item_command_text='cat "$f"')]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 4, "overall_rationale": "opaque",
+        "items": [{
+            "item_id": "item-0", "risk_score": 4, "rationale": "opaque",
+            "suggested_pattern": ["cat", "anything"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        'cat "$f"', items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == ["cat", "anything"]
+
+
 def test_classify_command_risk_passes_model_timeout_and_response_format() -> None:
     items = [_command_item(["echo", "hi"])]
     provider = MagicMock()

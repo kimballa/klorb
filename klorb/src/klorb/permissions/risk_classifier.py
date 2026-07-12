@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
+from klorb.permissions.command_access import pattern_matches_argv
 from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import ProcessConfig
 from klorb.session import PermissionAskContext, Session
@@ -236,6 +237,41 @@ def _try_parse_report(reply_text: str) -> tuple[CommandRiskReport | None, str | 
         return None, f"reply does not conform to the CommandRiskReport schema: {exc}"
 
 
+def _discard_nonmatching_suggested_patterns(
+    report: CommandRiskReport, items: list[PermissionAskItem],
+) -> None:
+    """Blank out any item's `suggested_pattern` that doesn't actually match the argv of the item
+    it was proposed for. The classifier model is *asked* to return the least-permissive pattern
+    that still matches the candidate command, but nothing constrains it to — a hallucinated
+    pattern (a mistyped token, a dropped required argument, an over-narrow literal, a stray
+    wildcard) would otherwise be recorded verbatim as a persistent `commandRules` grant that fails
+    to re-approve the very command the user just approved (and could differ, narrower or broader,
+    from what was actually vetted). Testing the abstraction against the original argv here — via
+    `klorb.permissions.command_access.pattern_matches_argv`, the same matcher
+    `CommandPermissionsTable` uses at evaluation time, so a pattern that passes this check is
+    guaranteed to match the command later too — and clearing it on mismatch makes the caller fall
+    back to `klorb.permissions.command_grant.compute_command_grant_patterns`'s deterministic
+    literal-argv grant, exactly as if the classifier had returned no pattern for this item.
+
+    Only `"command"`-kind items (`item.command` set) carry a meaningful `suggested_pattern`;
+    `"redirect"`/`"structural"` items have no argv to validate against and are left untouched.
+    Correlation is by the `item-<index>` id `_classify_command_risk` had the model assign in
+    `items` order.
+    """
+    for index, item in enumerate(items):
+        if item.command is None:
+            continue
+        assessment = next((a for a in report.items if a.item_id == f"item-{index}"), None)
+        if assessment is None or not assessment.suggested_pattern:
+            continue
+        if not pattern_matches_argv(assessment.suggested_pattern, item.command):
+            logger.info(
+                "Bash risk classifier suggested a pattern (%s) that does not match the command "
+                "argv it was for (%s); discarding it and falling back to a literal-argv grant",
+                assessment.suggested_pattern, item.command)
+            assessment.suggested_pattern = []
+
+
 def classify_command_risk(
     command_text: str,
     items: list[PermissionAskItem],
@@ -256,12 +292,19 @@ def classify_command_risk(
     return (e.g. an `ApiProvider` test double replying with something that isn't even textual) is
     caught here as a last-resort backstop, so a caller never needs its own try/except around this
     ergonomics-only feature.
+
+    Before returning, every `"command"`-kind item's `suggested_pattern` is validated against that
+    item's own argv (`_discard_nonmatching_suggested_patterns`): a pattern the model returned that
+    doesn't actually match the command it was for is blanked, so a hallucinated abstraction is
+    never shown or persisted as a grant that wouldn't re-approve the command it was vetted for.
     """
     try:
         report = _classify_command_risk(command_text, items, api_provider, model, timeout)
     except Exception:
         logger.warning("Bash risk classifier failed unexpectedly", exc_info=True)
         report = None
+    if report is not None:
+        _discard_nonmatching_suggested_patterns(report, items)
     # TODO(aaron): once a structured audit log for permission decisions exists, record an entry
     # here pairing `command_text`/`items` with `report` (or the `None` fallback) -- this is the
     # "this command _____ got this risk assessment: _____" injection point.

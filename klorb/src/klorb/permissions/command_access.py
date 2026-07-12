@@ -37,6 +37,49 @@ docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-al
 """
 
 
+def pattern_matches_argv(pattern: list[str], argv: list[str]) -> bool:
+    """Whether a single `commandRules` token `pattern` (the `*`/`?`/`**` grammar) matches a
+    candidate `argv` (argv0 first) — the exact positional, backtracking match
+    `CommandPermissionsTable` applies to each of its own rules, exposed as a standalone pure
+    function so a caller holding one candidate pattern can test it without building a whole table.
+    `klorb.permissions.risk_classifier` uses it to check that an LLM-suggested grant pattern
+    actually matches the command it was proposed for before that pattern is ever shown or
+    persisted. See `CommandPermissionsTable._matches` for the full token semantics.
+    """
+    memo: dict[tuple[int, int], bool] = {}
+
+    def match_from(rule_index: int, candidate_index: int) -> bool:
+        key = (rule_index, candidate_index)
+        cached = memo.get(key)
+        if cached is not None:
+            return cached
+
+        if rule_index == len(pattern):
+            result = candidate_index == len(argv)
+        else:
+            token = pattern[rule_index]
+            if token == WILDCARD_TOKEN:
+                result = candidate_index < len(argv) and match_from(
+                    rule_index + 1, candidate_index + 1)
+            elif token == OPTIONAL_TOKEN:
+                result = match_from(rule_index + 1, candidate_index) or (
+                    candidate_index < len(argv)
+                    and match_from(rule_index + 1, candidate_index + 1))
+            elif token == UNBOUNDED_TOKEN:
+                result = match_from(rule_index + 1, candidate_index) or (
+                    candidate_index < len(argv)
+                    and match_from(rule_index, candidate_index + 1))
+            else:
+                result = (
+                    candidate_index < len(argv) and argv[candidate_index] == token
+                    and match_from(rule_index + 1, candidate_index + 1))
+
+        memo[key] = result
+        return result
+
+    return match_from(0, 0)
+
+
 class CommandRules(BaseModel):
     """One `commandRules` config key's `deny`/`ask`/`allow` rule lists, as plain token-pattern
     data — see `CommandPermissionsTable` for the evaluation logic that consumes this. Each rule
@@ -89,35 +132,4 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
         consumes exactly one token, neither is optional — a candidate with nothing between `git`
         and `status`, or nothing after the final `status`, does not match this rule.
         """
-        memo: dict[tuple[int, int], bool] = {}
-
-        def match_from(rule_index: int, candidate_index: int) -> bool:
-            key = (rule_index, candidate_index)
-            cached = memo.get(key)
-            if cached is not None:
-                return cached
-
-            if rule_index == len(rule):
-                result = candidate_index == len(candidate)
-            else:
-                token = rule[rule_index]
-                if token == WILDCARD_TOKEN:
-                    result = candidate_index < len(candidate) and match_from(
-                        rule_index + 1, candidate_index + 1)
-                elif token == OPTIONAL_TOKEN:
-                    result = match_from(rule_index + 1, candidate_index) or (
-                        candidate_index < len(candidate)
-                        and match_from(rule_index + 1, candidate_index + 1))
-                elif token == UNBOUNDED_TOKEN:
-                    result = match_from(rule_index + 1, candidate_index) or (
-                        candidate_index < len(candidate)
-                        and match_from(rule_index, candidate_index + 1))
-                else:
-                    result = (
-                        candidate_index < len(candidate) and candidate[candidate_index] == token
-                        and match_from(rule_index + 1, candidate_index + 1))
-
-            memo[key] = result
-            return result
-
-        return match_from(0, 0)
+        return pattern_matches_argv(rule, candidate)

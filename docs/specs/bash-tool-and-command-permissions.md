@@ -181,7 +181,13 @@ For each item, it returns a `risk_score` (0-10), a one-sentence plain-English `r
 `suggested_pattern` (the same `*`/`?`/`**` token grammar `CommandPermissionsTable` matches
 against) that replaces `klorb.permissions.command_grant.compute_command_grant_patterns()`'s
 literal-argv fallback as the pattern a persistent-scope grant actually records, when a report is
-available. `PermissionAskPanel` shows the score as a badge near its header and the rationale
+available. A `suggested_pattern` is only trusted after it's been tested against the very command
+it was proposed for: `classify_command_risk` runs each `"command"`-kind item's pattern through
+`klorb.permissions.command_access.pattern_matches_argv` (the same matcher `CommandPermissionsTable`
+uses at evaluation time) and blanks any pattern that doesn't actually match that item's argv, so a
+hallucinated abstraction — a mistyped token, a dropped required argument, an over-narrow literal —
+is never shown or persisted; a blanked pattern makes the UI fall back to the deterministic
+literal-argv grant exactly as if the model had returned no pattern for that item. `PermissionAskPanel` shows the score as a badge near its header and the rationale
 always in italics (additionally colored by score band) beneath the command preview; a score at or
 above `tools.bash.riskClassifier.tooRiskyThreshold` pre-selects `Deny, once` as the panel's
 starting cursor cell — a nudge, never a block: every grid cell stays reachable and confirmable

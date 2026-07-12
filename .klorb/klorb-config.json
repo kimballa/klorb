@@ -28,10 +28,10 @@
         ["make", "**"],
         ["bin/klorb", "--help"],
         ["venv/bin/python", "-m", "pytest", "**"],
+        ["./venv/bin/python", "-m", "pytest", "**"],
         ["venv/bin/pytest", "**"],
-        ["sed", "-n", "4705,4760p", "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/textual/widget.py"],
-        ["grep", "-n", "handler_name\\|_get_dispatch_methods\\|def handler_name", "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/textual/message.py", "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/textual/events.py", "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/textual/message_pump.py"],
-        ["./venv/bin/python", "-m", "pytest", "tests/test_tui_repl.py"]
+        ["./venv/bin/pytest", "**"],
+        ["sed", "-n", "*", "*"]
       ]
     }
   },

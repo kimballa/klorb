@@ -2,11 +2,6 @@
 
 # Bugs:
 
-* Sometimes the bash command classifier comes back with an abstracted pattern that
-  doesn't actually match the input. When the recommended abstraction comes back, we
-  need to do a test whether the original input would actually be approved by the
-  abstracted version.
-
 * Scratchpad files that are ostensibly supposed to have a lifetime equal to the session
   that created the scratchpad file in the first place, are *not* being cleaned up.
 
