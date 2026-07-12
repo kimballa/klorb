@@ -495,6 +495,13 @@ class BashTool(Tool):
     creates a fresh one that becomes the persistent shell for subsequent `"session"` calls. At
     most one persistent shell exists per `Session` at a time — see `PersistentShell` and
     docs/specs/bash-tool-and-command-permissions.md's "Session-scoped terminals" section.
+
+    `intent` is a required, model-supplied short statement of what `command` is trying to
+    accomplish — shown alongside the command in the approval dialog and the history scroll (see
+    `summary()` and `klorb.tui.permission_ask_panel.PermissionAskPanel`), and passed to
+    `klorb.permissions.risk_classifier` so a command that looks deceptively different from its
+    own stated intent scores as more risky. See docs/specs/bash-tool-and-command-permissions.md's
+    "Agent-stated intent" section.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -525,7 +532,11 @@ class BashTool(Tool):
             "persistent shell and starts a fresh one that becomes the persistent shell for "
             "subsequent \"session\" calls. \"session\"/\"new\" responses also include "
             "terminal_alive (whether the persistent shell is still usable) and terminal_cwd "
-            "(its current directory, or null if terminal_alive is false)."
+            "(its current directory, or null if terminal_alive is false). intent is a short, "
+            "plain-English statement of what the command is trying to accomplish, shown to the "
+            "user alongside the command itself when it needs approval or appears in history; "
+            "state it accurately -- a command that does something other than what its own "
+            "intent describes is scored as more risky."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -535,6 +546,14 @@ class BashTool(Tool):
                 "command": {
                     "type": "string",
                     "description": "The shell command to run.",
+                },
+                "intent": {
+                    "type": "string",
+                    "description": (
+                        "A short, human-readable statement of what this command is trying to "
+                        "accomplish, e.g. \"List all _wait_until call sites in "
+                        "test_tui_repl.py\". Shown to the user alongside the command itself."
+                    ),
                 },
                 "shell_lifetime": {
                     "type": "string",
@@ -546,22 +565,23 @@ class BashTool(Tool):
                     ),
                 },
             },
-            "required": ["command", "shell_lifetime"],
+            "required": ["command", "intent", "shell_lifetime"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
         command = args["command"]
+        intent = args["intent"]
         shell_lifetime = args["shell_lifetime"]
         if shell_lifetime not in ("command", "session", "new"):
             raise ValueError(
                 f"shell_lifetime must be one of 'command'/'session'/'new', got {shell_lifetime!r}")
         if not command.strip():
             raise ValueError("command must not be empty")
-        logger.debug("Bash %r (shell_lifetime=%s)", command, shell_lifetime)
+        logger.debug("Bash %r (intent=%r, shell_lifetime=%s)", command, intent, shell_lifetime)
 
         analysis = parse_command(command, self._shfmt_command)
-        verdict, ask_items = self._classify(analysis, command)
+        verdict, ask_items = self._classify(analysis, command, intent)
         if verdict == "deny":
             raise PermissionError(f"Permission denied: run shell command: {command}")
         if verdict == "ask":
@@ -573,7 +593,7 @@ class BashTool(Tool):
         return self._execute_persistent(command, shell_lifetime)
 
     def _classify(
-        self, analysis: BashCommandAnalysis, command: str,
+        self, analysis: BashCommandAnalysis, command: str, intent: str,
     ) -> tuple[Verdict, list[PermissionAskItem]]:
         """Evaluate every simple command's `CommandPermissionsTable` verdict, every redirection
         target's directory-access verdict, and every reason the walker itself forced an "ask".
@@ -603,7 +623,10 @@ class BashTool(Tool):
         particular item is actually about, distinct from `command_text`'s full raw command — so
         a UI can show *this item's own command* as the prominent preview, not the whole compound
         line every other item in the same batch would show identically (see
-        `PermissionAskItem.item_command_text`).
+        `PermissionAskItem.item_command_text`). `intent` (the model's own required argument
+        describing what the whole command is trying to accomplish) is set identically on every
+        collected item too, the same way `command_text` is, so a UI and the risk classifier can
+        both see it (see `PermissionAskItem.intent`).
 
         `context.permission_override`, when set, lets a previously-approved-once resource skip
         straight past its check on this one retried call (see `PermissionOverride`): a simple
@@ -631,14 +654,15 @@ class BashTool(Tool):
             elif verdict is None or verdict == "ask":
                 ask_items.append(PermissionAskItem(
                     f"run command: {' '.join(argv)}", command=argv, command_text=command,
-                    is_compound=is_compound, item_command_text=simple_command.source_text))
+                    is_compound=is_compound, item_command_text=simple_command.source_text,
+                    intent=intent))
 
         for forced_reason in analysis.forced_ask_reasons:
             if override is not None and forced_reason.reason in override.reasons:
                 continue
             ask_items.append(PermissionAskItem(
                 forced_reason.reason, command_text=command, is_compound=is_compound,
-                item_command_text=forced_reason.source_text))
+                item_command_text=forced_reason.source_text, intent=intent))
 
         for redirect in analysis.redirects:
             redirect_verdict, path, is_write = self._evaluate_redirect(redirect)
@@ -648,7 +672,8 @@ class BashTool(Tool):
                 action = "write to" if is_write else "read"
                 ask_items.append(PermissionAskItem(
                     f"{action} {path}", path=path, is_write=is_write, command_text=command,
-                    is_compound=is_compound, item_command_text=redirect.source_text))
+                    is_compound=is_compound, item_command_text=redirect.source_text,
+                    intent=intent))
 
         if denied:
             logger.info("Bash command denied outright: %s", analysis)
@@ -905,13 +930,18 @@ class BashTool(Tool):
             deny=list(read_dirs.deny), ask=list(read_dirs.ask), allow=[*read_dirs.allow, tmp_dir])
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        """Prefix the rendered command with the model's own `intent` (when given), so the
+        history scroll shows what the command is *for* alongside what it actually runs — e.g.
+        `Bash: List all _wait_until call sites in test_tui_repl.py ($ grep -n ...)`."""
         command = args.get("command", "?")
+        intent = args.get("intent")
+        label = f"{intent} ($ {command})" if intent else command
         if error is not None:
-            return f"Bash: {command} failed: {error}"
+            return f"Bash: {label} failed: {error}"
         if not isinstance(result, dict):
-            return f"Bash: {command}"
+            return f"Bash: {label}"
         status = "ok" if result.get("success") else f"exit {result.get('exit_status')}"
-        return f"Bash: {command} ({status}, {result.get('runtime', 0):.2f}s)"
+        return f"Bash: {label} ({status}, {result.get('runtime', 0):.2f}s)"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with inline `stdout`/`stderr` capped

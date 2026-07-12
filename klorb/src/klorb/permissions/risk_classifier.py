@@ -121,6 +121,21 @@ position -- keep those literal in the pattern. For an item whose `kind` is not `
 (`"redirect"`/`"structural"`), `suggested_pattern` has no real use downstream; return an empty
 list for it.
 
+## Compare the command against the agent's stated intent
+
+The message you're given may include a `<StatedIntent>` element: the agent's own short,
+plain-English statement of what it is trying to accomplish by running this command. When present,
+judge whether the actual command plausibly does what the stated intent describes. A command that
+is deceptively different from its own stated intent -- accomplishing something broader, unrelated,
+or more dangerous than what the intent describes (e.g. an intent of "list files in the current
+directory" paired with a command that also exfiltrates credentials, or an intent naming one file
+while the command touches a different, sensitive one) -- is itself a risk signal, independent of
+how risky the command would otherwise look in isolation. When you find such a mismatch, raise the
+risk score (both the affected item's and, if it changes the character of the whole compound
+command, the overall score) and say so explicitly in the rationale -- name the mismatch, don't just
+describe the command. A command that plausibly matches its stated intent should be scored on its
+own merits, with no adjustment either way for having an intent at all.
+
 ## Output format
 
 You MUST reply with nothing but JSON conforming to the `CommandRiskReport` schema you were
@@ -177,8 +192,12 @@ def _build_system_prompt(items: list[PermissionAskItem]) -> str:
         "if it's part of a larger compound command) to reflect that extra uncertainty.")
 
 
-def _build_user_message(command_text: str, items: list[PermissionAskItem]) -> str:
+def _build_user_message(
+    command_text: str, items: list[PermissionAskItem], *, intent: str | None = None,
+) -> str:
     lines = ["<CommandUnderReview>", f"  <FullCommandText>{_cdata(command_text)}</FullCommandText>"]
+    if intent:
+        lines.append(f"  <StatedIntent>{_cdata(intent)}</StatedIntent>")
     for index, item in enumerate(items):
         text = item.item_command_text or item.resource_description
         lines.append(f'  <AskItem id="item-{index}" kind="{_item_kind(item)}">')
@@ -284,6 +303,7 @@ def classify_command_risk(
     api_provider: ApiProvider,
     model: str,
     timeout: float,
+    intent: str | None = None,
 ) -> CommandRiskReport | None:
     """Classify the risk of `command_text`'s already-"ask"-routed `items` (one compound-command
     call's worth, in the same order `MultiPermissionAskRequired.items` carries them) in a single
@@ -298,6 +318,15 @@ def classify_command_risk(
     caught here as a last-resort backstop, so a caller never needs its own try/except around this
     ergonomics-only feature.
 
+    `intent`, when given, is the model's own `BashTool` `intent` argument — see `klorb.tools.
+    bash.BashTool` and docs/specs/bash-tool-and-command-permissions.md's "Agent-stated intent"
+    section — sent to the classifier so it can flag a command that looks deceptively different
+    from what it was stated to accomplish (see `_SYSTEM_PROMPT`'s "Compare the command against
+    the agent's stated intent" section) with a higher risk score and a rationale naming the
+    mismatch. `None` (e.g. no intent was given, or this isn't a `BashTool` ask at all) omits the
+    comparison entirely — every item is scored purely on the command itself, exactly as before
+    this parameter existed.
+
     Before returning, every `"command"`-kind item's `suggested_pattern` is validated against that
     item's own argv (`_discard_nonmatching_suggested_patterns`): a pattern the model returned that
     doesn't actually match the command it was for is blanked, so a hallucinated abstraction is
@@ -305,7 +334,7 @@ def classify_command_risk(
     """
     started = time.perf_counter()
     try:
-        report = _classify_command_risk(command_text, items, api_provider, model, timeout)
+        report = _classify_command_risk(command_text, items, api_provider, model, timeout, intent)
     except Exception:
         logger.warning("Bash risk classifier failed unexpectedly", exc_info=True)
         report = None
@@ -327,9 +356,10 @@ def _classify_command_risk(
     api_provider: ApiProvider,
     model: str,
     timeout: float,
+    intent: str | None = None,
 ) -> CommandRiskReport | None:
     system_prompt = _build_system_prompt(items)
-    messages = [_message("user", _build_user_message(command_text, items))]
+    messages = [_message("user", _build_user_message(command_text, items, intent=intent))]
     response_format = _response_format()
 
     request_started = time.perf_counter()
@@ -386,7 +416,8 @@ def _sibling_items_for(ask_ctx: PermissionAskContext) -> list[PermissionAskItem]
     return [PermissionAskItem(
         ask_ctx.resource_description, path=ask_ctx.path, is_write=ask_ctx.is_write,
         command=ask_ctx.command, command_text=ask_ctx.command_text,
-        is_compound=ask_ctx.is_compound, item_command_text=ask_ctx.item_command_text)]
+        is_compound=ask_ctx.is_compound, item_command_text=ask_ctx.item_command_text,
+        intent=ask_ctx.intent)]
 
 
 def _default_classifier_model(session: Session) -> str:
@@ -430,7 +461,7 @@ def resolve_item_risk_assessment(
     model = process_config.bash_risk_classifier_model or _default_classifier_model(session)
     report = classify_command_risk(
         ask_ctx.command_text, items, api_provider=session.provider, model=model,
-        timeout=process_config.bash_risk_classifier_timeout_seconds)
+        timeout=process_config.bash_risk_classifier_timeout_seconds, intent=ask_ctx.intent)
     if report is None:
         return None
     for index, item in enumerate(items):

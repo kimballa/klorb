@@ -41,11 +41,13 @@ from klorb.tui.permission_ask_panel import (
     PERMISSION_ASK_GRID_ID,
     PERMISSION_ASK_HEADER_ID,
     PERMISSION_ASK_INPUT_ID,
+    PERMISSION_ASK_INTENT_ID,
     PERMISSION_ASK_MORE_ID,
     PERMISSION_ASK_RATIONALE_ID,
     PERMISSION_ASK_RISK_BADGE_ID,
     ExpandedCommandScreen,
     PermissionAskPanel,
+    format_ask_context_body,
 )
 from klorb.tui.repl import (
     CONFIG_MISSING_MESSAGE,
@@ -1448,14 +1450,48 @@ def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
 
 def _command_ask_ctx(
     command_text: str, *, reason: str = "some reason", is_compound: bool = False,
-    item_command_text: str | None = None,
+    item_command_text: str | None = None, intent: str | None = None,
 ) -> PermissionAskContext:
     """A bash-command-ask context (no `path`, matching a structural item's shape), for testing
     the "Run command" header/command-preview path -- see `_ask_ctx` for the file-tool ("Read
     file"/"Write file" header) counterpart."""
     return PermissionAskContext(
         command_text=command_text, resource_description=reason, is_compound=is_compound,
-        item_command_text=item_command_text)
+        item_command_text=item_command_text, intent=intent)
+
+
+def test_permission_ask_screen_shows_the_agents_stated_intent(tmp_path: Path) -> None:
+    screen = PermissionAskPanel(_command_ask_ctx("grep -n _wait_until tests/", intent="List call sites"))
+
+    container = next(iter(screen.compose()))
+    intent_static = _find_child(container, PERMISSION_ASK_INTENT_ID)
+
+    assert isinstance(intent_static, Static)
+    assert str(intent_static.render()) == "Intent: List call sites"
+
+
+def test_permission_ask_screen_omits_intent_line_when_unset(tmp_path: Path) -> None:
+    screen = PermissionAskPanel(_command_ask_ctx("echo hi"))
+
+    container = next(iter(screen.compose()))
+    with pytest.raises(StopIteration):
+        _find_child(container, PERMISSION_ASK_INTENT_ID)
+
+
+def test_format_ask_context_body_leads_with_intent_when_set() -> None:
+    ctx = _command_ask_ctx("grep -n _wait_until tests/", reason="run command: grep", intent="List call sites")
+
+    body = format_ask_context_body(ctx)
+
+    assert body == "Intent: List call sites\ngrep -n _wait_until tests/\nrun command: grep"
+
+
+def test_format_ask_context_body_omits_intent_line_when_unset() -> None:
+    ctx = _command_ask_ctx("echo hi", reason="run command: echo hi")
+
+    body = format_ask_context_body(ctx)
+
+    assert body == "echo hi\nrun command: echo hi"
 
 
 def test_permission_ask_screen_header_says_run_command_when_command_text_is_set(

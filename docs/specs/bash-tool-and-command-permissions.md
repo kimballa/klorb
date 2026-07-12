@@ -159,7 +159,38 @@ docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md — a
 `item_command_text`, the `SimpleCommand`/`ForcedAskReason`/`RedirectTarget`'s own `source_text`
 for just the one statement that particular item is about, distinct from every other item's from
 the same call even though they all share the identical `command_text` — see
-docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md.
+docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md. Every ask item
+also carries `intent`, identically across the whole call — see "Agent-stated intent" below.
+
+### Agent-stated intent
+
+`intent` is a required `BashTool` argument, separate from `command`: a short, plain-English
+statement of what the command is trying to accomplish (e.g. `"List all _wait_until call sites in
+test_tui_repl.py"` for a `grep -n _wait_until test_tui_repl.py` command). It is purely descriptive
+— never parsed, matched against a rule, or otherwise treated as part of the command itself — and
+flows alongside `command_text` everywhere that already threads through a `BashTool` call:
+
+* `klorb.permissions.table.PermissionAskItem.intent` and `klorb.session.PermissionAskContext.
+  intent` carry it onto every ask item a call produces, identically across items, the same way
+  `command_text` does (see "Combining verdicts" above).
+* `klorb.tui.permission_ask_panel.PermissionAskPanel` shows an "Intent: ..." line beneath the risk
+  badge, above the command preview, whenever `ask_ctx.intent` is set; `format_ask_context_body()`
+  includes the same line in the permanent history-scroll record `ReplApp` leaves behind once the
+  panel is dismissed.
+* `BashTool.summary()` — the one-line rendering any history view (approval or not) shows for a
+  finished call — leads with `intent` ahead of the command itself (`Bash: <intent> ($ <command>)
+  ...`), falling back to the bare command when `intent` is absent (e.g. a call whose `args` predate
+  this field).
+* `klorb.permissions.risk_classifier.classify_command_risk()` is given `intent` as a
+  `<StatedIntent>` element alongside `<FullCommandText>` (see "LLM risk classifier" below): the
+  classifier is instructed to treat a command that's deceptively different from what its own
+  stated intent describes as a risk signal in its own right, raising the score and naming the
+  mismatch in the rationale — independent of how risky the command would otherwise look in
+  isolation.
+
+Making `intent` required (not optional) means the risk classifier's intent-vs-command comparison
+always has something to compare against, and the approval dialog/history always has a
+human-readable "what for" line rather than showing it only some of the time.
 
 ### LLM risk classifier (`klorb.permissions.risk_classifier`)
 
@@ -176,6 +207,13 @@ deterministic pipeline above: the classifier only ever runs on an item that has 
 to `"ask"`, and never itself promotes anything to `"allow"` or `"deny"` — see
 docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md for the same reasoning
 applied to a different probabilistic layer (`bwrap`).
+
+When the call's `intent` is set (see "Agent-stated intent" above), it's included in the request as
+a `<StatedIntent>` element alongside the command text; the classifier's system prompt instructs it
+to score a command that's deceptively different from what its own stated intent describes — one
+that plausibly accomplishes something broader, unrelated, or more dangerous than the intent
+describes — as more risky than the command would otherwise look on its own, and to name the
+mismatch explicitly in the rationale rather than just describing the command.
 
 For each item, it returns a `risk_score` (0-10), a one-sentence plain-English `rationale`, and a
 `suggested_pattern` (the same `*`/`?`/`**` token grammar `CommandPermissionsTable` matches
@@ -459,3 +497,4 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md
 * docs/adrs/cap-persistent-shells-at-one-per-session.md
 * docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md
+* docs/adrs/bash-tool-requires-a-stated-intent-argument.md

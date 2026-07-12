@@ -35,6 +35,7 @@ _SCOPE_LABELS: dict[_Scope, str] = {
 
 PERMISSION_ASK_HEADER_ID = "permission-ask-header"
 PERMISSION_ASK_RISK_BADGE_ID = "permission-ask-risk-badge"
+PERMISSION_ASK_INTENT_ID = "permission-ask-intent"
 PERMISSION_ASK_COMMAND_ID = "permission-ask-command"
 PERMISSION_ASK_MORE_ID = "permission-ask-more"
 PERMISSION_ASK_RATIONALE_ID = "permission-ask-rationale"
@@ -90,12 +91,15 @@ def _cell_id(column: int, row: int) -> str:
 
 
 def format_ask_context_body(ask_ctx: PermissionAskContext) -> str:
-    """Render `ask_ctx`'s command/path preview plus its own `resource_description` detail as a
-    flat block of text, for the history-scroll record `ReplApp` leaves behind once a
-    `PermissionAskPanel` is dismissed (see `ReplApp._record_interaction_history`) — the same two
-    pieces of information `PermissionAskPanel.compose()` shows as two separate `Static`
-    widgets, here joined by a newline instead."""
+    """Render `ask_ctx`'s intent (if any), command/path preview, and its own
+    `resource_description` detail as a flat block of text, for the history-scroll record
+    `ReplApp` leaves behind once a `PermissionAskPanel` is dismissed (see
+    `ReplApp._record_interaction_history`) — the same pieces of information
+    `PermissionAskPanel.compose()` shows as separate `Static` widgets, here joined by a newline
+    instead."""
     lines: list[str] = []
+    if ask_ctx.intent:
+        lines.append(f"Intent: {ask_ctx.intent}")
     if ask_ctx.command_text is not None:
         lines.append(ask_ctx.item_command_text or ask_ctx.command_text)
     elif ask_ctx.path is not None:
@@ -223,7 +227,10 @@ class PermissionAskPanel(Vertical):
 
     Above the grid: a styled header naming the kind of access being requested ("Run command" if
     `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set — see
-    `header_text`), then a command preview (long commands truncated to
+    `header_text`), then, when `ask_ctx.intent` is set (every `BashTool` ask item carries one —
+    see `klorb.permissions.table.PermissionAskItem.intent`), an "Intent: ..." line showing the
+    model's own short statement of what the command is trying to accomplish, then a command
+    preview (long commands truncated to
     `_MAX_COMMAND_PREVIEW_LINES` with a `[more...]` indicator — see `_command_preview`,
     `ExpandedCommandScreen`), then `ask_ctx.resource_description`'s own per-item detail (the
     specific argv/path/reason this one ask is about). The preview shows `ask_ctx.
@@ -301,6 +308,13 @@ class PermissionAskPanel(Vertical):
         color: $text-muted;
         text-style: bold;
         margin: 0 0 1 0;
+    }
+
+    #permission-ask-intent {
+        color: $text-muted;
+        text-style: italic;
+        margin: 0 0 1 0;
+        width: 1fr;
     }
 
     #permission-ask-command {
@@ -420,6 +434,10 @@ class PermissionAskPanel(Vertical):
             widgets.append(Static(
                 f"Risk: {self._risk_score}/10", id=PERMISSION_ASK_RISK_BADGE_ID,
                 classes=badge_classes))
+        if self._ask_ctx.intent:
+            # `markup=False`: the agent's own free-text intent statement must render verbatim.
+            widgets.append(Static(
+                f"Intent: {self._ask_ctx.intent}", id=PERMISSION_ASK_INTENT_ID, markup=False))
 
         preview_section: list[Widget] = []
         command_text = self._ask_ctx.command_text
