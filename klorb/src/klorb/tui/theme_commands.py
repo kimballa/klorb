@@ -12,7 +12,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 
-SELECT_THEME_LABEL = "Change Theme"
+SELECT_THEME_LABEL = "Change theme"
 THEME_HEADER_TEXT = "Theme:"
 THEME_OPTION_LIST_ID = "theme-options"
 CURRENT_THEME_MARKER = " (*)"
@@ -84,7 +84,7 @@ class ThemeSelectionScreen(ModalScreen[None]):
 
 
 class ThemeCommandProvider(Provider):
-    """Offers a single `"Change Theme (<current>)"` command via the command palette that opens
+    """Offers a single `"Change theme (<current>)"` command via the command palette that opens
     `ThemeSelectionScreen`. Supersedes Textual's own built-in "Theme" system command — see
     `ReplApp.get_system_commands`, which drops that entry so there's exactly one theme-changing
     command instead of two competing pickers.

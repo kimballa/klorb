@@ -28,5 +28,5 @@
   matcher `Provider.matcher()` wraps — the same ranking/highlighting behavior the palette
   itself uses, just scoped to model names instead of every command. The single palette entry
   still names the current model in its label (matching `ThemeCommandProvider`'s
-  `"Change Theme (<current>)"` convention) so the active model is visible without opening the
+  `"Change theme (<current>)"` convention) so the active model is visible without opening the
   modal at all.
