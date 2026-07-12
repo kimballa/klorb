@@ -1,24 +1,44 @@
 # © Copyright 2026 Aaron Kimball
 """Detects whether `bwrap` (bubblewrap, https://github.com/containers/bubblewrap) can actually
-sandbox `BashTool`'s subprocesses on this host, and will eventually build the `bwrap` argv that
-does so. See docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and
+sandbox `BashTool`'s subprocesses on this host, and builds the `bwrap` argv that does so. See
+docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and
 docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md.
 
-Building the actual `bwrap` argv (mount list, namespace unshares, env plumbing) is a stub for
-now: developing and testing it requires a host where unprivileged user namespaces work, which
-this project's own dev/cloud-agent environments do not provide (`bwrap_available()` reports
-`False` there — confirmed directly). `BashTool` runs unsandboxed everywhere until that work
-lands; see `klorb.tools.bash`.
+`build_bwrap_argv()` assembles the namespace/mount/env argv from a session's permission tables
+(the same `readDirs`/`writeDirs` the file tools use — one source of truth, not a second parallel
+filesystem policy); `compute_sandbox_dirs()` derives the read-only/read-write/masked directory
+sets it binds. `BashTool` falls back to unsandboxed execution whenever `bwrap_available()`
+reports `False` (a missing binary, or a kernel/container policy that forbids unprivileged user
+namespaces — common inside Docker/cloud-agent environments); see `klorb.tools.bash`.
 """
 
 import logging
+import os
 import shutil
 import subprocess
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+from klorb.permissions.directory_access import DirRules, canonicalize_dir, privileged_dirs
+from klorb.permissions.file_access import FileRules
 
 logger = logging.getLogger(__name__)
 
 BWRAP_BINARY_NAME = "bwrap"
+
+SANDBOX_HOSTNAME = "klorb-host"
+"""The fake hostname `--hostname` sets inside the sandbox (requires `--unshare-uts`, its own UTS
+namespace, so changing it can't mutate the real host's hostname) — the sandboxed command never
+sees the true host name."""
+
+_USR_MERGE_LINKS = ("/bin", "/sbin", "/lib", "/lib64", "/libx32")
+"""Top-level directories that are symlinks into `/usr` on a merged-`/usr` host (Debian/Ubuntu/
+Fedora) and real directories on a non-merged one. `_base_filesystem_args()` reproduces whichever
+layout the host actually has (checked via `Path.is_symlink()`/`is_dir()` at launch, never
+hardcoded) so the sandbox's root matches the host's rather than synthesizing a merged view that
+isn't real."""
 
 BwrapUnavailableReason = Literal["missing_binary", "no_userns"]
 """Why `bwrap_available()` returned `False`, for `BashTool`'s one-time fallback notice
@@ -88,19 +108,311 @@ def detect_bwrap_unavailable_reason() -> BwrapUnavailableReason | None:
     return None
 
 
-def build_bwrap_argv() -> list[str]:
-    """Build the full `bwrap` argv for one `BashTool` invocation (mount list, namespace
-    unshares, hostname, env, workspace/homedir binds with denyholes over privileged paths) — see
-    docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section for the shape this
-    should eventually take.
+def bwrap_binary_path() -> str:
+    """Absolute path to the `bwrap` binary (resolved via `PATH`), or the bare name as a
+    last-resort fallback. `build_bwrap_argv()` uses this for argv[0] rather than the bare
+    `"bwrap"` so `subprocess.Popen` finds it even when `BashTool` passes an explicit `env=` with
+    no `PATH` of its own (see `klorb.tools.bash.build_bash_env`) — an unresolved bare name would
+    then fail to launch."""
+    return shutil.which(BWRAP_BINARY_NAME) or BWRAP_BINARY_NAME
 
-    Not implemented yet: developing this requires iterating against a host where unprivileged
-    user namespaces actually work (this repo's own dev and cloud-agent environments do not
-    provide one — `bwrap_available()` reports `False` there), so it can't be built and verified
-    here. `BashTool` never calls this today; it always runs unsandboxed (see
-    `klorb.tools.bash`), gated on `bwrap_available()` only to decide the wording of its one-time
-    fallback notice, not on this function.
+
+def path_dirs_from_env() -> list[Path]:
+    """The klorb process's own `$PATH` directories, canonicalized, as a best-effort source for
+    the PATH-derived top-up binds `build_bwrap_argv()` adds for toolchains installed outside
+    `/usr`/`$HOME` (e.g. `/opt/sometoolchain/bin`). This is a narrow top-up, not the primary
+    mechanism — the whole-tree `/usr` and `$HOME` binds already cover the common cases — so a
+    directory already under one of those is dropped by `build_bwrap_argv()` rather than bound
+    twice."""
+    raw = os.environ.get("PATH", "")
+    dirs: list[Path] = []
+    for entry in raw.split(os.pathsep):
+        if entry:
+            dirs.append(Path(entry).resolve(strict=False))
+    return dirs
+
+
+@dataclass(frozen=True)
+class SandboxDirs:
+    """The three directory sets `build_bwrap_argv()` turns into `bwrap` binds, all canonicalized
+    (symlinks/`..` resolved) so they compare and nest correctly. Derived from a session's
+    permission tables by `compute_sandbox_dirs()` — the *same* `readDirs`/`writeDirs` the file
+    tools consult, so the sandbox mount set is one source of truth with the classification layer,
+    not a second filesystem policy defined independently."""
+
+    read_write: tuple[Path, ...]
+    """Directories bound read-write (`--bind`): the home directory (always, so toolchains under
+    it work — see `build_bwrap_argv()`), the workspace root when the workspace is trusted, and
+    every `writeDirs.allow` entry."""
+    read_only: tuple[Path, ...]
+    """Directories bound read-only (`--ro-bind`): every `readDirs.allow` entry not already
+    covered by a read-write bind, plus the workspace root when the workspace is *untrusted* (still
+    readable, not writable)."""
+    mask: tuple[Path, ...]
+    """Directories hidden with an empty `--tmpfs` overlay: every `readDirs.deny` entry (`~/.ssh`,
+    `~/.aws`, ... — the same denylist the file tools honor) and every `privileged_dirs()` entry
+    (`<workspace>/.klorb`, the process-wide klorb config/data/state dirs). Applied last in the
+    argv so they override any read-write bind (e.g. the whole-home bind) that would otherwise
+    expose them."""
+    mask_files: tuple[Path, ...]
+    """Individual files hidden with a `--ro-bind /dev/null` overlay: every existing `readFiles.deny`
+    entry (`~/.git-credentials`, `~/.netrc`, ... — single-file secrets that sit directly inside an
+    otherwise-readable directory, where masking the whole parent would be too broad). `build_bwrap_
+    argv` only actually masks the ones that land inside a directory the sandbox binds (a file
+    outside every bind is already unreachable); files under a directory already in `mask` are
+    skipped, since that `--tmpfs` overlay hides them wholesale already."""
+    read_files: tuple[Path, ...]
+    """Individual existing files to bind read-only (`--ro-bind`), from `readFiles.allow` — the
+    mirror of `mask_files`. `build_bwrap_argv` only binds the ones that *aren't* already reachable:
+    a file inside a bound directory is left alone, but one that lives outside every directory bind
+    (or inside a `mask`ed directory the session nonetheless allowed this one file within) is bound
+    into place, synthesizing its parent directories with `--dir` as needed. Lets an exact
+    `readFiles.allow` grant for a path outside the workspace (a device node, a specific config
+    file) actually be readable inside the sandbox."""
+    write_files: tuple[Path, ...]
+    """Individual existing files to bind read-write (`--bind`), from `writeFiles.allow` — same
+    treatment as `read_files`, but read-write, and taking precedence when a path is in both."""
+
+
+def compute_sandbox_dirs(
+    *,
+    workspace_root: Path,
+    home: Path,
+    trusted: bool,
+    read_dirs: DirRules,
+    write_dirs: DirRules,
+    read_files: FileRules | None = None,
+    write_files: FileRules | None = None,
+) -> SandboxDirs:
+    """Derive the `SandboxDirs` bind sets from a session's permission tables. Every rule path is
+    canonicalized against `workspace_root` exactly as `DirectoryAccessTable`/`FileAccessTable`
+    canonicalize it, so a `~`-relative or workspace-relative rule maps to the same on-disk path
+    the classification layer would check.
+
+    The home directory is always read-write (the plan's answer to "how do toolchains outside
+    `/usr` get in": nvm/pyenv/cargo/etc. all live under `$HOME`), with sensitive subdirectories
+    masked back out via the `mask` set (whole directories) and individual `readFiles.deny` files
+    masked out via the `mask_files` set, rather than enumerated as separate binds. Individual
+    `readFiles.allow`/`writeFiles.allow` files carry into `read_files`/`write_files` so an exact
+    file grant outside every directory bind is still reachable inside the sandbox.
     """
-    raise NotImplementedError(
-        "build_bwrap_argv() is a stub: bubblewrap sandboxing isn't implemented yet. "
-        "BashTool always falls back to unsandboxed execution; see klorb.tools.bash.")
+    workspace_root = workspace_root.resolve(strict=False)
+    home = home.resolve(strict=False)
+
+    def canon(paths: Iterable[Path]) -> list[Path]:
+        return [canonicalize_dir(path, workspace_root) for path in paths]
+
+    read_write = {home}
+    if trusted:
+        read_write.add(workspace_root)
+    read_write.update(canon(write_dirs.allow))
+
+    read_only = set(canon(read_dirs.allow))
+    if not trusted:
+        read_only.add(workspace_root)
+    read_only = {
+        d for d in read_only
+        if not any(d == w or d.is_relative_to(w) for w in read_write)}
+
+    mask = set(canon(read_dirs.deny)) | set(privileged_dirs(workspace_root))
+
+    def existing_file_rules(rules: FileRules | None, attr: str) -> set[Path]:
+        if rules is None:
+            return set()
+        return {f for f in canon(getattr(rules, attr)) if f.exists() and not f.is_dir()}
+
+    mask_files = existing_file_rules(read_files, "deny")
+    read_allow_files = existing_file_rules(read_files, "allow")
+    write_allow_files = existing_file_rules(write_files, "allow")
+
+    return SandboxDirs(
+        read_write=tuple(sorted(read_write, key=str)),
+        read_only=tuple(sorted(read_only, key=str)),
+        mask=tuple(sorted(mask, key=str)),
+        mask_files=tuple(sorted(mask_files, key=str)),
+        read_files=tuple(sorted(read_allow_files, key=str)),
+        write_files=tuple(sorted(write_allow_files, key=str)))
+
+
+def allowed_dir_snapshot(dirs: SandboxDirs) -> frozenset[Path]:
+    """The set of bound (readable-or-writable) paths — directories *and* individually-allowed
+    files — used by the persistent shell's reconcile-on-grow check (`klorb.tools.bash`): a live
+    sandbox is rebuilt only when this set *grows* between commands (an interactive grant added a
+    directory or file `allow`). The `mask`/`mask_files` sets are deliberately excluded — they come
+    from the static deny lists and `privileged_dirs()`, all stable for the life of the process, so
+    they never drive a rebuild."""
+    return (
+        frozenset(dirs.read_write) | frozenset(dirs.read_only)
+        | frozenset(dirs.read_files) | frozenset(dirs.write_files))
+
+
+def _is_covered(path: Path, roots: Sequence[Path]) -> bool:
+    """Whether `path` is one of, or nested under, any directory in `roots` — so it's already
+    reachable through that root's bind and doesn't need its own."""
+    return any(path == root or path.is_relative_to(root) for root in roots)
+
+
+def _base_filesystem_args() -> list[str]:
+    """`--ro-bind` for the whole `/usr` and `/etc` trees, plus the top-level merged-`/usr`
+    symlinks (or real-directory binds on a non-merged host) — see `_USR_MERGE_LINKS`. Whole
+    trees, not just `/usr/bin`+`/usr/lib`: this picks up `/usr/local`, `/usr/share`, locale data,
+    nsswitch.conf, ssl certs, passwd/group, etc. that real toolchains and libc calls lean on."""
+    args = ["--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc"]
+    for link_name in _USR_MERGE_LINKS:
+        path = Path(link_name)
+        if path.is_symlink():
+            args += ["--symlink", os.readlink(link_name), link_name]
+        elif path.is_dir():
+            args += ["--ro-bind", link_name, link_name]
+    return args
+
+
+def _emit_bind(
+    args: list[str], created: set[Path], base_roots: Sequence[Path], target: Path, mode: str,
+) -> None:
+    """Append a `--dir`-for-each-missing-parent then `<mode> target target` bind to `args`,
+    tracking already-created parents in `created` so a shared ancestor isn't `--dir`'d twice.
+    `mode` is `"--bind"` (read-write) or `"--ro-bind"` (read-only). Parents already reachable
+    through a base bind (`base_roots`) are skipped — bwrap creates the final mount point itself."""
+    for ancestor in reversed(target.parents):
+        if ancestor == Path("/") or _is_covered(ancestor, base_roots) or ancestor in created:
+            continue
+        args += ["--dir", str(ancestor)]
+        created.add(ancestor)
+    args += [mode, str(target), str(target)]
+    created.add(target)
+
+
+def build_bwrap_argv(
+    *,
+    workspace_root: Path,
+    home: Path,
+    env: Mapping[str, str],
+    dirs: SandboxDirs,
+    path_dirs: Sequence[Path] = (),
+    hostname: str = SANDBOX_HOSTNAME,
+) -> list[str]:
+    """Build the `bwrap` argv prefix for one sandboxed shell invocation, up to and including the
+    `--` separator — the caller appends the actual command argv (`bash --rcfile ... -c ...` for a
+    one-shot, plain `bash` for a persistent shell).
+
+    Shape (see docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and the
+    plan it came from):
+
+    * Namespaces: `--unshare-net` (no network until a proxy exists), `--unshare-ipc`,
+      `--unshare-pid`, `--unshare-uts` (needed for `--hostname`), `--unshare-cgroup`, plus
+      `--unshare-user`/`--disable-userns` (defense-in-depth against nested-userns escapes; the
+      user namespace uses an identity uid/gid map, so files the command creates in the binds are
+      owned by the real user — see
+      docs/adrs/pass-unshare-user-because-disable-userns-requires-it.md).
+    * Hardening: `--hostname`, `--die-with-parent`, `--new-session` (blocks `TIOCSTI` escapes),
+      `--cap-drop ALL`.
+    * Environment: `--clearenv` then one `--setenv` per `env` entry, so the sandboxed command
+      starts from exactly the dict `build_bash_env()` built and nothing of klorb's own
+      environment leaks in.
+    * Filesystem: whole-tree read-only `/usr`+`/etc` and the merged-`/usr` symlinks
+      (`_base_filesystem_args()`); disposable `--tmpfs /tmp`, `--tmpfs /var`, `--dev /dev`,
+      `--proc /proc` (before the binds, so a bound directory living under `/tmp`/`/var` lands on
+      top of the fresh tmpfs rather than being wiped by it); a read-write whole-tree `$HOME` bind;
+      read-write binds for `dirs.read_write` and read-only binds for `dirs.read_only` beyond what
+      those already cover; PATH-derived read-only top-up binds for `path_dirs`; an empty `--tmpfs`
+      mask over every `dirs.mask` directory; individual binds for `dirs.read_files`/
+      `dirs.write_files` that aren't already reachable (an exact file grant outside every directory
+      bind, with `--dir`-synthesized parents); and finally a `--ro-bind /dev/null` mask over every
+      reachable `dirs.mask_files` file. The masks are applied after the binds so they win over the
+      whole-home bind that would otherwise expose `~/.ssh`, `~/.git-credentials`, and friends — see
+      docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
+    * `--chdir workspace_root` so the command starts in the workspace.
+    """
+    workspace_root = workspace_root.resolve(strict=False)
+    home = home.resolve(strict=False)
+
+    args: list[str] = [bwrap_binary_path()]
+    args += [
+        "--unshare-net", "--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup",
+        "--unshare-user", "--disable-userns",
+        "--hostname", hostname,
+        "--die-with-parent", "--new-session", "--cap-drop", "ALL",
+    ]
+
+    args += ["--clearenv"]
+    for name in sorted(env):
+        args += ["--setenv", name, env[name]]
+
+    args += _base_filesystem_args()
+
+    # Disposable scratch mounts go on *before* the binds so a bound directory that happens to
+    # live under /tmp or /var (e.g. a workspace root beneath a system temp dir) lands on top of
+    # the fresh tmpfs rather than being wiped out by a tmpfs applied after it.
+    args += ["--tmpfs", "/tmp", "--tmpfs", "/var", "--dev", "/dev", "--proc", "/proc"]
+
+    usr = Path("/usr")
+    etc = Path("/etc")
+    base_roots = [usr, etc, home]
+    created: set[Path] = {usr, etc, home}
+    args += ["--bind", str(home), str(home)]
+
+    emitted: set[Path] = set()
+    for d in dirs.read_write:
+        if _is_covered(d, [home]) or not d.exists():
+            continue
+        _emit_bind(args, created, base_roots, d, "--bind")
+        emitted.add(d)
+
+    for d in dirs.read_only:
+        if _is_covered(d, base_roots) or _is_covered(d, list(emitted)) or not d.exists():
+            continue
+        _emit_bind(args, created, base_roots, d, "--ro-bind")
+        emitted.add(d)
+
+    for d in path_dirs:
+        if _is_covered(d, base_roots) or _is_covered(d, list(emitted)) or not d.is_dir():
+            continue
+        _emit_bind(args, created, base_roots, d, "--ro-bind")
+        emitted.add(d)
+
+    for d in dirs.mask:
+        if d.exists():
+            args += ["--tmpfs", str(d)]
+
+    # Individual allowed files that aren't already reachable: bind each one into place so an exact
+    # readFiles/writeFiles grant for a path outside every directory bind (or for a single file
+    # inside an otherwise-masked directory) actually works. A file already carried in by a real
+    # directory bind, and not hidden by a mask, is left alone. `_emit_bind` synthesizes any missing
+    # parent directories with `--dir` first. Emitted after the directory masks (so a file inside a
+    # masked directory can be punched back through) but before the denied-file masks below (so a
+    # path that is somehow in both an allow and a deny list still ends up denied). Write binds win
+    # over read binds for a path named in both.
+    real_roots = [*base_roots, *emitted]
+    special_roots = [Path("/dev"), Path("/proc")]
+
+    def _needs_file_bind(target: Path) -> bool:
+        if _is_covered(target, special_roots):
+            return False  # provided by --dev/--proc; don't fight those mounts
+        return _is_covered(target, dirs.mask) or not _is_covered(target, real_roots)
+
+    file_bound: set[Path] = set()
+    for f in dirs.write_files:
+        if _needs_file_bind(f):
+            _emit_bind(args, created, base_roots, f, "--bind")
+            file_bound.add(f)
+    for f in dirs.read_files:
+        if f not in file_bound and _needs_file_bind(f):
+            _emit_bind(args, created, base_roots, f, "--ro-bind")
+            file_bound.add(f)
+
+    # Individual denied files: mask each one that is reachable -- inside a directory the sandbox
+    # binds, or itself individually allow-bound just above (a path misconfigured into both an
+    # allow and a deny list: deny must still win) -- unless its parent directory is already
+    # wholesale-masked above (that `--tmpfs` hid it already). `--ro-bind /dev/null` is the standard
+    # bwrap idiom for masking a single file's contents while leaving its siblings readable: the
+    # mask makes reads of the secret fail rather than return its real bytes.
+    for f in dirs.mask_files:
+        if _is_covered(f, dirs.mask):
+            continue
+        if not (_is_covered(f, real_roots) or f in file_bound):
+            continue
+        args += ["--ro-bind", "/dev/null", str(f)]
+
+    args += ["--chdir", str(workspace_root), "--"]
+    return args

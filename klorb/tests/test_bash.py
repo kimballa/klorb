@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from klorb import sandbox
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.file_access import FileRules
@@ -22,6 +23,24 @@ from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
 _live_sessions: list[Session] = []
+
+requires_bwrap = pytest.mark.skipif(
+    not sandbox.bwrap_available(),
+    reason="bwrap cannot create a sandbox here (missing binary or no unprivileged user namespaces)")
+"""Skip (never xfail/error) the opt-in tests that exercise a real `bwrap` sandbox — shared with
+the runtime's own `bwrap_available()` gate, per the plan's 'klorb's own test suite' note."""
+
+
+@pytest.fixture(autouse=True)
+def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every `BashTool` test unsandboxed unless it opts in, so the plumbing tests below
+    (env building, signal decoding, timeout, persistent-shell process identity) are deterministic
+    regardless of whether the host running the suite happens to have a working `bwrap` — matching
+    how a container/cloud-agent CI environment (no unprivileged user namespaces) already runs them.
+    A test that specifically covers sandboxed behavior re-patches `bwrap_available` back to the
+    real `klorb.sandbox.bwrap_available` in its own body (which wins, running after this fixture)
+    and gates itself on `requires_bwrap`."""
+    monkeypatch.setattr("klorb.tools.bash.bwrap_available", lambda: False)
 
 
 @pytest.fixture(autouse=True)
@@ -628,3 +647,146 @@ def test_summary_falls_back_to_the_bare_command_with_no_intent(tmp_path: Path) -
     args_without_intent = {key: value for key, value in args.items() if key != "intent"}
 
     assert tool.summary(args_without_intent, result) == f"Bash: echo hi (ok, {result['runtime']:.2f}s)"
+
+
+# --- sandboxed execution (opt-in; needs a real, working bwrap) ---
+
+
+def _use_real_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo `_unsandboxed_by_default` for this one test, restoring the real availability check so
+    `BashTool` actually wraps its command in `bwrap`. Runs in the test body, after the autouse
+    fixture, so it wins."""
+    monkeypatch.setattr("klorb.tools.bash.bwrap_available", sandbox.bwrap_available)
+
+
+@requires_bwrap
+def test_no_sandbox_notice_when_actually_sandboxed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_real_sandbox(monkeypatch)
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["true"]]))
+    result = _apply(BashTool(context), "true")
+    assert result["success"] is True
+    assert "sandbox_notice" not in result  # nothing to warn about -- it really was sandboxed
+
+
+@requires_bwrap
+def test_sandboxed_command_runs_under_the_fake_hostname(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_real_sandbox(monkeypatch)
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["hostname"]]))
+    result = _apply(BashTool(context), "hostname")
+    assert result["stdout"].strip() == sandbox.SANDBOX_HOSTNAME
+
+
+@requires_bwrap
+def test_sandboxed_command_cannot_read_a_denied_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end defense in depth: the OS-level mask hides a denied directory's contents even
+    from a command the classifier *allowed* because the read isn't visible in its argv (`find`
+    walking a tree, unlike `cat`/`ls`, isn't checked against readDirs). The mask is the only thing
+    standing between the approved command and the secret here."""
+    _use_real_sandbox(monkeypatch)
+    secret_dir = tmp_path / "secretdir"
+    secret_dir.mkdir()
+    (secret_dir / "secret.txt").write_text("TOP SECRET")
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["find", "**"]]),
+        read_dirs=DirRules(allow=[tmp_path], deny=[secret_dir]))
+    result = _apply(BashTool(context), "find secretdir -type f")
+    assert result["success"] is True
+    assert "secret.txt" not in result["stdout"]  # masked -> find sees an empty directory
+
+
+@requires_bwrap
+def test_sandboxed_command_can_read_a_readfiles_allowed_file_outside_the_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """An exact `readFiles.allow` grant for a file outside the workspace (and outside home) is
+    both classified-allowed and actually bound into the sandbox, so the command can read it."""
+    _use_real_sandbox(monkeypatch)
+    outside = tmp_path_factory.mktemp("outside") / "token.conf"
+    outside.write_text("ALLOWED-SECRET")
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["cat", "*"]]),
+        read_dirs=DirRules(allow=[tmp_path]),
+        read_files=FileRules(allow=[outside]))
+    result = _apply(BashTool(context), f"cat {outside}")
+    assert result["success"] is True
+    assert result["stdout"].strip() == "ALLOWED-SECRET"
+
+
+def _persistent_shell(context: ToolSetupContext) -> Any:
+    assert context.session is not None
+    return context.session.tool_state["Bash"]["persistent_shell"]
+
+
+@requires_bwrap
+def test_persistent_sandbox_rebuilds_and_preserves_state_when_a_grant_grows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    _use_real_sandbox(monkeypatch)
+    context = _persistent_context(tmp_path)
+    tool = BashTool(context)
+    # Establish exported-env and cwd state (a workspace subdir, so it's readable and survives the
+    # rebuild -- the workspace is bound in both the old and new sandbox) that must carry over.
+    _run_session(tool, "export KLORB_REBUILD_MARKER=survived; mkdir -p subdir; cd subdir")
+    first_shell = _persistent_shell(context)
+
+    # Grant a brand-new directory outside the workspace and home, so the allowed-dir snapshot
+    # actually grows (a dir under either would already be covered and wouldn't widen it).
+    granted = tmp_path_factory.mktemp("granted")
+    context.session_config.read_dirs = DirRules(allow=[tmp_path, granted])
+
+    # printenv reads the exported var with a literal argument (echo "$VAR" would be a non-literal
+    # token the classifier force-asks on, which is beside the point here).
+    result = _run_session(tool, "printenv KLORB_REBUILD_MARKER")
+    assert result["sandbox_rebuilt"] is True
+    assert _persistent_shell(context) is not first_shell  # a fresh sandbox replaced the stale one
+    assert result["stdout"].strip() == "survived"  # exported env carried over
+    assert result["terminal_cwd"] is not None
+    assert result["terminal_cwd"].endswith("subdir")  # cwd carried over
+
+
+@requires_bwrap
+def test_persistent_sandbox_does_not_rebuild_when_the_grant_set_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_real_sandbox(monkeypatch)
+    context = _persistent_context(tmp_path)
+    tool = BashTool(context)
+    _run_session(tool, "echo one")
+    first_shell = _persistent_shell(context)
+    result = _run_session(tool, "echo two")
+    assert result["sandbox_rebuilt"] is False
+    assert _persistent_shell(context) is first_shell  # same process, full state persistence
+
+
+@requires_bwrap
+def test_persistent_sandbox_refuses_to_rebuild_over_live_background_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """When a grant grows but the sandboxed shell has live background jobs, the command is not
+    run and the shell is left untouched -- the model must opt into a shell_lifetime="new" respawn
+    rather than have the harness silently kill its background work."""
+    _use_real_sandbox(monkeypatch)
+    context = _persistent_context(tmp_path)
+    tool = BashTool(context)
+    _run_session(tool, "echo start")
+    shell = _persistent_shell(context)
+    # Plant a real background job directly on the shell (a top-level '&' would be force-asked by
+    # the classifier, which is beside the point of what this test exercises).
+    shell.run_command("sleep 300 &", 120.0)
+    assert shell.has_live_jobs()
+
+    granted = tmp_path_factory.mktemp("granted")
+    context.session_config.read_dirs = DirRules(allow=[tmp_path, granted])
+
+    result = _run_session(tool, "echo after")
+    assert result["success"] is False
+    assert result["sandbox_rebuilt"] is False
+    assert result["terminal_alive"] is True
+    assert "shell_lifetime" in result["failure_reason"]
+    assert _persistent_shell(context) is shell  # same shell, still alive, command never ran

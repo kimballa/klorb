@@ -1,8 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that runs a shell command requested by the model, gated by two layers of defense: a
 `CommandRules`/`readDirs`/`writeDirs`-driven allow/ask/deny classification of the parsed command
-(never a regexp/lexical one — see `klorb.permissions.shell_parse`), and (once its argv
-construction lands — see `klorb.sandbox`) an OS-level `bwrap` sandbox boundary. See
+(never a regexp/lexical one — see `klorb.permissions.shell_parse`), and an OS-level `bwrap`
+sandbox boundary (`klorb.sandbox.build_bwrap_argv`) around the actual execution, with an
+unsandboxed fallback where `bwrap` can't create a sandbox. See
 docs/specs/bash-tool-and-command-permissions.md for the full design.
 """
 
@@ -11,6 +12,7 @@ import logging
 import os
 import queue
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -27,7 +29,15 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.shell_parse import BashCommandAnalysis, RedirectTarget, parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, Verdict
 from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_and_evaluate_write
-from klorb.sandbox import bwrap_available, detect_bwrap_unavailable_reason
+from klorb.sandbox import (
+    SandboxDirs,
+    allowed_dir_snapshot,
+    build_bwrap_argv,
+    bwrap_available,
+    compute_sandbox_dirs,
+    detect_bwrap_unavailable_reason,
+    path_dirs_from_env,
+)
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool, truncate_lines
@@ -63,9 +73,10 @@ _TIMEOUT_GRACE_SECONDS = 3.0
 to `SIGKILL` on timeout — see `PersistentShell._run_raw`."""
 
 _PWD_TIMEOUT_SECONDS = 10.0
-"""Timeout for the `pwd` round-trip `PersistentShell` runs after every command to refresh its
-known cwd (see `PersistentShell._refresh_cwd`) — deliberately short and independent of
-`tools.bash.timeout`, since `pwd` itself never legitimately takes long."""
+"""Timeout for the short internal round-trips `PersistentShell` runs on its own behalf — the
+`pwd` after every command (`_refresh_cwd`), and the `jobs -p`/`export -p` probes a
+reconcile-on-grow rebuild uses (`has_live_jobs`/`export_state`). Deliberately short and
+independent of `tools.bash.timeout`, since none of these ever legitimately takes long."""
 
 
 def _pump_lines(stream: IO[str], stream_name: str, sink: "queue.Queue[tuple[str, str | None]]") -> None:
@@ -127,11 +138,22 @@ class PersistentShell:
     tool call in a turn's round sequentially (see the plan's "Cleanup and lifecycle" section).
     """
 
-    def __init__(self, argv: list[str], env: dict[str, str], cwd: str) -> None:
+    def __init__(
+        self, argv: list[str], env: dict[str, str], cwd: str,
+        sandbox_snapshot: "frozenset[Path] | None" = None,
+    ) -> None:
         self.process = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, cwd=cwd, start_new_session=True, text=True, bufsize=1)
         self.cwd: str | None = cwd
+        self.sandbox_snapshot = sandbox_snapshot
+        """The `klorb.sandbox.allowed_dir_snapshot()` this shell's live `bwrap` mount namespace
+        was launched with, or `None` when the shell runs unsandboxed. `BashTool._execute_persistent`
+        compares it against the session's current snapshot before each command: a `bwrap` mount
+        namespace is frozen at launch, so if the session's allowed-directory set has *grown* (an
+        interactive grant added an `allow`) the sandbox is stale and must be rebuilt to see the
+        new directory — see docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md. `None`
+        skips that check entirely (nothing to go stale without a mount namespace)."""
         self.alive = True
         self._queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
         assert self.process.stdout is not None
@@ -175,6 +197,30 @@ class PersistentShell:
             return self.cwd
         self.cwd = stdout.strip()
         return self.cwd
+
+    def has_live_jobs(self) -> bool:
+        """Whether this shell currently has any background jobs (`jobs -p` prints a non-empty
+        list) — the probe `BashTool`'s reconcile-on-grow uses before rebuilding a stale sandbox,
+        so a rebuild never silently kills background work the model deliberately started (see
+        `BashTool._execute_persistent`). A dead or timed-out probe conservatively reports `False`
+        (there's no live shell whose jobs a rebuild could destroy). Cannot see already-`disown`'d
+        processes — the same acknowledged gap `jobs` itself has."""
+        stdout, _stderr, _exit_status, timed_out = self._run_raw("jobs -p", _PWD_TIMEOUT_SECONDS)
+        if not self.alive or timed_out:
+            return False
+        return bool(stdout.strip())
+
+    def export_state(self) -> str:
+        """This shell's exported environment as re-executable `declare -x` statements
+        (`export -p`), replayed into a rebuilt shell so cwd + exported env survive a
+        reconcile-on-grow sandbox rebuild — the load-bearing carryable state (see
+        `BashTool._rebuild_persistent_shell` and
+        docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md). Returns `""` if the shell died
+        or the probe failed, so a rebuild just proceeds without a replay rather than raising."""
+        stdout, _stderr, exit_status, timed_out = self._run_raw("export -p", _PWD_TIMEOUT_SECONDS)
+        if not self.alive or timed_out or exit_status != 0:
+            return ""
+        return stdout
 
     def _run_raw(self, command: str, timeout_seconds: float) -> tuple[str, str, int | None, bool]:
         """Run `command` to completion (or timeout/death) and return raw
@@ -347,10 +393,11 @@ def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str
     every `session_config.share_env` name that's actually set in the klorb process's environment,
     followed by `session_config.set_env`'s overrides (applied last, so they shadow a shared or
     always-set value for the same name). Everything else in the klorb process's own environment
-    is left out, mirroring `bwrap --clearenv`'s intent even though no `bwrap` boundary actually
-    enforces it yet (see `klorb.sandbox`) — `subprocess.Popen(..., env=...)` receives exactly
-    this dict, not `None` (which would inherit the entire parent environment), so the
-    least-privilege intent doesn't silently evaporate while sandboxing is unimplemented.
+    is left out. When a `bwrap` sandbox is in use this same dict is re-applied inside it via
+    `--clearenv` + `--setenv` (see `klorb.sandbox.build_bwrap_argv`); on the unsandboxed fallback
+    path there's no `--clearenv` to lean on, so `subprocess.Popen(..., env=...)` receives exactly
+    this dict, not `None` (which would inherit the entire parent environment), keeping the
+    least-privilege intent intact regardless of which path runs.
     """
     env: dict[str, str] = {}
     for name in ("HOME", "USER"):
@@ -368,23 +415,19 @@ def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str
 
 def _sandbox_notice() -> str:
     """One-time, human-readable explanation of why this command ran without an OS-level sandbox
-    boundary — tailored by `klorb.sandbox.detect_bwrap_unavailable_reason()` when `bwrap` itself
-    is the blocker, or noting plainly that klorb's sandboxed execution isn't built yet when
-    `bwrap` would otherwise work."""
-    if not bwrap_available():
-        reason = detect_bwrap_unavailable_reason()
-        if reason == "missing_binary":
-            detail = (
-                "Sandbox layer unavailable; cannot launch a sandboxed shell. "
-                "Run `sudo apt-get install bubblewrap`, then restart klorb.")
-        else:
-            detail = (
-                "Sandbox layer unavailable: this environment does not permit unprivileged "
-                "sandboxing (nested container or restrictive kernel policy).")
+    boundary — tailored by `klorb.sandbox.detect_bwrap_unavailable_reason()`: a missing `bwrap`
+    binary (fixable with `apt-get install bubblewrap`) versus a kernel/container policy that
+    forbids unprivileged user namespaces (common inside Docker/cloud-agent environments; fixed by
+    reconfiguring the host, not by installing anything). Only reached when `bwrap_available()` is
+    `False` — see `_maybe_sandbox_notice`."""
+    if detect_bwrap_unavailable_reason() == "missing_binary":
+        detail = (
+            "Sandbox layer unavailable; cannot launch a sandboxed shell. "
+            "Run `sudo apt-get install bubblewrap`, then restart klorb.")
     else:
         detail = (
-            "bubblewrap is available on this host, but klorb's sandboxed BashTool execution "
-            "isn't implemented yet.")
+            "Sandbox layer unavailable: this environment does not permit unprivileged "
+            "sandboxing (nested container or restrictive kernel policy).")
     return (
         f"{detail} Running BashTool without an OS-level sandbox boundary; command and redirect "
         "permission checks (commandRules/readDirs/writeDirs) are still fully enforced.")
@@ -483,10 +526,12 @@ class BashTool(Tool):
     contributor — enforced through the same `raise_if_not_allowed()` seam every other tool uses.
 
     Once permitted, the command runs via `bash --rcfile ${HOME}/.bashrc -i -c "unset PS1; unset
-    PS2; <command>"`. Sandboxing this execution with `bwrap` is designed but not yet built (see
-    `klorb.sandbox`); every call today runs unsandboxed, with a one-time notice the first time
-    that happens in a given session (see `_sandbox_notice`) — the permission checks above are
-    unaffected either way.
+    PS2; <command>"`, wrapped in a `bwrap` sandbox (see `klorb.sandbox.build_bwrap_argv`) whenever
+    one can actually be created on this host (`klorb.sandbox.bwrap_available`). Where it can't (no
+    `bwrap` binary, or a kernel/container policy forbidding unprivileged user namespaces — common
+    inside Docker/cloud-agent environments) the command falls back to unsandboxed execution, with
+    a one-time notice the first time that happens in a given session (see `_sandbox_notice`) — the
+    permission checks above are enforced identically either way.
 
     `shell_lifetime` selects how long the underlying shell process lives: `"command"` spawns a
     fresh, non-persistent shell that exits when the command finishes (no state carries over to
@@ -690,13 +735,40 @@ class BashTool(Tool):
         path, verdict = resolve_and_evaluate_read(self.context, redirect.target)
         return verdict, path, False
 
+    def _compute_sandbox_dirs(self, home: Path) -> SandboxDirs:
+        """The current `SandboxDirs` bind sets for this session's permission tables — recomputed
+        on demand (not cached) so a mid-session grant that widens `readDirs`/`writeDirs` is
+        reflected the next time a one-shot command is sandboxed, and so the persistent shell's
+        reconcile-on-grow check (`_execute_persistent`) sees the up-to-date set."""
+        config = self.context.session_config
+        return compute_sandbox_dirs(
+            workspace_root=config.workspace.path.resolve(),
+            home=home,
+            trusted=config.workspace.trusted,
+            read_dirs=config.read_dirs,
+            write_dirs=config.write_dirs,
+            read_files=config.read_files,
+            write_files=config.write_files)
+
+    def _bwrap_prefix(self, env: dict[str, str], home: Path) -> list[str]:
+        """The `bwrap ... --` argv prefix for this session, to prepend to a shell invocation.
+        Only meaningful when `bwrap_available()`; callers gate on that themselves."""
+        return build_bwrap_argv(
+            workspace_root=self.context.session_config.workspace.path.resolve(),
+            home=home, env=env, dirs=self._compute_sandbox_dirs(home),
+            path_dirs=path_dirs_from_env())
+
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()
         env = build_bash_env(self.context.session_config, self._bash_command)
         home = env.get("HOME", str(Path.home()))
         rcfile = str(Path(home) / ".bashrc")
         full_command = f"unset PS1; unset PS2; {command}"
-        argv = [self._bash_command, "--rcfile", rcfile, "-i", "-c", full_command]
+        inner_argv = [self._bash_command, "--rcfile", rcfile, "-i", "-c", full_command]
+        # bwrap wraps the same inner invocation when a sandbox can actually be created here;
+        # otherwise the command runs unsandboxed (with a one-time notice — see
+        # _maybe_sandbox_notice), permission classification unaffected either way.
+        argv = self._bwrap_prefix(env, Path(home)) + inner_argv if bwrap_available() else inner_argv
 
         tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
         # Registered immediately after creation, before anything else can raise, so this
@@ -793,9 +865,13 @@ class BashTool(Tool):
         return result
 
     def _maybe_sandbox_notice(self) -> str | None:
-        """Return `_sandbox_notice()` the first time it's needed for the current `Session`
-        (tracked via `session.tool_state["Bash"]["sandbox_warned"]`), or every call if there's no
-        `Session` to dedupe against — shared by `_execute` and `_execute_persistent`."""
+        """Return `_sandbox_notice()` the first time a command actually runs unsandboxed for the
+        current `Session` (tracked via `session.tool_state["Bash"]["sandbox_warned"]`), or every
+        such call if there's no `Session` to dedupe against — shared by `_execute` and
+        `_execute_persistent`. Returns `None` whenever `bwrap_available()` (the command ran inside
+        a real sandbox, so there's nothing to warn about)."""
+        if bwrap_available():
+            return None
         if self.context.session is None:
             # No Session to dedupe against (e.g. a caller that built a ToolSetupContext
             # directly) -- show it every call rather than silently dropping it.
@@ -806,12 +882,26 @@ class BashTool(Tool):
             return _sandbox_notice()
         return None
 
-    def _spawn_persistent_shell(self) -> PersistentShell:
+    def _spawn_persistent_shell(
+        self, restore_env: str | None = None, restore_cwd: str | None = None,
+    ) -> PersistentShell:
         workspace_root = self.context.session_config.workspace.path.resolve()
         env = build_bash_env(self.context.session_config, self._bash_command)
         home = env.get("HOME", str(Path.home()))
         rcfile = str(Path(home) / ".bashrc")
-        shell = PersistentShell([self._bash_command], env, str(workspace_root))
+        # Same bwrap prefix as the one-shot path, computed once at spawn (a bwrap mount namespace
+        # is fixed for the life of the process, so a persistent shell can't recompute it per
+        # command -- see reconcile-on-grow in _execute_persistent). The snapshot records the
+        # allowed-dir set this sandbox was launched with, so that reconcile can detect a later
+        # grant that widened it. Unsandboxed hosts get argv=[bash] and snapshot=None.
+        if bwrap_available():
+            argv = self._bwrap_prefix(env, Path(home)) + [self._bash_command]
+            snapshot: frozenset[Path] | None = allowed_dir_snapshot(
+                self._compute_sandbox_dirs(Path(home)))
+        else:
+            argv = [self._bash_command]
+            snapshot = None
+        shell = PersistentShell(argv, env, str(workspace_root), sandbox_snapshot=snapshot)
         # PS1='x' satisfies the `[ -z "$PS1" ] && return` guard most real .bashrc files start
         # with (see PersistentShell's docstring and docs/adrs/bash-env-uses-clearenv-plus-
         # shareenv-setenv-plus-forced-rcfile.md) without ever printing a prompt -- this shell was
@@ -821,7 +911,29 @@ class BashTool(Tool):
         # up to whatever build_bash_env already put in the environment.
         bootstrap = f'PS1=x\n[ -f "{rcfile}" ] && source "{rcfile}"\nunset PS1 PS2\n'
         shell.run_command(bootstrap, self._timeout_seconds)
+        # On a reconcile-on-grow rebuild, replay the prior shell's exported environment and cwd
+        # into the fresh one (after rc-file bootstrap, so accumulated values win) -- see
+        # _rebuild_persistent_shell. Background jobs are unavoidably not carried over.
+        if restore_env:
+            shell.run_command(restore_env, self._timeout_seconds)
+        if restore_cwd:
+            shell.run_command(f"cd {shlex.quote(restore_cwd)}", self._timeout_seconds)
         return shell
+
+    def _rebuild_persistent_shell(
+        self, old: PersistentShell, bash_state: dict[str, Any],
+    ) -> PersistentShell:
+        """Replace a stale sandboxed persistent shell with a fresh one launched against the
+        current (wider) permission tables, replaying the old shell's exported env + cwd, then
+        `SIGKILL` the old sandbox. Only called once `has_live_jobs()` has confirmed no background
+        work would be lost — see `_execute_persistent` and
+        docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md."""
+        restore_env = old.export_state()
+        restore_cwd = old.cwd
+        new_shell = self._spawn_persistent_shell(restore_env=restore_env, restore_cwd=restore_cwd)
+        old.kill()
+        bash_state[_PERSISTENT_SHELL_KEY] = new_shell
+        return new_shell
 
     def _execute_persistent(self, command: str, shell_lifetime: str) -> dict[str, Any]:
         session = self.context.session
@@ -837,9 +949,19 @@ class BashTool(Tool):
         if shell_lifetime == "new" and shell is not None:
             shell.kill()
             shell = None
+        reused = shell is not None
         if shell is None:
             shell = self._spawn_persistent_shell()
             bash_state[_PERSISTENT_SHELL_KEY] = shell
+
+        sandbox_rebuilt = False
+        if reused:
+            shell, sandbox_rebuilt, stale_refusal = self._reconcile_sandbox(shell, bash_state)
+            if stale_refusal is not None:
+                session.register_standing_interjection(
+                    _STANDING_INTERJECTION_SUBJECT, _standing_interjection_provider(shell))
+                session.register_teardown(_TEARDOWN_SUBJECT, shell.kill)
+                return self._sandbox_stale_response(command, shell, stale_refusal)
 
         session.register_standing_interjection(
             _STANDING_INTERJECTION_SUBJECT, _standing_interjection_provider(shell))
@@ -883,10 +1005,67 @@ class BashTool(Tool):
             "runtime": runtime,
             "terminal_alive": result.terminal_alive,
             "terminal_cwd": result.terminal_cwd,
+            "sandbox_rebuilt": sandbox_rebuilt,
         }
         if sandbox_notice is not None:
             response["sandbox_notice"] = sandbox_notice
         return response
+
+    def _reconcile_sandbox(
+        self, shell: PersistentShell, bash_state: dict[str, Any],
+    ) -> tuple[PersistentShell, bool, str | None]:
+        """Reconcile a reused persistent shell's frozen `bwrap` mount namespace with the session's
+        current permission tables before a command runs in it. Returns
+        `(shell_to_use, sandbox_rebuilt, stale_refusal)`:
+
+        * Unsandboxed shell (`sandbox_snapshot is None`), or the allowed-dir set is unchanged (the
+          overwhelmingly common case): the same shell, `False`, `None` — run the command as-is.
+        * The allowed-dir set grew (an interactive grant added an `allow` since this sandbox
+          launched — see docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md) and the shell
+          has no live background jobs: a freshly rebuilt shell, `True`, `None`.
+        * It grew but the shell *does* have live background jobs: the original shell (untouched),
+          `False`, and a non-`None` refusal string — the caller must not run the command, to avoid
+          silently killing that background work; the model is told to opt into a
+          `shell_lifetime="new"` respawn instead (see
+          docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md).
+        """
+        if shell.sandbox_snapshot is None:
+            return shell, False, None
+        env = build_bash_env(self.context.session_config, self._bash_command)
+        home = Path(env.get("HOME", str(Path.home())))
+        current = allowed_dir_snapshot(self._compute_sandbox_dirs(home))
+        if current == shell.sandbox_snapshot:
+            return shell, False, None
+        if shell.has_live_jobs():
+            return shell, False, (
+                "This session-scoped terminal was sandboxed before a directory it now has "
+                "permission to access was granted, and its sandbox has live background jobs an "
+                "automatic rebuild would kill. Re-run with shell_lifetime=\"new\" to start a "
+                "fresh terminal that can see the newly granted directory (this ends the current "
+                "terminal and its background jobs), or use shell_lifetime=\"command\" for a "
+                "one-off command.")
+        return self._rebuild_persistent_shell(shell, bash_state), True, None
+
+    def _sandbox_stale_response(
+        self, command: str, shell: PersistentShell, refusal: str,
+    ) -> dict[str, Any]:
+        """The response for a reconcile-on-grow refusal (live background jobs blocked an automatic
+        rebuild — see `_reconcile_sandbox`): the command did not run, the existing terminal is
+        left alive and untouched, and `failure_reason` explains how to pick up the new grant."""
+        return {
+            "command": command,
+            "exit_status": None,
+            "success": False,
+            "failure_reason": refusal,
+            "stdout": "",
+            "stderr": "",
+            "stdout_file": None,
+            "stderr_file": None,
+            "runtime": 0.0,
+            "terminal_alive": True,
+            "terminal_cwd": shell.cwd,
+            "sandbox_rebuilt": False,
+        }
 
     def _finalize_persistent_output(
         self, stdout: str, stderr: str,

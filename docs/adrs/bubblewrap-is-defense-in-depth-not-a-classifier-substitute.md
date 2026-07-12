@@ -33,8 +33,6 @@
   Because `bwrap` argv construction can't be developed or verified in this project's own
   dev/cloud-agent environments (`bwrap_available()` reports `False` there — unprivileged user
   namespaces aren't permitted in a nested container; see `klorb.sandbox`'s module docstring),
-  `BashTool` runs unsandboxed everywhere today, with a one-time per-session notice
+  `BashTool` runs unsandboxed in those environments, with a one-time per-session notice
   (`klorb.tools.bash._sandbox_notice`) making that reduction in guarantee explicit rather than
-  silent. This is a stated, temporary degradation (see the plan's "Fallback when bwrap can't
-  actually sandbox anything" section), not a reason to treat classification as sufficient on its
-  own once the sandbox layer is actually built.
+  silent.

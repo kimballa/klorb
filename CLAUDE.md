@@ -10,14 +10,14 @@ how the feature works and how it's built. These are especially important for fra
 features that other features are built upon.
 
 Key architecture decisions are captured in architecture decision records (ADRs). ADRs
-are short documents that record a decision, with the format: 
+are short documents that record a decision, with the format:
 
 * date and time
 * question
 * answer
 * reasoning
 
-ADRs are stored in docs/adrs/. 
+ADRs are stored in docs/adrs/.
 
 ADR filenames should have a reasonable slug (`do-foo-by-doing-bar.md`) so that useful
 ADRs can be quickly accessed by agents just by the filename. Don't waste filename on
@@ -150,8 +150,6 @@ The following are **critical** instructions for invoking shell commands:
   approved bash shell commands.
 * All the commands necessary to perform the full software development / test / review loop
   are already pre-approved. You should not need per-tool-call approval from the user.
-* If you use compound commands (`command1; command2` or `command1 && command2`), this
-  will void prior approval. Do not do this. Run each command in a separate bash call.
 * Do not pipe the output of one command directly to another; doing so voids prior approval.
   (The following are examples of forbidden patterns: `command1 | grep <pattern>` or
   `command1 | jq <expr>`). Direct the output of `command1` in each case into a temp file
@@ -176,8 +174,6 @@ Examples of GOOD bash commands:
 Examples of BAD bash commands:
 * `PYTHONPATH=./src:./tests venv/bin/pytest -q tests/ 2>&1 | tail -30`
 * `make test | tail -30`
-* `source venv/bin/activate && make test`
-* `cd backend && make lint`
 
 When you make up complex commands, you waste more time waiting for user approval than if
 you had just stuck to using the pre-approved "make" commands, even if `make test`, etc,

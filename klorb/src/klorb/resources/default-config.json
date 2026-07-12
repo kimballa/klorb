@@ -43,7 +43,14 @@
       "allow": []
     },
     "readFiles": {
-      "deny": [],
+      "deny": [
+        "~/.git-credentials",
+        "~/.netrc",
+        "~/.npmrc",
+        "~/.pypirc",
+        "~/.pgpass",
+        "~/.my.cnf"
+      ],
       "ask": [],
       "allow": [
         "/dev/null",

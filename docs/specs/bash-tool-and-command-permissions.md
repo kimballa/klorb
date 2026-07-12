@@ -14,9 +14,11 @@ confidently classify — a non-literal token, an unrecognized construct, a backg
 `SAFE_STDIN_CONSUMERS` below) — escalates to `"ask"`, never silently to `"allow"`. See the ADRs
 listed at the end of this doc for the reasoning behind its most consequential decisions.
 
-`BashTool` is designed for a second, independent safety layer — a `bwrap` (bubblewrap) sandbox
-boundary — but building the actual sandbox argv is not implemented yet (`klorb.sandbox`); every
-command runs unsandboxed today. See "Sandboxing" below.
+`BashTool` also runs each command inside a second, independent safety layer — a `bwrap`
+(bubblewrap) sandbox boundary (`klorb.sandbox`) — whenever one can actually be created on the
+host. Where it can't (no `bwrap` binary, or a kernel/container policy forbidding unprivileged user
+namespaces), it falls back to unsandboxed execution with a one-time notice; the permission
+classification above is enforced identically either way. See "Sandboxing" below.
 
 Every call also chooses a `shell_lifetime`: `"command"` (a fresh, non-persistent shell for that
 one call) or `"session"`/`"new"` (a single persistent shell reused across calls within a
@@ -411,6 +413,24 @@ and `PersistentShell.__init__` also registers its own `kill()` directly against 
 klorb process exiting normally, via `^C`, or via an uncaught exception never leaves a bash process
 behind.
 
+**Sandbox reconcile-on-grow.** A `bwrap` mount namespace is fixed at launch and cannot be modified
+for the life of that process, but a session's allowed-directory set can *grow* mid-session (the
+user approves an `ask`, adding an `allow`). So a persistent shell records the
+`klorb.sandbox.allowed_dir_snapshot()` its live sandbox was launched with, and before each reused
+command `BashTool._reconcile_sandbox` compares it to the session's current snapshot. Unchanged (the
+common case) or unsandboxed (`snapshot is None`): the command runs in the existing shell, no
+rebuild, `sandbox_rebuilt=false`. Grown, and the shell has no live background jobs (`jobs -p`
+empty): the sandbox is transparently rebuilt against the wider tables — `SIGKILL` the old `bwrap`,
+relaunch, replay cwd + exported env (`export -p`) — and the command runs in the fresh shell with
+`sandbox_rebuilt=true`. Grown, but the shell *has* live background jobs a rebuild would kill: the
+command does not run, the shell is left untouched, and `failure_reason` tells the model to opt into
+a `shell_lifetime="new"` respawn (accepting the loss of its background work) rather than have the
+harness make that call silently. See
+docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md and
+docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md. On an unsandboxed host this is
+entirely a no-op — there is no namespace to go stale — and directory grants remain enforced at the
+classification layer per command exactly as for the one-shot fallback.
+
 ### Response shape
 
 `BashTool`'s result dict uses this codebase's ordinary snake_case tool-response convention:
@@ -419,9 +439,10 @@ behind.
 `stderr_file` (`None` when not spilled — exactly one of each inline/file pair is non-`None`),
 `runtime` (seconds), and an optional `sandbox_notice` (see "Sandboxing" below). For
 `shell_lifetime` in `{"session", "new"}`, the response also includes `terminal_alive` (`bool`:
-whether the persistent shell is still usable after this command) and `terminal_cwd` (`str | None`:
+whether the persistent shell is still usable after this command), `terminal_cwd` (`str | None`:
 the shell's cwd via the `pwd` round-trip described above, or `None` when `terminal_alive` is
-`False`).
+`False`), and `sandbox_rebuilt` (`bool`: whether this call transparently rebuilt a stale sandbox
+to pick up a mid-session grant before running — see "Session-scoped terminals" below).
 
 ## Sandboxing
 
@@ -429,28 +450,72 @@ the shell's cwd via the `pwd` round-trip described above, or `None` when `termin
 (`bwrap --ro-bind / / --proc /proc --dev /dev -- true`) once per process, cached — the real
 question is "can `bwrap` actually create a sandbox right now," not any `/proc`/`/.dockerenv`
 environment fingerprinting (those are only used to *word* the fallback notice, never to make the
-go/no-go decision). `klorb.sandbox.build_bwrap_argv()` — the function that would build the actual
-mount/namespace/env argv for the sandboxed process — is a stub that raises `NotImplementedError`
-and is never called: developing and verifying it requires a
-host where unprivileged user namespaces actually work, which this project's own dev and
-cloud-agent environments do not provide. See
-docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md for why this is a
-deliberate, temporary degradation rather than a reason to skip the permission-classification
-layer.
+go/no-go decision).
 
-`BashTool` therefore runs every command unsandboxed today. The first time that happens in a given
-session, the result carries a `sandbox_notice` string explaining why (missing `bwrap` binary —
-also naming the `apt-get install bubblewrap` fix and that klorb needs restarting afterward for it
-to take effect — this environment disallowing unprivileged user namespaces, or `bwrap` being
-available but klorb's sandboxed execution simply not being built yet) and noting that
-command/redirect permission checks are still fully enforced regardless. The notice is never
-repeated for the rest of that session: `session.tool_state["Bash"]["sandbox_warned"]` (see
-docs/specs/tool-framework.md's `ToolSetupContext.session`/`Session.tool_state` description)
-tracks whether it's already fired, naturally resetting on `/clear` since a fresh `Session` (and
-thus a fresh, empty `tool_state`) is created then. A `BashTool` built from a `ToolSetupContext`
-with no real `Session` attached (e.g. a caller that constructs one directly, without going
-through `Session`) has no `tool_state` to dedupe against, so it shows the notice on every call
-instead of silently dropping it.
+When it can, `klorb.sandbox.build_bwrap_argv()` assembles the `bwrap ... --` argv prefix
+`BashTool` wraps the shell invocation in, derived from the *same* `readDirs`/`writeDirs` the file
+tools use (`klorb.sandbox.compute_sandbox_dirs` — one source of truth, not a second parallel
+filesystem policy):
+
+* Namespaces `--unshare-net` (all network denied until a proxy exists), `--unshare-ipc`,
+  `--unshare-pid`, `--unshare-uts`, `--unshare-cgroup`, plus `--unshare-user`/`--disable-userns`
+  with an identity uid/gid map so files the command creates in the binds stay owned by the real
+  user — the explicit `--unshare-user` is required by `--disable-userns` on real `bwrap`, contrary
+  to the plan's original guidance; see
+  docs/adrs/pass-unshare-user-because-disable-userns-requires-it.md.
+* Hardening `--hostname klorb-host`, `--die-with-parent`, `--new-session`, `--cap-drop ALL`; a
+  `--clearenv` + one `--setenv` per `build_bash_env()` entry so the sandbox starts from exactly
+  that dict.
+* Whole-tree read-only `/usr`+`/etc` binds and the host's own merged-`/usr` symlink layout; a
+  read-write whole-tree `$HOME` bind (the mechanism by which toolchains under `$HOME` — nvm,
+  pyenv, cargo, ... — reach the sandbox), with the sensitive subdirectories masked back out;
+  disposable `--tmpfs /tmp`, `--tmpfs /var`, `--dev /dev`, `--proc /proc`; read-write
+  binds for the workspace root (when trusted) and every `writeDirs.allow` entry, read-only binds
+  for `readDirs.allow` entries; PATH-derived read-only top-up binds for toolchains outside
+  `/usr`/`$HOME`; then an empty `--tmpfs` mask over every `readDirs.deny` entry and every
+  `privileged_dirs()` entry (`<workspace>/.klorb`, the klorb config/data/state dirs) — masked with
+  `--tmpfs` rather than empty-placeholder binds, so no host-side placeholder needs cleanup; see
+  docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
+* **Individual files.** The same one-source-of-truth idea extends to `readFiles`/`writeFiles`,
+  which name single files by exact path (`klorb.permissions.file_access`) rather than directories.
+  An existing `readFiles.deny` file that lands inside a bound directory (e.g. `~/.git-credentials`
+  sitting right in the read-write `$HOME` bind, where masking the whole parent would be far too
+  broad) is masked with `--ro-bind /dev/null <file>`, the standard bwrap file-mask idiom — its
+  content reads back as inaccessible while its siblings in the same directory stay readable. The
+  mirror also holds: an existing `readFiles.allow`/`writeFiles.allow` file that *isn't* already
+  reachable through a directory bind (a config file or device node the user allowed outside the
+  workspace, or a single file explicitly allowed inside an otherwise-masked directory) is bound
+  into place read-only/read-write, synthesizing any missing parent directories with `--dir` — so
+  an exact file grant actually works inside the sandbox instead of failing with `ENOENT`. Both are
+  applied after the directory binds/masks (so they win), file binds before deny-masks (so a deny
+  still wins over a stray allow), and only for files that exist on disk (a `--*-bind` needs a real
+  source). `klorb.resources.default-config.json` ships `readFiles.deny` entries for the common
+  single-file home-directory credential stores — `~/.git-credentials`, `~/.netrc`, `~/.npmrc`,
+  `~/.pypirc`, `~/.pgpass`, `~/.my.cnf` — that live directly in `$HOME` alongside unremarkable
+  files.
+* `--chdir workspace_root`.
+
+Signal deaths inside the sandbox surface through the extra `bwrap` → `bash` → target layer as an
+ordinary positive `128 + signum` exit code, decoded by `klorb.tools.bash._decode_exit` the same as
+the unsandboxed forked-child case; timeout/`^C` teardown always `SIGKILL`s the outer `bwrap`
+(destroying its pid namespace, which reaps everything inside).
+
+**Fallback.** When `bwrap_available()` is `False`, `BashTool` runs the same command unsandboxed.
+The first time that happens in a given session, the result carries a `sandbox_notice` string
+explaining why (missing `bwrap` binary — also naming the `apt-get install bubblewrap` fix and that
+klorb needs restarting afterward — or this environment disallowing unprivileged user namespaces,
+common inside Docker/cloud-agent environments) and noting that command/redirect permission checks
+are still fully enforced regardless. What's genuinely lost is the OS-level backstop on filesystem
+access: `evaluate_write()` still gates an explicit redirect and `CommandRules` still gates argv0/
+args, but neither can see what an *approved* command does with its own `open()`/`write()` calls —
+a `python -c "..."` one-liner or a compiled binary can read or write anything the sandboxed
+boundary would otherwise have prevented. The notice is never repeated for the rest of that
+session: `session.tool_state["Bash"]["sandbox_warned"]` (see docs/specs/tool-framework.md's
+`ToolSetupContext.session`/`Session.tool_state` description) tracks whether it's already fired,
+naturally resetting on `/clear` since a fresh `Session` (and thus a fresh, empty `tool_state`) is
+created then. A `BashTool` built from a `ToolSetupContext` with no real `Session` attached (e.g. a
+caller that constructs one directly, without going through `Session`) has no `tool_state` to
+dedupe against, so it shows the notice on every call instead of silently dropping it.
 
 ## Configuration
 
@@ -484,10 +549,11 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 
 ## Out of scope
 
-* `bwrap` argv construction (`klorb.sandbox.build_bwrap_argv`) — see "Sandboxing" above.
-* Network egress permissioning (`TODO.md`'s "website access" item) — `bwrap --unshare-net` is
-  planned to deny all network access unconditionally once sandboxing exists; no allowlist
-  mechanism is designed yet.
+* Network egress permissioning (`TODO.md`'s "website access" item) — `bwrap --unshare-net` denies
+  all network access unconditionally today; no domain-allowlist/proxy mechanism is designed yet.
+* Growing a live persistent sandbox's mounts *in place* (rather than rebuilding it) via a
+  privileged in-namespace mount helper — rejected as contradicting `--cap-drop ALL`; see
+  docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md.
 * Structured audit logging of command requests/decisions/outcomes — a real goal, not required for
   this first version.
 * macOS support (`sandbox-exec`/Seatbelt in place of `bwrap`) — Linux only.
@@ -505,6 +571,10 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/shell-out-to-shfmt-for-bash-parsing.md
 * docs/adrs/reject-trap-debug-as-a-security-boundary.md
 * docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md
+* docs/adrs/pass-unshare-user-because-disable-userns-requires-it.md
+* docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md
+* docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md
+* docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md
 * docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md
 * docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
 * docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md
