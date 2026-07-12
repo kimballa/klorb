@@ -16,7 +16,9 @@
       "WebSearch",
       "Read(//home/aaron/.local/state/klorb/session-logs/**)",
       "Bash(ps aux *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(git -C /home/aaron/src/klorb status)",
+      "Bash(git -C /home/aaron/src/klorb stash list)"
     ]
   },
   "hooks": {

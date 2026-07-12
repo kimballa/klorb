@@ -10,7 +10,7 @@ from typing import Callable, Literal
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Vertical, VerticalScroll
-from textual.markup import escape
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -197,7 +197,9 @@ class ExpandedCommandScreen(ModalScreen[None]):
         self._command_text = command_text
 
     def compose(self) -> ComposeResult:
-        yield VerticalScroll(Static(self._command_text))
+        # `markup=False`: `command_text` is arbitrary and must render verbatim -- a literal `[`
+        # in the command is not content markup.
+        yield VerticalScroll(Static(self._command_text, markup=False))
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -425,21 +427,29 @@ class PermissionAskPanel(Vertical):
             preview_source = self._ask_ctx.item_command_text or command_text
             preview, truncated = _command_preview(preview_source, wrap_width=self._preview_wrap_width)
             show_more = truncated or self._ask_ctx.is_compound
-            preview_section.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID))
+            # `markup=False`: `preview` is arbitrary command text and must render verbatim -- a
+            # literal `[` in an argv (e.g. a Python list comprehension) is not content markup, and
+            # would otherwise raise MarkupError when the compositor reflows this widget.
+            preview_section.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID, markup=False))
             if show_more:
                 preview_section.append(_MoreIndicator(on_activate=self.action_expand_command))
         elif self._ask_ctx.path is not None:
-            preview_section.append(Static(str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID))
-        if self._risk_rationale is not None:
+            # `markup=False`: a filesystem path can contain `[` and must render verbatim.
             preview_section.append(Static(
-                self._risk_rationale, id=PERMISSION_ASK_RATIONALE_ID,
+                str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID, markup=False))
+        if self._risk_rationale is not None:
+            # `markup=False`: the rationale is model-generated free text and must render verbatim.
+            preview_section.append(Static(
+                self._risk_rationale, id=PERMISSION_ASK_RATIONALE_ID, markup=False,
                 classes=_risk_band_class(self._risk_score) if self._risk_score is not None else None))
         if preview_section:
             preview_section[-1].add_class(_SECTION_END_CLASS)
         widgets.extend(preview_section)
 
+        # `markup=False`: `resource_description` carries arbitrary argv/path detail (e.g. a
+        # bash item's own command text) and must render verbatim, not be parsed as content markup.
         widgets.append(Static(
-            self._ask_ctx.resource_description, id=PERMISSION_ASK_DETAIL_ID,
+            self._ask_ctx.resource_description, id=PERMISSION_ASK_DETAIL_ID, markup=False,
             classes=_SECTION_END_CLASS))
 
         granted_text = self._granted_text()
@@ -467,22 +477,29 @@ class PermissionAskPanel(Vertical):
             kind = "Confirm"
         return f"Permission requested: {kind}"
 
-    def _granted_text(self) -> str | None:
+    def _granted_text(self) -> Content | None:
         """The `#permission-ask-granted` copy naming the real scope a persistent Allow records at.
         The resource being granted (the directory, or the command pattern) is set off from the
         surrounding prose in `$text-accent bold` so it reads as distinct from the explanatory
-        text rather than blending into it; `escape()` keeps a bracket or backslash in an argv or
-        path from being mis-parsed as content markup."""
+        text rather than blending into it.
+
+        Built as a `Content` with the resource as an explicitly-styled span rather than as a
+        markup string, so the arbitrary argv/path text is never parsed as content markup at all.
+        `textual.markup.escape()` is not a safe alternative here: it is less conservative than the
+        parser that actually applies the markup, so a resource containing e.g. `[$HOME]` slips
+        through escaping and is silently dropped from the rendered line -- which, for a line whose
+        whole job is to state exactly what a persistent Allow grants, would misreport the grant.
+        See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
         if self._granted_paths:
             directories = ", ".join(str(path) for path in self._granted_paths)
-            return (
-                "Any persistent Allow choice below grants access to the whole directory:\n"
-                f"[$text-accent bold]{escape(directories)}[/]")
+            return Content.assemble(
+                "Any persistent Allow choice below grants access to the whole directory:\n",
+                (directories, "$text-accent bold"))
         if self._granted_command_patterns:
             patterns = ", ".join(" ".join(pattern) for pattern in self._granted_command_patterns)
-            return (
-                "Any persistent Allow choice below grants: "
-                f"[$text-accent bold]{escape(patterns)}[/]")
+            return Content.assemble(
+                "Any persistent Allow choice below grants: ",
+                (patterns, "$text-accent bold"))
         return None
 
     def _refresh_selection(self) -> None:

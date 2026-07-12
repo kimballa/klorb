@@ -17,6 +17,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Grid as GridContainer
 from textual.containers import Vertical, VerticalScroll
+from textual.content import Content
 from textual.pilot import Pilot
 from textual.widgets import Input, Markdown, Static
 
@@ -1357,6 +1358,31 @@ def test_permission_ask_screen_names_the_granted_directory(tmp_path: Path) -> No
     assert str(tmp_path) in str(granted.render())
 
 
+def test_granted_line_keeps_a_bracketed_pattern_verbatim_as_a_styled_span() -> None:
+    """Regression test: the granted-scope line accents just the *pattern span* within a line of
+    fixed prose, so it can't lean on a whole-widget CSS style the way the command preview does --
+    it must build a `Content` with an explicit styled span. It must NOT instead wrap the pattern
+    in inline markup + `textual.markup.escape()`: escaping is less conservative than the parser,
+    so a pattern like `echo [$HOME]` slips through and is silently dropped, misreporting exactly
+    what a persistent Allow would grant. See
+    docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+    screen = PermissionAskPanel(
+        _command_ask_ctx("echo [$HOME]"), granted_command_patterns=[["echo", "[$HOME]"]])
+
+    container = next(iter(screen.compose()))
+    granted = _find_child(container, PERMISSION_ASK_GRANTED_ID)
+
+    assert isinstance(granted, Static)
+    rendered = granted.render()
+    # The pattern survives verbatim (not swallowed) ...
+    assert isinstance(rendered, Content)
+    assert rendered.plain == "Any persistent Allow choice below grants: echo [$HOME]"
+    # ... and is the styled span, set off from the surrounding prose.
+    assert any(
+        rendered.plain[span.start:span.end] == "echo [$HOME]" and "bold" in str(span.style)
+        for span in rendered.spans)
+
+
 def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
     tmp_path: Path,
 ) -> None:
@@ -1591,6 +1617,44 @@ async def test_expand_shows_the_full_compound_command_not_just_this_items_own_co
 
         assert isinstance(app.screen, ExpandedCommandScreen)
         assert str(app.screen.query_one(Static).render()) == "echo $SHELL; echo $HOME"
+
+
+async def test_a_command_with_brackets_mounts_without_a_markup_error() -> None:
+    """Regression test: a command whose text contains `[...]` (e.g. a Python list comprehension)
+    must render verbatim, not be parsed as Textual content markup. Every arbitrary-text `Static`
+    in the panel is built with `markup=False` for this reason -- otherwise the `[` opens a markup
+    tag and the compositor raises `MarkupError` the moment it reflows the panel (parsing happens
+    at reflow, not at `Static.render()`, which is why a `.compose()`-only unit test wouldn't catch
+    it). The whole ask path -- command preview, expanded screen, and `resource_description`
+    detail -- is exercised by expanding the command and mounting it. See
+    docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
+    bracketed = "python -c \"print([m for m in modes if m=='selection' or m=='text' or m=='cursor'])\""
+    app = _PermissionAskTestApp(_command_ask_ctx(bracketed, is_compound=True, reason=bracketed))
+
+    async with app.run_test() as pilot:
+        panel = app.query_one(PermissionAskPanel)
+        command_static = panel.query_one(f"#{PERMISSION_ASK_COMMAND_ID}", Static)
+        assert str(command_static.render()) == bracketed
+
+        await pilot.press("plus")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ExpandedCommandScreen)
+        assert str(app.screen.query_one(Static).render()) == bracketed
+
+
+async def test_a_path_with_brackets_mounts_without_a_markup_error(tmp_path: Path) -> None:
+    """Regression counterpart to the command case for the file-tool path preview: a filesystem
+    path containing `[` must render verbatim rather than be parsed as content markup."""
+    bracketed_path = tmp_path / "weird[dir]" / "f.txt"
+    ctx = PermissionAskContext(
+        path=bracketed_path, is_write=True, resource_description=f"write to {bracketed_path}")
+    app = _PermissionAskTestApp(ctx)
+
+    async with app.run_test():
+        panel = app.query_one(PermissionAskPanel)
+        command_static = panel.query_one(f"#{PERMISSION_ASK_COMMAND_ID}", Static)
+        assert str(command_static.render()) == str(bracketed_path)
 
 
 async def test_clicking_the_more_indicator_opens_expanded_command_screen() -> None:

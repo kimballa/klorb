@@ -1,5 +1,10 @@
 # Render the thinking body as Rich console markup, not a Markdown widget
 
+* Superseded-by: [[style-arbitrary-text-spans-with-content-not-escaped-markup]] — the
+  `rich.markup.escape()` + `[italic]` recipe below was later replaced by a `markup=False`
+  `Static` styled via the `.thinking-body` CSS class, because `escape()` is less conservative
+  than the parser and can't be trusted to neutralize arbitrary reasoning text. The Markdown vs.
+  console-markup finding (below) still holds; only the escaping approach was abandoned.
 * Date: 2026-07-01 00:00
 * Question: The REPL's thinking block needs its body rendered in italics (see
   [[terminal-repl]]). The first implementation reused the same approach as the response

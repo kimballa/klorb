@@ -147,16 +147,17 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   followed by a second `Static` (styled via the `.thinking-body` CSS class — `color:
   $text-muted` to match the dim `<Thinking>` label, and `padding: 0 2` to match the same
   2-column left indent the response gets for free from the `Markdown` widget's own default
-  CSS, since a plain `Static` has none) whose content is the accumulated text run through
-  `klorb.tui.repl._italicized()`; later chunks re-wrap the growing accumulated text the
-  same way and call `.update()` on that same `Static`. `_italicized()` escapes any literal
-  `[`/`]` in the text (via `rich.markup.escape`, so reasoning text containing brackets
-  can't be misread as markup) and wraps the result in `[italic]...[/italic]` Rich console
-  markup rather than Markdown's `*...*` emphasis syntax — deliberately, since reasoning
-  text commonly spans multiple paragraphs and Markdown emphasis doesn't apply across
-  blank-line-separated blocks the way Rich's per-line style markup does (a `Markdown`
-  widget was tried first and silently failed to italicize multi-paragraph reasoning; see
-  [[render-thinking-body-as-rich-markup-not-markdown]]).
+  CSS, since a plain `Static` has none) whose content is the accumulated reasoning text
+  verbatim; later chunks call `.update()` on that same `Static` with the growing text. The
+  `Static` is constructed with `markup=False` so reasoning text containing literal `[`/`]`
+  can't be misread as console markup, and the italic styling comes from the `.thinking-body`
+  CSS class (`text-style: italic`) rather than inline markup — deliberately not a `Markdown`
+  widget, since reasoning text commonly spans multiple paragraphs and Markdown's `*...*`
+  emphasis doesn't apply across blank-line-separated blocks the way a whole-widget CSS style
+  does (a `Markdown` widget was tried first and silently failed to italicize multi-paragraph
+  reasoning; see [[render-thinking-body-as-rich-markup-not-markdown]] for that finding, and
+  [[style-arbitrary-text-spans-with-content-not-escaped-markup]] for why the styling is CSS on
+  a `markup=False` widget rather than `escape()`-d inline markup).
   There's no non-streaming fallback for the thinking block (unlike the response): if
   nothing ever streamed as reasoning, no thinking block is shown, since there'd be no text
   to show.
@@ -292,9 +293,11 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   threads call it concurrently) once per line as it arrives. The first line mounts a `Static`
   widget (not `Markdown`: shell output is plain text, and `Markdown`'s CommonMark rendering
   collapses a single newline inside a paragraph into a soft line break, mangling multi-line
-  output); later lines `.update()` the same widget with the growing accumulated text, escaped
-  via `rich.markup.escape` so literal `[`/`]` in the output (e.g. `[INFO]` log tags) can't be
-  misread as Rich console markup. Only one shell command can be in flight at a time for a
+  output); later lines `.update()` the same widget with the growing accumulated text. The
+  `Static` is constructed with `markup=False` so literal `[`/`]` in the output (e.g. `[INFO]`
+  log tags) render verbatim instead of being misread as console markup (see
+  [[style-arbitrary-text-spans-with-content-not-escaped-markup]]). Only one shell command can
+  be in flight at a time for a
   given REPL: the input box stays disabled for the duration, exactly as it does for a model
   turn, so a second `!command` can't be submitted while the first is still running.
   `ProcessConfig.shell_timeout_seconds` (`shell.timeout` on disk, default `None` — no limit)
