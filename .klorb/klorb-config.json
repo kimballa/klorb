@@ -42,6 +42,10 @@
           "-m",
           "pytest",
           "**"
+        ],
+        [
+          "venv/bin/pytest",
+          "**"
         ]
       ]
     }

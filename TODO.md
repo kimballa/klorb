@@ -2,6 +2,9 @@
 
 # Bugs:
 
+* Scratchpad files that are ostensibly supposed to have a lifetime equal to the session
+  that created the scratchpad file in the first place, are *not* being cleaned up.
+
 * Pasting with ctrl+v reliably inserts the pasted text **twice**.
 
 * the 'screenshot' option in the cmd palette doesn't work.
@@ -22,7 +25,29 @@
 * Bash Approval panel: The string being approved should show up in a color other than the
   white "Any persistent Allow choice below grants: <command_in_different_color>"
 
+* `DeleteMemory` command should be renamed to `ForgetMemory`. References to the former should
+  be renamed to the latter. The file it's in should be renamed accordingly.
+
 # Feature backlog
+
+* The SystemPrompt can include some dynamic information about the current state of things:
+  * Date/time the session started
+  * Model name
+  * Model knowledge cutoff date
+  * Maybe add the detailed `git log -1` including "`whatchanged`" filenames.
+
+* System prompt and interstitial prompt ("hook") improvements:
+  * Regarding the user-entered task: start with a plain request, then rewrite it
+    into role, task, context, constraints, and output format. (maybe ask a
+    cheaper model how to rephrase the original user prompt to kick off the
+    session??)
+  * After the LLM uses tools to make a change, inject a prompt to have it
+    observe / remark on its changes, reflect, decide if it should revise / loop
+    back, or proceed... Kind of a "super turn" idea which loops over what it
+    accomplishes in one big turn.
+  * Also periodically remind it to look back at the system prompt and workspace
+    instructions; you can reference the associated SystemInterjection xml tag
+    and subject attribute.
 
 * The allow/ask/deny lists specifically under commandRules but technically under anything else
   should have elements that are always serialized to one line. In other words: A bash command
@@ -40,15 +65,8 @@
   "List all _wait_until call sites in test_tui_repl.py", which we show to the user, in addition
   to the "grep -n ..." actual command. This can be shown in approval dialog as well as cmd history.
 
-* Add `klorb` cli subcommands for seeing / dumping system prompt and tools list.
-  * it should have distinct output segments for the system prompt vs the tools list data.
-  * it should have a `--role` arg to formulate the system prompt for a specific role.
-  * ... which should default to `coordinator` if left unset, just as actually happens for
-    default sessions.
-  * the output should have a summary at the bottom with token counts for everything:
-    main default_sys.md, and role-specific prompt, and tools.
-  * This should all just go to regular stdout.
-* `klorb show-config` should show the merged config.
+* CLI subcommand: `klorb show-config` should show the merged config from all the json files it loads.
+
 * All config files that the session reads should be things that the process subscribes to; if one
   of the files is modified, then we should hot reload them into the session rather than wait for
   a process restart. (How does that work w.r.t. approvals, etc., that we've put into memory just

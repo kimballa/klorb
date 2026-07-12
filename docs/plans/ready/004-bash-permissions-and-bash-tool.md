@@ -623,6 +623,156 @@ rather than hand-rolling a second, potentially-divergent Docker-detection heuris
 tests.
 
 
+## Sandboxing session-lifetime (persistent) shells
+
+Everything above assumes a `bwrap` sandbox is built fresh per command: compute the mount list from
+the current permission tables, launch `bwrap [args] -- bash -c "<command>"`, wait for it to exit,
+tear the sandbox down. That is exactly right for `shell_lifetime="command"`. It does *not*
+translate directly to the session-scoped persistent shell that
+`docs/plans/archive/005-session-scoped-bash-terminals.md` added
+(`shell_lifetime="session"`/`"new"`, `klorb.tools.bash.PersistentShell`), whose "Out of scope"
+section explicitly deferred its own sandboxing to this plan. The reason it doesn't translate is a
+single hard constraint:
+
+**A `bwrap` sandbox's mount namespace is fixed at launch and cannot be modified for the life of
+that `bwrap` process.** There is no "add a bind mount to a running sandbox" operation. A persistent
+shell is, by design, *one* long-lived `bash` process (one per `Session`, per
+`docs/adrs/cap-persistent-shells-at-one-per-session.md`) — so if it runs inside `bwrap`, its entire
+filesystem view is frozen at the instant the shell was spawned. But the set of directories the
+session is allowed to touch is *not* frozen: the user can approve an `ask` prompt mid-session,
+which adds an `allow` rule to the live `SessionConfig`. A shell sandboxed at turn 1 physically
+cannot see a directory first granted at turn 6, even though `CommandPermissionsTable`/
+`evaluate_write()` now say the command is allowed — the write just fails with `ENOENT`/`EACCES`
+inside a mount namespace that never had that path.
+
+### The one property that makes this tractable: grants only ever loosen
+
+Within a single live session, the allowed-directory set is **monotonically non-shrinking**. An
+interactive grant only ever *adds* an `allow` (and at most removes a now-redundant `ask`) to the
+in-memory `SessionConfig`; nothing in a running session tightens it (see
+`docs/adrs/homedir-grants-can-clean-workspace-ask-never-reverse.md` and
+`docs/adrs/session-applies-its-own-permission-grants.md`). Denyholes (`~/.ssh` etc.) come from the
+static deny list, which is stable for the whole process. So the sandbox's mount set only ever needs
+to *grow*, never to remove a bind or re-mask a path — and "grow an immutable namespace" has exactly
+one primitive available: replace it. This is the whole design.
+
+### Reconcile-on-grow
+
+The mount set is derived from the permission *tables*, not from the parsed command — the one-shot
+path already binds the session's whole allowed-directory set regardless of which paths a given
+command happens to name, precisely because an approved `python -c "..."` can `open()` files the
+shfmt walker never sees (this plan states that limitation plainly under "Fallback"). So the
+persistent shell reuses the *same* `build_bwrap_argv()` computation, just once at spawn instead of
+once per command, and launches `bwrap [args] -- bash` (plain `bash`, no `-c`, matching
+`docs/adrs/persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md`) with its stdin pipe fed
+the same sentinel-delimited command stream the unsandboxed version uses today.
+
+`PersistentShell` records the allowed-directory set (or a cheap monotonically-increasing version
+counter bumped whenever a grant mutates `SessionConfig`) that its live `bwrap` was launched with.
+Before writing each command to the shell's stdin — at the same point `BashTool` already classifies
+the command — it compares the current allowed-dir set to that snapshot:
+
+* **Unchanged (the overwhelmingly common case):** run the command in the existing sandboxed shell.
+  No teardown, full state persistence, zero extra cost. A build/debug loop that never triggers a
+  new grant behaves identically to an unsandboxed persistent shell.
+* **Grown:** the running sandbox is stale and must be rebuilt with the wider mount set before the
+  command can run. See below.
+
+Reconciliation is driven by "the session's allowed-dir set grew," *not* by "this command names a
+new path." That correctly picks up a directory granted through some *other* tool (an `EditFile`
+`ask` the user approved between two `Bash` calls) and is robust to the "command opens a file the
+parser can't see" hole — the mount set is a function of the tables, and it is the tables we diff.
+
+### Rebuilding, and what survives it
+
+Rebuilding means: `SIGKILL` the old `bwrap` process (per the "Always kill the outer bwrap process
+with SIGKILL" rule in "process outcome" above — do *not* reuse the `SIGINT`-first escalation from
+`docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md`, which was tuned for
+in-namespace command timeout, not outer-sandbox teardown), recompute `build_bwrap_argv()` against
+the now-wider tables, relaunch `bwrap [args] -- bash`, and replay the previous shell's carryable
+state into the new one before running the model's command.
+
+A `bash` process's state is only *partially* serializable, and this must be stated plainly rather
+than papered over:
+
+* **Restorable, cheaply:** cwd (already tracked per call by `PersistentShell`), and the exported
+  environment (`export -p` in the old shell, replayed as the new shell's bootstrap).
+* **Restorable with more effort, optional for v1:** unexported shell variables (`declare -p`),
+  functions (`declare -f`), aliases (`alias`), and shell options (`shopt -p`, `set +o`). Recommend
+  restoring at least these too, since they're cheap to capture and their silent loss is surprising;
+  but none is load-bearing for the motivating "cd + exported env across steps" use case.
+* **Not restorable at all:** background jobs (`sleep 30 &`, a dev server the model started and left
+  running), disowned/`nohup`'d processes, and any open file descriptors or in-flight redirections.
+  A rebuild kills these along with the old `bwrap` tree. There is no way around this without the
+  rejected in-namespace-mount approach below.
+
+Because the last category can destroy work the model deliberately started, the rebuild must be
+**lossless-or-explicit**, never a silent kill of live background work:
+
+1. Before rebuilding, probe the old shell with `jobs -p` (one more sentinel-delimited round trip).
+2. **No live jobs:** rebuild transparently, replay the restorable state, run the command, and set
+   `sandbox_rebuilt=true` on the response so the reconcile is visible in the transcript rather than
+   silent. Nothing the model cares about was lost.
+3. **Live jobs present:** do *not* auto-rebuild. Leave the existing shell alive and untouched, do
+   not run the command, and return a `failure_reason` explaining that the shell was sandboxed
+   before this directory was granted and that picking up the new grant requires
+   `shell_lifetime="new"` — which the model can then issue as a deliberate choice, accepting the
+   loss of its background jobs, instead of the harness making that call for it. (`jobs -p` cannot
+   see already-`disown`'d processes; that residual gap is acknowledged, not closed — it's the same
+   class of "shell can detach from its own bookkeeping" caveat the backgrounding rule under
+   "CommandRules parsing" already lives with.)
+
+`shell_lifetime="new"` naturally shares this exact respawn machinery: it already means "kill the
+current shell and start fresh," so it always adopts the *current* (widest-so-far) mount set as a
+side effect, and is the model's explicit escape hatch for case 3. Likewise the timeout path already
+ends the whole persistent shell (per plan 005), so the *next* `shell_lifetime="session"` call
+transparently spawns a fresh, current-mount-set sandbox with nothing extra to do.
+
+### Rejected for v1: mutating a live sandbox's mounts from inside
+
+It is technically possible to keep one `bash` process alive *and* grow its mounts: run a custom
+init as `bwrap`'s child that retains `CAP_SYS_ADMIN` inside the user namespace and performs
+`mount(2)` bind mounts on request over a control fd. This is rejected for v1 on two grounds. First,
+it directly contradicts `--cap-drop ALL` and hands the sandboxed process tree the single most
+dangerous capability for namespace escape — `mount` is a classic escape primitive — which is a
+material weakening of the boundary this whole layer exists to provide, traded for avoiding an
+occasional shell respawn. Second, it's a large amount of bespoke, security-critical plumbing (a
+privileged in-sandbox helper and an IPC protocol to it) for a case that reconcile-on-grow already
+handles with the machinery plan 005 built. Worth revisiting only if real usage shows background-job
+loss across mid-session grants is a frequent, painful occurrence; noted as future work, not an open
+design question blocking v1.
+
+### Unsandboxed fallback
+
+When `bwrap_available()` is `False` (containerized dev/cloud-agent environments — the common case
+today), the persistent shell runs unsandboxed exactly as it does now, and reconcile-on-grow is a
+no-op: there is no mount namespace to go stale, so the allowed-dir-set snapshot is never consulted
+and no rebuild ever fires. Directory grants are still enforced at the classification layer
+(`CommandPermissionsTable`/`evaluate_write()` on each command before it reaches the shell's stdin),
+with the same "no OS-level backstop on what an approved command's own `open()`/`write()` reach"
+caveat this plan already spells out for the one-shot fallback path — nothing about persistence
+changes that story.
+
+### ADR-worthy decisions and open questions specific to this section
+
+* ADR: reconcile-on-grow (snapshot the launch-time mount set, rebuild only when the monotonic
+  allowed-dir set widens) as the mechanism for reconciling an immutable `bwrap` namespace with a
+  session's growing permissions — chosen over both a static broadest-possible envelope and the
+  rejected in-namespace-mount helper.
+* ADR: rebuilds are lossless-or-explicit (silent rebuild only when `jobs -p` is empty; otherwise
+  defer to an explicit `shell_lifetime="new"`), rather than silently killing live background work
+  to pick up a grant.
+* Open question: exactly how much shell state beyond cwd + exported env to restore on rebuild
+  (`declare -p`/`declare -f`/`alias`/`shopt`) — sketched as recommended-but-optional above; the
+  precise set and its ordering interactions with the replayed `~/.bashrc` bootstrap are left to
+  implementation, to be settled on a host where `bwrap` actually works (this plan's environments
+  can't validate it — see `klorb.sandbox.build_bwrap_argv`'s stub status).
+* Open question: whether to add a `sandbox_rebuilt` (and a reason) field to the persistent-shell
+  response schema alongside plan 005's `terminal_alive`/`terminal_cwd`, or fold the notice into the
+  existing standing `"SessionTerminal"` interjection — the former is per-call and precise, the
+  latter avoids growing the schema; decide during implementation.
+
+
 ## CommandRules parsing / matching with shfmt
 
 * `CommandRules` matching semantics:
