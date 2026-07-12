@@ -7,14 +7,14 @@ import pytest
 from fixtures.sample_models.alpha_model import AlphaModel
 
 from klorb.role import COORDINATOR_ROLE_NAME, CoordinatorRole, NamedRole, get_role
-from klorb.system_prompts import SYSTEM_PROMPTS_SUBDIR
+from klorb.system_prompt import SYSTEM_PROMPTS_SUBDIR
 
 
 @pytest.fixture
 def user_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the user override tier at an empty temp dir, so a developer's real
     `~/.config/klorb/system_prompts.d/` files can't leak into these tests."""
-    monkeypatch.setattr("klorb.system_prompts.KLORB_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("klorb.system_prompt.KLORB_CONFIG_DIR", tmp_path)
     return tmp_path
 
 

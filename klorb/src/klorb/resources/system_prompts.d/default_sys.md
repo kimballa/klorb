@@ -113,6 +113,8 @@ Editing with EditFile/EditScratchpad.
   `context_before`/`context_after` (raw content immediately before/after the target), using the
   exact values the error names for the intended location, to disambiguate — `""` there asserts
   "nothing is on that side," which is different from omitting the argument entirely.
+* When possible, anchoring to non-empty start / end lines tends to work better than blank ones,
+  as there are often many possible matches for a blank line in a given line number range.
 * To insert without deleting, set `start_line == end_line` to an existing line and fold that
   line's original text into `new_text`. To delete, pass an empty `new_text`. To insert into a
   completely empty file/scratchpad, the only valid call is `start_line=1, end_line=0,

@@ -113,6 +113,9 @@ Uphold high engineering standards.
   libraries cautiously and thoughtfully; ask the user for permission before adding new
   dependencies. Once added, use them according to their best practices. Do not reimplement
   functionality that already exists in this proven code. Extract _leverage_ from library code.
+* Design useful interfaces, APIs, class hierarchies, domain / data / object models.
+* Employ solid UX design principles and center the user, whether it's a web app, a GUI, a
+  terminal UI, command-line tool, or the developer experience (DX) of using APIs from a library.
 </SoftwareSpecific>
 
 </EngineeringStandards>

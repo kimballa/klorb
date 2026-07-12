@@ -35,7 +35,7 @@ from klorb.session import (
     TurnEventHandlers,
     generate_session_id,
 )
-from klorb.system_prompts import DEFAULT_SYS_FILENAME, resolve_prompt_file
+from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 

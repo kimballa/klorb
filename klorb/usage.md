@@ -13,6 +13,8 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb init` [`--system` | `--user`] [`--force`]
 
+`klorb system-prompt` [`--role` *ROLE*] [`--model` *MODEL*] [`--config` *FILE*]
+
 ## DESCRIPTION
 
 klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
@@ -24,7 +26,9 @@ message submitted as the first turn, then keeps the REPL open for more.
 
 Invoked as `klorb init` (only recognized when `init` is the very first
 argument), it instead bootstraps a `klorb-config.json` file and a `klorb`
-executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
+Invoked as `klorb system-prompt` (only recognized when `system-prompt` is the
+very first argument), it dumps the resolved system prompt and tool definitions
+to stdout — see COMMANDS below.
 
 ## COMMANDS
 
@@ -43,7 +47,19 @@ executable symlink — see COMMANDS below and `docs/specs/klorb-init.md`.
   user, or a permission error). Also reachable from the interactive REPL as
   the `Init local klorb config` command palette entry (always `--user`
   scope) — see `docs/specs/klorb-init.md`.
+* `system-prompt` [`--role` *ROLE*] [`--model` *MODEL*] [`--config` *FILE*]
 
+  Dumps the resolved system prompt and tool definitions to stdout, with a
+  token-count summary at the bottom. Output is plain text with
+  markdown-style section headers separating the default system prompt
+  (`default_sys.md`), the role-specific addendum (inside an `<AgentRole>`
+  tag), and the pretty-printed tool-definition JSON the model receives.
+  `--role` concretizes the system prompt for a specific operating role
+  (defaults to `coordinator`, the same role a default session runs as).
+  `--model` resolves model-specific prompt tiers (defaults to the model
+  configured via the `klorb-config.json` file stack). `--config` layers an
+  additional config file on top of the usual `/etc`, per-user, and
+  per-project files. Exit status is `0` on success.
 ## OPTIONS
 
 * `-m` *PROMPT*, `--message` *PROMPT*
@@ -205,6 +221,18 @@ environment:
 
 ```
 klorb --no-log-tool-calls -m "List the files in this directory."
+```
+Dump the resolved system prompt and tool definitions for the default
+coordinator role:
+
+```
+klorb system-prompt
+```
+
+Dump the system prompt for a different role and model:
+
+```
+klorb system-prompt --role auditor --model openai/gpt-5-nano
 ```
 
 ## SEE ALSO

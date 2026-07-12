@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
-from klorb.system_prompts import mangle_model_name, resolve_prompt_file
+from klorb.system_prompt import mangle_model_name, resolve_prompt_file
 
 ThinkingBudgetStyle = Literal["effort", "tokens"]
 """How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a
@@ -20,7 +20,7 @@ class Model(ABC):
 
     def mangled_name(self) -> str:
         """Return `name()` made filesystem-safe (see
-        `klorb.system_prompts.mangle_model_name`): this model's filename stem within a
+        `klorb.system_prompt.mangle_model_name`): this model's filename stem within a
         `system_prompts.d/` prompt-file tree."""
         return mangle_model_name(self.name())
 
@@ -28,7 +28,7 @@ class Model(ABC):
         """Return this model's role-agnostic, model-specific system prompt — the
         `<mangled_name()>.md` prompt file at the top of a `system_prompts.d/` tree (user
         override tier, then packaged tier — see
-        `klorb.system_prompts.resolve_prompt_file`) — or `None` if no such file exists.
+        `klorb.system_prompt.resolve_prompt_file`) — or `None` if no such file exists.
         Consulted by `Session._resolve_system_prompt()` as one tier of its "default walk",
         independent of whatever the active `Role`'s own prompt tiers resolve. Subclasses
         (e.g. test fixtures) may override to return a literal string without filesystem

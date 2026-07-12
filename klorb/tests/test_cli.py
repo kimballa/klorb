@@ -15,6 +15,7 @@ from klorb.logging_config import session_log_path
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig, ThinkingEffort
+from klorb.workspace import Workspace
 from klorb.workspace import trust_manager as trust_manager_module
 
 
@@ -473,3 +474,96 @@ def test_run_init_cli_returns_one_and_prints_error_on_init_error(
 
     assert exit_code == 1
     assert "boom" in capsys.readouterr().err
+
+
+def test_main_dispatches_to_system_prompt_subcommand_when_argv1_is_system_prompt() -> None:
+    with patch("klorb.cli.run_system_prompt_cli", return_value=0) as mock_run:
+        with patch("sys.argv", ["klorb", "system-prompt", "--role", "auditor"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    mock_run.assert_called_once_with(["--role", "auditor"])
+    assert exc_info.value.code == 0
+
+
+def test_main_propagates_system_prompt_subcommand_failure_exit_code() -> None:
+    with patch("klorb.cli.run_system_prompt_cli", return_value=1):
+        with patch("sys.argv", ["klorb", "system-prompt"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    assert exc_info.value.code == 1
+
+
+def test_main_does_not_treat_system_prompt_as_a_subcommand_unless_it_is_argv1() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_system_prompt_cli") as mock_run:
+            with patch("sys.argv", ["klorb", "-m", "system-prompt"]):
+                cli.main()
+
+    mock_run.assert_not_called()
+
+
+def test_run_system_prompt_cli_defaults_role_to_coordinator(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            exit_code = cli.run_system_prompt_cli([])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "## System Prompt (default_sys.md)" in out
+    assert "## Role-Specific Prompt (role: coordinator)" in out
+    assert "## Tool Definitions" in out
+    assert "## Token Count Summary" in out
+    assert "default_sys.md:" in out
+    assert "role-specific prompt:" in out
+    assert "tool definitions:" in out
+    assert "total" in out
+
+
+def test_run_system_prompt_cli_passes_explicit_role(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            exit_code = cli.run_system_prompt_cli(["--role", "auditor"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "## Role-Specific Prompt (role: auditor)" in out
+
+
+def test_run_system_prompt_cli_passes_explicit_model(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            exit_code = cli.run_system_prompt_cli(["--model", "some/model"])
+
+    assert exit_code == 0
+
+
+def test_run_system_prompt_cli_passes_config_flag_path(
+    stub_process_config: MagicMock,
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_system_prompt_cli(["--config", "/some/extra-config.json"])
+
+    stub_process_config.assert_called_once_with(
+        config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)

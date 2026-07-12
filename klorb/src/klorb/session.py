@@ -27,7 +27,7 @@ from klorb.permissions.table import (
     PermissionOverride,
 )
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
-from klorb.system_prompts import DEFAULT_SYS_FILENAME, DEFAULT_SYSTEM_PROMPT, resolve_prompt_file
+from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
 from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
@@ -148,13 +148,6 @@ def _wrap_system_interjection(subject: str, message: str) -> str:
     `_pending_permission_framework_interjection`."""
     return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
 
-
-def _wrap_agent_role(role_prompt: str) -> str:
-    """Wrap `role_prompt` in an `<AgentRole>...</AgentRole>` tag pair, so it reads as a
-    role-specific addendum layered onto the role-and-model-agnostic default prompt ahead of
-    it, rather than a competing, free-standing prompt — see
-    `Session._resolve_system_prompt()`."""
-    return f"<AgentRole>\n{role_prompt}\n</AgentRole>"
 
 
 class SessionConfig(BaseModel):
@@ -420,6 +413,7 @@ class Session:
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
+        self._system_prompt = SystemPrompt(config, self._role, self._model_registry)
         self._process_config = process_config
         """The `ProcessConfig` this session was constructed with, or `None`. Kept around (beyond
         the fields already pulled out of it above) so `_retry_after_permission_decision` can
@@ -510,6 +504,14 @@ class Session:
         """Return the `Role` this session's agent operates as, built (in `__init__`, from
         `config.role_name`) via `klorb.role.get_role()`."""
         return self._role
+
+    @property
+    def system_prompt(self) -> SystemPrompt:
+        """Return the `SystemPrompt` that resolves this session's system prompt, built in
+        `__init__` from the live `config`, `Role`, and `ModelRegistry`. Re-resolves fresh on
+        each call (see `SystemPrompt.resolve`), so a mid-session `config.model` change is
+        reflected on the next turn."""
+        return self._system_prompt
 
     @property
     def provider(self) -> ApiProvider:
@@ -669,49 +671,13 @@ class Session:
             return None
         return model.capabilities().get("max_context_window")
 
-    def _default_system_prompt(self) -> str:
-        """Return the role- and model-agnostic default system prompt: the `default_sys.md`
-        prompt file (user override tier, then packaged tier — see
-        `klorb.system_prompts.resolve_prompt_file`), falling back to the hardcoded
-        `DEFAULT_SYSTEM_PROMPT` constant only if that file exists in neither tier (it
-        always ships inside the `klorb.resources` package, so the constant is a safety net,
-        not an expected path)."""
-        prompt = resolve_prompt_file(DEFAULT_SYS_FILENAME)
-        return prompt if prompt is not None else DEFAULT_SYSTEM_PROMPT
-
     def _resolve_system_prompt(self) -> str:
-        """Resolve the system prompt for the active turn by combining two independent
-        resolver walks, each most-specific-source-first and each checking the user override
-        tier before the packaged tier at every step (see
-        `klorb.system_prompts.resolve_prompt_file`):
-
-        * The **default walk** — role-agnostic — tries the active model's own prompt file
-          (`Model.system_prompt()`, skipped when `config.model` isn't registered), then
-          `_default_system_prompt()`'s `default_sys.md`. This walk never comes up empty: its
-          final tier is the hardcoded `DEFAULT_SYSTEM_PROMPT` safety net.
-        * The **role walk** tries the session's `Role`'s prompt tiers (role+model, then role
-          default — see `Role.system_prompt`). May produce `None` if this role has no prompt
-          file in either tier.
-
-        The default walk's result is always the base of the returned prompt. When the role
-        walk also produces a prompt, it's wrapped in an `<AgentRole>` tag (`_wrap_agent_role`)
-        and appended after the default prompt, so a role's instructions layer onto the
-        default ones instead of replacing them outright. Context-instruction files
-        (`AGENTS.md` and friends) are no part of this: they're carried as a separate
-        `<SystemInterjection subject="ProjectGuidance">` prepended onto the first turn's user
-        message by `send_turn()`, not folded into the system prompt itself — see
-        `_build_context_files_interjection()`.
-
-        Re-derived fresh each place it's needed, so it always reflects the *current* active
-        model — see docs/specs/roles-and-system-prompts.md."""
-        model = self._active_model()
-        default_prompt = model.system_prompt() if model is not None else None
-        if default_prompt is None:
-            default_prompt = self._default_system_prompt()
-        role_prompt = self._role.system_prompt(model)
-        if role_prompt is None:
-            return default_prompt
-        return f"{default_prompt}\n\n{_wrap_agent_role(role_prompt)}"
+        """Resolve the system prompt for the active turn by delegating to the session's
+        `SystemPrompt` (see `klorb.system_prompt.SystemPrompt.resolve`), which runs the
+        default and role walks and concatenates their results. Re-derived fresh each place
+        it's needed, so it always reflects the *current* active model — see
+        docs/specs/roles-and-system-prompts.md."""
+        return self._system_prompt.resolve()
 
     def _reasoning_params(self) -> dict[str, Any] | None:
         """Return the provider-shaped `reasoning` request body for the active turn, or

@@ -2,6 +2,7 @@
 """Command-line entry point for klorb."""
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -10,10 +11,13 @@ from dotenv import load_dotenv
 
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, session_log_path
+from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import load_process_config
-from klorb.session import Session
-from klorb.token_estimate import configure_tiktoken_cache_env
+from klorb.role import COORDINATOR_ROLE_NAME, get_role
+from klorb.session import Session, SessionConfig
+from klorb.system_prompt import SystemPrompt
+from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.repl import run_repl
 from klorb.workspace import TrustManager
@@ -21,6 +25,7 @@ from klorb.workspace import TrustManager
 logger = logging.getLogger(__name__)
 
 INIT_SUBCOMMAND = "init"
+SYSTEM_PROMPT_SUBCOMMAND = "system-prompt"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,7 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Subcommands:\n"
             "  init              Bootstrap a klorb-config.json and a `klorb` executable "
-            "symlink.\n\n"
+            "symlink.\n"
+            "  system-prompt     Dump the resolved system prompt and tool definitions.\n\n"
             "Run `klorb <subcommand> --help` to see subcommand-specific flags."
         ),
     )
@@ -165,6 +171,119 @@ def run_init_cli(argv: list[str]) -> int:
     return 0
 
 
+def build_system_prompt_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for `klorb system-prompt`'s own flags
+    (`--role`/`--model`/`--config`) — see `run_system_prompt_cli()`.
+    """
+    parser = argparse.ArgumentParser(
+        prog="klorb system-prompt",
+        description=(
+            "Dump the resolved system prompt and tool definitions that klorb would send to "
+            "the model, with a token-count summary at the bottom. Output goes to stdout."
+        ),
+    )
+    parser.add_argument(
+        "--role", default=COORDINATOR_ROLE_NAME,
+        help=(
+            "Operating role to concretize the system prompt for (e.g. 'coordinator'). "
+            "Defaults to 'coordinator', the same role a default session runs as."
+        ),
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help=(
+            "OpenRouter model identifier to resolve model-specific prompt tiers for. "
+            "Defaults to the model configured via the klorb-config.json file stack."
+        ),
+    )
+    parser.add_argument(
+        "--config", dest="config", default=None,
+        help=(
+            "Path to an additional klorb-config.json file, applied on top of the "
+            "/etc, per-user, and per-project config files."
+        ),
+    )
+    return parser
+
+
+def _print_section(header: str, body: str) -> None:
+    """Print one output section: a markdown-style header, a blank line, the body, and a
+    trailing blank line, so sections are visually separated when concatenated on stdout."""
+    print(f"## {header}\n")
+    print(body)
+    print()
+
+
+def run_system_prompt_cli(argv: list[str]) -> int:
+    """Parse `argv` (the arguments following `klorb system-prompt`) and print the resolved
+    system prompt and tool definitions to stdout, with a token-count summary at the bottom.
+
+    Resolves the config file stack (the same `/etc`/per-user/per-project/`--config` layers
+    `load_process_config()` always reads) to pick up the configured model, then layers the
+    `--model` flag on top when given. The workspace is resolved via a fresh `TrustManager`
+    (never bootstrapped — that needs the interactive TUI), the same non-interactive path a
+    headless one-shot prompt takes: if the project isn't trusted, its per-project config layer
+    is simply skipped, not prompted for.
+
+    Output is plain text to stdout, with distinct markdown-style section headers separating
+    the default system prompt (`default_sys.md`), the role-specific addendum, and the tool
+    definitions JSON, followed by a summary of each section's estimated token count.
+    """
+    parser = build_system_prompt_parser()
+    args = parser.parse_args(argv)
+
+    load_dotenv()
+    cwd = Path.cwd()
+    config_flag_path = Path(args.config) if args.config is not None else None
+    trust_manager = TrustManager()
+    workspace = trust_manager.resolve_workspace(cwd)
+
+    process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
+    if args.model is not None:
+        process_config.session.model = args.model
+
+    configure_tiktoken_cache_env()
+
+    session_config = SessionConfig(
+        model=process_config.session.model,
+        role_name=args.role,
+        workspace=workspace,
+    )
+    role = get_role(args.role)
+    system_prompt = SystemPrompt(session_config, role, ModelRegistry())
+
+    default_prompt = system_prompt.default_prompt()
+    role_prompt = system_prompt.role_prompt()
+    tool_registry = ToolRegistry(process_config, session_config)
+    tool_definitions = tool_registry.tool_definitions()
+    tools_json = json.dumps(tool_definitions, indent=2, default=str)
+
+    _print_section("System Prompt (default_sys.md)", default_prompt)
+    if role_prompt is not None:
+        _print_section(f"Role-Specific Prompt (role: {args.role})", role_prompt)
+    else:
+        print(f"## Role-Specific Prompt (role: {args.role})\n")
+        print("(none — no prompt file found for this role)")
+        print()
+    _print_section("Tool Definitions", tools_json)
+
+    # Token-count summary.
+    default_tokens = estimate_tokens(default_prompt)
+    role_tokens = estimate_tokens(role_prompt) if role_prompt is not None else 0
+    tools_tokens = estimate_tokens(tools_json)
+    total = default_tokens + role_tokens + tools_tokens
+    print("## Token Count Summary\n")
+    print(f"  default_sys.md:        {default_tokens:>8,} tokens")
+    if role_prompt is not None:
+        print(f"  role-specific prompt:  {role_tokens:>8,} tokens")
+    else:
+        print(f"  role-specific prompt:  {role_tokens:>8,} tokens  (none)")
+    print(f"  tool definitions:      {tools_tokens:>8,} tokens")
+    print(f"  {'total':<22} {total:>8,} tokens")
+    print()
+    return 0
+
+
 def main() -> None:
     """Parse CLI arguments and either run a single prompt or start the interactive REPL.
 
@@ -187,6 +306,9 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == INIT_SUBCOMMAND:
         raise SystemExit(run_init_cli(sys.argv[2:]))
+
+    if len(sys.argv) > 1 and sys.argv[1] == SYSTEM_PROMPT_SUBCOMMAND:
+        raise SystemExit(run_system_prompt_cli(sys.argv[2:]))
 
     parser = build_parser()
     args = parser.parse_args()

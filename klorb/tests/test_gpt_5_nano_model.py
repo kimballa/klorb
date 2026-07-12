@@ -20,7 +20,7 @@ def test_mangled_name_is_filesystem_safe() -> None:
 def test_system_prompt_is_none_without_a_model_specific_prompt_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("klorb.system_prompts.KLORB_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("klorb.system_prompt.KLORB_CONFIG_DIR", tmp_path)
 
     assert Gpt5NanoModel().system_prompt() is None
 

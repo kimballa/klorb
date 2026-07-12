@@ -13,7 +13,7 @@ docs/specs/roles-and-system-prompts.md.
 from abc import ABC, abstractmethod
 
 from klorb.models.model import Model
-from klorb.system_prompts import ROLES_SUBDIR, resolve_prompt_file
+from klorb.system_prompt import ROLES_SUBDIR, resolve_prompt_file
 
 COORDINATOR_ROLE_NAME = "coordinator"
 """`SessionConfig.role_name`'s default: the top-level operating role a klorb session runs
@@ -39,7 +39,7 @@ class Role(ABC):
         tuned variant exists, or `None` if no prompt file for this role exists at all.
 
         Checks, most specific first, each via
-        `klorb.system_prompts.resolve_prompt_file()` (user override tier, then packaged
+        `klorb.system_prompt.resolve_prompt_file()` (user override tier, then packaged
         tier): `roles/<name>/<model.mangled_name()>.md` (skipped when `model` is `None`,
         e.g. the active model string has no registered `Model`), then
         `roles/<name>/default.md`. Subclasses (e.g. test fixtures) may override to return a
