@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Grid as GridContainer
 from textual.containers import Vertical, VerticalScroll
@@ -2354,6 +2355,52 @@ async def test_repeated_up_arrow_walks_back_through_history() -> None:
         await pilot.press("up")
         await pilot.pause()
         assert prompt_input.text == "first"
+
+
+async def test_paste_inserts_text_exactly_once() -> None:
+    """A single bracketed-paste event inserts the pasted text once, not twice. `PromptInput`
+    overrides `_on_paste` to detach from history before the box mutates; because Textual
+    dispatches an event to every `_on_paste` along the widget's MRO, that override must not
+    also call `super()._on_paste` or the base insertion runs twice (the Ctrl+V-pastes-twice
+    bug). The event is delivered via `app.post_message` exactly as the input driver forwards a
+    real bracketed paste to the focused widget."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.focus()
+        await pilot.pause()
+
+        app.post_message(events.Paste("pasted text"))
+        await _wait_until(pilot, lambda: prompt_input.text != "")
+        assert prompt_input.text == "pasted text"
+
+
+async def test_paste_after_recalling_history_starts_a_fresh_draft() -> None:
+    """Pasting detaches from history even though `_on_paste` no longer calls `super()` -- the
+    detach happens in the override itself, and the base handler that actually inserts the text
+    runs afterward via Textual's MRO dispatch. So a paste on top of a recalled entry appends to
+    it as an ordinary edit rather than being discarded as part of the read-only recall."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "recalled"
+        await pilot.press("enter")
+        await _complete_turn(pilot, app)
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert prompt_input.text == "recalled"
+        assert prompt_input._history_index is not None
+
+        app.post_message(events.Paste(" edited"))
+        await _wait_until(pilot, lambda: prompt_input.text != "recalled")
+        assert prompt_input.text == "recalled edited"
+        assert prompt_input._history_index is None
 
 
 async def test_down_arrow_walks_forward_and_returns_to_empty_draft() -> None:

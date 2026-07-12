@@ -5,8 +5,6 @@
 * Scratchpad files that are ostensibly supposed to have a lifetime equal to the session
   that created the scratchpad file in the first place, are *not* being cleaned up.
 
-* Pasting with ctrl+v reliably inserts the pasted text **twice**.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
@@ -21,6 +19,9 @@
 
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
+
+* If you click / focus on the chat history and then start typing, focus should auto-shift
+  into the 'messages' textbox / panel.
 
 # Feature backlog
 

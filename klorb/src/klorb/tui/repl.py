@@ -513,10 +513,19 @@ class PromptInput(TextArea):
         await super()._on_key(event)
 
     async def _on_paste(self, event: events.Paste) -> None:
-        """Detach from history before a paste inserts text, since pasting mutates the box."""
+        """Detach from history before a paste inserts text, since pasting mutates the box.
+
+        Deliberately does *not* call `super()._on_paste(event)`. Textual dispatches an event to
+        every `_on_paste` it finds walking the widget's MRO (see `MessagePump._on_message` ->
+        `_get_dispatch_methods`), so `TextArea._on_paste` -- which does the actual insertion --
+        already runs on its own, right after this override, unless a handler calls
+        `event.prevent_default()` to stop the walk. `TextArea._on_paste` never does, so calling
+        `super()._on_paste(event)` here would insert the pasted text a second time (the classic
+        Ctrl+V-pastes-twice bug). The MRO ordering (subclass first) still guarantees this
+        detach runs before the base handler mutates the box.
+        """
         self._last_key = None
         self._detach_from_history()
-        await super()._on_paste(event)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Refresh palette state whenever the text actually changes, regardless of what
