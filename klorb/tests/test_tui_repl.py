@@ -2155,6 +2155,33 @@ async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_on
     mock_provider.send_prompt.assert_called_once()
 
 
+async def test_confirm_permission_ask_records_decision_for_the_next_classification() -> None:
+    """The user's decision on one bash ask must reach the classifier's *next* request (a
+    different, later command in the same session) as `<PriorDecisionsHistory>` context -- see
+    `klorb.permissions.risk_classifier.record_decision_history`/`resolve_item_risk_assessment`."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _risk_report_reply([("item-0", 1, "reads only", [])])
+    app = ReplApp(session=_session(mock_provider))
+    first_ctx = _command_ctx("grep -rn FIXME", command=["grep", "-rn", "FIXME"])
+    second_ctx = _command_ctx("grep -rn TODO", command=["grep", "-rn", "TODO"])
+
+    async with app.run_test() as pilot:
+        first_task = asyncio.ensure_future(app._confirm_permission_ask(first_ctx))
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+        app.query_one(PermissionAskPanel).dismiss(PermissionDecision(action="allow", scope="session"))
+        await first_task
+
+        second_task = asyncio.ensure_future(app._confirm_permission_ask(second_ctx))
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+        app.query_one(PermissionAskPanel).dismiss(PermissionDecision(action="allow", scope="once"))
+        await second_task
+
+    assert mock_provider.send_prompt.call_count == 2
+    second_user_message = mock_provider.send_prompt.call_args_list[1][0][0][0].content
+    assert "<![CDATA[grep -rn FIXME]]>" in second_user_message
+    assert "<![CDATA[allowed, scope=session]]>" in second_user_message
+
+
 async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: Path) -> None:
     """Full plumbing check: selecting "Allow (this session)" applies the grant to the live
     session config (`Session._retry_after_permission_decision` -> `apply_permission_grant`,

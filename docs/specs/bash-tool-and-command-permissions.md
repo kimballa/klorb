@@ -260,9 +260,30 @@ setting this key explicitly always overrides that pick.
 separate from `tools.bash.timeout` (which bounds the shell command's own runtime once it
 actually runs).
 
+**Prior-decision history.** Every `classify_command_risk()` call remains a single, independent,
+stateless request — no conversation with the classifier model persists across calls (see
+docs/adrs/bounded-explicit-history-not-a-persistent-classifier-conversation.md for why this was
+chosen over keeping the classifier itself alive as a growing per-session conversation). Instead,
+right after the user's own `PermissionDecision` comes back, `ReplApp._confirm_permission_ask`
+calls `klorb.permissions.risk_classifier.record_decision_history()`, which appends one
+`HistoryEntry` (the item's own command text plus the rendered decision) to a plain list in
+`session.tool_state["BashRiskClassifierHistory"]`, trimmed to the most recent
+`tools.bash.riskClassifier.historySize` entries (default `20`) on every append. The next
+`resolve_item_risk_assessment()` call for that session reads that bounded window back out and
+passes it into `classify_command_risk(..., history=...)`, which renders it as a
+`<PriorDecisionsHistory>` element in the user message — distinct from, and always listed ahead of,
+`<CommandUnderReview>` — with the system prompt explicitly instructing the model to treat it as
+calibration context only (e.g. proposing a more broadly generalized `suggested_pattern` when the
+user has repeatedly approved a similar shape of command) and never as an item being scored.
+`record_decision_history()` is a no-op whenever `resolve_item_risk_assessment()` itself would be
+(no `command_text` on the ask, or `tools.bash.riskClassifier.enabled` is off), so nothing is
+recorded for a session that never reads it back.
+
 Structured audit logging of a command's risk assessment and of the user's own decision are both
 not built yet — see the `TODO(aaron)` markers in `klorb.permissions.risk_classifier.
-classify_command_risk` and `ReplApp._confirm_permission_ask` respectively.
+classify_command_risk` and `ReplApp._confirm_permission_ask` respectively. This is a separate,
+durable concern from the bounded, in-memory `HistoryEntry` history above, which exists solely to
+feed the classifier's own next prompt.
 
 ### Execution
 
@@ -451,7 +472,8 @@ instead of silently dropping it.
   "tools.bash.riskClassifier.enabled": true,
   "tools.bash.riskClassifier.model": "openai/gpt-5-nano",
   "tools.bash.riskClassifier.timeout": 5.0,
-  "tools.bash.riskClassifier.tooRiskyThreshold": 9
+  "tools.bash.riskClassifier.tooRiskyThreshold": 9,
+  "tools.bash.riskClassifier.historySize": 20
 }
 ```
 
@@ -498,3 +520,4 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/cap-persistent-shells-at-one-per-session.md
 * docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md
 * docs/adrs/bash-tool-requires-a-stated-intent-argument.md
+* docs/adrs/bounded-explicit-history-not-a-persistent-classifier-conversation.md

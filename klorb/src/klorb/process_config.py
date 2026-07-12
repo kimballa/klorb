@@ -145,6 +145,13 @@ DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD = 9
 `PermissionAskPanel`'s `Deny, once` cell instead of the remembered previous cell; see
 `klorb.permissions.risk_classifier.CommandRiskReport`."""
 
+DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE = 20
+"""Default for `ProcessConfig.bash_risk_classifier_history_size` — how many of the most recent
+`klorb.permissions.risk_classifier.HistoryEntry` records `resolve_item_risk_assessment` sends
+along with the item actually being scored, so a run of similar approvals/denials earlier in the
+same session can inform how aggressively the classifier generalizes its next `suggested_pattern`
+— see `klorb.permissions.risk_classifier.record_decision_history`."""
+
 SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
@@ -197,6 +204,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.riskClassifier.model": "bash_risk_classifier_model",
     "tools.bash.riskClassifier.timeout": "bash_risk_classifier_timeout_seconds",
     "tools.bash.riskClassifier.tooRiskyThreshold": "bash_risk_classifier_too_risky_threshold",
+    "tools.bash.riskClassifier.historySize": "bash_risk_classifier_history_size",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
     LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
     THEME_CONFIG_KEY: "theme",
@@ -292,6 +300,8 @@ class ProcessConfig(BaseModel):
     `bash_timeout_seconds`, which bounds the shell command's own runtime instead."""
     bash_risk_classifier_too_risky_threshold: int = DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD
     """See `DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD`."""
+    bash_risk_classifier_history_size: int = DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE
+    """See `DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE`."""
     compatibility_claude_markdown: bool = False
     """Whether to read `CLAUDE.md` from the workspace root and fold it into the
     `ProjectGuidance` interjection alongside `AGENTS.md` and `.klorb/INSTRUCTIONS.md` (see
