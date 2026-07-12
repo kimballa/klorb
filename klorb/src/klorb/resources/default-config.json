@@ -113,6 +113,7 @@
   "tools.bash.riskClassifier.model": null,
   "tools.bash.riskClassifier.timeout": 5.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
+  "tools.bash.riskClassifier.historySize": 20,
   "tools.editFile.driftSearchRadius": 20,
   "tools.findFile.maxResults": 500,
   "tools.grep.maxResults": 500,

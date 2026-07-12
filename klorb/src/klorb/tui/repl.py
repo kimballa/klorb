@@ -34,7 +34,7 @@ from klorb.models.model import Model
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
-from klorb.permissions.risk_classifier import resolve_item_risk_assessment
+from klorb.permissions.risk_classifier import record_decision_history, resolve_item_risk_assessment
 from klorb.process_config import (
     ProcessConfig,
     load_process_config,
@@ -2378,7 +2378,11 @@ class ReplApp(App[None]):
         confirmable regardless). `ReplApp` itself never constructs an `ItemRiskAssessment` or
         talks to the classifier directly — `resolve_item_risk_assessment` owns the gating,
         batching (across a compound command's several serially-asked items), and caching, so
-        this same call would work identically from any other UI layer driving `Session`.
+        this same call would work identically from any other UI layer driving `Session`. Once the
+        user's own `PermissionDecision` comes back, `klorb.permissions.risk_classifier.
+        record_decision_history` records it (command text plus decision) into this `session`'s
+        bounded history, so a later `resolve_item_risk_assessment` call this session can use it as
+        calibration context — see that function's own docstring.
         """
         risk_assessment = resolve_item_risk_assessment(
             ask_ctx, session=self._session, process_config=self._process_config)
@@ -2421,6 +2425,8 @@ class ReplApp(App[None]):
 
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
+        record_decision_history(
+            ask_ctx, decision, session=self._session, process_config=self._process_config)
         # TODO(aaron): once a structured audit log for permission decisions exists, record an
         # entry here pairing `ask_ctx` (this command/path being asked about) with the user's own
         # `decision` -- this is the "this command _____ got this decision: _____" injection

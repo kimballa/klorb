@@ -723,6 +723,7 @@ def test_bash_risk_classifier_defaults_when_no_config_files_exist(tmp_path: Path
     assert process_config.bash_risk_classifier_model is None
     assert process_config.bash_risk_classifier_timeout_seconds == 5.0
     assert process_config.bash_risk_classifier_too_risky_threshold == 9
+    assert process_config.bash_risk_classifier_history_size == 20
 
 
 def test_default_config_layer_matches_bash_risk_classifier_field_defaults() -> None:
@@ -740,6 +741,9 @@ def test_default_config_layer_matches_bash_risk_classifier_field_defaults() -> N
     assert (
         layer["tools.bash.riskClassifier.tooRiskyThreshold"]
         == defaults.bash_risk_classifier_too_risky_threshold)
+    assert (
+        layer["tools.bash.riskClassifier.historySize"]
+        == defaults.bash_risk_classifier_history_size)
 
 
 def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path: Path) -> None:
@@ -748,6 +752,7 @@ def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path:
         "tools.bash.riskClassifier.model": "openai/other-model",
         "tools.bash.riskClassifier.timeout": 2.5,
         "tools.bash.riskClassifier.tooRiskyThreshold": 6,
+        "tools.bash.riskClassifier.historySize": 5,
     })
 
     process_config = load_process_config(cwd=tmp_path)
@@ -756,3 +761,4 @@ def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path:
     assert process_config.bash_risk_classifier_model == "openai/other-model"
     assert process_config.bash_risk_classifier_timeout_seconds == 2.5
     assert process_config.bash_risk_classifier_too_risky_threshold == 6
+    assert process_config.bash_risk_classifier_history_size == 5
