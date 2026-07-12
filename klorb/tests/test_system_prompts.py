@@ -52,6 +52,15 @@ def test_default_sys_prompt_documents_ask_user_questions(user_config_dir: Path) 
     assert "AskUserQuestions" in content
 
 
+def test_default_sys_prompt_documents_bash_tool(user_config_dir: Path) -> None:
+    content = resolve_prompt_file(DEFAULT_SYS_FILENAME)
+
+    assert content is not None
+    assert "<BashTool>" in content
+    assert "stdout" in content
+    assert "exit" in content
+
+
 def test_resolve_prompt_file_reads_packaged_coordinator_role_prompt(user_config_dir: Path) -> None:
     content = resolve_prompt_file("roles/coordinator/default.md")
 

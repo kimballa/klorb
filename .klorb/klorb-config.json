@@ -36,6 +36,12 @@
         [
           "bin/klorb",
           "--help"
+        ],
+        [
+          "venv/bin/python",
+          "-m",
+          "pytest",
+          "**"
         ]
       ]
     }

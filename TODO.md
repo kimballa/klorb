@@ -2,6 +2,8 @@
 
 # Bugs:
 
+* Pasting with ctrl+v reliably inserts the pasted text **twice**.
+
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
@@ -13,28 +15,32 @@
   (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
   ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
   done by Textual's draw-over algorithm? This may not be fixable.
-  
+
+* Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
+  model to respond.
+
+* Bash Approval panel: The string being approved should show up in a color other than the
+  white "Any persistent Allow choice below grants: <command_in_different_color>"
 
 # Feature backlog
+
+* The allow/ask/deny lists specifically under commandRules but technically under anything else
+  should have elements that are always serialized to one line. In other words: A bash command
+  of `["python", "-m", "some_module", "**"]` should all show up like that on a single line,
+  rather than each token on its own line. It's much more legible this way. The rest of the
+  json config file **should** be pretty-printed with indentation, etc., like it currently is,
+  though.
 
 * The risk_classifer that rewrites bash commands to have */?/** for broader approvals should
   actually also get the history of other approved and denied commands from earlier in the
   session. If the user has approved a whole bunch of very similar commands, then it should
   take that into account and consider generalizing more widely for the next approval.
 
-* The system prompt should have a section with guidance for using the Bash tool.
-  The agent should be nudged inthe direction of using this to verify code, and use toolchain
-  elements in-use in the project / repo it finds itself in. (make, g++, venv/bin/python3, etc.) 
-  It should reassure the agent that stdout, stderr, and error code
-  will all be captured and reported intelligently, without clogging the context if they get too
-  big (you'll get a filename back w/ the data in it instead), so don't bother doing stupid
-  redirects or compound commands to `echo $?` afterward.
-
 * Bash tool can have a summary line provided by the agent, like
   "List all _wait_until call sites in test_tui_repl.py", which we show to the user, in addition
   to the "grep -n ..." actual command. This can be shown in approval dialog as well as cmd history.
 
-* Add `klorb` cli subcommands for seeing / dumping system prompt and tools list. 
+* Add `klorb` cli subcommands for seeing / dumping system prompt and tools list.
   * it should have distinct output segments for the system prompt vs the tools list data.
   * it should have a `--role` arg to formulate the system prompt for a specific role.
   * ... which should default to `coordinator` if left unset, just as actually happens for
@@ -47,11 +53,11 @@
   of the files is modified, then we should hot reload them into the session rather than wait for
   a process restart. (How does that work w.r.t. approvals, etc., that we've put into memory just
   for the duration of the session? Ideally just changed values or new approve/deny/ask entries
-  are merged in with the rest... this seems like it would clobber things, though.) 
+  are merged in with the rest... this seems like it would clobber things, though.)
 * Each per-project subdir in `.local/share/klorb/...` should include a `logs` subdir with symlinks
   to all the log files in `.local/state/ associated w/ the project
 * Why does this logging line make it to the stderr log and not the file log like basically everything
-  else? `INFO:klorb.token_estimate:Found bundled tiktoken cache...`  
+  else? `INFO:klorb.token_estimate:Found bundled tiktoken cache...`
 
 * The logs dir under `.local/state/` should keep at most N most-recent log files or most-recent
   log files up to XX megabytes. (But not less than 1 log file of any length). When opening a new
@@ -68,10 +74,10 @@
   that readfile and editfile can interact in a loop even with field masking making literal context
   matching in EditFile impossible.)
 
-* If it's the agent's turn the "send a message" textbox prompt should be "queue a message..." 
+* If it's the agent's turn the "send a message" textbox prompt should be "queue a message..."
   and you should be allowed to type before it's actually your turn to send.
   * The next logical thing to do is to implement "interrupting" in the conversation so you
-    can interject midway thru what it's saying. 
+    can interject midway thru what it's saying.
 
 * Add a command (CLI and/or command palette) that dumps the *resolved* system prompt for the
   current role + model into the user's editable tree
