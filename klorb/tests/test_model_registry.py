@@ -1,26 +1,83 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.models.registry."""
 
-import fixtures.sample_models as sample_models_package
+import json
+from pathlib import Path
 
+from fixtures.sample_models import NO_SUCH_DIR
+
+from klorb.models.configured_model import ConfiguredModel
 from klorb.models.registry import ModelRegistry
 
+SAMPLE_MODELS_DIR = Path(__file__).parent / "fixtures" / "sample_models"
 
-def test_discovers_models_in_package() -> None:
-    registry = ModelRegistry(package=sample_models_package)
+
+def test_discovers_models_in_packaged_directory() -> None:
+    registry = ModelRegistry(packaged_models_dir=SAMPLE_MODELS_DIR, user_models_dir=NO_SUCH_DIR)
 
     names = {model.name() for model in registry.models()}
 
-    assert names == {"alpha", "beta", "gamma"}
+    assert "delta" in names
 
 
 def test_get_returns_model_by_name() -> None:
-    registry = ModelRegistry(package=sample_models_package)
+    registry = ModelRegistry(packaged_models_dir=SAMPLE_MODELS_DIR, user_models_dir=NO_SUCH_DIR)
 
-    alpha = registry.get("alpha")
+    delta = registry.get("delta")
 
-    assert alpha.system_prompt() == "You are Alpha."
-    assert alpha.capabilities()["vision"] is True
+    assert delta.family() == "test-family"
+    assert delta.model_version() == "1.0"
+    assert delta.capabilities()["vision"] is True
+
+
+def test_user_models_dir_overrides_a_packaged_model_of_the_same_name(tmp_path: Path) -> None:
+    user_dir = tmp_path / "models"
+    user_dir.mkdir()
+    (user_dir / "delta.json").write_text(json.dumps({
+        "schema": {"name": "klorb-model", "version": "1.0.0"},
+        "name": "delta",
+        "capabilities": {"vision": False},
+    }))
+
+    registry = ModelRegistry(packaged_models_dir=SAMPLE_MODELS_DIR, user_models_dir=user_dir)
+
+    assert registry.get("delta").capabilities()["vision"] is False
+
+
+def test_user_models_dir_adds_new_models(tmp_path: Path) -> None:
+    user_dir = tmp_path / "models"
+    user_dir.mkdir()
+    (user_dir / "zeta.json").write_text(json.dumps({
+        "schema": {"name": "klorb-model", "version": "1.0.0"},
+        "name": "zeta",
+    }))
+
+    registry = ModelRegistry(packaged_models_dir=SAMPLE_MODELS_DIR, user_models_dir=user_dir)
+
+    names = {model.name() for model in registry.models()}
+    assert {"delta", "zeta"} <= names
+
+
+def test_a_file_with_the_wrong_schema_name_is_skipped(tmp_path: Path) -> None:
+    user_dir = tmp_path / "models"
+    user_dir.mkdir()
+    (user_dir / "wrong-schema.json").write_text(json.dumps({
+        "schema": {"name": "klorb-config", "version": "1.0.0"},
+        "name": "wrong-schema",
+    }))
+
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=user_dir)
+
+    assert registry.models() == []
+
+
+def test_register_adds_a_model_directly() -> None:
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    model = ConfiguredModel({"name": "manual"}, source="test")
+
+    registry.register(model)
+
+    assert registry.get("manual") is model
 
 
 def test_default_registry_discovers_production_models() -> None:
@@ -29,3 +86,7 @@ def test_default_registry_discovers_production_models() -> None:
     names = {model.name() for model in registry.models()}
 
     assert "openai/gpt-5-nano" in names
+    assert "z-ai/glm-5.2" in names
+    assert "anthropic/claude-sonnet-5" in names
+    assert "qwen/qwen3-coder-next" in names
+    assert "moonshotai/kimi-k2.7-code" in names

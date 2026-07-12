@@ -4,11 +4,22 @@
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 from klorb.system_prompt import mangle_model_name, resolve_prompt_file
 
 ThinkingBudgetStyle = Literal["effort", "tokens"]
 """How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a
 low/medium/high keyword, or `"tokens"` for a numeric reasoning token budget."""
+
+
+class ModelPricing(BaseModel):
+    """A model's published cost per million tokens ("MTok") sent/received, e.g. as reported by
+    an OpenRouter model listing."""
+
+    input_cost_per_mtok: float
+    output_cost_per_mtok: float
+    currency: str = "USD"
 
 
 class Model(ABC):
@@ -48,3 +59,24 @@ class Model(ABC):
         `max_context_window` (int, in tokens), though implementations may include
         additional provider-specific keys.
         """
+
+    def family(self) -> str | None:
+        """Return this model's family/tier identifier (e.g. `"sonnet"`, `"glm"`), or `None`
+        if unknown.
+
+        A model's `name()` is often an OpenRouter identifier that conflates a family name
+        with its version number (e.g. `"anthropic/claude-sonnet-5"` mixes the `"sonnet"`
+        tier with version `"5"`); `family()` and `model_version()` tease those apart so a
+        caller can detect that e.g. `"anthropic/claude-sonnet-5"` and a future
+        `"anthropic/claude-sonnet-5.1"` share a family even though their full names differ.
+        """
+        return None
+
+    def model_version(self) -> str | None:
+        """Return this model's version within its `family()` (e.g. `"5.0"`), or `None` if
+        unknown. See `family()`."""
+        return None
+
+    def pricing(self) -> ModelPricing | None:
+        """Return this model's published per-token cost, or `None` if unknown/not published."""
+        return None

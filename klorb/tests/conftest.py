@@ -32,6 +32,15 @@ def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point `ModelRegistry`'s user-override tier (`klorb.models.registry.KLORB_DATA_DIR`) at
+    an empty temp dir, so no test anywhere in the suite can accidentally pick up a real
+    `~/.local/share/klorb/models` file from the machine running the suite.
+    """
+    monkeypatch.setattr("klorb.models.registry.KLORB_DATA_DIR", tmp_path / "klorb-data-dir")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _configure_tiktoken_cache_dir() -> None:
     """Point tiktoken at the machine's `klorb init`-installed bundled cache, if there is one,

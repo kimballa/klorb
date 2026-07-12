@@ -3,10 +3,9 @@
 
 from pathlib import Path
 
-import fixtures.sample_models as sample_models_package
 import pytest
+from fixtures.sample_models import sample_model_registry
 
-from klorb.models.registry import ModelRegistry
 from klorb.role import COORDINATOR_ROLE_NAME, get_role
 from klorb.system_prompt import (
     DEFAULT_SYS_FILENAME,
@@ -45,7 +44,7 @@ def _system_prompt(model: str, role_name: str = COORDINATOR_ROLE_NAME) -> System
     from klorb.session import SessionConfig
     config = SessionConfig(model=model, role_name=role_name)
     role = get_role(role_name)
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     return SystemPrompt(config, role, registry)
 
 

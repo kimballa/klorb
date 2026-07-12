@@ -4,10 +4,16 @@
 from pathlib import Path
 
 import pytest
-from fixtures.sample_models.alpha_model import AlphaModel
 
+from klorb.models.configured_model import ConfiguredModel
 from klorb.role import COORDINATOR_ROLE_NAME, CoordinatorRole, NamedRole, get_role
 from klorb.system_prompt import SYSTEM_PROMPTS_SUBDIR
+
+
+def _alpha_model() -> ConfiguredModel:
+    """A trivial `Model` test double named `"alpha"`, used only to exercise `Role.system_prompt`'s
+    model-specific-file lookup."""
+    return ConfiguredModel({"name": "alpha"}, source="test")
 
 
 @pytest.fixture
@@ -40,18 +46,18 @@ def test_coordinator_system_prompt_resolves_packaged_default(user_config_dir: Pa
 
 
 def test_role_system_prompt_returns_none_when_no_files_exist(user_config_dir: Path) -> None:
-    assert NamedRole("no-such-role").system_prompt(AlphaModel()) is None
+    assert NamedRole("no-such-role").system_prompt(_alpha_model()) is None
 
 
 def test_role_model_specific_prompt_beats_role_default(user_config_dir: Path) -> None:
     role_dir = user_config_dir / SYSTEM_PROMPTS_SUBDIR / "roles" / "explorer"
     role_dir.mkdir(parents=True)
     (role_dir / "default.md").write_text("explorer default")
-    (role_dir / f"{AlphaModel().mangled_name()}.md").write_text("explorer on alpha")
+    (role_dir / f"{_alpha_model().mangled_name()}.md").write_text("explorer on alpha")
 
     role = NamedRole("explorer")
 
-    assert role.system_prompt(AlphaModel()) == "explorer on alpha"
+    assert role.system_prompt(_alpha_model()) == "explorer on alpha"
     assert role.system_prompt(None) == "explorer default"
 
 
@@ -60,7 +66,7 @@ def test_role_falls_back_to_role_default_when_no_model_specific_file(user_config
     role_dir.mkdir(parents=True)
     (role_dir / "default.md").write_text("explorer default")
 
-    assert NamedRole("explorer").system_prompt(AlphaModel()) == "explorer default"
+    assert NamedRole("explorer").system_prompt(_alpha_model()) == "explorer default"
 
 
 def test_repertoire_is_empty_for_every_role() -> None:
