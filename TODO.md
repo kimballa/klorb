@@ -70,11 +70,6 @@
 * Why does this logging line make it to the stderr log and not the file log like basically everything
   else? `INFO:klorb.token_estimate:Found bundled tiktoken cache...`
 
-* The logs dir under `.local/state/` should keep at most N most-recent log files or most-recent
-  log files up to XX megabytes. (But not less than 1 log file of any length). When opening a new
-  log file, start by cleaning up anything that's "over the line" in this regard.
-
-
 * bash approval panel should put `+` in the hotkey list for the panel when `more` is available.
 
 * Risk classifier (risk_classifier.py) "Command comments to review must not be trusted" instructions

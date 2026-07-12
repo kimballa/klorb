@@ -107,8 +107,9 @@ variable is consulted only as the fallback when that field is still `None`. So
 ## Out of scope
 
 * `tool-calls.log` is never rotated, size-capped, or pruned — every run appends to whatever is
-  already there, indefinitely, mirroring `session-logs/`'s own lack of pruning (see
-  [[paths-and-logging]]).
+  already there, indefinitely. Unlike `session-logs/`, which is bounded by file-count and
+  byte caps each time a new session log opens (see [[paths-and-logging]]), `tool-calls.log` is
+  a single ad hoc file in the working directory with no such cleanup.
 * The log file's location isn't configurable: it's always `tool-calls.log` in the current
   working directory, not under `$KLORB_STATE_DIR` alongside session logs — this is meant as an
   ad hoc, per-invocation-directory debugging aid, not process-wide state.

@@ -2,10 +2,22 @@
 """Tests for klorb.logging_config."""
 
 import logging
+import os
+from pathlib import Path
 
 from textual.logging import TextualHandler
 
 from klorb import logging_config
+
+
+def _make_log(logs_dir: Path, name: str, *, size: int = 0, mtime: float | None = None) -> Path:
+    """Create a `*.log` file of `size` bytes under `logs_dir`, optionally stamped with `mtime`."""
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    path = logs_dir / name
+    path.write_bytes(b"x" * size)
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+    return path
 
 
 def test_session_log_path_builds_path_under_session_logs_dir() -> None:
@@ -50,3 +62,74 @@ def test_configure_logging_writes_log_records_to_file() -> None:
     logging.getLogger("klorb.test_logging_config").info("hello from a test")
 
     assert "hello from a test" in log_path.read_text(encoding="utf-8")
+
+
+def test_prune_session_logs_no_op_on_empty_dir(tmp_path: Path) -> None:
+    logs = tmp_path / "session-logs"
+    logs.mkdir()
+
+    logging_config.prune_session_logs(logs, keep_path=logs / "new.log", max_files=3, max_bytes=10**9)
+
+    assert list(logs.glob("*.log")) == []
+
+
+def test_prune_session_logs_enforces_file_count_cap_reserving_a_slot(tmp_path: Path) -> None:
+    logs = tmp_path / "session-logs"
+    for i in range(5):
+        _make_log(logs, f"log{i}.log", mtime=1000 + i)
+
+    # max_files=3 leaves room for the incoming file, so only the 2 newest existing survive.
+    logging_config.prune_session_logs(
+        logs, keep_path=logs / "new.log", max_files=3, max_bytes=10**9)
+
+    assert sorted(p.name for p in logs.glob("*.log")) == ["log3.log", "log4.log"]
+
+
+def test_prune_session_logs_enforces_byte_cap(tmp_path: Path) -> None:
+    logs = tmp_path / "session-logs"
+    _make_log(logs, "a.log", size=100, mtime=1000)
+    _make_log(logs, "b.log", size=100, mtime=1001)
+    _make_log(logs, "c.log", size=100, mtime=1002)
+
+    # cap of 250 bytes fits the two newest (200 bytes); the oldest is pruned.
+    logging_config.prune_session_logs(
+        logs, keep_path=logs / "new.log", max_files=100, max_bytes=250)
+
+    assert sorted(p.name for p in logs.glob("*.log")) == ["b.log", "c.log"]
+
+
+def test_prune_session_logs_keeps_newest_even_when_over_byte_cap(tmp_path: Path) -> None:
+    logs = tmp_path / "session-logs"
+    _make_log(logs, "big.log", size=500, mtime=1002)
+    _make_log(logs, "mid.log", size=100, mtime=1001)
+    _make_log(logs, "old.log", size=100, mtime=1000)
+
+    # The newest file alone busts the 250-byte cap, but the floor keeps it; the rest are pruned.
+    logging_config.prune_session_logs(
+        logs, keep_path=logs / "new.log", max_files=100, max_bytes=250)
+
+    assert sorted(p.name for p in logs.glob("*.log")) == ["big.log"]
+
+
+def test_prune_session_logs_never_deletes_keep_path(tmp_path: Path) -> None:
+    logs = tmp_path / "session-logs"
+    keep = _make_log(logs, "keep.log", size=1000, mtime=2000)
+    _make_log(logs, "other.log", size=1000, mtime=1000)
+
+    logging_config.prune_session_logs(logs, keep_path=keep, max_files=1, max_bytes=1)
+
+    assert keep.exists()
+    assert not (logs / "other.log").exists()
+
+
+def test_configure_logging_prunes_old_logs_when_opening_new(tmp_path: Path) -> None:
+    logs = tmp_path / "session-logs"
+    for i in range(3):
+        _make_log(logs, f"old{i}.log", mtime=1000 + i)
+    new_log = logs / "new.log"
+
+    logging_config.configure_logging(
+        repl_mode=True, log_path=new_log, max_log_files=2, max_log_bytes=10**9)
+
+    # max_log_files=2 reserves a slot for new.log, so only the newest existing log survives.
+    assert sorted(p.name for p in logs.glob("*.log")) == ["new.log", "old2.log"]

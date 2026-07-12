@@ -30,15 +30,32 @@ paths or calling `logging.basicConfig` itself.
     `klorb/src/klorb/session.py` as `yyyy-mm-dd-hh-mm-<nonce>`, where `<nonce>` is a
     two-word kebab-case slug from `coolname.generate_slug(2)`, the resulting log file name
     takes the same form (e.g. `2026-06-30-15-38-festive-frog.log`).
-  * `configure_logging(*, repl_mode: bool, log_path: Path | None) -> None`, which:
+  * `configure_logging(*, repl_mode: bool, log_path: Path | None, max_log_files: int = ...,
+    max_log_bytes: int = ...) -> None`, which:
     * Attaches a `TextualHandler` (the active Textual app's console, or stderr when none is
       running) when `repl_mode` is True; otherwise attaches a plain `logging.StreamHandler`
       (stderr) for a one-shot prompt.
     * When `log_path` is not `None`, also creates its parent directory (if it doesn't
-      already exist) and attaches a `FileHandler` for it. When `log_path` is `None`, no
-      file is created and no `FileHandler` is attached.
+      already exist), prunes old logs from that directory via `prune_session_logs()` (see
+      below), and attaches a `FileHandler` for it. When `log_path` is `None`, no file is
+      created, no pruning happens, and no `FileHandler` is attached.
     * Calls `logging.basicConfig(level="NOTSET", handlers=[...], force=True)` with whichever
       handlers were selected above.
+  * `prune_session_logs(logs_dir, *, keep_path, max_files=DEFAULT_MAX_SESSION_LOG_FILES,
+    max_bytes=DEFAULT_MAX_SESSION_LOG_BYTES) -> None`, which deletes the oldest `*.log` files
+    in `logs_dir` so that, once the new log file `keep_path` is opened, the directory holds at
+    most `max_files` files totaling at most `max_bytes` bytes, keeping the most-recently-
+    *modified* files. Both are hard caps; the more restrictive one wins. `keep_path` (the log
+    about to be opened; it need not exist yet) is reserved a slot against `max_files` and is
+    never deleted, so steady state after each run is `max_files` files. The single newest
+    existing log is always retained regardless of its size — a session log larger than
+    `max_bytes` on its own is kept, not erased (the "not less than one log file of any length"
+    floor) — while older files are retained only as long as they still fit under `max_bytes`.
+    The defaults, `DEFAULT_MAX_SESSION_LOG_FILES` (12) and `DEFAULT_MAX_SESSION_LOG_BYTES`
+    (32 MiB), are module constants; `configure_logging`'s callers (`klorb.cli.main()` and the
+    REPL's `/clear`) use them unchanged. See [the log-pruning ADR](
+    ../adrs/prune-session-logs-to-newest-within-count-and-byte-caps.md). A file that can't be
+    removed (permissions, a race) is logged and skipped rather than raised.
   * See [the logging handler ADR](
     ../adrs/log-via-textualhandler-and-session-file-with-coolname-nonce.md) for why this
     combination of handlers and naming scheme was chosen, and [the one-shot logging
@@ -67,8 +84,11 @@ paths or calling `logging.basicConfig` itself.
 
 ## Out of scope
 
-* Log rotation/pruning of old files under `session-logs/` is not implemented; every run
-  leaves its log file in place indefinitely.
+* The pruning caps (`max_log_files`/`max_log_bytes`) are module-constant defaults, not yet
+  surfaced as `klorb-config.json` keys; `configure_logging`'s production callers pass neither,
+  so today the caps are always the 12-file / 32-MiB defaults. Wiring them through
+  `ProcessConfig`/`PROCESS_KEY_MAP` (the way other tool limits are, per
+  [[process-and-session-config]]) is a straightforward future extension.
 * `KLORB_CONFIG_DIR` is read from by `klorb.process_config` — see
   [[process-and-session-config]]. `KLORB_DATA_DIR` is written to by `klorb.klorb_init`'s
   `copy_tiktoken_cache()` step and read back by `klorb.token_estimate`'s
