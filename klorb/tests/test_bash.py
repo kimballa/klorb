@@ -21,6 +21,27 @@ from klorb.tools.bash import BashTool, build_bash_env
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
+_live_sessions: list[Session] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_sessions_created_by_context() -> Any:
+    """Close every `Session` `_context()` hands out, once the test using it finishes.
+
+    Several `shell_lifetime="session"`/`"new"` tests below spawn a real, live `PersistentShell`
+    (a `bash` subprocess plus two background reader threads -- see `klorb.tools.bash.
+    PersistentShell`) and never call `Session.close()` themselves. Left alone, that subprocess
+    and its threads outlive the test that started them for the rest of the pytest process (see
+    `Session.close`'s docstring): harmless in isolation, but they accumulate release-over-
+    release as more such tests run in the same process, alongside whatever unrelated tests ran
+    before or after them.
+    """
+    _live_sessions.clear()
+    yield
+    for session in _live_sessions:
+        session.close()
+    _live_sessions.clear()
+
 
 def _context(
     workspace_root: Path,
@@ -40,6 +61,8 @@ def _context(
         read_files=read_files or FileRules(), write_files=write_files or FileRules(),
         command_rules=command_rules or CommandRules())
     session = Session(config=session_config) if with_session else None
+    if session is not None:
+        _live_sessions.append(session)
     return ToolSetupContext(
         process_config=process_config or ProcessConfig(), session_config=session_config, session=session)
 

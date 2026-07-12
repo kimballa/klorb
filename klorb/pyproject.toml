@@ -75,7 +75,8 @@
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-timeout = 60
+# Any particular test case should never take more than 20 seconds.
+timeout = 20
 filterwarnings = [
 ]
 

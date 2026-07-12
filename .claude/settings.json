@@ -13,7 +13,9 @@
       "Bash(TESTARGS=* make test)",
       "Bash(env)",
       "WebFetch(domain:openrouter.ai)",
-      "WebSearch"
+      "WebSearch",
+      "Read(//home/aaron/.local/state/klorb/session-logs/**)",
+      "Bash(ps aux *)"
     ]
   },
   "hooks": {

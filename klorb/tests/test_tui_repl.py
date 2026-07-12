@@ -2178,18 +2178,16 @@ async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_rem
         prompt_input.text = "please touch two files"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         first_panel = app.query_one(PermissionAskPanel)
         assert (first_panel._column, first_panel._row) == (0, 0)  # default: allow/once
 
+        def _second_panel_shown() -> bool:
+            panels = app.query(PermissionAskPanel)
+            return bool(panels) and panels.first() is not first_panel
+
         first_panel.dismiss(PermissionDecision(action="allow", scope="workspace"))
-        while app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, _second_panel_shown)
         second_panel = app.query_one(PermissionAskPanel)
         assert second_panel is not first_panel
         assert (second_panel._column, second_panel._row) == (0, 2)  # remembered: allow/workspace
