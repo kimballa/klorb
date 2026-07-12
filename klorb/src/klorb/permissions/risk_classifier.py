@@ -27,7 +27,7 @@ from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
 from klorb.permissions.command_access import pattern_matches_argv
 from klorb.permissions.table import PermissionAskItem
-from klorb.process_config import ProcessConfig
+from klorb.process_config import DEFAULT_BASH_RISK_CLASSIFIER_MODEL, ProcessConfig
 from klorb.session import PermissionAskContext, Session
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 _TOOL_STATE_KEY = "BashRiskClassifier"
 """`Session.tool_state` key `resolve_item_risk_assessment()` caches `ItemRiskAssessment`s under,
 keyed by each item's own `item_command_text`."""
+
+BASH_SAFETY_EVAL_CAPABILITY = "BASH_SAFETY_EVAL"
+"""`Model.klorb_capabilities()` key a model declares (`True`) to volunteer itself as klorb's
+default bash-risk-classifier model — see `_default_classifier_model`."""
 
 
 class ItemRiskAssessment(BaseModel):
@@ -385,6 +389,16 @@ def _sibling_items_for(ask_ctx: PermissionAskContext) -> list[PermissionAskItem]
         is_compound=ask_ctx.is_compound, item_command_text=ask_ctx.item_command_text)]
 
 
+def _default_classifier_model(session: Session) -> str:
+    """The model name to classify bash risk with when `ProcessConfig.bash_risk_classifier_model`
+    is unset: the first model in `session.model_registry` that declares itself good at this
+    (`Model.klorb_capabilities()[BASH_SAFETY_EVAL_CAPABILITY]`, via
+    `ModelRegistry.find_by_capability`), or `DEFAULT_BASH_RISK_CLASSIFIER_MODEL` if none does.
+    """
+    model = session.model_registry.find_by_capability(BASH_SAFETY_EVAL_CAPABILITY)
+    return model.name() if model is not None else DEFAULT_BASH_RISK_CLASSIFIER_MODEL
+
+
 def resolve_item_risk_assessment(
     ask_ctx: PermissionAskContext, *, session: Session, process_config: ProcessConfig,
 ) -> ItemRiskAssessment | None:
@@ -413,9 +427,9 @@ def resolve_item_risk_assessment(
         return cached
 
     items = _sibling_items_for(ask_ctx)
+    model = process_config.bash_risk_classifier_model or _default_classifier_model(session)
     report = classify_command_risk(
-        ask_ctx.command_text, items, api_provider=session.provider,
-        model=process_config.bash_risk_classifier_model,
+        ask_ctx.command_text, items, api_provider=session.provider, model=model,
         timeout=process_config.bash_risk_classifier_timeout_seconds)
     if report is None:
         return None

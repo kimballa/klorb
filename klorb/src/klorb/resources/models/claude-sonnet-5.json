@@ -1,0 +1,19 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "anthropic/claude-sonnet-5",
+  "family": "claude-sonnet",
+  "model_version": "5.0",
+  "settings": {},
+  "capabilities": {
+    "vision": true,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 1000000,
+    "max_output_tokens": 128000,
+    "function_calling": true,
+    "streaming": true
+  }
+}

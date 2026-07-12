@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 from unittest.mock import MagicMock, patch
 
-import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
+from fixtures.sample_models import sample_model_registry
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Grid as GridContainer
@@ -25,7 +25,6 @@ from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.message import Message, MessageRole, ToolCallRequest
-from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
@@ -207,7 +206,7 @@ def test_format_token_count_examples() -> None:
 
 async def test_status_bar_shows_zero_tokens_against_model_context_window_on_mount() -> None:
     mock_provider = MagicMock()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(
         SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
@@ -221,7 +220,7 @@ async def test_status_bar_shows_zero_tokens_against_model_context_window_on_moun
 async def test_status_bar_updates_after_a_turn_completes() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(
         SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
@@ -258,7 +257,7 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
         return _reply("Hello world")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(
         SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)

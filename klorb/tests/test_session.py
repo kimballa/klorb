@@ -9,14 +9,13 @@ from typing import Literal
 from unittest import mock
 from unittest.mock import MagicMock
 
-import fixtures.sample_models as sample_models_package
 import fixtures.sample_tools as sample_tools_package
 import pytest
+from fixtures.sample_models import sample_model_registry
 
 from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.message import Message, ToolCallRequest
-from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired, PermissionOverride
 from klorb.process_config import ProcessConfig
@@ -261,7 +260,7 @@ def test_total_tokens_used_does_not_double_count_a_replayed_round() -> None:
 
 def test_max_context_window_reads_registered_model_capabilities() -> None:
     config = SessionConfig(model="alpha")
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(config, provider=MagicMock(), model_registry=registry)
 
     assert session.max_context_window() == 8_000
@@ -283,7 +282,7 @@ def test_active_model_name_falls_back_to_config_model_when_unregistered() -> Non
 
 def test_active_model_name_invokes_registered_model_name() -> None:
     config = SessionConfig(model="alpha")
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(config, provider=MagicMock(), model_registry=registry)
 
     assert session.active_model_name() == "alpha"
@@ -324,7 +323,7 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     config = SessionConfig(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -337,7 +336,7 @@ def test_role_prompt_layers_onto_registered_model_prompt() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     config = SessionConfig(model="alpha")  # role_name defaults to "coordinator"
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -362,7 +361,7 @@ def test_system_message_inserted_before_first_turn_for_registered_model() -> Non
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     config = SessionConfig(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -375,7 +374,7 @@ def test_system_message_not_duplicated_across_turns() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
     config = SessionConfig(model="alpha")
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
     session.send_turn("first")
@@ -399,7 +398,7 @@ def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     config = SessionConfig(model="alpha")
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, model_registry=registry, tool_registry=tool_registry)
 
@@ -411,7 +410,7 @@ def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
 def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(SessionConfig(model="beta"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -423,7 +422,7 @@ def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model() -> 
 def test_reasoning_respects_configured_effort_level() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     config = SessionConfig(model="beta", thinking_effort="low")
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -436,7 +435,7 @@ def test_reasoning_respects_configured_effort_level() -> None:
 def test_reasoning_uses_token_budget_for_tokens_style_thinking_model() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -448,7 +447,7 @@ def test_reasoning_uses_token_budget_for_tokens_style_thinking_model() -> None:
 def test_reasoning_uses_custom_token_budgets_when_given() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     custom_budgets: dict[ThinkingEffort, int] = {"low": 1_000, "medium": 2_000, "high": 3_000}
     session = Session(
         SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry,
@@ -464,7 +463,7 @@ def test_reasoning_uses_custom_token_budgets_when_given() -> None:
 def test_reasoning_none_when_thinking_disabled() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     config = SessionConfig(model="beta", thinking_enabled=False)
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -477,7 +476,7 @@ def test_reasoning_none_when_thinking_disabled() -> None:
 def test_reasoning_none_when_model_does_not_support_thinking() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    registry = ModelRegistry(package=sample_models_package)
+    registry = sample_model_registry()
     session = Session(SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")

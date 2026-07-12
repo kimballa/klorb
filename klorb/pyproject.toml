@@ -68,9 +68,12 @@
   # tiktoken-cache/*/* ships the bundled tiktoken BPE cache (klorb.token_estimate) that
   # `klorb init` copies to $KLORB_DATA_DIR, one subdirectory per tiktoken encoding name
   # (today, only o200k_base).
+  #
+  # models/*.json ships the built-in klorb-model JSON files klorb.models.registry.ModelRegistry
+  # discovers at runtime. See docs/specs/model-framework.md.
   "klorb.resources" = [
     "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", "default-config.json", "template-config.json",
-    "tiktoken-cache/*/*",
+    "tiktoken-cache/*/*", "models/*.json",
   ]
 
 [tool.pytest.ini_options]

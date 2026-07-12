@@ -48,3 +48,33 @@ class Model(ABC):
         `max_context_window` (int, in tokens), though implementations may include
         additional provider-specific keys.
         """
+
+    def family(self) -> str | None:
+        """Return this model's family/tier identifier (e.g. `"sonnet"`, `"glm"`), or `None`
+        if unknown.
+
+        A model's `name()` is often an OpenRouter identifier that conflates a family name
+        with its version number (e.g. `"anthropic/claude-sonnet-5"` mixes the `"sonnet"`
+        tier with version `"5"`); `family()` and `model_version()` tease those apart so a
+        caller can detect that e.g. `"anthropic/claude-sonnet-5"` and a future
+        `"anthropic/claude-sonnet-5.1"` share a family even though their full names differ.
+        """
+        return None
+
+    def model_version(self) -> str | None:
+        """Return this model's version within its `family()` (e.g. `"5.0"`), or `None` if
+        unknown. See `family()`."""
+        return None
+
+    def klorb_capabilities(self) -> dict[str, Any]:
+        """Return a dict of klorb-curated capability flags for this model — e.g.
+        `{"BASH_SAFETY_EVAL": True}` — distinct from `capabilities()`'s raw provider-reported
+        capabilities (vision, context window, ...). These flags name tasks klorb itself
+        considers this model especially suited for, so code that picks a model
+        programmatically (e.g. `klorb.permissions.risk_classifier`) can select one by capability
+        (`klorb.models.registry.ModelRegistry.find_by_capability`) instead of a hardcoded model
+        name. A user is always free to configure any model for any task regardless of what it
+        declares here — these flags only inform klorb's own defaults, they're never validated
+        against a user's explicit choice.
+        """
+        return {}

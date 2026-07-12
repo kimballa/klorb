@@ -626,8 +626,9 @@ class Session:
             teardown()
         self._teardown_callbacks.clear()
 
-    def _active_model(self) -> Model | None:
-        """Return the registered `Model` for `config.model`, or `None` if it isn't registered."""
+    def active_model(self) -> Model | None:
+        """Return the registered `Model` for `config.model`, or `None` if it isn't registered
+        (e.g. `--model` targets an OpenRouter identifier with no `Model` implementation)."""
         try:
             return self._model_registry.get(self.config.model)
         except KeyError:
@@ -641,7 +642,7 @@ class Session:
         callers can still target any OpenRouter model identifier that hasn't been given a
         `Model` implementation yet.
         """
-        model = self._active_model()
+        model = self.active_model()
         return model.name() if model is not None else self.config.model
 
     def _tokens_recorded_so_far(self) -> int:
@@ -679,7 +680,7 @@ class Session:
         """Return the active model's max context window in tokens, or `None` if the
         active model isn't registered or doesn't report one.
         """
-        model = self._active_model()
+        model = self.active_model()
         if model is None:
             return None
         return model.capabilities().get("max_context_window")
@@ -702,7 +703,7 @@ class Session:
         """
         if not self.config.thinking_enabled:
             return None
-        model = self._active_model()
+        model = self.active_model()
         if model is None or not model.capabilities().get("thinking", False):
             return None
         budget_style = model.capabilities().get("thinking_budget_style", "effort")
