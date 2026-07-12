@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import klorb.tools.scratchpad.common as common
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.scratchpad.common import SCRATCHPAD_FILENAME, Scratchpad, scratchpad_path
@@ -57,6 +58,31 @@ def test_cleanup_removes_a_freshly_created_scratchpad_directory() -> None:
     scratchpad.cleanup()
 
     assert not scratchpad_dir.exists()
+
+
+def test_fresh_scratchpad_registers_an_atexit_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fresh-directory branch registers an atexit hook to remove its directory, so it's
+    swept on process exit even when Session.close()/cleanup() never runs (the last active
+    session on a normal TUI exit, or a crash/SIGKILL)."""
+    registered: list[tuple[object, ...]] = []
+    monkeypatch.setattr(common.atexit, "register", lambda *args, **kwargs: registered.append(args))
+
+    scratchpad = Scratchpad(None)
+
+    assert (common.shutil.rmtree, scratchpad.path.parent) in registered
+
+
+def test_reused_scratchpad_registers_no_atexit_sweep(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A caller-supplied path is never swept by atexit -- its lifecycle isn't ours."""
+    registered: list[tuple[object, ...]] = []
+    monkeypatch.setattr(common.atexit, "register", lambda *args, **kwargs: registered.append(args))
+    shared = tmp_path / "team-scratchpad.md"
+    shared.write_text("existing notes\n")
+
+    Scratchpad(str(shared))
+
+    assert registered == []
 
 
 def test_cleanup_is_a_noop_for_a_reused_path(tmp_path: Path) -> None:

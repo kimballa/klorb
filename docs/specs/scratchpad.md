@@ -49,6 +49,14 @@ scope") coordinate through one shared file rather than each keeping a private on
     no-op for a caller-supplied `scratchpad_path`, tracked via a private `_owned_dir: Path |
     None` set only in the fresh-directory branch — a reused scratchpad's lifecycle belongs to
     whatever created it, not to this `Scratchpad`.
+  * `Session.close()` only runs on an explicit session switch (`ReplApp.clear_session()`), so it
+    never fires for the last active session on a normal TUI exit, and never at all on a crash or
+    `SIGKILL`. So the fresh-directory branch *also* does `atexit.register(shutil.rmtree,
+    scratchpad_dir, ignore_errors=True)` the moment it creates the directory — the same backstop
+    `BashTool` uses for its spilled stdout/stderr directories. `cleanup()` stays the eager path
+    (a switched-away session's directory goes right away rather than lingering until process
+    exit); the `atexit` hook sweeps whatever `cleanup()` never got to. Both are
+    `ignore_errors=True`, so the two firing for the same directory is harmless.
   * `Session` exposes the `Scratchpad` instance directly as a plain public field
     (`session.scratchpad`), not via a separate `scratchpad_path` property — `session.scratchpad
     .path` is exactly as much surface area as callers need, and `Session` itself does no
@@ -127,11 +135,6 @@ scope") coordinate through one shared file rather than each keeping a private on
   system prompt's team-coordination guidance are forward-looking, written against the day that
   mechanism exists, exactly like `SessionConfig.role_name`'s own "future subagent-spawning call
   site" note.
-* A freshly created scratchpad's directory is removed only when `Session.close()` runs
-  `Scratchpad.cleanup()` via its registered teardown — there's no `atexit` hook backing this up,
-  unlike `BashTool`'s spilled stdout/stderr directories (`atexit.register(shutil.rmtree, ...)`),
-  so a scratchpad from a process that exits without `close()` ever being called (a crash, a
-  `SIGKILL`) outlives the process.
 * A caller-supplied `scratchpad_path` is trusted as-is: `Scratchpad` doesn't verify the file
   exists, is readable/writable, or resolve it against any workspace boundary — the caller
   owns that file and is responsible for its lifecycle.

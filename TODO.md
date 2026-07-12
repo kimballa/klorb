@@ -2,9 +2,6 @@
 
 # Bugs:
 
-* Scratchpad files that are ostensibly supposed to have a lifetime equal to the session
-  that created the scratchpad file in the first place, are *not* being cleaned up.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment

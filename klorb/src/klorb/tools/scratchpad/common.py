@@ -10,6 +10,7 @@ below does, and only under `TYPE_CHECKING`) so that `klorb.session.Session` can 
 `klorb.session`, would cycle back on itself.
 """
 
+import atexit
 import shutil
 import tempfile
 from pathlib import Path
@@ -50,6 +51,11 @@ class Scratchpad:
         if scratchpad_path is not None:
             return Path(scratchpad_path)
         scratchpad_dir = Path(tempfile.mkdtemp(prefix="klorb-scratchpad-"))
+        # Registered immediately after creation, before anything else can raise, so this
+        # directory is always swept on process exit even when `cleanup()` never runs -- the
+        # final active session is never `close()`d on normal TUI exit, and a crash or SIGKILL
+        # skips teardown entirely. Mirrors `BashTool`'s spilled-output tmpdir handling.
+        atexit.register(shutil.rmtree, scratchpad_dir, ignore_errors=True)
         path = scratchpad_dir / SCRATCHPAD_FILENAME
         path.touch()
         self._owned_dir = scratchpad_dir
@@ -67,6 +73,10 @@ class Scratchpad:
         reuse — that file's lifecycle belongs to whatever created it, not to this `Scratchpad`.
         Safe to call more than once (`shutil.rmtree(..., ignore_errors=True)`), matching every
         other teardown callback's idempotency contract (see `Session.register_teardown`).
+
+        This is the eager path, run by `Session.close()` so a switched-away session's directory
+        goes right away; an `atexit` hook registered at creation time (see `_resolve`) is the
+        backstop that sweeps the directory on process exit when `close()` never runs at all.
         """
         if self._owned_dir is not None:
             shutil.rmtree(self._owned_dir, ignore_errors=True)
