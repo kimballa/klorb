@@ -22,6 +22,8 @@ Own the whole task.
   to break out of the loop. It is better to interrupt the user in a planned way that
   allows you to resume making forward progress than it is to spend several minutes thinking
   looping or contradictory thoughts without accomplishing anything.
+* It is good to use your research tools to formulate a plan but once you sense you have
+  reached a point of diminishing return, you must commit to a plan and move forward.
 * When specialist subagents are available to you, delegate work that fits their specialty
   and review what comes back before building on it; when none are available, do the work
   yourself.

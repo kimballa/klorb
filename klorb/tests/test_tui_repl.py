@@ -3546,3 +3546,46 @@ async def test_trust_workspace_for_non_project_workspace_skips_config_init_promp
         assert app._session.config.workspace.trusted is True
 
     assert not project_config_path(tmp_path).is_file()
+
+
+async def test_typing_while_history_is_focused_redirects_into_prompt_input() -> None:
+    """A printable keystroke that reaches the App while the (non-editable) history scroll
+    is focused should move focus to the message box and land the character there, rather
+    than being silently dropped (see `ReplApp.on_key`)."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.focus()
+        await pilot.pause()
+        assert _focused_id(app) == HISTORY_ID
+
+        await pilot.press("h", "i")
+        await pilot.pause()
+
+        assert _focused_id(app) == PROMPT_INPUT_ID
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        assert prompt_input.text == "hi"
+
+
+async def test_typing_while_history_focused_is_not_redirected_when_input_disabled() -> None:
+    """When the prompt input is disabled (e.g. an interaction panel is active), a printable
+    keystroke on the history scroll should not be redirected into the (non-accepting) box."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.disabled = True
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.focus()
+        await pilot.pause()
+        assert _focused_id(app) == HISTORY_ID
+
+        await pilot.press("h")
+        await pilot.pause()
+
+        # Focus stayed on the history; the disabled box received nothing.
+        assert _focused_id(app) == HISTORY_ID
+        assert prompt_input.text == ""

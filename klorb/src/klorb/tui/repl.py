@@ -1305,6 +1305,48 @@ class ReplApp(App[None]):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(f"Thinking effort set to {effort}.", classes="notice"))
 
+    def on_key(self, event: events.Key) -> None:
+        """Redirect text-like keystrokes into the prompt input when they'd otherwise land
+        on the (non-editable) history scroll.
+
+        The history `VerticalScroll` can receive focus — by clicking it or tabbing into it
+        — but it isn't an editable widget, so typing there would silently do nothing. Rather
+        than make the user click back into the box to start typing, treat a printable
+        keystroke that reaches this App-level handler while the history is focused as a
+        request to type into the message box: move focus there and insert the character,
+        so the keystroke isn't lost and the box is ready for the rest of what the user is
+        typing. Non-printable keys (arrows, escape, ctrl-combos, ...) are left alone, since
+        those are navigation/controls the history scroll legitimately handles or the App's
+        own bindings consume.
+
+        Only acts when the history scroll itself is the focused widget, and only when the
+        prompt input is in a state to accept input — i.e. not disabled while an interaction
+        panel (a permission ask or an `AskUserQuestions` prompt) or a modal is active.
+        Textual keeps an active modal on its own screen, so the base `Screen`/`App` key
+        dispatch routes that screen's events there before this handler ever runs; this guard
+        keeps the redirect from fighting a focused modal's own input widgets if one should
+        ever share the history's widget identity (it doesn't today, but the check is cheap).
+        """
+        if not event.is_printable or event.character is None:
+            return
+        focused = self.focused
+        if focused is None or focused.id != HISTORY_ID:
+            return
+        try:
+            prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        except Exception:
+            return
+        if prompt_input.disabled or not prompt_input.display or not prompt_input.can_focus:
+            return
+        # Move focus to the message box and let it own this keystroke: inserting here (rather
+        # than re-posting the event) avoids a second dispatch through Textual's key pipeline
+        # and keeps `PromptInput._on_key`'s history-detach/palette logic running exactly as if
+        # the box had been focused all along.
+        prompt_input.focus()
+        prompt_input.insert(event.character)
+        event.stop()
+        event.prevent_default()
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the `abort_response` binding from the footer unless a response is currently
         streaming in, since there's nothing for Escape to abort otherwise.
