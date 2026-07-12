@@ -62,6 +62,23 @@ paths or calling `logging.basicConfig` itself.
     defaults ADR](
     ../adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md) for why
     one-shot prompts default to neither.
+* `klorb.logging_config` also exposes crash-log capture for the interactive REPL:
+  * `crash_log_path(workspace_root: Path) -> Path` builds
+    `<tempdir>/klorb-crash-<workspace basename>-<timestamp>.log` (the OS temp directory, not
+    `KLORB_STATE_DIR`), timestamped to the second so repeated crashes in the same workspace
+    don't collide.
+  * `CrashLogTee` is a file-like object usable as a `rich.console.Console.file` that
+    duplicates every write to a real stream (e.g. `sys.stderr`) and a crash log file, opening
+    the file lazily on first write so a session that never crashes never creates one. `klorb.
+    tui.repl.run_repl()` installs it as `ReplApp.error_console.file` before calling `App.run()`:
+    Textual's own crash handling (`App._handle_exception` -> `App._print_error_renderables()`)
+    prints an unhandled exception's full traceback to `error_console` on its way out rather
+    than raising out of `run()`, so this is the only point that sees that output. Once `run()`
+    returns, `run_repl()` checks `app.return_code` (set to 1 by `_handle_exception`, 0 by a
+    normal `App.exit()`) and, if it's 1, prints a short pointer message to stderr naming the
+    crash log path (or a message saying the file couldn't be written, if `CrashLogTee.
+    opened_log_path()` is `None`) — see [the crash logging ADR](
+    ../adrs/tee-textual-crash-output-to-a-tmp-file.md).
 * `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `load_dotenv()` first, so a `.env`
   file can supply `KLORB_STATE_DIR` (or the other `KLORB_*` directory env vars) before
   logging is set up. It then parses CLI arguments, resolves whether the session is
