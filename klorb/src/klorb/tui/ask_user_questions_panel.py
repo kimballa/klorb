@@ -62,7 +62,7 @@ class AskUserQuestionsPanel(Vertical):
 
     can_focus = True
 
-    CSS = """
+    DEFAULT_CSS = """
     AskUserQuestionsPanel {
         width: 1fr;
         height: auto;

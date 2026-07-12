@@ -275,7 +275,7 @@ class PermissionAskPanel(Vertical):
 
     can_focus = True
 
-    CSS = """
+    DEFAULT_CSS = """
     PermissionAskPanel {
         width: 1fr;
         height: auto;
