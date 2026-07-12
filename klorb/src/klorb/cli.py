@@ -25,8 +25,17 @@ INIT_SUBCOMMAND = "init"
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the klorb CLI."""
-    parser = argparse.ArgumentParser(prog="klorb",
-        description="Klorb is your friendly neighborhood agent.")
+    parser = argparse.ArgumentParser(
+        prog="klorb",
+        description="Klorb is your friendly neighborhood agent.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Subcommands:\n"
+            "  init              Bootstrap a klorb-config.json and a `klorb` executable "
+            "symlink.\n\n"
+            "Run `klorb <subcommand> --help` to see subcommand-specific flags."
+        ),
+    )
     parser.add_argument(
         "-m",
         "--message",

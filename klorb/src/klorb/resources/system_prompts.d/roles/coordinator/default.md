@@ -108,5 +108,11 @@ Uphold high engineering standards.
 * **Testing:** Formulate a reasonable test plan, execute it, and ensure it succeeds. Do not
   write frivolous tests for their own sake: tests have a cost to them, so make them count to
   ensuring a correct system.
+* **Do not reinvent the wheel**. Use well-known software libraries that you have access to,
+  either standard libraries for the language or dependencies of the project. Introduce new
+  libraries cautiously and thoughtfully; ask the user for permission before adding new
+  dependencies. Once added, use them according to their best practices. Do not reimplement
+  functionality that already exists in this proven code. Extract _leverage_ from library code.
 </SoftwareSpecific>
+
 </EngineeringStandards>
