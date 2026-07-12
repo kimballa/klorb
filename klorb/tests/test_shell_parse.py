@@ -7,9 +7,18 @@ not a mocked AST — since the whole point of this module is to walk *actual* `s
 output; see docs/adrs/shell-out-to-shfmt-for-bash-parsing.md.
 """
 
+from pathlib import Path
+
 import pytest
 
-from klorb.permissions.shell_parse import RedirectTarget, ShellParseError, SimpleCommand, parse_command
+from klorb.permissions import shell_parse
+from klorb.permissions.shell_parse import (
+    RedirectTarget,
+    ShellParseError,
+    SimpleCommand,
+    _resolve_shfmt_command,
+    parse_command,
+)
 
 SHFMT = "shfmt"
 
@@ -322,3 +331,46 @@ def test_unrecognized_syntax_error_raises_shell_parse_error() -> None:
 def test_missing_shfmt_binary_raises_shell_parse_error() -> None:
     with pytest.raises(ShellParseError):
         parse_command("echo hi", "/no/such/shfmt/binary")
+
+
+# --- _resolve_shfmt_command precedence ---
+
+
+def test_resolve_shfmt_command_returns_path_like_input_unchanged() -> None:
+    assert _resolve_shfmt_command("/opt/tools/shfmt") == "/opt/tools/shfmt"
+    assert _resolve_shfmt_command("relative/shfmt") == "relative/shfmt"
+
+
+def test_resolve_shfmt_command_prefers_the_interpreter_sibling_binary_over_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare command name must resolve to the venv-pinned `shfmt` next to `sys.executable`, not
+    whatever a different, unpinned `shfmt` on `PATH` would give — see the precedence rationale in
+    `_resolve_shfmt_command`'s docstring: a machine's own system-wide `shfmt` is a different,
+    unverified build whose `Redirect.Op` codes this module's tables don't necessarily match."""
+    fake_python_dir = tmp_path / "venv-bin"
+    fake_python_dir.mkdir()
+    sibling_shfmt = fake_python_dir / "shfmt"
+    sibling_shfmt.write_text("", encoding="utf-8")
+    monkeypatch.setattr(shell_parse.sys, "executable", str(fake_python_dir / "python3"))
+    monkeypatch.setattr(shell_parse.shutil, "which", lambda name: "/usr/bin/shfmt")
+
+    assert _resolve_shfmt_command("shfmt") == str(sibling_shfmt)
+
+
+def test_resolve_shfmt_command_falls_back_to_path_when_no_sibling_binary_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shell_parse.sys, "executable", str(tmp_path / "no-such-dir" / "python3"))
+    monkeypatch.setattr(shell_parse.shutil, "which", lambda name: "/usr/bin/shfmt")
+
+    assert _resolve_shfmt_command("shfmt") == "shfmt"
+
+
+def test_resolve_shfmt_command_returns_bare_name_when_nothing_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shell_parse.sys, "executable", str(tmp_path / "no-such-dir" / "python3"))
+    monkeypatch.setattr(shell_parse.shutil, "which", lambda name: None)
+
+    assert _resolve_shfmt_command("shfmt") == "shfmt"

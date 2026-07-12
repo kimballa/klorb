@@ -179,20 +179,26 @@ class ShellParseError(Exception):
 def _resolve_shfmt_command(shfmt_command: str) -> str:
     """Resolve a configured `shfmt_command` (default `"shfmt"`, `tools.bash.shfmtCommand`) to an
     actually-runnable path. A value that already looks like a path (contains a path separator)
-    is returned unchanged — the caller explicitly chose it. Otherwise, tries `PATH` first (the
-    common case: an activated venv, or a system-wide install); if that fails, falls back to the
-    directory containing the running Python interpreter (`sys.executable`) — where `shfmt-py`
-    (a "scripts"-only wheel with no importable Python API of its own) actually installs the
-    `shfmt` binary for a venv install, alongside `python`/`pip` themselves, whether or not that
-    venv's `bin/` happens to be on `PATH` for the current process.
+    is returned unchanged — the caller explicitly chose it. Otherwise, tries the directory
+    containing the running Python interpreter (`sys.executable`) first — where `shfmt-py` (a
+    "scripts"-only wheel with no importable Python API of its own) installs the exact-pinned
+    `shfmt` binary for a venv install (see `pyproject.toml`'s exact-version pin and
+    docs/adrs/shell-out-to-shfmt-for-bash-parsing.md), alongside `python`/`pip` themselves,
+    whether or not that venv's `bin/` happens to be on `PATH` for the current process. Only if no
+    such sibling binary exists does this fall back to `PATH`. This order is deliberate, not
+    incidental: a machine with its own system-wide `shfmt` on `PATH` (a different, unpinned
+    version) must not shadow the exact build this module's `Redirect.Op` tables (`_WRITE_REDIR_
+    OPS` etc.) were empirically verified against — a version mismatch there doesn't error, it
+    silently degrades to "ask" more often as unrecognized operator codes fail closed (see the ADR
+    above), which is easy to mistake for a permissions bug rather than a `shfmt` version mismatch.
     """
     if "/" in shfmt_command or "\\" in shfmt_command:
-        return shfmt_command
-    if shutil.which(shfmt_command) is not None:
         return shfmt_command
     candidate = Path(sys.executable).parent / shfmt_command
     if candidate.is_file():
         return str(candidate)
+    if shutil.which(shfmt_command) is not None:
+        return shfmt_command
     return shfmt_command
 
 
