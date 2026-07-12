@@ -54,6 +54,7 @@ from klorb.session import (
     ToolCallEvent,
     TurnEventHandlers,
 )
+from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.tool import (
     default_invalid_tool_call_detail,
@@ -1486,9 +1487,14 @@ class ReplApp(App[None]):
         history.scroll_to(y=region.y + line_offset, animate=False, immediate=True)
 
     def on_mount(self) -> None:
-        """Label and focus the input box, cap its growth at the configured max height, watch
-        the history's scroll position (see `_on_history_scroll_changed`), show the initial
-        `> palette` hint (the box starts empty), greet the user with the klorb mascot (see
+        """Point tiktoken at the `klorb init`-installed cache (see
+        `configure_tiktoken_cache_env()`) now that the app is actually running, so its log
+        message routes through the app's log / the session log file rather than leaking to
+        raw stderr ahead of the TUI taking over the terminal — see
+        docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md. Then label and focus
+        the input box, cap its growth at the configured max height, watch the history's scroll
+        position (see `_on_history_scroll_changed`), show the initial `> palette` hint (the box
+        starts empty), greet the user with the klorb mascot (see
         `MASCOT_ART`/`MASCOT_GREETING`), note in the history if no per-user config file exists
         yet (see `CONFIG_MISSING_MESSAGE`), reports any config layer that failed to parse (see
         `ProcessConfig.config_warnings`), then hand off to
@@ -1496,6 +1502,8 @@ class ReplApp(App[None]):
         workspace, interactively bootstrap) workspace trust before submitting any initial
         message as the first turn.
         """
+        configure_tiktoken_cache_env()
+
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
         input_widget.styles.max_height = self._process_config.prompt_input_max_lines + 1
