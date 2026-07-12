@@ -15,7 +15,8 @@
       "WebFetch(domain:openrouter.ai)",
       "WebSearch",
       "Read(//home/aaron/.local/state/klorb/session-logs/**)",
-      "Bash(ps aux *)"
+      "Bash(ps aux *)",
+      "Bash(git stash *)"
     ]
   },
   "hooks": {

@@ -266,9 +266,7 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
         prompt_input.text = "hi"
         await pilot.press("enter")
 
-        while not first_chunk_rendered.is_set():
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, first_chunk_rendered.is_set)
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         mid_stream_tally = status_bar.content
@@ -469,9 +467,7 @@ async def test_escape_aborts_a_streaming_response() -> None:
         prompt_input.text = "what is 2+2?"
         await pilot.press("enter")
 
-        while not streaming_started.is_set():
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, streaming_started.is_set)
         assert app.check_action("abort_response", ()) is True
 
         await pilot.press("escape")
@@ -852,9 +848,7 @@ async def test_tool_call_limit_modal_yes_continues_the_turn() -> None:
         prompt_input.text = "please echo"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
         assert isinstance(app.screen, ToolCallLimitScreen)
 
         await pilot.click("#tool-call-limit-yes")
@@ -879,9 +873,7 @@ async def test_tool_call_limit_modal_no_shows_error() -> None:
         prompt_input.text = "please echo"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
         assert isinstance(app.screen, ToolCallLimitScreen)
 
         await pilot.press("escape")
@@ -906,9 +898,7 @@ async def test_tool_call_limit_modal_arrow_keys_move_focus_between_buttons() -> 
         prompt_input.text = "please echo"
         await pilot.press("enter")
 
-        while len(app.screen_stack) < 2:
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
         assert isinstance(app.screen, ToolCallLimitScreen)
 
         assert _focused_id(app) == "tool-call-limit-yes"
@@ -1134,9 +1124,7 @@ async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
         prompt_input.text = "please echo"
         await pilot.press("enter")
 
-        while not streaming_started.is_set():
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, streaming_started.is_set)
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         assert len(list(history.query(ToolCallStatic))) == 1
@@ -1311,9 +1299,7 @@ async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(tmp_path: P
         prompt_input.text = f"!touch {marker}; sleep 5"
         await pilot.press("enter")
 
-        while not marker.exists():
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, marker.exists)
 
         assert prompt_input.disabled is True
         assert app._shell_cancel_event is not None
@@ -1755,9 +1741,7 @@ async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path)
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         assert panel.parent is app.query_one(f"#{INTERACTION_PANEL_ID}", Vertical)
@@ -1780,9 +1764,7 @@ async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         app.query_one(PermissionAskPanel)
 
         await pilot.press("escape")
@@ -1818,9 +1800,7 @@ async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_an
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         await pilot.press("escape")
         await app.workers.wait_for_complete()
@@ -1846,9 +1826,7 @@ async def test_confirm_permission_ask_truncates_a_long_single_line_command_to_fi
 
     async with app.run_test(size=(60, 24)) as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         command_static = panel.query_one(f"#{PERMISSION_ASK_COMMAND_ID}", Static)
@@ -1882,9 +1860,7 @@ async def test_confirm_permission_ask_shows_risk_badge_and_rationale_when_classi
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         badge = panel.query_one(f"#{PERMISSION_ASK_RISK_BADGE_ID}", Static)
@@ -1906,9 +1882,7 @@ async def test_confirm_permission_ask_omits_risk_badge_when_classifier_is_disabl
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         assert not panel.query(f"#{PERMISSION_ASK_RISK_BADGE_ID}")
@@ -1928,9 +1902,7 @@ async def test_confirm_permission_ask_skips_classifier_for_a_path_only_ask(tmp_p
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         assert not panel.query(f"#{PERMISSION_ASK_RISK_BADGE_ID}")
@@ -1952,9 +1924,7 @@ async def test_confirm_permission_ask_biases_cursor_to_deny_once_above_the_too_r
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         assert panel._column == 1  # Deny
@@ -1973,9 +1943,7 @@ async def test_confirm_permission_ask_uses_suggested_pattern_for_the_granted_com
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         granted = panel.query_one(f"#{PERMISSION_ASK_GRANTED_ID}", Static)
@@ -2010,16 +1978,12 @@ async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_on
 
     async with app.run_test() as pilot:
         first_task = asyncio.ensure_future(app._confirm_permission_ask(first_ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         app.query_one(PermissionAskPanel).dismiss(PermissionDecision(action="allow", scope="once"))
         await first_task
 
         second_task = asyncio.ensure_future(app._confirm_permission_ask(second_ctx))
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         panel = app.query_one(PermissionAskPanel)
         rationale = panel.query_one(f"#{PERMISSION_ASK_RATIONALE_ID}", Static)
         assert "also reads only" in str(rationale.render())
@@ -2052,9 +2016,7 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         panel = app.query_one(PermissionAskPanel)
         panel.dismiss(PermissionDecision(action="allow", scope="session"))
@@ -2091,10 +2053,13 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         panel = app.query_one(PermissionAskPanel)
+        # outer_size is only known after a layout pass, which can land a pump cycle after the
+        # panel widget itself first appears in the DOM -- wait on the size directly rather than
+        # assume one more `pilot.pause()` is always enough.
+        await _wait_until(
+            pilot, lambda: panel.query_one(f"#{PERMISSION_ASK_GRID_ID}", GridContainer).outer_size.width > 0)
         grid_width = panel.query_one(f"#{PERMISSION_ASK_GRID_ID}", GridContainer).outer_size.width
         assert grid_width > 10  # regression guard: the grid must not collapse to ~1
 
@@ -2136,9 +2101,7 @@ async def test_permission_ask_modal_other_row_reachable_via_down_and_enter(
         prompt_input.text = "please touch a file"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         panel = app.query_one(PermissionAskPanel)
 
         for _ in range(4):
@@ -2221,9 +2184,7 @@ async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_ab
         prompt_input.text = "please touch two files"
         await pilot.press("enter")
 
-        while not app.query(PermissionAskPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
         app.query_one(PermissionAskPanel)
 
         await pilot.press("escape")
@@ -3193,13 +3154,15 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
             prompt_input.text = "hi"
             await pilot.press("enter")
 
-            while not first_chunk_sent.is_set():
-                await asyncio.sleep(0.01)
-            await pilot.pause()
+            await _wait_until(pilot, first_chunk_sent.is_set)
 
             # The user scrolls up to reread earlier output while the rest of the turn streams in.
+            # Waits on `_history_pinned_to_bottom` itself (what `_scroll_if_pinned` actually reads)
+            # rather than `history.is_vertical_scroll_end`: the former is a reactive-watcher-
+            # updated cache (see `ReplApp._on_history_scroll_changed`) that lags one message-pump
+            # cycle behind the latter, which flips as soon as the deferred `scroll_home()` lands.
             history.scroll_home(animate=False)
-            await _wait_until(pilot, lambda: not history.is_vertical_scroll_end)
+            await _wait_until(pilot, lambda: not app._history_pinned_to_bottom)
 
             release_rest_of_turn.set()
             await app.workers.wait_for_complete()

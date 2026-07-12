@@ -17,10 +17,22 @@
 
 # Feature backlog
 
-* system prompt guidance for bash should reassure the agent that stdout, stderr, and error code
+* The risk_classifer that rewrites bash commands to have */?/** for broader approvals should
+  actually also get the history of other approved and denied commands from earlier in the
+  session. If the user has approved a whole bunch of very similar commands, then it should
+  take that into account and consider generalizing more widely for the next approval.
+
+* The system prompt should have a section with guidance for using the Bash tool.
+  The agent should be nudged inthe direction of using this to verify code, and use toolchain
+  elements in-use in the project / repo it finds itself in. (make, g++, venv/bin/python3, etc.) 
+  It should reassure the agent that stdout, stderr, and error code
   will all be captured and reported intelligently, without clogging the context if they get too
   big (you'll get a filename back w/ the data in it instead), so don't bother doing stupid
   redirects or compound commands to `echo $?` afterward.
+
+* Bash tool can have a summary line provided by the agent, like
+  "List all _wait_until call sites in test_tui_repl.py", which we show to the user, in addition
+  to the "grep -n ..." actual command. This can be shown in approval dialog as well as cmd history.
 
 * Add `klorb` cli subcommands for seeing / dumping system prompt and tools list. 
   * it should have distinct output segments for the system prompt vs the tools list data.

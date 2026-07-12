@@ -5,9 +5,11 @@ a real `ReplApp`, mirroring `test_tui_repl.py`'s `PermissionAskPanel` end-to-end
 import asyncio
 import json
 from datetime import datetime
+from typing import Callable
 from unittest.mock import MagicMock
 
 from textual.containers import VerticalScroll
+from textual.pilot import Pilot
 from textual.widgets import Input, Static
 
 from klorb.api_provider import ProviderResponse
@@ -17,6 +19,20 @@ from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.ask_user_questions_panel import ASK_USER_QUESTIONS_INPUT_ID, AskUserQuestionsPanel
 from klorb.tui.repl import HISTORY_ID, PROMPT_INPUT_ID, PromptInput, ReplApp
+
+
+async def _wait_until(pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 2.0) -> None:
+    """Poll `predicate` via repeated `pilot.pause()` calls until it's true.
+
+    Mirrors `test_tui_repl.py`'s helper of the same name -- see that copy's docstring for why
+    `pilot.pause()` (which drives Textual's message pump) beats a flat `asyncio.sleep()` here.
+    """
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError(f"Timed out after {timeout}s waiting for condition")
+        await pilot.pause()
 
 
 def _reply(content: str = "final answer") -> ProviderResponse:
@@ -62,9 +78,7 @@ async def test_ask_user_questions_modal_appears_for_an_ask_tool_call() -> None:
         prompt_input.text = "please ask me something"
         await pilot.press("enter")
 
-        while not app.query(AskUserQuestionsPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(AskUserQuestionsPanel)))
 
         app.query_one(AskUserQuestionsPanel)
         assert app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
@@ -88,9 +102,7 @@ async def test_ask_user_questions_modal_answer_flows_back_into_the_tool_response
         prompt_input.text = "please ask me something"
         await pilot.press("enter")
 
-        while not app.query(AskUserQuestionsPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(AskUserQuestionsPanel)))
         app.query_one(AskUserQuestionsPanel)
 
         await pilot.press("enter")  # confirm the first ("JWT") row
@@ -125,9 +137,7 @@ async def test_ask_user_questions_modal_escape_cancels_and_shows_error() -> None
         prompt_input.text = "please ask me something"
         await pilot.press("enter")
 
-        while not app.query(AskUserQuestionsPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(AskUserQuestionsPanel)))
         app.query_one(AskUserQuestionsPanel)
 
         await pilot.press("escape")
@@ -157,9 +167,7 @@ async def test_ask_user_questions_modal_other_input_flows_back_as_free_text() ->
         prompt_input.text = "please ask me something"
         await pilot.press("enter")
 
-        while not app.query(AskUserQuestionsPanel):
-            await asyncio.sleep(0.01)
-        await pilot.pause()
+        await _wait_until(pilot, lambda: bool(app.query(AskUserQuestionsPanel)))
 
         await pilot.press("o")
         await pilot.pause()
