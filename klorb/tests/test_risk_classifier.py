@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from xml.etree import ElementTree
 
+from fixtures.sample_models import sample_model_registry
+
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message
 from klorb.permissions.risk_classifier import (
@@ -16,12 +18,13 @@ from klorb.permissions.risk_classifier import (
     _build_system_prompt,
     _build_user_message,
     _cdata,
+    _default_classifier_model,
     _response_format,
     classify_command_risk,
     resolve_item_risk_assessment,
 )
 from klorb.permissions.table import PermissionAskItem
-from klorb.process_config import ProcessConfig
+from klorb.process_config import DEFAULT_BASH_RISK_CLASSIFIER_MODEL, ProcessConfig
 from klorb.session import PermissionAskContext, Session, SessionConfig
 
 
@@ -350,6 +353,21 @@ def test_response_format_sets_additional_properties_false_on_every_object_schema
         assert object_schema["additionalProperties"] is False
 
 
+# --- _default_classifier_model ---
+
+
+def test_default_classifier_model_picks_the_capability_tagged_model() -> None:
+    session = Session(SessionConfig(), provider=MagicMock())
+
+    assert _default_classifier_model(session) == "openai/gpt-oss-safeguard-20b:nitro"
+
+
+def test_default_classifier_model_falls_back_when_no_model_declares_the_capability() -> None:
+    session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
+
+    assert _default_classifier_model(session) == DEFAULT_BASH_RISK_CLASSIFIER_MODEL
+
+
 # --- resolve_item_risk_assessment: gating, batching, caching ---
 
 
@@ -403,6 +421,36 @@ def test_resolve_item_risk_assessment_returns_the_matching_item() -> None:
 
     assert result is not None
     assert result.item_id == "item-0"
+
+
+def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_default() -> None:
+    """`ProcessConfig.bash_risk_classifier_model` unset (the default) means klorb picks a
+    model itself, by `klorb_capabilities` -- see `klorb.models.registry.ModelRegistry.
+    find_by_capability` and the packaged `openai/gpt-oss-safeguard-20b:nitro` model, the only
+    built-in model that declares `"BASH_SAFETY_EVAL"`."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
+
+    resolve_item_risk_assessment(
+        _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"]),
+        session=_session(provider), process_config=ProcessConfig())
+
+    _, kwargs = provider.send_prompt.call_args
+    assert kwargs["model"] == "openai/gpt-oss-safeguard-20b:nitro"
+
+
+def test_resolve_item_risk_assessment_respects_an_explicit_model_override() -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
+    process_config = ProcessConfig()
+    process_config.bash_risk_classifier_model = "openai/gpt-5-nano"
+
+    resolve_item_risk_assessment(
+        _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"]),
+        session=_session(provider), process_config=process_config)
+
+    _, kwargs = provider.send_prompt.call_args
+    assert kwargs["model"] == "openai/gpt-5-nano"
 
 
 def test_resolve_item_risk_assessment_classifies_sibling_items_in_one_request() -> None:

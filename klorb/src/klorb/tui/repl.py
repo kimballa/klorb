@@ -26,6 +26,7 @@ from textual.widgets import Button, Footer, Header, Markdown, Static, TextArea
 
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
+from klorb.models.model import Model
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.grant import compute_grant_paths
@@ -60,6 +61,7 @@ from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel, format_ask
 from klorb.tui.confirm_screen import ConfirmScreen
 from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
+from klorb.tui.model_info_commands import ModelInfoCommandProvider
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
 from klorb.tui.permission_ask_panel import (
     PermissionAskPanel,
@@ -1116,8 +1118,8 @@ class ReplApp(App[None]):
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
     ]
     COMMANDS = App.COMMANDS | {
-        InitCommandProvider, ModelCommandProvider, SessionCommandProvider, ThemeCommandProvider,
-        ThinkingCommandProvider, TrustWorkspaceCommandProvider,
+        InitCommandProvider, ModelCommandProvider, ModelInfoCommandProvider, SessionCommandProvider,
+        ThemeCommandProvider, ThinkingCommandProvider, TrustWorkspaceCommandProvider,
     }
 
     def __init__(
@@ -1183,6 +1185,20 @@ class ReplApp(App[None]):
             yield Footer(show_command_palette=False)
             yield PermissionBadge(id=PERMISSION_BADGE_ID)
             yield Static(id=STATUS_BAR_ID)
+
+    def get_current_model_name(self) -> str:
+        """Return the identifier of the currently active model — see `ModelCommandProvider`."""
+        return self._session.config.model
+
+    def get_active_model(self) -> Model | None:
+        """Return the currently active `Model`, or `None` if `config.model` isn't a
+        registered model — see `klorb.tui.model_info_commands.ModelInfoCommandProvider`."""
+        return self._session.active_model()
+
+    def available_model_names(self) -> list[str]:
+        """Return every model name discovered by the session's `ModelRegistry`, sorted for a
+        stable display order — see `ModelCommandProvider`."""
+        return sorted(model.name() for model in self._session.model_registry.models())
 
     def select_model(self, name: str) -> None:
         """Make `name` the active model used for subsequent prompts, the default model for any

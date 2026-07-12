@@ -110,7 +110,7 @@
   "tools.bash.spillBytes": 8192,
   "tools.bash.shfmtCommand": "shfmt",
   "tools.bash.riskClassifier.enabled": true,
-  "tools.bash.riskClassifier.model": "openai/gpt-5-nano",
+  "tools.bash.riskClassifier.model": null,
   "tools.bash.riskClassifier.timeout": 5.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
   "tools.editFile.driftSearchRadius": 20,

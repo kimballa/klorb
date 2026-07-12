@@ -720,7 +720,7 @@ def test_bash_risk_classifier_defaults_when_no_config_files_exist(tmp_path: Path
     process_config = load_process_config(cwd=tmp_path)
 
     assert process_config.bash_risk_classifier_enabled is True
-    assert process_config.bash_risk_classifier_model == "openai/gpt-5-nano"
+    assert process_config.bash_risk_classifier_model is None
     assert process_config.bash_risk_classifier_timeout_seconds == 5.0
     assert process_config.bash_risk_classifier_too_risky_threshold == 9
 

@@ -1,0 +1,24 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "openai/gpt-oss-safeguard-20b:nitro",
+  "family": "gpt-oss-safeguard",
+  "model_version": "20b",
+  "settings": {
+    "temperature": 0.2
+  },
+  "capabilities": {
+    "vision": false,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 131072,
+    "max_output_tokens": 65536,
+    "function_calling": true,
+    "streaming": true
+  },
+  "klorb_capabilities": {
+    "BASH_SAFETY_EVAL": true
+  }
+}

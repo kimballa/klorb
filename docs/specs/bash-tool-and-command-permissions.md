@@ -209,12 +209,15 @@ item list is first available, and why the gating/batching/caching logic itself i
 
 `tools.bash.riskClassifier.enabled` (default `true`) is a full escape hatch: `false` sends no
 command text to a second LLM call at all, and behavior is exactly as if the classifier didn't
-exist. `tools.bash.riskClassifier.model` (default `openai/gpt-5-nano`) is independent of the main
+exist. `tools.bash.riskClassifier.model` (default unset) is independent of the main
 conversation's own model — an ask can happen regardless of which model is driving the
 conversation — and is the one model used for every classification request regardless of how
 concerning the deterministic layer's own findings are; conservatism for an item carrying a
 `ForcedAskReason` is achieved by varying the prompt (naming the specific reason and asking the
-model to score upward), not by escalating to a costlier model.
+model to score upward), not by escalating to a costlier model. Left unset (the default), klorb
+picks the model itself — see [[model-framework]]'s note on
+`ModelRegistry.find_by_capability("BASH_SAFETY_EVAL")` — rather than a hardcoded literal;
+setting this key explicitly always overrides that pick.
 `tools.bash.riskClassifier.timeout` (default `5.0`) bounds this one request's wall-clock time,
 separate from `tools.bash.timeout` (which bounds the shell command's own runtime once it
 actually runs).

@@ -127,9 +127,11 @@ DEFAULT_BASH_RISK_CLASSIFIER_ENABLED = True
 risk classifier" section."""
 
 DEFAULT_BASH_RISK_CLASSIFIER_MODEL = "openai/gpt-5-nano"
-"""Default for `ProcessConfig.bash_risk_classifier_model` — independent of
+"""Last-resort model `klorb.permissions.risk_classifier.resolve_item_risk_assessment` falls
+back to when `ProcessConfig.bash_risk_classifier_model` is unset (the normal case) and no
+registered model declares the `"BASH_SAFETY_EVAL"` `klorb_capabilities` flag — independent of
 `SessionConfig.model` (the main conversation's own model), since an ask can happen regardless of
-which model is driving the conversation; see `klorb.permissions.risk_classifier`."""
+which model is driving the conversation."""
 
 DEFAULT_BASH_RISK_CLASSIFIER_TIMEOUT_SECONDS = 5.0
 """Default for `ProcessConfig.bash_risk_classifier_timeout_seconds` — a short, separate timeout
@@ -270,12 +272,20 @@ class ProcessConfig(BaseModel):
     second LLM call at all (cost, latency, or data-sensitivity reasons). `False` means exactly
     today's behavior: no risk badge/rationale, `klorb.permissions.command_grant.
     compute_command_grant_patterns()`'s literal-argv fallback used as-is."""
-    bash_risk_classifier_model: str = DEFAULT_BASH_RISK_CLASSIFIER_MODEL
+    bash_risk_classifier_model: str | None = None
     """Model `classify_command_risk()` sends its request to, via the same `ApiProvider` instance
     the main conversation uses. One fixed model classifies every request regardless of how
     concerning the deterministic layer's own findings are — see `klorb.permissions.
     risk_classifier._build_system_prompt` for how conservatism for a `ForcedAskReason`-carrying
-    item is instead achieved by varying the prompt, not by escalating to a costlier model."""
+    item is instead achieved by varying the prompt, not by escalating to a costlier model.
+
+    `None` (the default, and `default-config.json`'s own packaged value) means klorb picks the
+    model itself: `klorb.permissions.risk_classifier.resolve_item_risk_assessment` looks up a
+    registered model whose `Model.klorb_capabilities()` reports `"BASH_SAFETY_EVAL"`
+    (`klorb.models.registry.ModelRegistry.find_by_capability`), falling back to
+    `DEFAULT_BASH_RISK_CLASSIFIER_MODEL` if none is registered. Setting this to an explicit
+    model name (a user's own `klorb-config.json`, or a project's) always wins over that
+    lookup — klorb only picks for itself when nobody's told it what to use."""
     bash_risk_classifier_timeout_seconds: float = DEFAULT_BASH_RISK_CLASSIFIER_TIMEOUT_SECONDS
     """Wall-clock seconds `classify_command_risk()`'s request is allowed to take before it's
     treated as a failure (falling back to no risk badge/rationale) — separate from

@@ -1,0 +1,17 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "delta",
+  "family": "test-family",
+  "model_version": "1.0",
+  "settings": {
+    "temperature": 0.5
+  },
+  "capabilities": {
+    "vision": true,
+    "thinking": false,
+    "max_context_window": 8000
+  }
+}
