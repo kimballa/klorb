@@ -87,25 +87,6 @@
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
-* When we quit, ask if we should save the session state.
-  If yes, then write a file that goes in `projRoot`/.klorb/last-session.json
-  storing last Session config  and the message history for the session.
-
-  When we next load klorb in that same directory, auto-load the session state info from last-session.json
-  and reconstitute the session.
-
-  This json file should include the schema info:
-  ```
-  {
-    schema: {
-        name: "klorb-session",
-        version: "1.0.0"
-    },
-
-    /* actual data here. */
-  }
-  ```
-
 * Need a ProviderFactory
     * Produces ApiProviders from a string
     * Currently only openrouter api provider is supported from "openrouter" string.

@@ -101,9 +101,16 @@ or slicing a superset.
      hand-editing, not the built-in-defaults file above.
   4. `cwd/.klorb/klorb-config.json`
   5. The file named by `--config` on the command line, if given.
-  6. Overrides carried over from the previous session's saved state — a placeholder for now
-     (`_load_last_session_overrides()` always returns `{}`), reserved for when
-     `last-session.json` (see `TODO.md`) exists.
+  6. Overrides carried over from the previous session's saved state — still a placeholder
+     (`_load_last_session_overrides()` always returns `{}`): `last-session.json` (see
+     docs/specs/session-persistence.md) exists now, but its `SessionConfig` is restored by
+     `klorb.tui.repl.ReplApp._maybe_restore_last_session` directly, not through this layering
+     step — that file's saved config is a plain dump of `SessionConfig`'s own fields, not the
+     on-disk `sessionDefaults` shape this layer expects, and its message history has no
+     `ProcessConfig`-shaped home to land in regardless. This layer stays reserved for a
+     possible future change that reconciles the two, so a `--model`/other CLI flag passed to
+     a new invocation could win over a restored session's own value the way it already does
+     for every other layer here — see docs/specs/session-persistence.md's "Out of scope".
 
   Each layer is one JSON object shaped like `docs/specs/persisted-json-schema-versioning.md`
   describes, plus a `sessionDefaults` key holding a nested object of session-scoped
@@ -347,8 +354,9 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `SearchScratchpadTool` via `context.process_config.scratchpad_context_lines`;
   `DEFAULT_SCRATCHPAD_CONTEXT_LINES` in `process_config.py` is its sole canonical default — see
   [[tool-framework]] and docs/specs/scratchpad.md.
-* `last-session.json` (`TODO.md`) doesn't exist yet; `_load_last_session_overrides()` is a
-  placeholder that always returns no overrides.
+* `_load_last_session_overrides()` is a placeholder that always returns no overrides — see
+  "How it works" above for why `last-session.json` (docs/specs/session-persistence.md) is
+  restored outside this layering step instead of through it.
 * Provider selection isn't implemented (no command exists to change it), so there's nothing
   to dual-write for it yet; `openrouter_base_url` is process-only precisely because there's
   no per-session notion of "provider" to attach it to.

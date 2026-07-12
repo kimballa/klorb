@@ -5,8 +5,8 @@
 Every klorb JSON file that's written to disk and expected to be read back later — by a
 future run of the same process type, not just consumed once — carries a small envelope
 identifying its file type and format version. This is framework-level: any feature that
-persists state (config files today; saved session state, per the `last-session.json` item in
-`TODO.md`, in the future) reads through the shared helper in `klorb.schema_envelope` rather
+persists state (config files, saved session state — see docs/specs/session-persistence.md —
+`projects.json`, etc.) reads through the shared helper in `klorb.schema_envelope` rather
 than parsing JSON directly, so upgrade handling only needs to be written once. See
 [the schema envelope ADR](../adrs/version-persisted-json-with-a-schema-envelope.md) for why
 this exists.
@@ -73,7 +73,3 @@ this exists.
 ## Out of scope
 
 * No upgrade/migration logic exists yet; there's only ever been one version of any schema.
-* No write helper exists yet, since every current writer (a user hand-authoring
-  `klorb-config.json`) writes its own file directly. A `last-session.json` writer, when
-  built, is the natural place to add one if the envelope-construction boilerplate turns out
-  to be worth sharing.

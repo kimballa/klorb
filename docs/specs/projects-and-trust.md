@@ -196,9 +196,10 @@ so they aren't lost the next time klorb opens this workspace.
   "system prompts must not load from an untrusted project" is currently vacuous, not implemented
   against a real mechanism. Whenever such a per-project tier is built, it must be gated on
   `SessionConfig.workspace.trusted` the same way the config-file layer is here.
-* `last-session.json` (`TODO.md`) doesn't exist yet, so there's no "reconstitute the previous
-  session automatically" behavior tied to a trusted workspace — a possible future extension, not
-  built here.
+* Reconstituting a previous session automatically for a trusted workspace is built — see
+  docs/specs/session-persistence.md — but as a `klorb.tui.repl.ReplApp`-level concern layered
+  on top of the workspace resolution this spec covers, not as part of `Workspace` resolution
+  or config-layer precedence itself.
 * The `Header`'s title (`ReplApp.format_title()`, `klorb.tui.repl`) shows the current workspace
   path plus an `(Untrusted)` marker whenever `SessionConfig.workspace.trusted` is `False`,
   alongside the active model and (if thinking is enabled) its effort level — see
