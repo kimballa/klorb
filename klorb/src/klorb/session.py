@@ -149,6 +149,14 @@ def _wrap_system_interjection(subject: str, message: str) -> str:
     return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
 
 
+def _wrap_agent_role(role_prompt: str) -> str:
+    """Wrap `role_prompt` in an `<AgentRole>...</AgentRole>` tag pair, so it reads as a
+    role-specific addendum layered onto the role-and-model-agnostic default prompt ahead of
+    it, rather than a competing, free-standing prompt — see
+    `Session._resolve_system_prompt()`."""
+    return f"<AgentRole>\n{role_prompt}\n</AgentRole>"
+
+
 class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
 
@@ -672,22 +680,38 @@ class Session:
         return prompt if prompt is not None else DEFAULT_SYSTEM_PROMPT
 
     def _resolve_system_prompt(self) -> str:
-        """Resolve the system prompt for the active turn, most specific source first: the
-        session's `Role`'s prompt tiers (role+model, then role default — see
-        `Role.system_prompt`), then the active model's role-agnostic prompt
-        (`Model.system_prompt`, skipped when `config.model` isn't registered), then
-        `_default_system_prompt()`. Never returns an empty prompt: the final tier always
-        produces one. Re-derived fresh each place it's needed, so it always reflects the
-        *current* active model — see docs/specs/roles-and-system-prompts.md."""
+        """Resolve the system prompt for the active turn by combining two independent
+        resolver walks, each most-specific-source-first and each checking the user override
+        tier before the packaged tier at every step (see
+        `klorb.system_prompts.resolve_prompt_file`):
+
+        * The **default walk** — role-agnostic — tries the active model's own prompt file
+          (`Model.system_prompt()`, skipped when `config.model` isn't registered), then
+          `_default_system_prompt()`'s `default_sys.md`. This walk never comes up empty: its
+          final tier is the hardcoded `DEFAULT_SYSTEM_PROMPT` safety net.
+        * The **role walk** tries the session's `Role`'s prompt tiers (role+model, then role
+          default — see `Role.system_prompt`). May produce `None` if this role has no prompt
+          file in either tier.
+
+        The default walk's result is always the base of the returned prompt. When the role
+        walk also produces a prompt, it's wrapped in an `<AgentRole>` tag (`_wrap_agent_role`)
+        and appended after the default prompt, so a role's instructions layer onto the
+        default ones instead of replacing them outright. Context-instruction files
+        (`AGENTS.md` and friends) are no part of this: they're carried as a separate
+        `<SystemInterjection subject="ProjectGuidance">` prepended onto the first turn's user
+        message by `send_turn()`, not folded into the system prompt itself — see
+        `_build_context_files_interjection()`.
+
+        Re-derived fresh each place it's needed, so it always reflects the *current* active
+        model — see docs/specs/roles-and-system-prompts.md."""
         model = self._active_model()
-        prompt = self._role.system_prompt(model)
-        if prompt is not None:
-            return prompt
-        if model is not None:
-            prompt = model.system_prompt()
-            if prompt is not None:
-                return prompt
-        return self._default_system_prompt()
+        default_prompt = model.system_prompt() if model is not None else None
+        if default_prompt is None:
+            default_prompt = self._default_system_prompt()
+        role_prompt = self._role.system_prompt(model)
+        if role_prompt is None:
+            return default_prompt
+        return f"{default_prompt}\n\n{_wrap_agent_role(role_prompt)}"
 
     def _reasoning_params(self) -> dict[str, Any] | None:
         """Return the provider-shaped `reasoning` request body for the active turn, or

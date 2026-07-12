@@ -47,6 +47,11 @@ SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-[a-z]+-[a-z]+$")
 COORDINATOR_PROMPT = resolve_prompt_file("roles/coordinator/default.md")
 DEFAULT_PROMPT = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
+# What a coordinator-role session's resolved system prompt looks like when its "default walk"
+# lands on default_sys.md (e.g. an unregistered model): the default prompt, then the role's own
+# prompt layered on afterward inside an <AgentRole> tag — see Session._resolve_system_prompt().
+COMPOSED_COORDINATOR_PROMPT = f"{DEFAULT_PROMPT}\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>"
+
 # A role_name with no dedicated Role subclass and no roles/<name>/ prompt files anywhere, so
 # resolution falls through the role tiers to the model-specific and default tiers.
 ROLE_WITHOUT_PROMPT_FILES = "test-role-with-no-prompt-files"
@@ -294,10 +299,10 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=COORDINATOR_PROMPT, model="some/model",
+        session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, on_chunk=mock.ANY,
         on_thinking_chunk=mock.ANY, cancel_event=None)
-    assert [m.content for m in session.messages] == [COORDINATOR_PROMPT, "hi", "model reply"]
+    assert [m.content for m in session.messages] == [COMPOSED_COORDINATOR_PROMPT, "hi", "model reply"]
 
 
 def test_run_one_shot_delegates_to_send_turn() -> None:
@@ -310,7 +315,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=COORDINATOR_PROMPT, model="some/model",
+        session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, on_chunk=mock.ANY,
         on_thinking_chunk=mock.ANY, cancel_event=None)
 
@@ -328,7 +333,7 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
     assert kwargs["system_prompt"] == "You are Alpha."
 
 
-def test_role_prompt_outranks_registered_model_prompt() -> None:
+def test_role_prompt_layers_onto_registered_model_prompt() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     config = SessionConfig(model="alpha")  # role_name defaults to "coordinator"
@@ -338,7 +343,7 @@ def test_role_prompt_outranks_registered_model_prompt() -> None:
     session.send_turn("hi")
 
     _, kwargs = mock_provider.send_prompt.call_args
-    assert kwargs["system_prompt"] == COORDINATOR_PROMPT
+    assert kwargs["system_prompt"] == f"You are Alpha.\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>"
 
 
 def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt() -> None:
@@ -387,7 +392,7 @@ def test_system_message_holds_role_prompt_when_model_unregistered() -> None:
     session.send_turn("hi")
 
     assert session.messages[0].role == "system"
-    assert session.messages[0].content == COORDINATOR_PROMPT
+    assert session.messages[0].content == COMPOSED_COORDINATOR_PROMPT
 
 
 def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
@@ -501,7 +506,8 @@ def test_send_turn_sends_full_history_to_provider() -> None:
     session.send_turn("second")
 
     second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
-    assert [m.content for m in second_call_messages] == [COORDINATOR_PROMPT, "first", "r1", "second"]
+    assert [m.content for m in second_call_messages] == [
+        COMPOSED_COORDINATOR_PROMPT, "first", "r1", "second"]
 
 
 def test_token_delta_accounted_across_two_turns() -> None:

@@ -8,12 +8,14 @@ performing: coordinating a task, exploring a codebase, auditing a change, ...) a
 active *model* — across two tiers: a user-editable override tree under
 `$KLORB_CONFIG_DIR/system_prompts.d/`, and a built-in tree shipped inside the installed
 `klorb.resources` package. A `Role` object (`klorb/src/klorb/role.py`) represents the
-operating role; `Session` builds its own `Role` from `SessionConfig.role_name` and resolves
-the prompt most-specific-source-first on every turn. Roles exist because coding is headed
-toward a multi-agent exercise: two agents on the *same* model doing different jobs (writing
-code vs. auditing it) need different instructions, so role — not model, and not the API
-provider the model is reached through — is the primary axis a prompt hangs on. See
-[[resolve-system-prompts-role-first-then-model-then-default]] and
+operating role; `Session` builds its own `Role` from `SessionConfig.role_name` and, on every
+turn, resolves a role-and-model-agnostic default prompt and a role-specific prompt as two
+independent walks, then concatenates them. Roles exist because coding is headed toward a
+multi-agent exercise: two agents on the *same* model doing different jobs (writing code vs.
+auditing it) need different instructions, so role — not model, and not the API provider the
+model is reached through — is the primary axis a prompt hangs on. See
+[[resolve-system-prompts-role-first-then-model-then-default]],
+[[concatenate-role-prompt-onto-default-instead-of-replacing-it]], and
 [[ship-system-prompts-as-package-data-with-user-config-overrides]].
 
 ## How it works
@@ -79,8 +81,8 @@ model-specific override like any other.
   only supplies the name.
 * `NamedRole` covers any `role_name` with no dedicated subclass: it carries the string
   as-is and triangulates behavior purely from the prompt-file naming convention (whatever
-  `roles/<name>/` files exist, else the resolution below falls through to the model and
-  default tiers).
+  `roles/<name>/` files exist, layered onto the model and default tiers per the resolution
+  below — or, if none exist, no `<AgentRole>` addendum at all).
 * `get_role(role_name: str) -> Role` is the factory: dedicated subclass when one exists
   (today only `"coordinator"` → `CoordinatorRole`), else `NamedRole(role_name)`.
 * `SessionConfig.role_name` (default `COORDINATOR_ROLE_NAME`) is the only way a role enters
@@ -94,35 +96,49 @@ model-specific override like any other.
 
 ### Resolution order
 
-`Session._resolve_system_prompt() -> str` picks the prompt for the active turn, most
-specific source first; within each source, the user tier beats the packaged tier (that tie
-break lives inside `resolve_prompt_file`):
-
-1. `roles/<role>/<mangled-model>.md` — via `Role.system_prompt(model)`
-2. `roles/<role>/default.md` — same call
-3. `<mangled-model>.md` — via `Model.system_prompt()`, skipped when `config.model` has no
-   registered `Model` ([[model-framework]])
-4. `default_sys.md` — via `Session._default_system_prompt()`
-5. `klorb.system_prompts.DEFAULT_SYSTEM_PROMPT`, a hardcoded constant — a safety net that
-   never triggers in practice, since the packaged `default_sys.md` always ships
-
-Every method in the chain returns `str | None` and `None` means "fall through", so test
+`Session._resolve_system_prompt() -> str` picks the prompt for the active turn by running
+two independent resolver walks and concatenating their results, rather than a single chain
+where the first hit wins. Within each walk, the user tier beats the packaged tier at every
+step (that tie break lives inside `resolve_prompt_file`); each method in either walk returns
+`str | None` and `None` means "fall through to the next tier of *this* walk," so test
 fixtures (e.g. `klorb/tests/fixtures/sample_models/*.py`) can override
-`Model.system_prompt()`/`Role.system_prompt()` to return literal strings with no
-filesystem access. Note the consequence of role outranking model: while a
-`roles/coordinator/default.md` ships in the package, a top-level `<mangled-model>.md` is
-never reached by a coordinator session — model tuning *for the coordinator* belongs at
-`roles/coordinator/<mangled-model>.md`, and the top-level model files serve sessions whose
-role resolved no files at all.
+`Model.system_prompt()`/`Role.system_prompt()` to return literal strings with no filesystem
+access.
 
-Because the coordinator's role prompt must stand alone (tier 2 wins outright; tiers below
-it are never appended), `roles/coordinator/default.md` repeats the general engineering
-discipline of `default_sys.md` (grounding, minimal diffs, verification, honest reporting)
-and adds the coordinator's process-leadership instructions on top. The two files are
-deliberately separate rather than one shared prompt: `default_sys.md` backstops *every*
-session that resolves no role file — including future specialist subagents whose role files
-don't exist yet — so it must stay role-neutral rather than impose the coordinator's
-decompose-and-orchestrate bias on, say, an explore subagent that fell through to it.
+* The **default walk** is role-agnostic and never comes up empty:
+  1. `<mangled-model>.md` — via `Model.system_prompt()`, skipped when `config.model` has no
+     registered `Model` ([[model-framework]])
+  2. `default_sys.md` — via `Session._default_system_prompt()`
+  3. `klorb.system_prompts.DEFAULT_SYSTEM_PROMPT`, a hardcoded constant — a safety net that
+     never triggers in practice, since the packaged `default_sys.md` always ships
+* The **role walk** may come up empty (`None`):
+  1. `roles/<role>/<mangled-model>.md` — via `Role.system_prompt(model)`
+  2. `roles/<role>/default.md` — same call
+
+The default walk's result is always the base of the final prompt. When the role walk also
+produces a prompt, it's wrapped in an `<AgentRole>...</AgentRole>` tag (`_wrap_agent_role`)
+and appended after the default prompt, separated by a blank line — so a role's instructions
+*layer onto* the default ones rather than replacing them. When the role walk resolves
+nothing, the default walk's result is returned as-is, with no `<AgentRole>` block at all.
+This means every session's prompt always includes `default_sys.md` (or its user override),
+regardless of role — there is no way for a role to opt out of the role-and-model-agnostic
+default prompt, only to add to it.
+
+Context-instruction files (`AGENTS.md`, `.klorb/INSTRUCTIONS.md`, `CLAUDE.md`) are no part
+of this resolution at all: they're gathered by `_build_context_files_interjection()` and
+prepended, wrapped in a `<SystemInterjection subject="ProjectGuidance">` tag, onto the
+first turn's *user* message by `send_turn()` — a distinct mechanism from the system prompt
+described here (see [[workspace-context-files]]). Positionally this guidance still lands
+after the system prompt resolved here, since the system prompt is sent as its own field
+ahead of the conversation's messages.
+
+Because `default_sys.md` is now unconditionally part of every session's prompt,
+`roles/coordinator/default.md` no longer needs to restate `default_sys.md`'s general
+engineering discipline (grounding, minimal diffs, verification, honest reporting) to ensure
+a coordinator session sees it — both apply together. `roles/coordinator/default.md` is
+expected to hold only the coordinator's own process-leadership instructions layered on top
+(task ownership, the research/think/decide/plan/execute/verify/analyze loop, problem
+decomposition), not a copy of the default prompt's material.
 
 `Session` re-resolves the prompt fresh at each use — the `role="system"` bookkeeping
 message inserted before the first turn ([[store-system-prompt-as-a-bookkeeping-message]])

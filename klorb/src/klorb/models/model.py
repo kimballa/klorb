@@ -29,9 +29,10 @@ class Model(ABC):
         `<mangled_name()>.md` prompt file at the top of a `system_prompts.d/` tree (user
         override tier, then packaged tier — see
         `klorb.system_prompts.resolve_prompt_file`) — or `None` if no such file exists.
-        Consulted by `Session._resolve_system_prompt()` only after the active `Role`'s
-        prompt tiers returned nothing. Subclasses (e.g. test fixtures) may override to
-        return a literal string without filesystem access."""
+        Consulted by `Session._resolve_system_prompt()` as one tier of its "default walk",
+        independent of whatever the active `Role`'s own prompt tiers resolve. Subclasses
+        (e.g. test fixtures) may override to return a literal string without filesystem
+        access."""
         return resolve_prompt_file(f"{self.mangled_name()}.md")
 
     @abstractmethod

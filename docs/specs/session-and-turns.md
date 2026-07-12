@@ -72,8 +72,8 @@ config) has one place to live.
     work. It appends a new `Message` (`role="user"`, `processing_state="pending"`) to the
     history, then sends the *entire* history plus the
     session's resolved system prompt (re-resolved fresh by `_resolve_system_prompt()` on
-    every call — role tiers first, then model, then default; see
-    [[roles-and-system-prompts]]) and `_reasoning_params()`'s result via
+    every call — the model-then-default prompt with the role's own prompt, if any, layered
+    on top; see [[roles-and-system-prompts]]) and `_reasoning_params()`'s result via
     `ApiProvider.send_prompt(messages, system_prompt=, model=, session_id=, reasoning=,
     on_chunk=, on_thinking_chunk=)`. As chunks arrive, `Session` (not the provider) owns the
     in-progress assistant `Message`: on the first content chunk it appends a placeholder

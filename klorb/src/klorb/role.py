@@ -64,8 +64,9 @@ class NamedRole(Role):
 
     Covers any `SessionConfig.role_name` that `get_role()` doesn't recognize: it
     triangulates the right behavior purely from the name — its system prompt comes from
-    whatever `system_prompts.d/roles/<name>/` files exist (falling through to the
-    model-specific and default tiers otherwise — see `Session._resolve_system_prompt`).
+    whatever `system_prompts.d/roles/<name>/` files exist, layered onto the model-specific
+    and default tiers rather than replacing them (`None` when none exist at all — see
+    `Session._resolve_system_prompt`).
     """
 
     def __init__(self, role_name: str) -> None:
