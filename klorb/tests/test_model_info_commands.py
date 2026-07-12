@@ -75,7 +75,7 @@ def test_format_model_info_shows_provider_specific_capability_keys() -> None:
 
 def test_format_model_info_shows_klorb_capabilities() -> None:
     model = _model({
-        "name": "openai/gpt-oss-safeguard-20b:nitro",
+        "name": "openai/gpt-oss-120b:nitro",
         "klorb_capabilities": {"BASH_SAFETY_EVAL": True},
     })
 

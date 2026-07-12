@@ -119,7 +119,7 @@ OpenRouter's public models listing.
   `openai/gpt-5-nano` (klorb's default model, `klorb.openrouter.DEFAULT_MODEL`),
   `z-ai/glm-5.2`, `anthropic/claude-sonnet-5`, `qwen/qwen3-coder-next` (Qwen's
   coding-agent-focused model), `moonshotai/kimi-k2.7-code` (Moonshot AI's coding-focused
-  Kimi K2 release), and `openai/gpt-oss-safeguard-20b:nitro` (OpenAI's safety-reasoning
+  Kimi K2 release), and `openai/gpt-oss-120b:nitro` (OpenAI's open-weight reasoning
   model, the only built-in model declaring `klorb_capabilities.BASH_SAFETY_EVAL`).
 * `klorb.tui.model_commands.ModelCommandProvider` (`klorb/src/klorb/tui/model_commands.py`)
   is a Textual `command.Provider` offering a single `"Change model (<current>)"` command.
