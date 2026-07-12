@@ -298,9 +298,14 @@ def main() -> None:
     prompt and the REPL honor whatever trust decision a previous interactive session recorded
     for this directory. See docs/specs/projects-and-trust.md.
 
-    Calls `klorb.token_estimate.configure_tiktoken_cache_env()` once logging is configured (so
-    its log message is actually visible), pointing tiktoken at the `klorb init`-installed
-    cache if one is present.
+    For a one-shot prompt, calls `klorb.token_estimate.configure_tiktoken_cache_env()` once
+    logging is configured (so its log message is actually visible on stderr and, if enabled,
+    the session log file), pointing tiktoken at the `klorb init`-installed cache if one is
+    present. For an interactive session, that same call is instead made by
+    `klorb.tui.repl.ReplApp.on_mount()` once the Textual app is running, so its log message
+    routes through the app's log (or the session log file) rather than leaking to raw stderr
+    ahead of the TUI taking over the terminal -- see
+    docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md.
     """
     load_dotenv()
 
@@ -355,8 +360,6 @@ def main() -> None:
     configure_logging(repl_mode=interactive, log_path=log_path)
     logger.debug("Logging to %s", log_path)
 
-    configure_tiktoken_cache_env()
-
     if interactive:
         run_repl(
             session,
@@ -367,6 +370,7 @@ def main() -> None:
             config_flag_path=config_flag_path,
         )
     else:
+        configure_tiktoken_cache_env()
         logger.info("Sending prompt to model=%s", session.config.model)
         streamed_any = False
 

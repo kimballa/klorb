@@ -58,8 +58,6 @@
   are merged in with the rest... this seems like it would clobber things, though.)
 * Each per-project subdir in `.local/share/klorb/...` should include a `logs` subdir with symlinks
   to all the log files in `.local/state/ associated w/ the project
-* Why does this logging line make it to the stderr log and not the file log like basically everything
-  else? `INFO:klorb.token_estimate:Found bundled tiktoken cache...`
 
 * bash approval panel should put `+` in the hotkey list for the panel when `more` is available.
 

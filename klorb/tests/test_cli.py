@@ -358,6 +358,34 @@ def test_main_one_shot_writes_session_log_when_requested() -> None:
         repl_mode=False, log_path=session_log_path("some-session-id"))
 
 
+def test_main_one_shot_configures_tiktoken_cache_env() -> None:
+    """A one-shot prompt has no `ReplApp` to defer to, so `main()` itself must call
+    `configure_tiktoken_cache_env()` (after `configure_logging()`, so its log message is
+    visible) -- see docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md."""
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.configure_tiktoken_cache_env") as mock_configure_cache:
+            with patch("sys.argv", ["klorb", "-m", "hi"]):
+                cli.main()
+
+    mock_configure_cache.assert_called_once_with()
+
+
+def test_main_repl_defers_tiktoken_cache_env_to_repl_app() -> None:
+    """An interactive session's `configure_tiktoken_cache_env()` call is made by `ReplApp.
+    on_mount()` instead, once the Textual app is actually running -- not by `main()` -- see
+    docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md."""
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl"):
+            with patch("klorb.cli.configure_tiktoken_cache_env") as mock_configure_cache:
+                with patch("sys.argv", ["klorb"]):
+                    cli.main()
+
+    mock_configure_cache.assert_not_called()
+
+
 def test_main_repl_writes_session_log_by_default() -> None:
     mock_session = MagicMock()
     mock_session.id = "some-session-id"

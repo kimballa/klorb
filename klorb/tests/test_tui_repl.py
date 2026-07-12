@@ -204,6 +204,23 @@ def test_format_token_count_examples() -> None:
     assert format_token_count(1_000_000) == "1M"
 
 
+async def test_on_mount_configures_tiktoken_cache_env() -> None:
+    """`ReplApp.on_mount()` -- not `klorb.cli.main()` -- points tiktoken at the bundled cache
+    for an interactive session, since by then the Textual app is actually running and its
+    startup log message routes through the app's log / the session log file instead of
+    leaking to raw stderr -- see
+    docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md."""
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    with patch("klorb.tui.repl.configure_tiktoken_cache_env") as mock_configure_cache:
+        async with app.run_test():
+            pass
+
+    mock_configure_cache.assert_called_once_with()
+
+
 async def test_status_bar_shows_zero_tokens_against_model_context_window_on_mount() -> None:
     mock_provider = MagicMock()
     registry = sample_model_registry()
