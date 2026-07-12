@@ -5,11 +5,12 @@ box pinned to the bottom of the screen.
 
 import asyncio
 import inspect
+import json
 import logging
 import threading
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from rich.text import Text
 from textual import events, work
@@ -26,6 +27,8 @@ from textual.widgets import Button, Footer, Header, Markdown, Static, TextArea
 
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
+from klorb.message import Message as ChatMessage
+from klorb.message import ToolCallRequest
 from klorb.models.model import Model
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules
@@ -75,6 +78,7 @@ from klorb.tui.thinking_commands import ThinkingCommandProvider
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.input_history import append_history, load_history, project_history_path
+from klorb.workspace.last_session import read_last_session, write_last_session
 from klorb.workspace.workspace_init import (
     write_initial_project_config,
     write_session_defaults_to_project_config,
@@ -1386,7 +1390,39 @@ class ReplApp(App[None]):
         if self._shell_cancel_event is not None:
             self._shell_cancel_event.set()
         else:
-            self.exit()
+            self._quit_after_maybe_saving()
+
+    async def action_quit(self) -> None:
+        """Ctrl+Q (and the built-in "Quit the application" system command): ask whether to
+        save the session state, then exit — see `_quit_after_maybe_saving`.
+
+        Overrides `App.action_quit` (which just calls `self.exit()`) keeping its exact
+        signature (`async def action_quit(self) -> None`) so it stays a valid override;
+        the actual work happens in `_quit_after_maybe_saving`, a `@work()` worker, because
+        awaiting a modal's dismissal (`push_screen_wait`) is only allowed from within an
+        active worker's context. Calling (not awaiting) a `@work()`-decorated method starts
+        the worker and returns immediately, same as `trust_workspace`.
+        """
+        self._quit_after_maybe_saving()
+
+    @work()
+    async def _quit_after_maybe_saving(self) -> None:
+        """If the current workspace is trusted and this app has a `TrustManager` (see
+        `workspace_trust_management_enabled`), ask whether to save the session state before
+        quitting; on Yes, write the live `Session`'s config and message history to
+        `last-session.json` (`klorb.workspace.last_session.write_last_session`) so
+        `_maybe_restore_last_session` can pick it back up the next time klorb opens this
+        workspace. Either way, finishes by exiting the app. A no-op prompt (skipping straight
+        to `self.exit()`) when there's no `TrustManager` or the workspace isn't trusted, since
+        an unresolved or untrusted workspace has no business writing into its per-project data
+        directory.
+        """
+        if self._trust_manager is not None and self._session.config.workspace.trusted:
+            save = await self.push_screen_wait(ConfirmScreen("Save session state before quitting?"))
+            if save:
+                write_last_session(
+                    self._session.config.workspace, self._session.config, self._session.messages)
+        self.exit()
 
     def action_toggle_tool_call_detail(self) -> None:
         """Ctrl+O: flip every `ToolCallStatic` currently in the history — from any turn, not
@@ -1524,6 +1560,34 @@ class ReplApp(App[None]):
         # purely in-memory recall and never touches a real `$KLORB_DATA_DIR`.
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.set_history_store(project_history_path(workspace))
+        if workspace.trusted:
+            self._maybe_restore_last_session(workspace)
+
+    def _maybe_restore_last_session(self, workspace: Workspace) -> None:
+        """If a previous interactive session in `workspace` saved its state (see
+        `_quit_after_maybe_saving`), replace the freshly-constructed `Session` with one built
+        from that saved `SessionConfig` and message history, and re-render the history scroll
+        to match — so a trusted workspace picks its conversation back up where the last klorb
+        process left off, instead of starting blank. A no-op if no `last-session.json` exists
+        for `workspace` yet (`read_last_session` returns `None`).
+
+        Only called for a trusted `workspace` (see caller): an untrusted or unresolved
+        workspace has no saved state of its own to restore, by the same reasoning
+        `_quit_after_maybe_saving` uses to decide whether to write one.
+        """
+        state = read_last_session(workspace)
+        if state is None:
+            return
+        restored_config = state.config.model_copy(update={"workspace": workspace})
+        self._session.close()
+        self._session = Session(
+            restored_config, provider=self._session.provider,
+            model_registry=self._session.model_registry, process_config=self._process_config,
+            tool_registry=ToolRegistry(self._process_config, restored_config))
+        self._session.load_messages(state.messages)
+        self.sub_title = restored_config.model
+        self._update_status_bar()
+        self._mount_restored_history(state.messages)
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:
         """Ask the two workspace-bootstrap questions from docs/specs/projects-and-trust.md for
@@ -2086,32 +2150,43 @@ class ReplApp(App[None]):
         self._update_status_bar()
 
     def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
-        """Render `event` as `(summary_text, detail_text)` via its tool's `summary()`/
-        `detail_view()` — instantiating a fresh `Tool` purely to call these pure methods
-        (`ToolRegistry.instantiate_tool()` is already a cheap, no-shared-state operation; see
-        docs/adrs/tool-registry-instantiates-a-fresh-tool-per-call.md) — or via the shared
-        default formatters if `event.name` isn't a registered tool (e.g. a hallucinated tool
-        name, which `Session._run_tool_calls` already turned into `event.error`).
-
-        `event.raw_arguments is not None` means the model's `arguments` string failed to
-        parse as JSON before any tool ever ran (see `ToolCallEvent.raw_arguments`); that's
-        rendered via `default_invalid_tool_call_summary()`/`default_invalid_tool_call_detail()`
-        instead, showing the raw malformed text rather than the always-empty `event.args`.
+        """Render `event` as `(summary_text, detail_text)` — see `_render_tool_result`, which
+        does the actual work from `event`'s individual fields. Split out so
+        `_render_restored_tool_call` (reconstructing a finished call from persisted `Message`s
+        rather than a live `ToolCallEvent`) can share the same rendering logic.
         """
-        if event.raw_arguments is not None:
-            assert event.error is not None
-            return (default_invalid_tool_call_summary(event.name, event.error),
-                    default_invalid_tool_call_detail(event.name, event.raw_arguments, event.error))
+        return self._render_tool_result(
+            event.name, event.args, event.result, event.error, event.raw_arguments)
+
+    def _render_tool_result(
+        self, name: str, args: dict[str, Any], result: Any, error: str | None,
+        raw_arguments: str | None,
+    ) -> tuple[str, str]:
+        """Render one finished tool call as `(summary_text, detail_text)` via its tool's
+        `summary()`/`detail_view()` — instantiating a fresh `Tool` purely to call these pure
+        methods (`ToolRegistry.instantiate_tool()` is already a cheap, no-shared-state
+        operation; see docs/adrs/tool-registry-instantiates-a-fresh-tool-per-call.md) — or via
+        the shared default formatters if `name` isn't a registered tool (e.g. a hallucinated
+        tool name, which `Session._run_tool_calls` already turned into `error`).
+
+        `raw_arguments is not None` means the model's `arguments` string failed to parse as
+        JSON before any tool ever ran (see `ToolCallEvent.raw_arguments`); that's rendered via
+        `default_invalid_tool_call_summary()`/`default_invalid_tool_call_detail()` instead,
+        showing the raw malformed text rather than the always-empty `args`.
+        """
+        if raw_arguments is not None:
+            assert error is not None
+            return (default_invalid_tool_call_summary(name, error),
+                    default_invalid_tool_call_detail(name, raw_arguments, error))
         registry = self._session.tool_registry
         try:
             if registry is None:
-                raise KeyError(event.name)
-            tool = registry.instantiate_tool(event.name)
+                raise KeyError(name)
+            tool = registry.instantiate_tool(name)
         except KeyError:
-            return (default_tool_call_summary(event.name, event.args, event.error),
-                    default_tool_call_detail(event.name, event.args, event.result, event.error))
-        return (tool.summary(event.args, event.result, event.error),
-                tool.detail_view(event.args, event.result, event.error))
+            return (default_tool_call_summary(name, args, error),
+                    default_tool_call_detail(name, args, result, error))
+        return (tool.summary(args, result, error), tool.detail_view(args, result, error))
 
     def _mount_tool_call_widget(self, summary_text: str, detail_text: str) -> tuple[ToolCallStatic, Static]:
         """Mount a left-justified `<Tool use>` label (styled via the `.tool-call-label` CSS
@@ -2135,6 +2210,80 @@ class ReplApp(App[None]):
         self._tool_call_widgets.append(widget)
         self._update_status_bar()
         return widget, label_widget
+
+    def _mount_restored_history(self, messages: list[ChatMessage]) -> None:
+        """Re-render `messages` — a previous session's history, already loaded onto
+        `self._session` by `_maybe_restore_last_session` — into the history scroll, so a
+        restored conversation reads the same way it would have live: one `Static`/`Markdown`/
+        `ToolCallStatic` per user/assistant/thinking/tool-use message, in original order, via
+        the same `_mount_response_widget`/`_mount_thinking_widget`/`_mount_tool_call_widget`
+        helpers a live turn uses. `role="system"`/`"tool_defs"` bookkeeping messages are
+        skipped, matching how they're never rendered live either (see
+        `Session._ensure_system_message`/`_ensure_tool_defs_message`). A `role="tool_response"`
+        message is rendered together with its matching `role="tool_use"` entry, via
+        `_render_restored_tool_call`, rather than on its own.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        responses_by_call_id = {
+            message.tool_call_id: message for message in messages
+            if message.role == "tool_response" and message.tool_call_id is not None
+        }
+        for message in messages:
+            if message.role == "user":
+                history.mount(Static(message.content, classes="prompt", markup=False))
+            elif message.role == "assistant":
+                text = message.content
+                if message.processing_state == "aborted":
+                    text = f"{text}\n\n*(interrupted)*"
+                self._mount_response_widget(text)
+            elif message.role == "thinking":
+                text = message.content
+                if message.processing_state == "aborted":
+                    text = f"{text}\n\n(interrupted)"
+                self._mount_thinking_widget(text)
+            elif message.role == "tool_use":
+                for call in message.tool_calls or []:
+                    summary_text, detail_text = self._render_restored_tool_call(
+                        call, responses_by_call_id.get(call.id))
+                    self._mount_tool_call_widget(summary_text, detail_text)
+        history.mount(Static(f"Restored previous session ({len(messages)} messages).", classes="notice"))
+        history.scroll_end(animate=False)
+
+    def _render_restored_tool_call(
+        self, call: ToolCallRequest, response: ChatMessage | None,
+    ) -> tuple[str, str]:
+        """Reconstruct a finished tool call's `(summary_text, detail_text)` for
+        `_mount_restored_history` from persisted `Message`s alone — `call.arguments` (the
+        model's raw JSON-encoded arguments) and `response.content` (see
+        `_format_tool_response_content` in `klorb.session`, the encoding
+        `Session._run_tool_calls` used to fold a live call's `(result, error)` into one string,
+        the only form either survives in once persisted).
+
+        Best-effort, not lossless: a successful string result that happens to start with
+        `"Error: "` is indistinguishable here from an actual failure, since the two are folded
+        into the same `content` string on write; every other shape round-trips exactly. A
+        missing `response` (a truncated or hand-edited save file) renders as a call with a
+        `None` result rather than raising.
+        """
+        try:
+            args = json.loads(call.arguments) if call.arguments else {}
+            if not isinstance(args, dict):
+                raise ValueError("tool call arguments must decode to a JSON object")
+        except (json.JSONDecodeError, ValueError) as json_exc:
+            parse_error = f"Invalid JSON in tool call arguments: {json_exc}"
+            return self._render_tool_result(call.name, {}, None, parse_error, call.arguments)
+
+        result: Any = None
+        error: str | None = None
+        if response is not None:
+            if response.content.startswith("Error: "):
+                error = response.content[len("Error: "):]
+            else:
+                try:
+                    result = json.loads(response.content)
+                except json.JSONDecodeError:
+                    result = response.content
+        return self._render_tool_result(call.name, args, result, error, None)
 
     async def _confirm_tool_call_limit(self, message: str) -> bool:
         """Show `ToolCallLimitScreen` with `message` and wait for the user's yes/no answer.

@@ -24,7 +24,7 @@ from textual.widgets import Input, Markdown, Static
 from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.logging_config import session_log_path
-from klorb.message import Message, ToolCallRequest
+from klorb.message import Message, MessageRole, ToolCallRequest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
@@ -67,6 +67,7 @@ from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace import input_history as input_history_module
 from klorb.workspace.input_history import project_history_path
+from klorb.workspace.last_session import read_last_session, write_last_session
 
 TEST_SESSION_ID = "test-session-id"
 
@@ -1318,12 +1319,17 @@ async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(tmp_path: P
 
 
 async def test_ctrl_c_quits_when_no_shell_command_is_running() -> None:
+    """With no `TrustManager` (as here), `action_interrupt`'s fallthrough to
+    `_quit_after_maybe_saving` skips the save prompt entirely and exits directly — but that
+    still happens inside a `@work()` worker (see `_quit_after_maybe_saving`), so the test
+    must wait for it to run before asserting `exit()` was called."""
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
         await pilot.press("ctrl+c")
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         app.exit.assert_called_once()
@@ -3588,3 +3594,154 @@ async def test_typing_while_history_focused_is_not_redirected_when_input_disable
         # Focus stayed on the history; the disabled box received nothing.
         assert _focused_id(app) == HISTORY_ID
         assert prompt_input.text == ""
+
+
+# --- session persistence: save prompt on quit, auto-restore on startup ---
+
+
+def _sample_message(content: str = "hi", role: MessageRole = "user") -> Message:
+    return Message(
+        content=content, role=role, num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 0))
+
+
+async def test_quit_skips_save_prompt_for_untrusted_workspace(tmp_path: Path) -> None:
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        await pilot.press("ctrl+q")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1  # no ConfirmScreen was ever pushed
+        app.exit.assert_called_once()
+
+
+async def test_quit_skips_save_prompt_with_no_trust_manager() -> None:
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        await pilot.press("ctrl+q")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        app.exit.assert_called_once()
+
+
+async def test_quit_prompts_and_writes_last_session_on_yes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager, model="save/model")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._session.load_messages([_sample_message("hi")])
+        app.exit = MagicMock()  # type: ignore[method-assign]
+
+        await pilot.press("ctrl+q")
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.exit.assert_called_once()
+
+    state = read_last_session(workspace)
+    assert state is not None
+    assert state.config.model == "save/model"
+    assert [m.content for m in state.messages] == ["hi"]
+
+
+async def test_quit_declining_save_prompt_does_not_write_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.exit = MagicMock()  # type: ignore[method-assign]
+
+        await pilot.press("ctrl+q")
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        await pilot.click(f"#{CONFIRM_NO_ID}")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.exit.assert_called_once()
+
+    assert read_last_session(workspace) is None
+
+
+async def test_restores_previous_session_config_and_messages_on_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    write_last_session(
+        workspace, SessionConfig(model="restored/model", workspace=workspace),
+        [_sample_message("earlier prompt", "user"),
+         _sample_message("earlier reply", "assistant")])
+
+    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert app._session.config.model == "restored/model"
+        assert [m.content for m in app._session.messages] == ["earlier prompt", "earlier reply"]
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        prompts = list(history.query(".prompt"))
+        assert any(isinstance(w, Static) and str(w.content) == "earlier prompt" for w in prompts)
+        assert len(list(history.query(".response"))) == 1
+        assert any("Restored previous session" in notice for notice in _notice_texts(app))
+
+
+async def test_restore_skipped_when_no_saved_session_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._session.config.model == "fresh/model"
+        assert app._session.messages == []
+
+
+async def test_restores_tool_call_history_as_a_tool_call_widget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    tool_use = Message(
+        content="", role="tool_use", num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 0),
+        tool_calls=[ToolCallRequest(id="call-1", name="SampleTool", arguments='{"x": 1}')])
+    tool_response = Message(
+        content="42", role="tool_response", num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
+    write_last_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+
+    app = _repl_app_for_workspace(workspace, trust_manager)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(list(history.query(ToolCallStatic))) == 1

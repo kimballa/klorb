@@ -541,6 +541,19 @@ class Session:
         """Return the session's conversation history so far."""
         return list(self._messages)
 
+    def load_messages(self, messages: list[Message]) -> None:
+        """Replace this session's conversation history with `messages` — e.g. restoring a
+        previous interactive session's history from `klorb.workspace.last_session`. Intended
+        to be called once, immediately after construction, before any `send_turn()`: a
+        `role="system"`/`role="tool_defs"` bookkeeping message already present in `messages`
+        is left as-is rather than duplicated, since `_ensure_system_message()`/
+        `_ensure_tool_defs_message()` each skip inserting one if one is already there — see
+        their docstrings for why the possibly-stale content of either doesn't matter, since
+        the live system prompt and tool definitions are always resolved fresh and sent
+        out-of-band on every turn regardless of what's recorded here.
+        """
+        self._messages = list(messages)
+
     def set_permission_framework(self, value: PermissionFramework) -> None:
         """Change `config.permission_framework` to `value` and queue a system-harness
         interjection (`PERMISSION_FRAMEWORK_INTERJECTIONS[value]`) for `send_turn()` to
