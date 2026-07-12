@@ -17,6 +17,7 @@ docstring.
 
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -298,11 +299,16 @@ def classify_command_risk(
     doesn't actually match the command it was for is blanked, so a hallucinated abstraction is
     never shown or persisted as a grant that wouldn't re-approve the command it was vetted for.
     """
+    started = time.perf_counter()
     try:
         report = _classify_command_risk(command_text, items, api_provider, model, timeout)
     except Exception:
         logger.warning("Bash risk classifier failed unexpectedly", exc_info=True)
         report = None
+    elapsed = time.perf_counter() - started
+    logger.info(
+        "Bash risk classifier finished in %.2fs (model=%s, items=%d, result=%s)",
+        elapsed, model, len(items), "report" if report is not None else "None")
     if report is not None:
         _discard_nonmatching_suggested_patterns(report, items)
     # TODO(aaron): once a structured audit log for permission decisions exists, record an entry
@@ -322,13 +328,19 @@ def _classify_command_risk(
     messages = [_message("user", _build_user_message(command_text, items))]
     response_format = _response_format()
 
+    request_started = time.perf_counter()
     try:
         response = api_provider.send_prompt(
             messages, system_prompt=system_prompt, model=model,
             response_format=response_format, timeout=timeout)
     except Exception:
-        logger.warning("Bash risk classifier request failed", exc_info=True)
+        logger.warning(
+            "Bash risk classifier request failed after %.2fs",
+            time.perf_counter() - request_started, exc_info=True)
         return None
+    logger.info(
+        "Bash risk classifier request round trip took %.2fs",
+        time.perf_counter() - request_started)
 
     report, error = _try_parse_report(response.message.content)
     if report is not None:
@@ -340,13 +352,19 @@ def _classify_command_risk(
         f"That reply did not parse: {error}. Reply again with nothing but JSON conforming to "
         "the CommandRiskReport schema -- no prose, no markdown fences.")))
 
+    retry_started = time.perf_counter()
     try:
         response = api_provider.send_prompt(
             messages, system_prompt=system_prompt, model=model,
             response_format=response_format, timeout=timeout)
     except Exception:
-        logger.warning("Bash risk classifier retry request failed", exc_info=True)
+        logger.warning(
+            "Bash risk classifier retry request failed after %.2fs",
+            time.perf_counter() - retry_started, exc_info=True)
         return None
+    logger.info(
+        "Bash risk classifier retry request round trip took %.2fs",
+        time.perf_counter() - retry_started)
 
     report, error = _try_parse_report(response.message.content)
     if report is None:

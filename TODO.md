@@ -24,9 +24,6 @@
 
 # Feature backlog
 
-* bash classifier should put timing info in the log so I can tell actually how super
-  slow it is. It seems like this is actually really, really slow.
-
 * The SystemPrompt can include some dynamic information about the current state of things:
   * Date/time the session started
   * Model name
