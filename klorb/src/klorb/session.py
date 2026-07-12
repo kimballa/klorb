@@ -1457,7 +1457,7 @@ class Session:
         except Exception as exc:
             user_message.processing_state = "error"
             user_message.last_error = str(exc)
-            logger.error("Turn failed for %s: %s", model_name, exc)
+            logger.error("Turn failed for %s: %s", model_name, exc, exc_info=True)
             raise
 
         user_message.num_tokens = result.prompt_tokens - tokens_before
