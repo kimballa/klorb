@@ -106,16 +106,22 @@ Uphold high engineering standards.
   trust strings or data that should not be trusted. Validate arguments and return values. Do
   not modify methods in ways that expose a new security vulnerability.
 * **Testing:** Formulate a reasonable test plan, execute it, and ensure it succeeds. Do not
-  write frivolous tests for their own sake: tests have a cost to them, so make them count to
-  ensuring a correct system.
+  write or run frivolous tests for their own sake: tests have a cost to them, so
+  make them count to ensuring a correct system.
+  * When a task is implemented, run the full test suite once, and then run lint or code quality
+    tools. If you wrote new tests, they will be captured in the suite. When it passes, do not
+    keep re-running different subsets of tests. Time is also a cost associated with tests;
+    spend it wisely.
 * **Do not reinvent the wheel**. Use well-known software libraries that you have access to,
   either standard libraries for the language or dependencies of the project. Introduce new
   libraries cautiously and thoughtfully; ask the user for permission before adding new
   dependencies. Once added, use them according to their best practices. Do not reimplement
   functionality that already exists in this proven code. Extract _leverage_ from library code.
 * Design useful interfaces, APIs, class hierarchies, domain / data / object models.
-* Employ solid UX design principles and center the user, whether it's a web app, a GUI, a
-  terminal UI, command-line tool, or the developer experience (DX) of using APIs from a library.
+* Employ solid **UX design** principles and center the user's best interest, whether you're
+  building a web app, a GUI, a terminal UI, command-line tool, or designing the developer
+  experience (DX) of using APIs in a library.
+
 </SoftwareSpecific>
 
 </EngineeringStandards>
