@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 
+import pytest
 from textual.logging import TextualHandler
 
 from klorb import logging_config
@@ -181,3 +182,58 @@ def test_crash_log_tee_falls_back_to_stream_when_file_cannot_be_opened(tmp_path:
 
     assert stream.getvalue() == "boom\n"
     assert tee.opened_log_path() is None
+
+
+def test_crash_log_tee_is_not_closed_before_close_is_called(tmp_path: Path) -> None:
+    tee = logging_config.CrashLogTee(io.StringIO(), tmp_path / "crash.log")
+
+    assert not tee.closed
+
+
+def test_crash_log_tee_close_closes_the_log_file_but_not_the_stream(tmp_path: Path) -> None:
+    log_path = tmp_path / "crash.log"
+    stream = io.StringIO()
+    tee = logging_config.CrashLogTee(stream, log_path)
+    tee.write("boom\n")
+    log_file = tee._log_file
+    assert log_file is not None
+
+    tee.close()
+
+    assert tee.closed
+    assert log_file.closed
+    assert not stream.closed
+    assert log_path.read_text(encoding="utf-8") == "boom\n"
+
+
+def test_crash_log_tee_close_is_a_no_op_when_never_written(tmp_path: Path) -> None:
+    tee = logging_config.CrashLogTee(io.StringIO(), tmp_path / "crash.log")
+
+    tee.close()  # must not raise even though no log file was ever opened
+
+    assert tee.closed is True
+
+
+def test_crash_log_tee_reports_write_only_capabilities() -> None:
+    tee = logging_config.CrashLogTee(io.StringIO(), Path("/tmp/unused-crash.log"))
+
+    assert tee.writable() is True
+    assert tee.readable() is False
+    assert tee.seekable() is False
+
+
+@pytest.mark.parametrize(("method_name", "args"), [
+    ("read", ()),
+    ("readline", ()),
+    ("readlines", ()),
+    ("seek", (0,)),
+    ("tell", ()),
+    ("truncate", ()),
+    ("fileno", ()),
+    ("__next__", ()),
+])
+def test_crash_log_tee_unsupported_operations_raise(method_name: str, args: tuple[int, ...]) -> None:
+    tee = logging_config.CrashLogTee(io.StringIO(), Path("/tmp/unused-crash.log"))
+
+    with pytest.raises(io.UnsupportedOperation):
+        getattr(tee, method_name)(*args)

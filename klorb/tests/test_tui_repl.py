@@ -9,7 +9,7 @@ import threading
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Literal, TextIO, cast
+from typing import Any, Callable, Literal
 from unittest.mock import MagicMock, patch
 
 import fixtures.sample_tools as sample_tools_package
@@ -232,7 +232,7 @@ async def test_error_console_crash_dump_is_captured_by_crash_log_tee(tmp_path: P
     stream = io.StringIO()
     log_path = tmp_path / "crash.log"
     tee = CrashLogTee(stream, log_path)
-    app.error_console.file = cast(TextIO, tee)
+    app.error_console.file = tee
 
     with pytest.raises(RuntimeError, match="boom"):
         await _crash_running_app(app)

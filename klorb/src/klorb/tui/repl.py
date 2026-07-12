@@ -11,7 +11,7 @@ import sys
 import threading
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Literal, TextIO, cast
+from typing import Any, Literal
 
 from rich.text import Text
 from textual import events, work
@@ -2612,8 +2612,10 @@ def run_repl(
         trust_manager=trust_manager,
         config_flag_path=config_flag_path,
     )
-    app.error_console.file = cast(TextIO, crash_tee)
-    app.run()
-
-    if app.return_code == 1:
-        _handle_repl_crash(app, crash_tee)
+    app.error_console.file = crash_tee
+    try:
+        app.run()
+        if app.return_code == 1:
+            _handle_repl_crash(app, crash_tee)
+    finally:
+        crash_tee.close()
