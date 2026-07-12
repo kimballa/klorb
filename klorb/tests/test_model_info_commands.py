@@ -12,7 +12,6 @@ from klorb.tui.model_info_commands import (
     NOT_AVAILABLE,
     SHOW_MODEL_INFO_LABEL,
     ModelInfoCommandProvider,
-    ModelInfoScreen,
     format_model_info,
 )
 
@@ -90,18 +89,7 @@ def test_format_model_info_includes_pricing_when_given() -> None:
     assert "Cost per MTok (in / out): 0.11 / 0.8 USD" in format_model_info(model, pricing)
 
 
-def test_model_info_screen_shows_header_and_formatted_body() -> None:
-    model = _model({"name": "some/model"})
-    screen = ModelInfoScreen(model, None)
-
-    container = next(iter(screen.compose()))
-    header, body = container._pending_children
-
-    assert str(header.render()) == MODEL_INFO_HEADER_TEXT
-    assert str(body.render()) == format_model_info(model, None)
-
-
-async def test_show_model_info_screen_pushes_modal_with_fetched_pricing() -> None:
+async def test_show_model_info_posts_a_history_notice_with_fetched_pricing() -> None:
     mock_screen = MagicMock()
     model = _model({"name": "some/model"})
     mock_screen.app.get_active_model.return_value = model
@@ -111,24 +99,21 @@ async def test_show_model_info_screen_pushes_modal_with_fetched_pricing() -> Non
     with patch(
         "klorb.tui.model_info_commands.fetch_openrouter_pricing", return_value=pricing,
     ) as mock_fetch:
-        await provider._show_model_info_screen()
+        await provider._show_model_info()
 
     mock_fetch.assert_called_once_with("some/model")
-    (pushed_screen,), _ = mock_screen.app.push_screen.call_args
-    assert isinstance(pushed_screen, ModelInfoScreen)
-    assert pushed_screen._model is model
-    assert pushed_screen._pricing is pricing
+    mock_screen.app.show_notice.assert_called_once_with(
+        f"{MODEL_INFO_HEADER_TEXT}\n{format_model_info(model, pricing)}")
 
 
-async def test_show_model_info_screen_reports_a_notice_when_no_model_is_active() -> None:
+async def test_show_model_info_reports_a_notice_when_no_model_is_active() -> None:
     mock_screen = MagicMock()
     mock_screen.app.get_active_model.return_value = None
     mock_screen.app.show_notice = MagicMock()
     provider = ModelInfoCommandProvider(mock_screen)
 
-    await provider._show_model_info_screen()
+    await provider._show_model_info()
 
-    mock_screen.app.push_screen.assert_not_called()
     mock_screen.app.show_notice.assert_called_once()
 
 

@@ -1,17 +1,13 @@
 # © Copyright 2026 Aaron Kimball
-"""Command palette provider and modal that report everything klorb knows about the active
-model: its family/version, capabilities (vision, thinking, context window, etc.),
-klorb-curated capability flags, and current per-token pricing (fetched live from OpenRouter
-— see `klorb.models.openrouter_pricing`)."""
+"""Command palette provider that reports everything klorb knows about the active model: its
+family/version, capabilities (vision, thinking, context window, etc.), klorb-curated
+capability flags, and current per-token pricing (fetched live from OpenRouter — see
+`klorb.models.openrouter_pricing`)."""
 
 import asyncio
 from typing import Protocol, cast
 
-from textual.app import ComposeResult
 from textual.command import DiscoveryHit, Hit, Hits, Provider
-from textual.containers import Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Static
 
 from klorb.models.model import Model
 from klorb.models.openrouter_pricing import ModelPricing, fetch_openrouter_pricing
@@ -89,9 +85,10 @@ def _format_klorb_capabilities(klorb_capabilities: dict[str, object]) -> str:
 
 def format_model_info(model: Model, pricing: ModelPricing | None) -> str:
     """Render every field klorb tracks for `model` as human-readable `"Label: value"` lines,
-    joined with newlines — the body `ModelInfoScreen` displays, and independently testable
-    without constructing a Textual app or a network connection. `pricing` is looked up
-    separately (`fetch_openrouter_pricing`, live, not stored on `model` — see
+    joined with newlines — the body of the history notice
+    `ModelInfoCommandProvider` posts, and independently testable without constructing a
+    Textual app or a network connection. `pricing` is looked up separately
+    (`fetch_openrouter_pricing`, live, not stored on `model` — see
     docs/adrs/fetch-model-pricing-live-not-from-json.md) and passed in rather than read off
     `model`, since fetching it is a blocking network call this function itself must not make.
     """
@@ -111,69 +108,27 @@ def format_model_info(model: Model, pricing: ModelPricing | None) -> str:
     return "\n".join(lines)
 
 
-class ModelInfoScreen(ModalScreen[None]):
-    """Modal showing `format_model_info(model, pricing)`'s rendering of the active model's
-    tracked data. Escape or Enter dismisses; there's nothing to select.
-    """
-
-    CSS = """
-    ModelInfoScreen {
-        align: center middle;
-    }
-
-    ModelInfoScreen Vertical {
-        width: auto;
-        height: auto;
-        max-height: 80%;
-        border: round $accent;
-        padding: 0 1;
-    }
-
-    #model-info-header {
-        text-style: bold;
-        margin: 0 0 1 0;
-        width: auto;
-    }
-
-    #model-info-body {
-        width: auto;
-    }
-    """
-
-    BINDINGS = [("escape", "dismiss", "Close"), ("enter", "dismiss", "Close")]
-
-    def __init__(self, model: Model, pricing: ModelPricing | None) -> None:
-        super().__init__()
-        self._model = model
-        self._pricing = pricing
-
-    def compose(self) -> ComposeResult:
-        yield Vertical(
-            Static(MODEL_INFO_HEADER_TEXT, id="model-info-header"),
-            Static(format_model_info(self._model, self._pricing), markup=False, id="model-info-body"),
-        )
-
-
 class ModelInfoCommandProvider(Provider):
-    """Offers a `"Show model info"` command via the command palette that opens
-    `ModelInfoScreen` for the currently active model, or a plain notice if no model is
-    currently registered/active.
+    """Offers a `"Show model info"` command via the command palette that appends
+    `format_model_info`'s rendering of the currently active model to the history scroll (see
+    `SupportsModelInfo.show_notice`), or a plain notice if no model is currently
+    registered/active.
     """
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         score = matcher.match(SHOW_MODEL_INFO_LABEL)
         if score > 0:
-            yield Hit(score, matcher.highlight(SHOW_MODEL_INFO_LABEL), self._show_model_info_screen)
+            yield Hit(score, matcher.highlight(SHOW_MODEL_INFO_LABEL), self._show_model_info)
 
     async def discover(self) -> Hits:
-        yield DiscoveryHit(SHOW_MODEL_INFO_LABEL, self._show_model_info_screen)
+        yield DiscoveryHit(SHOW_MODEL_INFO_LABEL, self._show_model_info)
 
-    async def _show_model_info_screen(self) -> None:
+    async def _show_model_info(self) -> None:
         app = cast(SupportsModelInfo, self.app)
         model = app.get_active_model()
         if model is None:
             app.show_notice("The active model isn't registered; no info to show.", error=True)
             return
         pricing = await asyncio.to_thread(fetch_openrouter_pricing, model.name())
-        self.app.push_screen(ModelInfoScreen(model, pricing))
+        app.show_notice(f"{MODEL_INFO_HEADER_TEXT}\n{format_model_info(model, pricing)}")

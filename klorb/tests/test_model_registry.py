@@ -118,3 +118,65 @@ def test_find_by_capability_ignores_falsy_values() -> None:
         {"name": "opted-out", "klorb_capabilities": {"BASH_SAFETY_EVAL": False}}, source="test"))
 
     assert registry.find_by_capability("BASH_SAFETY_EVAL") is None
+
+
+def test_find_by_capability_prefers_a_user_directory_model_over_a_packaged_one(
+    tmp_path: Path,
+) -> None:
+    """A user can deterministically override which model klorb picks for a capability by
+    dropping a `klorb-model` JSON file into `$KLORB_DATA_DIR/models/` — even though the
+    packaged directory is scanned first, the user tier outranks it for this lookup."""
+    packaged_dir = tmp_path / "packaged"
+    packaged_dir.mkdir()
+    (packaged_dir / "aaa-packaged.json").write_text(json.dumps({
+        "schema": {"name": "klorb-model", "version": "1.0.0"},
+        "name": "aaa-packaged",
+        "klorb_capabilities": {"BASH_SAFETY_EVAL": True},
+    }))
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "zzz-user.json").write_text(json.dumps({
+        "schema": {"name": "klorb-model", "version": "1.0.0"},
+        "name": "zzz-user",
+        "klorb_capabilities": {"BASH_SAFETY_EVAL": True},
+    }))
+
+    registry = ModelRegistry(packaged_models_dir=packaged_dir, user_models_dir=user_dir)
+
+    found = registry.find_by_capability("BASH_SAFETY_EVAL")
+
+    assert found is not None
+    assert found.name() == "zzz-user"
+
+
+def test_find_by_capability_prefers_a_manually_registered_model_over_a_user_directory_one(
+    tmp_path: Path,
+) -> None:
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "aaa-user.json").write_text(json.dumps({
+        "schema": {"name": "klorb-model", "version": "1.0.0"},
+        "name": "aaa-user",
+        "klorb_capabilities": {"BASH_SAFETY_EVAL": True},
+    }))
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=user_dir)
+    registry.register(ConfiguredModel(
+        {"name": "zzz-manual", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}}, source="test"))
+
+    found = registry.find_by_capability("BASH_SAFETY_EVAL")
+
+    assert found is not None
+    assert found.name() == "zzz-manual"
+
+
+def test_find_by_capability_breaks_ties_by_name_within_the_same_source() -> None:
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(ConfiguredModel(
+        {"name": "zzz", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}}, source="test"))
+    registry.register(ConfiguredModel(
+        {"name": "aaa", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}}, source="test"))
+
+    found = registry.find_by_capability("BASH_SAFETY_EVAL")
+
+    assert found is not None
+    assert found.name() == "aaa"

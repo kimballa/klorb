@@ -6,9 +6,7 @@
   "name": "anthropic/claude-sonnet-5",
   "family": "claude-sonnet",
   "model_version": "5.0",
-  "settings": {
-    "temperature": 0.2
-  },
+  "settings": {},
   "capabilities": {
     "vision": true,
     "thinking": true,

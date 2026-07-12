@@ -137,14 +137,14 @@ OpenRouter's public models listing.
 * `klorb.tui.model_info_commands.ModelInfoCommandProvider`
   (`klorb/src/klorb/tui/model_info_commands.py`) offers a `"Show model info"` command.
   Selecting it fetches the active model's current pricing (`asyncio.to_thread`, so the
-  blocking network call doesn't stall the Textual event loop — see below) and pushes
-  `ModelInfoScreen`, a modal rendering every field klorb tracks for the currently active
-  model — name, family, version, each capability, `klorb_capabilities`, and pricing (or
-  `"(not available)"` for any field klorb doesn't know) — via
+  blocking network call doesn't stall the Textual event loop — see below) and appends a
+  `.notice` item to the history scroll (`ReplApp.show_notice()`, see
+  [[avoid-toasts-prefer-history-notices]]) rendering every field klorb tracks for the
+  currently active model — name, family, version, each capability, `klorb_capabilities`, and
+  pricing (or `"(not available)"` for any field klorb doesn't know) — via
   `format_model_info(model, pricing) -> str`, which is independently testable without
   constructing a Textual app or a network connection. If `config.model` isn't a registered
-  model, the command reports that via `ReplApp.show_notice()` instead of opening an empty
-  modal.
+  model, the command reports that via `ReplApp.show_notice()` too, as an error notice.
 * `klorb.models.openrouter_pricing.fetch_openrouter_pricing(model_name) -> ModelPricing |
   None` (`klorb/src/klorb/models/openrouter_pricing.py`) is the sole source of pricing data:
   a live `GET /models` request against OpenRouter's public listing (no API key required),
