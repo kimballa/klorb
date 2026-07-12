@@ -117,11 +117,9 @@ install_dev_deps: venv
 	@echo "Installed runtime and development dependencies."
 
 # Bootstrap a klorb-config.json, a klorb executable symlink, and the bundled tiktoken cache
-# for this venv's own klorb (see docs/specs/klorb-init.md). `--force` overwrites an existing
-# config file/symlink rather than leaving it alone, so re-running this target (e.g. a repeated
-# cloud_setup) always ends up with the freshly-installed version's files.
+# for this venv's own klorb (see docs/specs/klorb-init.md). 
 init: venv
-	$(LOAD_VENV); "$(KLORB_BIN)" init --force
+	$(LOAD_VENV); "$(KLORB_BIN)" init || true
 
 clean:
 	find src -name "*.pyo" -delete
