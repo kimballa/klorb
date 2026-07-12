@@ -4,7 +4,8 @@
 
 A `Model` describes a model klorb can send prompts to: its identifier, family/version,
 provider-specific settings/flags, a dict of its capabilities (vision, thinking, max context
-window, etc.), and its published per-token pricing when known. Every model klorb ships with,
+window, etc.), and a dict of klorb-curated capability flags (`klorb_capabilities`) naming
+tasks klorb itself considers this model especially suited for. Every model klorb ships with,
 plus any a user adds, is described declaratively by a `klorb-model` JSON file rather than a
 hand-written Python class — see
 [[back-models-with-json-resource-files-not-python-classes]]. `ModelRegistry` discovers these
@@ -12,7 +13,10 @@ JSON files the same way [[tool-framework]]'s `ToolRegistry` discovers tools, by 
 directories rather than importing hand-registered modules. The REPL exposes the discovered
 models through a single "Change model" command that opens a filterable modal, plus a "Show
 model info" command — see [[single-change-model-command-with-typeahead-modal]] for why model
-selection isn't just another set of entries in the default command palette listing.
+selection isn't just another set of entries in the default command palette listing. Per-token
+pricing is deliberately *not* part of a model's stored data — see
+[[fetch-model-pricing-live-not-from-json]] — and is instead fetched live, on demand, from
+OpenRouter's public models listing.
 
 ## How it works
 
@@ -44,10 +48,14 @@ selection isn't just another set of entries in the default command palette listi
     with version `"5"` — so these tease the two apart, letting a caller detect that e.g.
     `"anthropic/claude-sonnet-5"` and a future `"anthropic/claude-sonnet-5.1"` share a
     family even though their full names differ.
-  * `pricing() -> ModelPricing | None`, a concrete method returning `None` by default.
-    `klorb.models.model.ModelPricing` is a pydantic model with `input_cost_per_mtok`,
-    `output_cost_per_mtok` (both `float`, cost per million tokens), and `currency`
-    (`str`, defaults to `"USD"`).
+  * `klorb_capabilities() -> dict[str, Any]`, a concrete method returning `{}` by default.
+    Distinct from `capabilities()`'s raw provider-reported facts, these are klorb-curated
+    flags (e.g. `{"BASH_SAFETY_EVAL": True}`) naming tasks a model is especially suited for,
+    so code that picks a model programmatically can select one by capability
+    (`ModelRegistry.find_by_capability`, see below) instead of a hardcoded model name. A
+    user configuring any model for any task by hand always works regardless of what it
+    declares here — these flags inform only klorb's own defaults, never a validation gate on
+    a user's explicit choice.
 * `klorb.models.configured_model.ConfiguredModel`
   (`klorb/src/klorb/models/configured_model.py`) is the one concrete `Model` implementation
   in use: it wraps a parsed `klorb-model` JSON document (schema name `klorb-model`, see
@@ -72,15 +80,15 @@ selection isn't just another set of entries in the default command palette listi
       "function_calling": true,
       "streaming": true
     },
-    "pricing": {"input_cost_per_mtok": 2.0, "output_cost_per_mtok": 10.0, "currency": "USD"}
+    "klorb_capabilities": {}
   }
   ```
 
-  `pricing` is optional and omitted entirely when a model's cost isn't known/published.
-  Every JSON key besides `schema` uses the same snake_case as the `Model.capabilities()`
-  dict it's read into (rather than the dot-delineated lowerCamelCase
+  There is no `pricing` field — see [[fetch-model-pricing-live-not-from-json]]. Every JSON
+  key besides `schema` uses the same snake_case as the `Model.capabilities()`/
+  `klorb_capabilities()` dicts it's read into (rather than the dot-delineated lowerCamelCase
   [[process-and-session-config]] uses for the hand-authored `klorb-config.json`), so no key
-  translation happens between the file and the dict callers read.
+  translation happens between the file and the dicts callers read.
 * `klorb.models.registry.ModelRegistry` (`klorb/src/klorb/models/registry.py`) discovers
   `klorb-model` JSON files by scanning two directories in order and building one
   `ConfiguredModel` per file, keyed by its `name` field:
@@ -99,12 +107,20 @@ selection isn't just another set of entries in the default command palette listi
   file doesn't prevent every other model from loading. A different pair of directories can
   be passed to the constructor (used by tests to scan fixture directories instead).
   * `models() -> list[Model]` — all discovered models.
-  * `get(name: str) -> Model` — look up a discovered model by name.
-* klorb ships five built-in models as `klorb.resources/models/*.json`:
+  * `get(name: str) -> Model` — look up a discovered model by name, raising `KeyError` if
+    absent.
+  * `register(model: Model) -> None` — register an already-constructed `Model` directly,
+    keyed by its `name()`, without discovering it from a JSON file. Used by tests to register
+    `Model` test doubles without needing real `klorb-model` JSON fixture files on disk.
+  * `find_by_capability(capability: str) -> Model | None` — the first registered model (by
+    name, for a deterministic pick) whose `klorb_capabilities()` reports `capability`
+    truthily, or `None` if none does. See `klorb.permissions.risk_classifier`'s use below.
+* klorb ships six built-in models as `klorb.resources/models/*.json`:
   `openai/gpt-5-nano` (klorb's default model, `klorb.openrouter.DEFAULT_MODEL`),
   `z-ai/glm-5.2`, `anthropic/claude-sonnet-5`, `qwen/qwen3-coder-next` (Qwen's
-  coding-agent-focused model), and `moonshotai/kimi-k2.7-code` (Moonshot AI's
-  coding-focused Kimi K2 release).
+  coding-agent-focused model), `moonshotai/kimi-k2.7-code` (Moonshot AI's coding-focused
+  Kimi K2 release), and `openai/gpt-oss-safeguard-20b:nitro` (OpenAI's safety-reasoning
+  model, the only built-in model declaring `klorb_capabilities.BASH_SAFETY_EVAL`).
 * `klorb.tui.model_commands.ModelCommandProvider` (`klorb/src/klorb/tui/model_commands.py`)
   is a Textual `command.Provider` offering a single `"Change model (<current>)"` command.
   Selecting it pushes `ModelSelectionScreen`, a modal with a text `Input` filter box above an
@@ -120,12 +136,22 @@ selection isn't just another set of entries in the default command palette listi
   the history scroll confirming the switch (see [[avoid-toasts-prefer-history-notices]]).
 * `klorb.tui.model_info_commands.ModelInfoCommandProvider`
   (`klorb/src/klorb/tui/model_info_commands.py`) offers a `"Show model info"` command.
-  Selecting it pushes `ModelInfoScreen`, a modal rendering every field klorb tracks for the
-  currently active model — name, family, version, each capability, and pricing (or
+  Selecting it fetches the active model's current pricing (`asyncio.to_thread`, so the
+  blocking network call doesn't stall the Textual event loop — see below) and pushes
+  `ModelInfoScreen`, a modal rendering every field klorb tracks for the currently active
+  model — name, family, version, each capability, `klorb_capabilities`, and pricing (or
   `"(not available)"` for any field klorb doesn't know) — via
-  `format_model_info(model) -> str`, which is independently testable without constructing a
-  Textual app. If `config.model` isn't a registered model, the command reports that via
-  `ReplApp.show_notice()` instead of opening an empty modal.
+  `format_model_info(model, pricing) -> str`, which is independently testable without
+  constructing a Textual app or a network connection. If `config.model` isn't a registered
+  model, the command reports that via `ReplApp.show_notice()` instead of opening an empty
+  modal.
+* `klorb.models.openrouter_pricing.fetch_openrouter_pricing(model_name) -> ModelPricing |
+  None` (`klorb/src/klorb/models/openrouter_pricing.py`) is the sole source of pricing data:
+  a live `GET /models` request against OpenRouter's public listing (no API key required),
+  converting its dollars-per-token figures into `ModelPricing`'s dollars-per-million-tokens.
+  Returns `None` — never raises — on any failure (network error, timeout, malformed
+  response, model not listed). See [[fetch-model-pricing-live-not-from-json]] for why this
+  is fetched live rather than stored in a model's JSON file.
 * [[session-and-turns]]'s `Session.active_model_name()` looks up `SessionConfig.model` in a
   `ModelRegistry` and, when it's registered, calls the resulting `Model.name()` to get the
   identifier passed to `ApiProvider.send_prompt()`; an unregistered model string is passed
@@ -133,6 +159,12 @@ selection isn't just another set of entries in the default command palette listi
   a `klorb-model` JSON file for it. `Session.active_model() -> Model | None` exposes the
   registered `Model` object itself (or `None` if unregistered) for callers — like
   `ModelInfoCommandProvider` — that need more than just the name.
+* `klorb.permissions.risk_classifier.resolve_item_risk_assessment` picks the bash-risk
+  classifier's model via `ModelRegistry.find_by_capability("BASH_SAFETY_EVAL")` whenever
+  `ProcessConfig.bash_risk_classifier_model` is unset (the default), falling back to
+  `klorb.process_config.DEFAULT_BASH_RISK_CLASSIFIER_MODEL` if no registered model declares
+  that capability. An explicit `tools.bash.riskClassifier.model` config value always wins
+  over this lookup — klorb only picks for itself when nobody's told it what to use.
 
 ## Out of scope
 
@@ -142,6 +174,7 @@ selection isn't just another set of entries in the default command palette listi
   not sent with requests yet.
 * Recursive discovery into subdirectories of `klorb.resources/models/` or
   `$KLORB_DATA_DIR/models/` is not implemented yet; both are scanned one level deep.
-* Pricing is static data captured in each `klorb-model` JSON file at authoring time, not
-  fetched live from an API on every use. Refreshing it (e.g. against OpenRouter's models
-  listing) is a manual, occasional maintenance task today rather than an automated one.
+* `find_by_capability` returns the first alphabetically-named match rather than, say, the
+  cheapest or fastest; with today's single built-in `"BASH_SAFETY_EVAL"`-declaring model this
+  never matters in practice, but a future capability with several qualifying models would
+  need a real tie-breaking rule.

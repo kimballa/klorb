@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from klorb.models.model import Model, ModelPricing
+from klorb.models.model import Model
 
 MODEL_SCHEMA_NAME = "klorb-model"
 MODEL_SCHEMA_VERSION = "1.0.0"
@@ -23,7 +23,7 @@ class _ConfiguredModelData(BaseModel):
     model_version: str | None = None
     settings: dict[str, Any] = {}
     capabilities: dict[str, Any] = {}
-    pricing: ModelPricing | None = None
+    klorb_capabilities: dict[str, Any] = {}
 
 
 class ConfiguredModel(Model):
@@ -58,5 +58,5 @@ class ConfiguredModel(Model):
     def model_version(self) -> str | None:
         return self._data.model_version
 
-    def pricing(self) -> ModelPricing | None:
-        return self._data.pricing
+    def klorb_capabilities(self) -> dict[str, Any]:
+        return self._data.klorb_capabilities

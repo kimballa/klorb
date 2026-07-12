@@ -17,10 +17,5 @@
     "max_output_tokens": 131072,
     "function_calling": true,
     "streaming": true
-  },
-  "pricing": {
-    "input_cost_per_mtok": 0.42,
-    "output_cost_per_mtok": 1.32,
-    "currency": "USD"
   }
 }

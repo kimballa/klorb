@@ -71,26 +71,18 @@ def test_family_and_model_version_read_from_data() -> None:
     assert model.model_version() == "5.0"
 
 
-def test_pricing_defaults_to_none() -> None:
+def test_klorb_capabilities_defaults_to_an_empty_dict() -> None:
     model = ConfiguredModel({"name": "some/model"}, source="test")
 
-    assert model.pricing() is None
+    assert model.klorb_capabilities() == {}
 
 
-def test_pricing_reads_from_data() -> None:
+def test_klorb_capabilities_reads_from_data() -> None:
     model = ConfiguredModel(
-        {
-            "name": "some/model",
-            "pricing": {"input_cost_per_mtok": 0.05, "output_cost_per_mtok": 0.4},
-        },
+        {"name": "openai/gpt-oss-safeguard-20b:nitro", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}},
         source="test")
 
-    pricing = model.pricing()
-
-    assert pricing is not None
-    assert pricing.input_cost_per_mtok == 0.05
-    assert pricing.output_cost_per_mtok == 0.4
-    assert pricing.currency == "USD"
+    assert model.klorb_capabilities() == {"BASH_SAFETY_EVAL": True}
 
 
 def test_source_returns_the_constructor_argument() -> None:

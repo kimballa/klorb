@@ -90,3 +90,31 @@ def test_default_registry_discovers_production_models() -> None:
     assert "anthropic/claude-sonnet-5" in names
     assert "qwen/qwen3-coder-next" in names
     assert "moonshotai/kimi-k2.7-code" in names
+    assert "openai/gpt-oss-safeguard-20b:nitro" in names
+
+
+def test_find_by_capability_returns_a_model_declaring_it() -> None:
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(ConfiguredModel(
+        {"name": "safety-model", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}}, source="test"))
+    registry.register(ConfiguredModel({"name": "plain-model"}, source="test"))
+
+    found = registry.find_by_capability("BASH_SAFETY_EVAL")
+
+    assert found is not None
+    assert found.name() == "safety-model"
+
+
+def test_find_by_capability_returns_none_when_no_model_declares_it() -> None:
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(ConfiguredModel({"name": "plain-model"}, source="test"))
+
+    assert registry.find_by_capability("BASH_SAFETY_EVAL") is None
+
+
+def test_find_by_capability_ignores_falsy_values() -> None:
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(ConfiguredModel(
+        {"name": "opted-out", "klorb_capabilities": {"BASH_SAFETY_EVAL": False}}, source="test"))
+
+    assert registry.find_by_capability("BASH_SAFETY_EVAL") is None

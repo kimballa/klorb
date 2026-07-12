@@ -78,3 +78,17 @@ class ModelRegistry:
     def models(self) -> list[Model]:
         """Return all registered models."""
         return list(self._models.values())
+
+    def find_by_capability(self, capability: str) -> Model | None:
+        """Return the first registered model (by name, for a deterministic pick when more than
+        one qualifies) whose `Model.klorb_capabilities()` reports `capability` truthily, or
+        `None` if none does.
+
+        Lets code that picks a model programmatically (e.g.
+        `klorb.permissions.risk_classifier`'s default bash-risk-classifier model) select one by
+        what it's good at rather than a hardcoded model name — see `Model.klorb_capabilities`.
+        """
+        for name in sorted(self._models):
+            if self._models[name].klorb_capabilities().get(capability):
+                return self._models[name]
+        return None

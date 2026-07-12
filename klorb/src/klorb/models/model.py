@@ -4,22 +4,11 @@
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
-from pydantic import BaseModel
-
 from klorb.system_prompt import mangle_model_name, resolve_prompt_file
 
 ThinkingBudgetStyle = Literal["effort", "tokens"]
 """How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a
 low/medium/high keyword, or `"tokens"` for a numeric reasoning token budget."""
-
-
-class ModelPricing(BaseModel):
-    """A model's published cost per million tokens ("MTok") sent/received, e.g. as reported by
-    an OpenRouter model listing."""
-
-    input_cost_per_mtok: float
-    output_cost_per_mtok: float
-    currency: str = "USD"
 
 
 class Model(ABC):
@@ -77,6 +66,15 @@ class Model(ABC):
         unknown. See `family()`."""
         return None
 
-    def pricing(self) -> ModelPricing | None:
-        """Return this model's published per-token cost, or `None` if unknown/not published."""
-        return None
+    def klorb_capabilities(self) -> dict[str, Any]:
+        """Return a dict of klorb-curated capability flags for this model — e.g.
+        `{"BASH_SAFETY_EVAL": True}` — distinct from `capabilities()`'s raw provider-reported
+        capabilities (vision, context window, ...). These flags name tasks klorb itself
+        considers this model especially suited for, so code that picks a model
+        programmatically (e.g. `klorb.permissions.risk_classifier`) can select one by capability
+        (`klorb.models.registry.ModelRegistry.find_by_capability`) instead of a hardcoded model
+        name. A user is always free to configure any model for any task regardless of what it
+        declares here — these flags only inform klorb's own defaults, they're never validated
+        against a user's explicit choice.
+        """
+        return {}
