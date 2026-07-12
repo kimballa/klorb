@@ -2431,10 +2431,7 @@ class ReplApp(App[None]):
         # entry here pairing `ask_ctx` (this command/path being asked about) with the user's own
         # `decision` -- this is the "this command _____ got this decision: _____" injection
         # point (a separate concern from pairing a command with its own risk assessment, whose
-        # injection point is in klorb.permissions.risk_classifier.classify_command_risk, and from
-        # klorb.permissions.risk_classifier.record_decision_history's own bounded, in-memory
-        # history, which exists only to feed the classifier's next prompt rather than as a
-        # durable audit trail).
+        # injection point is in klorb.permissions.risk_classifier.classify_command_risk).
         self._record_interaction_history(
             panel.header_text(), format_ask_context_body(ask_ctx), format_permission_decision(decision))
         return decision

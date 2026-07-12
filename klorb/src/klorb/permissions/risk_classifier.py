@@ -127,11 +127,7 @@ def record_decision_history(
 
     Called once per resolved ask, right after the user's `PermissionDecision` comes back —
     `klorb.tui.repl.ReplApp._confirm_permission_ask` is the one caller today, immediately after
-    the same point that already updates `_last_permission_action`/`_last_permission_scope`. This
-    is a separate concern from a future structured audit log for permission decisions (see the
-    `TODO(aaron)` in `ReplApp._confirm_permission_ask` itself): this history is in-memory only,
-    bounded, and exists purely to feed the risk classifier's own next prompt, not as a durable
-    record of what happened.
+    the same point that already updates `_last_permission_action`/`_last_permission_scope`.
     """
     if ask_ctx.command_text is None or not process_config.bash_risk_classifier_enabled:
         return
@@ -227,13 +223,16 @@ oldest first, each with the command's own text and the user's decision. This is 
 context only -- none of these commands are being scored now, and nothing about them changes the
 rubric above. Use it only to calibrate how comfortable the user has already shown themselves to be
 with a *pattern* of similar commands: if they have repeatedly approved commands that share the
-same shape as an item you are scoring now (e.g. the same argv0 and flags, varying only a file
-path or commit message), you may propose a more broadly generalized `suggested_pattern` for that
-item than you would from this one command alone -- but never more broadly than the varying part
-they've actually shown a pattern of approving, and never by widening a destructive flag into a
-wildcard position, no matter how many times a similar-looking command was approved. A history of
-repeated denials for a similar shape should instead make you more conservative, not less. When
-`<PriorDecisionsHistory>` is absent, score purely from `<CommandUnderReview>` as usual.
+same argv0 as an item you are scoring now (e.g. several different `pytest -k ...`/`pytest -v ...`
+invocations), you may propose a `suggested_pattern` broader than this one command alone would
+justify -- up to generalizing a flag itself, not just a file path or commit message, once enough
+approvals actually establish that varying it is part of the accepted pattern (e.g. `["pytest",
+"**"]`). The one thing prior approvals never license widening into a wildcard position is a flag
+whose own presence measurably changes the command's blast radius or reversibility -- `-rf`,
+`--force`, `--no-verify`, and similar -- keep those literal regardless of how many times a command
+carrying one was approved. A history of repeated denials for a similar shape should instead make
+you more conservative, not less. When `<PriorDecisionsHistory>` is absent, score purely from
+`<CommandUnderReview>` as usual.
 
 ## Output format
 
