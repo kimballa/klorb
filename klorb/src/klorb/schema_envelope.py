@@ -19,6 +19,8 @@ docs/specs/persisted-json-schema-versioning.md for the full convention.
 import json
 import logging
 import os
+import re
+import secrets
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,73 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 SCHEMA_KEY = "schema"
+
+COMPACT_LIST_KEYS = ("allow", "ask", "deny")
+"""Object keys whose list value gets one-element-per-line formatting where each element is
+itself emitted on a single line, rather than the whole element tree being exploded across many
+indented lines (see `_ConfigJSONEncoder`). These are the permission-rule lists —
+`commandRules.allow`, `readDirs.deny`, etc. — whose elements (an argv token pattern like
+`["python", "-m", "pytest", "**"]`, or a directory path string) read far better kept together on
+one line than with every token on its own. See docs/specs/process-and-session-config.md's
+"On-disk key naming" section."""
+
+
+class _OneLine:
+    """Marks a value that `_ConfigJSONEncoder` must serialize compactly on a single line even
+    though the surrounding document is pretty-printed. Wrapping (rather than pre-serializing to a
+    string) lets the normal encoder machinery run for the enclosing list — one wrapped element per
+    indented line — while the element itself stays collapsed."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+
+def _wrap_compact_list_elements(node: Any) -> Any:
+    """Return a copy of `node` in which every list found under a `COMPACT_LIST_KEYS` key has each
+    of its elements wrapped in `_OneLine`, so `_ConfigJSONEncoder` emits that element on a single
+    line. Recurses through the rest of the structure so a permission-rule list is collapsed no
+    matter how deeply nested (e.g. under `sessionDefaults.commandRules`)."""
+    if isinstance(node, dict):
+        result: dict[str, Any] = {}
+        for key, value in node.items():
+            if key in COMPACT_LIST_KEYS and isinstance(value, list):
+                result[key] = [_OneLine(element) for element in value]
+            else:
+                result[key] = _wrap_compact_list_elements(value)
+        return result
+    if isinstance(node, list):
+        return [_wrap_compact_list_elements(element) for element in node]
+    return node
+
+
+class _ConfigJSONEncoder(json.JSONEncoder):
+    """Pretty-printing encoder (via `indent`) that additionally collapses any `_OneLine`-wrapped
+    value onto a single line. Each such value is emitted as a unique placeholder string during the
+    normal indented encode, then swapped for its compact one-line serialization in a final pass —
+    a self-contained way to get per-node formatting that the stdlib `json` module otherwise can't
+    express. The placeholder carries a per-instance random token so it can't collide with real
+    string data in the document."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._token = secrets.token_hex(8)
+        self._compact_blobs: list[str] = []
+        self._placeholder_re = re.compile(rf'"@@klorb-oneline:{self._token}:(\d+)@@"')
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, _OneLine):
+            index = len(self._compact_blobs)
+            self._compact_blobs.append(json.dumps(o.value, sort_keys=self.sort_keys))
+            return f"@@klorb-oneline:{self._token}:{index}@@"
+        return super().default(o)
+
+    def encode(self, o: Any) -> str:
+        indented = super().encode(o)
+        return self._placeholder_re.sub(
+            lambda match: self._compact_blobs[int(match.group(1))], indented)
+
 
 JSON_ERROR_CONTEXT_LINES = 2
 """Number of source lines shown before and after the offending line in the snippet
@@ -147,6 +216,11 @@ def write_versioned_json(
     `path`. This matters because `path` may be read again moments later by another tool call in
     the same turn — a process interrupted mid-write must never leave a torn, unparseable config
     file behind.
+
+    The document is pretty-printed with two-space indentation, except that the permission-rule
+    lists keyed by `COMPACT_LIST_KEYS` (`allow`/`ask`/`deny`) get each of their elements collapsed
+    onto a single line (see `_ConfigJSONEncoder`) so an argv token pattern like
+    `["python", "-m", "pytest", "**"]` stays readable on one line instead of one token per line.
     """
     if SCHEMA_KEY in data:
         raise ValueError(f"data already contains a {SCHEMA_KEY!r} key; refusing to overwrite it")
@@ -157,7 +231,7 @@ def write_versioned_json(
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
-            json.dump(payload, tmp_file, indent=2)
+            tmp_file.write(json.dumps(_wrap_compact_list_elements(payload), indent=2, cls=_ConfigJSONEncoder))
             tmp_file.write("\n")
         os.replace(tmp_name, path)
     except BaseException:

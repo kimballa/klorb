@@ -235,6 +235,17 @@ there are only the first two:
    layer's for that same key, but keys from different layers accumulate — effectively
    `dict.update()` scoped to this one nested object rather than the whole `sessionDefaults` dict.
 
+When klorb *writes* a config file (`klorb.schema_envelope.write_versioned_json`, used by the
+project-config bootstrap and by interactive permission grants), the document is pretty-printed
+with two-space indentation, with one exception: the `allow`/`ask`/`deny` lists (of `readDirs`,
+`writeDirs`, `readFiles`, `writeFiles`, and `commandRules`) get each of their *elements*
+collapsed onto a single line. A `commandRules` entry like `["python", "-m", "pytest", "**"]`
+therefore stays legible on one line rather than being exploded to one token per line, while the
+list itself still spans multiple lines (one element each). The set of collapsed keys is
+`klorb.schema_envelope.COMPACT_LIST_KEYS`; it's keyed purely on the `allow`/`ask`/`deny` names,
+so any such list anywhere in the document is formatted this way. Hand-authored files aren't
+required to follow this — it's the shape klorb produces, and the parser accepts any valid JSON.
+
 Within each of those two objects, keys are flat strings with dot-delineated namespaces in
 lowerCamelCase — e.g. `"thinking.tokenBudgets"`, `"terminal.input.maxLines"` (the key is the
 literal string `"terminal.input.maxLines"`, not a path into nested JSON objects — the same

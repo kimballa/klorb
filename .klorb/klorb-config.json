@@ -25,27 +25,19 @@
       "ask": [],
       "allow": [
         [
-          "grep",
-          "-i",
-          "*"
+          "grep", "-i", "*"
         ],
         [
-          "make",
-          "**"
+          "make", "**"
         ],
         [
-          "bin/klorb",
-          "--help"
+          "bin/klorb", "--help"
         ],
         [
-          "venv/bin/python",
-          "-m",
-          "pytest",
-          "**"
+          "venv/bin/python", "-m", "pytest", "**"
         ],
         [
-          "venv/bin/pytest",
-          "**"
+          "venv/bin/pytest", "**"
         ]
       ]
     }

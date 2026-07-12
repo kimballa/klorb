@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from klorb.schema_envelope import read_versioned_json
+from klorb.schema_envelope import read_versioned_json, write_versioned_json
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -86,3 +86,45 @@ def test_no_warnings_collected_when_warnings_arg_omitted(tmp_path: Path) -> None
     path.write_text('{"model": "some/model",}', encoding="utf-8")
 
     assert read_versioned_json(path, expected_schema_name="klorb-config") == {}
+
+
+def test_write_collapses_permission_rule_list_elements_onto_one_line(tmp_path: Path) -> None:
+    """The `allow`/`ask`/`deny` lists get each element rendered on a single line, even nested
+    deep under `sessionDefaults.commandRules`, while the rest of the document stays pretty-printed
+    with two-space indentation. See docs/specs/process-and-session-config.md's "On-disk key
+    naming" section."""
+    path = tmp_path / "klorb-config.json"
+    write_versioned_json(
+        path,
+        {
+            "sessionDefaults": {
+                "readDirs": {"deny": [], "ask": [], "allow": ["/home/a", "/home/b"]},
+                "commandRules": {
+                    "deny": [],
+                    "ask": [],
+                    "allow": [["grep", "-i", "*"], ["python", "-m", "pytest", "**"]],
+                },
+            },
+        },
+        schema_name="klorb-config",
+        schema_version="1.0.0",
+    )
+    text = path.read_text(encoding="utf-8")
+
+    # Each command pattern is emitted whole on one line, not one token per line...
+    assert '["grep", "-i", "*"],' in text
+    assert '["python", "-m", "pytest", "**"]' in text
+    # ...and each directory-path element likewise sits on its own single line.
+    assert '        "/home/a",\n' in text
+    # The surrounding document is still indented/pretty-printed, and round-trips cleanly.
+    assert '  "sessionDefaults": {' in text
+    assert read_versioned_json(path, expected_schema_name="klorb-config") == {
+        "sessionDefaults": {
+            "readDirs": {"deny": [], "ask": [], "allow": ["/home/a", "/home/b"]},
+            "commandRules": {
+                "deny": [],
+                "ask": [],
+                "allow": [["grep", "-i", "*"], ["python", "-m", "pytest", "**"]],
+            },
+        },
+    }

@@ -49,13 +49,6 @@
     instructions; you can reference the associated SystemInterjection xml tag
     and subject attribute.
 
-* The allow/ask/deny lists specifically under commandRules but technically under anything else
-  should have elements that are always serialized to one line. In other words: A bash command
-  of `["python", "-m", "some_module", "**"]` should all show up like that on a single line,
-  rather than each token on its own line. It's much more legible this way. The rest of the
-  json config file **should** be pretty-printed with indentation, etc., like it currently is,
-  though.
-
 * The risk_classifer that rewrites bash commands to have */?/** for broader approvals should
   actually also get the history of other approved and denied commands from earlier in the
   session. If the user has approved a whole bunch of very similar commands, then it should
