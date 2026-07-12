@@ -148,7 +148,10 @@ pytest==9.1.1
     # via
     #   klorb (pyproject.toml)
     #   pytest-asyncio
+    #   pytest-timeout
 pytest-asyncio==1.4.0
+    # via klorb (pyproject.toml)
+pytest-timeout==2.4.0
     # via klorb (pyproject.toml)
 python-dotenv==1.2.2
     # via klorb (pyproject.toml)
