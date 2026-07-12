@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""ListMemories/SearchMemories/ReadMemory/EditMemory/CreateMemory/DeleteMemory: the tools a
+"""ListMemories/SearchMemories/ReadMemory/EditMemory/CreateMemory/ForgetMemory: the tools a
 model uses to record and recall durable notes about a workspace or the broader user/homedir
 environment across sessions — see `klorb.tools.memory.common` and docs/specs/memories.md.
 

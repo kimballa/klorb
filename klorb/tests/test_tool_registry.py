@@ -64,7 +64,7 @@ def test_default_registry_discovers_production_tools() -> None:
     assert "AskUserQuestions" in names
     assert {
         "ListMemories", "SearchMemories", "ReadMemory", "EditMemory", "CreateMemory",
-        "DeleteMemory",
+        "ForgetMemory",
     } <= names
 
 

@@ -22,9 +22,6 @@
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
 
-* `DeleteMemory` command should be renamed to `ForgetMemory`. References to the former should
-  be renamed to the latter. The file it's in should be renamed accordingly.
-
 # Feature backlog
 
 * The SystemPrompt can include some dynamic information about the current state of things:

@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Shared mechanics behind `ListMemories`/`SearchMemories`/`ReadMemory`/`EditMemory`/
-`CreateMemory`/`DeleteMemory`: resolving a `namespace`/`filename` pair to a `Path`, validating
+`CreateMemory`/`ForgetMemory`: resolving a `namespace`/`filename` pair to a `Path`, validating
 `filename` against path-separator/traversal escapes, the "first line must not be blank"
 file-format rule, and the untrusted-workspace access gate. See docs/specs/memories.md.
 """
@@ -51,7 +51,7 @@ def workspace_namespace_accessible(context: "ToolSetupContext") -> bool:
 def require_workspace_namespace_accessible(context: "ToolSetupContext", namespace: Namespace) -> None:
     """Raise `PermissionError` outright -- with no appeal to the user, unlike an `ask`-verdict
     permission check -- if `namespace` is `workspace` and the workspace is untrusted. Called by
-    `ReadMemory`/`EditMemory`/`CreateMemory`/`DeleteMemory` ahead of their own
+    `ReadMemory`/`EditMemory`/`CreateMemory`/`ForgetMemory` ahead of their own
     `tools.memory.*Permission` check, so a workspace memory in an untrusted workspace is denied
     before that check (and before any disk I/O) rather than surfacing as a `PermissionAskRequired`.
     `ListMemories`/`SearchMemories` do not call this: per docs/specs/memories.md, they instead

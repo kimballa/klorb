@@ -65,11 +65,11 @@ DEFAULT_MEMORY_EDIT_PERMISSION: Verdict = "allow"
 DEFAULT_MEMORY_CREATE_PERMISSION: Verdict = "ask"
 DEFAULT_MEMORY_DELETE_PERMISSION: Verdict = "ask"
 """Per-operation default `Verdict`s for the Memory tools (`ListMemories`/`SearchMemories`
-[read], `EditMemory`, `CreateMemory`, `DeleteMemory`) — see `ProcessConfig.
+[read], `EditMemory`, `CreateMemory`, `ForgetMemory`) — see `ProcessConfig.
 memory_read_permission` et al. and docs/specs/memories.md. Read and edit default to `"allow"`
 since a memory is harness-managed session-spanning notes, not a workspace file a model can
 redirect through; create and delete default to `"ask"` since those are less easily reversed
-(a created file needs an explicit follow-up `DeleteMemory`; a deleted one is simply gone)."""
+(a created file needs an explicit follow-up `ForgetMemory`; a deleted one is simply gone)."""
 
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_SCHEMA_VERSION = "1.0.0"
@@ -239,7 +239,7 @@ class ProcessConfig(BaseModel):
     memory_create_permission: Verdict = DEFAULT_MEMORY_CREATE_PERMISSION
     """Governs `CreateMemory` — see `klorb.tools.memory`."""
     memory_delete_permission: Verdict = DEFAULT_MEMORY_DELETE_PERMISSION
-    """Governs `DeleteMemory` — see `klorb.tools.memory`."""
+    """Governs `ForgetMemory` — see `klorb.tools.memory`."""
     openrouter_base_url: str = OPENROUTER_BASE_URL
     shell_command: str = DEFAULT_SHELL_COMMAND
     """Shell binary a `!`-prefixed REPL command is run through, e.g. `/bin/bash` or `/bin/zsh`

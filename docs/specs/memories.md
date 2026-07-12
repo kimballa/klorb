@@ -6,7 +6,7 @@ A memory is a markdown file an agent writes to itself, to record something worth
 a later session — a durable fact about the user, a project convention, a decision and why it
 was made. Unlike the scratchpad (see docs/specs/scratchpad.md), which is discarded once a
 session closes, memories persist across sessions. `ListMemories`, `SearchMemories`,
-`ReadMemory`, `EditMemory`, `CreateMemory`, and `DeleteMemory` are the tools a model uses to
+`ReadMemory`, `EditMemory`, `CreateMemory`, and `ForgetMemory` are the tools a model uses to
 enumerate, find, read, and write them.
 
 Every memory lives in one of two namespaces:
@@ -26,7 +26,7 @@ either namespace.
   `klorb/src/klorb/tools/scratchpad/`'s own layout: `common.py` (namespace resolution,
   `filename` validation, the untrusted-workspace gate, and the blank-first-line-rejection
   helper) plus one module per tool (`list_memories.py`, `search_memories.py`,
-  `read_memory.py`, `edit_memory.py`, `create_memory.py`, `delete_memory.py`). Its
+  `read_memory.py`, `edit_memory.py`, `create_memory.py`, `forget_memory.py`). Its
   `__init__.py` deliberately imports none of these `Tool` subclasses, for the same
   import-cycle reason `klorb.tools.scratchpad`'s own `__init__.py` doesn't (see that
   subpackage's docstring) — `klorb.tools.registry.ToolRegistry._discover_tools()`'s recursive
@@ -59,7 +59,7 @@ either namespace.
   `CreateMemoryTool` similarly delegates to `klorb.tools.util.CreateFileCore`, the file-creation
   mechanic extracted from `CreateFileTool` (which now holds one too) so both tools share it
   rather than duplicating the "already exists / create missing parents / write" logic.
-  `DeleteMemoryTool` has no existing core to share — no other tool deletes a harness-resolved
+  `ForgetMemoryTool` has no existing core to share — no other tool deletes a harness-resolved
   file — so it calls `Path.unlink()` directly, after every validation/permission/trust check.
 * **File format**: a memory is an ordinary markdown file whose first line is its *topic* — a
   one-line summary `ListMemoriesTool`/`SearchMemoriesTool` show without opening the file. The
@@ -89,7 +89,7 @@ either namespace.
   the `workspace` namespace as empty (or skip it entirely during iteration) rather than
   raising — the same "quietly report nothing" behavior an untrusted `readDirs` boundary doesn't
   use, but chosen here since there's no single resource to ask about, just an entire namespace
-  to omit. `ReadMemory`/`EditMemory`/`CreateMemory`/`DeleteMemory` instead raise `PermissionError`
+  to omit. `ReadMemory`/`EditMemory`/`CreateMemory`/`ForgetMemory` instead raise `PermissionError`
   outright for a `workspace`-namespace call in an untrusted workspace — checked *before* the
   operation's own `tools.memory.*Permission` verdict, so an untrusted-workspace denial is never
   observable as a `PermissionAskRequired` (which would imply a user could approve their way past
@@ -107,7 +107,7 @@ Four process-level `Verdict` (`"deny"`/`"ask"`/`"allow"`) flags, one per operati
   and `ReadMemory`.
 * `tools.memory.editPermission` (default `"allow"`) — governs `EditMemory`.
 * `tools.memory.createPermission` (default `"ask"`) — governs `CreateMemory`.
-* `tools.memory.deletePermission` (default `"ask"`) — governs `DeleteMemory`.
+* `tools.memory.deletePermission` (default `"ask"`) — governs `ForgetMemory`.
 
 Each sets the correspondingly-named `ProcessConfig` field (`memory_read_permission`,
 `memory_edit_permission`, `memory_create_permission`, `memory_delete_permission`) via

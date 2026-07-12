@@ -16,7 +16,7 @@ from klorb.tools.tool import Tool
 logger = logging.getLogger(__name__)
 
 
-class DeleteMemoryTool(Tool):
+class ForgetMemoryTool(Tool):
     """Deletes an existing memory file. Raises `FileNotFoundError` (with a clear message, not a
     raw traceback) if no memory with that `namespace`/`filename` exists.
 
@@ -28,7 +28,7 @@ class DeleteMemoryTool(Tool):
     """
 
     def name(self) -> str:
-        return "DeleteMemory"
+        return "ForgetMemory"
 
     def description(self) -> str:
         return (
@@ -53,7 +53,7 @@ class DeleteMemoryTool(Tool):
     def apply(self, args: dict[str, Any]) -> Any:
         namespace = args["namespace"]
         filename = args["filename"]
-        logger.debug("DeleteMemory %s/%s", namespace, filename)
+        logger.debug("ForgetMemory %s/%s", namespace, filename)
 
         if namespace not in ("global", "workspace"):
             raise ValueError(f"namespace must be 'global' or 'workspace', got {namespace!r}")
@@ -68,7 +68,7 @@ class DeleteMemoryTool(Tool):
             raise FileNotFoundError(f"no such {namespace} memory: {filename}")
 
         path.unlink()
-        logger.debug("DeleteMemory %s/%s deleted", namespace, filename)
+        logger.debug("ForgetMemory %s/%s deleted", namespace, filename)
 
         return {"namespace": namespace, "filename": filename, "deleted": True}
 
@@ -76,5 +76,5 @@ class DeleteMemoryTool(Tool):
         namespace = args.get("namespace", "?")
         filename = args.get("filename", "?")
         if error is not None:
-            return f"Delete memory: {namespace}/{filename} failed: {error}"
-        return f"Delete memory: {namespace}/{filename}"
+            return f"Forget memory: {namespace}/{filename} failed: {error}"
+        return f"Forget memory: {namespace}/{filename}"
