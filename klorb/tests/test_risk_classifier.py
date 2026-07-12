@@ -16,6 +16,7 @@ from klorb.permissions.risk_classifier import (
     _build_system_prompt,
     _build_user_message,
     _cdata,
+    _response_format,
     classify_command_risk,
     resolve_item_risk_assessment,
 )
@@ -258,6 +259,35 @@ def test_command_risk_report_round_trips_through_json_schema() -> None:
     assert schema["title"] == "CommandRiskReport"
     report = CommandRiskReport.model_validate(json.loads(_valid_report_json(["item-0", "item-1"])))
     assert len(report.items) == 2
+
+
+def _find_object_schemas(node: object) -> list[dict]:
+    """Every dict node with a `"properties"` key anywhere in `node` (recursing through nested
+    dicts and lists) -- both the top-level object schema and each entry under `"$defs"`."""
+    found: list[dict] = []
+    if isinstance(node, dict):
+        if "properties" in node:
+            found.append(node)
+        for value in node.values():
+            found.extend(_find_object_schemas(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_find_object_schemas(item))
+    return found
+
+
+def test_response_format_sets_additional_properties_false_on_every_object_schema() -> None:
+    """`openai/gpt-5-nano`'s strict `json_schema` structured-output mode rejects any object
+    schema that omits `"additionalProperties": false` -- `model_json_schema()` doesn't set this
+    itself, so `_response_format()` must inject it into the top-level `CommandRiskReport` schema
+    and every nested `$defs` entry (here, `ItemRiskAssessment`), or every real classifier request
+    fails its schema validation before the model ever sees the prompt."""
+    schema = _response_format()["json_schema"]["schema"]
+    object_schemas = _find_object_schemas(schema)
+
+    assert len(object_schemas) >= 2  # CommandRiskReport itself, plus ItemRiskAssessment in $defs
+    for object_schema in object_schemas:
+        assert object_schema["additionalProperties"] is False
 
 
 # --- resolve_item_risk_assessment: gating, batching, caching ---

@@ -188,12 +188,31 @@ def _message(role: MessageRole, content: str) -> Message:
         processing_state="complete")
 
 
+def _with_additional_properties_false(node: Any) -> Any:
+    """Deep copy of a `BaseModel.model_json_schema()` result with `"additionalProperties":
+    false` set on every object schema (any dict carrying a `"properties"` key -- the top-level
+    schema and each entry under `"$defs"` alike). Strict `json_schema` structured-output mode
+    (`_response_format()`'s `"strict": True`) rejects an object schema that omits this, but
+    `model_json_schema()` doesn't set it itself -- without this, every `classify_command_risk()`
+    request to a strict-mode model (e.g. `openai/gpt-5-nano`) fails its schema validation before
+    the model ever sees the prompt, so `resolve_item_risk_assessment()` degrades to `None` (no
+    risk badge/rationale) on every single ask rather than failing loudly."""
+    if isinstance(node, dict):
+        marked = {key: _with_additional_properties_false(value) for key, value in node.items()}
+        if "properties" in marked:
+            marked.setdefault("additionalProperties", False)
+        return marked
+    if isinstance(node, list):
+        return [_with_additional_properties_false(item) for item in node]
+    return node
+
+
 def _response_format() -> dict[str, Any]:
     return {
         "type": "json_schema",
         "json_schema": {
             "name": "CommandRiskReport",
-            "schema": CommandRiskReport.model_json_schema(),
+            "schema": _with_additional_properties_false(CommandRiskReport.model_json_schema()),
             "strict": True,
         },
     }
