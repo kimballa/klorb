@@ -114,6 +114,21 @@ def test_read_last_session_returns_none_for_wrong_shaped_field(tmp_path: Path) -
     assert read_last_session(workspace) is None
 
 
+def test_read_last_session_returns_none_for_invalid_session_config_field(tmp_path: Path) -> None:
+    """A schema error nested *inside* `config` itself -- not just a missing/wrong-shaped
+    top-level `LastSessionState` field -- is likewise a `pydantic.ValidationError` on
+    `model_validate`, since pydantic validates nested models recursively. Here,
+    `thinking_effort` is a `Literal["low", "medium", "high"]`; a value outside that set fails
+    to validate `SessionConfig` itself, one level down from `LastSessionState`."""
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_versioned_json(
+        last_session_path(workspace),
+        {"config": {"thinking_effort": "extreme"}, "messages": []},
+        schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
+
+    assert read_last_session(workspace) is None
+
+
 def test_tool_call_messages_round_trip(tmp_path: Path) -> None:
     from klorb.message import ToolCallRequest
 
