@@ -2,7 +2,10 @@
 """Configures klorb's stdlib logging: a TextualHandler plus a per-session log file."""
 
 import logging
+import tempfile
+from datetime import datetime
 from pathlib import Path
+from typing import TextIO
 
 from textual.logging import TextualHandler
 
@@ -109,3 +112,74 @@ def configure_logging(
         handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
 
     logging.basicConfig(level="NOTSET", handlers=handlers, force=True)
+
+
+def crash_log_path(workspace_root: Path) -> Path:
+    """Build the path a Textual crash dump for `workspace_root` would be written to:
+    `<tempdir>/klorb-crash-<workspace basename>-<timestamp>.log`, timestamped to the second at
+    call time so repeated crashes in the same workspace don't collide.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    basename = workspace_root.name or "workspace"
+    return Path(tempfile.gettempdir()) / f"klorb-crash-{basename}-{timestamp}.log"
+
+
+class CrashLogTee:
+    """A file-like object, suitable as a `rich.console.Console.file`, that duplicates every
+    write to a real output stream (`stderr`) and a crash log file, so Textual's
+    `App._print_error_renderables()` — which prints an unhandled exception's traceback to
+    `App.error_console` on its way out — also lands the same text in a file a user can attach
+    to a bug report.
+
+    The log file is opened lazily on the first write rather than eagerly in `__init__`, so a
+    session that never crashes never creates a file in `/tmp`: `error_console` is written to
+    only when there's actually a crash to report (see `App._print_error_renderables`). If the
+    file can't be opened (permissions, a full disk), writes silently fall back to `stream`
+    alone rather than raising out of Rich's render path; if a write to `stream` itself fails,
+    the file write already happened first, so the crash is still captured on disk. Call
+    `opened_log_path` after the run to find out whether (and where) anything was actually
+    written.
+    """
+
+    def __init__(self, stream: TextIO, log_path: Path) -> None:
+        self._stream = stream
+        self._log_path = log_path
+        self._log_file: TextIO | None = None
+        self._log_open_failed = False
+
+    def _ensure_log_file(self) -> TextIO | None:
+        if self._log_file is None and not self._log_open_failed:
+            try:
+                self._log_file = self._log_path.open("w", encoding="utf-8")
+            except OSError:
+                logger.warning("Could not open crash log file %s", self._log_path, exc_info=True)
+                self._log_open_failed = True
+        return self._log_file
+
+    def opened_log_path(self) -> Path | None:
+        """The crash log path if a write has actually opened it, else `None`."""
+        return self._log_path if self._log_file is not None else None
+
+    def write(self, text: str) -> int:
+        log_file = self._ensure_log_file()
+        if log_file is not None:
+            try:
+                log_file.write(text)
+            except OSError:
+                logger.warning("Could not write to crash log file %s", self._log_path, exc_info=True)
+        return self._stream.write(text)
+
+    def flush(self) -> None:
+        if self._log_file is not None:
+            try:
+                self._log_file.flush()
+            except OSError:
+                pass
+        self._stream.flush()
+
+    def isatty(self) -> bool:
+        return self._stream.isatty()
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._stream, "encoding", "utf-8") or "utf-8"

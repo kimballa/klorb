@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.logging_config."""
 
+import io
 import logging
 import os
 from pathlib import Path
@@ -133,3 +134,50 @@ def test_configure_logging_prunes_old_logs_when_opening_new(tmp_path: Path) -> N
 
     # max_log_files=2 reserves a slot for new.log, so only the newest existing log survives.
     assert sorted(p.name for p in logs.glob("*.log")) == ["new.log", "old2.log"]
+
+
+def test_crash_log_path_includes_workspace_basename_and_tmpdir() -> None:
+    path = logging_config.crash_log_path(Path("/home/user/some-project"))
+
+    assert path.parent == Path(logging_config.tempfile.gettempdir())
+    assert path.name.startswith("klorb-crash-some-project-")
+    assert path.name.endswith(".log")
+
+
+def test_crash_log_path_falls_back_to_workspace_when_basename_empty() -> None:
+    path = logging_config.crash_log_path(Path("/"))
+
+    assert path.name.startswith("klorb-crash-workspace-")
+
+
+def test_crash_log_tee_writes_to_both_stream_and_file(tmp_path: Path) -> None:
+    log_path = tmp_path / "crash.log"
+    stream = io.StringIO()
+    tee = logging_config.CrashLogTee(stream, log_path)
+
+    tee.write("boom\n")
+    tee.flush()
+
+    assert stream.getvalue() == "boom\n"
+    assert log_path.read_text(encoding="utf-8") == "boom\n"
+    assert tee.opened_log_path() == log_path
+
+
+def test_crash_log_tee_does_not_create_file_until_first_write(tmp_path: Path) -> None:
+    log_path = tmp_path / "crash.log"
+    tee = logging_config.CrashLogTee(io.StringIO(), log_path)
+
+    assert tee.opened_log_path() is None
+    assert not log_path.exists()
+
+
+def test_crash_log_tee_falls_back_to_stream_when_file_cannot_be_opened(tmp_path: Path) -> None:
+    unwritable_dir = tmp_path / "missing-parent"
+    log_path = unwritable_dir / "crash.log"
+    stream = io.StringIO()
+    tee = logging_config.CrashLogTee(stream, log_path)
+
+    tee.write("boom\n")
+
+    assert stream.getvalue() == "boom\n"
+    assert tee.opened_log_path() is None

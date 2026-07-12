@@ -5,10 +5,12 @@
 A trusted workspace can pick a conversation back up where a previous interactive klorb
 process left off. Quitting the TUI (`klorb.tui.repl.ReplApp`, via Ctrl+Q or the "Quit the
 application" system command) offers to save the live `Session`'s `SessionConfig` and full
-message history to `last-session.json`; opening klorb again in the same (trusted) workspace
+message history to `last-session.json`; an unhandled exception saves it unconditionally, with
+no prompt (see "Saving on crash" below); opening klorb again in the same (trusted) workspace
 auto-loads that file and replaces the freshly-constructed `Session` with one built from it,
 re-rendering the history scroll to match. `klorb.workspace.last_session` owns reading and
-writing the file; `klorb.tui.repl.ReplApp` owns the save prompt and the reconstruction.
+writing the file; `klorb.tui.repl.ReplApp` and `klorb.tui.repl.run_repl`/`_handle_repl_crash`
+own the save prompt/crash-save and the reconstruction.
 
 ## How it works
 
@@ -42,6 +44,28 @@ docs/specs/projects-and-trust.md).
   "1.0.0"}`), overwriting any previously-saved state for this workspace outright — there is
   only ever one "last" session per workspace, not a history of them.
 * Either way, the app then exits (`self.exit()`).
+
+### Saving on crash (`klorb.tui.repl.run_repl` / `_handle_repl_crash`)
+
+`App.run()` never raises an unhandled exception back out to its caller — Textual's own
+`App._handle_exception` prints a traceback and exits the app instead (see
+docs/adrs/tee-textual-crash-output-to-a-tmp-file.md for how that traceback is also captured to
+a `/tmp` crash log file). `run_repl()` checks `app.return_code` once `App.run()` returns
+(`_handle_exception` sets it to `1`; a normal `App.exit()` leaves it `0`) and, on a crash, calls
+`_handle_repl_crash(app, crash_tee)`, which:
+
+* Prints the crash log file's path to stderr (or a fallback line if `CrashLogTee` couldn't
+  open it).
+* Reads `app._session` — the app's *live* session at crash time, which may differ from
+  whatever `Session` `run_repl()` was originally called with, since `/clear` (and mid-session
+  workspace-trust changes) can replace or mutate it — and, only if `app._session.config.
+  workspace.trusted`, calls `write_last_session` unconditionally, with no confirmation prompt:
+  there is no modal to confirm through once the app has already crashed, and the alternative is
+  losing the conversation outright. An untrusted or unresolved workspace is skipped, the same
+  gate `_quit_after_maybe_saving` applies to the normal quit path.
+* Either prints the saved file's path to stderr, or (if the write itself raises `OSError` —
+  permissions, a full disk) logs a warning and prints a fallback line, without letting that
+  secondary failure mask the crash itself.
 
 ### Restoring (`ReplApp._maybe_restore_last_session`)
 
