@@ -22,9 +22,6 @@
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
 
-* Bash Approval panel: The string being approved should show up in a color other than the
-  white "Any persistent Allow choice below grants: <command_in_different_color>"
-
 * `DeleteMemory` command should be renamed to `ForgetMemory`. References to the former should
   be renamed to the latter. The file it's in should be renamed accordingly.
 
@@ -85,12 +82,13 @@
   * The next logical thing to do is to implement "interrupting" in the conversation so you
     can interject midway thru what it's saying.
 
-* Add a command (CLI and/or command palette) that dumps the *resolved* system prompt for the
-  current role + model into the user's editable tree
-  (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same relative path the resolver would
-  read it back from), so the user has a real `.md` file to start editing from instead of
-  hunting down the packaged copy inside site-packages. Should refuse to clobber an existing
-  file without `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
+* `klorb system-prompt` should have a `--export` option
+  that dumps the *resolved* system prompt for the current role + model into the
+  user's editable tree (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same
+  relative path the resolver would read it back from), so the user has a real
+  `.md` file to start editing from instead of hunting down the packaged copy
+  inside site-packages. Should refuse to clobber an existing file without
+  `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
   docs/specs/roles-and-system-prompts.md.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)

@@ -10,6 +10,7 @@ from typing import Callable, Literal
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Vertical, VerticalScroll
+from textual.markup import escape
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -467,14 +468,21 @@ class PermissionAskPanel(Vertical):
         return f"Permission requested: {kind}"
 
     def _granted_text(self) -> str | None:
+        """The `#permission-ask-granted` copy naming the real scope a persistent Allow records at.
+        The resource being granted (the directory, or the command pattern) is set off from the
+        surrounding prose in `$text-accent bold` so it reads as distinct from the explanatory
+        text rather than blending into it; `escape()` keeps a bracket or backslash in an argv or
+        path from being mis-parsed as content markup."""
         if self._granted_paths:
             directories = ", ".join(str(path) for path in self._granted_paths)
             return (
                 "Any persistent Allow choice below grants access to the whole directory:\n"
-                f"{directories}")
+                f"[$text-accent bold]{escape(directories)}[/]")
         if self._granted_command_patterns:
             patterns = ", ".join(" ".join(pattern) for pattern in self._granted_command_patterns)
-            return f"Any persistent Allow choice below grants: {patterns}"
+            return (
+                "Any persistent Allow choice below grants: "
+                f"[$text-accent bold]{escape(patterns)}[/]")
         return None
 
     def _refresh_selection(self) -> None:
