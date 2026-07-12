@@ -359,7 +359,7 @@ def test_response_format_sets_additional_properties_false_on_every_object_schema
 def test_default_classifier_model_picks_the_capability_tagged_model() -> None:
     session = Session(SessionConfig(), provider=MagicMock())
 
-    assert _default_classifier_model(session) == "openai/gpt-oss-safeguard-20b:nitro"
+    assert _default_classifier_model(session) == "openai/gpt-oss-120b:nitro"
 
 
 def test_default_classifier_model_falls_back_when_no_model_declares_the_capability() -> None:
@@ -426,7 +426,7 @@ def test_resolve_item_risk_assessment_returns_the_matching_item() -> None:
 def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_default() -> None:
     """`ProcessConfig.bash_risk_classifier_model` unset (the default) means klorb picks a
     model itself, by `klorb_capabilities` -- see `klorb.models.registry.ModelRegistry.
-    find_by_capability` and the packaged `openai/gpt-oss-safeguard-20b:nitro` model, the only
+    find_by_capability` and the packaged `openai/gpt-oss-120b:nitro` model, the only
     built-in model that declares `"BASH_SAFETY_EVAL"`."""
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
@@ -436,7 +436,7 @@ def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_defaul
         session=_session(provider), process_config=ProcessConfig())
 
     _, kwargs = provider.send_prompt.call_args
-    assert kwargs["model"] == "openai/gpt-oss-safeguard-20b:nitro"
+    assert kwargs["model"] == "openai/gpt-oss-120b:nitro"
 
 
 def test_resolve_item_risk_assessment_respects_an_explicit_model_override() -> None:

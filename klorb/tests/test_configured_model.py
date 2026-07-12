@@ -79,7 +79,7 @@ def test_klorb_capabilities_defaults_to_an_empty_dict() -> None:
 
 def test_klorb_capabilities_reads_from_data() -> None:
     model = ConfiguredModel(
-        {"name": "openai/gpt-oss-safeguard-20b:nitro", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}},
+        {"name": "openai/gpt-oss-120b:nitro", "klorb_capabilities": {"BASH_SAFETY_EVAL": True}},
         source="test")
 
     assert model.klorb_capabilities() == {"BASH_SAFETY_EVAL": True}

@@ -90,7 +90,7 @@ def test_default_registry_discovers_production_models() -> None:
     assert "anthropic/claude-sonnet-5" in names
     assert "qwen/qwen3-coder-next" in names
     assert "moonshotai/kimi-k2.7-code" in names
-    assert "openai/gpt-oss-safeguard-20b:nitro" in names
+    assert "openai/gpt-oss-120b:nitro" in names
 
 
 def test_find_by_capability_returns_a_model_declaring_it() -> None:
