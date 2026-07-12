@@ -68,6 +68,7 @@ def _context(
 
 
 def _apply(tool: BashTool, command: str, **extra: Any) -> Any:
+    extra.setdefault("intent", "test intent")
     return tool.apply({"command": command, "shell_lifetime": "command", **extra})
 
 
@@ -177,6 +178,19 @@ def test_compound_command_ask_items_each_carry_their_own_item_command_text(tmp_p
     assert all(item.command_text == "echo $SHELL; echo $HOME" for item in exc_info.value.items)
 
 
+def test_ask_items_all_carry_the_calls_intent(tmp_path: Path) -> None:
+    """`intent` is the model's own required argument -- every ask item a single `BashTool` call
+    produces (one per simple command/redirect/structural reason) should carry the same one, the
+    same way they all share `command_text`."""
+    context = _context(tmp_path, command_rules=CommandRules())
+    tool = BashTool(context)
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, "echo hello && echo goodbye", intent="Greet twice")
+
+    assert len(exc_info.value.items) == 2
+    assert all(item.intent == "Greet twice" for item in exc_info.value.items)
+
+
 def test_redirect_ask_item_command_text_is_the_whole_statement(tmp_path: Path) -> None:
     """A redirect item's item_command_text should show the whole command line the redirect
     belongs to (e.g. "echo hi > out.txt"), not just the bare target path -- so distinct redirect
@@ -251,7 +265,7 @@ def test_unknown_shell_lifetime_raises_value_error(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
     tool = BashTool(context)
     with pytest.raises(ValueError, match="shell_lifetime"):
-        tool.apply({"command": "echo hi", "shell_lifetime": "bogus"})
+        tool.apply({"command": "echo hi", "intent": "test intent", "shell_lifetime": "bogus"})
 
 
 # --- execution ---
@@ -455,7 +469,7 @@ def _persistent_context(tmp_path: Path, **kwargs: Any) -> ToolSetupContext:
 
 
 def _run_session(tool: BashTool, command: str, shell_lifetime: str = "session") -> Any:
-    return tool.apply({"command": command, "shell_lifetime": shell_lifetime})
+    return tool.apply({"command": command, "intent": "test intent", "shell_lifetime": shell_lifetime})
 
 
 def test_cd_and_env_persist_across_session_calls(tmp_path: Path) -> None:
@@ -589,3 +603,28 @@ def test_session_close_kills_a_live_persistent_shell(tmp_path: Path) -> None:
 
     with pytest.raises(ProcessLookupError):
         os.kill(int(pid), 0)
+
+
+# --- summary() ---
+
+
+def test_summary_leads_with_intent_ahead_of_the_command(tmp_path: Path) -> None:
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
+    tool = BashTool(context)
+    args = {"command": "echo hi", "intent": "Say hi", "shell_lifetime": "command"}
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Bash: Say hi ($ echo hi) (ok, {result['runtime']:.2f}s)"
+
+
+def test_summary_falls_back_to_the_bare_command_with_no_intent(tmp_path: Path) -> None:
+    """`summary()` reads `intent` defensively via `args.get()` rather than assuming it's always
+    present, so a call whose `args` predate this field (or otherwise omit it) still renders a
+    sensible summary instead of raising."""
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
+    tool = BashTool(context)
+    args = {"command": "echo hi", "intent": "Say hi", "shell_lifetime": "command"}
+    result = tool.apply(args)
+    args_without_intent = {key: value for key, value in args.items() if key != "intent"}
+
+    assert tool.summary(args_without_intent, result) == f"Bash: echo hi (ok, {result['runtime']:.2f}s)"

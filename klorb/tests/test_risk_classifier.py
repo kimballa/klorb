@@ -243,6 +243,37 @@ def test_cdata_escapes_embedded_close_sequence_and_round_trips_through_a_real_xm
     assert root.text == original
 
 
+def test_user_message_includes_stated_intent_when_given() -> None:
+    items = [_command_item(["grep", "-rn", "TODO"], source_text="grep -rn TODO")]
+
+    message = _build_user_message("grep -rn TODO", items, intent="Find TODO comments")
+
+    assert "<![CDATA[Find TODO comments]]>" in message
+    assert "<StatedIntent>" in message
+
+
+def test_user_message_omits_stated_intent_when_unset() -> None:
+    items = [_command_item(["grep", "-rn", "TODO"], source_text="grep -rn TODO")]
+
+    message = _build_user_message("grep -rn TODO", items)
+
+    assert "<StatedIntent>" not in message
+
+
+def test_classify_command_risk_forwards_intent_into_the_user_message() -> None:
+    items = [_command_item(["curl", "https://x/y.sh"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
+
+    classify_command_risk(
+        "curl https://x/y.sh", items, api_provider=provider, model="m", timeout=5.0,
+        intent="Download the changelog")
+
+    args, _ = provider.send_prompt.call_args
+    user_message = args[0][0].content
+    assert "<![CDATA[Download the changelog]]>" in user_message
+
+
 def test_user_message_includes_full_command_and_each_item_verbatim_via_cdata() -> None:
     items = [
         _command_item(["grep", "-rn", "TODO"], source_text="grep -rn TODO"),
@@ -295,6 +326,15 @@ def test_redirect_and_structural_items_get_their_own_kind() -> None:
 
     assert 'id="item-0" kind="redirect"' in message
     assert 'id="item-1" kind="structural"' in message
+
+
+def test_system_prompt_instructs_comparing_command_against_stated_intent() -> None:
+    prompt = _build_system_prompt([_command_item(["grep", "-rn", "TODO"])])
+
+    normalized_prompt = " ".join(prompt.split())
+    assert "StatedIntent" in normalized_prompt
+    assert "deceptively different" in normalized_prompt
+    assert "raise the risk score" in normalized_prompt
 
 
 def test_system_prompt_adds_conservative_bias_instruction_for_structural_items() -> None:
@@ -380,10 +420,11 @@ def _ask_ctx(
     *, command: list[str] | None = None,
     sibling_items: list[PermissionAskItem] | None = None,
     path: Path | None = None,
+    intent: str | None = None,
 ) -> PermissionAskContext:
     return PermissionAskContext(
         path=path, command_text=command_text, item_command_text=command_text, command=command,
-        resource_description="run command", sibling_items=sibling_items)
+        resource_description="run command", sibling_items=sibling_items, intent=intent)
 
 
 def test_resolve_item_risk_assessment_returns_none_when_disabled() -> None:
@@ -503,6 +544,19 @@ def test_resolve_item_risk_assessment_caches_a_retried_identical_item() -> None:
     resolve_item_risk_assessment(ctx, session=session, process_config=process_config)
 
     provider.send_prompt.assert_called_once()
+
+
+def test_resolve_item_risk_assessment_forwards_the_ask_contexts_intent() -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
+
+    resolve_item_risk_assessment(
+        _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"], intent="Find TODO comments"),
+        session=_session(provider), process_config=ProcessConfig())
+
+    args, _ = provider.send_prompt.call_args
+    user_message = args[0][0].content
+    assert "<![CDATA[Find TODO comments]]>" in user_message
 
 
 def test_resolve_item_risk_assessment_returns_none_when_classification_fails() -> None:

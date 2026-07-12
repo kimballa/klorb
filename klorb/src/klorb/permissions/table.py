@@ -74,13 +74,19 @@ class PermissionAskItem:
     (`echo $SHELL; echo $HOME`), showing `command_text` in the per-item preview would make every
     item's approval request look identical, with no way to tell which one is actually about
     which command.
+
+    `intent`, also set alongside `command_text` on every ask item a `BashTool` call produces, is
+    the model's own short, human-readable statement of what the whole command is trying to
+    accomplish (`BashTool`'s required `intent` argument — see docs/specs/bash-tool-and-command-
+    permissions.md's "Agent-stated intent" section) — shared identically across every item from
+    the same call, the same way `command_text` is. `None` for a non-`BashTool` ask item.
     """
 
     def __init__(
         self, resource_description: str, *,
         path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
         command_text: str | None = None, is_compound: bool = False,
-        item_command_text: str | None = None,
+        item_command_text: str | None = None, intent: str | None = None,
     ) -> None:
         self.resource_description = resource_description
         self.path = path
@@ -89,6 +95,7 @@ class PermissionAskItem:
         self.command_text = command_text
         self.is_compound = is_compound
         self.item_command_text = item_command_text
+        self.intent = intent
 
 
 class PermissionOverride:
