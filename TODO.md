@@ -2,6 +2,16 @@
 
 # Bugs:
 
+* `grep -n * *` is already allowlisted but it keeps asking over and over; why?
+
+* multiple bash tool approval panels can stack up vertically. it should only ever show one at a time.
+  ... this sort of implies that it's somehow running multiple of these bash calls in parallel? How?
+  I thought all tool calls were serial.
+
+* sometimes very large heredocs show up in the bash tool approval panel and completely push all the
+  actual approval options off the bottom of the screen. This should all be truncated to a small
+  number of lines with a `more...` below them.
+
 * Sometimes this shows up in history: Error: 'Session' object has no attribute '_resolve_escalate_privileges'
 
 * If a required tool arg is not provided, the error message we send back to the agent is just

@@ -3575,8 +3575,9 @@ async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
 
 
 async def test_trust_workspace_command_persists_and_offers_config_init(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
     app = _repl_app_for_workspace(workspace, trust_manager)
@@ -3613,8 +3614,9 @@ async def test_trust_workspace_command_persists_and_offers_config_init(
 
 
 async def test_trust_workspace_command_declining_config_init_leaves_no_file(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
     app = _repl_app_for_workspace(workspace, trust_manager)

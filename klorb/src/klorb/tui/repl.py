@@ -57,7 +57,7 @@ from klorb.session import (
     TurnEventHandlers,
 )
 from klorb.token_estimate import configure_tiktoken_cache_env
-from klorb.tools.registry import ToolRegistry
+from klorb.tools.registry import NoSuchToolException, ToolRegistry
 from klorb.tools.tool import (
     default_invalid_tool_call_detail,
     default_invalid_tool_call_summary,
@@ -2197,7 +2197,7 @@ class ReplApp(App[None]):
             if registry is None:
                 raise KeyError(name)
             tool = registry.instantiate_tool(name)
-        except KeyError:
+        except (KeyError, NoSuchToolException):
             return (default_tool_call_summary(name, args, error),
                     default_tool_call_detail(name, args, result, error))
         return (tool.summary(args, result, error), tool.detail_view(args, result, error))
