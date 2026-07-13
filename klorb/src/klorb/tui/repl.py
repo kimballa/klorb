@@ -1165,16 +1165,29 @@ class ReplApp(App[None]):
         workspace's trust/registration state changes) layers it back in identically."""
         self._cancel_event: threading.Event | None = None
         self._shell_cancel_event: threading.Event | None = None
+        self._turn_in_flight: bool = False
+        """Authoritative "a model turn or shell command is currently running" guard, checked and
+        set synchronously in `_submit_prompt`/`_submit_shell_command` and cleared in `_finish_turn`.
+        The prompt input's `disabled` flag is only a visual affordance and can NOT be relied on to
+        serialize turns: pressing Enter posts a `Submitted` message synchronously (see
+        `PromptInput._on_key`/`_record_and_submit`), but `disabled` is set only later, when the app
+        *handles* that message. Two submits queued inside that window (a double Enter, a bracketed
+        paste containing a newline, ...) therefore both reach `on_prompt_input_submitted` before
+        either disables the box, and without this flag both would dispatch — two concurrent
+        `_send_prompt` workers streaming into their own `Markdown` widgets at once, which is the
+        stacked-panels / duplicated-turn bug (and the flood of `_GatheringFuture` `CancelledError`s
+        from Textual's `Markdown.await_update` lock when the app is torn down mid-stream). Being a
+        plain bool touched only from the event-loop thread, its check-and-set is atomic against
+        other message handlers."""
         self._interaction_lock = asyncio.Lock()
         """Serializes the mount/await/dismiss lifecycle of every interaction panel (permission
         ask, ask-user-questions, escalate-privileges) so at most one is ever mounted into
         `#interaction-panel` at a time — see `_confirm_permission_ask`/`_confirm_ask_user_questions`/
-        `_confirm_escalate_privileges`. A single turn's tool calls are already serial, and the
-        prompt input stays disabled for a turn's whole duration (so the user can't launch a second,
-        concurrent turn while a panel is up — see `_exit_interaction_mode`), which between them
-        make an overlap impossible today; this lock is a structural guarantee that a second panel
-        queues behind the first rather than stacking, no matter what future path drives a
-        confirmation."""
+        `_confirm_escalate_privileges`. A single turn's tool calls are already serial, and
+        `_turn_in_flight` keeps a second turn from starting while one is running (so no second
+        turn's tool calls can drive a confirmation concurrently); this lock is a further structural
+        guarantee that even so a second panel queues behind the first rather than stacking, no
+        matter what future path drives a confirmation."""
         self._last_permission_action: Literal["allow", "deny"] = "allow"
         self._last_permission_scope: Literal["once", "session", "workspace", "homedir"] = "once"
         """`PermissionAskPanel`'s grid cursor position after the most recent prompt this app
@@ -1868,7 +1881,15 @@ class ReplApp(App[None]):
         start a second one while the first is still running. The echoed `Static` is
         constructed with `markup=False`: `command` is arbitrary user input and must render
         verbatim rather than be parsed as Textual console markup.
+
+        Like `_submit_prompt`, drops the submit if a turn or shell command is already running
+        (`_turn_in_flight`) — the authoritative guard that keeps the two serial regardless of the
+        racy `disabled` flag.
         """
+        if self._turn_in_flight:
+            return
+        self._turn_in_flight = True
+
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = True
 
@@ -2001,7 +2022,16 @@ class ReplApp(App[None]):
         """Echo `prompt_text` into the history, disable the input, and dispatch it. The echoed
         `Static` is constructed with `markup=False`: `prompt_text` is arbitrary user input and
         must render verbatim rather than be parsed as Textual console markup.
+
+        Drops the submit outright if a turn or shell command is already running (`_turn_in_flight`):
+        the input's `disabled` flag alone can't prevent a second submit that was queued before the
+        first one disabled the box, so this authoritative check-and-set is what actually keeps turns
+        serial (see `_turn_in_flight`).
         """
+        if self._turn_in_flight:
+            return
+        self._turn_in_flight = True
+
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = True
 
@@ -2617,7 +2647,8 @@ class ReplApp(App[None]):
         event (`_run_shell_command`), since neither Escape nor Ctrl+C has anything left to
         abort/interrupt once a turn is done (successfully, in error, or aborted) — shared by
         both a model turn and a shell command, since only one of the two is ever in flight at a
-        time.
+        time. Clearing `_turn_in_flight` here (the terminal state of every model turn and shell
+        command) is what lets the next submit through.
         """
         self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
@@ -2626,6 +2657,7 @@ class ReplApp(App[None]):
         input_widget.focus()
         self._cancel_event = None
         self._shell_cancel_event = None
+        self._turn_in_flight = False
         self.refresh_bindings()
 
 

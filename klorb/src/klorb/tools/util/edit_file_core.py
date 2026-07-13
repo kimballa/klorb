@@ -202,7 +202,7 @@ class EditFileCore:
 
         # If we truncated start_text/end_text, provide advisory feedback to steer the agent to
         # more-efficient usage for next time.
-        user_feedback=[]
+        user_feedback = []
         if truncated_start:
             user_feedback.append("btw, start_text should only be one line - the first line of the block to "
                                  "replace. The first '\n' and everything afterward was ignored. Next time, "

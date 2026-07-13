@@ -476,6 +476,52 @@ async def test_submitting_an_empty_prompt_does_nothing() -> None:
     mock_provider.send_prompt.assert_not_called()
 
 
+async def test_second_submit_while_a_turn_is_in_flight_is_dropped() -> None:
+    """A submit that arrives while a turn is still running is ignored (`_turn_in_flight`), so a
+    double Enter / a bracketed paste with a trailing newline can't launch a second, concurrent
+    `_send_prompt` worker. The prompt input's `disabled` flag can't be relied on for this: Enter
+    posts its `Submitted` synchronously but `disabled` is set only when the app handles it, so two
+    submits queued inside that window both reach the handler before either disables the box."""
+    mock_provider = MagicMock()
+    first_turn_streaming = threading.Event()
+    release_first_turn = threading.Event()
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        first_turn_streaming.set()
+        release_first_turn.wait(timeout=5)
+        return _reply()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+
+        # First turn is now blocked inside the worker; try to launch a second one directly (the
+        # `disabled` box would swallow a real keypress, so drive the submit handler ourselves to
+        # reproduce the queued-Submitted race that `disabled` can't guard).
+        await _wait_until(pilot, first_turn_streaming.is_set)
+        app._submit_prompt("second")
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        # Only the first prompt was ever echoed; the second submit was dropped.
+        prompt_widgets = history.query(".prompt")
+        assert len(prompt_widgets) == 1
+        assert prompt_widgets.first(Static).content == "first"
+
+        release_first_turn.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # With the first turn finished the guard is cleared, so a fresh submit goes through.
+        assert app._turn_in_flight is False
+
+    assert mock_provider.send_prompt.call_count == 1
+
+
 async def test_provider_error_is_shown_in_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")
