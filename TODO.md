@@ -12,8 +12,6 @@
   actual approval options off the bottom of the screen. This should all be truncated to a small
   number of lines with a `more...` below them.
 
-* Sometimes this shows up in history: Error: 'Session' object has no attribute '_resolve_escalate_privileges'
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
