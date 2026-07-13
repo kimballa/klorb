@@ -456,6 +456,7 @@ class PermissionAskPanel(Vertical):
 
         preview_section: list[Widget] = []
         command_text = self._ask_ctx.command_text
+        show_more = False
         if command_text is not None:
             preview_source = self._ask_ctx.item_command_text or command_text
             preview, truncated = _command_preview(preview_source, wrap_width=self._preview_wrap_width)
@@ -492,7 +493,11 @@ class PermissionAskPanel(Vertical):
 
         widgets.append(Grid(*cells, id=PERMISSION_ASK_GRID_ID))
         widgets.append(Static(
-            "←/→ Allow/Deny   ↑/↓ scope   Enter confirm   O other   Esc deny",
+            # Build hint text with "+" when more content is available
+            "   ".join(
+                ["←/→ Allow/Deny", "↑/↓ scope", "Enter confirm", "O other", "Esc deny"]
+                + (["+ expand"] if show_more else [])
+            ),
             id="permission-ask-hint"))
 
         yield Vertical(*widgets, id="permission-ask-body")

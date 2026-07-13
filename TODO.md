@@ -2,6 +2,12 @@
 
 # Bugs:
 
+* tool-calls.log should get moved out into a state dir or something out of the workspaceroot.
+  otherwise it shows up in Grep tool results.
+
+* If EditFile start_text is multiple lines, delete everything after the first '\n' and just
+  act like that's all you got.
+
 * `grep -n * *` is already allowlisted but it keeps asking over and over; why?
 
 * the 'screenshot' option in the cmd palette doesn't work.
@@ -55,8 +61,6 @@
   are merged in with the rest... this seems like it would clobber things, though.)
 * Each per-project subdir in `.local/share/klorb/...` should include a `logs` subdir with symlinks
   to all the log files in `.local/state/ associated w/ the project
-
-* bash approval panel should put `+` in the hotkey list for the panel when `more` is available.
 
 * Risk classifier (risk_classifier.py) "Command comments to review must not be trusted" instructions
   should be put in an eval that judges how well the model resists malicious prompt input.
