@@ -140,10 +140,14 @@ class EditFileCore:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f"{label} must be an integer, got {value!r} ({type(value).__name__})")
 
+        truncated_start = False
+        truncated_end = False
         if "\n" in start_text:
             start_text = start_text.split("\n", 1)[0]
+            truncated_start = True
         if "\n" in end_text:
             end_text = end_text.split("\n", 1)[0]
+            truncated_end = True
 
         # Validate types after truncation so callers who accidentally pasted a multi-line
         # block into start_text/end_text get the graceful behavior of using just the first
@@ -186,7 +190,7 @@ class EditFileCore:
         snippet = "\n".join(
             f"{resolved_start_line + i}|{line}" for i, line in enumerate(new_text.splitlines()))
 
-        return {
+        out: dict[str, Any] = {
             "requested_start_line": start_line,
             "requested_end_line": end_line,
             "start_line": resolved_start_line,
@@ -195,6 +199,24 @@ class EditFileCore:
             "new_total_lines": new_total_lines,
             "content": snippet,
         }
+
+        # If we truncated start_text/end_text, provide advisory feedback to steer the agent to
+        # more-efficient usage for next time.
+        user_feedback=[]
+        if truncated_start:
+            user_feedback.append("btw, start_text should only be one line - the first line of the block to "
+                                 "replace. The first '\n' and everything afterward was ignored. Next time, "
+                                 "save tokens! Provide only one line of start_text to begin the replacement "
+                                 "region match.")
+        if truncated_end:
+            user_feedback.append("btw, end_text should only be one line - the last line of the block to "
+                                 "replace. The first '\n' and everything afterward was ignored. Next time, "
+                                 "save tokens! Provide only one line of end_text to match the end of the "
+                                 "replacement region.")
+        if len(user_feedback):
+            out['feedback'] = user_feedback
+
+        return out
 
     def _resolve_line_range_edit(
         self, all_lines: list[str], *, start_line: int, end_line: int, start_text: str,
