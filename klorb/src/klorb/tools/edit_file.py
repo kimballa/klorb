@@ -66,7 +66,7 @@ class EditFileTool(Tool):
             verdict, resource_description=f"write to {path}", path=path, is_write=True)
 
         result = self.edit_file_core.apply(
-            path, args, subject=filename, reread_hint=f"re-ReadFile {filename}")
+            path, args, subject=filename, reread_hint=f"Use ReadFile on filename={filename}")
         result["filename"] = filename
 
         logger.debug(

@@ -40,9 +40,20 @@
         ["git", "diff", "--stat", "HEAD"],
         ["git", "diff", "HEAD", "--", "**"],
         ["git", "diff", "--stat", "HEAD", "--", "**"],
-        ["git", "status", "--short", "**"]
+        ["git", "status", "--short", "**"],
+        ["git", "log", "--oneline", "-5"],
+        ["source", "venv/bin/activate"],
+        ["git", "log", "--oneline", "-15"],
+        ["git", "status"],
+        ["grep", "-E", "^(FAILED|PASSED|ERROR)"],
+        ["find", "tests", "-name", "conftest.py"],
+        ["./venv/bin/flake8", "--config", ".flake8", "src/klorb/sandbox.py"],
+        ["grep", "-n", "klorb_dir\\|KLORB_DATA\\|KLORB_STATE\\|tiktoken\\|TIKTOKEN\\|local/share\\|local/state", "tests/test_sandbox.py"]
       ]
-    }
+    },
+    "shareEnv": [
+      "TIKTOKEN_CACHE_DIR"
+    ]
   },
   "tools.logCalls": true
 }

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from klorb.paths import KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.directory_access import DirRules, canonicalize_dir, privileged_dirs
 from klorb.permissions.file_access import FileRules
 
@@ -374,6 +375,18 @@ def build_bwrap_argv(
     for d in dirs.mask:
         if d.exists():
             args += ["--tmpfs", str(d)]
+
+    # The klorb data/state dirs ($HOME/.local/share/klorb, $HOME/.local/state/klorb) are masked
+    # just above via privileged_dirs()'s --tmpfs. But the bundled tiktoken cache klorb init copied
+    # into $KLORB_DATA_DIR/tiktoken-cache is read-only data the sandboxed command needs to read
+    # (tiktoken reads it via $TIKTOKEN_CACHE_DIR, passed through by shareEnv), and $KLORB_STATE_DIR
+    # holds session logs a sandboxed command may want to read. Re-bind both read-only *after* the
+    # mask so the cache/logs are visible without giving the sandboxed command write access (or
+    # exposing anything beyond what klorb itself put there). Applied after dirs.mask's --tmpfs and
+    # before the individual-file masks below.
+    for klorb_dir in (KLORB_DATA_DIR.resolve(strict=False), KLORB_STATE_DIR.resolve(strict=False)):
+        if klorb_dir.exists():
+            args += ["--ro-bind", str(klorb_dir), str(klorb_dir)]
 
     # Individual allowed files that aren't already reachable: bind each one into place so an exact
     # readFiles/writeFiles grant for a path outside every directory bind (or for a single file

@@ -2,6 +2,8 @@
 
 # Bugs:
 
+* Sometimes this shows up in history: Error: 'Session' object has no attribute '_resolve_escalate_privileges'
+
 * If a required tool arg is not provided, the error message we send back to the agent is just
   the name of the missing arg in single quotes like `"error": "'some_arg'"`. Each tool should
   send back a full sentence explaining that the `foo` arg is missing, and what kind of content
