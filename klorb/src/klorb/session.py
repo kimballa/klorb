@@ -1151,7 +1151,8 @@ class Session:
         was unknown or raised — so the next round can send it back to the model. Also fires
         `callbacks.on_tool_call`, if given, once per call with a `ToolCallEvent` carrying the
         same result-or-error outcome as raw data, for a UI to render. When `self._log_tool_calls`
-        is set, also appends the call's name/arguments and result/error to `tool-calls.log` via
+        is set, also appends the call's name/arguments and result/error to `$KLORB_STATE_DIR/tool-calls.log`
+        via
         `klorb.tool_call_log.log_tool_call` — an out-of-band record independent of both
         `callbacks.on_tool_call` and the ordinary `logging` module.
 

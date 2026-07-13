@@ -63,9 +63,7 @@ def test_tool_call_logging_enabled_explicit_true_overrides_env_var(
     assert tool_call_logging_enabled(True) is True
 
 
-def test_log_tool_call_creates_file_in_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-
+def test_log_tool_call_creates_file_in_state_dir(tmp_path: Path) -> None:
     log_tool_call("ReadFile", {"filename": "foo.py"}, {"content": "hi"}, None)
 
     log_path = tmp_path / TOOL_CALLS_LOG_FILENAME
@@ -75,8 +73,6 @@ def test_log_tool_call_creates_file_in_cwd(tmp_path: Path, monkeypatch: pytest.M
 def test_log_tool_call_first_entry_has_no_leading_blank_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-
     log_tool_call("ReadFile", {"filename": "foo.py"}, {"content": "hi"}, None)
 
     contents = (tmp_path / TOOL_CALLS_LOG_FILENAME).read_text(encoding="utf-8")
@@ -86,8 +82,6 @@ def test_log_tool_call_first_entry_has_no_leading_blank_line(
 def test_log_tool_call_writes_request_and_response_sections(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-
     log_tool_call("ReadFile", {"filename": "foo.py"}, {"content": "hi"}, None)
 
     contents = (tmp_path / TOOL_CALLS_LOG_FILENAME).read_text(encoding="utf-8")
@@ -104,8 +98,6 @@ def test_log_tool_call_writes_request_and_response_sections(
 def test_log_tool_call_reports_error_instead_of_result_on_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-
     log_tool_call("ReadFile", {"filename": "missing.py"}, None, "No such file")
 
     contents = (tmp_path / TOOL_CALLS_LOG_FILENAME).read_text(encoding="utf-8")
@@ -116,8 +108,6 @@ def test_log_tool_call_reports_error_instead_of_result_on_failure(
 def test_log_tool_call_appends_with_blank_line_separator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-
     log_tool_call("ReadFile", {"filename": "a.py"}, {"content": "a"}, None)
     log_tool_call("ReadFile", {"filename": "b.py"}, {"content": "b"}, None)
 

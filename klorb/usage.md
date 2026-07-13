@@ -106,9 +106,9 @@ to stdout — see COMMANDS below.
 
 * `--log-tool-calls`
 
-  Append every tool call's request and response to `tool-calls.log` in the
-  current working directory, creating it (or appending to it, if it already
-  exists) as needed. Defaults to off; also enabled by the `LOG_TOOL_CALLS`
+  Append every tool call's request and response to `$KLORB_STATE_DIR/tool-calls.log`
+  (default `~/.local/state/klorb/tool-calls.log`), creating it (or appending to it,
+  if it already exists) as needed. Defaults to off; also enabled by the `LOG_TOOL_CALLS`
   environment variable (`1` or `true`) or the `tools.logCalls` config key,
   independently of this flag. `--no-log-tool-calls` forces logging off,
   overriding those other sources. See `docs/specs/tool-call-logging.md`.
@@ -144,7 +144,8 @@ to stdout — see COMMANDS below.
 * `KLORB_STATE_DIR`
 
   Overrides klorb's state directory, under which session logs are written
-  (`$KLORB_STATE_DIR/session-logs/`). Defaults to `~/.local/state/klorb`.
+  (`$KLORB_STATE_DIR/session-logs/`) and the `--log-tool-calls` audit file
+  (`$KLORB_STATE_DIR/tool-calls.log`). Defaults to `~/.local/state/klorb`.
 
 * `LOG_TOOL_CALLS`
 

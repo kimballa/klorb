@@ -311,7 +311,7 @@ class ProcessConfig(BaseModel):
     they're klorb's own conventions."""
     log_tool_calls: bool | None = None
     """Whether to append an out-of-band, file-based record of every tool call to
-    `tool-calls.log` in the current working directory — see `klorb.tool_call_log`. Also
+    `tool-calls.log` under `KLORB_STATE_DIR` — see `klorb.tool_call_log`. Also
     activated by the `LOG_TOOL_CALLS` environment variable (`"1"`/`"true"`) or the
     `--log-tool-calls`/`--no-log-tool-calls` CLI flag pair, only when this field is
     still `None` — see `klorb.tool_call_log.tool_call_logging_enabled`."""

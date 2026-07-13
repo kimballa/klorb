@@ -2,16 +2,18 @@
 """Out-of-band, file-based audit trail of every tool call a session executes.
 
 Distinct from klorb's ordinary `logging`-based instrumentation (see `klorb.logging_config`):
-when active, this always appends directly to a fixed file, `tool-calls.log` in the current
-working directory, regardless of the active logging configuration, handlers, or level.
+when active, this always appends directly to a fixed file, `tool-calls.log` under
+`KLORB_STATE_DIR` (default `~/.local/state/klorb/tool-calls.log`), regardless of the active
+logging configuration, handlers, or level.
 """
 
 import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
+
+from klorb.paths import KLORB_STATE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +59,8 @@ def tool_call_logging_enabled(config_enabled: bool | None) -> bool:
 
 
 def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | None) -> None:
-    """Append one entry recording a finished tool call to `tool-calls.log` in the current
-    working directory, creating the file if it doesn't already exist.
+    """Append one entry recording a finished tool call to `tool-calls.log` under
+    `KLORB_STATE_DIR`, creating the file and its parent directory if needed.
 
     Each entry is separated from the file's existing contents (if any) by a blank line,
     followed by a `---` divider line, an ISO-8601 timestamp line, `"Request:"` and the call's
@@ -66,7 +68,7 @@ def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | Non
     on failure — the same success/failure discriminant as `klorb.session.ToolCallEvent`) as
     pretty-printed JSON.
 
-    Never raises: an `IOError` (e.g. an unwritable working directory, a full disk) is caught and
+    Never raises: an `IOError` (e.g. an unwritable state directory, a full disk) is caught and
     reported via `logger.error()` instead, since this is a best-effort audit trail, not a
     behavior a tool call's success should depend on. Only the first `IOError` this process
     encounters is logged (tracked via the module-level `_io_error_already_logged` flag) — a
@@ -75,7 +77,8 @@ def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | Non
     """
     global _io_error_already_logged
     try:
-        path = Path.cwd() / TOOL_CALLS_LOG_FILENAME
+        path = KLORB_STATE_DIR / TOOL_CALLS_LOG_FILENAME
+        path.parent.mkdir(parents=True, exist_ok=True)
         file_has_contents = path.is_file() and path.stat().st_size > 0
 
         request_json = json.dumps({"name": name, "arguments": args}, indent=2, default=str)
@@ -92,4 +95,4 @@ def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | Non
     except IOError as exc:
         if not _io_error_already_logged:
             _io_error_already_logged = True
-            logger.error("Failed to write tool call log entry to %s: %s", TOOL_CALLS_LOG_FILENAME, exc)
+            logger.error("Failed to write tool call log entry to %s: %s", path, exc)

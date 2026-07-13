@@ -4,11 +4,8 @@
 
 * LLM output is being added to the history in some markup-parsing way and if the llm
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
-  ways. We need to be durable if the LLM accidentally starts sending mis-matched XML
-  like `</Think>` in the middle of its output.
-
-* tool-calls.log should get moved out into a state dir or something out of the workspaceroot.
-  otherwise it shows up in Grep tool results.
+  ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
+  like `</Think>` in the middle of its output. (It almost seems like)
 
 * `grep -n * *` is already allowlisted but it keeps asking over and over; why?
 

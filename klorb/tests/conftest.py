@@ -17,6 +17,12 @@ def _redirect_session_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.fixture(autouse=True)
+def _redirect_tool_calls_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests from writing tool-calls.log into the real KLORB_STATE_DIR."""
+    monkeypatch.setattr("klorb.tool_call_log.KLORB_STATE_DIR", tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point every file-backed config layer at empty locations under `tmp_path`, and blank out
     the packaged built-in-defaults layer, so no test anywhere in the suite can accidentally read

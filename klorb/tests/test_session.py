@@ -1189,7 +1189,6 @@ def test_on_tool_call_fires_with_error_for_unknown_tool_name() -> None:
 def test_log_tool_calls_disabled_by_default_writes_no_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
@@ -1207,7 +1206,6 @@ def test_log_tool_calls_disabled_by_default_writes_no_file(
 def test_log_tool_calls_enabled_via_process_config_writes_request_and_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
@@ -1236,7 +1234,6 @@ def test_log_tool_calls_enabled_via_process_config_writes_request_and_response(
 def test_log_tool_calls_separates_entries_with_a_blank_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
@@ -1262,7 +1259,6 @@ def test_log_tool_calls_separates_entries_with_a_blank_line(
 def test_log_tool_calls_enabled_via_env_var_with_no_process_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LOG_TOOL_CALLS", "true")
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [

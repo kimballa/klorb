@@ -102,8 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Append every tool call's request/response to tool-calls.log in the current "
-            "working directory. Defaults to off; also enabled by the LOG_TOOL_CALLS=1/true "
+            "Append every tool call's request/response to $KLORB_STATE_DIR/tool-calls.log "
+            "(default ~/.local/state/klorb/tool-calls.log). Defaults to off; also enabled by the "
+            "LOG_TOOL_CALLS=1/true environment variable or the tools.logCalls config key. Use "
+            "--no-log-tool-calls to force it off, overriding both the config key and the "
+            "LOG_TOOL_CALLS env var."
             "environment variable or the tools.logCalls config key. Use --no-log-tool-calls "
             "to force it off, overriding both the config key and the LOG_TOOL_CALLS env var."
         ),
