@@ -31,7 +31,16 @@
         ["./venv/bin/python", "-m", "pytest", "**"],
         ["venv/bin/pytest", "**"],
         ["./venv/bin/pytest", "**"],
-        ["sed", "-n", "*", "*"]
+        ["sed", "-n", "*", "*"],
+        ["grep", "-n", "*", "*"],
+        ["venv/bin/isort", "**"],
+        ["git", "stash"],
+        ["git", "stash", "pop"],
+        ["git", "log", "--oneline", "?"],
+        ["git", "diff", "--stat", "HEAD"],
+        ["git", "diff", "HEAD", "--", "**"],
+        ["git", "diff", "--stat", "HEAD", "--", "**"],
+        ["git", "status", "--short", "**"]
       ]
     }
   },

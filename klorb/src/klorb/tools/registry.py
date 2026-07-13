@@ -20,6 +20,11 @@ from klorb.tools.tool import Tool
 logger = logging.getLogger(__name__)
 
 
+class NoSuchToolException(Exception):
+    def __init__(self, tool_name: str) -> None:
+        super().__init__(f"No such tool: {tool_name!r}")
+
+
 class ToolRegistry:
     """Discovers Tool subclasses defined in a package once, and acts as a factory for them
     for as long as this registry (and the `Session` it belongs to) lives.
@@ -78,7 +83,10 @@ class ToolRegistry:
         `KeyError` if no tool with that name was discovered. `permission_override`, if given, is
         threaded onto that `ToolSetupContext` — see `ToolSetupContext.permission_override`.
         """
-        return self._tool_classes[name](self._context(permission_override=permission_override))
+        try:
+            return self._tool_classes[name](self._context(permission_override=permission_override))
+        except KeyError:
+            raise NoSuchToolException(name)
 
     def tools(self) -> list[Tool]:
         """Return a freshly-instantiated Tool for every discovered tool."""

@@ -579,8 +579,9 @@ class BashTool(Tool):
             "terminal_alive (whether the persistent shell is still usable) and terminal_cwd "
             "(its current directory, or null if terminal_alive is false). intent is a short, "
             "plain-English statement of what the command is trying to accomplish, shown to the "
-            "user alongside the command itself when it needs approval or appears in history; "
-            "state it accurately -- a command that does something other than what its own "
+            "user alongside the command itself when it needs approval or appears in history. "
+            "For example: 'list all files in foobar directory.' "
+            "State it accurately -- a command that does something other than what its own "
             "intent describes is scored as more risky."
         )
 
@@ -596,8 +597,7 @@ class BashTool(Tool):
                     "type": "string",
                     "description": (
                         "A short, human-readable statement of what this command is trying to "
-                        "accomplish, e.g. \"List all _wait_until call sites in "
-                        "test_tui_repl.py\". Shown to the user alongside the command itself."
+                        "accomplish."
                     ),
                 },
                 "shell_lifetime": {
@@ -615,21 +615,36 @@ class BashTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        command = args["command"]
-        intent = args["intent"]
-        shell_lifetime = args["shell_lifetime"]
+        try:
+            command = args["command"]
+        except KeyError:
+            raise ValueError("Missing required argument: 'command'. Include the bash command to execute.")
+
+        try:
+            intent = args["intent"]
+        except KeyError:
+            raise ValueError("Missing required argument: 'intent'. Include a human-readable " +
+                             "description of the command's purpose.")
+
+        try:
+            shell_lifetime = args["shell_lifetime"]
+        except KeyError:
+            raise ValueError("Missing required argument: 'shell_lifetime'. Must be command/session/new.")
+
         if shell_lifetime not in ("command", "session", "new"):
             raise ValueError(
                 f"shell_lifetime must be one of 'command'/'session'/'new', got {shell_lifetime!r}")
+
         if not command.strip():
             raise ValueError("command must not be empty")
+
         logger.debug("Bash %r (intent=%r, shell_lifetime=%s)", command, intent, shell_lifetime)
 
         analysis = parse_command(command, self._shfmt_command)
         verdict, ask_items = self._classify(analysis, command, intent)
         if verdict == "deny":
             raise PermissionError(f"Permission denied: run shell command: {command}")
-        if verdict == "ask":
+        elif verdict == "ask":
             raise MultiPermissionAskRequired(
                 f"Permission requires confirmation: run shell command: {command}", items=ask_items)
 

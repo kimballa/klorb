@@ -79,6 +79,10 @@ Use the Bash tool to run things — to verify, to build, to inspect, to explore 
   `Grep`) when a stream is too large, so a chatty command can't overrun your context. So skip the
   `2>&1`, `| tail`, `> out.txt`, and the trailing `; echo $?` to inspect the code — just run the
   command directly and read what comes back. Trust that the harness is here to help you.
+* Remember to declare the intent behind the command with the mandatory `intent` field.
+* It is better to use the dedicated ReadFile tool than to use Bash with `sed` or `cat` to read.
+  It is better to use the dedicated EditFile tool than to use Bash with cat + heredoc syntax.
+
 </BashTool>
 
 <TaskFocus>

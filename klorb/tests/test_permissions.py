@@ -192,6 +192,66 @@ def test_is_privileged_path_matches_descendants_not_unrelated_paths(tmp_path: Pa
     assert not is_privileged_path(tmp_path / "src" / "main.py", tmp_path)
 
 
+# --- privileged_dirs / is_privileged_path: EscalatePrivileges "workspace" scope ---
+
+
+def test_workspace_scope_in_approved_scopes_omits_klorb_dir(tmp_path: Path) -> None:
+    dirs = privileged_dirs(tmp_path, {"workspace"})
+    assert tmp_path / ".klorb" not in dirs
+    # The process-wide KLORB_*_DIR locations stay privileged regardless.
+    assert KLORB_CONFIG_DIR.resolve(strict=False) in dirs
+    assert KLORB_DATA_DIR.resolve(strict=False) in dirs
+    assert KLORB_STATE_DIR.resolve(strict=False) in dirs
+
+
+def test_workspace_scope_lifts_privileged_deny_on_klorb_dir_only(tmp_path: Path) -> None:
+    klorb_file = tmp_path / ".klorb" / "klorb-config.json"
+    assert is_privileged_path(klorb_file, tmp_path)
+    assert not is_privileged_path(klorb_file, tmp_path, {"workspace"})
+    # A process-wide KLORB_*_DIR path stays privileged even with "workspace" approved.
+    assert is_privileged_path(
+        (KLORB_STATE_DIR / "session-logs" / "a.log").resolve(strict=False), tmp_path, {"workspace"})
+
+
+def test_empty_approved_scopes_keeps_all_privileged_dirs_denied(tmp_path: Path) -> None:
+    assert is_privileged_path(tmp_path / ".klorb" / "f", tmp_path, set())
+    assert is_privileged_path(tmp_path / ".klorb" / "f", tmp_path, None)
+
+
+def test_resolve_and_evaluate_write_unlocks_klorb_after_workspace_escalation(tmp_path: Path) -> None:
+    """End-to-end: with an approved 'workspace' scope threaded through ToolSetupContext, writing
+    to .klorb/ is no longer an unconditional deny -- it consults writeDirs/writeFiles like any
+    other in-workspace path."""
+    target = tmp_path / ".klorb" / "klorb-config.json"
+    process_config = ProcessConfig(approved_scopes={"workspace"})
+    context = ToolSetupContext(
+        process_config=process_config,
+        session_config=SessionConfig(
+            workspace=Workspace(path=tmp_path),
+            write_dirs=DirRules(allow=[tmp_path]),
+            read_dirs=DirRules(allow=[tmp_path]),
+        ),
+    )
+    resolved, verdict = resolve_and_evaluate_write(context, ".klorb/klorb-config.json")
+    assert verdict == "allow"
+    assert resolved == target
+
+
+def test_privileged_klorb_deny_error_mentions_escalate_privileges(tmp_path: Path) -> None:
+    """A privileged-path deny on the workspace .klorb/ dir raises a PermissionError whose message
+    points the agent at the EscalatePrivileges tool, instead of a bare 'Permission denied'."""
+    context = _context(tmp_path)
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_write(context, ".klorb/klorb-config.json")
+
+
+def test_privileged_klorb_deny_read_error_mentions_escalate_privileges(tmp_path: Path) -> None:
+    """Same as the write case, for a read of a .klorb/ path."""
+    context = _context(tmp_path)
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
+
+
 def test_canonicalize_dir_expands_home_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -281,7 +341,8 @@ def test_write_merge_matrix(
 def test_evaluate_write_denies_klorb_dir_even_with_empty_write_dirs(tmp_path: Path) -> None:
     context = _context(tmp_path)
     path = resolve_within_workspace(context, ".klorb/klorb-config.json")
-    assert evaluate_write(context, path) == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        evaluate_write(context, path)
 
 
 def test_evaluate_write_denies_klorb_dir_even_with_writedirs_allow_covering_workspace(
@@ -289,7 +350,8 @@ def test_evaluate_write_denies_klorb_dir_even_with_writedirs_allow_covering_work
 ) -> None:
     context = _context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))
     path = resolve_within_workspace(context, ".klorb/klorb-config.json")
-    assert evaluate_write(context, path) == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        evaluate_write(context, path)
 
 
 def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_path: Path) -> None:
@@ -362,8 +424,8 @@ def test_writefiles_privileged_path_still_denied_even_with_writefiles_allow(tmp_
     re-enable access to .klorb/, mirroring evaluate_write()'s own unconditional deny."""
     target = tmp_path / ".klorb" / "klorb-config.json"
     context = _context(tmp_path, write_files=FileRules(allow=[target]))
-    _, verdict = resolve_and_evaluate_write(context, ".klorb/klorb-config.json")
-    assert verdict == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_write(context, ".klorb/klorb-config.json")
 
 
 # --- readFiles: file-level short-circuit ahead of readDirs/the workspace boundary ---
@@ -400,8 +462,8 @@ def test_readfiles_has_no_opinion_falls_through_to_readdirs(tmp_path: Path) -> N
 def test_readfiles_privileged_path_still_denied_even_with_readfiles_allow(tmp_path: Path) -> None:
     target = tmp_path / ".klorb" / "klorb-config.json"
     context = _context(tmp_path, read_files=FileRules(allow=[target]))
-    _, verdict = resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
-    assert verdict == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
 
 
 # --- resolve_and_evaluate_read: untrusted (default) ---
@@ -454,8 +516,8 @@ def test_untrusted_read_denies_klorb_dir_even_with_readdirs_allow_covering_works
     tmp_path: Path,
 ) -> None:
     context = _context(tmp_path, read_dirs=DirRules(allow=[tmp_path]))
-    _, verdict = resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
-    assert verdict == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
 
 
 # --- resolve_and_evaluate_read: trusted (see docs/specs/projects-and-trust.md) ---
@@ -690,10 +752,11 @@ def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path)
     context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=PermissionOverride(paths=frozenset({path})))
-    assert evaluate_write(context, path) == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        evaluate_write(context, path)
 
     read_context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
         permission_override=PermissionOverride(paths=frozenset({path})))
-    _, verdict = resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")
-    assert verdict == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")

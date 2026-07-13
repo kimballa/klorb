@@ -31,6 +31,7 @@ from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
 from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
+from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.scratchpad.common import Scratchpad
 from klorb.workspace import Workspace
 
@@ -336,6 +337,28 @@ class AskUserQuestionsAnswer(BaseModel):
     cancelled: bool = False
 
 
+class EscalatePrivilegesContext(BaseModel):
+    """Passed to `on_escalate_privileges` when the `EscalatePrivileges` tool requests a
+    session-only privilege grant (see `klorb.tools.escalate_privileges`). `scope` is the
+    requested scope string (today, only `"workspace"`); `description` is a human-readable
+    explanation of what approving would unlock, for a UI to show without re-deriving it."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    scope: str
+    description: str
+
+
+class EscalatePrivilegesDecision(BaseModel):
+    """The user's answer to an `EscalatePrivilegesContext` prompt, returned by
+    `on_escalate_privileges`. `approved` is `True` when the user granted the scope for the
+    rest of the session (Session records it into `ProcessConfig.approved_scopes`); `False`
+    when denied, so the privileged-path deny stays in effect and the tool reports the denial
+    back to the model."""
+
+    approved: bool = False
+
+
 class ToolCallEvent(BaseModel):
     """Reports one finished tool call to `TurnEventHandlers.on_tool_call`, fired once per call
     from `_run_tool_calls` right after it completes (including after an `on_permission_ask`-
@@ -372,7 +395,8 @@ class TurnEventHandlers(BaseModel):
     `cancel_event` (abort a turn mid-stream), `on_tool_call_limit_reached` (ask whether to
     raise a safety cap), `on_permission_ask` (ask how to resolve an `"ask"` permission
     verdict), `on_ask_user_questions` (ask the user one `AskUserQuestions` tool-call
-    question), and `on_tool_call` (report one finished tool call, for display). Replaces
+    question), `on_escalate_privileges` (ask the user to approve a session-only
+    `EscalatePrivileges` grant), and `on_tool_call` (report one finished tool call, for display). Replaces
     passing these as separate keyword arguments through `send_turn()`/`retry_last_turn()`/
     `_dispatch_turn()` and everything they call — a single object here means a future addition
     only touches this class, not every method's signature along the chain. `frozen=True` since
@@ -389,6 +413,9 @@ class TurnEventHandlers(BaseModel):
     on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None
     on_ask_user_questions: (
         Callable[[AskUserQuestionsItemContext], AskUserQuestionsAnswer] | None
+    ) = None
+    on_escalate_privileges: (
+        Callable[[EscalatePrivilegesContext], EscalatePrivilegesDecision] | None
     ) = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
 
@@ -1069,6 +1096,50 @@ class Session:
             })
         return {"answers": answers}, None
 
+    def _resolve_escalate_privileges(
+        self,
+        call: ToolCallRequest,
+        escalate_exc: EscalatePrivilegesRequired,
+        callbacks: TurnEventHandlers,
+    ) -> tuple[Any, str | None]:
+        """Resolve an `EscalatePrivilegesRequired` into a `(result, error)` pair: asks
+        `callbacks.on_escalate_privileges` for an `EscalatePrivilegesDecision` and, on
+        approval, records the scope into `ProcessConfig.approved_scopes` (the in-memory,
+        session-scoped set `is_privileged_path` consults \u2014 see
+        `klorb.permissions.directory_access.privileged_dirs`). Like `_resolve_ask_user_questions`,
+        there is no `permission_framework` branching (escalation isn't a resource-access verdict
+        the auto/deny framework applies to) and no retry afterward: recording the approval was
+        this tool's entire job, so the decision directly becomes the result.
+
+        With no callback given (e.g. a headless one-shot run \u2014 see `_send_and_receive`'s
+        prompt-path callers), fails closed: the privileged-path deny stays in effect and the
+        tool reports the denial back to the model. A `None` `ProcessConfig` (most unit tests)
+        also fails closed, since there is no `approved_scopes` set to mutate \u2014 escalation is
+        meaningless without a process-wide config to record it in.
+        """
+        if callbacks.on_escalate_privileges is None or self._process_config is None:
+            logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, escalate_exc)
+            return None, (
+                f"Escalation of '{escalate_exc.scope}' scope was not approved: there is no "
+                "interactive surface to ask through, so the privileged-path deny stays in "
+                "effect. Read or write the file through a non-privileged path instead, or ask "
+                "the user to run klorb interactively so they can approve this escalation."
+            )
+
+        scope = escalate_exc.scope
+        description = (
+            f"Grant Klorb read/write access to the workspace's .klorb/ directory "
+            f"({self.config.workspace.path}/.klorb/) for the rest of this session."
+        ) if scope == "workspace" else str(escalate_exc)
+        decision = callbacks.on_escalate_privileges(EscalatePrivilegesContext(
+            scope=scope, description=description))
+        if decision.approved:
+            self._process_config.approved_scopes.add(scope)
+            logger.info("Escalation approved for scope '%s'", scope)
+            return {"scope": scope, "approved": True}, None
+        logger.info("Escalation denied for scope '%s'", scope)
+        return None, f"Escalation of '{scope}' scope was denied by the user."
+
     def _run_tool_calls(
         self,
         tool_use_message: Message,
@@ -1184,6 +1255,8 @@ class Session:
                     result, error = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
                 except AskUserQuestionsRequired as ask_questions_exc:
                     result, error = self._resolve_ask_user_questions(call, ask_questions_exc, callbacks)
+                except EscalatePrivilegesRequired as escalate_exc:
+                    result, error = self._resolve_escalate_privileges(call, escalate_exc, callbacks)
                 except PermissionAskRequired as ask_exc:
                     if ask_exc.path is None or self.config.permission_framework == "deny":
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)

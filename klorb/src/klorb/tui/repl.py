@@ -46,6 +46,8 @@ from klorb.process_config import (
 from klorb.session import (
     AskUserQuestionsAnswer,
     AskUserQuestionsItemContext,
+    EscalatePrivilegesContext,
+    EscalatePrivilegesDecision,
     PermissionAskContext,
     PermissionDecision,
     PermissionFramework,
@@ -64,6 +66,7 @@ from klorb.tools.tool import (
 )
 from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel, format_ask_user_questions_answer
 from klorb.tui.confirm_screen import ConfirmScreen
+from klorb.tui.escalate_privileges_panel import EscalatePrivilegesPanel, format_escalate_privileges_decision
 from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
 from klorb.tui.model_info_commands import ModelInfoCommandProvider
@@ -2080,7 +2083,9 @@ class ReplApp(App[None]):
                 on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
                 cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
                 on_permission_ask=self._on_permission_ask,
-                on_ask_user_questions=self._on_ask_user_questions, on_tool_call=handle_tool_call))
+                on_ask_user_questions=self._on_ask_user_questions,
+                on_escalate_privileges=self._on_escalate_privileges,
+                on_tool_call=handle_tool_call))
         except ResponseAborted:
             self.call_from_thread(
                 self._handle_aborted_response, response_widget, accumulated,
@@ -2485,6 +2490,46 @@ class ReplApp(App[None]):
         callback = self._confirm_ask_user_questions
         answer: AskUserQuestionsAnswer = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
         return answer
+
+    async def _confirm_escalate_privileges(
+        self, escalate_ctx: EscalatePrivilegesContext,
+    ) -> EscalatePrivilegesDecision:
+        """Mount an `EscalatePrivilegesPanel` for `escalate_ctx` into `#interaction-panel` and
+        wait for the user's choice.
+
+        Must be run on the app's own event loop, since it awaits the panel's dismissal \u2014
+        `_on_escalate_privileges` is what the worker thread actually calls, via
+        `call_from_thread`, to get here.
+        """
+        decision_future: asyncio.Future[EscalatePrivilegesDecision] = (
+            asyncio.get_running_loop().create_future())
+        panel = EscalatePrivilegesPanel(escalate_ctx, on_dismiss=decision_future.set_result)
+
+        panel_container = self._enter_interaction_mode()
+        await panel_container.mount(panel)
+        decision = await decision_future
+        await panel.remove()
+        self._exit_interaction_mode()
+
+        self._record_interaction_history(
+            panel.header_text(), escalate_ctx.description,
+            format_escalate_privileges_decision(decision))
+        return decision
+
+    def _on_escalate_privileges(
+        self, escalate_ctx: EscalatePrivilegesContext,
+    ) -> EscalatePrivilegesDecision:
+        """`Session`'s `on_escalate_privileges` callback: block the worker thread running
+        `Session.send_turn()` until the user answers `EscalatePrivilegesPanel`, then return
+        that decision as-is \u2014 `Session._resolve_escalate_privileges` records the approved
+        scope into `ProcessConfig.approved_scopes` itself; this callback only surfaces the
+        user's decision, not act on it.
+        """
+        # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
+        callback = self._confirm_escalate_privileges
+        decision: EscalatePrivilegesDecision = self.call_from_thread(
+            callback, escalate_ctx)  # type: ignore[arg-type]
+        return decision
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""

@@ -66,7 +66,7 @@ def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
     return path.resolve(strict=False)
 
 
-def privileged_dirs(workspace_root: Path) -> list[Path]:
+def privileged_dirs(workspace_root: Path, approved_scopes: set[str] | None = None) -> list[Path]:
     """Canonicalized list of every directory klorb's file tools must never read from or write to:
     the workspace's own `${workspace_root}/.klorb/` project dir, plus the process-wide
     `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` from `klorb.paths` (resolved here,
@@ -74,27 +74,51 @@ def privileged_dirs(workspace_root: Path) -> list[Path]:
 
     This is the single source of truth `klorb.permissions.workspace.evaluate_write` and
     `resolve_and_evaluate_read` both check against, unconditionally, ahead of the
-    `writeDirs`/`readDirs` tables — no `allow` entry in either table can re-enable access to
+    `writeDirs`/`readDirs` tables \u2014 no `allow` entry in either table can re-enable access to
     anything this list contains.
 
-    TODO(aaron): there is no way to grant a temporary, user-confirmed exception to this deny yet
-    (e.g. for an agent that legitimately needs to inspect its own session state); every match
-    here is an unconditional, permanent "deny" until such a mechanism is built.
+    `approved_scopes` is the set of session-only escalation scopes the user has granted this
+    process (see `ProcessConfig.approved_scopes`, populated by the `EscalatePrivileges` tool).
+    A `"workspace"` scope in it omits `${workspace_root}/.klorb/` from the returned list,
+    lifting the privileged-path deny on that one directory for the rest of the session \u2014 the
+    process-wide `KLORB_*_DIR` locations stay privileged regardless, since `"workspace"` scope
+    only ever covers the workspace's own project dir. `None` (or an empty set) preserves the
+    pre-escalation behavior: every privileged dir is denied.
     """
     root = workspace_root.resolve(strict=False)
-    return [
-        root / KLORB_PROJECT_DIR_NAME,
+    dirs: list[Path] = [
         KLORB_CONFIG_DIR.resolve(strict=False),
         KLORB_DATA_DIR.resolve(strict=False),
         KLORB_STATE_DIR.resolve(strict=False),
     ]
+    if not (approved_scopes and "workspace" in approved_scopes):
+        dirs.append(root / KLORB_PROJECT_DIR_NAME)
+    return dirs
 
 
-def is_privileged_path(path: Path, workspace_root: Path) -> bool:
+def is_privileged_path(
+    path: Path, workspace_root: Path, approved_scopes: set[str] | None = None,
+) -> bool:
     """Return whether `path` (already canonicalized by the caller) is one of, or falls beneath,
-    any directory in `privileged_dirs(workspace_root)` — the same equal-or-descendant
-    containment semantics `DirectoryAccessTable._matches` uses for ordinary rules."""
-    return any(path == d or path.is_relative_to(d) for d in privileged_dirs(workspace_root))
+    any directory in `privileged_dirs(workspace_root, approved_scopes)` \u2014 the same
+    equal-or-descendant containment semantics `DirectoryAccessTable._matches` uses for ordinary
+    rules. See `privileged_dirs` for how `approved_scopes` gates the workspace `.klorb/` dir."""
+    return any(path == d or path.is_relative_to(d) for d in privileged_dirs(workspace_root, approved_scopes))
+
+
+def workspace_klorb_dir(workspace_root: Path) -> Path:
+    """Return the canonicalized `${workspace_root}/.klorb/` path \u2014 the one privileged dir an
+    `EscalatePrivileges(scope=\"workspace\")` grant can unlock. Used by
+    `klorb.permissions.workspace` to distinguish a workspace-`.klorb` deny (which should point the
+    agent at the `EscalatePrivileges` tool) from a process-wide `KLORB_*_DIR` deny (which it can't)."""
+    return workspace_root.resolve(strict=False) / KLORB_PROJECT_DIR_NAME
+
+
+def is_under_workspace_klorb_dir(path: Path, workspace_root: Path) -> bool:
+    """Return whether `path` (already canonicalized) is the workspace `.klorb/` dir or beneath it
+    \u2014 the subset of `is_privileged_path` an `EscalatePrivileges` \"workspace\" scope grant lifts."""
+    klorb = workspace_klorb_dir(workspace_root)
+    return path == klorb or path.is_relative_to(klorb)
 
 
 class DirectoryAccessTable(PermissionsTable[Path]):

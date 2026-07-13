@@ -229,8 +229,20 @@ klorb-internal state) and silently escalate its own access on a later config rel
 `evaluate_write()` and `resolve_and_evaluate_read()` check via `is_privileged_path()`; adding a
 new internal directory to this protection means adding it there once, not touching each call
 site. `TODO.md` notes the intended unlock path is a future `EscalatePrivileges` tool that grants
-a temporary, user-confirmed exception through the end of a turn; that tool doesn't exist yet, so
-today the deny is absolute.
+a temporary, user-confirmed exception through the end of the session: when the model calls
+`EscalatePrivileges(scope="workspace")`, `Session._resolve_escalate_privileges` raises an
+interstitial approval panel (via `TurnEventHandlers.on_escalate_privileges`) offering
+`Approve`/`Deny`. On approval, the scope is recorded into `ProcessConfig.approved_scopes`
+(an in-memory, session-scoped `set[str]`, never persisted to disk), which
+`is_privileged_path(path, workspace_root, approved_scopes)` consults to *omit*
+`${workspace_root}/.klorb/` from the privileged list \u2014 so subsequent
+`ReadFile`/`EditFile`/`CreateFile` calls against `.klorb/` consult `readDirs`/`writeDirs`/
+`readFiles`/`writeFiles` like any other in-workspace path. The process-wide
+`KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` locations stay privileged regardless:
+`"workspace"` scope only ever covers the workspace's own project dir. The grant revokes when
+the process exits, and no config file can pre-populate `approved_scopes` (it's absent from
+`PROCESS_KEY_MAP`).
+`PROCESS_KEY_MAP`).
 
 ## Configuration
 

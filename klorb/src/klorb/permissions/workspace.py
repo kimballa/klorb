@@ -26,12 +26,46 @@ path string.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from klorb.permissions.directory_access import DirectoryAccessTable, canonicalize_dir, is_privileged_path
+from klorb.permissions.directory_access import (
+    DirectoryAccessTable,
+    canonicalize_dir,
+    is_privileged_path,
+    is_under_workspace_klorb_dir,
+)
 from klorb.permissions.file_access import FileAccessTable
 from klorb.permissions.table import Verdict, stricter_verdict
 
 if TYPE_CHECKING:
     from klorb.tools.setup_context import ToolSetupContext
+
+
+def _approved_scopes(context: "ToolSetupContext") -> set[str] | None:
+    """The session-only privilege-escalation scopes approved this process, pulled off the
+    `ToolSetupContext`'s `ProcessConfig` (see `ProcessConfig.approved_scopes`, populated by the
+    `EscalatePrivileges` tool). `None` when the context carries no `ProcessConfig` (most unit
+    tests), so `is_privileged_path` sees no approved scopes and keeps every privileged dir
+    denied, exactly as before escalation existed."""
+    process_config = context.process_config
+    return process_config.approved_scopes if process_config is not None else None
+
+
+def _privileged_deny(path: Path, workspace_root: Path, *, is_write: bool) -> Verdict:
+    """Return the verdict for a path that failed `is_privileged_path`: always `\"deny\"`, but with a
+    side effect \u2014 when the path is the workspace's own `.klorb/` dir or beneath it, raise a
+    `PermissionError` whose message points the agent at the `EscalatePrivileges` tool (the one
+    mechanism that can lift this deny for the rest of the session), instead of letting the generic
+    `\"Permission denied: <op> <path>\"` reach the model with no hint. A process-wide `KLORB_*_DIR`
+    deny stays a plain `\"deny\"` verdict: `EscalatePrivileges` can't unlock those, so pointing the
+    agent at the tool there would only waste a round trip."""
+    if is_under_workspace_klorb_dir(path, workspace_root):
+        op = "write to" if is_write else "read"
+        raise PermissionError(
+            f"Permission denied: {op} {path}. This file is inside the workspace's privileged "
+            f".klorb/ directory, which is hard-blocked from direct tool access. If you need to "
+            f"read or write files there, call the EscalatePrivileges tool with scope \"workspace\" "
+            f"to request temporary, session-only access; once the user approves, retry the "
+            f"operation.")
+    return "deny"
 
 
 def canonicalize_candidate(context: "ToolSetupContext", filename: str) -> Path:
@@ -99,8 +133,8 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     even if `readDirs` allows it.
     """
     workspace_root = context.session_config.workspace.path.resolve()
-    if is_privileged_path(path, workspace_root):
-        return "deny"
+    if is_privileged_path(path, workspace_root, _approved_scopes(context)):
+        return _privileged_deny(path, workspace_root, is_write=True)
     if context.permission_override is not None and path in context.permission_override.paths:
         return "allow"
 
@@ -159,8 +193,8 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     workspace_root = context.session_config.workspace.path.resolve()
     candidate = canonicalize_candidate(context, filename)
 
-    if is_privileged_path(candidate, workspace_root):
-        return candidate, "deny"
+    if is_privileged_path(candidate, workspace_root, _approved_scopes(context)):
+        return candidate, _privileged_deny(candidate, workspace_root, is_write=False)
 
     file_table = FileAccessTable(context.session_config.read_files, workspace_root)
     file_verdict = file_table.evaluate(candidate)
@@ -208,8 +242,8 @@ def resolve_and_evaluate_write(context: "ToolSetupContext", filename: str) -> tu
     workspace_root = context.session_config.workspace.path.resolve()
     candidate = canonicalize_candidate(context, filename)
 
-    if is_privileged_path(candidate, workspace_root):
-        return candidate, "deny"
+    if is_privileged_path(candidate, workspace_root, _approved_scopes(context)):
+        return candidate, _privileged_deny(candidate, workspace_root, is_write=True)
 
     file_table = FileAccessTable(context.session_config.write_files, workspace_root)
     file_verdict = file_table.evaluate(candidate)
