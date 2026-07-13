@@ -31,8 +31,17 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
 from klorb.schema_envelope import read_versioned_json
-from klorb.session import PermissionAskContext, PermissionDecision, Session, SessionConfig
+from klorb.session import (
+    AskUserQuestionsAnswer,
+    AskUserQuestionsItemContext,
+    PermissionAskContext,
+    PermissionDecision,
+    Session,
+    SessionConfig,
+)
+from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
+from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel
 from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.permission_ask_panel import (
@@ -623,10 +632,13 @@ async def test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt
         assert prompt_input.text == "line one\nline two\nline three"
 
 
-async def test_exiting_interaction_mode_restores_the_prompt_input() -> None:
+async def test_exiting_interaction_mode_unmutes_but_leaves_the_prompt_input_disabled() -> None:
     """The other half of `test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input`:
-    `_exit_interaction_mode` undoes every bit of that -- re-enabling, un-muting, and expanding
-    the prompt input back to fit its (untouched) draft text once a panel is dismissed."""
+    `_exit_interaction_mode` un-mutes and expands the prompt input back to fit its (untouched)
+    draft text once a panel is dismissed, but deliberately leaves it *disabled* -- an interaction
+    panel only appears part-way through a still-running turn, so the input must stay locked until
+    `_finish_turn` re-enables it, rather than being re-enabled here and letting the user launch a
+    second concurrent turn whose panels would stack onto this one's."""
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
@@ -640,10 +652,48 @@ async def test_exiting_interaction_mode_restores_the_prompt_input() -> None:
         app._exit_interaction_mode()
         await pilot.pause()
 
-        assert prompt_input.disabled is False
+        assert prompt_input.disabled is True
         assert prompt_input.has_class("interaction-active") is False
         assert prompt_input.outer_size.height > 1
         assert prompt_input.text == "line one\nline two\nline three"
+
+
+def _question_ctx(header: str) -> AskUserQuestionsItemContext:
+    return AskUserQuestionsItemContext(
+        header=header, question=f"{header}?",
+        options=[QuestionOption("Yes", None, False), QuestionOption("No", None, False)],
+        index=1, total=1)
+
+
+async def test_two_overlapping_interaction_panels_never_mount_at_once() -> None:
+    """`_interaction_lock` serializes the panel lifecycle so a second confirmation that somehow
+    starts while a first is still awaiting the user queues behind it rather than stacking a
+    second panel into `#interaction-panel`. Guards the "stacked approval panels" bug at the
+    structural level, independent of the (separate) fix that keeps the prompt input disabled for
+    a whole turn so a second concurrent turn can't be launched in the first place."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        first = asyncio.create_task(app._confirm_ask_user_questions(_question_ctx("First")))
+        second = asyncio.create_task(app._confirm_ask_user_questions(_question_ctx("Second")))
+
+        await _wait_until(pilot, lambda: bool(app.query(AskUserQuestionsPanel)))
+        # Only the first panel is mounted; the second confirmation is blocked on the lock.
+        assert len(app.query(AskUserQuestionsPanel)) == 1
+        assert app.query_one(AskUserQuestionsPanel)._ask_ctx.header == "First"
+
+        app.query_one(AskUserQuestionsPanel).dismiss(AskUserQuestionsAnswer(answer="Yes"))
+        await first
+        await _wait_until(
+            pilot,
+            lambda: bool(app.query(AskUserQuestionsPanel))
+            and app.query_one(AskUserQuestionsPanel)._ask_ctx.header == "Second")
+        # The first panel is gone; exactly one (the second) is now up in its place.
+        assert len(app.query(AskUserQuestionsPanel)) == 1
+
+        app.query_one(AskUserQuestionsPanel).dismiss(AskUserQuestionsAnswer(answer="No"))
+        await second
 
 
 async def test_select_model_also_updates_process_config_template() -> None:

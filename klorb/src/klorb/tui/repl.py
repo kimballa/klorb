@@ -1165,6 +1165,16 @@ class ReplApp(App[None]):
         workspace's trust/registration state changes) layers it back in identically."""
         self._cancel_event: threading.Event | None = None
         self._shell_cancel_event: threading.Event | None = None
+        self._interaction_lock = asyncio.Lock()
+        """Serializes the mount/await/dismiss lifecycle of every interaction panel (permission
+        ask, ask-user-questions, escalate-privileges) so at most one is ever mounted into
+        `#interaction-panel` at a time — see `_confirm_permission_ask`/`_confirm_ask_user_questions`/
+        `_confirm_escalate_privileges`. A single turn's tool calls are already serial, and the
+        prompt input stays disabled for a turn's whole duration (so the user can't launch a second,
+        concurrent turn while a panel is up — see `_exit_interaction_mode`), which between them
+        make an overlap impossible today; this lock is a structural guarantee that a second panel
+        queues behind the first rather than stacking, no matter what future path drives a
+        confirmation."""
         self._last_permission_action: Literal["allow", "deny"] = "allow"
         self._last_permission_scope: Literal["once", "session", "workspace", "homedir"] = "once"
         """`PermissionAskPanel`'s grid cursor position after the most recent prompt this app
@@ -2338,11 +2348,18 @@ class ReplApp(App[None]):
         return self.query_one(f"#{INTERACTION_PANEL_ID}", Vertical)
 
     def _exit_interaction_mode(self) -> None:
-        """Undo `_enter_interaction_mode`: re-enable, un-mute, and refocus the prompt input."""
+        """Un-mute and un-collapse the prompt input once an interaction panel is dismissed, but
+        leave it *disabled*: an interaction panel only ever appears part-way through a turn that
+        is still running (a permission ask, ask-user-questions, or escalate-privileges callback
+        fired from inside `Session.send_turn`), so the input must stay locked until the whole turn
+        finishes and `_finish_turn` re-enables it. Re-enabling here instead would let the user
+        submit a second prompt mid-turn, launching a second concurrent `_send_prompt` worker whose
+        own tool calls would mount interaction panels into `#interaction-panel` alongside this
+        turn's — the "stacked panels" bug this guards against. Focus is intentionally not moved
+        onto the (still-disabled) input either; the removed panel's focus is reassigned by Textual
+        on its own."""
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.remove_class("interaction-active")
-        prompt_input.disabled = False
-        prompt_input.focus()
 
     def _record_interaction_history(self, header_text: str, body: str, decision_text: str) -> None:
         """Leave a permanent record of a just-finished permission ask or ask-user-questions
@@ -2422,11 +2439,12 @@ class ReplApp(App[None]):
             risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,
             preview_wrap_width=preview_wrap_width, on_dismiss=decision_future.set_result)
 
-        panel_container = self._enter_interaction_mode()
-        await panel_container.mount(panel)
-        decision = await decision_future
-        await panel.remove()
-        self._exit_interaction_mode()
+        async with self._interaction_lock:
+            panel_container = self._enter_interaction_mode()
+            await panel_container.mount(panel)
+            decision = await decision_future
+            await panel.remove()
+            self._exit_interaction_mode()
 
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
@@ -2469,11 +2487,12 @@ class ReplApp(App[None]):
         answer_future: asyncio.Future[AskUserQuestionsAnswer] = asyncio.get_running_loop().create_future()
         panel = AskUserQuestionsPanel(ask_ctx, on_dismiss=answer_future.set_result)
 
-        panel_container = self._enter_interaction_mode()
-        await panel_container.mount(panel)
-        answer = await answer_future
-        await panel.remove()
-        self._exit_interaction_mode()
+        async with self._interaction_lock:
+            panel_container = self._enter_interaction_mode()
+            await panel_container.mount(panel)
+            answer = await answer_future
+            await panel.remove()
+            self._exit_interaction_mode()
 
         self._record_interaction_history(
             panel.header_text(), ask_ctx.question, format_ask_user_questions_answer(answer))
@@ -2505,11 +2524,12 @@ class ReplApp(App[None]):
             asyncio.get_running_loop().create_future())
         panel = EscalatePrivilegesPanel(escalate_ctx, on_dismiss=decision_future.set_result)
 
-        panel_container = self._enter_interaction_mode()
-        await panel_container.mount(panel)
-        decision = await decision_future
-        await panel.remove()
-        self._exit_interaction_mode()
+        async with self._interaction_lock:
+            panel_container = self._enter_interaction_mode()
+            await panel_container.mount(panel)
+            decision = await decision_future
+            await panel.remove()
+            self._exit_interaction_mode()
 
         self._record_interaction_history(
             panel.header_text(), escalate_ctx.description,
