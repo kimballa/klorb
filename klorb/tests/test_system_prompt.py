@@ -127,7 +127,7 @@ def test_default_sys_prompt_documents_memories(user_config_dir: Path) -> None:
     content = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
     assert content is not None
-    assert "<Memories>" in content
+    assert "## Memories" in content
     assert "ListMemories" in content
 
 
@@ -135,7 +135,7 @@ def test_default_sys_prompt_documents_ask_user_questions(user_config_dir: Path) 
     content = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
     assert content is not None
-    assert "<AskUserQuestions>" in content
+    assert "## Deciding vs. asking" in content
     assert "AskUserQuestions" in content
 
 
@@ -143,7 +143,7 @@ def test_default_sys_prompt_documents_bash_tool(user_config_dir: Path) -> None:
     content = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
     assert content is not None
-    assert "<BashTool>" in content
+    assert "## Bash" in content
     assert "stdout" in content
     assert "exit" in content
 
