@@ -78,12 +78,17 @@ either namespace.
   first line). It excludes non-`.md` files and dotfiles, and does not recurse into
   subdirectories.
 * `SearchMemoriesTool` takes `queries: list[str]` — matched as a literal, case-insensitive
-  substring (never a regular expression), the same `re.escape`-and-alternate construction
-  `SearchScratchpadTool` uses — and always searches every accessible namespace; there is no
-  `namespace` argument to narrow it, matching `ListMemories`' own "always both" shape. A file's
-  own `filename` is also a search subject: a query matching `filename` returns that file even
-  if none of its lines do, using its first non-blank line as the reported match; a file matched
-  by both its filename and real content is reported once, using the real content matches.
+  substring (never a regular expression), the same `klorb.tools.util.search_core` construction
+  `GrepTool`/`SearchScratchpadTool` use — and always searches every accessible namespace; there
+  is no `namespace` argument to narrow it, matching `ListMemories`' own "always both" shape. Each
+  matching file is reported once in `results` as `{namespace, filename, lines}`, where `lines` is
+  a flat list of the shared dense-format strings (`"*42|matched text"`, a leading `*`/space match
+  marker plus 1-based line number); there is no surrounding context (only the matching lines are
+  listed). A file's own `filename` is also a search subject: a query matching `filename` returns
+  that file even if none of its lines do, listing its first non-blank line as a single unmatched
+  (` `-prefixed) line; a file matched by both its filename and real content is reported once,
+  using the real content matches. `match_count` counts individual matching lines, plus one for
+  each filename-only hit (see the ADR `grep-search-tools-share-dense-line-core.md`).
 * **Untrusted-workspace gating**: `workspace` memories are inaccessible in an untrusted
   workspace (see `klorb.workspace.Workspace.trusted`). `ListMemories`/`SearchMemories` report
   the `workspace` namespace as empty (or skip it entirely during iteration) rather than

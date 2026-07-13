@@ -43,7 +43,7 @@ def test_finds_case_insensitive_content_match(tmp_path: Path, monkeypatch: pytes
 
     assert result["match_count"] == 1
     assert result["results"][0] == {
-        "namespace": "global", "filename": "notes.md", "line_number": 2, "line": "ONE"}
+        "namespace": "global", "filename": "notes.md", "lines": ["*2|ONE"]}
 
 
 def test_multiple_queries_combine_via_alternation(
@@ -54,7 +54,12 @@ def test_multiple_queries_combine_via_alternation(
 
     result = SearchMemoriesTool(context).apply({"queries": ["alpha", "delta"]})
 
+    # Both matches live in one file, so they group into a single result entry whose two
+    # dense-format lines each carry a `*`; match_count still counts the individual matches.
     assert result["match_count"] == 2
+    assert len(result["results"]) == 1
+    assert result["results"][0] == {
+        "namespace": "global", "filename": "notes.md", "lines": ["*2|alpha", "*4|delta"]}
 
 
 def test_searches_both_namespaces_at_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,8 +83,7 @@ def test_filename_only_match_reports_first_non_blank_line(
 
     assert result["match_count"] == 1
     assert result["results"][0] == {
-        "namespace": "global", "filename": "you-like-birds.md", "line_number": 3,
-        "line": "Actual topic",
+        "namespace": "global", "filename": "you-like-birds.md", "lines": [" 3|Actual topic"],
     }
 
 
@@ -93,8 +97,8 @@ def test_filename_and_content_match_reports_once_with_real_content_hits(
 
     assert result["match_count"] == 1
     assert result["results"][0] == {
-        "namespace": "global", "filename": "you-like-birds.md", "line_number": 2,
-        "line": "bird watching notes",
+        "namespace": "global", "filename": "you-like-birds.md",
+        "lines": ["*2|bird watching notes"],
     }
 
 

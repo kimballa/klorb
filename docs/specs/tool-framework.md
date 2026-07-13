@@ -184,16 +184,21 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   decode as UTF-8 (or fails to open at all) is skipped silently, matching common `grep -I`
   behavior. Each hit is reported with `context.process_config.grep_context_lines` (default
   `process_config.DEFAULT_GREP_CONTEXT_LINES`, 2) lines of surrounding context on each side, like
-  `grep -C`; overlapping or adjacent context windows within the same file are merged into a
-  single block rather than reported as separately-overlapping results. At most
+  `grep -C`; overlapping or adjacent context windows within the same file are merged rather than
+  reported as separately-overlapping results. At most
   `context.process_config.grep_max_results` matching lines (default
   `process_config.DEFAULT_GREP_MAX_RESULTS`, 500) are returned per call. The result is a dict:
   `root` (the resolved search root), `queries`, `is_regex`, `case_insensitive`, `file_glob`,
-  `context_lines`, `blocks` (a list of `{filename, start_line, end_line, lines}`, where `lines`
-  is `{line_number, line, matched}` for every line in the block), `match_count`, and `truncated`.
-  `summary()` names the queries, root, and match count; `detail_view()` caps `blocks` to its
-  first 20 entries (adding a `blocks_omitted` count), since a full result can hold up to
-  `grep_max_results` matching lines spread across that many blocks.
+  `context_lines`, `files` (a list of `{filename, lines}`, one entry per matching file), `match_count`,
+  and `truncated`. Each `lines` entry is a compact dense-format string — `"*42|matched text"` or
+  `" 41|context text"`, a leading `*`/space match marker, the 1-based line number, a `|`, and the
+  line's text — built by the shared `klorb.tools.util.search_core` helpers; because every line
+  carries its own number, a file's merged context windows are concatenated into one flat `lines`
+  list with no `start_line`/`end_line` wrapper, and a break between windows shows up only as a jump
+  in the embedded line numbers (see the ADR
+  `grep-search-tools-share-dense-line-core.md`). `summary()` names the queries, root, and match
+  count; `detail_view()` caps `files` to its first 20 entries (adding a `files_omitted` count),
+  since a full result can span up to `grep_max_results` matching lines across that many files.
 * `klorb.tools.find_file.FindFileTool` (`klorb/src/klorb/tools/find_file.py`), name `FindFile`.
   Recursively searches the directory tree rooted at `dirname` (`""` means the whole project
   root) for files whose bare name matches a glob `pattern` (e.g. `"*.py"` or `"*_context*"`;

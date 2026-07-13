@@ -27,16 +27,31 @@ def _write(path: Path, content: str) -> Path:
     return scratchpad
 
 
+def _parse_lines(result: dict) -> list[tuple[int, str, bool]]:
+    """Parse a flat result["lines"] list of dense-format strings.
+
+    Returns list of (line_number, line_content, is_matched) tuples.
+    """
+    parsed = []
+    for line_str in result["lines"]:
+        # Format is " 123|content" or "*123|content"
+        marker = line_str[0]
+        rest = line_str[1:]
+        pipe_idx = rest.index("|")
+        parsed.append((int(rest[:pipe_idx]), rest[pipe_idx + 1:], marker == "*"))
+    return parsed
+
+
 def test_finds_case_insensitive_match(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "one\nTWO\nthree\nfour\nfive\n")
 
     result = SearchScratchpadTool(_context(str(scratchpad))).apply({"queries": ["two"]})
 
     assert result["match_count"] == 1
-    matched_lines = [line for block in result["blocks"] for line in block["lines"] if line["matched"]]
+    matched_lines = [line for line in _parse_lines(result) if line[2]]
     assert len(matched_lines) == 1
-    assert matched_lines[0]["line"] == "TWO"
-    assert matched_lines[0]["line_number"] == 2
+    assert matched_lines[0][1] == "TWO"
+    assert matched_lines[0][0] == 2
 
 
 def test_multiple_queries_combine_via_alternation(tmp_path: Path) -> None:
@@ -53,10 +68,7 @@ def test_context_lines_from_config(tmp_path: Path) -> None:
     result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
         {"queries": ["line5"]})
 
-    assert len(result["blocks"]) == 1
-    block = result["blocks"][0]
-    assert block["start_line"] == 5
-    assert block["end_line"] == 7
+    assert [line[0] for line in _parse_lines(result)] == [5, 6, 7]
 
 
 def test_adjacent_matches_merge_into_one_block(tmp_path: Path) -> None:
@@ -66,12 +78,10 @@ def test_adjacent_matches_merge_into_one_block(tmp_path: Path) -> None:
         {"queries": ["MATCH"]})
 
     assert result["match_count"] == 2
-    assert len(result["blocks"]) == 1
-    assert result["blocks"][0]["start_line"] == 1
-    assert result["blocks"][0]["end_line"] == 5
+    assert [line[0] for line in _parse_lines(result)] == [1, 2, 3, 4, 5]
 
 
-def test_distant_matches_produce_separate_blocks(tmp_path: Path) -> None:
+def test_distant_matches_flatten_with_a_line_number_gap(tmp_path: Path) -> None:
     lines = ["x"] * 20
     lines[0] = "MATCH"
     lines[19] = "MATCH"
@@ -80,16 +90,18 @@ def test_distant_matches_produce_separate_blocks(tmp_path: Path) -> None:
     result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
         {"queries": ["MATCH"]})
 
-    assert len(result["blocks"]) == 2
+    # Two non-contiguous windows concatenated into one lines array; the gap shows only as a jump
+    # in the embedded line numbers, with no separator between them.
+    assert [line[0] for line in _parse_lines(result)] == [1, 2, 19, 20]
 
 
-def test_no_matches_returns_empty_blocks(tmp_path: Path) -> None:
+def test_no_matches_returns_empty_lines(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "a\nb\nc\n")
 
     result = SearchScratchpadTool(_context(str(scratchpad))).apply({"queries": ["nope"]})
 
     assert result["match_count"] == 0
-    assert result["blocks"] == []
+    assert result["lines"] == []
 
 
 def test_query_with_regex_metacharacters_is_treated_literally(tmp_path: Path) -> None:
@@ -100,8 +112,8 @@ def test_query_with_regex_metacharacters_is_treated_literally(tmp_path: Path) ->
     result = SearchScratchpadTool(_context(str(scratchpad))).apply({"queries": ["a(b"]})
 
     assert result["match_count"] == 1
-    matched_lines = [line for block in result["blocks"] for line in block["lines"] if line["matched"]]
-    assert matched_lines[0]["line"] == "a(b"
+    matched_lines = [line for line in _parse_lines(result) if line[2]]
+    assert matched_lines[0][1] == "a(b"
 
 
 def test_empty_queries_raises(tmp_path: Path) -> None:
@@ -148,9 +160,9 @@ def test_summary_on_failure_includes_the_error() -> None:
     assert tool.summary({"queries": ["x"]}, error="boom") == "Search scratchpad: ['x'] failed: boom"
 
 
-def test_detail_view_caps_blocks_to_12(tmp_path: Path) -> None:
+def test_detail_view_caps_lines_to_60(tmp_path: Path) -> None:
     lines: list[str] = []
-    for i in range(20):
+    for i in range(70):
         lines.append(f"MATCH{i}")
         lines.extend(["filler"] * 5)
     scratchpad = _write(tmp_path, "\n".join(lines) + "\n")
@@ -159,5 +171,5 @@ def test_detail_view_caps_blocks_to_12(tmp_path: Path) -> None:
 
     detail = json.loads(tool.detail_view({"queries": ["MATCH"]}, result))
 
-    assert len(detail["result"]["blocks"]) == 12
-    assert detail["result"]["blocks_omitted"] == 8
+    assert len(detail["result"]["lines"]) == 60
+    assert detail["result"]["lines_omitted"] == 10

@@ -4,13 +4,18 @@ strings or regular expressions, returning each match with surrounding context li
 
 import fnmatch
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
-from klorb.tools.util import walk_readable_tree
+from klorb.tools.util import (
+    compile_queries,
+    context_lines_for_matches,
+    match_line_indices,
+    validate_queries,
+    walk_readable_tree,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +31,11 @@ class GrepTool(Tool):
 
     Each hit is reported with `context.process_config.grep_context_lines` lines of surrounding
     context on each side (like `grep -C`); overlapping or adjacent context windows within the
-    same file are merged into a single block rather than reported as separately-overlapping
-    results.
+    same file are merged rather than reported as separately-overlapping results. Every matching
+    file appears once in `result["files"]` as `{"filename", "lines"}`, where `lines` is a flat
+    list of dense-format strings (see `klorb.tools.util.search_core`) — a leading `*` marks a
+    line that itself matched, and each line carries its own 1-based number, so a gap between two
+    merged windows shows up as a jump in those numbers with no separator line.
 
     A file that can't be decoded as UTF-8 text, or can't be opened at all, is skipped silently
     (treated as binary) rather than raising — matches are only ever reported from files
@@ -53,9 +61,13 @@ class GrepTool(Tool):
             "filename glob (e.g. '*.py'). dirname empty means search the whole project root. "
             f"Each hit is returned with {self._context_lines} lines of surrounding context on "
             f"each side, like `grep -C {self._context_lines}`, merging overlapping or adjacent "
-            f"context windows within the same file. Returns at most {self._max_results} "
-            "matching lines per call; a 'truncated' flag in the result means more matches "
-            "exist than were returned. A subdirectory your readDirs permissions deny, or that "
+            "context windows within the same file. Results are grouped by file under 'files'; "
+            "each line is a string like '*42|matched text' or ' 41|context text', where the "
+            "leading '*' marks a matching line and the number is its 1-based line number (a gap "
+            "in those numbers marks a break between context windows). Returns at most "
+            f"{self._max_results} matching lines per call; a 'truncated' flag in the result "
+            "means more matches exist than were returned. A subdirectory your readDirs "
+            "permissions deny, or that "
             "requires confirmation, is silently skipped rather than failing the whole search "
             "— only dirname itself raises if it isn't allowed."
         )
@@ -111,15 +123,10 @@ class GrepTool(Tool):
             raise ValueError(
                 "Missing required argument: 'dirname'. Provide the directory to search under.")
         try:
-            queries = args["queries"]
+            queries = validate_queries(args["queries"])
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
-        if not isinstance(queries, list) or not queries:
-            raise ValueError("queries must be a non-empty array of search strings")
-        for query in queries:
-            if not isinstance(query, str):
-                raise ValueError(f"each entry in queries must be a string, got {query!r}")
         is_regex = args.get("is_regex", False)
         case_insensitive = args.get("case_insensitive", False)
         file_glob = args.get("file_glob")
@@ -127,17 +134,10 @@ class GrepTool(Tool):
             "Grep %r in %r (is_regex=%s, case_insensitive=%s, file_glob=%s)",
             queries, dirname, is_regex, case_insensitive, file_glob)
 
-        flags = re.IGNORECASE if case_insensitive else 0
-        if is_regex:
-            combined_pattern = "|".join(f"(?:{query})" for query in queries)
-        else:
-            combined_pattern = "|".join(re.escape(query) for query in queries)
-        try:
-            compiled = re.compile(combined_pattern, flags)
-        except re.error as exc:
-            raise ValueError(f"Invalid regex in {queries!r}: {exc}") from exc
+        compiled = compile_queries(
+            queries, is_regex=is_regex, case_insensitive=case_insensitive)
 
-        blocks: list[dict[str, Any]] = []
+        files: list[dict[str, Any]] = []
         match_count = 0
         truncated = False
         root_path: Path | None = None
@@ -155,10 +155,7 @@ class GrepTool(Tool):
                 except (UnicodeDecodeError, OSError):
                     continue
                 all_lines = text.splitlines()
-                total_lines = len(all_lines)
-                matched_indices = [
-                    index for index, line in enumerate(all_lines) if compiled.search(line)
-                ]
+                matched_indices = match_line_indices(all_lines, compiled)
                 if not matched_indices:
                     continue
 
@@ -166,37 +163,18 @@ class GrepTool(Tool):
                     matched_indices = matched_indices[: self._max_results - match_count]
                     truncated = True
 
-                windows: list[list[int]] = []
-                for index in matched_indices:
-                    start = max(0, index - self._context_lines)
-                    end = min(total_lines - 1, index + self._context_lines)
-                    if windows and start <= windows[-1][1] + 1:
-                        windows[-1][1] = max(windows[-1][1], end)
-                    else:
-                        windows.append([start, end])
-
-                matched_index_set = set(matched_indices)
-                for start, end in windows:
-                    blocks.append({
-                        "filename": str(file_path),
-                        "start_line": start + 1,
-                        "end_line": end + 1,
-                        "lines": [
-                            (
-                                "*"
-                                if i in matched_index_set
-                                else " "
-                            ) + f"{i + 1}|{all_lines[i]}"
-                            for i in range(start, end + 1)
-                        ],
-                    })
+                files.append({
+                    "filename": str(file_path),
+                    "lines": context_lines_for_matches(
+                        all_lines, matched_indices, self._context_lines),
+                })
                 match_count += len(matched_indices)
                 if truncated:
                     break
 
         logger.debug(
-            "Grep found %d match(es) in %d block(s) (truncated=%s)",
-            match_count, len(blocks), truncated)
+            "Grep found %d match(es) in %d file(s) (truncated=%s)",
+            match_count, len(files), truncated)
 
         return {
             "root": str(root_path) if root_path is not None else dirname,
@@ -205,7 +183,7 @@ class GrepTool(Tool):
             "case_insensitive": case_insensitive,
             "file_glob": file_glob,
             "context_lines": self._context_lines,
-            "blocks": blocks,
+            "files": files,
             "match_count": match_count,
             "truncated": truncated,
         }
@@ -223,16 +201,16 @@ class GrepTool(Tool):
         return f"Grep: {queries!r} in {root} ({count}{suffix} match{plural})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["blocks"]` capped to its
-        first 20 entries — a full grep result can hold up to `self._max_results` (100 by
-        default) matching lines, far more than useful to show inline.
+        """Same as the default pretty-JSON rendering, but with `result["files"]` capped to its
+        first 20 entries — a full grep result can span up to `self._max_results` (100 by
+        default) matching lines across many files, far more than useful to show inline.
         """
-        if error is not None or not isinstance(result, dict) or "blocks" not in result:
+        if error is not None or not isinstance(result, dict) or "files" not in result:
             return super().detail_view(args, result, error)
-        blocks = result["blocks"]
-        if len(blocks) <= 20:
+        files = result["files"]
+        if len(files) <= 20:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
-        capped_result["blocks"] = blocks[:20]
-        capped_result["blocks_omitted"] = len(blocks) - 20
+        capped_result["files"] = files[:20]
+        capped_result["files_omitted"] = len(files) - 20
         return super().detail_view(args, capped_result, error)

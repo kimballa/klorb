@@ -9,6 +9,13 @@ from typing import Any
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import Namespace, memory_namespace_dir, workspace_namespace_accessible
 from klorb.tools.tool import Tool
+from klorb.tools.util import (
+    compile_queries,
+    context_lines_for_matches,
+    format_match_line,
+    match_line_indices,
+    validate_queries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +24,17 @@ class SearchMemoriesTool(Tool):
     """Searches every memory file in both the `global` and `workspace` namespaces (there is no
     `namespace` argument to narrow this -- like `ListMemories`, it always covers every
     accessible namespace) for lines containing any of `queries` -- each matched as a literal,
-    case-insensitive substring (never a regular expression), the same `re.escape`-and-alternate
-    construction `SearchScratchpadTool` uses.
+    case-insensitive substring (never a regular expression), the same
+    `klorb.tools.util.search_core` construction `GrepTool` and `SearchScratchpadTool` use.
+
+    Each matching file is reported once in `result["results"]` as `{"namespace", "filename",
+    "lines"}`, where `lines` is a flat list of dense-format strings shared with `GrepTool` (a
+    leading `*` marks a matching line; each line carries its own 1-based number). There is no
+    surrounding context -- only the matching lines themselves are listed.
 
     A file's own `filename` is also a search subject: when `filename` matches, the file is
-    reported as a hit even if none of its lines do, using its first non-blank line as the
-    reported `line` (regardless of whether that line itself matches) -- so a query like "bird"
+    reported as a hit even if none of its lines do, listing its first non-blank line (as an
+    unmatched ` `-prefixed line, since the content itself didn't match) so a query like "bird"
     finds a file named `you-like-birds.md` by name alone. A file matched by both its filename
     and its content is reported once, using its real content matches, never a duplicate
     filename-only entry.
@@ -41,10 +53,12 @@ class SearchMemoriesTool(Tool):
             "Searches every memory file (both the global and workspace namespaces) for lines "
             "containing any of the given search strings, each matched as a literal, "
             "case-insensitive substring (not a regular expression) -- equivalent to "
-            "`grep -i -F -e 'seq1' -e 'seq2' ...` against every memory file's content. A "
-            "file's own filename is also searched: a query matching a filename returns that "
-            "file even if none of its lines match, using its first non-blank line as the "
-            "reported match."
+            "`grep -i -F -e 'seq1' -e 'seq2' ...` against every memory file's content. Results "
+            "are grouped by file under 'results'; each entry's 'lines' are strings like "
+            "'*42|matched text', where the leading '*' marks a matching line and the number is "
+            "its 1-based line number. A file's own filename is also searched: a query matching "
+            "a filename returns that file even if none of its lines match, listing its first "
+            "non-blank line."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -67,23 +81,17 @@ class SearchMemoriesTool(Tool):
 
     def apply(self, args: dict[str, Any]) -> Any:
         try:
-            queries = args["queries"]
+            queries = validate_queries(args["queries"])
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
-        if not isinstance(queries, list) or not queries:
-            raise ValueError("queries must be a non-empty array of search sequences")
-        for query in queries:
-            if not isinstance(query, str):
-                raise ValueError(f"each entry in queries must be a string, got {query!r}")
         logger.debug("SearchMemories %r", queries)
 
         raise_if_not_allowed(
             self.context.process_config.memory_read_permission,
             resource_description="search memories")
 
-        combined_pattern = "|".join(re.escape(query) for query in queries)
-        compiled = re.compile(combined_pattern, re.IGNORECASE)
+        compiled = compile_queries(queries, case_insensitive=True)
 
         results: list[dict[str, Any]] = []
         for namespace in ("global", "workspace"):
@@ -91,10 +99,17 @@ class SearchMemoriesTool(Tool):
                 continue
             results.extend(self._search_namespace(namespace, compiled))
 
-        logger.debug("SearchMemories found %d hit(s)", len(results))
+        # A content match contributes one hit per matching (`*`-prefixed) line; a filename-only
+        # match, whose sole listed line is unmatched, still counts as a single hit.
+        match_count = sum(
+            starred if (starred := sum(1 for line in result["lines"] if line.startswith("*")))
+            else 1
+            for result in results
+        )
+        logger.debug("SearchMemories found %d hit(s) across %d file(s)", match_count, len(results))
         return {
             "queries": queries,
-            "match_count": len(results),
+            "match_count": match_count,
             "results": results,
         }
 
@@ -109,20 +124,20 @@ class SearchMemoriesTool(Tool):
                 continue
 
             lines = path.read_text(encoding="utf-8").splitlines()
-            line_hits = [
-                {"line_number": index + 1, "line": line}
-                for index, line in enumerate(lines) if compiled.search(line)
-            ]
-            if line_hits:
-                for hit in line_hits:
-                    hits.append({"namespace": namespace, "filename": path.name, **hit})
+            matched_indices = match_line_indices(lines, compiled)
+            if matched_indices:
+                hits.append({
+                    "namespace": namespace, "filename": path.name,
+                    "lines": context_lines_for_matches(lines, matched_indices, 0),
+                })
             elif compiled.search(path.name):
                 first_non_blank = next(
                     ((index + 1, line) for index, line in enumerate(lines) if line.strip()),
                     (1, ""))
                 hits.append({
                     "namespace": namespace, "filename": path.name,
-                    "line_number": first_non_blank[0], "line": first_non_blank[1],
+                    "lines": [format_match_line(
+                        first_non_blank[0], first_non_blank[1], matched=False)],
                 })
         return hits
 

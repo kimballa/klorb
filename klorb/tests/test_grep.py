@@ -40,16 +40,16 @@ def _make_tree(root: Path) -> None:
 
 
 def _matched_filenames(result: dict) -> set:
-    return {Path(block["filename"]).name for block in result["blocks"]}
+    return {Path(file["filename"]).name for file in result["files"]}
 
 
-def _parse_lines(block: dict) -> list[tuple[int, str, bool]]:
-    """Parse a block's lines from the new string format.
+def _parse_lines(file: dict) -> list[tuple[int, str, bool]]:
+    """Parse a file's dense-format lines.
 
     Returns list of (line_number, line_content, is_matched) tuples.
     """
     result = []
-    for line_str in block["lines"]:
+    for line_str in file["lines"]:
         # Format is " 123|content" or "*123|content"
         marker = line_str[0]
         rest = line_str[1:]
@@ -105,9 +105,9 @@ def test_regex_pattern(tmp_path: Path) -> None:
         {"dirname": "", "queries": [r"^def \w+\(\):"], "is_regex": True})
 
     assert result["match_count"] == 1
-    block = result["blocks"][0]
-    assert block["filename"].endswith("nested.py")
-    parsed = _parse_lines(block)
+    file = result["files"][0]
+    assert file["filename"].endswith("nested.py")
+    parsed = _parse_lines(file)
     matched_lines = [line for line in parsed if line[2]]
     assert len(matched_lines) == 1
     assert matched_lines[0][0] == 1
@@ -152,11 +152,9 @@ def test_context_lines_surround_each_match(tmp_path: Path) -> None:
     result = GrepTool(_context(tmp_path, context_lines=1)).apply(
         {"dirname": "", "queries": ["MATCH"]})
 
-    assert len(result["blocks"]) == 1
-    block = result["blocks"][0]
-    assert block["start_line"] == 2
-    assert block["end_line"] == 4
-    parsed = _parse_lines(block)
+    assert len(result["files"]) == 1
+    parsed = _parse_lines(result["files"][0])
+    assert [line[0] for line in parsed] == [2, 3, 4]
     assert [line[1] for line in parsed] == ["b", "MATCH", "c"]
     assert [line[2] for line in parsed] == [False, True, False]
 
@@ -167,11 +165,27 @@ def test_adjacent_matches_merge_into_one_block(tmp_path: Path) -> None:
     result = GrepTool(_context(tmp_path, context_lines=1)).apply(
         {"dirname": "", "queries": ["MATCH"]})
 
-    assert len(result["blocks"]) == 1
-    block = result["blocks"][0]
-    assert block["start_line"] == 1
-    assert block["end_line"] == 3
+    assert len(result["files"]) == 1
+    parsed = _parse_lines(result["files"][0])
+    assert [line[0] for line in parsed] == [1, 2, 3]
     assert result["match_count"] == 2
+
+
+def test_distant_matches_in_one_file_flatten_with_a_line_number_gap(tmp_path: Path) -> None:
+    lines = ["filler"] * 20
+    lines[0] = "MATCH"
+    lines[19] = "MATCH"
+    (tmp_path / "lines.txt").write_text("\n".join(lines) + "\n")
+
+    result = GrepTool(_context(tmp_path, context_lines=1)).apply(
+        {"dirname": "", "queries": ["MATCH"]})
+
+    # One file entry, its two non-contiguous windows concatenated into a single lines array;
+    # the gap is visible only as a jump in the embedded line numbers, with no separator.
+    assert len(result["files"]) == 1
+    parsed = _parse_lines(result["files"][0])
+    assert [line[0] for line in parsed] == [1, 2, 19, 20]
+    assert [line[2] for line in parsed] == [True, False, False, True]
 
 
 def test_max_results_truncates(tmp_path: Path) -> None:

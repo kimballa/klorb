@@ -23,7 +23,8 @@
       "Bash(bwrap --ro-bind / / --proc /proc --dev /dev -- true)",
       "Bash(echo *)",
       "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q)",
-      "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q -k *)"
+      "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q -k *)",
+      "Bash(venv/bin/isort --diff *)"
     ]
   },
   "hooks": {

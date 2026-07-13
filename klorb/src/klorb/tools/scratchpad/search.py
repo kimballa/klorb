@@ -3,12 +3,12 @@
 several literal search strings, returning each match plus surrounding context lines."""
 
 import logging
-import re
 from typing import Any
 
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
+from klorb.tools.util import compile_queries, context_lines_for_matches, match_line_indices, validate_queries
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,13 @@ class SearchScratchpadTool(Tool):
     `grep -i -F -e 'seq1' -e 'seq2' ...` against the scratchpad file) -- and returns each match
     together with `context_lines` (see `ProcessConfig.scratchpad_context_lines`) lines of
     surrounding content on each side. Overlapping or adjacent matches' context windows are
-    merged into a single block, the same way `grep -C` collapses them, rather than reported as
-    separate, redundantly-overlapping results.
+    merged, the same way `grep -C` collapses them, rather than reported as separate,
+    redundantly-overlapping results.
+
+    `result["lines"]` is a flat list of dense-format strings shared with `GrepTool` (see
+    `klorb.tools.util.search_core`): a leading `*` marks a matching line, and each line carries
+    its own 1-based number, so a break between two merged context windows shows up as a jump in
+    those numbers rather than a separate block wrapper.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -37,7 +42,10 @@ class SearchScratchpadTool(Tool):
             "each matched as a literal, case-insensitive substring (not a regular expression) "
             "-- equivalent to `grep -i -F -e 'seq1' -e 'seq2' ...` against the scratchpad -- "
             f"and returns each match with {self._context_lines} lines of surrounding context "
-            "on each side, merging overlapping/adjacent matches into a single block."
+            "on each side, merging overlapping/adjacent matches. Each entry in 'lines' is a "
+            "string like '*42|matched text' or ' 41|context text', where the leading '*' marks "
+            "a matching line and the number is its 1-based line number (a gap in those numbers "
+            "marks a break between context windows)."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -60,56 +68,29 @@ class SearchScratchpadTool(Tool):
 
     def apply(self, args: dict[str, Any]) -> Any:
         try:
-            queries = args["queries"]
+            queries = validate_queries(args["queries"])
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
-        if not isinstance(queries, list) or not queries:
-            raise ValueError("queries must be a non-empty array of search sequences")
-        for query in queries:
-            if not isinstance(query, str):
-                raise ValueError(f"each entry in queries must be a string, got {query!r}")
         logger.debug("SearchScratchpad %r", queries)
 
-        combined_pattern = "|".join(re.escape(query) for query in queries)
-        compiled = re.compile(combined_pattern, re.IGNORECASE)
+        compiled = compile_queries(queries, case_insensitive=True)
 
         path = scratchpad_path(self.context)
         all_lines = path.read_text(encoding="utf-8").splitlines()
         total_lines = len(all_lines)
 
-        matched_indices = [index for index, line in enumerate(all_lines) if compiled.search(line)]
-
-        windows: list[list[int]] = []
-        for index in matched_indices:
-            start = max(0, index - self._context_lines)
-            end = min(total_lines - 1, index + self._context_lines)
-            if windows and start <= windows[-1][1] + 1:
-                windows[-1][1] = max(windows[-1][1], end)
-            else:
-                windows.append([start, end])
-
-        matched_index_set = set(matched_indices)
-        blocks = [
-            {
-                "start_line": start + 1,
-                "end_line": end + 1,
-                "lines": [
-                    {"line_number": i + 1, "line": all_lines[i], "matched": i in matched_index_set}
-                    for i in range(start, end + 1)
-                ],
-            }
-            for start, end in windows
-        ]
+        matched_indices = match_line_indices(all_lines, compiled)
+        lines = context_lines_for_matches(all_lines, matched_indices, self._context_lines)
 
         logger.debug(
-            "SearchScratchpad found %d match(es) in %d block(s)", len(matched_indices), len(blocks))
+            "SearchScratchpad found %d match(es) in %d line(s)", len(matched_indices), len(lines))
 
         return {
             "queries": queries,
             "total_lines": total_lines,
             "match_count": len(matched_indices),
-            "blocks": blocks,
+            "lines": lines,
         }
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
@@ -123,16 +104,16 @@ class SearchScratchpadTool(Tool):
         return f"Search scratchpad: {queries!r} ({count} match{plural})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["blocks"]` capped to its
-        first 12 entries -- a scratchpad with many scattered matches could otherwise dump far
+        """Same as the default pretty-JSON rendering, but with `result["lines"]` capped to its
+        first 60 entries -- a scratchpad with many scattered matches could otherwise dump far
         more context than useful to show inline.
         """
-        if error is not None or not isinstance(result, dict) or "blocks" not in result:
+        if error is not None or not isinstance(result, dict) or "lines" not in result:
             return super().detail_view(args, result, error)
-        blocks = result["blocks"]
-        if len(blocks) <= 12:
+        lines = result["lines"]
+        if len(lines) <= 60:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
-        capped_result["blocks"] = blocks[:12]
-        capped_result["blocks_omitted"] = len(blocks) - 12
+        capped_result["lines"] = lines[:60]
+        capped_result["lines_omitted"] = len(lines) - 60
         return super().detail_view(args, capped_result, error)

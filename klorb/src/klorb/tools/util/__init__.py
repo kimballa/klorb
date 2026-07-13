@@ -25,11 +25,36 @@ already resolved. `walk_readable_tree` (`dir_walk.py`) is different — it does 
 subdirectory — but re-exporting it here is still safe: nothing that needs to avoid the
 `klorb.session` cycle (e.g. `klorb.session` itself, or `klorb.tools.ask.common`) imports
 `klorb.tools.util`, only tool implementations (`GrepTool`, `FindFileTool`, ...) do.
+
+`search_core.py` is the analogous shared mechanic behind the line-search tools (`GrepTool`,
+`SearchScratchpadTool`, `SearchMemoriesTool`): validating and compiling a `queries` array,
+finding the matching line indices, and rendering matches (with optional context) into the
+compact dense line format those tools share. Like the `*Core` helpers it takes no
+`ToolSetupContext` — each function operates on plain lists of lines its caller already read — so
+re-exporting it here is cycle-free for the same reason.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
 from klorb.tools.util.dir_walk import walk_readable_tree
 from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit
 from klorb.tools.util.read_file_core import ReadFileCore
+from klorb.tools.util.search_core import (
+    compile_queries,
+    context_lines_for_matches,
+    format_match_line,
+    match_line_indices,
+    validate_queries,
+)
 
-__all__ = ["CreateFileCore", "EditFileCore", "LineRangeEdit", "ReadFileCore", "walk_readable_tree"]
+__all__ = [
+    "CreateFileCore",
+    "EditFileCore",
+    "LineRangeEdit",
+    "ReadFileCore",
+    "compile_queries",
+    "context_lines_for_matches",
+    "format_match_line",
+    "match_line_indices",
+    "validate_queries",
+    "walk_readable_tree",
+]

@@ -111,10 +111,14 @@ scope") coordinate through one shared file rather than each keeping a private on
   alternation pattern) — equivalent to running `grep -i -F -e 'seq1' -e 'seq2' ...` against the
   file. Each match is reported with `context.process_config.scratchpad_context_lines`
   (`ProcessConfig.scratchpad_context_lines`, default `2`) lines of surrounding context on each
-  side; overlapping or adjacent matches' context windows are merged into one block (mirroring
-  `grep -C`'s own block-collapsing behavior) rather than returned as separately-overlapping
-  results, so a cluster of nearby matches reads as one contiguous excerpt. `detail_view()` caps
-  the rendered `blocks` list to 12 entries (`blocks_omitted` reports how many more exist).
+  side; overlapping or adjacent matches' context windows are merged (mirroring `grep -C`'s own
+  block-collapsing behavior) rather than returned as separately-overlapping results, so a cluster
+  of nearby matches reads as one contiguous excerpt. The result's `lines` is a flat list of the
+  same compact dense-format strings `GrepTool` returns (`"*42|matched text"` / `" 41|context
+  text"`), built by the shared `klorb.tools.util.search_core` helpers; a break between two merged
+  windows shows up only as a jump in the embedded line numbers, with no enclosing block wrapper
+  (see the ADR `grep-search-tools-share-dense-line-core.md`). `detail_view()` caps the rendered
+  `lines` list to 60 entries (`lines_omitted` reports how many more exist).
 * The default system prompt (`klorb/src/klorb/resources/system_prompts.d/default_sys.md`)
   carries two sections relevant here: "Editing with EditFile/EditScratchpad" (the row-extent
   substitution mechanic, moved out of both tools' own `description()`s — see above) and "Use
