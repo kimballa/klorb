@@ -140,6 +140,14 @@ class EditFileCore:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f"{label} must be an integer, got {value!r} ({type(value).__name__})")
 
+        if "\n" in start_text:
+            start_text = start_text.split("\n", 1)[0]
+        if "\n" in end_text:
+            end_text = end_text.split("\n", 1)[0]
+
+        # Validate types after truncation so callers who accidentally pasted a multi-line
+        # block into start_text/end_text get the graceful behavior of using just the first
+        # line as the anchor, rather than a hard error.
         for label, value in (("start_text", start_text), ("end_text", end_text)):
             if "\n" in value:
                 first_line = value.split("\n", 1)[0]

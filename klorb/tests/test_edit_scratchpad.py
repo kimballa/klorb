@@ -133,13 +133,28 @@ def test_non_integer_line_number_raises(tmp_path: Path) -> None:
         })
 
 
-def test_multiline_start_text_raises(tmp_path: Path) -> None:
+def test_multiline_start_text_truncates_to_first_line(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "a\nb\nc\n")
 
-    with pytest.raises(ValueError, match="start_text must be exactly one line"):
-        EditScratchpadTool(_context(str(scratchpad))).apply({
-            "start_line": 1, "end_line": 2, "start_text": "a\nb", "end_text": "b", "new_text": "x",
-        })
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 1, "end_line": 2, "start_text": "a\nb", "end_text": "b", "new_text": "x",
+    })
+
+    assert scratchpad.read_text() == "x\nc\n"
+    assert result["new_total_lines"] == 2
+    assert result["content"] == "1|x"
+
+
+def test_multiline_end_text_truncates_to_first_line(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nc\n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 1, "end_line": 2, "start_text": "a", "end_text": "b\nc", "new_text": "x",
+    })
+
+    assert scratchpad.read_text() == "x\nc\n"
+    assert result["new_total_lines"] == 2
+    assert result["content"] == "1|x"
 
 
 def test_requires_active_session() -> None:

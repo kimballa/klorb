@@ -2,11 +2,13 @@
 
 # Bugs:
 
+* LLM output is being added to the history in some markup-parsing way and if the llm
+  itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
+  ways. We need to be durable if the LLM accidentally starts sending mis-matched XML
+  like `</Think>` in the middle of its output.
+
 * tool-calls.log should get moved out into a state dir or something out of the workspaceroot.
   otherwise it shows up in Grep tool results.
-
-* If EditFile start_text is multiple lines, delete everything after the first '\n' and just
-  act like that's all you got.
 
 * `grep -n * *` is already allowlisted but it keeps asking over and over; why?
 
