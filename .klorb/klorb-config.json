@@ -48,7 +48,8 @@
         ["grep", "-E", "^(FAILED|PASSED|ERROR)"],
         ["find", "tests", "-name", "conftest.py"],
         ["./venv/bin/flake8", "--config", ".flake8", "src/klorb/sandbox.py"],
-        ["grep", "-n", "klorb_dir\\|KLORB_DATA\\|KLORB_STATE\\|tiktoken\\|TIKTOKEN\\|local/share\\|local/state", "tests/test_sandbox.py"]
+        ["grep", "-n", "klorb_dir\\|KLORB_DATA\\|KLORB_STATE\\|tiktoken\\|TIKTOKEN\\|local/share\\|local/state", "tests/test_sandbox.py"],
+        ["git", "diff", "tests/test_grep.py"]
       ]
     },
     "shareEnv": [

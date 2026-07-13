@@ -125,7 +125,7 @@ class FindFileTool(Tool):
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with `result["matches"]` capped to its
-        first 20 entries — a full result can hold up to `self._max_results` (500 by default)
+        first 20 entries — a full result can hold up to `self._max_results` (100 by default)
         matches, far more than useful to show inline.
         """
         if error is not None or not isinstance(result, dict) or "matches" not in result:

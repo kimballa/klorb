@@ -182,11 +182,11 @@ class GrepTool(Tool):
                         "start_line": start + 1,
                         "end_line": end + 1,
                         "lines": [
-                            {
-                                "line_number": i + 1,
-                                "line": all_lines[i],
-                                "matched": i in matched_index_set,
-                            }
+                            (
+                                "*"
+                                if i in matched_index_set
+                                else " "
+                            ) + f"{i + 1}|{all_lines[i]}"
                             for i in range(start, end + 1)
                         ],
                     })
@@ -224,7 +224,7 @@ class GrepTool(Tool):
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with `result["blocks"]` capped to its
-        first 20 entries — a full grep result can hold up to `self._max_results` (500 by
+        first 20 entries — a full grep result can hold up to `self._max_results` (100 by
         default) matching lines, far more than useful to show inline.
         """
         if error is not None or not isinstance(result, dict) or "blocks" not in result:

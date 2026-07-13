@@ -43,6 +43,24 @@ def _matched_filenames(result: dict) -> set:
     return {Path(block["filename"]).name for block in result["blocks"]}
 
 
+def _parse_lines(block: dict) -> list[tuple[int, str, bool]]:
+    """Parse a block's lines from the new string format.
+
+    Returns list of (line_number, line_content, is_matched) tuples.
+    """
+    result = []
+    for line_str in block["lines"]:
+        # Format is " 123|content" or "*123|content"
+        marker = line_str[0]
+        rest = line_str[1:]
+        pipe_idx = rest.index("|")
+        line_number = int(rest[:pipe_idx])
+        content = rest[pipe_idx + 1:]
+        is_matched = marker == "*"
+        result.append((line_number, content, is_matched))
+    return result
+
+
 def test_finds_literal_matches_across_the_tree(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 
@@ -89,9 +107,10 @@ def test_regex_pattern(tmp_path: Path) -> None:
     assert result["match_count"] == 1
     block = result["blocks"][0]
     assert block["filename"].endswith("nested.py")
-    matched_lines = [line for line in block["lines"] if line["matched"]]
+    parsed = _parse_lines(block)
+    matched_lines = [line for line in parsed if line[2]]
     assert len(matched_lines) == 1
-    assert matched_lines[0]["line_number"] == 1
+    assert matched_lines[0][0] == 1
 
 
 def test_multiple_regex_queries_are_distinct_alternatives(tmp_path: Path) -> None:
@@ -137,8 +156,9 @@ def test_context_lines_surround_each_match(tmp_path: Path) -> None:
     block = result["blocks"][0]
     assert block["start_line"] == 2
     assert block["end_line"] == 4
-    assert [line["line"] for line in block["lines"]] == ["b", "MATCH", "c"]
-    assert [line["matched"] for line in block["lines"]] == [False, True, False]
+    parsed = _parse_lines(block)
+    assert [line[1] for line in parsed] == ["b", "MATCH", "c"]
+    assert [line[2] for line in parsed] == [False, True, False]
 
 
 def test_adjacent_matches_merge_into_one_block(tmp_path: Path) -> None:

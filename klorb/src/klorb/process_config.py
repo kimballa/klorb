@@ -38,7 +38,7 @@ no constant of its own, it reads `ProcessConfig.edit_file_drift_search_radius` v
 single-line edits an agent makes to one file per turn, not file size; see
 docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md."""
 
-DEFAULT_GREP_MAX_RESULTS = 500
+DEFAULT_GREP_MAX_RESULTS = 100
 """`GrepTool`'s per-call match cap default; the canonical source of this value —
 `klorb.tools.grep` has no constant of its own, it reads `ProcessConfig.grep_max_results` via
 `ToolSetupContext` at construction time instead."""
@@ -49,7 +49,7 @@ each side of a match); the canonical source of this value — `klorb.tools.grep`
 of its own, it reads `ProcessConfig.grep_context_lines` via `ToolSetupContext` at construction
 time instead."""
 
-DEFAULT_FIND_FILE_MAX_RESULTS = 500
+DEFAULT_FIND_FILE_MAX_RESULTS = 100
 """`FindFileTool`'s per-call match cap default; the canonical source of this value —
 `klorb.tools.find_file` has no constant of its own, it reads
 `ProcessConfig.find_file_max_results` via `ToolSetupContext` at construction time instead."""
