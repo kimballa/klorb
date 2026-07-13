@@ -345,7 +345,21 @@ def build_bwrap_argv(
     # Disposable scratch mounts go on *before* the binds so a bound directory that happens to
     # live under /tmp or /var (e.g. a workspace root beneath a system temp dir) lands on top of
     # the fresh tmpfs rather than being wiped out by a tmpfs applied after it.
-    args += ["--tmpfs", "/tmp", "--tmpfs", "/var", "--dev", "/dev", "--proc", "/proc"]
+    #
+    # `/tmp` is mounted with `--perms 1777` (world-writable + sticky, exactly like a real system
+    # `/tmp`) rather than bwrap's default `0755`. A 0755 tmpfs is writable *only* by the uid that
+    # owns its root inode; when this sandbox's user namespace maps the command to a uid other than
+    # that owner (seen in the wild: a root-owned `/tmp` inside the userns while the command runs as
+    # an unprivileged uid), a 0755 `/tmp` is read-only to the command. That matters more here than
+    # on a normal host because the sandbox leaves `/tmp` as the *only* writable entry in the
+    # standard temp-dir search path -- the `--tmpfs /var` below shadows `/var/tmp` with an empty
+    # tmpfs and there is no `/usr/tmp` under the read-only `/usr` bind -- so `tempfile.gettempdir()`
+    # (and pytest's `tmp_path`, etc.) has no `/var/tmp` cushion to fall back to and drops straight
+    # to `os.getcwd()`, i.e. the workspace root, scattering temp dirs into the user's checkout. A
+    # 1777 `/tmp` is writable by any uid the userns might use, closing that hole. See
+    # docs/adrs/sandbox-tmp-is-1777-so-any-uid-can-write.md.
+    args += [
+        "--perms", "1777", "--tmpfs", "/tmp", "--tmpfs", "/var", "--dev", "/dev", "--proc", "/proc"]
 
     usr = Path("/usr")
     etc = Path("/etc")

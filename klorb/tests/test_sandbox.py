@@ -257,6 +257,20 @@ def test_argv_chdir_is_the_workspace_root(tmp_path: Path) -> None:
     assert argv[argv.index("--chdir") + 1] == str((tmp_path / "ws").resolve())
 
 
+def test_argv_tmpfs_tmp_is_world_writable_and_sticky(tmp_path: Path) -> None:
+    # /tmp is the only writable entry in the sandbox's temp-dir search path (--tmpfs /var shadows
+    # /var/tmp, there is no /usr/tmp), so it must be writable regardless of which uid the userns
+    # maps the command to -- a default 0755 tmpfs is writable only by its owner uid. It is mounted
+    # 1777 (world-writable + sticky, like a real /tmp). See
+    # docs/adrs/sandbox-tmp-is-1777-so-any-uid-can-write.md.
+    argv = _argv(tmp_path)
+    tmpfs_tmp = next(
+        i for i, tok in enumerate(argv) if tok == "--tmpfs" and argv[i + 1] == "/tmp")
+    # --perms applies to the immediately following mount op, so it must sit right before --tmpfs /tmp.
+    assert argv[tmpfs_tmp - 2] == "--perms"
+    assert argv[tmpfs_tmp - 1] == "1777"
+
+
 def test_argv_masks_a_denied_file_inside_home_with_dev_null(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
