@@ -41,6 +41,17 @@ layout the host actually has (checked via `Path.is_symlink()`/`is_dir()` at laun
 hardcoded) so the sandbox's root matches the host's rather than synthesizing a merged view that
 isn't real."""
 
+DISPOSABLE_TMPFS_DIRS = (Path("/tmp"), Path("/var"))
+"""Mount points `build_bwrap_argv()` covers with a fresh, disposable `--tmpfs`. A directory bind
+whose target is *exactly* one of these is dropped rather than emitted: binding the host's `/tmp`
+(or `/var`) on top would clobber the scratch tmpfs the sandbox deliberately put there. That
+matters most for `/tmp` -- it commonly appears in `readDirs.allow` (so it lands in
+`SandboxDirs.read_only`), and a `--ro-bind /tmp /tmp` over the tmpfs makes the sandbox's `/tmp`
+read-only, which sends `tempfile.gettempdir()` (pytest's `tmp_path`, etc.) falling through to the
+workspace root and scatters temp dirs into the user's checkout. Only an *exact* match is dropped;
+a bind of a directory *under* `/tmp`/`/var` still lands on top of the tmpfs, as intended. See
+docs/adrs/sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md."""
+
 BwrapUnavailableReason = Literal["missing_binary", "no_userns"]
 """Why `bwrap_available()` returned `False`, for `BashTool`'s one-time fallback notice
 (`detect_bwrap_unavailable_reason()`): `"missing_binary"` (not installed) needs a different fix
@@ -344,19 +355,17 @@ def build_bwrap_argv(
 
     # Disposable scratch mounts go on *before* the binds so a bound directory that happens to
     # live under /tmp or /var (e.g. a workspace root beneath a system temp dir) lands on top of
-    # the fresh tmpfs rather than being wiped out by a tmpfs applied after it.
+    # the fresh tmpfs rather than being wiped out by a tmpfs applied after it. A later bind whose
+    # target *is* one of these mount points (`/tmp`, `/var`) is dropped entirely below rather than
+    # allowed to clobber the scratch tmpfs -- see DISPOSABLE_TMPFS_DIRS.
     #
-    # `/tmp` is mounted with `--perms 1777` (world-writable + sticky, exactly like a real system
-    # `/tmp`) rather than bwrap's default `0755`. A 0755 tmpfs is writable *only* by the uid that
-    # owns its root inode; when this sandbox's user namespace maps the command to a uid other than
-    # that owner (seen in the wild: a root-owned `/tmp` inside the userns while the command runs as
-    # an unprivileged uid), a 0755 `/tmp` is read-only to the command. That matters more here than
-    # on a normal host because the sandbox leaves `/tmp` as the *only* writable entry in the
-    # standard temp-dir search path -- the `--tmpfs /var` below shadows `/var/tmp` with an empty
-    # tmpfs and there is no `/usr/tmp` under the read-only `/usr` bind -- so `tempfile.gettempdir()`
-    # (and pytest's `tmp_path`, etc.) has no `/var/tmp` cushion to fall back to and drops straight
-    # to `os.getcwd()`, i.e. the workspace root, scattering temp dirs into the user's checkout. A
-    # 1777 `/tmp` is writable by any uid the userns might use, closing that hole. See
+    # `/tmp` is mounted `--perms 1777` (world-writable + sticky, exactly like a real system `/tmp`)
+    # rather than bwrap's default `0755`, so it is writable regardless of which uid the sandbox's
+    # user namespace maps the command to. Insurance: the sandbox leaves `/tmp` as the only writable
+    # entry in the standard temp-dir search path (`--tmpfs /var` shadows `/var/tmp`, there is no
+    # `/usr/tmp` under the read-only `/usr` bind), so if `/tmp` were ever not writable
+    # `tempfile.gettempdir()` (and pytest's `tmp_path`) would fall through to `os.getcwd()` -- the
+    # workspace root -- and scatter temp dirs into the user's checkout. See
     # docs/adrs/sandbox-tmp-is-1777-so-any-uid-can-write.md.
     args += [
         "--perms", "1777", "--tmpfs", "/tmp", "--tmpfs", "/var", "--dev", "/dev", "--proc", "/proc"]
@@ -369,19 +378,21 @@ def build_bwrap_argv(
 
     emitted: set[Path] = set()
     for d in dirs.read_write:
-        if _is_covered(d, [home]) or not d.exists():
+        if d in DISPOSABLE_TMPFS_DIRS or _is_covered(d, [home]) or not d.exists():
             continue
         _emit_bind(args, created, base_roots, d, "--bind")
         emitted.add(d)
 
     for d in dirs.read_only:
-        if _is_covered(d, base_roots) or _is_covered(d, list(emitted)) or not d.exists():
+        if (d in DISPOSABLE_TMPFS_DIRS or _is_covered(d, base_roots)
+                or _is_covered(d, list(emitted)) or not d.exists()):
             continue
         _emit_bind(args, created, base_roots, d, "--ro-bind")
         emitted.add(d)
 
     for d in path_dirs:
-        if _is_covered(d, base_roots) or _is_covered(d, list(emitted)) or not d.is_dir():
+        if (d in DISPOSABLE_TMPFS_DIRS or _is_covered(d, base_roots)
+                or _is_covered(d, list(emitted)) or not d.is_dir()):
             continue
         _emit_bind(args, created, base_roots, d, "--ro-bind")
         emitted.add(d)

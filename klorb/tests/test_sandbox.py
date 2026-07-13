@@ -271,6 +271,27 @@ def test_argv_tmpfs_tmp_is_world_writable_and_sticky(tmp_path: Path) -> None:
     assert argv[tmpfs_tmp - 1] == "1777"
 
 
+def test_argv_does_not_bind_tmp_over_the_scratch_tmpfs(tmp_path: Path) -> None:
+    # /tmp is commonly in readDirs.allow, which would put it in SandboxDirs.read_only and emit a
+    # `--ro-bind /tmp /tmp` that shadows the disposable scratch tmpfs with the host's read-only
+    # /tmp -- making the sandbox's /tmp read-only and sending tempfile.gettempdir() falling back to
+    # the workspace root. The disposable tmpfs must win. See
+    # docs/adrs/sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md.
+    home = tmp_path / "home"
+    home.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    dirs = compute_sandbox_dirs(
+        workspace_root=ws, home=home, trusted=True,
+        read_dirs=DirRules(allow=[Path("/tmp")]), write_dirs=DirRules())
+    argv = build_bwrap_argv(workspace_root=ws, home=home, env={"HOME": str(home)}, dirs=dirs)
+    # A --tmpfs /tmp is present; no --bind/--ro-bind names /tmp as its target on top of it.
+    assert "/tmp" in argv  # sanity: the tmpfs mount point is there
+    bind_targets = [
+        argv[i + 2] for i, tok in enumerate(argv) if tok in ("--bind", "--ro-bind")]
+    assert "/tmp" not in bind_targets
+
+
 def test_argv_masks_a_denied_file_inside_home_with_dev_null(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
