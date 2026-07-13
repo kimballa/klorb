@@ -105,8 +105,16 @@ class GrepTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        dirname = args["dirname"]
-        queries = args["queries"]
+        try:
+            dirname = args["dirname"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'dirname'. Provide the directory to search under.")
+        try:
+            queries = args["queries"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
         if not isinstance(queries, list) or not queries:
             raise ValueError("queries must be a non-empty array of search strings")
         for query in queries:

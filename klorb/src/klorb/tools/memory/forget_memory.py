@@ -51,8 +51,16 @@ class ForgetMemoryTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        namespace = args["namespace"]
-        filename = args["filename"]
+        try:
+            namespace = args["namespace"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'namespace'. Must be 'global' or 'workspace'.")
+        try:
+            filename = args["filename"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'filename'. Provide the name of the memory file.")
         logger.debug("ForgetMemory %s/%s", namespace, filename)
 
         if namespace not in ("global", "workspace"):

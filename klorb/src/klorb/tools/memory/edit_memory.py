@@ -75,8 +75,16 @@ class EditMemoryTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        namespace = args["namespace"]
-        filename = args["filename"]
+        try:
+            namespace = args["namespace"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'namespace'. Must be 'global' or 'workspace'.")
+        try:
+            filename = args["filename"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'filename'. Provide the name of the memory file.")
         logger.debug("EditMemory %s/%s (start_line=%s, end_line=%s)",
                      namespace, filename, args.get("start_line"), args.get("end_line"))
 

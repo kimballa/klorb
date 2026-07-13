@@ -68,8 +68,16 @@ class FindFileTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        dirname = args["dirname"]
-        pattern = args["pattern"]
+        try:
+            dirname = args["dirname"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'dirname'. Provide the directory to search under.")
+        try:
+            pattern = args["pattern"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'pattern'. Provide the filename glob pattern to match.")
         case_insensitive = args.get("case_insensitive", False)
         logger.debug(
             "FindFile %r in %r (case_insensitive=%s)", pattern, dirname, case_insensitive)

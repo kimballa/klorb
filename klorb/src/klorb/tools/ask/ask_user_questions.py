@@ -109,7 +109,12 @@ class AskUserQuestionsTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        raw_questions = args["questions"]
+        try:
+            raw_questions = args["questions"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'questions'. Provide a non-empty list of questions "
+                "to ask the user.")
         if not isinstance(raw_questions, list) or not raw_questions:
             raise ValueError("'questions' must be a non-empty list.")
         raise AskUserQuestionsRequired(parse_questions(raw_questions))

@@ -73,9 +73,21 @@ class ReplaceAllTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        filename = args["filename"]
-        search = args["search"]
-        new_text = args["new_text"]
+        try:
+            filename = args["filename"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'filename'. Provide the path of the file to edit.")
+        try:
+            search = args["search"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'search'. Provide the text (or regex) to search for.")
+        try:
+            new_text = args["new_text"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'new_text'. Provide the replacement text.")
         is_regex = args.get("is_regex", False)
         case_insensitive = args.get("case_insensitive", False)
         multiline = args.get("multiline", False)

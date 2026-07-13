@@ -103,11 +103,36 @@ class EditFileCore:
         `"re-ReadScratchpad your scratchpad"`), so the message stays accurate for whichever
         caller (`EditFileTool`/`EditScratchpadTool`) invoked this.
         """
-        start_line = args["start_line"]
-        end_line = args["end_line"]
-        start_text = args["start_text"]
-        end_text = args["end_text"]
-        new_text = args["new_text"]
+        try:
+            start_line = args["start_line"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'start_line'. Provide the 1-based line number where "
+                "the edit begins.")
+        try:
+            end_line = args["end_line"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'end_line'. Provide the 1-based line number where the "
+                "edit ends.")
+        try:
+            start_text = args["start_text"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'start_text'. Provide the exact current content of "
+                "start_line, to confirm the edit is anchored correctly.")
+        try:
+            end_text = args["end_text"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'end_text'. Provide the exact current content of "
+                "end_line, to confirm the edit is anchored correctly.")
+        try:
+            new_text = args["new_text"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'new_text'. Provide the replacement text for the "
+                "start_line..end_line range.")
         context_before = args.get("context_before")
         context_after = args.get("context_after")
 

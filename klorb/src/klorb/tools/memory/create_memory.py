@@ -66,9 +66,24 @@ class CreateMemoryTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        namespace = args["namespace"]
-        filename = args["filename"]
-        logger.debug("CreateMemory %s/%s (%d bytes)", namespace, filename, len(args["content"]))
+        try:
+            namespace = args["namespace"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'namespace'. Must be 'global' or 'workspace'.")
+        try:
+            filename = args["filename"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'filename'. Provide the name of the memory file to "
+                "create.")
+        try:
+            content = args["content"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'content'. Provide the contents for the new memory "
+                "file (may be an empty string).")
+        logger.debug("CreateMemory %s/%s (%d bytes)", namespace, filename, len(content))
 
         if namespace not in ("global", "workspace"):
             raise ValueError(f"namespace must be 'global' or 'workspace', got {namespace!r}")

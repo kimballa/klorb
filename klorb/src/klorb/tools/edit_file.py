@@ -57,7 +57,11 @@ class EditFileTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        filename = args["filename"]
+        try:
+            filename = args["filename"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'filename'. Provide the path of the file to edit.")
         logger.debug("EditFile %s (start_line=%s, end_line=%s)",
                      filename, args.get("start_line"), args.get("end_line"))
 

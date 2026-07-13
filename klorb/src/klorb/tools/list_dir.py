@@ -54,7 +54,11 @@ class ListDirTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        dirname = args["dirname"]
+        try:
+            dirname = args["dirname"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'dirname'. Provide the path of the directory to list.")
         logger.debug("ListDir %r", dirname)
 
         path, verdict = resolve_and_evaluate_read(self.context, dirname)

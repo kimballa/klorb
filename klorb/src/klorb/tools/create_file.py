@@ -55,8 +55,18 @@ class CreateFileTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        filename = args["filename"]
-        logger.debug("CreateFile %s (%d bytes)", filename, len(args["content"]))
+        try:
+            filename = args["filename"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'filename'. Provide the path of the file to create.")
+        try:
+            content = args["content"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'content'. Provide the contents for the new file "
+                "(may be an empty string).")
+        logger.debug("CreateFile %s (%d bytes)", filename, len(content))
 
         path, verdict = resolve_and_evaluate_write(self.context, filename)
         raise_if_not_allowed(

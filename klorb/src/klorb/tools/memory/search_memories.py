@@ -66,7 +66,11 @@ class SearchMemoriesTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        queries = args["queries"]
+        try:
+            queries = args["queries"]
+        except KeyError:
+            raise ValueError(
+                "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
         if not isinstance(queries, list) or not queries:
             raise ValueError("queries must be a non-empty array of search sequences")
         for query in queries:
