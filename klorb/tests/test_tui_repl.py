@@ -45,7 +45,10 @@ from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel
 from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.permission_ask_panel import (
+    _MAX_COMMAND_PREVIEW_LINES,
+    _MAX_SECONDARY_TEXT_LINES,
     PERMISSION_ASK_COMMAND_ID,
+    PERMISSION_ASK_DETAIL_ID,
     PERMISSION_ASK_GRANTED_ID,
     PERMISSION_ASK_GRID_ID,
     PERMISSION_ASK_HEADER_ID,
@@ -1842,6 +1845,50 @@ async def test_more_indicator_is_never_focused_so_it_cannot_steal_enter_from_the
         await pilot.press("enter")
         await pilot.pause()
         assert app.decision == PermissionDecision(action="allow", scope="once")
+
+
+async def test_every_body_static_is_height_capped_so_a_long_line_cannot_push_the_grid_off_screen(
+) -> None:
+    """Belt-and-suspenders regression: every variable-content body `Static` -- the intent line, the
+    command preview, the risk rationale, the per-item detail, and the granted-scope line -- is
+    clipped to a bounded number of rows at mount, so no single very long line (which soft-wraps to
+    arbitrarily many rows once rendered) can grow the panel tall enough to push the decision grid
+    off the bottom of the screen. Rendered here *without* `preview_wrap_width`, so the command
+    preview's own content-level truncation is deliberately not in play and only the height cap
+    protects it. Uncapped, the intent (~28 rows), command and detail (~40 rows each), rationale
+    (~28 rows) and granted line together dwarf even this tall test terminal; capped, they sum well
+    under it and the grid stays fully on screen. See `PermissionAskPanel._cap_body_static_heights`,
+    docs/adrs/cap-every-permission-ask-body-static-height.md."""
+    huge = "x" * 4000
+    ctx = PermissionAskContext(
+        command_text="python3 -c " + huge, is_compound=True,
+        item_command_text="python3 -c " + huge,
+        intent="run an inline one-liner that does a whole lot of things " * 40,
+        resource_description="run command: python3 -c " + huge)
+
+    class _Harness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Vertical()
+
+        async def on_mount(self) -> None:
+            await self.query_one(Vertical).mount(PermissionAskPanel(
+                ctx, risk_score=8,
+                risk_rationale="this rewrites files in place and is hard to undo " * 40,
+                granted_command_patterns=[["python3", huge]]))
+
+    app = _Harness()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        for capped_id in (
+            PERMISSION_ASK_INTENT_ID, PERMISSION_ASK_DETAIL_ID,
+            PERMISSION_ASK_RATIONALE_ID, PERMISSION_ASK_GRANTED_ID,
+        ):
+            assert app.query_one(f"#{capped_id}", Static).region.height <= _MAX_SECONDARY_TEXT_LINES
+        command = app.query_one(f"#{PERMISSION_ASK_COMMAND_ID}", Static)
+        assert command.region.height <= _MAX_COMMAND_PREVIEW_LINES
+        grid = app.query_one(f"#{PERMISSION_ASK_GRID_ID}", GridContainer)
+        assert 0 <= grid.region.y
+        assert grid.region.bottom <= app.size.height
 
 
 @pytest.mark.parametrize(("column", "row", "expected_action", "expected_scope"), [

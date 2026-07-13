@@ -4,10 +4,6 @@
 
 * `grep -n * *` is already allowlisted but it keeps asking over and over; why?
 
-* sometimes very large heredocs show up in the bash tool approval panel and completely push all the
-  actual approval options off the bottom of the screen. This should all be truncated to a small
-  number of lines with a `more...` below them.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
@@ -22,8 +18,6 @@
 
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
-  * **especially** while we're waiting for the nano model to classify a bash command,
-    which can take a couple of seconds, all the input is blocked.
 
 # Feature backlog
 

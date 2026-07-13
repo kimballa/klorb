@@ -59,6 +59,21 @@ to a `[more...]` indicator (`PERMISSION_ASK_MORE_ID`) — see `_command_preview`
 enough to display in full still gets the same `[more...]` indicator if `ask_ctx.is_compound` is
 set — see `PermissionAskPanel.compose`."""
 
+_MAX_SECONDARY_TEXT_LINES = 4
+"""Belt-and-suspenders height cap, in terminal rows, applied to every variable-content body
+`Static` *other* than the command preview — the `"Intent:"` line, the risk rationale, the per-item
+`resource_description` detail, and the granted-scope line. Each carries model- or resource-derived
+text that can be a single very long line with no `\\n` at all, which soft-wraps to arbitrarily many
+rows once rendered; without a cap, one such line (e.g. a `resource_description` of `"run command:
+<a 2000-character one-liner>"`, or a compound command's detail) grows tall enough to push the
+decision grid off the bottom of the screen — exactly the failure the command preview's own
+`_MAX_COMMAND_PREVIEW_LINES` truncation already prevents for the command itself. These secondary
+lines are informational and have no `[more...]` expand path of their own, so they are simply
+clipped at this many rows rather than truncated-with-an-indicator; the full command is always
+still reachable via the command preview's `[more...]`/`ExpandedCommandScreen`. See
+`PermissionAskPanel._cap_body_static_heights` and
+docs/adrs/cap-every-permission-ask-body-static-height.md."""
+
 _SECTION_END_CLASS = "ask-section-end"
 """CSS class carrying the trailing blank-line margin between one body section (header, command
 preview, detail, granted-directory info) and the next — applied to whichever widget actually
@@ -483,8 +498,32 @@ class PermissionAskPanel(Vertical):
         yield Vertical(*widgets, id="permission-ask-body")
 
     def on_mount(self) -> None:
+        self._cap_body_static_heights()
         self._refresh_selection()
         self.focus()
+
+    def _cap_body_static_heights(self) -> None:
+        """Clip every variable-content body `Static` to a bounded number of rows so no amount of
+        model- or resource-derived text — however long, and however much a single unbroken line
+        soft-wraps once rendered — can grow the panel tall enough to push the decision grid off the
+        bottom of the screen. The command preview is capped at `_MAX_COMMAND_PREVIEW_LINES`
+        (matching its own content-level truncation budget, so this is a pure backstop for it);
+        every other variable line is capped at the smaller `_MAX_SECONDARY_TEXT_LINES`.
+
+        Applied here, at mount, rather than as static `DEFAULT_CSS`, so the row counts stay defined
+        once in Python — next to the `_command_preview` truncation logic they mirror — instead of
+        being duplicated as magic numbers in a CSS string. See `_MAX_SECONDARY_TEXT_LINES`."""
+        caps: tuple[tuple[str, int], ...] = (
+            (PERMISSION_ASK_COMMAND_ID, _MAX_COMMAND_PREVIEW_LINES),
+            (PERMISSION_ASK_INTENT_ID, _MAX_SECONDARY_TEXT_LINES),
+            (PERMISSION_ASK_RATIONALE_ID, _MAX_SECONDARY_TEXT_LINES),
+            (PERMISSION_ASK_DETAIL_ID, _MAX_SECONDARY_TEXT_LINES),
+            (PERMISSION_ASK_GRANTED_ID, _MAX_SECONDARY_TEXT_LINES),
+        )
+        for widget_id, max_lines in caps:
+            for widget in self.query(f"#{widget_id}"):
+                widget.styles.max_height = max_lines
+                widget.styles.overflow_y = "hidden"
 
     def header_text(self) -> str:
         if self._ask_ctx.command_text is not None:
