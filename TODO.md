@@ -2,7 +2,7 @@
 
 # Bugs:
 
-* Need to accept 'description' in addition to 'intent' for bash tool, for Qwen's sake.
+*
 
 * LLM output is being added to the history in an markdown-aware way and if the llm
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird

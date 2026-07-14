@@ -623,8 +623,12 @@ class BashTool(Tool):
         try:
             intent = args["intent"]
         except KeyError:
-            raise ValueError("Missing required argument: 'intent'. Include a human-readable " +
-                             "description of the command's purpose.")
+            try:
+                # Some models really insist on sending a 'description' instead of 'intent'. Fine.
+                intent = args["description"]
+            except KeyError:
+                raise ValueError("Missing required argument: 'intent'. Include a human-readable " +
+                                "description of the command's purpose.")
 
         try:
             shell_lifetime = args["shell_lifetime"]
