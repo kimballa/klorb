@@ -1418,6 +1418,8 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
     ):
         nonlocal calls_made
         calls_made += 1
+        assert on_thinking_chunk is not None
+        assert on_chunk is not None
         if calls_made == 1:
             on_thinking_chunk("Round one thinking.")
             on_chunk("Round one reply.")
@@ -3460,6 +3462,7 @@ async def test_streaming_response_updates_widget_progressively() -> None:
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
+        assert on_chunk is not None
         on_chunk("Hel")
         on_chunk("lo")
         return _reply("Hello")
@@ -3488,6 +3491,8 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
+        assert on_thinking_chunk is not None
+        assert on_chunk is not None
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
         on_chunk("Hello")
@@ -3522,6 +3527,8 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
+        assert on_thinking_chunk is not None
+        assert on_chunk is not None
         on_thinking_chunk("First paragraph.\n\nSecond paragraph.")
         on_chunk("Hello")
         return _reply("Hello")
@@ -3550,6 +3557,8 @@ async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
+        assert on_thinking_chunk is not None
+        assert on_chunk is not None
         on_thinking_chunk("check [status]")
         on_chunk("Hello")
         return _reply("Hello")
@@ -3583,6 +3592,8 @@ async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_t
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
+        assert on_thinking_chunk is not None
+        assert on_chunk is not None
         on_thinking_chunk("Thinking...")
         on_chunk("Hello")
         return _reply("Hello")
@@ -3616,6 +3627,8 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
         on_thinking_chunk=None, cancel_event=None,
     ):
+        assert on_thinking_chunk is not None
+        assert on_chunk is not None
         on_thinking_chunk("First bit of thinking.")
         first_chunk_sent.set()
         release_rest_of_turn.wait(timeout=5)
