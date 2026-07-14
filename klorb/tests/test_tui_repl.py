@@ -20,7 +20,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Grid as GridContainer
 from textual.containers import Vertical, VerticalScroll
 from textual.content import Content
+from textual.geometry import Offset
 from textual.pilot import Pilot
+from textual.screen import Screen
 from textual.widgets import Input, Markdown, Static
 
 from klorb import process_config as process_config_module
@@ -75,6 +77,7 @@ from klorb.tui.repl import (
     PermissionBadge,
     PromptInput,
     ReplApp,
+    SelectionSafeScreen,
     ToolCallLimitScreen,
     ToolCallStatic,
     _handle_repl_crash,
@@ -272,6 +275,33 @@ async def test_error_console_crash_dump_is_captured_by_crash_log_tee(tmp_path: P
     assert "boom" in stream.getvalue()
     assert tee.opened_log_path() == log_path
     assert "boom" in log_path.read_text(encoding="utf-8")
+
+
+async def test_selection_safe_screen_drops_hit_on_detached_widget() -> None:
+    """A `MouseDown` hit-test that resolves to a detached (parent-less) widget — as happens
+    when a click lands on a `MarkdownParagraph` mid streaming-remount — is dropped so Textual's
+    text-selection code never dereferences the widget's `None` parent and crashes the app. See
+    docs/adrs/drop-mousedown-on-detached-widget-to-avoid-selection-crash.md.
+    """
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test():
+        screen = app.screen
+        assert isinstance(screen, SelectionSafeScreen)
+
+        detached = Markdown("x")  # never mounted, so its parent is None
+        assert detached.parent is None
+        with patch.object(
+                Screen, "get_widget_and_offset_at", return_value=(detached, Offset(0, 0))):
+            assert screen.get_widget_and_offset_at(3, 4) == (None, None)
+
+        # An attached widget passes straight through, so normal selection still works.
+        attached = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert attached.parent is not None
+        with patch.object(
+                Screen, "get_widget_and_offset_at", return_value=(attached, Offset(1, 2))):
+            assert screen.get_widget_and_offset_at(3, 4) == (attached, Offset(1, 2))
 
 
 async def test_status_bar_shows_zero_tokens_against_model_context_window_on_mount() -> None:

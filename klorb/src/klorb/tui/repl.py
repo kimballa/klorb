@@ -20,6 +20,7 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
+from textual.geometry import Offset
 from textual.message import Message
 from textual.screen import ModalScreen, Screen
 from textual.types import IgnoreReturnCallbackType
@@ -1005,6 +1006,31 @@ class PermissionBadge(Static):
         return Text(text, style=self.get_component_rich_style(component), justify="right")
 
 
+class SelectionSafeScreen(Screen[None]):
+    """The app's default screen, hardened against a Textual text-selection race.
+
+    Textual starts an app-level text selection on `MouseDown` by hit-testing the coordinate,
+    then reading `widget.parent.region` to anchor the selection. During a streaming `Markdown`
+    re-render, paragraph widgets are detached and remounted rapidly, so a click can land on a
+    `MarkdownParagraph` that the compositor's spatial map still reports at that coordinate even
+    though it has already been detached (`parent is None`). Textual then dereferences the
+    `None` parent and the whole app crashes with `AttributeError: 'NoneType' object has no
+    attribute 'region'`.
+
+    We drop a hit on a detached widget so selection simply doesn't begin on it; the next
+    render re-hit-tests cleanly. See
+    `docs/adrs/drop-mousedown-on-detached-widget-to-avoid-selection-crash.md`.
+    """
+
+    def get_widget_and_offset_at(
+        self, x: int, y: int
+    ) -> tuple[Widget | None, Offset | None]:
+        widget, offset = super().get_widget_and_offset_at(x, y)
+        if widget is not None and not isinstance(widget, Screen) and widget.parent is None:
+            return None, None
+        return widget, offset
+
+
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
 
@@ -1217,6 +1243,11 @@ class ReplApp(App[None]):
             yield Footer(show_command_palette=False)
             yield PermissionBadge(id=PERMISSION_BADGE_ID)
             yield Static(id=STATUS_BAR_ID)
+
+    def get_default_screen(self) -> Screen:
+        """Use `SelectionSafeScreen` so a click during a streaming `Markdown` re-render can't
+        crash the app via Textual's text-selection hit-test (see the class docstring)."""
+        return SelectionSafeScreen(id="_default")
 
     def get_current_model_name(self) -> str:
         """Return the identifier of the currently active model — see `ModelCommandProvider`."""
