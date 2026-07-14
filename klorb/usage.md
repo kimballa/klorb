@@ -15,6 +15,8 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb system-prompt` [`--role` *ROLE*] [`--model` *MODEL*] [`--config` *FILE*]
 
+`klorb models` [`--json` | `--brief`] [`--costs`]
+
 ## DESCRIPTION
 
 klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
@@ -28,7 +30,9 @@ Invoked as `klorb init` (only recognized when `init` is the very first
 argument), it instead bootstraps a `klorb-config.json` file and a `klorb`
 Invoked as `klorb system-prompt` (only recognized when `system-prompt` is the
 very first argument), it dumps the resolved system prompt and tool definitions
-to stdout — see COMMANDS below.
+to stdout — see COMMANDS below. Invoked as `klorb models` (only recognized
+when `models` is the very first argument), it lists every model klorb has
+discovered — see COMMANDS below.
 
 ## COMMANDS
 
@@ -60,6 +64,21 @@ to stdout — see COMMANDS below.
   configured via the `klorb-config.json` file stack). `--config` layers an
   additional config file on top of the usual `/etc`, per-user, and
   per-project files. Exit status is `0` on success.
+* `models` [`--json` | `--brief`] [`--costs`]
+
+  Lists every model `ModelRegistry` discovers (built-in and user-added, see
+  `docs/specs/model-framework.md`), sorted by name. With no flags, prints a
+  column-aligned table (no vertical borders, a single horizontal rule under
+  the header row) of each model's name, family, version, and capabilities.
+  `--json` instead emits a JSON array of each model's data. `--brief` emits
+  only each model's OpenRouter name, one per line, and no other fields.
+  `--json` and `--brief` are mutually exclusive. `--costs` looks up each
+  model's current per-token cost from OpenRouter (live, not stored — see
+  `docs/adrs/fetch-model-pricing-live-not-from-json.md`), throttled to
+  `klorb.models.openrouter_pricing.MAX_PRICING_REQUESTS_PER_SECOND` requests
+  per second, and folds it into the table (as an `IN $/MTOK`/`OUT $/MTOK`
+  column pair) or the `--json` output (as a `costs` key); it's ignored with
+  `--brief`. Exit status is always `0`.
 ## OPTIONS
 
 * `-m` *PROMPT*, `--message` *PROMPT*
@@ -236,10 +255,28 @@ Dump the system prompt for a different role and model:
 klorb system-prompt --role auditor --model openai/gpt-5-nano
 ```
 
+List every discovered model as a table:
+
+```
+klorb models
+```
+
+List just the model names, for scripting:
+
+```
+klorb models --brief
+```
+
+List every model as JSON, with live per-token pricing:
+
+```
+klorb models --json --costs
+```
+
 ## SEE ALSO
 
 `docs/specs/openrouter-prompt-client.md`, `docs/specs/terminal-repl.md`,
 `docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`,
 `docs/specs/process-and-session-config.md`,
 `docs/specs/persisted-json-schema-versioning.md`, `docs/specs/klorb-init.md`,
-`docs/specs/tool-call-logging.md`
+`docs/specs/tool-call-logging.md`, `docs/specs/model-framework.md`

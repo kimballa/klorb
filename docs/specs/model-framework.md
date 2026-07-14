@@ -153,6 +153,23 @@ OpenRouter's public models listing.
   Returns `None` — never raises — on any failure (network error, timeout, malformed
   response, model not listed). See [[fetch-model-pricing-live-not-from-json]] for why this
   is fetched live rather than stored in a model's JSON file.
+  `fetch_openrouter_pricing_for_models(model_names) -> dict[str, ModelPricing | None]` looks
+  up several models at once — one `fetch_openrouter_pricing()` call per name, throttled to at
+  most `MAX_PRICING_REQUESTS_PER_SECOND` (a module constant, `8.0` by default, hand-editable if
+  OpenRouter's actual rate limit ever changes) requests per second, so a caller listing pricing
+  for a long model list doesn't burst-hit OpenRouter.
+* `klorb models` [`--json` | `--brief`] [`--costs`] (`run_models_cli()` in
+  `klorb/src/klorb/cli.py`, dispatched from `main()` the same way `klorb init` and
+  `klorb system-prompt` are — see `klorb/usage.md`) prints every model `ModelRegistry`
+  discovers, sorted by name: a column-aligned table by default (no vertical borders between
+  columns, one horizontal rule under the header row and nowhere else), a JSON array of each
+  model's data (`name`, `family`, `model_version`, `settings`, `capabilities`,
+  `klorb_capabilities`) with `--json`, or just each model's OpenRouter name — one per line, no
+  other fields — with `--brief`. `--costs` looks up live pricing via
+  `fetch_openrouter_pricing_for_models` and folds it into either output format (an `IN
+  $/MTOK`/`OUT $/MTOK` column pair in the table, or a `costs` key — `null` if unavailable — in
+  each `--json` object); it's a no-op with `--brief`, which never fetches pricing since it
+  never prints anything but names.
 * [[session-and-turns]]'s `Session.active_model_name()` looks up `SessionConfig.model` in a
   `ModelRegistry` and, when it's registered, calls the resulting `Model.name()` to get the
   identifier passed to `ApiProvider.send_prompt()`; an unregistered model string is passed

@@ -11,7 +11,9 @@ info" — see `klorb.tui.model_info_commands`) wants to display it.
 
 import json
 import logging
+import time
 import urllib.request
+from collections.abc import Iterable
 
 from pydantic import BaseModel
 
@@ -23,6 +25,12 @@ OPENROUTER_MODELS_ENDPOINT = f"{OPENROUTER_BASE_URL}/models"
 DEFAULT_PRICING_FETCH_TIMEOUT = 5.0
 """Default socket timeout (seconds) for `fetch_openrouter_pricing()` — short enough that a
 "Show model info" command doesn't hang the UI for long if OpenRouter is unreachable."""
+
+MAX_PRICING_REQUESTS_PER_SECOND = 8.0
+"""Ceiling on how many `fetch_openrouter_pricing()` calls `fetch_openrouter_pricing_for_models()`
+issues per second, so looking up pricing for a long model list (e.g. `klorb models --costs`)
+doesn't hammer OpenRouter with a burst of near-simultaneous requests. Edit by hand if
+OpenRouter's actual rate limit ever changes."""
 
 
 class ModelPricing(BaseModel):
@@ -69,3 +77,28 @@ def fetch_openrouter_pricing(
             logger.warning("Malformed OpenRouter pricing for %s: %s", model_name, exc)
             return None
     return None
+
+
+def fetch_openrouter_pricing_for_models(
+    model_names: Iterable[str],
+    *,
+    timeout: float = DEFAULT_PRICING_FETCH_TIMEOUT,
+    max_requests_per_second: float = MAX_PRICING_REQUESTS_PER_SECOND,
+) -> dict[str, ModelPricing | None]:
+    """Look up pricing for every name in `model_names`, one `fetch_openrouter_pricing()` call
+    per model, throttled to at most `max_requests_per_second` requests per second (see
+    `MAX_PRICING_REQUESTS_PER_SECOND`). Returns a dict keyed by model name; a name whose lookup
+    failed (network error, unlisted model, malformed response — see `fetch_openrouter_pricing`)
+    maps to `None`.
+    """
+    min_interval = 1.0 / max_requests_per_second
+    results: dict[str, ModelPricing | None] = {}
+    last_request_at: float | None = None
+    for model_name in model_names:
+        if last_request_at is not None:
+            wait = min_interval - (time.monotonic() - last_request_at)
+            if wait > 0:
+                time.sleep(wait)
+        last_request_at = time.monotonic()
+        results[model_name] = fetch_openrouter_pricing(model_name, timeout=timeout)
+    return results

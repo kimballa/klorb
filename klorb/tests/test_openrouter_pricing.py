@@ -2,12 +2,17 @@
 """Tests for klorb.models.openrouter_pricing."""
 
 import json
+import time
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 import pytest
 
-from klorb.models.openrouter_pricing import fetch_openrouter_pricing
+from klorb.models.openrouter_pricing import (
+    ModelPricing,
+    fetch_openrouter_pricing,
+    fetch_openrouter_pricing_for_models,
+)
 
 
 def _response(payload: dict) -> MagicMock:
@@ -80,3 +85,27 @@ def test_fetch_openrouter_pricing_returns_none_on_malformed_pricing_values() -> 
         pricing = fetch_openrouter_pricing("openai/gpt-5-nano")
 
     assert pricing is None
+
+
+def test_fetch_openrouter_pricing_for_models_returns_a_result_per_model() -> None:
+    pricing = ModelPricing(input_cost_per_mtok=1.0, output_cost_per_mtok=2.0)
+    with patch(
+        "klorb.models.openrouter_pricing.fetch_openrouter_pricing",
+        side_effect=[pricing, None],
+    ) as mock_fetch:
+        result = fetch_openrouter_pricing_for_models(["a/one", "b/two"], max_requests_per_second=1000.0)
+
+    assert result == {"a/one": pricing, "b/two": None}
+    assert mock_fetch.call_count == 2
+    mock_fetch.assert_any_call("a/one", timeout=5.0)
+    mock_fetch.assert_any_call("b/two", timeout=5.0)
+
+
+def test_fetch_openrouter_pricing_for_models_respects_max_requests_per_second() -> None:
+    with patch("klorb.models.openrouter_pricing.fetch_openrouter_pricing", return_value=None):
+        start = time.monotonic()
+        fetch_openrouter_pricing_for_models(["a", "b", "c"], max_requests_per_second=20.0)
+        elapsed = time.monotonic() - start
+
+    # Three requests at 20/s enforce two inter-request waits of 0.05s each.
+    assert elapsed >= 0.08

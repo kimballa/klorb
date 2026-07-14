@@ -12,6 +12,12 @@ from dotenv import load_dotenv
 
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, session_log_path
+from klorb.models.model import Model
+from klorb.models.openrouter_pricing import (
+    MAX_PRICING_REQUESTS_PER_SECOND,
+    ModelPricing,
+    fetch_openrouter_pricing_for_models,
+)
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
@@ -27,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 INIT_SUBCOMMAND = "init"
 SYSTEM_PROMPT_SUBCOMMAND = "system-prompt"
+MODELS_SUBCOMMAND = "models"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,7 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Subcommands:\n"
             "  init              Bootstrap a klorb-config.json and a `klorb` executable "
             "symlink.\n"
-            "  system-prompt     Dump the resolved system prompt and tool definitions.\n\n"
+            "  system-prompt     Dump the resolved system prompt and tool definitions.\n"
+            "  models            List every discovered model.\n\n"
             "Run `klorb <subcommand> --help` to see subcommand-specific flags."
         ),
     )
@@ -288,6 +296,169 @@ def run_system_prompt_cli(argv: list[str]) -> int:
     return 0
 
 
+_MODELS_TABLE_HEADERS = [
+    "NAME", "FAMILY", "VERSION", "CONTEXT", "MAX OUTPUT", "VISION", "THINKING", "TOOLS", "STREAM",
+]
+"""Column headers for `klorb models`' default table output, in the order each model's row is
+built by `_model_table_row`. `--costs` appends `IN $/MTOK`/`OUT $/MTOK` after these."""
+
+_MODELS_TABLE_GUTTER = "  "
+"""Spacing between columns in `klorb models`' table output — no vertical border characters,
+per `_render_models_table`."""
+
+
+def build_models_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for `klorb models`'s own flags
+    (`--json`/`--brief`/`--costs`) — see `run_models_cli()`.
+    """
+    parser = argparse.ArgumentParser(
+        prog="klorb models",
+        description="List every model klorb has discovered (built-in and user-added).",
+    )
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "--json", action="store_true",
+        help="Emit a JSON array of each model's data instead of a table.",
+    )
+    output_group.add_argument(
+        "--brief", action="store_true",
+        help="Emit only each model's OpenRouter name, one per line, no other fields.",
+    )
+    parser.add_argument(
+        "--costs", action="store_true",
+        help=(
+            "Look up each model's current per-token cost from OpenRouter (live, throttled to "
+            f"{MAX_PRICING_REQUESTS_PER_SECOND:g} requests/second — see "
+            "klorb.models.openrouter_pricing.MAX_PRICING_REQUESTS_PER_SECOND) and include it "
+            "in the output. Ignored with --brief, which never prints anything but names."
+        ),
+    )
+    return parser
+
+
+def _format_int(value: object) -> str:
+    return f"{value:,}" if isinstance(value, int) else "-"
+
+
+def _format_bool(value: object) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "-"
+
+
+def _model_table_row(model: Model, pricing: ModelPricing | None, *, include_costs: bool) -> list[str]:
+    capabilities = model.capabilities()
+    row = [
+        model.name(),
+        model.family() or "-",
+        model.model_version() or "-",
+        _format_int(capabilities.get("max_context_window")),
+        _format_int(capabilities.get("max_output_tokens")),
+        _format_bool(capabilities.get("vision")),
+        _format_bool(capabilities.get("thinking")),
+        _format_bool(capabilities.get("function_calling")),
+        _format_bool(capabilities.get("streaming")),
+    ]
+    if include_costs:
+        if pricing is None:
+            row += ["-", "-"]
+        else:
+            row += [f"{pricing.input_cost_per_mtok:g}", f"{pricing.output_cost_per_mtok:g}"]
+    return row
+
+
+def _render_models_table(models: list[Model], costs: dict[str, ModelPricing | None] | None) -> str:
+    """Render `models` as a column-aligned table with no vertical borders between columns and a
+    single horizontal rule under the header row (and nowhere else). `costs` (from `--costs`),
+    if given, appends an input/output $-per-MTok column pair; a model with no live pricing
+    available shows `-` in both.
+    """
+    headers = list(_MODELS_TABLE_HEADERS)
+    if costs is not None:
+        headers += ["IN $/MTOK", "OUT $/MTOK"]
+
+    rows: list[list[str]] = []
+    for model in models:
+        pricing = costs.get(model.name()) if costs is not None else None
+        rows.append(_model_table_row(model, pricing, include_costs=costs is not None))
+
+    widths = [max(len(header), *(len(row[i]) for row in rows)) if rows else len(header)
+              for i, header in enumerate(headers)]
+
+    def render_row(values: list[str]) -> str:
+        return _MODELS_TABLE_GUTTER.join(value.ljust(width) for value, width in zip(values, widths)).rstrip()
+
+    total_width = sum(widths) + len(_MODELS_TABLE_GUTTER) * (len(widths) - 1)
+    lines = [render_row(headers), "-" * total_width]
+    lines.extend(render_row(row) for row in rows)
+    return "\n".join(lines)
+
+
+def _model_to_dict(model: Model, pricing: ModelPricing | None, *, include_costs: bool) -> dict[str, Any]:
+    """Return `model`'s data as a plain JSON-serializable dict, in the same shape as its source
+    `klorb-model` JSON file's data (minus the `schema` envelope, which describes the file, not
+    the model). When `include_costs` is set (`--json --costs`), adds a `costs` key: `None` if
+    no live pricing could be found for this model, otherwise its per-MTok input/output cost —
+    see `run_models_cli`.
+    """
+    data: dict[str, Any] = {
+        "name": model.name(),
+        "family": model.family(),
+        "model_version": model.model_version(),
+        "settings": model.settings(),
+        "capabilities": model.capabilities(),
+        "klorb_capabilities": model.klorb_capabilities(),
+    }
+    if include_costs:
+        data["costs"] = None if pricing is None else {
+            "input_cost_per_mtok": pricing.input_cost_per_mtok,
+            "output_cost_per_mtok": pricing.output_cost_per_mtok,
+            "currency": pricing.currency,
+        }
+    return data
+
+
+def run_models_cli(argv: list[str]) -> int:
+    """Parse `argv` (the arguments following `klorb models`) and print every model
+    `ModelRegistry` discovers (built-in and user-added, see docs/specs/model-framework.md) to
+    stdout, sorted by name: a column-aligned table by default, a JSON array of each model's
+    data with `--json`, or just each model's OpenRouter name (one per line) with `--brief`.
+
+    `--costs` looks up each model's live per-token pricing from OpenRouter
+    (`klorb.models.openrouter_pricing.fetch_openrouter_pricing_for_models`, throttled to
+    `MAX_PRICING_REQUESTS_PER_SECOND` requests/second) and folds it into whichever output
+    format was chosen — an extra column pair in the table, or a `"costs"` key in each `--json`
+    object. It's a no-op with `--brief`, which never fetches pricing since it never prints
+    anything but names. Always returns `0`.
+    """
+    parser = build_models_parser()
+    args = parser.parse_args(argv)
+
+    models = sorted(ModelRegistry().models(), key=lambda model: model.name())
+
+    if args.brief:
+        for model in models:
+            print(model.name())
+        return 0
+
+    costs: dict[str, ModelPricing | None] | None = None
+    if args.costs:
+        costs = fetch_openrouter_pricing_for_models([model.name() for model in models])
+
+    if args.json:
+        model_dicts = []
+        for model in models:
+            pricing = costs.get(model.name()) if costs is not None else None
+            model_dicts.append(_model_to_dict(model, pricing, include_costs=args.costs))
+        print(json.dumps(model_dicts, indent=2))
+        return 0
+
+    print(_render_models_table(models, costs))
+    return 0
+
+
 def main() -> None:
     """Parse CLI arguments and either run a single prompt or start the interactive REPL.
 
@@ -318,6 +489,9 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == SYSTEM_PROMPT_SUBCOMMAND:
         raise SystemExit(run_system_prompt_cli(sys.argv[2:]))
+
+    if len(sys.argv) > 1 and sys.argv[1] == MODELS_SUBCOMMAND:
+        raise SystemExit(run_models_cli(sys.argv[2:]))
 
     parser = build_parser()
     args = parser.parse_args()
