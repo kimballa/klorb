@@ -24,7 +24,8 @@
       "Bash(echo *)",
       "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q)",
       "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q -k *)",
-      "Bash(venv/bin/isort --diff *)"
+      "Bash(venv/bin/isort --diff *)",
+      "Read(//tmp/**)"
     ]
   },
   "hooks": {

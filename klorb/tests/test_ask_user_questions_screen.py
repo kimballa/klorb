@@ -237,3 +237,23 @@ async def test_escape_from_inside_the_other_input_still_cancels() -> None:
         await pilot.pause()
 
         assert app.answer == AskUserQuestionsAnswer(cancelled=True)
+
+
+async def test_bracketed_option_and_question_text_do_not_crash_at_reflow() -> None:
+    """Model-authored labels, descriptions, headers, and question text can contain a literal
+    `[` that Rich would otherwise parse as console markup and crash the compositor with a
+    `MarkupError` at reflow (not at `Static.render()`, so this must mount through a real app to
+    reproduce). See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+    app = _AskUserQuestionsTestApp(AskUserQuestionsItemContext(
+        header="Pick [an-option]", question="Which [foo-bar] do you want?",
+        options=[_option("Use [foo-bar]", description="the [baz-qux] variant"), _option("Cookie")],
+        index=0, total=1))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Reaching here without a MarkupError is the assertion; confirm the panel actually
+        # mounted and its bracketed first row rendered verbatim.
+        app.query_one(AskUserQuestionsPanel)
+        first_row = app.query_one("#ask-user-questions-row-0", Static)
+        assert str(first_row.render()) == "Use [foo-bar]: the [baz-qux] variant"

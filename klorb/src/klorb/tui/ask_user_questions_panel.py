@@ -8,6 +8,7 @@ from typing import Callable
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
@@ -137,13 +138,18 @@ class AskUserQuestionsPanel(Vertical):
         self._on_dismiss = on_dismiss
 
     def compose(self) -> ComposeResult:
-        widgets: list[Widget] = [Static(self.header_text(), id=ASK_USER_QUESTIONS_HEADER_ID)]
+        # `markup=False` on the header and question: both carry arbitrary model-authored text,
+        # which is parsed as console markup by default and would crash the compositor at reflow
+        # on a literal `[` (see docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md).
+        widgets: list[Widget] = [
+            Static(self.header_text(), id=ASK_USER_QUESTIONS_HEADER_ID, markup=False)]
         widgets.append(Static(
-            self._ask_ctx.question, id=ASK_USER_QUESTIONS_TEXT_ID, classes=_SECTION_END_CLASS))
+            self._ask_ctx.question, id=ASK_USER_QUESTIONS_TEXT_ID, classes=_SECTION_END_CLASS,
+            markup=False))
 
         if self._ask_ctx.options:
             rows: list[Static] = [
-                Static(self._option_row_text(index), id=_row_id(index))
+                Static(self._option_row_content(index), id=_row_id(index))
                 for index in range(len(self._ask_ctx.options))
             ]
             rows.append(Static("Other...", id=ASK_USER_QUESTIONS_OTHER_ROW_ID))
@@ -164,11 +170,17 @@ class AskUserQuestionsPanel(Vertical):
     def header_text(self) -> str:
         return f"Question {self._ask_ctx.index + 1} of {self._ask_ctx.total} · {self._ask_ctx.header}"
 
-    def _option_row_text(self, index: int) -> str:
+    def _option_row_content(self, index: int) -> Content:
+        # A `Content` (already-resolved styled text) rather than a markup string: `label` and
+        # `description` are arbitrary model-authored text, so bolding the label with `[bold]`
+        # markup would re-parse that text and crash the compositor at reflow on a literal `[`.
+        # See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md.
         option = self._ask_ctx.options[index]
         prefix = "(Recommended) " if option.recommended else ""
-        label = f"[bold]{prefix}{option.label}:[/bold]"
-        return f"{label} {option.description}" if option.description else label
+        label = f"{prefix}{option.label}:"
+        if option.description:
+            return Content.assemble((label, "bold"), f" {option.description}")
+        return Content.assemble((label, "bold"))
 
     def _row_widget_id(self, row: int) -> str:
         return ASK_USER_QUESTIONS_OTHER_ROW_ID if row == self._other_row else _row_id(row)
