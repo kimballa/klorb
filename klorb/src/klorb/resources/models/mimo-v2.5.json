@@ -1,0 +1,21 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "xiaomi/mimo-v2.5",
+  "family": "mimo",
+  "model_version": "2.5",
+  "settings": {
+    "temperature": 0.2
+  },
+  "capabilities": {
+    "vision": true,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 1000000,
+    "max_output_tokens": 131072,
+    "function_calling": true,
+    "streaming": true
+  }
+}

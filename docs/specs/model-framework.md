@@ -115,12 +115,13 @@ OpenRouter's public models listing.
   * `find_by_capability(capability: str) -> Model | None` — the first registered model (by
     name, for a deterministic pick) whose `klorb_capabilities()` reports `capability`
     truthily, or `None` if none does. See `klorb.permissions.risk_classifier`'s use below.
-* klorb ships six built-in models as `klorb.resources/models/*.json`:
+* klorb ships seven built-in models as `klorb.resources/models/*.json`:
   `openai/gpt-5-nano` (klorb's default model, `klorb.openrouter.DEFAULT_MODEL`),
   `z-ai/glm-5.2`, `anthropic/claude-sonnet-5`, `qwen/qwen3-coder-next` (Qwen's
   coding-agent-focused model), `moonshotai/kimi-k2.7-code` (Moonshot AI's coding-focused
-  Kimi K2 release), and `openai/gpt-oss-120b:nitro` (OpenAI's open-weight reasoning
-  model, the only built-in model declaring `klorb_capabilities.BASH_SAFETY_EVAL`).
+  Kimi K2 release), `xiaomi/mimo-v2.5` (Xiaomi's omnimodal agentic model), and
+  `openai/gpt-oss-120b:nitro` (OpenAI's open-weight reasoning model, the only built-in
+  model declaring `klorb_capabilities.BASH_SAFETY_EVAL`).
 * `klorb.tui.model_commands.ModelCommandProvider` (`klorb/src/klorb/tui/model_commands.py`)
   is a Textual `command.Provider` offering a single `"Change model (<current>)"` command.
   Selecting it pushes `ModelSelectionScreen`, a modal with a text `Input` filter box above an
