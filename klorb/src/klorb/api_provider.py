@@ -15,12 +15,18 @@ class ProviderResponse(BaseModel):
     """The result of one `ApiProvider.send_prompt()` call: the reply plus request-level usage."""
 
     message: Message
-    """The assistant's reply. `message.num_tokens` is the completion-token count for this
-    response; `message.finish_reason` is the provider's reported stop reason."""
+    """The assistant's reply. `message.num_tokens` is a client-side `tiktoken` estimate of
+    the reply's own content (see `Message.num_tokens`), not the provider's billed
+    completion-token count; `message.finish_reason` is the provider's reported stop reason."""
 
     prompt_tokens: int
     """Total input tokens billed for this request (covers the full message list sent,
-    including the system prompt), as reported by the provider's usage stats."""
+    including the system prompt), as reported by the provider's usage stats. Retained for
+    logging/diagnostics only -- `klorb.session.Session` derives its own token accounting
+    entirely from each `Message`'s client-side `num_tokens` instead (see
+    docs/adrs/count-every-message-tokens-client-side-with-tiktoken.md), since a provider's
+    aggregate usage figures are reported per-request, not broken down per message, and can't
+    be reconciled against individual messages without their own tokenizer anyway."""
 
 
 class ResponseAborted(Exception):
@@ -50,8 +56,10 @@ class ApiProvider(ABC):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         timeout: float | None = None,
+        drop_reasoning: bool = False,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history (plus an optional system prompt) to a model
@@ -79,10 +87,16 @@ class ApiProvider(ABC):
         distinct from the main conversation's (e.g. an interactive approval-flow side call that
         must fail fast rather than stall a modal), not for the main conversation turn loop.
 
+        `drop_reasoning` (default `False`, from the active model's `Model.drop_reasoning()`)
+        controls whether prior turns' thinking/reasoning content is included in this request
+        at all: preserved and replayed by default, dropped entirely when `True`.
+
         If `on_chunk` is given, it is invoked once per non-empty text delta as the response
         streams in, in addition to the final reply being returned as usual. If
         `on_thinking_chunk` is given, it is invoked once per non-empty reasoning/thinking
-        text delta, separately from `on_chunk`.
+        text delta, separately from `on_chunk`. If `on_reasoning_details` is given, it is
+        invoked with the current, fully-merged `reasoning_details` structured payload (see
+        `Message.reasoning_details`) each time a new fragment of it arrives.
 
         If `cancel_event` is given and becomes set while the response is streaming in, the
         provider stops consuming the stream and raises `ResponseAborted` instead of

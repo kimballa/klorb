@@ -1,11 +1,10 @@
 # © Copyright 2026 Aaron Kimball
-"""Rough client-side token-count estimation for a single `Message`, used only to give the
-running context-usage footer a live number before a turn's real, server-reported counts come
-back (see `klorb.session.Session._settle_estimated_tokens` and
-docs/adrs/null-estimated-tokens-when-a-real-count-supersedes-them.md). klorb has no
-per-provider tokenizer, so every model is estimated via tiktoken's `o200k_base` encoding
-(the vocabulary behind OpenAI's newer models) regardless of which model is actually active --
-close enough for a live estimate that a round trip's real count supersedes within moments.
+"""Client-side token-count estimation for a single `Message`, treated as that message's
+definitive cost rather than a placeholder for a provider-reported count (see
+`klorb.message.Message.num_tokens` and docs/adrs/count-every-message-tokens-client-side-with-
+tiktoken.md). klorb has no per-provider tokenizer, so every model is estimated via tiktoken's
+`o200k_base` encoding (the vocabulary behind OpenAI's newer models) regardless of which model
+is actually active -- close enough for any provider's own tokenizer at negligible cost.
 
 This module also bundles that `o200k_base` encoding's BPE cache as klorb package data, so a
 fresh install never has to reach OpenAI's blob storage the first time `estimate_tokens()`

@@ -56,6 +56,12 @@ OpenRouter's public models listing.
     user configuring any model for any task by hand always works regardless of what it
     declares here — these flags inform only klorb's own defaults, never a validation gate on
     a user's explicit choice.
+  * `drop_reasoning() -> bool`, a concrete method returning `False` by default. `True` means
+    this model's prior turns' thinking/reasoning content (`Message.reasoning_details`
+    included) is stripped from the outgoing request rather than resent as-is —
+    [[session-and-turns]]'s `Session._drop_reasoning()` reads this to decide what
+    `ApiProvider.send_prompt(drop_reasoning=...)` gets for the active turn. See
+    [[preserve-reasoning-across-turns-by-default]].
 * `klorb.models.configured_model.ConfiguredModel`
   (`klorb/src/klorb/models/configured_model.py`) is the one concrete `Model` implementation
   in use: it wraps a parsed `klorb-model` JSON document (schema name `klorb-model`, see
@@ -80,11 +86,14 @@ OpenRouter's public models listing.
       "function_calling": true,
       "streaming": true
     },
-    "klorb_capabilities": {}
+    "klorb_capabilities": {},
+    "drop_reasoning": false
   }
   ```
 
-  There is no `pricing` field — see [[fetch-model-pricing-live-not-from-json]]. Every JSON
+  `drop_reasoning` is optional, defaulting to `false` when omitted — every packaged model
+  today omits it. There is no `pricing` field — see
+  [[fetch-model-pricing-live-not-from-json]]. Every JSON
   key besides `schema` uses the same snake_case as the `Model.capabilities()`/
   `klorb_capabilities()` dicts it's read into (rather than the dot-delineated lowerCamelCase
   [[process-and-session-config]] uses for the hand-authored `klorb-config.json`), so no key

@@ -142,6 +142,7 @@ bracketed value (`"[auto]"`/`"[deny]"`, 6 characters) plus 1 for breathing room 
 `refresh()` -- only `update()` does that -- which would otherwise clip a later, longer
 value's trailing `]`."""
 THINKING_LABEL = "<Thinking>"
+REASONING_DETAILS_LABEL = "<Reasoning>"
 TOOL_USE_LABEL = "<Tool use>"
 INTERACTION_RECORD_LABEL = "<Approval>"
 
@@ -206,6 +207,26 @@ def format_token_count(count: int) -> str:
     if value == int(value):
         return f"{int(value)}{suffix}"
     return f"{value}{suffix}"
+
+
+def _summarize_reasoning_details(entries: list[dict[str, Any]]) -> str | None:
+    """Return a compact indicator string for a turn's `reasoning_details` payload (see
+    `klorb.message.Message.reasoning_details`), or `None` if every entry carries its own
+    human-readable `text`/`summary` string -- content the `<Thinking>` block already shows in
+    full, since a provider's plain-text `reasoning` delta is itself composed from those same
+    entries. An entry with neither field (e.g. OpenRouter's opaque `reasoning.encrypted`
+    type) carries information the `<Thinking>` block can't display, so any such entry makes
+    the whole payload worth a one-line note confirming it was captured and will be resent on
+    a later turn.
+    """
+    opaque_count = sum(
+        1 for entry in entries
+        if not isinstance(entry.get("text"), str) and not isinstance(entry.get("summary"), str)
+    )
+    if opaque_count == 0:
+        return None
+    noun = "block" if len(entries) == 1 else "blocks"
+    return f"[{len(entries)} reasoning {noun} preserved, {opaque_count} encrypted]"
 
 
 _WORKSPACE_PATH_DISPLAY_MAX_CHARS = 40
@@ -1112,6 +1133,17 @@ class ReplApp(App[None]):
     }
 
     .thinking-body {
+        color: $text-muted;
+        padding: 0 2;
+        text-style: italic;
+    }
+
+    .reasoning-details-label {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
+
+    .reasoning-details-body {
         color: $text-muted;
         padding: 0 2;
         text-style: italic;
@@ -2225,7 +2257,11 @@ class ReplApp(App[None]):
         label and in italics, via a separate `Static` widget (not `Markdown`: reasoning text
         commonly spans multiple paragraphs, and Markdown's `*...*` emphasis syntax doesn't
         apply across blank-line-separated blocks, whereas Rich's `[italic]...[/italic]`
-        console markup styles every line regardless).
+        console markup styles every line regardless). A structured `reasoning_details`
+        payload, if the provider sends one, is rendered below the `<Thinking>` block as a
+        one-line `<Reasoning>` indicator (see `_summarize_reasoning_details`) -- but only when
+        it carries information the `<Thinking>` block can't show (e.g. an opaque/encrypted
+        entry); a payload made entirely of plain-text entries is suppressed as redundant.
 
         A turn with tool calls is really a sequence of rounds under the hood (see
         `Session._dispatch_turn`): each round streams its own thinking/response text, then, if
@@ -2255,6 +2291,8 @@ class ReplApp(App[None]):
         thinking_widget: Static | None = None
         thinking_accumulated = ""
         thinking_round: int | None = None
+        reasoning_details_widget: Static | None = None
+        reasoning_details_round: int | None = None
         round_index = 0
 
         def handle_chunk(delta_text: str) -> None:
@@ -2283,6 +2321,21 @@ class ReplApp(App[None]):
                 self.call_from_thread(
                     self._update_thinking_widget, thinking_widget, thinking_accumulated)
 
+        def handle_reasoning_details_chunk(entries: list[dict[str, Any]]) -> None:
+            nonlocal reasoning_details_widget, reasoning_details_round
+            if reasoning_details_round != round_index:
+                reasoning_details_widget = None
+                reasoning_details_round = round_index
+            text = _summarize_reasoning_details(entries)
+            if text is None:
+                return
+            if reasoning_details_widget is None:
+                reasoning_details_widget, _ = self.call_from_thread(
+                    self._mount_reasoning_details_widget, text)
+            else:
+                self.call_from_thread(
+                    self._update_reasoning_details_widget, reasoning_details_widget, text)
+
         def handle_tool_call(event: ToolCallEvent) -> None:
             nonlocal round_index
             summary_text, detail_text = self._render_tool_call(event)
@@ -2292,6 +2345,7 @@ class ReplApp(App[None]):
         try:
             response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
                 on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
+                on_reasoning_details=handle_reasoning_details_chunk,
                 cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
                 on_permission_ask=self._on_permission_ask,
                 on_ask_user_questions=self._on_ask_user_questions,
@@ -2312,7 +2366,7 @@ class ReplApp(App[None]):
     def _mount_response_widget(self, initial_text: str) -> Markdown:
         """Mount a new `Markdown` widget for a streaming response and return it. Also refreshes
         the status bar's token tally (see `_update_status_bar`): a new placeholder `Message`
-        with its own `estimated_tokens` was just appended to the session for this chunk (see
+        with its own `num_tokens` was just appended to the session for this chunk (see
         `Session._send_and_receive.handle_chunk`), so the footer should reflect it immediately
         rather than only once the whole turn finishes.
         """
@@ -2332,7 +2386,7 @@ class ReplApp(App[None]):
         mounted in the history at this point: `_send_prompt` starts a fresh widget rather than
         reusing this one once a round boundary (a tool call) has passed, so there's nothing
         mounted after it left to get stuck behind. Also refreshes the status bar (see
-        `_mount_response_widget`): the placeholder message's `estimated_tokens` grew along with
+        `_mount_response_widget`): the placeholder message's `num_tokens` grew along with
         `text`.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -2349,7 +2403,7 @@ class ReplApp(App[None]):
         verbatim, not be parsed as Textual console markup (an unescaped `[` in it can
         otherwise be misread as the start of a markup tag and raise `MarkupError`). Also
         refreshes the status bar (see `_mount_response_widget`): a new `role="thinking"`
-        placeholder message with its own `estimated_tokens` was just appended to the session.
+        placeholder message with its own `num_tokens` was just appended to the session.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -2366,8 +2420,35 @@ class ReplApp(App[None]):
         following the view to the bottom only if it was already pinned there before this
         change (see `_update_response_widget`) — the label mounted alongside `widget` never
         changes after being set, so only the body needs updating here. Also refreshes the
-        status bar: the placeholder message's `estimated_tokens` grew along with `text`.
+        status bar: the placeholder message's `num_tokens` grew along with `text`.
         """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        widget.update(text)
+        self._scroll_if_pinned(history, was_pinned)
+        self._update_status_bar()
+
+    def _mount_reasoning_details_widget(self, text: str) -> tuple[Static, Static]:
+        """Mount a left-justified `<Reasoning>` label followed by an italicized `Static`
+        widget showing `text` (see `_summarize_reasoning_details`), mirroring
+        `_mount_thinking_widget`'s label/body split and `markup=False` rationale, and return
+        `(body_widget, label_widget)`. Also refreshes the status bar: a new `role="thinking"`
+        placeholder message's `reasoning_details` was just set on the session (see
+        `Session._send_and_receive.handle_reasoning_details_chunk`).
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        label_widget = Static(REASONING_DETAILS_LABEL, classes="reasoning-details-label")
+        history.mount(label_widget)
+        widget = Static(text, classes="reasoning-details-body", markup=False)
+        history.mount(widget)
+        self._scroll_if_pinned(history, was_pinned)
+        self._update_status_bar()
+        return widget, label_widget
+
+    def _update_reasoning_details_widget(self, widget: Static, text: str) -> None:
+        """Update a `<Reasoning>` `Static` widget with the latest `text` (see
+        `_summarize_reasoning_details`), mirroring `_update_thinking_widget`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
@@ -2421,7 +2502,7 @@ class ReplApp(App[None]):
         so a call rendered while detail view is already active shows detail immediately rather
         than a summary the user would have to toggle past. Also refreshes the status bar (see
         `_mount_response_widget`): `Session._run_tool_calls` has already appended this call's
-        `role="tool_response"` message (with its own `estimated_tokens`) by the time
+        `role="tool_response"` message (with its own `num_tokens`) by the time
         `callbacks.on_tool_call` — and so this method — runs.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -2442,11 +2523,14 @@ class ReplApp(App[None]):
         restored conversation reads the same way it would have live: one `Static`/`Markdown`/
         `ToolCallStatic` per user/assistant/thinking/tool-use message, in original order, via
         the same `_mount_response_widget`/`_mount_thinking_widget`/`_mount_tool_call_widget`
-        helpers a live turn uses. `role="system"`/`"tool_defs"` bookkeeping messages are
-        skipped, matching how they're never rendered live either (see
-        `Session._ensure_system_message`/`_ensure_tool_defs_message`). A `role="tool_response"`
-        message is rendered together with its matching `role="tool_use"` entry, via
-        `_render_restored_tool_call`, rather than on its own.
+        helpers a live turn uses. A `"thinking"` message's `reasoning_details`, if it carries
+        one, is rendered right after it via `_mount_reasoning_details_widget`, subject to the
+        same `_summarize_reasoning_details()` suppression a live turn applies.
+        `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching how they're
+        never rendered live either (see `Session._ensure_system_message`/
+        `_ensure_tool_defs_message`). A `role="tool_response"` message is rendered together
+        with its matching `role="tool_use"` entry, via `_render_restored_tool_call`, rather
+        than on its own.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         responses_by_call_id = {
@@ -2466,6 +2550,10 @@ class ReplApp(App[None]):
                 if message.processing_state == "aborted":
                     text = f"{text}\n\n(interrupted)"
                 self._mount_thinking_widget(text)
+                if message.reasoning_details:
+                    reasoning_details_text = _summarize_reasoning_details(message.reasoning_details)
+                    if reasoning_details_text is not None:
+                        self._mount_reasoning_details_widget(reasoning_details_text)
             elif message.role == "tool_use":
                 for call in message.tool_calls or []:
                     summary_text, detail_text = self._render_restored_tool_call(

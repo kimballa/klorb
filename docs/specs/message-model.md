@@ -41,20 +41,22 @@ this one shape.
     JSON-encoded arguments).
   * `tool_call_id: str | None` — populated on a `role="tool_response"` `Message`: the
     `ToolCallRequest.id` (from the preceding `tool_use` message) this is the result of.
-  * `num_tokens: int` — the token count attributed to this message. For an assistant reply,
-    this comes directly from the provider's reported completion tokens; for a user message,
-    it's derived after the fact (see [[derive-user-turn-token-counts-from-a-prompt-token-delta]]).
-  * `estimated_tokens: int | None` — a cheap, client-side estimate of this message's current
-    token cost (`klorb.token_estimate.estimate_tokens`, a `tiktoken`-based count), or `None`
-    once a real, server-reported count has superseded it. Set the moment content exists for
-    the message — at construction for a bookkeeping/user/`tool_response` message, and
-    refreshed on every streamed chunk for an in-progress assistant/thinking placeholder — so
-    `Session.total_tokens_used()` has a live number to report before any round trip completes.
-    Cleared back to `None` for every message in the buffer, in one sweep, the moment any round
-    completes (its real `prompt_tokens` already covers everything sent as that round's
-    input), except on a reply/thinking placeholder left `"aborted"` mid-stream, which was
-    never part of a completed round and keeps its estimate permanently. See
-    [[null-estimated-tokens-when-a-real-count-supersedes-them]].
+  * `num_tokens: int` — this message's own token count, from `klorb.token_estimate.
+    estimate_tokens` run against its current content: a client-side `tiktoken` count, not a
+    provider-reported one, treated as this message's definitive cost. Set the moment content
+    exists for the message — at construction for a bookkeeping/user/`tool_response` message,
+    and refreshed on every streamed chunk for an in-progress assistant/thinking placeholder —
+    so `Session.total_tokens_used()`/`total_output_tokens_used()` always have an accurate,
+    live number, without waiting on or reconciling against a provider's own aggregate,
+    per-request usage figures. See
+    [[count-every-message-tokens-client-side-with-tiktoken]].
+  * `reasoning_details: list[dict[str, Any]] | None` — populated on a `role="thinking"`
+    `Message`: the raw, structured `reasoning_details` array a provider returned alongside its
+    plain-text reasoning (e.g. OpenRouter's `reasoning.text`/`reasoning.summary`/
+    `reasoning.encrypted`-typed entries), accumulated by index as chunks stream in. Preserved
+    verbatim rather than rendered or reinterpreted, so it can be resent unmodified on a later
+    turn — see [[preserve-reasoning-across-turns-by-default]]. `None` for every other role,
+    and for a `"thinking"` message whose provider never sent this field.
   * `processing_state: ProcessingState` — a `Literal["pending", "error", "started_receipt",
     "complete"]` tracking this message's lifecycle. `Session` mutates this in place as a
     turn progresses (see [[session-and-turns]] and

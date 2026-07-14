@@ -42,6 +42,7 @@ from klorb.session import (
     Session,
     SessionConfig,
 )
+from klorb.token_estimate import estimate_tokens
 from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel
@@ -73,6 +74,7 @@ from klorb.tui.repl import (
     PALETTE_HINT_TEXT,
     PERMISSION_BADGE_ID,
     PROMPT_INPUT_ID,
+    REASONING_DETAILS_LABEL,
     STATUS_BAR_ID,
     THINKING_LABEL,
     TOOL_USE_LABEL,
@@ -83,6 +85,7 @@ from klorb.tui.repl import (
     ToolCallLimitScreen,
     ToolCallStatic,
     _handle_repl_crash,
+    _summarize_reasoning_details,
     format_token_count,
 )
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
@@ -226,6 +229,28 @@ def test_format_token_count_examples() -> None:
     assert format_token_count(1_000_000) == "1M"
 
 
+def test_summarize_reasoning_details_is_none_when_every_entry_has_text() -> None:
+    assert _summarize_reasoning_details([
+        {"type": "reasoning.text", "text": "Let me think."},
+        {"type": "reasoning.summary", "summary": "Short summary."},
+    ]) is None
+
+
+def test_summarize_reasoning_details_notes_encrypted_entries() -> None:
+    result = _summarize_reasoning_details([
+        {"type": "reasoning.text", "text": "visible"},
+        {"type": "reasoning.encrypted", "data": "opaque-blob"},
+    ])
+
+    assert result == "[2 reasoning blocks preserved, 1 encrypted]"
+
+
+def test_summarize_reasoning_details_singular_block_wording() -> None:
+    result = _summarize_reasoning_details([{"type": "reasoning.encrypted", "data": "opaque-blob"}])
+
+    assert result == "[1 reasoning block preserved, 1 encrypted]"
+
+
 async def test_on_mount_configures_tiktoken_cache_env() -> None:
     """`ReplApp.on_mount()` -- not `klorb.cli.main()` -- points tiktoken at the bundled cache
     for an interactive session, since by then the Textual app is actually running and its
@@ -336,7 +361,7 @@ async def test_status_bar_updates_after_a_turn_completes() -> None:
         await pilot.pause()
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == f"\u2191 {session.total_tokens_used()} / 8k"
+        assert status_bar.content == f"\u2191 {format_token_count(session.total_tokens_used())} / 8k"
 
 
 async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None:
@@ -349,14 +374,19 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
 
     def fake_send_prompt(
         messages: Any, system_prompt: Any = None, model: Any = None, session_id: Any = None,
-        reasoning: Any = None, tools: Any = None, on_chunk: Any = None, on_thinking_chunk: Any = None,
-        cancel_event: Any = None,
+        reasoning: Any = None, tools: Any = None, drop_reasoning: Any = False, on_chunk: Any = None,
+        on_thinking_chunk: Any = None, on_reasoning_details: Any = None, cancel_event: Any = None,
     ) -> Any:
         on_chunk("Hello")
         first_chunk_rendered.set()
         assert release_second_chunk.wait(timeout=5)
         on_chunk(" world")
-        return _reply("Hello world")
+        return ProviderResponse(
+            message=Message(
+                content="Hello world", role="assistant",
+                num_tokens=estimate_tokens("Hello world"), processing_state="complete",
+                timestamp=datetime.now()),
+            prompt_tokens=1)
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
     registry = sample_model_registry()
@@ -374,15 +404,19 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         mid_stream_tally = status_bar.content
+        mid_stream_total = session.total_tokens_used()
         assert mid_stream_tally != "\u2191 0 / 8k"
-        assert mid_stream_tally == f"\u2191 {format_token_count(session.total_tokens_used())} / 8k"
+        assert mid_stream_tally == f"\u2191 {format_token_count(mid_stream_total)} / 8k"
 
         release_second_chunk.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert status_bar.content == f"\u2191 {format_token_count(session.total_tokens_used())} / 8k"
-        assert status_bar.content != mid_stream_tally
+        # The system/tool_defs/user content already counted toward the mid-stream tally, so a
+        # one-word difference in the final reply's length may not shift the SI-rounded display
+        # string -- assert the underlying exact total grew instead of the rendered text.
+        assert session.total_tokens_used() > mid_stream_total
 
 
 async def test_status_bar_omits_limit_when_model_unregistered() -> None:
@@ -434,8 +468,8 @@ async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes
 
     def fake_send_prompt(
         messages: Any, system_prompt: Any = None, model: Any = None, session_id: Any = None,
-        reasoning: Any = None, tools: Any = None, on_chunk: Any = None,
-        on_thinking_chunk: Any = None, cancel_event: Any = None,
+        reasoning: Any = None, tools: Any = None, drop_reasoning: Any = False, on_chunk: Any = None,
+        on_thinking_chunk: Any = None, on_reasoning_details: Any = None, cancel_event: Any = None,
     ) -> Any:
         on_chunk("Hello")
         first_chunk_rendered.set()
@@ -1414,8 +1448,9 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
     calls_made = 0
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         nonlocal calls_made
         calls_made += 1
@@ -3677,8 +3712,9 @@ async def test_streaming_response_updates_widget_progressively() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         assert on_chunk is not None
         on_chunk("Hel")
@@ -3706,8 +3742,9 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -3738,12 +3775,77 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
         assert response_widgets[0].source == "Hello"
 
 
+async def test_reasoning_details_with_encrypted_entries_renders_a_compact_indicator() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
+    ):
+        assert on_reasoning_details is not None
+        on_thinking_chunk("Let me think.")
+        on_reasoning_details([
+            {"type": "reasoning.text", "text": "Let me think.", "index": 0},
+            {"type": "reasoning.encrypted", "data": "opaque-blob", "index": 1},
+        ])
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        reasoning_details_label = history.query_one(".reasoning-details-label", Static)
+        reasoning_details_widgets = list(history.query(".reasoning-details-body").results(Static))
+
+        assert reasoning_details_label.content == REASONING_DETAILS_LABEL
+        assert len(reasoning_details_widgets) == 1
+        assert reasoning_details_widgets[0].content == "[2 reasoning blocks preserved, 1 encrypted]"
+
+
+async def test_reasoning_details_made_only_of_plain_text_entries_renders_nothing() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
+    ):
+        assert on_reasoning_details is not None
+        on_thinking_chunk("Let me think.")
+        on_reasoning_details([{"type": "reasoning.text", "text": "Let me think.", "index": 0}])
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert list(history.query(".reasoning-details-body").results(Static)) == []
+
+
 async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_italicized() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -3772,8 +3874,9 @@ async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -3807,8 +3910,9 @@ async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_t
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -3842,8 +3946,9 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
     release_rest_of_turn = threading.Event()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None

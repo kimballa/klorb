@@ -2,12 +2,14 @@
 """Tests for klorb.openrouter."""
 
 from datetime import datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from klorb import openrouter
 from klorb.message import Message
+from klorb.token_estimate import estimate_tokens
 
 
 def _user_message(content: str = "hi") -> Message:
@@ -35,13 +37,19 @@ def _chunk(
     finish_reason: str | None = None,
     usage: MagicMock | None = None,
     reasoning: str | None = None,
+    reasoning_details: list[dict[str, Any]] | None = None,
     tool_calls: list[MagicMock] | None = None,
 ) -> MagicMock:
-    has_choice = content is not None or finish_reason is not None or reasoning is not None or tool_calls
+    has_choice = (
+        content is not None or finish_reason is not None or reasoning is not None
+        or reasoning_details or tool_calls
+    )
     return MagicMock(
         choices=[
             MagicMock(
-                delta=MagicMock(content=content, reasoning=reasoning, tool_calls=tool_calls),
+                delta=MagicMock(
+                    content=content, reasoning=reasoning, reasoning_details=reasoning_details,
+                    tool_calls=tool_calls),
                 finish_reason=finish_reason),
         ] if has_choice else [],
         usage=usage,
@@ -99,7 +107,7 @@ def test_send_prompt_returns_model_response() -> None:
     result = provider.send_prompt([_user_message()], model="some/model")
 
     assert result.message.content == "hello there"
-    assert result.message.num_tokens == 7
+    assert result.message.num_tokens == estimate_tokens("hello there")
     assert result.message.finish_reason == "stop"
     assert result.prompt_tokens == 3
     mock_client.chat.completions.create.assert_called_once_with(
@@ -198,7 +206,7 @@ def test_send_prompt_reads_usage_from_choiceless_final_chunk() -> None:
 
     result = provider.send_prompt([_user_message()])
 
-    assert result.message.num_tokens == 4
+    assert result.message.num_tokens == estimate_tokens("hi")
     assert result.prompt_tokens == 9
 
 
@@ -305,18 +313,130 @@ def test_send_prompt_works_without_on_thinking_chunk() -> None:
     assert result.message.content == "hi"
 
 
-def test_build_api_messages_excludes_thinking_role_messages() -> None:
+def test_send_prompt_accumulates_reasoning_details_fragments_by_index() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(reasoning_details=[{"type": "reasoning.text", "text": "Let ", "index": 0}]),
+        _chunk(reasoning_details=[{"type": "reasoning.text", "text": "me think.", "index": 0}]),
+        _chunk(content="Hello", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    on_reasoning_details = MagicMock()
+
+    provider.send_prompt([_user_message()], on_reasoning_details=on_reasoning_details)
+
+    assert on_reasoning_details.call_args_list[0].args[0] == [
+        {"type": "reasoning.text", "text": "Let ", "index": 0}]
+    assert on_reasoning_details.call_args_list[-1].args[0] == [
+        {"type": "reasoning.text", "text": "Let me think.", "index": 0}]
+
+
+def test_send_prompt_accumulates_reasoning_details_by_separate_index() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(reasoning_details=[
+            {"type": "reasoning.text", "text": "visible", "index": 0},
+            {"type": "reasoning.encrypted", "data": "opaque-blob", "index": 1},
+        ]),
+        _chunk(content="Hello", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    on_reasoning_details = MagicMock()
+
+    provider.send_prompt([_user_message()], on_reasoning_details=on_reasoning_details)
+
+    assert on_reasoning_details.call_args_list[-1].args[0] == [
+        {"type": "reasoning.text", "text": "visible", "index": 0},
+        {"type": "reasoning.encrypted", "data": "opaque-blob", "index": 1},
+    ]
+
+
+def test_send_prompt_skips_on_reasoning_details_when_no_fragments() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    on_reasoning_details = MagicMock()
+
+    provider.send_prompt([_user_message()], on_reasoning_details=on_reasoning_details)
+
+    on_reasoning_details.assert_not_called()
+
+
+def test_build_api_messages_folds_thinking_content_onto_the_next_assistant_message() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    thinking_message = Message(
+        content="reasoning...", role="thinking", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now(), reasoning_details=[{"type": "reasoning.text", "text": "reasoning..."}])
+    assistant_message = Message(
+        content="final answer", role="assistant", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now())
+
+    provider.send_prompt(
+        [_user_message(), thinking_message, assistant_message], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"][1] == {
+        "role": "assistant",
+        "content": "final answer",
+        "reasoning": "reasoning...",
+        "reasoning_details": [{"type": "reasoning.text", "text": "reasoning..."}],
+    }
+
+
+def test_build_api_messages_folds_thinking_content_onto_the_next_tool_use_message() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     thinking_message = Message(
         content="reasoning...", role="thinking", num_tokens=0, processing_state="complete",
         timestamp=datetime.now())
+    tool_use_message = Message(
+        content="", role="tool_use", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now(),
+        tool_calls=[openrouter.ToolCallRequest(id="call_1", name="ReadFile", arguments='{"filename": "f"}')])
 
-    provider.send_prompt([_user_message(), thinking_message], model="some/model")
+    provider.send_prompt(
+        [_user_message(), thinking_message, tool_use_message], model="some/model")
 
     _, kwargs = mock_client.chat.completions.create.call_args
-    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+    assert kwargs["messages"][1] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "ReadFile", "arguments": '{"filename": "f"}'},
+            },
+        ],
+        "reasoning": "reasoning...",
+    }
+
+
+def test_build_api_messages_drops_thinking_content_when_drop_reasoning_is_true() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    thinking_message = Message(
+        content="reasoning...", role="thinking", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now(), reasoning_details=[{"type": "reasoning.text", "text": "reasoning..."}])
+    assistant_message = Message(
+        content="final answer", role="assistant", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now())
+
+    provider.send_prompt(
+        [_user_message(), thinking_message, assistant_message], model="some/model",
+        drop_reasoning=True)
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"] == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "final answer"},
+    ]
 
 
 def test_send_prompt_omits_tools_when_not_given() -> None:

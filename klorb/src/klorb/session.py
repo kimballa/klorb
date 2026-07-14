@@ -404,7 +404,8 @@ class ToolCallEvent(BaseModel):
 
 class TurnEventHandlers(BaseModel):
     """Immutable bundle of the optional callbacks (and cancellation signal) a caller can
-    supply for one turn: `on_chunk`/`on_thinking_chunk` (streamed response text),
+    supply for one turn: `on_chunk`/`on_thinking_chunk`/`on_reasoning_details` (streamed
+    response text, reasoning text, and structured reasoning payload respectively),
     `cancel_event` (abort a turn mid-stream), `on_tool_call_limit_reached` (ask whether to
     raise a safety cap), `on_permission_ask` (ask how to resolve an `"ask"` permission
     verdict), `on_ask_user_questions` (ask the user one `AskUserQuestions` tool-call
@@ -421,6 +422,7 @@ class TurnEventHandlers(BaseModel):
 
     on_chunk: Callable[[str], None] | None = None
     on_thinking_chunk: Callable[[str], None] | None = None
+    on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None
     cancel_event: threading.Event | None = None
     on_tool_call_limit_reached: Callable[[str], bool] | None = None
     on_permission_ask: Callable[[PermissionAskContext], PermissionDecision] | None = None
@@ -497,16 +499,6 @@ class Session:
         a caller that constructs a `Session` without a `ProcessConfig` at all, as most
         unit tests do)."""
         self._messages: list[Message] = []
-        self._last_known_real_tokens = 0
-        """The most recent `prompt_tokens + completion_tokens` reported for any completed
-        round (`_send_and_receive`'s success path) -- always the exact current size of the
-        whole conversation, since a round's `prompt_tokens` already reflects every message
-        sent as input to it, however many earlier rounds contributed to that history. This is
-        what `total_tokens_used()` reports as the settled portion of its total, instead of
-        summing every message's own `num_tokens`, which would double-count an earlier round's
-        reply: its completion tokens are billed once as that round's own output, then billed
-        again as prompt tokens once resent as history to the next round. See
-        docs/adrs/null-estimated-tokens-when-a-real-count-supersedes-them.md."""
         self._context_files_seeded = False
         """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the
         one-shot `ProjectGuidance` `<SystemInterjection>` carrying the workspace's
@@ -688,55 +680,37 @@ class Session:
         model = self.active_model()
         return model.name() if model is not None else self.config.model
 
-    def _tokens_recorded_so_far(self) -> int:
-        """Sum of `num_tokens` across all messages currently in the buffer."""
-        return sum(message.num_tokens for message in self._messages)
-
-    def _settle_estimated_tokens(self) -> None:
-        """Clear `estimated_tokens` on every message in the buffer: called right after
-        `_last_known_real_tokens` is updated from a just-completed round's real
-        `prompt_tokens`/`completion_tokens` (see `_send_and_receive`), since that round's
-        `prompt_tokens` already reflects every message currently in history as this round's
-        input -- there's nothing left for any message's own estimate to cover. Only ever
-        called from that success path, so a message can't be `"aborted"` here: aborting
-        raises out of `_send_and_receive` before this point, leaving that round's
-        placeholder(s) with their estimate intact instead (see
-        docs/adrs/null-estimated-tokens-when-a-real-count-supersedes-them.md).
-        """
-        for message in self._messages:
-            message.estimated_tokens = None
-
     def total_tokens_used(self) -> int:
-        """Return the running total of tokens consumed by the conversation so far:
-        `_last_known_real_tokens` (the last completed round's real, server-reported
-        `prompt_tokens + completion_tokens` -- already the exact size of the whole
-        conversation as of that round, see `_last_known_real_tokens`), plus `estimated_tokens`
-        for any message not yet covered by that report -- content streaming in for the round
-        currently in flight, or (before the first round of the session completes) the initial
-        system/tool_defs/user content. This gives the context-usage footer a live number that
-        updates as content streams in, without double-counting an earlier round's reply once
-        it's resent as history to a later one."""
-        return self._last_known_real_tokens + sum(
-            message.estimated_tokens or 0 for message in self._messages)
+        """Return the total tokens that would be uploaded to the model at the start of the
+        next turn: each message's own client-side `num_tokens` (a `tiktoken` estimate of its
+        content, see `Message.num_tokens`), summed over every message that would actually be
+        sent. `"thinking"`-role messages are excluded exactly when `OpenRouterApiProvider.
+        _build_api_messages()` would exclude them -- when the active model's
+        `Model.drop_reasoning()` is `True` -- and included otherwise, since preserved
+        reasoning is resent on the next turn by default. A stored `"system"`/`"tool_defs"`
+        bookkeeping message is itself skipped from the literal request body (see
+        `_ensure_system_message`/`_ensure_tool_defs_message`), but equivalent content is
+        always resent out-of-band via `send_prompt(system_prompt=..., tools=...)`, so it
+        still counts here. See docs/adrs/count-every-message-tokens-client-side-with-
+        tiktoken.md.
+        """
+        drop_reasoning = self._drop_reasoning()
+        return sum(
+            message.num_tokens for message in self._messages
+            if message.role != "thinking" or not drop_reasoning
+        )
 
     def total_output_tokens_used(self) -> int:
-        """Return the running total of tokens output by the model so far.
-
-        Sums the provider-reported `num_tokens` (completion tokens) for every completed
-        `role="assistant"` or `role="tool_use"` message -- which already covers all model-
-        generated content for that round, including user-facing text, reasoning/thinking, and
-        tool-call arguments -- plus the live `estimated_tokens` of any assistant/thinking/tool_use
-        placeholder still in flight. This mirrors how `total_tokens_used()` stays live before a
-        round completes, while remaining exact once real counts arrive."""
-        completed = sum(
+        """Return the running total of tokens the model has generated so far: each
+        `role="assistant"`/`"tool_use"`/`"thinking"` message's own client-side `num_tokens`
+        (see `Message.num_tokens`), summed unconditionally -- unlike `total_tokens_used()`,
+        this reports everything the model has ever produced, regardless of whether the
+        active model's `Model.drop_reasoning()` would keep a `"thinking"` message out of a
+        later upload."""
+        return sum(
             message.num_tokens for message in self._messages
-            if message.role in ("assistant", "tool_use")
+            if message.role in ("assistant", "tool_use", "thinking")
         )
-        in_flight = sum(
-            message.estimated_tokens or 0 for message in self._messages
-            if message.role in ("assistant", "thinking", "tool_use")
-        )
-        return completed + in_flight
 
     def max_context_window(self) -> int | None:
         """Return the active model's max context window in tokens, or `None` if the
@@ -773,6 +747,14 @@ class Session:
             return {"max_tokens": self._thinking_token_budgets[self.config.thinking_effort]}
         return {"effort": self.config.thinking_effort}
 
+    def _drop_reasoning(self) -> bool:
+        """Return whether the active model wants prior turns' thinking/reasoning content
+        stripped from the outgoing request rather than resent as-is (see
+        `Model.drop_reasoning`) -- `False`, matching that method's own default, if the active
+        model isn't registered."""
+        model = self.active_model()
+        return model.drop_reasoning() if model is not None else False
+
     def _ensure_system_message(self) -> None:
         """Insert a `role="system"` `Message` at the very front of `self._messages`,
         recording the session's resolved system prompt (see `_resolve_system_prompt` —
@@ -792,8 +774,7 @@ class Session:
         self._messages.insert(0, Message(
             content=system_prompt,
             role="system",
-            num_tokens=0,
-            estimated_tokens=estimate_tokens(system_prompt),
+            num_tokens=estimate_tokens(system_prompt),
             processing_state="complete",
             timestamp=datetime.now(),
         ))
@@ -821,8 +802,7 @@ class Session:
         self._messages.insert(insert_index, Message(
             content=definitions_json,
             role="tool_defs",
-            num_tokens=0,
-            estimated_tokens=estimate_tokens(definitions_json),
+            num_tokens=estimate_tokens(definitions_json),
             processing_state="complete",
             timestamp=datetime.now(),
         ))
@@ -1329,8 +1309,7 @@ class Session:
             self._messages.append(Message(
                 content=content,
                 role="tool_response",
-                num_tokens=0,
-                estimated_tokens=estimate_tokens(content),
+                num_tokens=estimate_tokens(content),
                 processing_state="complete",
                 timestamp=datetime.now(),
                 tool_call_id=call.id,
@@ -1347,6 +1326,7 @@ class Session:
         system_prompt: str | None,
         model_name: str,
         reasoning: dict[str, Any] | None,
+        drop_reasoning: bool,
         tools: list[dict[str, Any]] | None,
         callbacks: TurnEventHandlers,
     ) -> tuple[Message, ProviderResponse]:
@@ -1356,27 +1336,24 @@ class Session:
         (`processing_state="started_receipt"`, `streaming_content=[]`) is appended to
         `self._messages`, and each chunk's text is appended to it. On success, that same
         placeholder is finalized in place (`content`, `streaming_content=None`,
-        `processing_state="complete"`, `num_tokens`, `finish_reason`) rather than appending a
-        second, duplicate `Message`; if no placeholder was ever created (e.g. a non-streaming
-        test double), the provider's reply is appended fresh instead. The finalized message's
+        `processing_state="complete"`, `finish_reason`) rather than appending a second,
+        duplicate `Message`; if no placeholder was ever created (e.g. a non-streaming test
+        double), the provider's reply is appended fresh instead. The finalized message's
         `role` is `"tool_use"` (with `tool_calls` populated) if the model asked to call
         tools, or `"assistant"` otherwise.
 
         Reasoning/thinking deltas are handled the same way, but as a separate
         `role="thinking"` placeholder appended ahead of the reply one, so the two can be told
-        apart and rendered separately. Its `num_tokens` is left at `0`: reasoning tokens are
-        already folded into the reply message's `num_tokens` via `result.message.num_tokens`,
-        so giving the thinking message its own count would double-count them.
+        apart and rendered separately; a structured `reasoning_details` payload (see
+        `Message.reasoning_details`), if the provider sends one, is attached to that same
+        placeholder (lazily creating it too, if reasoning arrived as only structured details
+        with no plain-text delta ever streamed).
 
-        Both placeholders' `estimated_tokens` are refreshed from `klorb.token_estimate.
-        estimate_tokens` on every chunk while streaming (so `Session.total_tokens_used()` has
-        a live number before this round trip completes). On success, every message currently
-        in history -- not just these two placeholders -- has `estimated_tokens` cleared back
-        to `None` via `_settle_estimated_tokens()`, and `Session._last_known_real_tokens` is
-        updated to `result.prompt_tokens + result.message.num_tokens`: that sum is already the
-        exact size of the whole conversation as of this round, since `prompt_tokens` reflects
-        every message just sent as this round's input, however many earlier rounds
-        contributed to it.
+        Every message's `num_tokens` is a client-side `tiktoken` count of its own content
+        (`klorb.token_estimate.estimate_tokens`) -- refreshed on every chunk while streaming,
+        so `Session.total_tokens_used()` has a live, steadily-accurate number throughout the
+        round trip, and left as-is once a message stops changing. See
+        docs/adrs/count-every-message-tokens-client-side-with-tiktoken.md.
 
         On any exception other than `ResponseAborted`, whichever placeholder(s) were created
         are mutated to `processing_state="error"`/`last_error` (partial `streaming_content`
@@ -1389,6 +1366,20 @@ class Session:
         """
         placeholder: Message | None = None
         thinking_placeholder: Message | None = None
+
+        def ensure_thinking_placeholder() -> Message:
+            nonlocal thinking_placeholder
+            if thinking_placeholder is None:
+                thinking_placeholder = Message(
+                    content="",
+                    role="thinking",
+                    num_tokens=0,
+                    processing_state="started_receipt",
+                    timestamp=datetime.now(),
+                    streaming_content=[],
+                )
+                self._messages.append(thinking_placeholder)
+            return thinking_placeholder
 
         def handle_chunk(delta_text: str) -> None:
             nonlocal placeholder
@@ -1404,34 +1395,32 @@ class Session:
                 self._messages.append(placeholder)
             assert placeholder.streaming_content is not None
             placeholder.streaming_content.append(delta_text)
-            placeholder.estimated_tokens = estimate_tokens("".join(placeholder.streaming_content))
+            placeholder.num_tokens = estimate_tokens("".join(placeholder.streaming_content))
             if callbacks.on_chunk is not None:
                 callbacks.on_chunk(delta_text)
 
         def handle_thinking_chunk(delta_text: str) -> None:
-            nonlocal thinking_placeholder
-            if thinking_placeholder is None:
-                thinking_placeholder = Message(
-                    content="",
-                    role="thinking",
-                    num_tokens=0,
-                    processing_state="started_receipt",
-                    timestamp=datetime.now(),
-                    streaming_content=[],
-                )
-                self._messages.append(thinking_placeholder)
-            assert thinking_placeholder.streaming_content is not None
-            thinking_placeholder.streaming_content.append(delta_text)
-            thinking_placeholder.estimated_tokens = estimate_tokens(
-                "".join(thinking_placeholder.streaming_content))
+            thinking = ensure_thinking_placeholder()
+            assert thinking.streaming_content is not None
+            thinking.streaming_content.append(delta_text)
+            thinking.num_tokens = estimate_tokens("".join(thinking.streaming_content))
             if callbacks.on_thinking_chunk is not None:
                 callbacks.on_thinking_chunk(delta_text)
+
+        def handle_reasoning_details_chunk(accumulated: list[dict[str, Any]]) -> None:
+            thinking = ensure_thinking_placeholder()
+            thinking.reasoning_details = accumulated
+            if callbacks.on_reasoning_details is not None:
+                callbacks.on_reasoning_details(accumulated)
 
         try:
             result = self._provider.send_prompt(
                 message_snapshot, system_prompt=system_prompt, model=model_name,
-                session_id=self.id, reasoning=reasoning, tools=tools, on_chunk=handle_chunk,
-                on_thinking_chunk=handle_thinking_chunk, cancel_event=callbacks.cancel_event)
+                session_id=self.id, reasoning=reasoning, tools=tools,
+                drop_reasoning=drop_reasoning, on_chunk=handle_chunk,
+                on_thinking_chunk=handle_thinking_chunk,
+                on_reasoning_details=handle_reasoning_details_chunk,
+                cancel_event=callbacks.cancel_event)
         except ResponseAborted:
             if thinking_placeholder is not None:
                 thinking_placeholder.content = "".join(thinking_placeholder.streaming_content or [])
@@ -1472,15 +1461,11 @@ class Session:
         if placeholder.tool_calls:
             placeholder.role = "tool_use"
 
-        self._last_known_real_tokens = result.prompt_tokens + result.message.num_tokens
-        self._settle_estimated_tokens()
-
         return placeholder, result
 
     def _dispatch_turn(
         self,
         user_message: Message,
-        tokens_before: int,
         callbacks: TurnEventHandlers | None = None,
     ) -> str:
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
@@ -1496,12 +1481,9 @@ class Session:
         `self._tool_calls_this_turn` is reset to `0` at the start of every call to
         `_dispatch_turn` (including retries); `self._tool_calls_this_session` is never reset.
 
-        On success, `user_message.num_tokens` is set to the delta between the *last* round's
-        total `prompt_tokens` and `tokens_before` (the tokens already recorded prior to this
-        turn) — folding every round's prompt cost, including any tool definitions/results
-        sent along the way, into this one turn, the same way the system prompt's cost is
-        folded into the first turn (see docs/specs/session-and-turns.md) —
-        `processing_state` becomes `"complete"`, and `last_error` is cleared. On failure,
+        `user_message.num_tokens` is already set (from `estimate_tokens(user_message.content)`
+        at construction, see `send_turn`/`retry_last_turn`) and untouched here. On success,
+        `processing_state` becomes `"complete"` and `last_error` is cleared. On failure,
         `user_message` is mutated to `processing_state="error"` with `last_error` set (the
         failing round's own placeholder(s) are already marked the same way by
         `_send_and_receive`), and the exception is re-raised.
@@ -1513,9 +1495,7 @@ class Session:
         completed turn's would), plus the aborted round's placeholder(s), already finalized
         with `processing_state="aborted"` by `_send_and_receive` — are left in
         `self._messages` rather than erased. `user_message.processing_state` becomes
-        `"aborted"` too, and its `num_tokens` reflects the last *completed* round's prompt
-        tokens (`0` if the very first round was the one aborted, since no round completed).
-        The exception is re-raised so the caller can report the interruption.
+        `"aborted"` too. The exception is re-raised so the caller can report the interruption.
         """
         callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
@@ -1524,13 +1504,13 @@ class Session:
         model_name = self.active_model_name()
         system_prompt = self._resolve_system_prompt()
         reasoning = self._reasoning_params()
+        drop_reasoning = self._drop_reasoning()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
-        last_completed_result: ProviderResponse | None = None
 
         try:
-            reply, result = self._send_and_receive(
-                list(self._messages), system_prompt, model_name, reasoning, tools, callbacks)
-            last_completed_result = result
+            reply, _ = self._send_and_receive(
+                list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
+                tools, callbacks)
 
             rounds = 0
             while reply.role == "tool_use":
@@ -1551,13 +1531,11 @@ class Session:
                         f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
                 logger.info("Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
                 self._run_tool_calls(reply, callbacks)
-                reply, result = self._send_and_receive(
-                    list(self._messages), system_prompt, model_name, reasoning, tools, callbacks)
-                last_completed_result = result
+                reply, _ = self._send_and_receive(
+                    list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
+                    tools, callbacks)
         except ResponseAborted:
             user_message.processing_state = "aborted"
-            if last_completed_result is not None:
-                user_message.num_tokens = last_completed_result.prompt_tokens - tokens_before
             logger.info("Turn aborted for %s", model_name)
             raise
         except Exception as exc:
@@ -1566,7 +1544,6 @@ class Session:
             logger.error("Turn failed for %s: %s", model_name, exc, exc_info=True)
             raise
 
-        user_message.num_tokens = result.prompt_tokens - tokens_before
         user_message.processing_state = "complete"
         user_message.last_error = None
         logger.debug(
@@ -1587,8 +1564,9 @@ class Session:
         provider, and mutates that
         same `Message` in place to reflect the outcome (see `_dispatch_turn`). `callbacks`
         (a `TurnEventHandlers`, defaulting to one with every field `None` if omitted) bundles
-        every optional hook for this turn: `on_chunk`/`on_thinking_chunk` are invoked with each
-        text/reasoning delta as the response streams in; if `cancel_event` is set while the
+        every optional hook for this turn: `on_chunk`/`on_thinking_chunk`/`on_reasoning_details`
+        are invoked with each text/reasoning delta (and reasoning payload update) as the
+        response streams in; if `cancel_event` is set while the
         response is streaming in, the turn is aborted: `ResponseAborted` is raised, and the
         user `Message` appended here — along with whatever partial reply/thinking content and
         completed tool-call rounds accumulated before the interruption — stays in history with
@@ -1619,7 +1597,6 @@ class Session:
         so this never runs again for the rest of the `Session`'s lifetime, matching every other
         one-shot interjection's "fires once" contract — see docs/specs/workspace-context-files.md.
         """
-        tokens_before = self._tokens_recorded_so_far()
         if self._pending_permission_framework_interjection is not None:
             interjection = _wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)
@@ -1637,15 +1614,14 @@ class Session:
         user_message = Message(
             content=prompt,
             role="user",
-            num_tokens=0,
-            estimated_tokens=estimate_tokens(prompt),
+            num_tokens=estimate_tokens(prompt),
             processing_state="pending",
             timestamp=datetime.now(),
         )
         self._messages.append(user_message)
         logger.info(
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
-        return self._dispatch_turn(user_message, tokens_before, callbacks)
+        return self._dispatch_turn(user_message, callbacks)
 
     def retry_last_turn(
         self,
@@ -1669,10 +1645,9 @@ class Session:
 
         del self._messages[index + 1:]
         errored_message = self._messages[index]
-        tokens_before = self._tokens_recorded_so_far() - errored_message.num_tokens
         errored_message.processing_state = "pending"
         logger.info("Retrying errored turn for %s", self.active_model_name())
-        return self._dispatch_turn(errored_message, tokens_before, callbacks)
+        return self._dispatch_turn(errored_message, callbacks)
 
     def run_one_shot(
         self,
