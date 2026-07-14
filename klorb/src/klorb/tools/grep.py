@@ -80,7 +80,7 @@ class GrepTool(Tool):
                     "type": "string",
                     "description": (
                         "Directory to search, relative to the project root unless absolute. "
-                        "An empty string means the whole project root."
+                        "An empty string or null means the whole project root."
                     ),
                 },
                 "queries": {
@@ -112,16 +112,12 @@ class GrepTool(Tool):
                     ),
                 },
             },
-            "required": ["dirname", "queries"],
+            "required": ["queries"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        try:
-            dirname = args["dirname"]
-        except KeyError:
-            raise ValueError(
-                "Missing required argument: 'dirname'. Provide the directory to search under.")
+        dirname = args.get("dirname", "") # Empty-string default searches recursively from ${workspaceRoot}.
         try:
             queries = validate_queries(args["queries"])
         except KeyError:
