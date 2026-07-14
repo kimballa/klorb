@@ -315,7 +315,7 @@ async def test_status_bar_shows_zero_tokens_against_model_context_window_on_moun
 
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == "\u2193 0 / 8k"
+        assert status_bar.content == "\u2191 0 / 8k"
 
 
 async def test_status_bar_updates_after_a_turn_completes() -> None:
@@ -335,7 +335,7 @@ async def test_status_bar_updates_after_a_turn_completes() -> None:
         await pilot.pause()
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == f"\u2193 {session.total_tokens_used()} / 8k"
+        assert status_bar.content == f"\u2191 {session.total_tokens_used()} / 8k"
 
 
 async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None:
@@ -373,14 +373,14 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         mid_stream_tally = status_bar.content
-        assert mid_stream_tally != "\u2193 0 / 8k"
-        assert mid_stream_tally == f"\u2193 {format_token_count(session.total_tokens_used())} / 8k"
+        assert mid_stream_tally != "\u2191 0 / 8k"
+        assert mid_stream_tally == f"\u2191 {format_token_count(session.total_tokens_used())} / 8k"
 
         release_second_chunk.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert status_bar.content == f"\u2193 {format_token_count(session.total_tokens_used())} / 8k"
+        assert status_bar.content == f"\u2191 {format_token_count(session.total_tokens_used())} / 8k"
         assert status_bar.content != mid_stream_tally
 
 
@@ -390,7 +390,7 @@ async def test_status_bar_omits_limit_when_model_unregistered() -> None:
 
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == "\u2193 0"
+        assert status_bar.content == "\u2191 0"
 
 
 async def test_output_tokens_widget_shows_zero_on_mount() -> None:
@@ -4039,6 +4039,7 @@ async def test_quit_declining_save_prompt_does_not_write_file(
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
     app = _repl_app_for_workspace(workspace, trust_manager)
+    app._session.load_messages([_sample_message("hi")])
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -4050,6 +4051,30 @@ async def test_quit_declining_save_prompt_does_not_write_file(
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+        app.exit.assert_called_once()
+
+    assert read_last_session(workspace) is None
+
+
+async def test_quit_skips_save_prompt_with_no_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When there are no messages in the session, the save prompt should be skipped."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.exit = MagicMock()  # type: ignore[method-assign]
+
+        await pilot.press("ctrl+q")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # No ConfirmScreen was pushed because there are no messages
+        assert len(app.screen_stack) == 1
         app.exit.assert_called_once()
 
     assert read_last_session(workspace) is None

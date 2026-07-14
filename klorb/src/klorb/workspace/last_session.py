@@ -54,6 +54,20 @@ def write_last_session(workspace: Workspace, config: SessionConfig, messages: li
         last_session_path(workspace), state.model_dump(mode="json"),
         schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
 
+def clear_last_session(workspace: Workspace) -> None:
+    """Remove any existing `last-session.json` for this workspace. If the file does not exist,
+       that's also OK."""
+    path: Path = last_session_path(workspace)
+    if not path.exists():
+        logger.debug("No last-session state file at '%s' to unlink.", path)
+        return
+
+    logger.debug("Removing last-session state file at '%s'.", path)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as e:
+        logger.exception("Error while attempting to clear_last_session for path '%s': errno=%s",
+                         path, e.errno, e)
 
 def read_last_session(workspace: Workspace) -> LastSessionState | None:
     """Load `workspace`'s previously-saved session state, or `None` if none exists (no file),
@@ -72,6 +86,7 @@ def read_last_session(workspace: Workspace) -> LastSessionState | None:
         return LastSessionState.model_validate(data)
     except ValidationError as exc:
         logger.warning(
-            "%s failed to validate as a %s save file; ignoring it: %s",
+            "%s failed to validate as a %s save file; removing it: %s",
             last_session_path(workspace), LAST_SESSION_SCHEMA_NAME, exc)
+        clear_last_session(workspace)
         return None

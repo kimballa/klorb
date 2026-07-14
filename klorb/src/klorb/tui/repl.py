@@ -84,7 +84,12 @@ from klorb.tui.thinking_commands import ThinkingCommandProvider
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.input_history import append_history, load_history, project_history_path
-from klorb.workspace.last_session import last_session_path, read_last_session, write_last_session
+from klorb.workspace.last_session import (
+    last_session_path,
+    read_last_session,
+    write_last_session,
+    clear_last_session
+)
 from klorb.workspace.workspace_init import (
     write_initial_project_config,
     write_session_defaults_to_project_config,
@@ -1483,13 +1488,18 @@ class ReplApp(App[None]):
         workspace. Either way, finishes by exiting the app. A no-op prompt (skipping straight
         to `self.exit()`) when there's no `TrustManager` or the workspace isn't trusted, since
         an unresolved or untrusted workspace has no business writing into its per-project data
-        directory.
+        directory, or there's no message history to save.
         """
-        if self._trust_manager is not None and self._session.config.workspace.trusted:
+        has_messages = len(self._session.messages) > 0
+        save = False
+        if self._trust_manager is not None and self._session.config.workspace.trusted and has_messages:
             save = await self.push_screen_wait(ConfirmScreen("Save session state before quitting?"))
-            if save:
-                write_last_session(
-                    self._session.config.workspace, self._session.config, self._session.messages)
+
+        if save:
+            write_last_session(
+                self._session.config.workspace, self._session.config, self._session.messages)
+        else:
+            clear_last_session(self._session.config.workspace)
         self.exit()
 
     def action_toggle_tool_call_detail(self) -> None:
