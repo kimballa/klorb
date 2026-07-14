@@ -327,6 +327,33 @@ class ProcessConfig(BaseModel):
     `klorb.tui.repl.ReplApp` posts each of these to the history scroll at startup (and again for
     any newly-discovered ones after `_apply_workspace_config`'s reload), since a `logger.error`
     call alone is easy for an interactive user to miss entirely."""
+    argv: list[str] = Field(default_factory=list)
+    """The verbatim `argv` the process was given (as observed by `klorb.cli.main()`), kept so a
+    later step can re-derive the session-scoped CLI overrides without re-parsing. See
+    `session_cli_flags` for the already-derived overrides themselves."""
+    session_cli_flags: dict[str, Any] = Field(default_factory=dict)
+    """Session-scoped overrides derived from the CLI flags `main()` parsed, keyed by
+    `SessionConfig` attribute name (`"interactive"`, `"permission_framework"`,
+    `"max_tool_calls_per_turn"`, `"max_tool_calls_per_session"`). Populated by
+    `klorb.cli.main()` and applied to `session` via `apply_cli_flags_to_session()`; a later
+    `clear_session()` re-reads config layers from disk and re-applies these on top, so a CLI
+    flag like `--max-tool-calls-per-turn` survives a `/clear` (which otherwise reverts to the
+    disk config) the same way it survived the initial startup. Process-only CLI overrides
+    (`log_tool_calls`) are applied directly to their `ProcessConfig` field instead, since
+    they outlive any one session."""
+
+
+def apply_cli_flags_to_session(process_config: "ProcessConfig") -> None:
+    """Apply `process_config.session_cli_flags` onto `process_config.session` in place.
+
+    Each `(attr_name, value)` pair in `session_cli_flags` is `setattr`'d directly onto the nested
+    `SessionConfig`, so the session sees the override immediately. Called by
+    `klorb.cli.main()` after assembling `session_cli_flags` and by `ReplApp.clear_session()` after
+    re-reading config layers from disk, so the CLI overrides win over the disk config both at
+    startup and after a `/clear`.
+    """
+    for attr_name, value in process_config.session_cli_flags.items():
+        setattr(process_config.session, attr_name, value)
 
 
 def _default_config_layer(warnings: list[str]) -> dict[str, Any]:

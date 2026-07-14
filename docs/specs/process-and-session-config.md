@@ -172,12 +172,24 @@ or slicing a superset.
   `write_versioned_json`, preserving every other key already in the file — the same
   preserve-everything-else pattern `klorb.permissions.grant` uses for `readDirs`/`writeDirs`
   grants, generalized to an arbitrary scalar key.
-* `ReplApp.clear_session()` (`klorb/src/klorb/tui/repl.py`) builds the new session's config
-  as `self._process_config.session.model_copy()` — the *current* template, including any
-  dual-written changes — rather than hand-picking individual fields. This is why `/clear`
-  carries over thinking settings as well as the model: an earlier version only copied
-  `model` and `interactive` explicitly and silently reset thinking settings to their
-  `SessionConfig` defaults on every `/clear`.
+* `ReplApp.clear_session()` (`klorb/src/klorb/tui/repl.py`) rebuilds the new session's
+  config by re-reading the config layers from disk (via `load_process_config()`, keeping
+  just the session-scoped parts), then re-applying the CLI flags on top via
+  `apply_cli_flags_to_session()` — so a config-file edit made between startup and the
+  `/clear` takes effect, and a `--max-tool-calls-per-turn` (etc.) flag passed to this invocation survives a
+  `/clear` the same way it survived startup (winning over the disk config, the same
+  precedence it had at startup). After building the new `Session` from that config,
+  `clear_session()` attaches the same `workspace` as before to
+  fold in the workspace-trust-driven parts
+  the same way it does when trust is first resolved. The palette
+  commands that change a session-scoped setting (`select_model`,
+  `set_thinking_enabled`, `set_thinking_effort`) persist their value to the per-user
+  config file via `persist_session_default()`, so a setting changed via the palette
+  survives a subsequent `/clear` through that disk reload rather than through an in-memory
+  `ProcessConfig.session` template copy. `argv`/`cli_flags` themselves are set once by
+  `klorb.cli.main()` and never re-derived by `load_process_config()`, so the disk reload
+  in `clear_session()` deliberately preserves them
+  instead of wiping them back to empty defaults.
 
 ## On-disk key naming
 

@@ -34,6 +34,7 @@ from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import (
+    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
     AskUserQuestionsAnswer,
     AskUserQuestionsItemContext,
     PermissionAskContext,
@@ -2651,7 +2652,8 @@ async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:
 async def test_clear_replaces_session_and_resets_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    process_config = ProcessConfig(session=SessionConfig(model="some/model"))
+    process_config = ProcessConfig(
+        session_cli_flags={"model": "some/model", "interactive": True})
     app = ReplApp(session=_session(mock_provider), process_config=process_config)
 
     async with app.run_test() as pilot:
@@ -2690,23 +2692,121 @@ async def test_clear_closes_the_outgoing_session() -> None:
         assert app._session is not outgoing_session
 
 
-async def test_clear_carries_over_thinking_settings_from_process_config() -> None:
-    """Regression test: `/clear` used to hand-pick `model`/`interactive` onto the new
-    `SessionConfig`, silently dropping `thinking_enabled`/`thinking_effort` back to their
-    defaults. It now copies the full `ProcessConfig.session` template, which the thinking
-    commands keep in sync, so a `/clear` after changing thinking settings preserves them.
+async def test_clear_carries_over_thinking_settings_from_process_config(
+    tmp_path: Path,
+) -> None:
+    """`/clear` rebuilds the new session's `SessionConfig` by re-reading the config layers
+    from disk and applying CLI flags on top (see `ReplApp.clear_session`), so a setting
+    changed via the palette survives a `/clear` only if it's persisted to a config file
+    `load_process_config()` reads. `set_thinking_enabled`/`set_thinking_effort` persist to
+    `user_config_path()` (see `persist_session_default`), so pointing the REPL's
+    `user_config_path` at the same file the conftest-isolated `load_process_config()` reads
+    makes the carry-over work through that disk reload rather than the old in-memory
+    `ProcessConfig.session` template copy.
     """
+    from klorb.process_config import user_config_path as process_user_config_path
+
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    with patch("klorb.tui.repl.user_config_path", return_value=process_user_config_path()):
+        async with app.run_test() as pilot:
+            app.set_thinking_enabled(False)
+            app.set_thinking_effort("low")
+
+            await _invoke_clear_session(pilot)
+
+            assert app._session.config.thinking_enabled is False
+
+
+async def test_clear_reloads_session_config_from_disk(
+    tmp_path: Path,
+) -> None:
+    """`/clear` re-reads the config layers from disk into the new session's
+    `SessionConfig`, so a config-file edit made between startup and the `/clear` takes
+    effect rather than being silently ignored (the old behavior, which copied the
+    in-memory `ProcessConfig.session` template that was loaded once at startup).
+
+    Writes a `sessionDefaults.tools.maxCallsPerTurn` to the conftest-isolated per-user config file
+    (`process_config.user_config_path()`, the one `load_process_config()` reads) after
+    the app is already running, then asserts the cleared session picked it up.
+    """
+    from klorb.process_config import user_config_path as process_user_config_path
+    from klorb.schema_envelope import write_versioned_json
+
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
-        app.set_thinking_enabled(False)
-        app.set_thinking_effort("low")
+        # Sanity check: the session starts with the tool-call limit the session was constructed with,
+        # not the one we're about to write to disk.
+        assert app._session.config.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
+
+        raised_limit = 6 * DEFAULT_MAX_TOOL_CALLS_PER_TURN
+
+        config_path = process_user_config_path()
+        write_versioned_json(
+            config_path,
+            {"sessionDefaults": {"tools.maxCallsPerTurn": raised_limit}},
+            schema_name="klorb-config", schema_version="1.0.0")
 
         await _invoke_clear_session(pilot)
 
-        assert app._session.config.thinking_enabled is False
-        assert app._session.config.thinking_effort == "low"
+        assert app._session.config.max_tool_calls_per_turn == raised_limit
+
+
+async def test_clear_applies_cli_flags_on_top_of_disk(
+    tmp_path: Path,
+) -> None:
+    """CLI flags are re-applied on top of the disk-reloaded `SessionConfig` during
+    `/clear`, so a `--model` (etc.) passed to this invocation survives a `/clear` and wins
+    over any disk config value — the same precedence it had at startup.
+    """
+    from klorb.process_config import user_config_path as process_user_config_path
+    from klorb.schema_envelope import write_versioned_json
+
+
+    raised_limit = 7 * DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(
+        session_cli_flags={"max_tool_calls_per_turn": raised_limit, "interactive": True})
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test() as pilot:
+        config_path = process_user_config_path()
+        write_versioned_json(
+            config_path,
+            {"sessionDefaults": {"model": "from/disk"}},
+            schema_name="klorb-config", schema_version="1.0.0")
+
+        await _invoke_clear_session(pilot)
+
+        # The CLI flag wins over the disk value, the same way it did at startup.
+        assert app._session.config.max_tool_calls_per_turn == raised_limit
+        # And the process-level template carries it too, so a *second* /clear would also
+        # keep it.
+        assert app._process_config.session.max_tool_calls_per_turn == raised_limit
+        assert app._process_config.session_cli_flags == \
+            {"max_tool_calls_per_turn": raised_limit, "interactive": True}
+
+
+async def test_clear_preserves_argv_and_cli_flags_across_reload() -> None:
+    """`clear_session()` reloads process-only fields from disk via `load_process_config()`,
+    which never populates `argv`/`cli_flags` (those are set once by `klorb.cli.main()`).
+    The reload must not wipe them back to their empty defaults — otherwise a second
+    `/clear` would lose the CLI overrides the first one preserved.
+    """
+    mock_provider = MagicMock()
+    argv = ["klorb", "--model", "from/cli"]
+    cli_flags = {"model": "from/cli", "interactive": True}
+    process_config = ProcessConfig(argv=argv, session_cli_flags=cli_flags)
+    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+
+    async with app.run_test() as pilot:
+        await _invoke_clear_session(pilot)
+
+        assert app._process_config.argv == argv
+        assert app._process_config.session_cli_flags == cli_flags
 
 
 async def test_clear_does_not_disable_input_or_send_to_provider() -> None:

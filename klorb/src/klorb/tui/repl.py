@@ -38,6 +38,7 @@ from klorb.permissions.grant import compute_grant_paths
 from klorb.permissions.risk_classifier import record_decision_history, resolve_item_risk_assessment
 from klorb.process_config import (
     ProcessConfig,
+    apply_cli_flags_to_session,
     load_process_config,
     persist_session_default,
     persist_theme,
@@ -1733,7 +1734,10 @@ class ReplApp(App[None]):
         ]
 
         for field_name in ProcessConfig.model_fields:
-            if field_name == "session":
+            # `session` is folded in separately below; `argv`/`cli_flags` are set once
+            # by `klorb.cli.main()` and never re-derived by `load_process_config()`, so a
+            # reload would otherwise wipe them back to their empty defaults.
+            if field_name in ("session", "argv", "cli_flags"):
                 continue
             setattr(self._process_config, field_name, getattr(reloaded, field_name))
 
@@ -2044,22 +2048,59 @@ class ReplApp(App[None]):
             self._finish_turn(history, self._history_pinned_to_bottom)
 
     def clear_session(self) -> None:
-        """Replace the active Session with a fresh one (new id, config reset to the current
-        process-level template), reset the visible history, and roll over the per-session
-        log file if session logging is enabled for this REPL invocation.
+        """Replace the active Session with a fresh one (new id, config re-read from disk
+        with CLI flags re-applied on top), reset the visible history, and roll over the
+        per-session log file if session logging is enabled for this REPL invocation.
 
         Tears down the outgoing `Session` first (`Session.close()`) so a live resource it
         registered a teardown for (e.g. `BashTool`'s persistent shell) doesn't leak past this
         call — nothing else references the outgoing `Session` afterward.
+
+        The new session's `SessionConfig` is rebuilt by re-reading the config layers from
+        disk (keeping just the session-scoped parts) and applying the CLI flags on top, so a
+        config-file edit made between startup and this `/clear` takes effect and a `--model`
+        (etc.) flag survives a `/clear` the same way it survived startup — see
+        `apply_cli_flags_to_session` and docs/specs/process-and-session-config.md.
+        `_apply_workspace_config` is then called with the same workspace as before to fold in
+        the workspace-trust-driven parts (project-layer `readDirs`/`writeDirs` grants,
+        `config_warnings`) the same way it does when trust is first resolved.
         """
-        self._session.close()
-        new_config = self._process_config.session.model_copy()
+        old_session: Session = self._session
+
+        workspace = old_session.config.workspace
+        old_session.close()
+
+        # Re-read the config layers from disk into a fresh `SessionConfig` (only the
+        # session-scoped parts), so a config change made after this process started is
+        # picked up here rather than silently ignored. Then layer
+        # the CLI flags on top, so a `--max-tool-calls-per-turn` (etc.) passed to this
+        # invocation survives a `/clear` the same way it survived startup.
+        reloaded_pc = load_process_config(
+            config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
+        self._process_config.session = reloaded_pc.session
+        apply_cli_flags_to_session(self._process_config)
+        new_session_config = self._process_config.session.model_copy()
+
+        # Take note of any warnings / syntax errors raised when re-parsing config files.
+        new_warnings: list[str] = reloaded_pc.config_warnings
+
+        # The existing workspace is brought into the new session the same way it
+        # does when trust is first resolved; see docs/specs/process-and-session-config.md.
+        new_session_config.workspace = workspace
+
+        # The choice of model is a "live" setting that the user may have been manipulating
+        # throughout; we carry forward their choice from the prior session, here.
+        new_session_config.model = old_session.config.model
+        new_session_config.thinking_effort = old_session.config.thinking_effort
+        new_session_config.thinking_enabled = old_session.config.thinking_enabled
+
+        # Once the new session_config is ready, wrap it up into the new Session.
         self._session = Session(
-            new_config,
-            provider=self._session.provider,
-            model_registry=self._session.model_registry,
+            new_session_config,
+            provider=old_session.provider,
+            model_registry=old_session.model_registry,
             process_config=self._process_config,
-            tool_registry=ToolRegistry(self._process_config, new_config),
+            tool_registry=ToolRegistry(self._process_config, new_session_config),
         )
 
         if self._session_log_enabled:
@@ -2070,6 +2111,10 @@ class ReplApp(App[None]):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
         history.mount(Static("Session cleared.", classes="notice"))
+
+        # Display new config parser warnings after we've already cleared the history.
+        for warning in new_warnings:
+            self.show_notice(warning, error=True)
 
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.clear_input_history()

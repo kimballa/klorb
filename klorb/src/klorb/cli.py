@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -13,7 +14,7 @@ from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, session_log_path
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
-from klorb.process_config import load_process_config
+from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.role import COORDINATOR_ROLE_NAME, get_role
 from klorb.session import Session, SessionConfig
 from klorb.system_prompt import SystemPrompt
@@ -333,24 +334,31 @@ def main() -> None:
     workspace = trust_manager.resolve_workspace(cwd)
 
     process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
-    process_config.session.interactive = interactive
+
+    # Gather CLI flag outcomes that impact the SessionConfig into a dict. We save this collection of
+    # attributes because if we subsequently create new sessions, we want to be able to re-apply the session
+    # config override CLI flags on those new sessions as well.
+    session_cli_flags: dict[str, Any] = {"interactive": interactive}
     if args.auto_approve:
-        process_config.session.permission_framework = "auto"
+        session_cli_flags["permission_framework"] = "auto"
     elif not interactive:
-        process_config.session.permission_framework = "deny"
-    if args.model is not None:
-        process_config.session.model = args.model
+        session_cli_flags["permission_framework"] = "deny"
+    if args.max_tool_calls_per_turn is not None:
+        session_cli_flags["max_tool_calls_per_turn"] = args.max_tool_calls_per_turn
+    if args.max_tool_calls_per_session is not None:
+        session_cli_flags["max_tool_calls_per_session"] = args.max_tool_calls_per_session
+    process_config.argv = list(sys.argv)
+    process_config.session_cli_flags = session_cli_flags
+    apply_cli_flags_to_session(process_config)
     if args.log_tool_calls is True:
         process_config.log_tool_calls = True
     elif args.log_tool_calls is False:
         process_config.log_tool_calls = False
-    if args.max_tool_calls_per_turn is not None:
-        process_config.session.max_tool_calls_per_turn = args.max_tool_calls_per_turn
-    if args.max_tool_calls_per_session is not None:
-        process_config.session.max_tool_calls_per_session = args.max_tool_calls_per_session
 
     provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
     session_config = process_config.session.model_copy()
+    if args.model is not None:
+        session_config.model = args.model
     tool_registry = ToolRegistry(process_config, session_config)
     session = Session(
         session_config,
