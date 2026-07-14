@@ -113,7 +113,7 @@ async def test_escalate_privileges_approve_records_scope_and_flows_back() -> Non
 
         assert not app.query(EscalatePrivilegesPanel)
         assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
-        assert "workspace" in process_config.approved_scopes
+        assert "workspace" in app._session.config.approved_scopes
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "approved" in str(tool_response.content)
 
@@ -148,7 +148,7 @@ async def test_escalate_privileges_deny_keeps_scope_locked_and_reports_denial() 
         await pilot.pause()
 
         assert not app.query(EscalatePrivilegesPanel)
-        assert "workspace" not in process_config.approved_scopes
+        assert "workspace" not in app._session.config.approved_scopes
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "denied" in str(tool_response.content)
 
@@ -175,6 +175,6 @@ async def test_escalate_privileges_escape_denies() -> None:
         await pilot.pause()
 
         assert not app.query(EscalatePrivilegesPanel)
-        assert "workspace" not in process_config.approved_scopes
+        assert "workspace" not in app._session.config.approved_scopes
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "denied" in str(tool_response.content)

@@ -49,7 +49,11 @@
         ["find", "tests", "-name", "conftest.py"],
         ["./venv/bin/flake8", "--config", ".flake8", "src/klorb/sandbox.py"],
         ["grep", "-n", "klorb_dir\\|KLORB_DATA\\|KLORB_STATE\\|tiktoken\\|TIKTOKEN\\|local/share\\|local/state", "tests/test_sandbox.py"],
-        ["git", "diff", "tests/test_grep.py"]
+        ["git", "diff", "tests/test_grep.py"],
+        ["grep", "-rn", "approved_scopes\\|EscalatePrivileges\\|escalate", "/home/aaron/src/klorb/docs/specs/permissions.md", "/home/aaron/src/klorb/docs/specs/projects-and-trust.md"],
+        ["grep", "-E", "^(test|lint|mypy|flake|check|all):", "Makefile"],
+        ["grep", "-nA2", "^typecheck:\\|^lint:\\|^test:", "Makefile"],
+        ["venv/bin/flake8", "--config", ".flake8", "*"]
       ]
     },
     "shareEnv": [

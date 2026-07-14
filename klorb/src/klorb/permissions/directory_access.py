@@ -78,9 +78,9 @@ def privileged_dirs(workspace_root: Path, approved_scopes: set[str] | None = Non
     anything this list contains.
 
     `approved_scopes` is the set of session-only escalation scopes the user has granted this
-    process (see `ProcessConfig.approved_scopes`, populated by the `EscalatePrivileges` tool).
+    session (see `SessionConfig.approved_scopes`, populated by the `EscalatePrivileges` tool).
     A `"workspace"` scope in it omits `${workspace_root}/.klorb/` from the returned list,
-    lifting the privileged-path deny on that one directory for the rest of the session \u2014 the
+    lifting the privileged-path deny on that one directory for the rest of the session — the
     process-wide `KLORB_*_DIR` locations stay privileged regardless, since `"workspace"` scope
     only ever covers the workspace's own project dir. `None` (or an empty set) preserves the
     pre-escalation behavior: every privileged dir is denied.

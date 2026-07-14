@@ -103,21 +103,21 @@ def test_invalid_scope_reports_error_without_invoking_callback() -> None:
     on_escalate.assert_not_called()
 
 
-def test_approved_records_scope_into_process_config() -> None:
+def test_approved_records_scope_into_session_config() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
     process_config = ProcessConfig()
-    assert "workspace" not in process_config.approved_scopes
     session = _session(mock_provider, process_config=process_config)
+    assert "workspace" not in session.config.approved_scopes
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))
 
     response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
 
     assert response == "done"
-    assert "workspace" in process_config.approved_scopes
+    assert "workspace" in session.config.approved_scopes
     content = _tool_response_content(session)
     assert "approved" in content
     assert "workspace" in content
@@ -141,15 +141,16 @@ def test_denied_does_not_record_scope() -> None:
     response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
 
     assert response == "done"
-    assert "workspace" not in process_config.approved_scopes
+    assert "workspace" not in session.config.approved_scopes
     content = _tool_response_content(session)
     assert "Error:" in content
     assert "denied" in content
 
 
-def test_none_process_config_fails_closed_even_with_callback(tmp_path: Path) -> None:
-    """A Session constructed without a ProcessConfig has no approved_scopes set to mutate, so
-    escalation fails closed even when a callback is supplied."""
+def test_escalation_succeeds_without_process_config(tmp_path: Path) -> None:
+    """Escalation is session-scoped: `approved_scopes` lives on `SessionConfig`, so a
+    `Session` constructed without a `ProcessConfig` can still record an approval into its
+    own `config.approved_scopes` and report success back to the model."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
@@ -163,7 +164,7 @@ def test_none_process_config_fails_closed_even_with_callback(tmp_path: Path) -> 
     response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
 
     assert response == "done"
+    assert "workspace" in session.config.approved_scopes
     content = _tool_response_content(session)
-    assert "Error:" in content
-    assert "not approved" in content
-    on_escalate.assert_not_called()
+    assert "approved" in content
+    on_escalate.assert_called_once()

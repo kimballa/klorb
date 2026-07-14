@@ -127,7 +127,7 @@
     * ~~Need to handle extra safeguards for writing into ${workspaceRoot}/.klorb/. This is
       implicitly denied; add a separate EscalatePrivileges tool that will unlock
       the dir (with a user ask prompt) for writes (thru the end of the session).~~
-      (Done: `klorb.tools.escalate_privileges` + `ProcessConfig.approved_scopes` gate
+      (Done: `klorb.tools.escalate_privileges` + `SessionConfig.approved_scopes` gate
       `is_privileged_path`.)
       implicitly denied; add a separate EscalatePrivileges tool that will unlock
       the dir (with a user ask prompt) for writes (thru the end of the session).

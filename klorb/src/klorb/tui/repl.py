@@ -85,10 +85,10 @@ from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceComman
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.input_history import append_history, load_history, project_history_path
 from klorb.workspace.last_session import (
+    clear_last_session,
     last_session_path,
     read_last_session,
     write_last_session,
-    clear_last_session
 )
 from klorb.workspace.workspace_init import (
     write_initial_project_config,
@@ -2629,8 +2629,8 @@ class ReplApp(App[None]):
     ) -> EscalatePrivilegesDecision:
         """`Session`'s `on_escalate_privileges` callback: block the worker thread running
         `Session.send_turn()` until the user answers `EscalatePrivilegesPanel`, then return
-        that decision as-is \u2014 `Session._resolve_escalate_privileges` records the approved
-        scope into `ProcessConfig.approved_scopes` itself; this callback only surfaces the
+        that decision as-is — `Session._resolve_escalate_privileges` records the approved
+        scope into `SessionConfig.approved_scopes` itself; this callback only surfaces the
         user's decision, not act on it.
         """
         # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.

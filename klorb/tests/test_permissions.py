@@ -223,13 +223,14 @@ def test_resolve_and_evaluate_write_unlocks_klorb_after_workspace_escalation(tmp
     to .klorb/ is no longer an unconditional deny -- it consults writeDirs/writeFiles like any
     other in-workspace path."""
     target = tmp_path / ".klorb" / "klorb-config.json"
-    process_config = ProcessConfig(approved_scopes={"workspace"})
+    process_config = ProcessConfig()
     context = ToolSetupContext(
         process_config=process_config,
         session_config=SessionConfig(
             workspace=Workspace(path=tmp_path),
             write_dirs=DirRules(allow=[tmp_path]),
             read_dirs=DirRules(allow=[tmp_path]),
+            approved_scopes={"workspace"},
         ),
     )
     resolved, verdict = resolve_and_evaluate_write(context, ".klorb/klorb-config.json")

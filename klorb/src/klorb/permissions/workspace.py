@@ -39,14 +39,14 @@ if TYPE_CHECKING:
     from klorb.tools.setup_context import ToolSetupContext
 
 
-def _approved_scopes(context: "ToolSetupContext") -> set[str] | None:
-    """The session-only privilege-escalation scopes approved this process, pulled off the
-    `ToolSetupContext`'s `ProcessConfig` (see `ProcessConfig.approved_scopes`, populated by the
-    `EscalatePrivileges` tool). `None` when the context carries no `ProcessConfig` (most unit
-    tests), so `is_privileged_path` sees no approved scopes and keeps every privileged dir
-    denied, exactly as before escalation existed."""
-    process_config = context.process_config
-    return process_config.approved_scopes if process_config is not None else None
+def _approved_scopes(context: "ToolSetupContext") -> set[str]:
+    """The session-only privilege-escalation scopes approved this session, pulled off the
+    `ToolSetupContext`'s `SessionConfig` (see `SessionConfig.approved_scopes`, populated by
+    the `EscalatePrivileges` tool). Always returns a (possibly empty) set, since
+    `SessionConfig` is always present on a `ToolSetupContext`; `is_privileged_path` treats
+    an empty set the same as the pre-escalation behavior, keeping every privileged dir
+    denied."""
+    return context.session_config.approved_scopes
 
 
 def _privileged_deny(path: Path, workspace_root: Path, *, is_write: bool) -> Verdict:

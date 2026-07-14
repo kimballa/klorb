@@ -234,6 +234,19 @@ class SessionConfig(BaseModel):
     `klorb.process_config.SESSION_KEY_MAP` — like `interactive`, its default depends on
     whether the session is interactive, resolved explicitly by `klorb.cli.main()` rather
     than a static config default. See docs/specs/permissions.md."""
+    approved_scopes: set[str] = Field(default_factory=set)
+    """Session-only privilege-escalation scopes the user has interactively approved *this
+    session*, via the `EscalatePrivileges` tool (see `klorb.tools.escalate_privileges`).
+    Today the only valid scope is `"workspace"`, which lifts the unconditional
+    privileged-path deny on the workspace's own `${workspace_root}/.klorb/` directory
+    (see `klorb.permissions.directory_access.is_privileged_path`) so the agent can
+    read/write there through `EditFile`/`CreateFile`/etc. for the rest of the session.
+    Never persisted to disk: a grant here revokes when the session ends (e.g. a `/clear`
+    in the REPL starts a fresh `SessionConfig` with an empty set), and a config file can't
+    pre-populate it (it's absent from `SESSION_KEY_MAP`). Lives on `SessionConfig`, not
+    `ProcessConfig`, precisely because escalation is session-scoped — a `Session` owns its
+    own `SessionConfig`, so the grant dies with it rather than leaking to the next session
+    the process starts."""
 
 
 class PermissionAskContext(BaseModel):
@@ -352,7 +365,7 @@ class EscalatePrivilegesContext(BaseModel):
 class EscalatePrivilegesDecision(BaseModel):
     """The user's answer to an `EscalatePrivilegesContext` prompt, returned by
     `on_escalate_privileges`. `approved` is `True` when the user granted the scope for the
-    rest of the session (Session records it into `ProcessConfig.approved_scopes`); `False`
+    rest of the session (Session records it into `SessionConfig.approved_scopes`); `False`
     when denied, so the privileged-path deny stays in effect and the tool reports the denial
     back to the model."""
 
@@ -1123,20 +1136,22 @@ class Session:
     ) -> tuple[Any, str | None]:
         """Resolve an `EscalatePrivilegesRequired` into a `(result, error)` pair: asks
         `callbacks.on_escalate_privileges` for an `EscalatePrivilegesDecision` and, on
-        approval, records the scope into `ProcessConfig.approved_scopes` (the in-memory,
-        session-scoped set `is_privileged_path` consults \u2014 see
+        approval, records the scope into `SessionConfig.approved_scopes` (`self.config`,
+        the in-memory, session-scoped set `is_privileged_path` consults — see
         `klorb.permissions.directory_access.privileged_dirs`). Like `_resolve_ask_user_questions`,
         there is no `permission_framework` branching (escalation isn't a resource-access verdict
         the auto/deny framework applies to) and no retry afterward: recording the approval was
         this tool's entire job, so the decision directly becomes the result.
 
-        With no callback given (e.g. a headless one-shot run \u2014 see `_send_and_receive`'s
+        With no callback given (e.g. a headless one-shot run — see `_send_and_receive`'s
         prompt-path callers), fails closed: the privileged-path deny stays in effect and the
-        tool reports the denial back to the model. A `None` `ProcessConfig` (most unit tests)
-        also fails closed, since there is no `approved_scopes` set to mutate \u2014 escalation is
-        meaningless without a process-wide config to record it in.
+        tool reports the denial back to the model. The recording target is `self.config`
+        (the session's own `SessionConfig`), which always exists, so — unlike when
+        `approved_scopes` lived on `ProcessConfig` — a `Session` constructed without a
+        `ProcessConfig` no longer fails closed here: escalation is session-scoped, and the
+        grant is recorded on the session itself.
         """
-        if callbacks.on_escalate_privileges is None or self._process_config is None:
+        if callbacks.on_escalate_privileges is None:
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, escalate_exc)
             return None, (
                 f"Escalation of '{escalate_exc.scope}' scope was not approved: there is no "
@@ -1153,7 +1168,7 @@ class Session:
         decision = callbacks.on_escalate_privileges(EscalatePrivilegesContext(
             scope=scope, description=description))
         if decision.approved:
-            self._process_config.approved_scopes.add(scope)
+            self.config.approved_scopes.add(scope)
             logger.info("Escalation approved for scope '%s'", scope)
             return {"scope": scope, "approved": True}, None
         logger.info("Escalation denied for scope '%s'", scope)

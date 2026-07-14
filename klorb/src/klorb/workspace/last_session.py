@@ -54,6 +54,7 @@ def write_last_session(workspace: Workspace, config: SessionConfig, messages: li
         last_session_path(workspace), state.model_dump(mode="json"),
         schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
 
+
 def clear_last_session(workspace: Workspace) -> None:
     """Remove any existing `last-session.json` for this workspace. If the file does not exist,
        that's also OK."""
@@ -68,6 +69,7 @@ def clear_last_session(workspace: Workspace) -> None:
     except OSError as e:
         logger.exception("Error while attempting to clear_last_session for path '%s': errno=%s",
                          path, e.errno, e)
+
 
 def read_last_session(workspace: Workspace) -> LastSessionState | None:
     """Load `workspace`'s previously-saved session state, or `None` if none exists (no file),

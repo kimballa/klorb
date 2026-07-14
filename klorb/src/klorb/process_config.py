@@ -320,16 +320,6 @@ class ProcessConfig(BaseModel):
     `klorb.tui.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`
     so it's restored on the next klorb session. `None` (the default) means no persisted choice
     exists yet; `ReplApp` falls back to Textual's own built-in default theme in that case."""
-    approved_scopes: set[str] = Field(default_factory=set)
-    """Session-only privilege-escalation scopes the user has interactively approved this process,
-    via the `EscalatePrivileges` tool (see `klorb.tools.escalate_privileges`). Today the only
-    valid scope is `"workspace"`, which lifts the unconditional privileged-path deny on the
-    workspace's own `${workspace_root}/.klorb/` directory (see
-    `klorb.permissions.directory_access.is_privileged_path`) so the agent can read/write there
-    through `EditFile`/`CreateFile`/etc. for the rest of the session. Never persisted to disk:
-    a grant here revokes when the process exits, and a config file can't pre-populate it (it's
-    absent from `PROCESS_KEY_MAP`). A `None` `ProcessConfig` (most unit tests) yields an empty
-    set, so privileged paths stay denied, exactly as before this field existed."""
     config_warnings: list[str] = Field(default_factory=list)
     """Human-readable messages describing any config layer `load_process_config()` had to skip
     over while assembling this `ProcessConfig` — today, only a layer whose file isn't valid
