@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.cli."""
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -12,6 +13,8 @@ from klorb import cli
 from klorb import token_estimate as token_estimate_module
 from klorb.klorb_init import InitError
 from klorb.logging_config import session_log_path
+from klorb.models.model import Model
+from klorb.models.openrouter_pricing import ModelPricing
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig, ThinkingEffort
@@ -595,3 +598,206 @@ def test_run_system_prompt_cli_passes_config_flag_path(
 
     stub_process_config.assert_called_once_with(
         config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)
+
+
+def _make_model(
+    name: str,
+    *,
+    family: str | None = "fam",
+    model_version: str | None = "1.0",
+    capabilities: dict | None = None,
+    settings: dict | None = None,
+    klorb_capabilities: dict | None = None,
+) -> MagicMock:
+    model = MagicMock(spec=Model)
+    model.name.return_value = name
+    model.family.return_value = family
+    model.model_version.return_value = model_version
+    model.capabilities.return_value = capabilities if capabilities is not None else {
+        "vision": True, "thinking": False, "max_context_window": 1_000, "max_output_tokens": 500,
+        "function_calling": True, "streaming": True,
+    }
+    model.settings.return_value = settings if settings is not None else {}
+    model.klorb_capabilities.return_value = klorb_capabilities if klorb_capabilities is not None else {}
+    return model
+
+
+def test_main_dispatches_to_models_subcommand_when_argv1_is_models() -> None:
+    with patch("klorb.cli.run_models_cli", return_value=0) as mock_run:
+        with patch("sys.argv", ["klorb", "models", "--json"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    mock_run.assert_called_once_with(["--json"])
+    assert exc_info.value.code == 0
+
+
+def test_main_propagates_models_subcommand_failure_exit_code() -> None:
+    with patch("klorb.cli.run_models_cli", return_value=1):
+        with patch("sys.argv", ["klorb", "models"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    assert exc_info.value.code == 1
+
+
+def test_main_does_not_treat_models_as_a_subcommand_unless_it_is_argv1() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_models_cli") as mock_run:
+            with patch("sys.argv", ["klorb", "-m", "models"]):
+                cli.main()
+
+    mock_run.assert_not_called()
+
+
+def test_run_models_cli_prints_table_sorted_by_name(capsys: pytest.CaptureFixture[str]) -> None:
+    model_b = _make_model("b/model-two")
+    model_a = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model_b, model_a]
+        exit_code = cli.run_models_cli([])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[0].split()[0] == "NAME"
+    assert set(lines[1]) == {"-"}
+    assert out.index("a/model-one") < out.index("b/model-two")
+
+
+def test_run_models_cli_table_has_no_vertical_borders_and_one_rule(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        cli.run_models_cli([])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "|" not in "\n".join(lines)
+    rule_lines = [line for line in lines if set(line) == {"-"}]
+    assert len(rule_lines) == 1
+    assert rule_lines[0] == lines[1]
+
+
+def test_run_models_cli_brief_prints_only_names(capsys: pytest.CaptureFixture[str]) -> None:
+    model_b = _make_model("b/model-two")
+    model_a = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model_b, model_a]
+        exit_code = cli.run_models_cli(["--brief"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "a/model-one\nb/model-two\n"
+
+
+def test_run_models_cli_json_and_brief_emit_array_of_name_strings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model_b = _make_model("b/model-two")
+    model_a = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model_b, model_a]
+        exit_code = cli.run_models_cli(["--json", "--brief"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == ["a/model-one", "b/model-two"]
+
+
+def test_run_models_cli_brief_never_fetches_costs(capsys: pytest.CaptureFixture[str]) -> None:
+    model = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        with patch("klorb.cli.fetch_openrouter_pricing_for_models") as mock_fetch:
+            cli.run_models_cli(["--brief", "--costs"])
+
+    mock_fetch.assert_not_called()
+
+
+def test_run_models_cli_json_emits_array_of_model_dicts(capsys: pytest.CaptureFixture[str]) -> None:
+    model = _make_model(
+        "a/model-one", family="fam", model_version="1.0",
+        capabilities={"vision": True}, settings={"temperature": 0.1},
+        klorb_capabilities={"FOO": True})
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        exit_code = cli.run_models_cli(["--json"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == [{
+        "name": "a/model-one",
+        "family": "fam",
+        "model_version": "1.0",
+        "settings": {"temperature": 0.1},
+        "capabilities": {"vision": True},
+        "klorb_capabilities": {"FOO": True},
+    }]
+
+
+def test_run_models_cli_json_has_no_costs_key_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    model = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        cli.run_models_cli(["--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "costs" not in payload[0]
+
+
+def test_run_models_cli_json_costs_includes_pricing(capsys: pytest.CaptureFixture[str]) -> None:
+    model = _make_model("a/model-one")
+    pricing = ModelPricing(input_cost_per_mtok=1.5, output_cost_per_mtok=3.0)
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        with patch("klorb.cli.fetch_openrouter_pricing_for_models", return_value={"a/model-one": pricing}):
+            exit_code = cli.run_models_cli(["--json", "--costs"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["costs"] == {
+        "input_cost_per_mtok": 1.5,
+        "output_cost_per_mtok": 3.0,
+        "currency": "USD",
+    }
+
+
+def test_run_models_cli_json_costs_null_when_pricing_unavailable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        with patch("klorb.cli.fetch_openrouter_pricing_for_models", return_value={"a/model-one": None}):
+            cli.run_models_cli(["--json", "--costs"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["costs"] is None
+
+
+def test_run_models_cli_costs_adds_table_columns(capsys: pytest.CaptureFixture[str]) -> None:
+    model = _make_model("a/model-one")
+    pricing = ModelPricing(input_cost_per_mtok=1.5, output_cost_per_mtok=3.0)
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model]
+        with patch("klorb.cli.fetch_openrouter_pricing_for_models", return_value={"a/model-one": pricing}):
+            cli.run_models_cli(["--costs"])
+
+    out = capsys.readouterr().out
+    assert "IN $/MTOK" in out
+    assert "OUT $/MTOK" in out
+    assert "1.5" in out
+    assert "3" in out
+
+
+def test_run_models_cli_costs_passes_all_model_names(capsys: pytest.CaptureFixture[str]) -> None:
+    model_a = _make_model("a/model-one")
+    model_b = _make_model("b/model-two")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model_b, model_a]
+        with patch("klorb.cli.fetch_openrouter_pricing_for_models", return_value={}) as mock_fetch:
+            cli.run_models_cli(["--costs"])
+
+    mock_fetch.assert_called_once_with(["a/model-one", "b/model-two"])
