@@ -114,6 +114,7 @@ PROMPT_INPUT_ID = "prompt-input"
 PALETTE_HINT_ID = "palette-hint"
 PALETTE_HINT_TEXT = f"{PALETTE_PREFIX} palette"
 STATUS_BAR_ID = "status-bar"
+OUTPUT_TOKENS_ID = "output-tokens"
 PERMISSION_BADGE_ID = "permission-badge"
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
 """The order Shift+Tab cycles `Session.config.permission_framework` through -- see
@@ -1077,6 +1078,13 @@ class ReplApp(App[None]):
         padding: 0 1;
     }
 
+    #output-tokens {
+        width: auto;
+        color: $footer-description-foreground;
+        background: $footer-background;
+        padding: 0 1;
+    }
+
     .prompt {
         color: $accent;
         text-style: bold;
@@ -1243,6 +1251,7 @@ class ReplApp(App[None]):
             yield Footer(show_command_palette=False)
             yield PermissionBadge(id=PERMISSION_BADGE_ID)
             yield Static(id=STATUS_BAR_ID)
+            yield Static(id=OUTPUT_TOKENS_ID)
 
     def get_default_screen(self) -> Screen:
         """Use `SelectionSafeScreen` so a click during a streaming `Markdown` re-render can't
@@ -1840,11 +1849,19 @@ class ReplApp(App[None]):
         self._history_pinned_to_bottom = _pinned_to_bottom(history)
 
     def _update_status_bar(self) -> None:
-        """Refresh the status bar's running token tally against the active model's context window."""
+        """Refresh both footer token tallies: context usage vs. the model's context window, and
+        total model-output tokens.
+        """
         status_bar = self.query_one(f"#{STATUS_BAR_ID}", Static)
         used = format_token_count(self._session.total_tokens_used())
         limit = self._session.max_context_window()
-        status_bar.update(used if limit is None else f"{used} / {format_token_count(limit)}")
+        if limit is None:
+            status_bar.update(f"\u2191 {used}")
+        else:
+            status_bar.update(f"\u2191 {used} / {format_token_count(limit)}")
+
+        output_tokens = self.query_one(f"#{OUTPUT_TOKENS_ID}", Static)
+        output_tokens.update(f"\u2193 {format_token_count(self._session.total_output_tokens_used())}")
 
     def _update_permission_badge(self) -> None:
         """Set the permission badge to show `Session.config.permission_framework`

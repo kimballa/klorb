@@ -258,6 +258,53 @@ def test_total_tokens_used_does_not_double_count_a_replayed_round() -> None:
     assert session.total_tokens_used() == 20 + 4
 
 
+def test_total_output_tokens_used_sums_completion_tokens_across_rounds() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3, prompt_tokens=10),
+        _reply("final answer", num_tokens=4, prompt_tokens=20),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    # Output tokens are the sum of completion tokens for every model round (tool_use + final).
+    assert session.total_output_tokens_used() == 3 + 4
+
+
+def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
+    mock_provider = MagicMock()
+    seen_outputs: list[int] = []
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+    ):
+        seen_outputs.append(session.total_output_tokens_used())
+        on_chunk("hello")
+        seen_outputs.append(session.total_output_tokens_used())
+        on_thinking_chunk("thinking...")
+        seen_outputs.append(session.total_output_tokens_used())
+        return _reply("hello", num_tokens=5, prompt_tokens=10)
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    # Estimates should grow as assistant/thinking content streams in.
+    assert seen_outputs[1] > seen_outputs[0]
+    assert seen_outputs[2] > seen_outputs[1]
+    assert session.total_output_tokens_used() == 5
+    assert all(
+        message.estimated_tokens is None
+        for message in session.messages
+        if message.role in ("assistant", "thinking", "tool_use")
+    )
+
+
 def test_max_context_window_reads_registered_model_capabilities() -> None:
     config = SessionConfig(model="alpha")
     registry = sample_model_registry()

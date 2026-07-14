@@ -706,6 +706,25 @@ class Session:
         return self._last_known_real_tokens + sum(
             message.estimated_tokens or 0 for message in self._messages)
 
+    def total_output_tokens_used(self) -> int:
+        """Return the running total of tokens output by the model so far.
+
+        Sums the provider-reported `num_tokens` (completion tokens) for every completed
+        `role="assistant"` or `role="tool_use"` message -- which already covers all model-
+        generated content for that round, including user-facing text, reasoning/thinking, and
+        tool-call arguments -- plus the live `estimated_tokens` of any assistant/thinking/tool_use
+        placeholder still in flight. This mirrors how `total_tokens_used()` stays live before a
+        round completes, while remaining exact once real counts arrive."""
+        completed = sum(
+            message.num_tokens for message in self._messages
+            if message.role in ("assistant", "tool_use")
+        )
+        in_flight = sum(
+            message.estimated_tokens or 0 for message in self._messages
+            if message.role in ("assistant", "thinking", "tool_use")
+        )
+        return completed + in_flight
+
     def max_context_window(self) -> int | None:
         """Return the active model's max context window in tokens, or `None` if the
         active model isn't registered or doesn't report one.

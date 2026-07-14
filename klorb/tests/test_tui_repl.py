@@ -67,6 +67,7 @@ from klorb.tui.repl import (
     CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
     INTERACTION_PANEL_ID,
+    OUTPUT_TOKENS_ID,
     PALETTE_HINT_ID,
     PALETTE_HINT_TEXT,
     PERMISSION_BADGE_ID,
@@ -314,7 +315,7 @@ async def test_status_bar_shows_zero_tokens_against_model_context_window_on_moun
 
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == "0 / 8k"
+        assert status_bar.content == "\u2193 0 / 8k"
 
 
 async def test_status_bar_updates_after_a_turn_completes() -> None:
@@ -334,7 +335,7 @@ async def test_status_bar_updates_after_a_turn_completes() -> None:
         await pilot.pause()
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == f"{session.total_tokens_used()} / 8k"
+        assert status_bar.content == f"\u2193 {session.total_tokens_used()} / 8k"
 
 
 async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None:
@@ -372,14 +373,14 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
 
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         mid_stream_tally = status_bar.content
-        assert mid_stream_tally != "0 / 8k"
-        assert mid_stream_tally == f"{format_token_count(session.total_tokens_used())} / 8k"
+        assert mid_stream_tally != "\u2193 0 / 8k"
+        assert mid_stream_tally == f"\u2193 {format_token_count(session.total_tokens_used())} / 8k"
 
         release_second_chunk.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert status_bar.content == f"{format_token_count(session.total_tokens_used())} / 8k"
+        assert status_bar.content == f"\u2193 {format_token_count(session.total_tokens_used())} / 8k"
         assert status_bar.content != mid_stream_tally
 
 
@@ -389,7 +390,81 @@ async def test_status_bar_omits_limit_when_model_unregistered() -> None:
 
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
-        assert status_bar.content == "0"
+        assert status_bar.content == "\u2193 0"
+
+
+async def test_output_tokens_widget_shows_zero_on_mount() -> None:
+    mock_provider = MagicMock()
+    registry = sample_model_registry()
+    session = Session(
+        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        output_tokens = app.query_one(f"#{OUTPUT_TOKENS_ID}", Static)
+        assert output_tokens.content == "\u2193 0"
+
+
+async def test_output_tokens_widget_updates_after_a_turn_completes() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = sample_model_registry()
+    session = Session(
+        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        output_tokens = app.query_one(f"#{OUTPUT_TOKENS_ID}", Static)
+        assert output_tokens.content == f"\u2193 {format_token_count(session.total_output_tokens_used())}"
+
+
+async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes() -> None:
+    mock_provider = MagicMock()
+    first_chunk_rendered = threading.Event()
+    release_second_chunk = threading.Event()
+
+    def fake_send_prompt(
+        messages: Any, system_prompt: Any = None, model: Any = None, session_id: Any = None,
+        reasoning: Any = None, tools: Any = None, on_chunk: Any = None,
+        on_thinking_chunk: Any = None, cancel_event: Any = None,
+    ) -> Any:
+        on_chunk("Hello")
+        first_chunk_rendered.set()
+        assert release_second_chunk.wait(timeout=5)
+        on_chunk(" world")
+        return _reply("Hello world")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    registry = sample_model_registry()
+    session = Session(
+        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, first_chunk_rendered.is_set)
+
+        output_tokens = app.query_one(f"#{OUTPUT_TOKENS_ID}", Static)
+        assert output_tokens.content == f"\u2193 {format_token_count(session.total_output_tokens_used())}"
+        assert output_tokens.content != "\u2193 0"
+
+        release_second_chunk.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert output_tokens.content == f"\u2193 {format_token_count(session.total_output_tokens_used())}"
 
 
 async def test_permission_badge_shows_the_session_permission_framework() -> None:
