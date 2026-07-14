@@ -315,14 +315,19 @@ def build_models_parser() -> argparse.ArgumentParser:
         prog="klorb models",
         description="List every model klorb has discovered (built-in and user-added).",
     )
-    output_group = parser.add_mutually_exclusive_group()
-    output_group.add_argument(
+    parser.add_argument(
         "--json", action="store_true",
-        help="Emit a JSON array of each model's data instead of a table.",
+        help=(
+            "Emit a JSON array of each model's data instead of a table. Combined with "
+            "--brief, emits a JSON array of model name strings instead."
+        ),
     )
-    output_group.add_argument(
+    parser.add_argument(
         "--brief", action="store_true",
-        help="Emit only each model's OpenRouter name, one per line, no other fields.",
+        help=(
+            "Emit only each model's OpenRouter name, no other fields: one per line as plain "
+            "text, or (combined with --json) as a JSON array of strings."
+        ),
     )
     parser.add_argument(
         "--costs", action="store_true",
@@ -424,7 +429,9 @@ def run_models_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb models`) and print every model
     `ModelRegistry` discovers (built-in and user-added, see docs/specs/model-framework.md) to
     stdout, sorted by name: a column-aligned table by default, a JSON array of each model's
-    data with `--json`, or just each model's OpenRouter name (one per line) with `--brief`.
+    data with `--json`, or just each model's OpenRouter name and no other fields with
+    `--brief` — one per line as plain text, or (combined with `--json`) as a JSON array of
+    name strings.
 
     `--costs` looks up each model's live per-token pricing from OpenRouter
     (`klorb.models.openrouter_pricing.fetch_openrouter_pricing_for_models`, throttled to
@@ -439,8 +446,12 @@ def run_models_cli(argv: list[str]) -> int:
     models = sorted(ModelRegistry().models(), key=lambda model: model.name())
 
     if args.brief:
-        for model in models:
-            print(model.name())
+        names = [model.name() for model in models]
+        if args.json:
+            print(json.dumps(names, indent=2))
+        else:
+            for name in names:
+                print(name)
         return 0
 
     costs: dict[str, ModelPricing | None] | None = None

@@ -652,11 +652,6 @@ def test_main_does_not_treat_models_as_a_subcommand_unless_it_is_argv1() -> None
     mock_run.assert_not_called()
 
 
-def test_run_models_cli_rejects_json_and_brief_together() -> None:
-    with pytest.raises(SystemExit):
-        cli.run_models_cli(["--json", "--brief"])
-
-
 def test_run_models_cli_prints_table_sorted_by_name(capsys: pytest.CaptureFixture[str]) -> None:
     model_b = _make_model("b/model-two")
     model_a = _make_model("a/model-one")
@@ -696,6 +691,19 @@ def test_run_models_cli_brief_prints_only_names(capsys: pytest.CaptureFixture[st
 
     assert exit_code == 0
     assert capsys.readouterr().out == "a/model-one\nb/model-two\n"
+
+
+def test_run_models_cli_json_and_brief_emit_array_of_name_strings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    model_b = _make_model("b/model-two")
+    model_a = _make_model("a/model-one")
+    with patch("klorb.cli.ModelRegistry") as mock_registry_cls:
+        mock_registry_cls.return_value.models.return_value = [model_b, model_a]
+        exit_code = cli.run_models_cli(["--json", "--brief"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == ["a/model-one", "b/model-two"]
 
 
 def test_run_models_cli_brief_never_fetches_costs(capsys: pytest.CaptureFixture[str]) -> None:

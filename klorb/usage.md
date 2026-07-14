@@ -15,7 +15,7 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb system-prompt` [`--role` *ROLE*] [`--model` *MODEL*] [`--config` *FILE*]
 
-`klorb models` [`--json` | `--brief`] [`--costs`]
+`klorb models` [`--json`] [`--brief`] [`--costs`]
 
 ## DESCRIPTION
 
@@ -64,15 +64,16 @@ discovered — see COMMANDS below.
   configured via the `klorb-config.json` file stack). `--config` layers an
   additional config file on top of the usual `/etc`, per-user, and
   per-project files. Exit status is `0` on success.
-* `models` [`--json` | `--brief`] [`--costs`]
+* `models` [`--json`] [`--brief`] [`--costs`]
 
   Lists every model `ModelRegistry` discovers (built-in and user-added, see
   `docs/specs/model-framework.md`), sorted by name. With no flags, prints a
   column-aligned table (no vertical borders, a single horizontal rule under
   the header row) of each model's name, family, version, and capabilities.
   `--json` instead emits a JSON array of each model's data. `--brief` emits
-  only each model's OpenRouter name, one per line, and no other fields.
-  `--json` and `--brief` are mutually exclusive. `--costs` looks up each
+  only each model's OpenRouter name and no other fields, one per line as
+  plain text; combined with `--json`, it instead emits a JSON array of name
+  strings (e.g. `["xiaomi/mimo-v2.5", ...]`). `--costs` looks up each
   model's current per-token cost from OpenRouter (live, not stored — see
   `docs/adrs/fetch-model-pricing-live-not-from-json.md`), throttled to
   `klorb.models.openrouter_pricing.MAX_PRICING_REQUESTS_PER_SECOND` requests
