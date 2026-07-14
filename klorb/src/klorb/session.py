@@ -1244,6 +1244,13 @@ class Session:
             "Dispatching %d tool call(s) requested by the model: %s",
             len(tool_use_message.tool_calls), [call.name for call in tool_use_message.tool_calls])
         for call in tool_use_message.tool_calls:
+            if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
+                # Stop before running the next call (and before asking about any more of this
+                # round's calls) once cancellation is signalled -- see the matching round-boundary
+                # check in `_dispatch_turn` and `TurnEventHandlers.cancel_event`. Calls already
+                # dispatched in this round keep their `tool_response` messages, exactly like a
+                # mid-stream abort leaves an earlier round's completed calls in place.
+                raise ResponseAborted()
             if self._tool_calls_this_turn >= self.config.max_tool_calls_per_turn:
                 if not self._confirm_limit_increase(
                     "turn", self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
@@ -1527,6 +1534,14 @@ class Session:
 
             rounds = 0
             while reply.role == "tool_use":
+                if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
+                    # Abort at the round boundary too, not just mid-stream: a turn that was
+                    # cancelled (Escape, or an interactive quit -- see
+                    # klorb.tui.repl.ReplApp._begin_exit) while a tool call was running, or while
+                    # its worker thread was parked awaiting a permission decision, would otherwise
+                    # keep issuing more rounds/streams before the provider's own mid-stream
+                    # cancel_event check (klorb.openrouter.send_prompt) got another chance to fire.
+                    raise ResponseAborted()
                 rounds += 1
                 if rounds > MAX_TOOL_CALL_ROUNDS:
                     logger.warning(

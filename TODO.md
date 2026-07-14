@@ -2,11 +2,6 @@
 
 # Bugs:
 
-* There is some sort of race condition with the locking. Models can sometimes just "hang" now.
-  Likewise, attempting to exit with ^q prompts the user to save their session, saves it, kills
-  the TUI and sends things back to the main tty-world... but the process doesn't end. It just
-  hangs there until you ^C and then it finally releases you back to the shell you started in.
-
 * LLM output is being added to the history in an markdown-aware way and if the llm
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML

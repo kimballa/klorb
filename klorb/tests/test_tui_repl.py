@@ -2192,6 +2192,124 @@ async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path
         assert config.write_dirs == DirRules()
 
 
+async def test_release_pending_interaction_unblocks_a_parked_confirm() -> None:
+    """The lever behind both the "model hangs" and "can't quit" fixes: while an interaction panel
+    is awaiting the user, `_release_pending_interaction` resolves its decision future with a safe
+    default (deny/once here), releasing whatever is blocked on it -- a real turn's worker thread is
+    parked in `App.call_from_thread` on exactly this future. `_signal_turn_cancellation` fires it,
+    and the callback is cleared once the confirm returns. See
+    docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        task = asyncio.ensure_future(app._confirm_permission_ask(_command_ask_ctx("echo hi")))
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+        # Narrow a local rather than the instance attribute: asserting `is not None` directly on
+        # `app._release_pending_interaction` would leave mypy believing it stays non-None across the
+        # `await` below, making the later `is None` check (and everything after it) unreachable.
+        pending_release = app._release_pending_interaction
+        assert pending_release is not None
+
+        app._signal_turn_cancellation()
+        decision = await task
+
+        assert decision.action == "deny"
+        assert decision.scope == "once"
+        assert app._release_pending_interaction is None
+        assert not app.query(PermissionAskPanel)
+
+
+async def test_interaction_panel_double_dismiss_is_idempotent() -> None:
+    """A panel's `on_dismiss` is now guarded against resolving an already-resolved future, so a
+    stray second dismiss (a queued keypress landing between the panel resolving and `_confirm_*`
+    unmounting it, or a teardown resolving it first) is a no-op rather than an
+    `asyncio.InvalidStateError` that would crash the event loop and strand the turn."""
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        task = asyncio.ensure_future(app._confirm_ask_user_questions(_question_ctx("Q")))
+        await _wait_until(pilot, lambda: bool(app.query(AskUserQuestionsPanel)))
+
+        panel = app.query_one(AskUserQuestionsPanel)
+        panel.dismiss(AskUserQuestionsAnswer(answer="Yes"))
+        # The second dismiss must not raise, and the first answer wins.
+        panel.dismiss(AskUserQuestionsAnswer(answer="No"))
+
+        answer = await task
+        assert answer.answer == "Yes"
+
+
+async def test_ctrl_c_aborts_an_in_flight_model_turn_instead_of_quitting() -> None:
+    """Ctrl+C with a model turn in flight aborts the turn (like Escape) rather than quitting out
+    from under it -- quitting a still-running turn is what used to strand its worker thread and
+    hang process shutdown (see `_begin_exit`). The app stays running afterward."""
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        assert cancel_event is not None
+        streaming_started.set()
+        cancel_event.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "what is 2+2?"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, streaming_started.is_set)
+        await pilot.press("ctrl+c")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.query_one(".interrupted", Static)
+        assert prompt_input.disabled is False
+        assert app._exit_requested is False
+        app.exit.assert_not_called()
+
+
+async def test_quit_while_a_permission_ask_is_pending_defers_exit_until_the_worker_unwinds(
+    tmp_path: Path,
+) -> None:
+    """The core regression: quitting while a turn's worker thread is parked awaiting a permission
+    decision must not `self.exit()` immediately (which would stop the event loop while the worker
+    is still blocked in `App.call_from_thread`, hanging process shutdown). Instead the pending ask
+    is released, the turn unwinds, and the real exit is deferred to `_finish_turn`. See
+    docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", tmp_path / "f.txt")]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+        app.exit = MagicMock()  # type: ignore[method-assign]
+
+        await pilot.press("ctrl+q")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # The exit went through the deferred path (turn was in flight), not the immediate one ...
+        assert app._exit_requested is True
+        # ... the parked ask was released so the worker could unwind, and the real exit ran once
+        # the turn actually finished.
+        assert not app.query(PermissionAskPanel)
+        app.exit.assert_called_once()
+
+
 async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_and_decided(
     tmp_path: Path,
 ) -> None:

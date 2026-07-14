@@ -9,9 +9,9 @@ import json
 import logging
 import sys
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from rich.text import Text
 from textual import events, work
@@ -153,6 +153,10 @@ actual rendered width for `PermissionAskPanel`'s `preview_wrap_width` (see
 _MIN_COMMAND_PREVIEW_WRAP_WIDTH = 20
 """Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable
 (if aggressively wrapped) preview rather than a degenerate near-zero width."""
+
+_InteractionResult = TypeVar("_InteractionResult")
+"""The decision/answer type an interaction panel resolves its future with — see
+`ReplApp._register_interaction_future`."""
 
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
@@ -1228,6 +1232,24 @@ class ReplApp(App[None]):
         turn's tool calls can drive a confirmation concurrently); this lock is a further structural
         guarantee that even so a second panel queues behind the first rather than stacking, no
         matter what future path drives a confirmation."""
+        self._release_pending_interaction: Callable[[], None] | None = None
+        """While an interaction panel (permission ask, ask-user-questions, escalate-privileges) is
+        mounted and awaiting the user, this resolves that panel's pending decision future with a
+        safe default (deny / cancelled), releasing the worker thread parked inside
+        `App.call_from_thread` waiting on it and freeing `_interaction_lock`. Each `_confirm_*`
+        method sets it right before it awaits and clears it in a `finally`; `None` whenever no
+        interaction is pending. Teardown/abort paths (`_signal_turn_cancellation`,
+        `_release_workers_for_exit`) call it so quitting or interrupting can never strand a worker
+        thread blocked on a decision that will never come — the deadlock behind both the
+        "model hangs" and "can't quit" symptoms (see
+        docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md)."""
+        self._exit_requested: bool = False
+        """Set by `_begin_exit` when a quit is requested while a turn or shell command is still in
+        flight: rather than `self.exit()` immediately (which would stop the event loop while the
+        worker thread is still parked in `App.call_from_thread`, so its `future.result()` never
+        returns and its non-daemon executor thread blocks process shutdown), the exit is deferred
+        until the signalled worker unwinds and reaches `_finish_turn`, which performs the real
+        `self.exit()` once nothing is running on the loop's behalf anymore."""
         self._last_permission_action: Literal["allow", "deny"] = "allow"
         self._last_permission_scope: Literal["once", "session", "workspace", "homedir"] = "once"
         """`PermissionAskPanel`'s grid cursor position after the most recent prompt this app
@@ -1451,18 +1473,37 @@ class ReplApp(App[None]):
 
     def action_abort_response(self) -> None:
         """Signal the in-flight turn's worker thread to stop consuming the response stream."""
+        self._signal_turn_cancellation()
+
+    def _signal_turn_cancellation(self) -> None:
+        """Tell an in-flight model turn's worker thread to unwind. Sets `_cancel_event` (so
+        `Session.send_turn` raises `ResponseAborted` at its next stream or round/tool boundary —
+        see `Session._dispatch_turn`) *and* resolves any pending interaction panel's decision with
+        a safe deny/cancelled default (`_release_pending_interaction`), so a worker parked in
+        `App.call_from_thread` awaiting a user decision is released too — the cancel event alone
+        can't wake it, since it's blocked on the decision future, not mid-stream. A no-op when
+        nothing is pending, so it's safe to call unconditionally."""
         if self._cancel_event is not None:
             self._cancel_event.set()
+        if self._release_pending_interaction is not None:
+            self._release_pending_interaction()
 
     def action_interrupt(self) -> None:
-        """Ctrl+C: if a `!`-prefixed shell command is currently running, terminate it instead
-        of quitting — mirroring a terminal's own Ctrl+C, which interrupts the foreground job
-        rather than closing the shell. With no shell command in flight, falls through to the
-        ordinary quit behavior (matching `action_quit`, which Ctrl+C used to be bound to
-        directly).
+        """Ctrl+C: interrupt whatever is running, mirroring a terminal's own Ctrl+C interrupting
+        the foreground job rather than closing the shell. A `!`-prefixed shell command is
+        terminated; otherwise an in-flight model turn is aborted (the same as Escape's
+        `action_abort_response`). Only when nothing at all is running does Ctrl+C fall through to
+        the ordinary quit flow.
+
+        Aborting an in-flight turn rather than quitting it is deliberate: quitting out from under a
+        still-running turn is exactly what used to strand the turn's worker thread and hang process
+        shutdown (see `_begin_exit`), and interrupting-then-quitting is both safer and the more
+        conventional terminal gesture.
         """
         if self._shell_cancel_event is not None:
             self._shell_cancel_event.set()
+        elif self._turn_in_flight:
+            self._signal_turn_cancellation()
         else:
             self._quit_after_maybe_saving()
 
@@ -1501,7 +1542,34 @@ class ReplApp(App[None]):
                 self._session.config.workspace, self._session.config, self._session.messages)
         else:
             clear_last_session(self._session.config.workspace)
-        self.exit()
+        self._begin_exit()
+
+    def _begin_exit(self) -> None:
+        """Exit the app, but never while a worker thread is still running: if a model turn or shell
+        command is in flight (`_turn_in_flight`), exiting immediately would stop the event loop
+        while that worker is parked in `App.call_from_thread`, so its `future.result()` would never
+        return and its non-daemon executor thread would block process shutdown until it's ^C'd (the
+        "TUI is gone but the process won't end" hang). Instead, signal the worker to unwind
+        (`_release_workers_for_exit`) and defer the real `self.exit()` to `_finish_turn`, which the
+        worker reaches once its turn actually ends. When nothing is in flight, exits right away."""
+        if not self._turn_in_flight:
+            self.exit()
+            return
+        self._exit_requested = True
+        self._release_workers_for_exit()
+
+    def _release_workers_for_exit(self) -> None:
+        """Signal every kind of in-flight worker to stop so a deferred exit (`_begin_exit`) can
+        complete: cancel a streaming/tool model turn (`_cancel_event`) and a shell command
+        (`_shell_cancel_event`), and resolve any pending interaction panel's decision with a safe
+        default (`_release_pending_interaction`) so a worker parked in `App.call_from_thread`
+        awaiting one is released. Each piece is a no-op when that kind of work isn't running."""
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        if self._shell_cancel_event is not None:
+            self._shell_cancel_event.set()
+        if self._release_pending_interaction is not None:
+            self._release_pending_interaction()
 
     def action_toggle_tool_call_detail(self) -> None:
         """Ctrl+O: flip every `ToolCallStatic` currently in the history — from any turn, not
@@ -1926,7 +1994,7 @@ class ReplApp(App[None]):
 
         event.prompt_input.text = ""
         if prompt_text in [":q", "/quit", "/exit"]:
-            self.exit()
+            self._begin_exit()
             return
 
         if prompt_text.startswith("!") and "\n" not in prompt_text and "\r" not in prompt_text:
@@ -2513,6 +2581,25 @@ class ReplApp(App[None]):
             f"Decision: {decision_text}", classes="interaction-record-decision", markup=False))
         self._scroll_if_pinned(history, was_pinned)
 
+    def _register_interaction_future(
+        self, future: "asyncio.Future[_InteractionResult]", teardown_default: _InteractionResult,
+    ) -> Callable[[_InteractionResult], None]:
+        """Wire a just-created interaction panel's decision `future` for safe resolution, returning
+        the guarded `on_dismiss` callback the panel reports its result through.
+
+        The returned resolver is idempotent: a second dismiss (e.g. a stray keypress landing
+        between the panel resolving and `_confirm_*` unmounting it), or a teardown resolving the
+        future first, is a no-op rather than an `asyncio.InvalidStateError`. It also registers
+        `_release_pending_interaction` so a teardown/abort path can resolve this same future with
+        `teardown_default` (deny / cancelled), unblocking the worker thread parked in
+        `App.call_from_thread` awaiting the decision and freeing `_interaction_lock`. The caller
+        must clear `_release_pending_interaction` in its own `finally` once the await completes."""
+        def resolve(result: _InteractionResult) -> None:
+            if not future.done():
+                future.set_result(result)
+        self._release_pending_interaction = lambda: resolve(teardown_default)
+        return resolve
+
     async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """Mount a `PermissionAskPanel` for `ask_ctx` into `#interaction-panel` and wait for the
         user's choice.
@@ -2570,14 +2657,19 @@ class ReplApp(App[None]):
             initial_action=initial_action, initial_scope=initial_scope,
             risk_score=risk_assessment.risk_score if risk_assessment is not None else None,
             risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,
-            preview_wrap_width=preview_wrap_width, on_dismiss=decision_future.set_result)
+            preview_wrap_width=preview_wrap_width,
+            on_dismiss=self._register_interaction_future(
+                decision_future, PermissionDecision(action="deny", scope="once")))
 
-        async with self._interaction_lock:
-            panel_container = self._enter_interaction_mode()
-            await panel_container.mount(panel)
-            decision = await decision_future
-            await panel.remove()
-            self._exit_interaction_mode()
+        try:
+            async with self._interaction_lock:
+                panel_container = self._enter_interaction_mode()
+                await panel_container.mount(panel)
+                decision = await decision_future
+                await panel.remove()
+                self._exit_interaction_mode()
+        finally:
+            self._release_pending_interaction = None
 
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
@@ -2618,14 +2710,19 @@ class ReplApp(App[None]):
         `call_from_thread`, to get here.
         """
         answer_future: asyncio.Future[AskUserQuestionsAnswer] = asyncio.get_running_loop().create_future()
-        panel = AskUserQuestionsPanel(ask_ctx, on_dismiss=answer_future.set_result)
+        panel = AskUserQuestionsPanel(
+            ask_ctx, on_dismiss=self._register_interaction_future(
+                answer_future, AskUserQuestionsAnswer(cancelled=True)))
 
-        async with self._interaction_lock:
-            panel_container = self._enter_interaction_mode()
-            await panel_container.mount(panel)
-            answer = await answer_future
-            await panel.remove()
-            self._exit_interaction_mode()
+        try:
+            async with self._interaction_lock:
+                panel_container = self._enter_interaction_mode()
+                await panel_container.mount(panel)
+                answer = await answer_future
+                await panel.remove()
+                self._exit_interaction_mode()
+        finally:
+            self._release_pending_interaction = None
 
         self._record_interaction_history(
             panel.header_text(), ask_ctx.question, format_ask_user_questions_answer(answer))
@@ -2655,14 +2752,19 @@ class ReplApp(App[None]):
         """
         decision_future: asyncio.Future[EscalatePrivilegesDecision] = (
             asyncio.get_running_loop().create_future())
-        panel = EscalatePrivilegesPanel(escalate_ctx, on_dismiss=decision_future.set_result)
+        panel = EscalatePrivilegesPanel(
+            escalate_ctx, on_dismiss=self._register_interaction_future(
+                decision_future, EscalatePrivilegesDecision(approved=False)))
 
-        async with self._interaction_lock:
-            panel_container = self._enter_interaction_mode()
-            await panel_container.mount(panel)
-            decision = await decision_future
-            await panel.remove()
-            self._exit_interaction_mode()
+        try:
+            async with self._interaction_lock:
+                panel_container = self._enter_interaction_mode()
+                await panel_container.mount(panel)
+                decision = await decision_future
+                await panel.remove()
+                self._exit_interaction_mode()
+        finally:
+            self._release_pending_interaction = None
 
         self._record_interaction_history(
             panel.header_text(), escalate_ctx.description,
@@ -2752,6 +2854,11 @@ class ReplApp(App[None]):
         both a model turn and a shell command, since only one of the two is ever in flight at a
         time. Clearing `_turn_in_flight` here (the terminal state of every model turn and shell
         command) is what lets the next submit through.
+
+        If a quit was requested while this turn was still running (`_exit_requested`, set by
+        `_begin_exit`), the deferred `self.exit()` happens here — now that the worker thread has
+        actually finished and can no longer be stranded by the event loop stopping out from under
+        it. Runs last, after the turn is fully wound down.
         """
         self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
@@ -2762,6 +2869,8 @@ class ReplApp(App[None]):
         self._shell_cancel_event = None
         self._turn_in_flight = False
         self.refresh_bindings()
+        if self._exit_requested:
+            self.exit()
 
 
 def _handle_repl_crash(app: ReplApp, crash_tee: CrashLogTee) -> None:

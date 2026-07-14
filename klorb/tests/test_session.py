@@ -3,6 +3,7 @@
 
 import json
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -236,6 +237,41 @@ def test_completed_round_clears_reply_estimate_before_turn_settles() -> None:
 
     assert response == "final answer"
     assert all(m.estimated_tokens is None for m in session.messages)
+
+
+def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
+    """A `cancel_event` that becomes set while a tool-call round is in flight aborts the turn at
+    the next round boundary (`_dispatch_turn`) -- the pending tool call is not dispatched and no
+    further provider request is made -- rather than waiting for the provider's own mid-stream
+    cancel check on a round that may never start. This is what lets an interactive quit or Ctrl+C
+    unwind a turn whose worker thread is parked between streams (e.g. on a permission ask). See
+    docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
+    cancel_event = threading.Event()
+    mock_provider = MagicMock()
+
+    def first_round_then_cancel(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+    ):
+        # Simulate the turn being cancelled (quit / Ctrl+C) while this round's reply is assembled.
+        assert cancel_event is not None
+        cancel_event.set()
+        return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+
+    mock_provider.send_prompt.side_effect = first_round_then_cancel
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    with pytest.raises(ResponseAborted):
+        session.send_turn("please echo", TurnEventHandlers(cancel_event=cancel_event))
+
+    # Only the first round ran: the boundary check aborted before dispatching the tool call or
+    # requesting a second round.
+    assert mock_provider.send_prompt.call_count == 1
+    assert not any(m.role == "tool_response" for m in session.messages)
+    assert session.messages[0].role == "system"
+    assert next(m for m in session.messages if m.role == "user").processing_state == "aborted"
 
 
 def test_total_tokens_used_does_not_double_count_a_replayed_round() -> None:
