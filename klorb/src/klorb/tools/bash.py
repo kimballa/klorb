@@ -1133,7 +1133,7 @@ class BashTool(Tool):
         `Bash: List all _wait_until call sites in test_tui_repl.py ($ grep -n ...)`."""
         command = args.get("command", "?")
         intent = args.get("intent")
-        label = f"{intent} ($ {command})" if intent else command
+        label = f"{intent}\n$ {command}" if intent else command
         if error is not None:
             return f"Bash: {label} failed: {error}"
         if not isinstance(result, dict):
