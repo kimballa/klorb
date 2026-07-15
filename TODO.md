@@ -26,12 +26,10 @@
 
 # Feature backlog
 
-* Grep should have even more concise output
-  * Also selectable output modes:
-    * ListFiles -- just list the files (sort|uniq) that contain a hit
-    * MatchLines -- just the lines that match (like `grep -R`)
-    * FullContext -- the lines that match + 2 context lines on either side.
-  * Should have a `path` argument which could be a dir (which is recursively grepped) or just one file.
+* FindFile tool should (optionally) respect gitignore.
+  * If it _would_ have returned a filename hidden by gitignore, it should set a flag in the output
+    along with a message informing the agent that it can discover the gitignored files by re-findfile'ing
+    with useGitIgnore=false (it defaults to true).
 
 * Consider switching Qwen option to qwen/qwen3.7-plus. Cheaper. Bigger context. ...Better?
 

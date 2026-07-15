@@ -178,3 +178,110 @@ def test_summary_on_failure_includes_the_error(
     tool = SearchMemoriesTool(_context(tmp_path, monkeypatch))
 
     assert tool.summary({"queries": ["x"]}, error="boom") == "Search memories: ['x'] failed: boom"
+
+
+# --- outputStyle tests ---
+
+
+def test_default_output_style_is_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When outputStyle is omitted, the default is 'Matches' (only hit lines, no context)."""
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nONE\ntwo\nthree\n")
+    result = SearchMemoriesTool(context).apply({"queries": ["one"]})
+    assert result["match_count"] == 1
+    assert result["results"][0] == {
+        "namespace": "global", "filename": "notes.md", "lines": ["*2|ONE"]}
+
+
+def test_output_style_matches_returns_only_hit_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nalpha\nbeta\ndelta\n")
+    result = SearchMemoriesTool(context).apply(
+        {"queries": ["alpha", "delta"], "outputStyle": "Matches"})
+    assert result["match_count"] == 2
+    assert result["results"][0] == {
+        "namespace": "global", "filename": "notes.md",
+        "lines": ["*2|alpha", "*4|delta"]}
+
+
+def test_output_style_full_context_returns_surrounding_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "line1\nline2\nMATCH\nline4\nline5\n")
+    result = SearchMemoriesTool(context).apply(
+        {"queries": ["MATCH"], "outputStyle": "FullContext"})
+    # FullContext uses grep_context_lines (default 2) so should include lines 1-5
+    assert result["match_count"] == 1
+    lines = result["results"][0]["lines"]
+    # Should have context lines (space-prefixed) around the match
+    assert len(lines) > 1
+    # The matched line should be present
+    assert any(line.startswith("*") for line in lines)
+
+
+def test_output_style_list_files_returns_deduplicated_filenames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "a.md", "Topic\nhello\n")
+    _write(context, "global", "b.md", "Topic\nhello\n")
+    _write(context, "global", "c.md", "Topic\nnothing here\n")
+    result = SearchMemoriesTool(context).apply(
+        {"queries": ["hello"], "outputStyle": "ListFiles"})
+    # files should be a plain list of strings
+    assert isinstance(result["files"], list)
+    assert all(isinstance(f, str) for f in result["files"])
+    # Should have namespace/filename format
+    assert result["files"] == ["global/a.md", "global/b.md"]
+    # No results key, just files
+    assert "results" not in result
+    assert result["match_count"] == 2
+
+
+def test_list_files_includes_filename_only_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "you-like-birds.md", "Topic\nno matching word here\n")
+    result = SearchMemoriesTool(context).apply(
+        {"queries": ["bird"], "outputStyle": "ListFiles"})
+    assert result["files"] == ["global/you-like-birds.md"]
+    assert result["match_count"] == 1
+
+
+def test_list_files_filename_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ListFiles format is <namespace>/<filename>, not a full path."""
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nhello\n")
+    result = SearchMemoriesTool(context).apply(
+        {"queries": ["hello"], "outputStyle": "ListFiles"})
+    assert result["files"] == ["global/notes.md"]
+
+
+def test_invalid_output_style_raises_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "a.md", "Topic\nhello\n")
+    with pytest.raises(ValueError, match="outputStyle"):
+        SearchMemoriesTool(context).apply(
+            {"queries": ["hello"], "outputStyle": "bogus"})
+
+
+def test_invalid_output_style_error_explains_enum_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "a.md", "Topic\nhello\n")
+    with pytest.raises(ValueError, match="outputStyle") as exc_info:
+        SearchMemoriesTool(context).apply(
+            {"queries": ["hello"], "outputStyle": "bad"})
+    msg = str(exc_info.value)
+    assert "ListFiles" in msg
+    assert "Matches" in msg
+    assert "FullContext" in msg

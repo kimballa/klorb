@@ -8,7 +8,14 @@ from typing import Any
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
-from klorb.tools.util import compile_queries, context_lines_for_matches, match_line_indices, validate_queries
+from klorb.tools.util import (
+    compile_queries,
+    context_lines_for_matches,
+    match_line_indices,
+    matches_only,
+    validate_output_style,
+    validate_queries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +52,9 @@ class SearchScratchpadTool(Tool):
             "on each side, merging overlapping/adjacent matches. Each entry in 'lines' is a "
             "string like '*42|matched text' or ' 41|context text', where the leading '*' marks "
             "a matching line and the number is its 1-based line number (a gap in those numbers "
-            "marks a break between context windows)."
+            "marks a break between context windows). Use outputStyle to control the level "
+            "of detail: \"Matches\" returns only the hit lines (default); \"FullContext\" "
+            "returns hit lines plus surrounding context. \"ListFiles\" is not supported."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -61,6 +70,13 @@ class SearchScratchpadTool(Tool):
                         "regular expressions); a line containing any one of them is returned."
                     ),
                 },
+                "outputStyle": {
+                    "type": "string",
+                    "description": (
+                        "Controls the level of detail: \"Matches\" returns only the hit lines "
+                        "(default); \"FullContext\" returns hit lines plus surrounding context."
+                    ),
+                },
             },
             "required": ["queries"],
             "additionalProperties": False,
@@ -72,7 +88,8 @@ class SearchScratchpadTool(Tool):
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
-        logger.debug("SearchScratchpad %r", queries)
+        output_style = validate_output_style(args.get("outputStyle"), allow_list_files=False)
+        logger.debug("SearchScratchpad %r (outputStyle=%s)", queries, output_style)
 
         compiled = compile_queries(queries, case_insensitive=True)
 
@@ -81,7 +98,10 @@ class SearchScratchpadTool(Tool):
         total_lines = len(all_lines)
 
         matched_indices = match_line_indices(all_lines, compiled)
-        lines = context_lines_for_matches(all_lines, matched_indices, self._context_lines)
+        if output_style == "Matches":
+            lines = matches_only(all_lines, matched_indices)
+        else:  # FullContext
+            lines = context_lines_for_matches(all_lines, matched_indices, self._context_lines)
 
         logger.debug(
             "SearchScratchpad found %d match(es) in %d line(s)", len(matched_indices), len(lines))

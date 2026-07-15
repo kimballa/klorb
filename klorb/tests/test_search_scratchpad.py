@@ -66,7 +66,7 @@ def test_context_lines_from_config(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "\n".join(f"line{i}" for i in range(10)) + "\n")
 
     result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
-        {"queries": ["line5"]})
+        {"queries": ["line5"], "outputStyle": "FullContext"})
 
     assert [line[0] for line in _parse_lines(result)] == [5, 6, 7]
 
@@ -75,7 +75,7 @@ def test_adjacent_matches_merge_into_one_block(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "a\nMATCH\nb\nMATCH\nc\n")
 
     result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
-        {"queries": ["MATCH"]})
+        {"queries": ["MATCH"], "outputStyle": "FullContext"})
 
     assert result["match_count"] == 2
     assert [line[0] for line in _parse_lines(result)] == [1, 2, 3, 4, 5]
@@ -88,7 +88,7 @@ def test_distant_matches_flatten_with_a_line_number_gap(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "\n".join(lines) + "\n")
 
     result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
-        {"queries": ["MATCH"]})
+        {"queries": ["MATCH"], "outputStyle": "FullContext"})
 
     # Two non-contiguous windows concatenated into one lines array; the gap shows only as a jump
     # in the embedded line numbers, with no separator between them.
@@ -173,3 +173,66 @@ def test_detail_view_caps_lines_to_60(tmp_path: Path) -> None:
 
     assert len(detail["result"]["lines"]) == 60
     assert detail["result"]["lines_omitted"] == 10
+
+
+# --- outputStyle tests ---
+
+
+def test_default_output_style_is_matches(tmp_path: Path) -> None:
+    """When outputStyle is omitted, the default is 'Matches' (only hit lines, no context)."""
+    scratchpad = _write(tmp_path, "a\nb\nMATCH\nc\nd\n")
+    result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
+        {"queries": ["MATCH"]})
+    parsed = _parse_lines(result)
+    assert [line[0] for line in parsed] == [3]
+    assert [line[2] for line in parsed] == [True]
+
+
+def test_output_style_matches_returns_only_hit_lines(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nMATCH\nc\nd\n")
+    result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
+        {"queries": ["MATCH"], "outputStyle": "Matches"})
+    parsed = _parse_lines(result)
+    assert [line[0] for line in parsed] == [3]
+    assert [line[2] for line in parsed] == [True]
+
+
+def test_output_style_full_context_returns_surrounding_lines(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nMATCH\nc\nd\n")
+    result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
+        {"queries": ["MATCH"], "outputStyle": "FullContext"})
+    parsed = _parse_lines(result)
+    assert [line[0] for line in parsed] == [2, 3, 4]
+    assert [line[2] for line in parsed] == [False, True, False]
+
+
+def test_list_files_rejected_for_scratchpad(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\n")
+    with pytest.raises(ValueError, match="ListFiles.*not supported"):
+        SearchScratchpadTool(_context(str(scratchpad))).apply(
+            {"queries": ["a"], "outputStyle": "ListFiles"})
+
+
+def test_invalid_output_style_raises_value_error(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\n")
+    with pytest.raises(ValueError, match="outputStyle"):
+        SearchScratchpadTool(_context(str(scratchpad))).apply(
+            {"queries": ["a"], "outputStyle": "bogus"})
+
+
+def test_invalid_output_style_error_explains_enum_values(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\n")
+    with pytest.raises(ValueError, match="outputStyle") as exc_info:
+        SearchScratchpadTool(_context(str(scratchpad))).apply(
+            {"queries": ["a"], "outputStyle": "bad"})
+    msg = str(exc_info.value)
+    assert "Matches" in msg
+    assert "FullContext" in msg
+
+
+def test_output_style_empty_string_defaults_to_matches(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nMATCH\nc\nd\n")
+    result = SearchScratchpadTool(_context(str(scratchpad), context_lines=1)).apply(
+        {"queries": ["MATCH"], "outputStyle": ""})
+    parsed = _parse_lines(result)
+    assert [line[0] for line in parsed] == [3]

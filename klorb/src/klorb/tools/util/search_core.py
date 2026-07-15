@@ -18,6 +18,43 @@ splitting on the first `|` always recovers the number and the (possibly `|`-cont
 import re
 from typing import Any
 
+# The three valid outputStyle values and the human-readable error message used when an
+# invalid value is supplied.
+VALID_OUTPUT_STYLES: frozenset[str] = frozenset({"ListFiles", "Matches", "FullContext"})
+_OUTPUT_STYLE_ERROR = (
+    "Invalid outputStyle value. Valid values are:\n"
+    "  \"ListFiles\"  — the output object's files value is just an array of strings "
+    "which are the filenames (deduplicated) from the matches.\n"
+    "  \"Matches\"    — the files[i].lines arrays contain only the lines that actually hit.\n"
+    "  \"FullContext\" — the files[i].lines arrays contain the hit lines plus the "
+    "surrounding context."
+)
+
+
+def validate_output_style(raw: Any, *, allow_list_files: bool = True) -> str:
+    """Validate and normalise a model-supplied ``outputStyle`` argument.
+
+    Returns the canonical style string (one of ``"ListFiles"``, ``"Matches"``,
+    ``"FullContext"``).  An empty string, ``None``, or an omitted value (which
+    arrives as ``""`` from the caller) defaults to ``"Matches"``.  An
+    *allow_list_files* of ``False`` additionally rejects ``"ListFiles"`` with a
+    scratchpad-specific message.
+    """
+    if raw in (None, ""):
+        return "Matches"
+    if not isinstance(raw, str):
+        raise ValueError(_OUTPUT_STYLE_ERROR)
+    normalised = raw.strip()
+    if normalised not in VALID_OUTPUT_STYLES:
+        raise ValueError(_OUTPUT_STYLE_ERROR)
+    if not allow_list_files and normalised == "ListFiles":
+        raise ValueError(
+            "outputStyle \"ListFiles\" is not supported for SearchScratchpad. "
+            "Use \"Matches\" (only the hit lines) or \"FullContext\" (hit lines "
+            "plus surrounding context)."
+        )
+    return normalised
+
 
 def validate_queries(queries: Any) -> list[str]:
     """Validate a model-supplied `queries` argument, returning it unchanged as a `list[str]`,
@@ -62,6 +99,13 @@ def format_match_line(line_number: int, text: str, *, matched: bool) -> str:
     query (else a space), then the 1-based `line_number`, a `|`, and the line's `text`.
     """
     return ("*" if matched else " ") + f"{line_number}|{text}"
+
+
+def matches_only(all_lines: list[str], matched_indices: list[int]) -> list[str]:
+    """Return a flat list of dense-format result lines covering only the matching lines
+    (no surrounding context). Each line is formatted as with ``format_match_line``."""
+    return [format_match_line(index + 1, all_lines[index], matched=True)
+            for index in matched_indices]
 
 
 def context_lines_for_matches(

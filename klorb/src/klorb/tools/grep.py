@@ -7,12 +7,16 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from klorb.permissions.table import raise_if_not_allowed
+from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 from klorb.tools.util import (
     compile_queries,
     context_lines_for_matches,
     match_line_indices,
+    matches_only,
+    validate_output_style,
     validate_queries,
     walk_readable_tree,
 )
@@ -25,7 +29,7 @@ class GrepTool(Tool):
     as a literal substring by default, or as a distinct Python regex when `is_regex` is true —
     a line matching any one of them counts as a hit, equivalent to `grep -e 'seq1' -e 'seq2'
     ...`), reusing `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at
-    every directory level, not just at `dirname` itself — see that function's docstring for how
+    every directory level, not just at the given path itself — see that function's docstring for how
     a denied, ask-gated, or symlinked subdirectory is pruned rather than aborting the whole
     search.
 
@@ -58,7 +62,7 @@ class GrepTool(Tool):
             "default; set is_regex to treat every entry as a distinct Python regular "
             "expression instead. A line matching any one query counts as a hit — equivalent to "
             "`grep -e query1 -e query2 ...`. Optionally filter which files are searched with a "
-            "filename glob (e.g. '*.py'). dirname empty means search the whole project root. "
+            "filename glob (e.g. '*.py'). path empty means search the whole project root. "
             f"Each hit is returned with {self._context_lines} lines of surrounding context on "
             f"each side, like `grep -C {self._context_lines}`, merging overlapping or adjacent "
             "context windows within the same file. Results are grouped by file under 'files'; "
@@ -69,18 +73,23 @@ class GrepTool(Tool):
             "means more matches exist than were returned. A subdirectory your readDirs "
             "permissions deny, or that "
             "requires confirmation, is silently skipped rather than failing the whole search "
-            "— only dirname itself raises if it isn't allowed."
+            "— only the path itself raises if it isn't allowed. "
+            "Use outputStyle to control the level of detail: \"ListFiles\" returns just "
+            "deduplicated filenames, \"Matches\" returns only the hit lines (default), and "
+            "\"FullContext\" returns hit lines plus surrounding context."
         )
 
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "dirname": {
+                "path": {
                     "type": "string",
                     "description": (
-                        "Directory to search, relative to the project root unless absolute. "
-                        "An empty string or null means the whole project root."
+                        "File or directory to search, relative to the project root unless "
+                        "absolute. An empty string or null means the whole project root. "
+                        "If a file, only that file is searched; if a directory, the search "
+                        "is recursive."
                     ),
                 },
                 "queries": {
@@ -111,13 +120,22 @@ class GrepTool(Tool):
                         "searched, matched against each file's bare name."
                     ),
                 },
+                "outputStyle": {
+                    "type": "string",
+                    "description": (
+                        "Controls the level of detail in results: \"ListFiles\" returns just "
+                        "deduplicated filenames; \"Matches\" returns only the hit lines "
+                        "(default); \"FullContext\" returns hit lines plus surrounding context."
+                    ),
+                },
             },
             "required": ["queries"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        dirname = args.get("dirname", "") # Empty-string default searches recursively from ${workspaceRoot}.
+        # None or empty-string default searches recursively from ${workspaceRoot}.
+        search_path = args.get("path") or ""
         try:
             queries = validate_queries(args["queries"])
         except KeyError:
@@ -126,59 +144,128 @@ class GrepTool(Tool):
         is_regex = args.get("is_regex", False)
         case_insensitive = args.get("case_insensitive", False)
         file_glob = args.get("file_glob")
+        output_style = validate_output_style(args.get("outputStyle"))
         logger.debug(
-            "Grep %r in %r (is_regex=%s, case_insensitive=%s, file_glob=%s)",
-            queries, dirname, is_regex, case_insensitive, file_glob)
+            "Grep %r in %r (is_regex=%s, case_insensitive=%s, file_glob=%s, outputStyle=%s)",
+            queries, search_path, is_regex, case_insensitive, file_glob, output_style)
 
         compiled = compile_queries(
             queries, is_regex=is_regex, case_insensitive=case_insensitive)
 
+        # For ListFiles mode, we collect just filenames (deduplicated strings).
+        list_files: list[str] = []
+        # For Matches/FullContext modes, we collect file dicts with lines.
         files: list[dict[str, Any]] = []
         match_count = 0
         truncated = False
         root_path: Path | None = None
-        for dir_path, _subdirs, filenames in walk_readable_tree(self.context, dirname):
-            if root_path is None:
-                root_path = dir_path
-            if truncated:
-                break
-            for filename in filenames:
-                if file_glob and not fnmatch.fnmatch(filename, file_glob):
-                    continue
-                file_path = dir_path / filename
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                except (UnicodeDecodeError, OSError):
-                    continue
+
+        # Determine whether search_path is a single file or a directory tree.
+        single_file: Path | None = None
+        if search_path:
+            resolved, verdict = resolve_and_evaluate_read(self.context, search_path)
+            raise_if_not_allowed(
+                verdict, resource_description=f"search {resolved}",
+                path=resolved, is_write=False)
+            if resolved.is_file():
+                single_file = resolved
+                root_path = resolved.parent
+            elif not resolved.is_dir():
+                raise FileNotFoundError(f"{search_path!r} does not exist")
+
+        if single_file is not None:
+            # Search just the one file.
+            try:
+                text = single_file.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                pass  # Skip unreadable files silently.
+            else:
                 all_lines = text.splitlines()
                 matched_indices = match_line_indices(all_lines, compiled)
-                if not matched_indices:
-                    continue
-
-                if match_count + len(matched_indices) > self._max_results:
-                    matched_indices = matched_indices[: self._max_results - match_count]
-                    truncated = True
-
-                files.append({
-                    "filename": str(file_path),
-                    "lines": context_lines_for_matches(
-                        all_lines, matched_indices, self._context_lines),
-                })
-                match_count += len(matched_indices)
+                if matched_indices:
+                    if match_count + len(matched_indices) > self._max_results:
+                        matched_indices = matched_indices[: self._max_results - match_count]
+                        truncated = True
+                    if output_style == "ListFiles":
+                        list_files.append(str(single_file))
+                    elif output_style == "Matches":
+                        files.append({
+                            "filename": str(single_file),
+                            "lines": matches_only(all_lines, matched_indices),
+                        })
+                    else:  # FullContext
+                        files.append({
+                            "filename": str(single_file),
+                            "lines": context_lines_for_matches(
+                                all_lines, matched_indices, self._context_lines),
+                        })
+                    match_count += len(matched_indices)
+        else:
+            # Directory tree search (existing recursive walk).
+            for dir_path, _subdirs, filenames in walk_readable_tree(self.context, search_path):
+                if root_path is None:
+                    root_path = dir_path
                 if truncated:
                     break
+                for filename in filenames:
+                    if file_glob and not fnmatch.fnmatch(filename, file_glob):
+                        continue
+                    file_path = dir_path / filename
+                    try:
+                        text = file_path.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError):
+                        continue
+                    all_lines = text.splitlines()
+                    matched_indices = match_line_indices(all_lines, compiled)
+                    if not matched_indices:
+                        continue
+
+                    if match_count + len(matched_indices) > self._max_results:
+                        matched_indices = matched_indices[: self._max_results - match_count]
+                        truncated = True
+
+                    if output_style == "ListFiles":
+                        fname = str(file_path)
+                        if fname not in list_files:
+                            list_files.append(fname)
+                    elif output_style == "Matches":
+                        files.append({
+                            "filename": str(file_path),
+                            "lines": matches_only(all_lines, matched_indices),
+                        })
+                    else:  # FullContext
+                        files.append({
+                            "filename": str(file_path),
+                            "lines": context_lines_for_matches(
+                                all_lines, matched_indices, self._context_lines),
+                        })
+                    match_count += len(matched_indices)
+                    if truncated:
+                        break
 
         logger.debug(
             "Grep found %d match(es) in %d file(s) (truncated=%s)",
-            match_count, len(files), truncated)
+            match_count, len(files) if output_style != "ListFiles" else len(list_files), truncated)
+
+        if output_style == "ListFiles":
+            return {
+                "root": str(root_path) if root_path is not None else search_path,
+                "queries": queries,
+                "is_regex": is_regex,
+                "case_insensitive": case_insensitive,
+                "file_glob": file_glob,
+                "files": list_files,
+                "match_count": match_count,
+                "truncated": truncated,
+            }
 
         return {
-            "root": str(root_path) if root_path is not None else dirname,
+            "root": str(root_path) if root_path is not None else search_path,
             "queries": queries,
             "is_regex": is_regex,
             "case_insensitive": case_insensitive,
             "file_glob": file_glob,
-            "context_lines": self._context_lines,
+            "context_lines": self._context_lines if output_style == "FullContext" else 0,
             "files": files,
             "match_count": match_count,
             "truncated": truncated,
@@ -193,7 +280,7 @@ class GrepTool(Tool):
         count = result.get("match_count", 0)
         suffix = "+" if result.get("truncated") else ""
         plural = "es" if count != 1 else ""
-        root = result.get("root", args.get("dirname", "?"))
+        root = result.get("root", args.get("path", "?"))
         return f"Grep: {queries!r} in {root} ({count}{suffix} match{plural})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:

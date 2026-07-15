@@ -4,7 +4,7 @@ literal search strings, also treating each file's own filename as a search subje
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import Namespace, memory_namespace_dir, workspace_namespace_accessible
@@ -14,6 +14,8 @@ from klorb.tools.util import (
     context_lines_for_matches,
     format_match_line,
     match_line_indices,
+    matches_only,
+    validate_output_style,
     validate_queries,
 )
 
@@ -58,7 +60,10 @@ class SearchMemoriesTool(Tool):
             "'*42|matched text', where the leading '*' marks a matching line and the number is "
             "its 1-based line number. A file's own filename is also searched: a query matching "
             "a filename returns that file even if none of its lines match, listing its first "
-            "non-blank line."
+            "non-blank line. Use outputStyle to control the level of detail: \"ListFiles\" "
+            "returns just deduplicated filenames as \"<namespace>/<filename>\"; \"Matches\" "
+            "returns only the hit lines (default); \"FullContext\" returns hit lines plus "
+            "surrounding context."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -74,6 +79,15 @@ class SearchMemoriesTool(Tool):
                         "regular expressions) against both memory file content and filenames."
                     ),
                 },
+                "outputStyle": {
+                    "type": "string",
+                    "description": (
+                        "Controls the level of detail: \"ListFiles\" returns just deduplicated "
+                        "filenames as \"<namespace>/filename\"; \"Matches\" returns only the "
+                        "hit lines (default); \"FullContext\" returns hit lines plus surrounding "
+                        "context."
+                    ),
+                },
             },
             "required": ["queries"],
             "additionalProperties": False,
@@ -85,7 +99,8 @@ class SearchMemoriesTool(Tool):
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
-        logger.debug("SearchMemories %r", queries)
+        output_style = validate_output_style(args.get("outputStyle"))
+        logger.debug("SearchMemories %r (outputStyle=%s)", queries, output_style)
 
         raise_if_not_allowed(
             self.context.process_config.memory_read_permission,
@@ -93,11 +108,29 @@ class SearchMemoriesTool(Tool):
 
         compiled = compile_queries(queries, case_insensitive=True)
 
-        results: list[dict[str, Any]] = []
-        for namespace in ("global", "workspace"):
+        context_lines = self.context.process_config.grep_context_lines
+
+        if output_style == "ListFiles":
+            list_files: list[str] = []
+            results: list[dict[str, Any]] = []
+            for namespace in cast(tuple[Namespace, ...], ("global", "workspace")):
+                if namespace == "workspace" and not workspace_namespace_accessible(self.context):
+                    continue
+                list_files.extend(self._list_files_namespace(namespace, compiled))
+            # Count matches (each filename string is one hit).
+            match_count = len(list_files)
+            logger.debug("SearchMemories found %d hit(s) across %d file(s)", match_count, len(list_files))
+            return {
+                "queries": queries,
+                "match_count": match_count,
+                "files": list_files,
+            }
+
+        results = []
+        for namespace in cast(tuple[Namespace, ...], ("global", "workspace")):
             if namespace == "workspace" and not workspace_namespace_accessible(self.context):
                 continue
-            results.extend(self._search_namespace(namespace, compiled))
+            results.extend(self._search_namespace(namespace, compiled, output_style, context_lines))
 
         # A content match contributes one hit per matching (`*`-prefixed) line; a filename-only
         # match, whose sole listed line is unmatched, still counts as a single hit.
@@ -113,7 +146,10 @@ class SearchMemoriesTool(Tool):
             "results": results,
         }
 
-    def _search_namespace(self, namespace: Namespace, compiled: re.Pattern[str]) -> list[dict[str, Any]]:
+    def _search_namespace(
+        self, namespace: Namespace, compiled: re.Pattern[str],
+        output_style: str = "Matches", context_lines: int = 0,
+    ) -> list[dict[str, Any]]:
         namespace_dir = memory_namespace_dir(self.context, namespace)
         if not namespace_dir.is_dir():
             return []
@@ -126,9 +162,13 @@ class SearchMemoriesTool(Tool):
             lines = path.read_text(encoding="utf-8").splitlines()
             matched_indices = match_line_indices(lines, compiled)
             if matched_indices:
+                if output_style == "Matches":
+                    line_data = matches_only(lines, matched_indices)
+                else:  # FullContext
+                    line_data = context_lines_for_matches(lines, matched_indices, context_lines)
                 hits.append({
                     "namespace": namespace, "filename": path.name,
-                    "lines": context_lines_for_matches(lines, matched_indices, 0),
+                    "lines": line_data,
                 })
             elif compiled.search(path.name):
                 first_non_blank = next(
@@ -140,6 +180,36 @@ class SearchMemoriesTool(Tool):
                         first_non_blank[0], first_non_blank[1], matched=False)],
                 })
         return hits
+
+    def _list_files_namespace(
+        self, namespace: Namespace, compiled: re.Pattern[str],
+    ) -> list[str]:
+        """Return deduplicated ``<namespace>/<filename>`` strings for every memory file
+        whose content or filename matches any of the compiled queries."""
+        namespace_dir = memory_namespace_dir(self.context, namespace)
+        if not namespace_dir.is_dir():
+            return []
+
+        files: list[str] = []
+        for path in sorted(namespace_dir.iterdir()):
+            if not path.is_file() or path.suffix != ".md" or path.name.startswith("."):
+                continue
+
+            # Check filename first.
+            if compiled.search(path.name):
+                entry = f"{namespace}/{path.name}"
+                if entry not in files:
+                    files.append(entry)
+                continue
+
+            # Check content.
+            lines = path.read_text(encoding="utf-8").splitlines()
+            if match_line_indices(lines, compiled):
+                entry = f"{namespace}/{path.name}"
+                if entry not in files:
+                    files.append(entry)
+
+        return files
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")

@@ -39,10 +39,13 @@ from klorb.tools.util.dir_walk import walk_readable_tree
 from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit
 from klorb.tools.util.read_file_core import ReadFileCore
 from klorb.tools.util.search_core import (
+    VALID_OUTPUT_STYLES,
     compile_queries,
     context_lines_for_matches,
     format_match_line,
     match_line_indices,
+    matches_only,
+    validate_output_style,
     validate_queries,
 )
 
@@ -51,10 +54,13 @@ __all__ = [
     "EditFileCore",
     "LineRangeEdit",
     "ReadFileCore",
+    "VALID_OUTPUT_STYLES",
     "compile_queries",
     "context_lines_for_matches",
     "format_match_line",
     "match_line_indices",
+    "matches_only",
+    "validate_output_style",
     "validate_queries",
     "walk_readable_tree",
 ]
