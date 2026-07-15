@@ -128,3 +128,16 @@ def test_summary_on_failure_includes_the_error() -> None:
 
     assert tool.summary({"dirname": "", "pattern": "*.py"}, error="not found") == (
         "Find file: '*.py' failed: not found")
+
+
+def test_omitted_dirname_defaults_to_workspace_root(tmp_path: Path) -> None:
+    """Calling without dirname should behave identically to dirname=""."""
+    _make_tree(tmp_path)
+
+    result_with_empty = FindFileTool(_context(tmp_path)).apply(
+        {"dirname": "", "pattern": "*.py"})
+    result_omitted = FindFileTool(_context(tmp_path)).apply(
+        {"pattern": "*.py"})
+
+    assert result_omitted["matches"] == result_with_empty["matches"]
+    assert result_omitted["truncated"] is False

@@ -32,7 +32,7 @@ class FindFileTool(Tool):
         return (
             "Recursively finds files in a directory tree whose bare name (not full path) "
             "matches a glob pattern, e.g. '*.py' or '*_context*', so you can locate a file "
-            "without knowing exactly where it lives. dirname empty means search the whole "
+            "without knowing exactly where it lives. dirname is optional, defaulting to the whole "
             f"project root. Returns at most {self._max_results} matches per call; a "
             "'truncated' flag in the result means more matches exist than were returned. A "
             "subdirectory your readDirs permissions deny, or that requires confirmation, is "
@@ -48,7 +48,7 @@ class FindFileTool(Tool):
                     "type": "string",
                     "description": (
                         "Directory to search, relative to the project root unless absolute. "
-                        "An empty string means the whole project root."
+                        "An empty string or null means the whole project root."
                     ),
                 },
                 "pattern": {
@@ -63,16 +63,12 @@ class FindFileTool(Tool):
                     "description": "Match pattern case-insensitively. Defaults to false.",
                 },
             },
-            "required": ["dirname", "pattern"],
+            "required": ["pattern"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        try:
-            dirname = args["dirname"]
-        except KeyError:
-            raise ValueError(
-                "Missing required argument: 'dirname'. Provide the directory to search under.")
+        dirname = args.get("dirname", "")  # Empty-string default searches recursively from ${workspaceRoot}.
         try:
             pattern = args["pattern"]
         except KeyError:

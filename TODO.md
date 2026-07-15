@@ -30,7 +30,6 @@
 
 # Feature backlog
 
-* The Find file tool's `dirname` argument should be optional; if omitted, use workspaceRoot.
 * Grep should have even more concise output
   * Also selectable output modes:
     * ListFiles -- just list the files (sort|uniq) that contain a hit

@@ -200,7 +200,7 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   count; `detail_view()` caps `files` to its first 20 entries (adding a `files_omitted` count),
   since a full result can span up to `grep_max_results` matching lines across that many files.
 * `klorb.tools.find_file.FindFileTool` (`klorb/src/klorb/tools/find_file.py`), name `FindFile`.
-  Recursively searches the directory tree rooted at `dirname` (`""` means the whole project
+  Recursively searches the directory tree rooted at `dirname` (optional; omitted or `""` means the whole project
   root) for files whose bare name matches a glob `pattern` (e.g. `"*.py"` or `"*_context*"`;
   `case_insensitive` folds case on both sides of the match). Uses the same
   `walk_readable_tree()` walk as `Grep`. At most `context.process_config.find_file_max_results`
