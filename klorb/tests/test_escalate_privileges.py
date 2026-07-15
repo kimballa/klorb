@@ -20,9 +20,13 @@ def test_validate_scope_accepts_workspace() -> None:
     assert validate_scope("workspace") == "workspace"
 
 
-@pytest.mark.parametrize("bad_scope", ["", "global", "session", "homedir", "WORKSPACE", "root"])
-def test_validate_scope_rejects_anything_but_workspace(bad_scope: str) -> None:
-    with pytest.raises(ValueError, match="only valid scope"):
+def test_validate_scope_accepts_homedir() -> None:
+    assert validate_scope("homedir") == "homedir"
+
+
+@pytest.mark.parametrize("bad_scope", ["", "global", "session", "WORKSPACE", "root"])
+def test_validate_scope_rejects_invalid_scopes(bad_scope: str) -> None:
+    with pytest.raises(ValueError, match="Valid scopes"):
         validate_scope(bad_scope)
 
 
@@ -35,6 +39,15 @@ def test_apply_raises_for_well_formed_workspace_scope() -> None:
     assert excinfo.value.scope == "workspace"
 
 
+def test_apply_raises_for_well_formed_homedir_scope() -> None:
+    tool = _tool()
+
+    with pytest.raises(EscalatePrivilegesRequired) as excinfo:
+        tool.apply({"scope": "homedir"})
+
+    assert excinfo.value.scope == "homedir"
+
+
 def test_apply_rejects_missing_scope() -> None:
     tool = _tool()
 
@@ -45,20 +58,25 @@ def test_apply_rejects_missing_scope() -> None:
 def test_apply_rejects_invalid_scope() -> None:
     tool = _tool()
 
-    with pytest.raises(ValueError, match="only valid scope"):
-        tool.apply({"scope": "homedir"})
+    with pytest.raises(ValueError, match="Valid scopes"):
+        tool.apply({"scope": "invalid_scope"})
 
 
 def test_parameters_requires_scope_and_forbids_extras() -> None:
     schema = _tool().parameters()
     assert schema["required"] == ["scope"]
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["scope"]["const"] == "workspace"
+    assert schema["properties"]["scope"]["enum"] == ["workspace", "homedir"]
 
 
 def test_summary_names_the_scope() -> None:
     tool = _tool()
     assert tool.summary({"scope": "workspace"}) == "EscalatePrivileges(workspace)"
+
+
+def test_summary_names_homedir_scope() -> None:
+    tool = _tool()
+    assert tool.summary({"scope": "homedir"}) == "EscalatePrivileges(homedir)"
 
 
 def test_summary_includes_error_when_present() -> None:

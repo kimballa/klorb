@@ -11,7 +11,7 @@ than returning a value. `Session._run_tool_calls` catches it, asks the user via
 
 The data types and validation logic themselves live in `klorb.tools.escalate_privileges.common`
 rather than here, so `klorb.session` can import them without importing this module (which pulls
-in `klorb.tools.tool`/`klorb.tools.setup_context`, and so `klorb.session` itself — see that
+in `klorb.tools.tool`/`klorb.tools.setup_context`, and so `klorb.session` itself -- see that
 module's docstring for the full cycle).
 """
 
@@ -24,9 +24,13 @@ from klorb.tools.tool import Tool
 class EscalatePrivilegesTool(Tool):
     """Requests elevated privileges for workspace access in the current session.
 
-    The only valid scope value is "workspace", which grants read/write access to the
-    ${workspaceRoot}/.klorb/ directory (currently hard-blocked from direct tool access).
-    This is a temporary, session-only grant that revokes at the end of the session —
+    The valid scope values are:
+    - "workspace": grants read/write access to the ${workspaceRoot}/.klorb/ directory
+      (currently hard-blocked from direct tool access).
+    - "homedir": grants read/write access to KLORB_DATA_DIR and KLORB_STATE_DIR
+      (the process-wide klorb data and state directories).
+
+    This is a temporary, session-only grant that revokes at the end of the session --
     there is no permanent approval option.
 
     When invoked, an interstitial approval panel appears explaining the request and
@@ -39,10 +43,11 @@ class EscalatePrivilegesTool(Tool):
 
     def description(self) -> str:
         return (
-            "Request elevated privileges for workspace access (read/write to ${workspaceRoot}/.klorb/). "
+            "Request elevated privileges for workspace access (read/write to ${workspaceRoot}/.klorb/ "
+            "or KLORB_DATA_DIR/KLORB_CONFIG_DIR/KLORB_STATE_DIR). "
             "This is a temporary, session-only grant that revokes at the end of the session. "
-            "The only valid scope value is 'workspace'. Use this when you need to edit files "
-            "in the .klorb/ directory (e.g., config files, memory files, scratchpad)."
+            "Valid scope values are 'workspace' (access to the workspace's .klorb/ directory) and "
+            "'homedir' (access to KLORB_DATA_DIR, KLORB_CONFIG_DIR, and KLORB_STATE_DIR)."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -51,10 +56,11 @@ class EscalatePrivilegesTool(Tool):
             "properties": {
                 "scope": {
                     "type": "string",
-                    "const": "workspace",
+                    "enum": ["workspace", "homedir"],
                     "description": (
-                        "The scope of the privilege escalation. Currently only 'workspace' is "
-                        "supported, granting access to the workspace's .klorb/ directory."
+                        "The scope of the privilege escalation. 'workspace' grants access to the "
+                        "workspace's .klorb/ directory. 'homedir' grants access to KLORB_DATA_DIR, "
+                        "KLORB_CONFIG_DIR, and KLORB_STATE_DIR."
                     ),
                 },
             },

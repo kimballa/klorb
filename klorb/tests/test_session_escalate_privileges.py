@@ -11,6 +11,7 @@ import pytest
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message, ToolCallRequest
+from klorb.paths import KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.process_config import ProcessConfig
 from klorb.session import (
     EscalatePrivilegesContext,
@@ -88,7 +89,7 @@ def test_no_callback_fails_closed() -> None:
 def test_invalid_scope_reports_error_without_invoking_callback() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
-        _tool_call_reply([_escalate_call("call_1", scope="homedir")]),
+        _tool_call_reply([_escalate_call("call_1", scope="invalid_scope")]),
         _reply(),
     ]
     session = _session(mock_provider)
@@ -99,7 +100,7 @@ def test_invalid_scope_reports_error_without_invoking_callback() -> None:
     assert response == "done"
     content = _tool_response_content(session)
     assert "Error:" in content
-    assert "only valid scope" in content
+    assert "Valid scopes" in content
     on_escalate.assert_not_called()
 
 
@@ -126,6 +127,32 @@ def test_approved_records_scope_into_session_config() -> None:
     assert isinstance(ctx, EscalatePrivilegesContext)
     assert ctx.scope == "workspace"
     assert ".klorb" in ctx.description
+
+
+def test_homedir_approved_records_scope_into_session_config() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_escalate_call("call_1", scope="homedir")]),
+        _reply(),
+    ]
+    process_config = ProcessConfig()
+    session = _session(mock_provider, process_config=process_config)
+    assert "homedir" not in session.config.approved_scopes
+    on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))
+
+    response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
+
+    assert response == "done"
+    assert "homedir" in session.config.approved_scopes
+    content = _tool_response_content(session)
+    assert "approved" in content
+    assert "homedir" in content
+    on_escalate.assert_called_once()
+    (ctx,), _ = on_escalate.call_args
+    assert isinstance(ctx, EscalatePrivilegesContext)
+    assert ctx.scope == "homedir"
+    assert str(KLORB_DATA_DIR) in ctx.description
+    assert str(KLORB_STATE_DIR) in ctx.description
 
 
 def test_denied_does_not_record_scope() -> None:

@@ -253,6 +253,49 @@ def test_privileged_klorb_deny_read_error_mentions_escalate_privileges(tmp_path:
         resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
 
 
+def test_homedir_scope_in_approved_scopes_omits_data_and_state_dirs(tmp_path: Path) -> None:
+    dirs = privileged_dirs(tmp_path, {"homedir"})
+    # KLORB_DATA_DIR, KLORB_CONFIG_DIR, and KLORB_STATE_DIR should be omitted.
+    assert KLORB_DATA_DIR.resolve(strict=False) not in dirs
+    assert KLORB_STATE_DIR.resolve(strict=False) not in dirs
+    assert KLORB_CONFIG_DIR.resolve(strict=False) not in dirs
+    # Workspace .klorb/ stays privileged (workspace scope not approved).
+    assert tmp_path / ".klorb" in dirs
+
+
+def test_homedir_scope_lifts_privileged_deny_on_data_and_state_dirs(tmp_path: Path) -> None:
+    data_file = (KLORB_DATA_DIR / "some-file.txt").resolve(strict=False)
+    state_file = (KLORB_STATE_DIR / "session-logs" / "a.log").resolve(strict=False)
+    # Both paths are privileged without any scope.
+    assert is_privileged_path(data_file, tmp_path)
+    assert is_privileged_path(state_file, tmp_path)
+    # Both paths are unlocked with "homedir" scope.
+    assert not is_privileged_path(data_file, tmp_path, {"homedir"})
+    assert not is_privileged_path(state_file, tmp_path, {"homedir"})
+    # KLORB_CONFIG_DIR not privileged with "homedir" approved.
+    config_file = (KLORB_CONFIG_DIR / "settings.json").resolve(strict=False)
+    assert not is_privileged_path(config_file, tmp_path, {"homedir"})
+
+
+def test_homedir_and_workspace_scopes_together(tmp_path: Path) -> None:
+    """Both scopes approved: .klorb/, KLORB_DATA_DIR, and KLORB_STATE_DIR all lifted."""
+    dirs = privileged_dirs(tmp_path, {"homedir", "workspace"})
+    assert KLORB_DATA_DIR.resolve(strict=False) not in dirs
+    assert KLORB_STATE_DIR.resolve(strict=False) not in dirs
+    assert tmp_path / ".klorb" not in dirs
+    # KLORB_CONFIG_DIR not privileged.
+    assert KLORB_CONFIG_DIR.resolve(strict=False) not in dirs
+
+
+def test_privileged_homedir_deny_error_mentions_escalate_privileges(tmp_path: Path) -> None:
+    """A privileged-path deny on KLORB_STATE_DIR raises a PermissionError whose message
+    points the agent at the EscalatePrivileges tool with scope 'homedir'."""
+    from klorb.permissions.workspace import _privileged_deny
+    target = (KLORB_STATE_DIR / "foo.txt").resolve(strict=False)
+    with pytest.raises(PermissionError, match=r"EscalatePrivileges.*homedir"):
+        _privileged_deny(target, tmp_path, is_write=True)
+
+
 def test_canonicalize_dir_expands_home_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -358,7 +401,8 @@ def test_evaluate_write_denies_klorb_dir_even_with_writedirs_allow_covering_work
 def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_path: Path) -> None:
     context = _context(tmp_path, write_dirs=DirRules(allow=[KLORB_STATE_DIR]))
     path = (KLORB_STATE_DIR / "session-logs" / "a.log").resolve(strict=False)
-    assert evaluate_write(context, path) == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges.*homedir"):
+        evaluate_write(context, path)
 
 
 # --- resolve_and_evaluate_write ---
@@ -548,8 +592,8 @@ def test_trusted_read_denies_klorb_config_dir_even_with_readdirs_allow(tmp_path:
     context = _context(
         tmp_path, is_workspace_trusted=True, read_dirs=DirRules(allow=[KLORB_CONFIG_DIR]))
     target = str((KLORB_CONFIG_DIR / "klorb-config.json").resolve(strict=False))
-    _, verdict = resolve_and_evaluate_read(context, target)
-    assert verdict == "deny"
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_read(context, target)
 
 
 # --- canonicalize_candidate vs resolve_within_workspace ---

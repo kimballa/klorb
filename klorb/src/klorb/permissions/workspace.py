@@ -30,6 +30,7 @@ from klorb.permissions.directory_access import (
     DirectoryAccessTable,
     canonicalize_dir,
     is_privileged_path,
+    is_under_homedir_klorb_dir,
     is_under_workspace_klorb_dir,
 )
 from klorb.permissions.file_access import FileAccessTable
@@ -50,21 +51,29 @@ def _approved_scopes(context: "ToolSetupContext") -> set[str]:
 
 
 def _privileged_deny(path: Path, workspace_root: Path, *, is_write: bool) -> Verdict:
-    """Return the verdict for a path that failed `is_privileged_path`: always `\"deny\"`, but with a
-    side effect \u2014 when the path is the workspace's own `.klorb/` dir or beneath it, raise a
-    `PermissionError` whose message points the agent at the `EscalatePrivileges` tool (the one
-    mechanism that can lift this deny for the rest of the session), instead of letting the generic
-    `\"Permission denied: <op> <path>\"` reach the model with no hint. A process-wide `KLORB_*_DIR`
-    deny stays a plain `\"deny\"` verdict: `EscalatePrivileges` can't unlock those, so pointing the
-    agent at the tool there would only waste a round trip."""
+    """Return the verdict for a path that failed `is_privileged_path`: always `\"deny\"`, but with
+    a side effect — when the path is the workspace's own `.klorb/` dir or beneath it, raise a
+    `PermissionError` whose message points the agent at the `EscalatePrivileges` tool with scope
+    `"workspace"`; when the path is under `KLORB_DATA_DIR`, `KLORB_CONFIG_DIR`, or
+    `KLORB_STATE_DIR`, raise a `PermissionError` pointing the agent at `EscalatePrivileges` with
+    scope `"homedir"`. Both are temporary, session-only grants."""
     if is_under_workspace_klorb_dir(path, workspace_root):
         op = "write to" if is_write else "read"
         raise PermissionError(
             f"Permission denied: {op} {path}. This file is inside the workspace's privileged "
-            f".klorb/ directory, which is hard-blocked from direct tool access. If you need to "
-            f"read or write files there, call the EscalatePrivileges tool with scope \"workspace\" "
-            f"to request temporary, session-only access; once the user approves, retry the "
-            f"operation.")
+            ".klorb/ directory, which is hard-blocked from direct tool access. If you need to "
+            "read or write files there, call the EscalatePrivileges tool with scope \"workspace\" "
+            "to request temporary, session-only access; once the user approves, retry the "
+            "operation.")
+    if is_under_homedir_klorb_dir(path):
+        op = "write to" if is_write else "read"
+        raise PermissionError(
+            f"Permission denied: {op} {path}. This file is inside a klorb privileged directory "
+            "(KLORB_DATA_DIR, KLORB_CONFIG_DIR, or KLORB_STATE_DIR), which is hard-blocked from "
+            "direct tool access. "
+            "If you need to read or write files there, call the EscalatePrivileges tool with "
+            "scope \"homedir\" to request temporary, session-only access; once the user approves, "
+            "retry the operation.")
     return "deny"
 
 

@@ -7,8 +7,9 @@ import so `klorb.session` can import it at module level without a cycle.
 
 from typing import Literal
 
-Scope = Literal["workspace"]
-"""The only valid scope value for `EscalatePrivilegesTool`. Currently only supports "workspace"."""
+Scope = Literal["workspace", "homedir"]
+"""Valid scope values for `EscalatePrivilegesTool`: "workspace" unlocks the workspace's .klorb/ dir;
+"homedir" unlocks KLORB_DATA_DIR, KLORB_CONFIG_DIR, and KLORB_STATE_DIR."""
 
 
 class EscalatePrivilegesRequired(Exception):
@@ -27,6 +28,8 @@ def validate_scope(scope: object) -> Scope:
     message if invalid."""
     if scope == "workspace":
         return "workspace"
+    if scope == "homedir":
+        return "homedir"
     raise ValueError(
-        f"Invalid scope '{scope}'. The only valid scope is 'workspace'."
+        f"Invalid scope '{scope}'. Valid scopes are 'workspace' and 'homedir'."
     )

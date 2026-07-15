@@ -17,6 +17,7 @@ from klorb.message import Message, ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
+from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
 from klorb.permissions.file_access import FileRules
@@ -237,10 +238,10 @@ class SessionConfig(BaseModel):
     approved_scopes: set[str] = Field(default_factory=set)
     """Session-only privilege-escalation scopes the user has interactively approved *this
     session*, via the `EscalatePrivileges` tool (see `klorb.tools.escalate_privileges`).
-    Today the only valid scope is `"workspace"`, which lifts the unconditional
-    privileged-path deny on the workspace's own `${workspace_root}/.klorb/` directory
-    (see `klorb.permissions.directory_access.is_privileged_path`) so the agent can
-    read/write there through `EditFile`/`CreateFile`/etc. for the rest of the session.
+    Valid scopes are `"workspace"` (lifts the unconditional privileged-path deny on the
+    workspace's own `${workspace_root}/.klorb/` directory) and `"homedir"` (lifts the
+    privileged-path deny on `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR` and `KLORB_STATE_DIR`). See
+    `klorb.permissions.directory_access.is_privileged_path` for how the grants are applied.
     Never persisted to disk: a grant here revokes when the session ends (e.g. a `/clear`
     in the REPL starts a fresh `SessionConfig` with an empty set), and a config file can't
     pre-populate it (it's absent from `SESSION_KEY_MAP`). Lives on `SessionConfig`, not
@@ -1144,7 +1145,10 @@ class Session:
         description = (
             f"Grant Klorb read/write access to the workspace's .klorb/ directory "
             f"({self.config.workspace.path}/.klorb/) for the rest of this session."
-        ) if scope == "workspace" else str(escalate_exc)
+        ) if scope == "workspace" else (
+            f"Grant Klorb read/write access to {KLORB_DATA_DIR}, {KLORB_STATE_DIR}, "
+            f"and {KLORB_CONFIG_DIR} for the rest of this session."
+        ) if scope == "homedir" else str(escalate_exc)
         decision = callbacks.on_escalate_privileges(EscalatePrivilegesContext(
             scope=scope, description=description))
         if decision.approved:
