@@ -53,7 +53,9 @@
         ["grep", "-rn", "approved_scopes\\|EscalatePrivileges\\|escalate", "/home/aaron/src/klorb/docs/specs/permissions.md", "/home/aaron/src/klorb/docs/specs/projects-and-trust.md"],
         ["grep", "-E", "^(test|lint|mypy|flake|check|all):", "Makefile"],
         ["grep", "-nA2", "^typecheck:\\|^lint:\\|^test:", "Makefile"],
-        ["venv/bin/flake8", "--config", ".flake8", "*"]
+        ["venv/bin/flake8", "--config", ".flake8", "*"],
+        ["which", "python3"],
+        ["python3", "--version"]
       ]
     },
     "shareEnv": [

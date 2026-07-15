@@ -788,8 +788,8 @@ def test_run_models_cli_costs_adds_table_columns(capsys: pytest.CaptureFixture[s
     out = capsys.readouterr().out
     assert "IN $/MTOK" in out
     assert "OUT $/MTOK" in out
-    assert "1.5" in out
-    assert "3" in out
+    assert "1.500" in out
+    assert "3.000" in out
 
 
 def test_run_models_cli_costs_passes_all_model_names(capsys: pytest.CaptureFixture[str]) -> None:

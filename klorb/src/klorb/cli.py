@@ -370,7 +370,7 @@ def _model_table_row(model: Model, pricing: ModelPricing | None, *, include_cost
         if pricing is None:
             row += ["-", "-"]
         else:
-            row += [f"{pricing.input_cost_per_mtok:g}", f"{pricing.output_cost_per_mtok:g}"]
+            row += [f"{pricing.input_cost_per_mtok:.3f}", f"{pricing.output_cost_per_mtok:.3f}"]
     return row
 
 
@@ -392,8 +392,14 @@ def _render_models_table(models: list[Model], costs: dict[str, ModelPricing | No
     widths = [max(len(header), *(len(row[i]) for row in rows)) if rows else len(header)
               for i, header in enumerate(headers)]
 
+    right_justified = {"CONTEXT", "MAX OUTPUT", "IN $/MTOK", "OUT $/MTOK"}
+
     def render_row(values: list[str]) -> str:
-        return _MODELS_TABLE_GUTTER.join(value.ljust(width) for value, width in zip(values, widths)).rstrip()
+        parts = []
+        for value, header, width in zip(values, headers, widths):
+            align = "rjust" if header in right_justified else "ljust"
+            parts.append(getattr(value, align)(width))
+        return _MODELS_TABLE_GUTTER.join(parts).rstrip()
 
     total_width = sum(widths) + len(_MODELS_TABLE_GUTTER) * (len(widths) - 1)
     lines = [render_row(headers), "-" * total_width]
