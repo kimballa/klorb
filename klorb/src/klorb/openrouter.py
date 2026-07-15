@@ -265,6 +265,30 @@ class OpenRouterApiProvider(ApiProvider):
             )
             raise
 
+        # Spawn a daemon thread that watches cancel_event and closes the stream
+        # when it fires.  This unblocks the blocked next() call inside
+        # ``for chunk in stream:`` immediately — without this, the per-chunk
+        # ``cancel_event.is_set()`` check only runs after the *next* chunk
+        # arrives from the HTTP response, which can take seconds if the model
+        # is still thinking/processing.
+        _stream_done = threading.Event()
+        _stream_closer_thread: threading.Thread | None = None
+        if cancel_event is not None and not cancel_event.is_set():
+            def _cancel_stream_when_signaled() -> None:
+                # Poll until either cancel fires or the stream finishes
+                # normally.  Waking every 250 ms is cheap and keeps the thread
+                # from lingering after a successful response.
+                while not _stream_done.wait(timeout=0.25):
+                    if cancel_event.is_set():
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass  # Best-effort; errors are harmless here.
+                        return
+            _stream_closer_thread = threading.Thread(
+                target=_cancel_stream_when_signaled, daemon=True)
+            _stream_closer_thread.start()
+
         content_parts: list[str] = []
         finish_reason: str | None = None
         completion_tokens = 0
@@ -324,6 +348,13 @@ class OpenRouterApiProvider(ApiProvider):
         except ResponseAborted:
             raise
         except Exception as exc:
+            # If cancel_event was set while we were blocked on next(stream),
+            # the daemon _stream_closer_thread's stream.close() unblocked us
+            # with an exception (typically httpx.StreamClosed).  Treat it as
+            # a normal cancellation rather than a real API error.
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("Aborted streamed response from %s", resolved_model)
+                raise ResponseAborted() from exc
             _log_api_error_context(
                 exc,
                 resolved_model=resolved_model,
@@ -333,6 +364,9 @@ class OpenRouterApiProvider(ApiProvider):
                 has_reasoning=has_reasoning,
             )
             raise
+        finally:
+            # Ensure the cancel thread exits and gets gc'd.
+            _stream_done.set()
         content = "".join(content_parts)
         tool_calls = [
             ToolCallRequest(

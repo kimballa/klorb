@@ -1,6 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.openrouter."""
 
+import threading
+import time
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -592,3 +594,151 @@ def test_build_api_messages_translates_tool_response_role_to_tool() -> None:
 
     _, kwargs = mock_client.chat.completions.create.call_args
     assert kwargs["messages"][1] == {"role": "tool", "content": "42", "tool_call_id": "call_1"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests for the daemon stream-closer thread that enables immediate cancellation
+# when the worker thread is blocked on next(stream) and no chunks are arriving.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _BlockingStream:
+    """A mock stream that yields one chunk, then blocks on the next read until
+    ``close()`` is called from another thread — exactly mimicking the real
+    scenario where the HTTP response socket has no data for seconds."""
+
+    def __init__(self, first_chunk: MagicMock, close_exception: Exception | None = None):
+        self._first_chunk: MagicMock | None = first_chunk
+        self._close_exception = close_exception
+        self._closed = threading.Event()
+        self._blocker = threading.Event()
+        self.close_called = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> MagicMock:
+        if self._first_chunk is not None:
+            chunk = self._first_chunk
+            self._first_chunk = None
+            return chunk
+        # Block until close() is called; mypy flags this as unreachable after
+        # the None check above, but at runtime the attribute *is* set to None
+        # after the first call, so the second call does reach here.
+        self._blocker.wait(timeout=10)  # type: ignore[unreachable]
+        if self._closed.is_set() and self._close_exception is not None:
+            raise self._close_exception
+        raise StopIteration
+
+    def close(self) -> None:
+        self.close_called = True
+        self._closed.set()
+        self._blocker.set()
+
+
+def test_stream_closer_thread_unblocks_blocked_next_on_cancel() -> None:
+    """When cancel_event is set while next(stream) is blocked, the daemon
+    _stream_closer_thread calls stream.close(), which unblocks the iterator
+    with an exception.  The ``except Exception`` handler detects that
+    cancel_event is set and raises ResponseAborted."""
+    from klorb.api_provider import ResponseAborted
+
+    first_chunk = _chunk(content="partial", finish_reason=None)
+    error_on_close = Exception("stream closed by cancel")
+    blocking_stream = _BlockingStream(first_chunk, close_exception=error_on_close)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = blocking_stream
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    cancel_event = threading.Event()
+    result: dict[str, Any] = {}
+
+    def send():
+        try:
+            resp = provider.send_prompt(
+                [_user_message()], cancel_event=cancel_event)
+            result["response"] = resp
+        except ResponseAborted:
+            result["aborted"] = True
+        except Exception as e:
+            result["error"] = e
+
+    sender = threading.Thread(target=send)
+    sender.start()
+
+    # Wait for the first chunk to be consumed (the stream is now blocked on next())
+    for _ in range(100):
+        if blocking_stream._first_chunk is None:
+            break
+        time.sleep(0.01)
+    time.sleep(0.1)  # Give the thread time to block on __next__
+
+    # Signal cancellation — the daemon thread should call stream.close()
+    cancel_event.set()
+    sender.join(timeout=5)
+
+    assert blocking_stream.close_called, "stream.close() should have been called by the daemon thread"
+    assert result.get("aborted") is True, f"Expected ResponseAborted, got {result}"
+
+
+def test_stream_closer_thread_is_not_spawned_when_no_cancel_event() -> None:
+    """When cancel_event is None, no daemon thread is spawned and the stream
+    iterates normally."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("all good")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+    assert result.message.content == "all good"
+
+
+def test_stream_closer_thread_is_not_spawned_when_cancel_event_already_set() -> None:
+    """If cancel_event is already set before the stream is created, the daemon
+    thread is not spawned — the per-chunk check handles it immediately."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("gone")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    cancel_event = threading.Event()
+    cancel_event.set()  # Pre-set
+
+    from klorb.api_provider import ResponseAborted
+    with pytest.raises(ResponseAborted):
+        provider.send_prompt([_user_message()], cancel_event=cancel_event)
+
+
+def test_stream_closer_thread_reraises_real_error_when_cancel_not_set() -> None:
+    """If the stream raises a genuine error (not caused by cancellation), and
+    cancel_event is NOT set, the exception propagates normally."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("gone")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    # Inject a real error by making the client raise
+    mock_client.chat.completions.create.side_effect = RuntimeError("real API error")
+
+    with pytest.raises(RuntimeError, match="real API error"):
+        provider.send_prompt([_user_message()])
+
+
+def test_stream_closer_thread_exits_promptly_on_normal_completion() -> None:
+    """On normal (non-cancelled) completion, the daemon thread should exit
+    promptly via _stream_done rather than lingering on cancel_event.wait()."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("all done")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    cancel_event = threading.Event()
+    result = provider.send_prompt([_user_message()], cancel_event=cancel_event)
+    assert result.message.content == "all done"
+
+    # The daemon thread polls _stream_done every 250 ms; give it at most 1 s
+    # to exit.  If the thread is still alive after that, it leaked.
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if not cancel_event.is_set():
+            break
+        time.sleep(0.05)
+    assert not cancel_event.is_set(), (
+        "cancel_event should never be set on normal completion"
+    )
