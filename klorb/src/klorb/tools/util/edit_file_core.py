@@ -14,12 +14,19 @@ class LineRangeEdit:
     `EditFileCore._resolve_line_range_edit`): where it actually landed (`resolved_start_line`/
     `resolved_end_line`), whether that matched the caller's hint exactly with no drift
     (`line_hint_matched`), and the subject's full line list after the substitution (`new_lines`).
+
+    `fuzzy_whitespace_match` is True when the anchors could only be located by ignoring
+    leading/trailing whitespace on `start_text`/`end_text` (and the file's lines) after an exact
+    match failed; `whitespace_message` then carries the advisory string `apply()` echoes back to
+    the caller (None when no fuzzy fallback occurred).
     """
 
     resolved_start_line: int
     resolved_end_line: int
     line_hint_matched: bool
     new_lines: list[str]
+    fuzzy_whitespace_match: bool = False
+    whitespace_message: str | None = None
 
 
 class EditFileCore:
@@ -200,6 +207,12 @@ class EditFileCore:
             "content": snippet,
         }
 
+        # When the anchors could only be located by ignoring leading/trailing whitespace,
+        # surface that so the caller knows to be more precise next time.
+        if edit.fuzzy_whitespace_match:
+            out["fuzzyWhitespaceMatch"] = True
+            out["whitespace"] = edit.whitespace_message
+
         # If we truncated start_text/end_text, provide advisory feedback to steer the agent to
         # more-efficient usage for next time.
         user_feedback = []
@@ -253,28 +266,67 @@ class EditFileCore:
             all_lines, start_line=start_line, end_line=end_line, start_text=start_text,
             end_text=end_text, context_before=context_before, context_after=context_after)
 
+        fuzzy = False
+        whitespace_message: str | None = None
         if len(candidates) == 1:
             resolved_start_line = candidates[0]
             resolved_end_line = resolved_start_line + (end_line - start_line)
             line_hint_matched = resolved_start_line == start_line
         elif len(candidates) == 0:
-            if all_lines[start_line - 1] != start_text:
+            # Exact anchoring failed everywhere in range. As a robustness fallback, retry the
+            # same drift search ignoring leading/trailing whitespace on both the supplied
+            # anchors and the file's lines: a model that captured a line's content with its
+            # surrounding indentation trimmed (or, conversely, added spurious whitespace)
+            # should still resolve. Only honor this fallback when it pins down exactly one
+            # location, so a genuinely wrong anchor still surfaces the precise error below.
+            fuzzy_candidates = self._find_drift_candidates(
+                all_lines, start_line=start_line, end_line=end_line, start_text=start_text,
+                end_text=end_text, context_before=context_before, context_after=context_after,
+                fuzzy=True)
+            if len(fuzzy_candidates) == 1:
+                fuzzy = True
+                resolved_start_line = fuzzy_candidates[0]
+                resolved_end_line = resolved_start_line + (end_line - start_line)
+                line_hint_matched = resolved_start_line == start_line
+                # Determine which anchor(s) actually needed whitespace tolerance at the
+                # resolved location (the other may have matched exactly and only failed the
+                # exact search because its partner didn't).
+                start_fuzzy = all_lines[resolved_start_line - 1] != start_text
+                end_fuzzy = all_lines[resolved_end_line - 1] != end_text
+                if start_fuzzy and end_fuzzy:
+                    which = "start_text and end_text were"
+                    anchor = "their anchors"
+                elif start_fuzzy:
+                    which = "start_text was"
+                    anchor = "its anchor"
+                else:
+                    which = "end_text was"
+                    anchor = "its anchor"
+                whitespace_message = (
+                    f"{which} matched to {anchor} by ignoring leading/trailing whitespace; "
+                    "for most accurate matching, be precise with leading and trailing whitespace.")
+            else:
+                if all_lines[start_line - 1] != start_text:
+                    raise ValueError(
+                        f"start_text does not match the content of start_line (line "
+                        f"#{start_line}): {all_lines[start_line - 1]!r} != {start_text!r}, and "
+                        f"no matching location was found within {self._drift_search_radius} "
+                        f"lines; {reread_hint}. Line #{start_line}'s contents are "
+                        f"\"{all_lines[start_line - 1]}\"")
+                if all_lines[end_line - 1] != end_text:
+                    raise ValueError(
+                        f"end_text does not match the content of end_line (line #{end_line}): "
+                        f"{all_lines[end_line - 1]!r} != {end_text!r}, and no matching "
+                        f"location was found within {self._drift_search_radius} lines; "
+                        f"{reread_hint}. Line #{end_line}'s contents are "
+                        f"\"{all_lines[end_line - 1]}\"")
                 raise ValueError(
-                    f"start_text does not match line {start_line}'s actual content: "
-                    f"{all_lines[start_line - 1]!r} != {start_text!r}, and no matching "
-                    f"location was found within {self._drift_search_radius} lines; {reread_hint}")
-            if all_lines[end_line - 1] != end_text:
-                raise ValueError(
-                    f"end_text does not match line {end_line}'s actual content: "
-                    f"{all_lines[end_line - 1]!r} != {end_text!r}, and no matching "
-                    f"location was found within {self._drift_search_radius} lines; {reread_hint}")
-            raise ValueError(
-                f"start_text/end_text match line {start_line}..{end_line}, but the "
-                "supplied context_before/context_after does not match the surrounding "
-                f"lines there (and no other nearby location within "
-                f"{self._drift_search_radius} lines satisfies every constraint); omit or "
-                f"correct context_before/context_after, or {reread_hint} to confirm the "
-                "surrounding lines")
+                    f"start_text/end_text match line {start_line}..{end_line}, but the "
+                    "supplied context_before/context_after does not match the surrounding "
+                    f"lines there (and no other nearby location within "
+                    f"{self._drift_search_radius} lines satisfies every constraint); omit or "
+                    f"correct context_before/context_after, or {reread_hint} to confirm the "
+                    "surrounding lines")
         else:
             span = end_line - start_line
             preview_lines = self._minimal_disambiguating_window(all_lines, candidates, span)
@@ -295,7 +347,8 @@ class EditFileCore:
             all_lines[:resolved_start_line - 1] + new_text.splitlines() + all_lines[resolved_end_line:])
         return LineRangeEdit(
             resolved_start_line=resolved_start_line, resolved_end_line=resolved_end_line,
-            line_hint_matched=line_hint_matched, new_lines=new_lines)
+            line_hint_matched=line_hint_matched, new_lines=new_lines,
+            fuzzy_whitespace_match=fuzzy, whitespace_message=whitespace_message)
 
     def _describe_candidate_neighbors(
         self, all_lines: list[str], candidate_start: int, span: int, preview_lines: int,
@@ -374,6 +427,7 @@ class EditFileCore:
     def _find_drift_candidates(
         self, all_lines: list[str], *, start_line: int, end_line: int, start_text: str,
         end_text: str, context_before: str | None, context_after: str | None,
+        fuzzy: bool = False,
     ) -> list[int]:
         """Return every start-line position within `self._drift_search_radius` of `start_line`
         (inclusive, clipped to the file's bounds) where `start_text` occurs and `end_text`
@@ -382,6 +436,12 @@ class EditFileCore:
         (see `_context_matches_candidate`). `start_line` itself (zero drift) is an ordinary
         candidate, not special-cased, so an undrifted hint naturally resolves as the sole
         match. Candidates are returned in ascending line-number order.
+
+        With `fuzzy=True`, the `start_text`/`end_text` comparison ignores leading/trailing
+        whitespace on both the anchor and the file's line (`_anchor_matches`); the
+        `context_before`/`context_after` check is still exact, since those are an optional
+        disambiguation aid a caller supplies deliberately rather than an anchor likely to be
+        captured with stray whitespace.
         """
         total_lines = len(all_lines)
         span = end_line - start_line
@@ -392,9 +452,9 @@ class EditFileCore:
         candidates: list[int] = []
         for candidate_start in range(lo, hi + 1):
             candidate_end = candidate_start + span
-            if all_lines[candidate_start - 1] != start_text:
+            if not self._anchor_matches(all_lines[candidate_start - 1], start_text, fuzzy):
                 continue
-            if all_lines[candidate_end - 1] != end_text:
+            if not self._anchor_matches(all_lines[candidate_end - 1], end_text, fuzzy):
                 continue
             if not self._context_matches_candidate(
                 all_lines, candidate_start=candidate_start, candidate_end=candidate_end,
@@ -403,6 +463,16 @@ class EditFileCore:
                 continue
             candidates.append(candidate_start)
         return candidates
+
+    @staticmethod
+    def _anchor_matches(line: str, text: str, fuzzy: bool) -> bool:
+        """True if `line` matches the supplied `text` anchor. Exact by default; with
+        `fuzzy=True`, leading/trailing whitespace is ignored on both sides, so an anchor
+        captured with its indentation trimmed (or with spurious surrounding whitespace) still
+        matches."""
+        if not fuzzy:
+            return line == text
+        return line.strip() == text.strip()
 
     def _context_matches_candidate(
         self, all_lines: list[str], *, candidate_start: int, candidate_end: int,

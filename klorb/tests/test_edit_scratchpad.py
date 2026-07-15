@@ -204,3 +204,113 @@ def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path
     detail = json.loads(tool.detail_view(args, result))
 
     assert detail["result"]["content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."
+
+
+def test_fuzzy_whitespace_match_on_start_text(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "  a  \nb\nc\n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 1, "end_line": 3, "start_text": "a", "end_text": "c", "new_text": "X\nY\nZ",
+    })
+
+    assert scratchpad.read_text() == "X\nY\nZ\n"
+    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["whitespace"] == (
+        "start_text was matched to its anchor by ignoring leading/trailing whitespace; "
+        "for most accurate matching, be precise with leading and trailing whitespace.")
+    assert result["line_hint_matched"] is True
+
+
+def test_fuzzy_whitespace_match_on_end_text(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\n  c  \n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 1, "end_line": 3, "start_text": "a", "end_text": "c", "new_text": "X\nY\nZ",
+    })
+
+    assert scratchpad.read_text() == "X\nY\nZ\n"
+    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["whitespace"] == (
+        "end_text was matched to its anchor by ignoring leading/trailing whitespace; "
+        "for most accurate matching, be precise with leading and trailing whitespace.")
+
+
+def test_fuzzy_whitespace_match_on_both_anchors(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "  a  \nb\n  c  \n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 1, "end_line": 3, "start_text": "a", "end_text": "c", "new_text": "X\nY\nZ",
+    })
+
+    assert scratchpad.read_text() == "X\nY\nZ\n"
+    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["whitespace"] == (
+        "start_text and end_text were matched to their anchors by ignoring leading/trailing "
+        "whitespace; for most accurate matching, be precise with leading and trailing whitespace.")
+
+
+def test_exact_match_takes_precedence_over_fuzzy(tmp_path: Path) -> None:
+    # Line 1 exact-matches "a"; no fuzzy fallback is reported even though a trimmed comparison
+    # would also have matched.
+    scratchpad = _write(tmp_path, "a\nb\nc\n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 1, "end_line": 3, "start_text": "a", "end_text": "c", "new_text": "X\nY\nZ",
+    })
+
+    assert scratchpad.read_text() == "X\nY\nZ\n"
+    assert "fuzzyWhitespaceMatch" not in result
+    assert "whitespace" not in result
+
+
+def test_fuzzy_match_relocates_with_drift(tmp_path: Path) -> None:
+    # Exact anchor "a" is not at the hinted line 2, but the trimmed line 1 is the only fuzzy
+    # candidate within radius; the edit relocates there and reports the fuzzy fallback.
+    scratchpad = _write(tmp_path, "  a  \np\nq\n")
+
+    result = EditScratchpadTool(_context(
+        str(scratchpad), process_config=ProcessConfig(edit_file_drift_search_radius=1),
+    )).apply({
+        "start_line": 2, "end_line": 2, "start_text": "a", "end_text": "a", "new_text": "A",
+    })
+
+    assert scratchpad.read_text() == "A\np\nq\n"
+    assert result["start_line"] == 1
+    assert result["fuzzyWhitespaceMatch"] is True
+
+
+def test_fuzzy_match_falls_through_when_still_ambiguous(tmp_path: Path) -> None:
+    # Two lines trim to "a"; fuzzy would match both, so the fallback is not honored and the
+    # exact-match failure surfaces instead.
+    scratchpad = _write(tmp_path, "  a  \n a \n")
+
+    with pytest.raises(ValueError, match="start_text does not match"):
+        EditScratchpadTool(_context(str(scratchpad))).apply({
+            "start_line": 1, "end_line": 1, "start_text": "a", "end_text": "a", "new_text": "X",
+        })
+
+
+def test_start_text_match_failure_error_names_line_number_and_contents(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match=r"Line #1's contents are") as excinfo:
+        EditScratchpadTool(_context(str(scratchpad))).apply({
+            "start_line": 1, "end_line": 1, "start_text": "X", "end_text": "X", "new_text": "Q",
+        })
+
+    message = str(excinfo.value)
+    assert "line #1" in message
+    assert 'Line #1\'s contents are "a"' in message
+
+
+def test_end_text_match_failure_error_names_line_number_and_contents(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match=r"Line #2's contents are") as excinfo:
+        EditScratchpadTool(_context(str(scratchpad))).apply({
+            "start_line": 1, "end_line": 2, "start_text": "a", "end_text": "Y", "new_text": "Q",
+        })
+
+    message = str(excinfo.value)
+    assert "line #2" in message
+    assert 'Line #2\'s contents are "b"' in message

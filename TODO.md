@@ -2,20 +2,10 @@
 
 # Bugs:
 
-* The replacements get tripped up on leading/trailing whitespace tokens.
-  If the start_text/end_text cannot exact-match to anything in the region, try matching
-  trim(start_text) with trim(line) foreach line in the region. If that matches exactly one
-  line, just use that.
-  * In cases where that happens, set fuzzy_whitespace=True and add a feedback message about
-    being careful with whitespace.
-
-* "Provide the exact current content of end_line" should actually include the current content
-  of the numbered end_line. Same for start_text error.
-
-* LLM output is being added to the history in an markdown-aware way and if the llm
+* LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
-  like `</Think>` in the middle of its output. (It almost seems like)
+  like `</Think>` in the middle of its output.
 
 * `grep -n * *` is already allowlisted but it keeps asking over and over; why?
 
