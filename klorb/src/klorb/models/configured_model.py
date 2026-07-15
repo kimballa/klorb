@@ -24,6 +24,7 @@ class _ConfiguredModelData(BaseModel):
     settings: dict[str, Any] = {}
     capabilities: dict[str, Any] = {}
     klorb_capabilities: dict[str, Any] = {}
+    drop_reasoning: bool = False
 
 
 class ConfiguredModel(Model):
@@ -60,3 +61,6 @@ class ConfiguredModel(Model):
 
     def klorb_capabilities(self) -> dict[str, Any]:
         return self._data.klorb_capabilities
+
+    def drop_reasoning(self) -> bool:
+        return self._data.drop_reasoning

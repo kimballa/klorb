@@ -89,3 +89,15 @@ def test_source_returns_the_constructor_argument() -> None:
     model = ConfiguredModel({"name": "some/model"}, source="/path/to/some-model.json")
 
     assert model.source() == "/path/to/some-model.json"
+
+
+def test_drop_reasoning_defaults_to_false() -> None:
+    model = ConfiguredModel({"name": "some/model"}, source="test")
+
+    assert model.drop_reasoning() is False
+
+
+def test_drop_reasoning_reads_from_data() -> None:
+    model = ConfiguredModel({"name": "some/model", "drop_reasoning": True}, source="test")
+
+    assert model.drop_reasoning() is True

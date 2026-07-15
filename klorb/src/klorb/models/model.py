@@ -78,3 +78,13 @@ class Model(ABC):
         against a user's explicit choice.
         """
         return {}
+
+    def drop_reasoning(self) -> bool:
+        """Return whether thinking/reasoning content from this model's prior turns should be
+        stripped from the outgoing request rather than resent as-is. Defaults to `False`:
+        thinking content and any structured `reasoning_details` payload are preserved and
+        replayed on every subsequent turn by default, letting a reasoning-capable model
+        continue from where it left off. A model overrides this to `True` when its provider
+        doesn't support, or doesn't want, past reasoning replayed as conversation history.
+        """
+        return False

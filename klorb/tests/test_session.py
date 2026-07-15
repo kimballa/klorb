@@ -6,17 +6,19 @@ import re
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from unittest import mock
 from unittest.mock import MagicMock
 
 import fixtures.sample_tools as sample_tools_package
 import pytest
-from fixtures.sample_models import sample_model_registry
+from fixtures.sample_models import NO_SUCH_DIR, sample_model_registry
 
 from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.message import Message, ToolCallRequest
+from klorb.models.model import Model
+from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired, PermissionOverride
 from klorb.process_config import ProcessConfig
@@ -36,6 +38,7 @@ from klorb.session import (
     generate_session_id,
 )
 from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
+from klorb.token_estimate import estimate_tokens
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 
@@ -141,30 +144,31 @@ def test_session_uses_explicitly_given_id() -> None:
     assert session.id == "my-custom-id"
 
 
-def test_total_tokens_used_sums_recorded_message_tokens() -> None:
+def test_total_tokens_used_sums_every_messages_client_side_num_tokens() -> None:
     mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply(num_tokens=5, prompt_tokens=10)
+    mock_provider.send_prompt.return_value = _reply("model reply")
     session = Session(SessionConfig(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
-    assert session.total_tokens_used() == 10 + 5
+    assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_estimated_tokens_contribute_to_total_before_settlement() -> None:
+def test_total_tokens_used_grows_live_as_chunks_stream_in() -> None:
     mock_provider = MagicMock()
     seen_totals: list[int] = []
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
-        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         seen_totals.append(session.total_tokens_used())
         on_chunk("hello")
         seen_totals.append(session.total_tokens_used())
         on_chunk(" there, world")
         seen_totals.append(session.total_tokens_used())
-        return _reply("hello there, world", num_tokens=5, prompt_tokens=10)
+        return _reply("hello there, world")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
     session = Session(SessionConfig(model="some/model"), provider=mock_provider)
@@ -174,16 +178,16 @@ def test_estimated_tokens_contribute_to_total_before_settlement() -> None:
     assert seen_totals[0] > 0
     assert seen_totals[1] > seen_totals[0]
     assert seen_totals[2] > seen_totals[1]
-    assert session.total_tokens_used() == 10 + 5
-    assert all(message.estimated_tokens is None for message in session.messages)
+    assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_aborted_placeholder_keeps_its_estimate_permanently() -> None:
+def test_aborted_placeholder_still_counts_its_partial_content() -> None:
     mock_provider = MagicMock()
 
     def aborting_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
-        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_chunk("partial rep")
         raise ResponseAborted()
@@ -196,47 +200,9 @@ def test_aborted_placeholder_keeps_its_estimate_permanently() -> None:
 
     _system_message, user_message, assistant_message = session.messages
     assert assistant_message.processing_state == "aborted"
-    assert assistant_message.estimated_tokens is not None
-    assert assistant_message.estimated_tokens > 0
-    assert user_message.num_tokens == 0
-    assert session.total_tokens_used() == sum(
-        message.estimated_tokens or 0 for message in session.messages)
-
-
-def test_completed_round_clears_reply_estimate_before_turn_settles() -> None:
-    mock_provider = MagicMock()
-    config = SessionConfig(model="some/model")
-    tool_registry = _sample_tool_registry(config)
-    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
-    calls_made = 0
-
-    def scripted_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
-        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
-    ):
-        nonlocal calls_made
-        calls_made += 1
-        if calls_made == 1:
-            on_chunk("calling tool")
-            return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-        # The first round's real prompt_tokens/completion_tokens already settled every
-        # message that existed as of that round (bookkeeping, user, the streamed reply)
-        # before this second round is even sent, rather than waiting for the whole turn to
-        # finish. The tool_response appended just now (after round 1, before round 2) hasn't
-        # been covered by any real count yet, so it's the one message still holding an
-        # estimate at this point.
-        assert all(
-            m.estimated_tokens is None for m in session.messages if m.role != "tool_response")
-        tool_response = next(m for m in session.messages if m.role == "tool_response")
-        assert tool_response.estimated_tokens is not None
-        return _reply("final answer", num_tokens=4, prompt_tokens=20)
-
-    mock_provider.send_prompt.side_effect = scripted_send_prompt
-
-    response = session.send_turn("please echo")
-
-    assert response == "final answer"
-    assert all(m.estimated_tokens is None for m in session.messages)
+    assert assistant_message.num_tokens == estimate_tokens("partial rep")
+    assert user_message.num_tokens == estimate_tokens("hi")
+    assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
 def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
@@ -251,7 +217,8 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
 
     def first_round_then_cancel(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
-        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         # Simulate the turn being cancelled (quit / Ctrl+C) while this round's reply is assembled.
         assert cancel_event is not None
@@ -274,11 +241,11 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
     assert next(m for m in session.messages if m.role == "user").processing_state == "aborted"
 
 
-def test_total_tokens_used_does_not_double_count_a_replayed_round() -> None:
+def test_total_tokens_used_sums_every_message_across_a_multi_round_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
-        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3, prompt_tokens=10),
-        _reply("final answer", num_tokens=4, prompt_tokens=20),
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3),
+        _reply("final answer", num_tokens=4),
     ]
     config = SessionConfig(model="some/model")
     tool_registry = _sample_tool_registry(config)
@@ -286,12 +253,9 @@ def test_total_tokens_used_does_not_double_count_a_replayed_round() -> None:
 
     session.send_turn("please echo")
 
-    # Round 2's prompt_tokens (20) already includes round 1's reply (completion_tokens=3)
-    # resent as history, so the running total must be the latest round's own
-    # prompt_tokens + completion_tokens (24), not a sum across every round's individually
-    # recorded num_tokens (0 + 0 + 20 + 3 + 0 + 4 = 27), which would double-count round 1's
-    # reply once directly and once folded into round 2's delta.
-    assert session.total_tokens_used() == 20 + 4
+    # Each round's reply is a distinct Message, counted exactly once by its own client-side
+    # num_tokens -- there's no server-usage delta to double-count against a later round.
+    assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
 def test_total_output_tokens_used_sums_completion_tokens_across_rounds() -> None:
@@ -316,28 +280,29 @@ def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
-        on_chunk=None, on_thinking_chunk=None, cancel_event=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         seen_outputs.append(session.total_output_tokens_used())
         on_chunk("hello")
         seen_outputs.append(session.total_output_tokens_used())
         on_thinking_chunk("thinking...")
         seen_outputs.append(session.total_output_tokens_used())
-        return _reply("hello", num_tokens=5, prompt_tokens=10)
+        return _reply("hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
     session = Session(SessionConfig(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
-    # Estimates should grow as assistant/thinking content streams in.
+    # Totals should grow as assistant/thinking content streams in.
     assert seen_outputs[1] > seen_outputs[0]
     assert seen_outputs[2] > seen_outputs[1]
-    assert session.total_output_tokens_used() == 5
-    assert all(
-        message.estimated_tokens is None
-        for message in session.messages
-        if message.role in ("assistant", "thinking", "tool_use")
+    assistant_message = next(m for m in session.messages if m.role == "assistant")
+    thinking_message = next(m for m in session.messages if m.role == "thinking")
+    assert (
+        session.total_output_tokens_used()
+        == assistant_message.num_tokens + thinking_message.num_tokens
     )
 
 
@@ -382,8 +347,9 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
-        session_id="my-session-id", reasoning=None, tools=None, on_chunk=mock.ANY,
-        on_thinking_chunk=mock.ANY, cancel_event=None)
+        session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
+        on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
+        cancel_event=None)
     assert [m.content for m in session.messages] == [COMPOSED_COORDINATOR_PROMPT, "hi", "model reply"]
 
 
@@ -398,8 +364,9 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
         session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
-        session_id="my-session-id", reasoning=None, tools=None, on_chunk=mock.ANY,
-        on_thinking_chunk=mock.ANY, cancel_event=None)
+        session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
+        on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
+        cancel_event=None)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
@@ -579,6 +546,107 @@ def test_reasoning_none_when_model_unregistered() -> None:
     assert kwargs["reasoning"] is None
 
 
+class _DropReasoningModel(Model):
+    """A registered `Model` test double declaring `drop_reasoning() -> True`, so `Session`
+    tests can verify that flag reaches `ApiProvider.send_prompt()`. See
+    `fixtures.sample_models`'s `AlphaModel`/`BetaModel`/`GammaModel` for the same pattern used
+    for `thinking`/`thinking_budget_style` coverage."""
+
+    def name(self) -> str:
+        return "drops-reasoning"
+
+    def settings(self) -> dict[str, Any]:
+        return {}
+
+    def capabilities(self) -> dict[str, Any]:
+        return {}
+
+    def drop_reasoning(self) -> bool:
+        return True
+
+
+def test_drop_reasoning_passed_to_provider_when_active_model_declares_it() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(_DropReasoningModel())
+    session = Session(
+        SessionConfig(model="drops-reasoning"), provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["drop_reasoning"] is True
+
+
+def test_drop_reasoning_false_by_default_for_registered_model() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    registry = sample_model_registry()
+    session = Session(SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["drop_reasoning"] is False
+
+
+def test_drop_reasoning_false_when_model_unregistered() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    _, kwargs = mock_provider.send_prompt.call_args
+    assert kwargs["drop_reasoning"] is False
+
+
+def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
+    ):
+        on_thinking_chunk("thinking...")
+        on_chunk("hello")
+        return _reply("hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(_DropReasoningModel())
+    session = Session(
+        SessionConfig(model="drops-reasoning"), provider=mock_provider, model_registry=registry)
+
+    session.send_turn("hi")
+
+    thinking_message = next(m for m in session.messages if m.role == "thinking")
+    assert session.total_tokens_used() == sum(
+        m.num_tokens for m in session.messages if m is not thinking_message)
+
+
+def test_total_tokens_used_includes_thinking_by_default() -> None:
+    mock_provider = MagicMock()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
+    ):
+        on_thinking_chunk("thinking...")
+        on_chunk("hello")
+        return _reply("hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+
+    session.send_turn("hi")
+
+    assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
+
+
 def test_send_turn_sends_full_history_to_provider() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("r1", num_tokens=5, prompt_tokens=10), _reply("r2")]
@@ -592,23 +660,18 @@ def test_send_turn_sends_full_history_to_provider() -> None:
         COMPOSED_COORDINATOR_PROMPT, "first", "r1", "second"]
 
 
-def test_token_delta_accounted_across_two_turns() -> None:
+def test_user_message_num_tokens_is_its_own_client_side_estimate() -> None:
     mock_provider = MagicMock()
-    mock_provider.send_prompt.side_effect = [
-        _reply("r1", num_tokens=5, prompt_tokens=10),
-        _reply("r2", num_tokens=8, prompt_tokens=23),
-    ]
+    mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
     session = Session(SessionConfig(model="some/model"), provider=mock_provider)
 
     session.send_turn("first")
     session.send_turn("second")
 
     system_message, user1, assistant1, user2, assistant2 = session.messages
-    assert system_message.num_tokens == 0
-    assert user1.num_tokens == 10
-    assert assistant1.num_tokens == 5
-    assert user2.num_tokens == 23 - (10 + 5)
-    assert assistant2.num_tokens == 8
+    assert system_message.num_tokens == estimate_tokens(COMPOSED_COORDINATOR_PROMPT)
+    assert user1.num_tokens == estimate_tokens("first")
+    assert user2.num_tokens == estimate_tokens("second")
 
 
 def test_send_turn_marks_user_message_error_and_reraises_on_provider_failure() -> None:
@@ -653,8 +716,9 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_chunk("Hel")
         on_chunk("lo")
@@ -677,8 +741,9 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_chunk("Hel")
         on_chunk("lo")
@@ -697,8 +762,9 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
@@ -718,7 +784,7 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
     assert thinking_message.content == "Let me think."
     assert thinking_message.streaming_content is None
     assert thinking_message.processing_state == "complete"
-    assert thinking_message.num_tokens == 0
+    assert thinking_message.num_tokens == estimate_tokens("Let me think.")
     assert assistant_message.role == "assistant"
     assert assistant_message.content == "Hello"
 
@@ -727,8 +793,9 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
     mock_provider = MagicMock()
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
@@ -747,8 +814,9 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     mock_provider = MagicMock()
 
     def failing_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_chunk("partial")
         raise RuntimeError("boom")
@@ -771,8 +839,9 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     mock_provider = MagicMock()
 
     def failing_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_thinking_chunk("partial thought")
         raise RuntimeError("boom")
@@ -801,15 +870,16 @@ def test_abort_before_any_chunk_marks_user_message_aborted_not_removed() -> None
     _system_message, user_message = session.messages
     assert user_message.processing_state == "aborted"
     assert user_message.last_error is None
-    assert user_message.num_tokens == 0
+    assert user_message.num_tokens == estimate_tokens("hi")
 
 
 def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None:
     mock_provider = MagicMock()
 
     def aborting_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_thinking_chunk("thinking out loud")
         on_chunk("partial rep")
@@ -836,8 +906,9 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     calls_made = 0
 
     def fake_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         nonlocal calls_made
         calls_made += 1
@@ -862,17 +933,18 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     assert tool_response_message.content == "hi"
     user_message = session.messages[2]
     assert user_message.processing_state == "aborted"
-    # The completed round's own prompt_tokens (10, per _tool_call_reply's default) counts
-    # toward this turn even though the second round never finished.
-    assert user_message.num_tokens == 10
+    # The user message's own num_tokens is set once, from its own content, at construction --
+    # unaffected by how many rounds ran, or whether the last one was aborted.
+    assert user_message.num_tokens == estimate_tokens("please echo")
 
 
 def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> None:
     mock_provider = MagicMock()
 
     def failing_send_prompt(
-        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None, on_chunk=None,
-        on_thinking_chunk=None, cancel_event=None,
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cancel_event=None,
     ):
         on_chunk("partial")
         raise RuntimeError("boom")
@@ -980,7 +1052,7 @@ def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
     assert tool_response_message.content == "hi there"
     user_message = session.messages[2]
     assert user_message.processing_state == "complete"
-    assert user_message.num_tokens == 20
+    assert user_message.num_tokens == estimate_tokens("please echo")
     assert mock_provider.send_prompt.call_count == 2
 
 

@@ -13,10 +13,17 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
 from klorb.message import Message, ToolCallRequest
+from klorb.token_estimate import estimate_tokens
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 DEFAULT_MODEL = "openai/gpt-5-nano"
+
+_REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS = ("text", "summary", "data")
+"""`reasoning_details` entry fields that stream incrementally, fragment by fragment, and so
+are concatenated across fragments sharing the same `index` rather than overwritten -- unlike
+`"type"`/`"id"`/`"format"`/`"index"` themselves, which a provider repeats identically (or
+sends only once) on every fragment for a given entry."""
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +69,10 @@ class OpenRouterApiProvider(ApiProvider):
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         timeout: float | None = None,
+        drop_reasoning: bool = False,
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history to a model via OpenRouter, streaming the
@@ -84,11 +93,24 @@ class OpenRouterApiProvider(ApiProvider):
         `timeout` kwarg, bounding this one call's wall-clock time independent of any client-wide
         default.
 
+        `drop_reasoning` controls whether prior turns' thinking content is included in
+        `api_messages` at all -- see `_build_api_messages`.
+
+        If `on_reasoning_details` is given, it's invoked with the current, fully-merged
+        `reasoning_details` array (OpenRouter's structured reasoning payload -- see
+        `Message.reasoning_details`) each time a chunk carries a new fragment of it, mirroring
+        `delta.tool_calls`: fragments arrive keyed by `index` and are merged here
+        (`_REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS` concatenated, every other field
+        overwritten) rather than left for the caller to reassemble. Each call gets a fresh
+        snapshot (a new list of shallow-copied entry dicts) rather than a reference to the
+        internal accumulator, so a caller that keeps an earlier call's payload around isn't
+        surprised by it changing underfoot once a later fragment arrives.
+
         If `cancel_event` is given and set while the stream is being consumed, the
         underlying HTTP stream is closed and `ResponseAborted` is raised.
         """
         resolved_model = model or self._model
-        api_messages = self._build_api_messages(messages, system_prompt)
+        api_messages = self._build_api_messages(messages, system_prompt, drop_reasoning)
         logger.info("Sending %d-message turn to %s", len(api_messages), resolved_model)
         client = self.build_client()
         extra_body: dict[str, Any] | None = None
@@ -118,6 +140,7 @@ class OpenRouterApiProvider(ApiProvider):
         completion_tokens = 0
         prompt_tokens = 0
         tool_call_accumulators: dict[int, dict[str, str]] = {}
+        reasoning_details_accumulators: dict[int, dict[str, Any]] = {}
         for chunk in stream:
             if cancel_event is not None and cancel_event.is_set():
                 stream.close()
@@ -133,6 +156,25 @@ class OpenRouterApiProvider(ApiProvider):
                 thinking_delta_text = getattr(choice.delta, "reasoning", None) or ""
                 if thinking_delta_text and on_thinking_chunk is not None:
                     on_thinking_chunk(thinking_delta_text)
+                reasoning_details_fragments = getattr(choice.delta, "reasoning_details", None) or []
+                if reasoning_details_fragments:
+                    for fragment in reasoning_details_fragments:
+                        accumulator = reasoning_details_accumulators.setdefault(
+                            fragment.get("index", 0), {})
+                        for key, value in fragment.items():
+                            existing = accumulator.get(key)
+                            if (
+                                key in _REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS
+                                and isinstance(value, str) and isinstance(existing, str)
+                            ):
+                                accumulator[key] = existing + value
+                            else:
+                                accumulator[key] = value
+                    if on_reasoning_details is not None:
+                        on_reasoning_details([
+                            dict(accumulator) for _, accumulator
+                            in sorted(reasoning_details_accumulators.items())
+                        ])
                 for delta_call in choice.delta.tool_calls or []:
                     accumulator = tool_call_accumulators.setdefault(
                         delta_call.index, {"id": "", "name": "", "arguments": ""})
@@ -164,7 +206,7 @@ class OpenRouterApiProvider(ApiProvider):
         reply = Message(
             content=content,
             role="assistant",
-            num_tokens=completion_tokens,
+            num_tokens=estimate_tokens(content),
             processing_state="complete",
             timestamp=datetime.now(),
             finish_reason=finish_reason,
@@ -174,32 +216,46 @@ class OpenRouterApiProvider(ApiProvider):
 
     @staticmethod
     def _build_api_messages(
-        messages: list[Message], system_prompt: str | None
+        messages: list[Message], system_prompt: str | None, drop_reasoning: bool
     ) -> list[ChatCompletionMessageParam]:
         """Convert session history (plus an optional system prompt) into OpenAI SDK message
-        dicts. `"thinking"`-, `"tool_defs"`-, and `"system"`-role messages are omitted: none
-        is replayed as-is here — reasoning content isn't meant to be replayed as conversation
-        history, tool definitions are offered via the request's separate `tools` array (see
-        `send_prompt`) rather than as a chat message, and a stored `"system"` message is only
-        `klorb.session.Session`'s bookkeeping record of what was sent on the first turn (see
+        dicts. `"tool_defs"`- and `"system"`-role messages are omitted: tool definitions are
+        offered via the request's separate `tools` array (see `send_prompt`) rather than as a
+        chat message, and a stored `"system"` message is only `klorb.session.Session`'s
+        bookkeeping record of what was sent on the first turn (see
         `Session._ensure_system_message`) — the live system prompt is supplied fresh via the
         `system_prompt` argument below instead, so it reflects the current active model even
         if it's changed since that bookkeeping message was inserted. `"tool_use"` and
         `"tool_response"` are translated into the shapes the API expects for a tool-calling
         round trip: an `assistant` message carrying `tool_calls`, and a `tool` message
         carrying `tool_call_id`, respectively.
+
+        A `"thinking"`-role message is never sent as its own chat message -- the OpenAI-
+        compatible API has no such role. `Session` always appends one immediately ahead of
+        the `"assistant"`/`"tool_use"` reply it belongs to (see `Session._send_and_receive`),
+        so when `drop_reasoning` is `False` (the default), its `content` and
+        `reasoning_details` are instead folded onto that next reply's own request dict as
+        `reasoning`/`reasoning_details` fields -- the shape OpenRouter expects for replayed
+        reasoning, letting the model continue from its own prior reasoning trace. When
+        `drop_reasoning` is `True`, a `"thinking"` message's content is discarded entirely.
         """
         api_messages: list[ChatCompletionMessageParam] = []
         if system_prompt is not None:
             system_message = {"role": "system", "content": system_prompt}
             api_messages.append(cast(ChatCompletionMessageParam, system_message))
+        pending_reasoning: Message | None = None
         for message in messages:
-            if message.role in ("thinking", "tool_defs", "system"):
+            if message.role == "thinking":
+                if not drop_reasoning:
+                    pending_reasoning = message
                 continue
+            if message.role in ("tool_defs", "system"):
+                continue
+            api_message: dict[str, Any]
             if message.role == "tool_use":
-                assistant_message: dict[str, Any] = {"role": "assistant", "content": message.content or None}
+                api_message = {"role": "assistant", "content": message.content or None}
                 if message.tool_calls:
-                    assistant_message["tool_calls"] = [
+                    api_message["tool_calls"] = [
                         {
                             "id": call.id,
                             "type": "function",
@@ -207,14 +263,24 @@ class OpenRouterApiProvider(ApiProvider):
                         }
                         for call in message.tool_calls
                     ]
-                api_messages.append(cast(ChatCompletionMessageParam, assistant_message))
             elif message.role == "tool_response":
                 api_messages.append(cast(ChatCompletionMessageParam, {
                     "role": "tool",
                     "tool_call_id": message.tool_call_id,
                     "content": message.content,
                 }))
+                continue
+            elif message.role == "assistant":
+                api_message = {"role": "assistant", "content": message.content}
             else:
                 api_messages.append(
                     cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content}))
+                continue
+            if pending_reasoning is not None:
+                if pending_reasoning.content:
+                    api_message["reasoning"] = pending_reasoning.content
+                if pending_reasoning.reasoning_details:
+                    api_message["reasoning_details"] = pending_reasoning.reasoning_details
+                pending_reasoning = None
+            api_messages.append(cast(ChatCompletionMessageParam, api_message))
         return api_messages

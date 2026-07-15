@@ -66,6 +66,18 @@ config) has one place to live.
     `THINKING_EFFORT_TOKEN_BUDGETS[config.thinking_effort]` (see
     [[map-thinking-effort-levels-to-fixed-token-budgets]]). Recomputed fresh on every turn,
     like `system_prompt`, so palette changes to thinking config take effect immediately.
+  * `_drop_reasoning() -> bool` returns the active model's `Model.drop_reasoning()` (`False`
+    if the active model isn't registered, matching that method's own default), passed to
+    `ApiProvider.send_prompt(drop_reasoning=...)` on every round. See
+    [[preserve-reasoning-across-turns-by-default]].
+  * `total_tokens_used() -> int` sums every message's own `num_tokens` (see
+    [[message-model]]) except a `role="thinking"` message when `_drop_reasoning()` is
+    `True` — the same predicate `OpenRouterApiProvider._build_api_messages()` applies, so the
+    context-usage footer always reflects exactly what would be uploaded at the start of the
+    next turn, no more and no less. `total_output_tokens_used() -> int` sums `num_tokens`
+    over `"assistant"`/`"tool_use"`/`"thinking"` messages unconditionally, regardless of
+    `_drop_reasoning()`, since it reports everything the model has generated rather than what
+    would be resent. See [[count-every-message-tokens-client-side-with-tiktoken]].
   * `send_turn(prompt: str, on_chunk: ... = None, on_thinking_chunk: ... = None,
     cancel_event: threading.Event | None = None, on_tool_call_limit_reached: Callable[[str],
     bool] | None = None) -> str` is the turn-based loop's unit of
@@ -82,18 +94,23 @@ config) has one place to live.
     [[session-owns-in-progress-assistant-message-during-streaming]]). Reasoning/thinking
     chunks are handled the same way but into a separate `role="thinking"` placeholder
     appended ahead of the assistant one (so streamed reasoning, which typically arrives
-    first, and the eventual answer can be told apart), forwarded to `on_thinking_chunk`.
-    On success, both placeholders are finalized in place (`content`, `streaming_content=
-    None`, `processing_state="complete"`) — the assistant one also gets `num_tokens` and
-    `finish_reason` from the response, while the thinking one's `num_tokens` stays `0`
-    since reasoning tokens are already folded into the assistant message's count — or, for
-    the assistant message, the provider's reply is appended fresh if no placeholder was
-    ever created (e.g. a non-streaming test double; there's no non-streaming fallback for
-    thinking, since without streaming there's nothing to have generated a thinking
-    placeholder from). The user `Message` is mutated in place — `num_tokens` via a delta
-    against the response's `prompt_tokens` (see
-    [[derive-user-turn-token-counts-from-a-prompt-token-delta]]), `processing_state`
-    becomes `"complete"`, `last_error` is cleared. On failure, it mutates the user `Message`
+    first, and the eventual answer can be told apart), forwarded to `on_thinking_chunk`. A
+    structured `reasoning_details` payload, if the provider sends one, is merged onto that
+    same placeholder (lazily creating it too, if reasoning arrived as only structured details
+    with no plain-text delta ever streamed) and forwarded to `on_reasoning_details` — see
+    [[preserve-reasoning-across-turns-by-default]]. Every message's `num_tokens` — including
+    the thinking placeholder's own, no longer zeroed out — is a client-side `tiktoken` count
+    of its own content (`klorb.token_estimate.estimate_tokens`), refreshed on every streamed
+    chunk; see [[count-every-message-tokens-client-side-with-tiktoken]]. On success, both
+    placeholders are finalized in place (`content`, `streaming_content=None`,
+    `processing_state="complete"`) — the assistant one also gets `finish_reason` from the
+    response — or, for the assistant message, the provider's reply is appended fresh if no
+    placeholder was ever created (e.g. a non-streaming test double; there's no non-streaming
+    fallback for thinking, since without streaming there's nothing to have generated a
+    thinking placeholder from). The user `Message`'s `num_tokens` is already set, from its
+    own content, at construction (see below); `_dispatch_turn()` only mutates its
+    `processing_state` to `"complete"` and clears `last_error` on success. On failure, it
+    mutates the user `Message`
     to `processing_state="error"`/`last_error=str(exc)` (and both placeholders too, if
     created, leaving their partial `streaming_content` intact) and re-raises. If
     `cancel_event` is given and becomes set while the response is streaming in, the
@@ -166,10 +183,6 @@ config) has one place to live.
     interactively. See
     [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md) and
     [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
-
-    `user_message.num_tokens` is set from the *last* round's `prompt_tokens` delta, folding
-    every round's cost (tool definitions and results included) into the one turn, the same
-    way the system prompt's cost is folded into the first turn (see "Out of scope" below).
   * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None,
     on_tool_call_limit_reached: ... = None) -> str` scans
     backward for the last `role == "user"` `Message`; if it isn't in `"error"` state (or
@@ -224,14 +237,6 @@ klorb                                    # REPL, no initial message (default)
 
 ## Out of scope
 
-* The system prompt's token cost is folded into the first user turn's `num_tokens` delta
-  rather than given its own count on the bookkeeping `role="system"` `Message` (which always
-  has `num_tokens=0`) — an intentional v1 approximation, since there's no per-message
-  tokenizer to attribute tokens precisely without a round trip to the model. Until that round
-  trip settles, `total_tokens_used()` reports a client-side estimate of the same cost instead
-  (see [[message-model]]'s `estimated_tokens` and
-  [[null-estimated-tokens-when-a-real-count-supersedes-them]]), so the context-usage footer
-  has a live number to show even mid-turn.
 * `retry_last_turn()` exists on `Session` but isn't yet exposed through the TUI or CLI.
 * Persisting `SessionConfig` across invocations is not implemented yet.
 * `retry_last_turn()` restarts a tool-calling turn from scratch (resending the original user
