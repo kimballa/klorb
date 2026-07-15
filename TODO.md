@@ -2,6 +2,21 @@
 
 # Bugs:
 
+* Somehow the conversation can abruptly stop with this error in the history:
+  ```
+  Error: {"error":{"message":"Expecting value: line 1 column 511 (char 510)","type":"BadRequestError","param":null,"code":400}}
+  ```
+  We now have better logging in place but we still need to diagnose why this happens.
+
+
+* If the agent makes a malformed tool call, we reply with an error message, but also
+  we keep the malformed call in the conversation, and this can cause 400 Bad Request issues
+  on subsequent turns.
+
+* It's possible for the app to hang in a way that ^C doesn't work.
+  We need to have a SIGINT handler that will actually abort the app if the user
+  presses ^C repeatedly.
+
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -25,6 +40,14 @@
   model to respond.
 
 # Feature backlog
+
+* The Find file tool's `dirname` argument should be optional; if omitted, use workspaceRoot.
+* Grep should have even more concise output
+  * Also selectable output modes:
+    * ListFiles -- just list the files (sort|uniq) that contain a hit
+    * MatchLines -- just the lines that match (like `grep -R`)
+    * FullContext -- the lines that match + 2 context lines on either side.
+  * Should have a `path` argument which could be a dir (which is recursively grepped) or just one file.
 
 * Consider switching Qwen option to qwen/qwen3.7-plus. Cheaper. Bigger context. ...Better?
 

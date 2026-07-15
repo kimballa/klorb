@@ -15,6 +15,9 @@ from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
 from klorb.message import Message, ToolCallRequest
 from klorb.token_estimate import estimate_tokens
 
+# Set true if you want *extremely* verbose debug logs.
+LOG_CONVERSATION_EVERY_TURN = False
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
 DEFAULT_MODEL = "openai/gpt-5-nano"
@@ -26,6 +29,89 @@ are concatenated across fragments sharing the same `index` rather than overwritt
 sends only once) on every fragment for a given entry."""
 
 logger = logging.getLogger(__name__)
+
+
+def _log_api_error_context(
+    exc: Exception,
+    *,
+    resolved_model: str,
+    message_count: int,
+    total_content_chars: int,
+    has_tools: bool,
+    has_reasoning: bool,
+) -> None:
+    """Log detailed context about an API error to help diagnose request issues.
+
+    Extracts HTTP request/response bodies from OpenAI SDK exceptions when available,
+    and logs a summary of what was being sent (model, message count, content size,
+    etc.) alongside the full error details.  For400-level errors where the response
+    body contains a JSON parse error message, also logs a truncated snapshot of the
+    request body that was sent.
+    """
+    # --- basic context always logged ---
+    logger.error(
+        "API error for model=%s messages=%d content_chars=%d tools=%s reasoning=%s: %s",
+        resolved_model, message_count, total_content_chars,
+        has_tools, has_reasoning, exc,
+        exc_info=True,
+    )
+
+    # --- extract HTTP request/response from SDK exceptions when available ---
+    request_obj = getattr(exc, "request", None)
+    response_obj = getattr(exc, "response", None)
+    body = getattr(exc, "body", None)
+    status_code = getattr(exc, "status_code", None)
+
+    if response_obj is not None:
+        try:
+            resp_text = response_obj.text
+            if len(resp_text) > 4096:
+                resp_out = resp_text[:4096] + f"...(truncated, len={len(resp_text)})"
+            else:
+                resp_out = resp_text
+
+            logger.error(
+                "API HTTP response (status=%s, length=%d):\n%s",
+                status_code or response_obj.status_code,
+                len(resp_text),
+                resp_out
+            )
+        except Exception:
+            logger.warning("Could not read API HTTP response body", exc_info=True)
+
+    if body is not None and body != getattr(response_obj, "text", None):
+        logger.error("API error body: %r", body)
+
+    # --- for 400 errors, try to dump the request body we actually sent ---
+    if status_code == 400 or getattr(exc, "type", None) == "BadRequestError":
+        if request_obj is not None:
+            try:
+                req_body_bytes = request_obj.content
+                req_text = req_body_bytes.decode("utf-8", errors="replace")
+                if len(req_text) > 8192:
+                    req_out = req_text[:8192] + f"...(truncated, len={len(req_text)})"
+                else:
+                    req_out = req_text
+
+                logger.error(
+                    "Request body that triggered the 400 (%d chars):\n%s",
+                    len(req_text),
+                    req_out
+                )
+            except Exception:
+                logger.warning("Could not read API request body", exc_info=True)
+
+            # Log request metadata
+            try:
+                logger.error(
+                    "Request metadata: url=%s method=%s content_type=%s content_length=%s",
+                    request_obj.url,
+                    request_obj.method,
+                    request_obj.headers.get("content-type", "?"),
+                    request_obj.headers.get("content-length", "?"),
+                )
+            except Exception:
+                logger.warning("Could not read API request metadata", exc_info=True)
 
 
 class OpenRouterApiProvider(ApiProvider):
@@ -111,7 +197,40 @@ class OpenRouterApiProvider(ApiProvider):
         """
         resolved_model = model or self._model
         api_messages = self._build_api_messages(messages, system_prompt, drop_reasoning)
-        logger.info("Sending %d-message turn to %s", len(api_messages), resolved_model)
+        total_content_chars = sum(
+            len(str(m.get("content") or "")) for m in api_messages
+        )
+        has_reasoning = any(m.get("reasoning") or m.get("reasoning_details") for m in api_messages)
+        logger.info(
+            "Sending %d-message turn to %s (content_chars=%d, tools=%s, reasoning=%s)",
+            len(api_messages), resolved_model, total_content_chars,
+            bool(tools), has_reasoning,
+        )
+        if LOG_CONVERSATION_EVERY_TURN and logger.isEnabledFor(logging.DEBUG):
+            # Dump a compact snapshot of every message for diagnostics.  Each
+            # message is truncated to 200 chars so a long system prompt doesn't
+            # flood the log, but the first and last 100 chars are preserved so
+            # we can see the start/end of the content.
+            for idx, m in enumerate(api_messages):
+                raw_content = m.get("content")
+                content_str = str(raw_content or "")
+                if content_str:
+                    preview = content_str[:100]
+                    if len(content_str) > 200:
+                        preview += "..." + content_str[-100:]
+                else:
+                    preview = "(empty)"
+                logger.debug(
+                    "  api_messages[%d] role=%s"
+                    " content_len=%d%s preview=%r",
+                    idx, m.get("role", "?"),
+                    len(content_str),
+                    " has_reasoning"
+                    if m.get("reasoning")
+                    or m.get("reasoning_details")
+                    else "",
+                    preview,
+                )
         client = self.build_client()
         extra_body: dict[str, Any] | None = None
         if session_id is not None or reasoning is not None or response_format is not None:
@@ -133,7 +252,18 @@ class OpenRouterApiProvider(ApiProvider):
             create_kwargs["tools"] = tools
         if timeout is not None:
             create_kwargs["timeout"] = timeout
-        stream = client.chat.completions.create(**create_kwargs)
+        try:
+            stream = client.chat.completions.create(**create_kwargs)
+        except Exception as exc:
+            _log_api_error_context(
+                exc,
+                resolved_model=resolved_model,
+                message_count=len(api_messages),
+                total_content_chars=total_content_chars,
+                has_tools=bool(tools),
+                has_reasoning=has_reasoning,
+            )
+            raise
 
         content_parts: list[str] = []
         finish_reason: str | None = None
@@ -141,56 +271,68 @@ class OpenRouterApiProvider(ApiProvider):
         prompt_tokens = 0
         tool_call_accumulators: dict[int, dict[str, str]] = {}
         reasoning_details_accumulators: dict[int, dict[str, Any]] = {}
-        for chunk in stream:
-            if cancel_event is not None and cancel_event.is_set():
-                stream.close()
-                logger.info("Aborted streamed response from %s", resolved_model)
-                raise ResponseAborted()
-            if chunk.choices:
-                choice = chunk.choices[0]
-                delta_text = choice.delta.content or ""
-                if delta_text:
-                    content_parts.append(delta_text)
-                    if on_chunk is not None:
-                        on_chunk(delta_text)
-                thinking_delta_text = getattr(choice.delta, "reasoning", None) or ""
-                if thinking_delta_text and on_thinking_chunk is not None:
-                    on_thinking_chunk(thinking_delta_text)
-                reasoning_details_fragments = getattr(choice.delta, "reasoning_details", None) or []
-                if reasoning_details_fragments:
-                    for fragment in reasoning_details_fragments:
-                        accumulator = reasoning_details_accumulators.setdefault(
-                            fragment.get("index", 0), {})
-                        for key, value in fragment.items():
-                            existing = accumulator.get(key)
-                            if (
-                                key in _REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS
-                                and isinstance(value, str) and isinstance(existing, str)
-                            ):
-                                accumulator[key] = existing + value
-                            else:
-                                accumulator[key] = value
-                    if on_reasoning_details is not None:
-                        on_reasoning_details([
-                            dict(accumulator) for _, accumulator
-                            in sorted(reasoning_details_accumulators.items())
-                        ])
-                for delta_call in choice.delta.tool_calls or []:
-                    accumulator = tool_call_accumulators.setdefault(
-                        delta_call.index, {"id": "", "name": "", "arguments": ""})
-                    if delta_call.id:
-                        accumulator["id"] = delta_call.id
-                    if delta_call.function is not None:
-                        if delta_call.function.name:
-                            accumulator["name"] = delta_call.function.name
-                        if delta_call.function.arguments:
-                            accumulator["arguments"] += delta_call.function.arguments
-                if choice.finish_reason is not None:
-                    finish_reason = choice.finish_reason
-            if chunk.usage is not None:
-                completion_tokens = chunk.usage.completion_tokens
-                prompt_tokens = chunk.usage.prompt_tokens
-
+        try:
+            for chunk in stream:
+                if cancel_event is not None and cancel_event.is_set():
+                    stream.close()
+                    logger.info("Aborted streamed response from %s", resolved_model)
+                    raise ResponseAborted()
+                if chunk.choices:
+                    choice = chunk.choices[0]
+                    delta_text = choice.delta.content or ""
+                    if delta_text:
+                        content_parts.append(delta_text)
+                        if on_chunk is not None:
+                            on_chunk(delta_text)
+                    thinking_delta_text = getattr(choice.delta, "reasoning", None) or ""
+                    if thinking_delta_text and on_thinking_chunk is not None:
+                        on_thinking_chunk(thinking_delta_text)
+                    reasoning_details_fragments = getattr(choice.delta, "reasoning_details", None) or []
+                    if reasoning_details_fragments:
+                        for fragment in reasoning_details_fragments:
+                            accumulator = reasoning_details_accumulators.setdefault(
+                                fragment.get("index", 0), {})
+                            for key, value in fragment.items():
+                                existing = accumulator.get(key)
+                                if (
+                                    key in _REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS
+                                    and isinstance(value, str) and isinstance(existing, str)
+                                ):
+                                    accumulator[key] = existing + value
+                                else:
+                                    accumulator[key] = value
+                        if on_reasoning_details is not None:
+                            on_reasoning_details([
+                                dict(accumulator) for _, accumulator
+                                in sorted(reasoning_details_accumulators.items())
+                            ])
+                    for delta_call in choice.delta.tool_calls or []:
+                        accumulator = tool_call_accumulators.setdefault(
+                            delta_call.index, {"id": "", "name": "", "arguments": ""})
+                        if delta_call.id:
+                            accumulator["id"] = delta_call.id
+                        if delta_call.function is not None:
+                            if delta_call.function.name:
+                                accumulator["name"] = delta_call.function.name
+                            if delta_call.function.arguments:
+                                accumulator["arguments"] += delta_call.function.arguments
+                    if choice.finish_reason is not None:
+                        finish_reason = choice.finish_reason
+                if chunk.usage is not None:
+                    completion_tokens = chunk.usage.completion_tokens
+                    prompt_tokens = chunk.usage.prompt_tokens
+        except ResponseAborted:
+            raise
+        except Exception as exc:
+            _log_api_error_context(
+                exc,
+                resolved_model=resolved_model,
+                message_count=len(api_messages),
+                total_content_chars=total_content_chars,
+                has_tools=bool(tools),
+                has_reasoning=has_reasoning,
+            )
+            raise
         content = "".join(content_parts)
         tool_calls = [
             ToolCallRequest(
@@ -281,6 +423,7 @@ class OpenRouterApiProvider(ApiProvider):
                     api_message["reasoning"] = pending_reasoning.content
                 if pending_reasoning.reasoning_details:
                     api_message["reasoning_details"] = pending_reasoning.reasoning_details
+
                 pending_reasoning = None
             api_messages.append(cast(ChatCompletionMessageParam, api_message))
         return api_messages

@@ -1436,6 +1436,24 @@ class Session:
                 placeholder.processing_state = "aborted"
             raise
         except Exception as exc:
+            total_chars = sum(len(m.content) for m in message_snapshot)
+            logger.error(
+                "API call failed for model=%s messages=%d"
+                " total_chars=%d: %s",
+                model_name, len(message_snapshot), total_chars, exc,
+            )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Conversation history:")
+                for i, m in enumerate(message_snapshot):
+                    logger.debug(
+                        "msg idx=%s:\n%s",
+                        i,
+                        m.model_dump_json(
+                            indent=2, exclude_unset=True,
+                            exclude_defaults=True,
+                        ),
+                    )
+
             if placeholder is not None:
                 placeholder.processing_state = "error"
                 placeholder.last_error = str(exc)
@@ -1545,7 +1563,12 @@ class Session:
         except Exception as exc:
             user_message.processing_state = "error"
             user_message.last_error = str(exc)
-            logger.error("Turn failed for %s: %s", model_name, exc, exc_info=True)
+            total_chars = sum(len(m.content) for m in self._messages)
+            logger.error(
+                "Turn failed for %s: %s (messages=%d, total_chars=%d)",
+                model_name, exc, len(self._messages), total_chars,
+            )
+            logger.error("Full exception details:", exc_info=True)
             raise
 
         user_message.processing_state = "complete"

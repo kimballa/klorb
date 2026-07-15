@@ -633,7 +633,7 @@ def test_summary_leads_with_intent_ahead_of_the_command(tmp_path: Path) -> None:
     args = {"command": "echo hi", "intent": "Say hi", "shell_lifetime": "command"}
     result = tool.apply(args)
 
-    assert tool.summary(args, result) == f"Bash: Say hi ($ echo hi) (ok, {result['runtime']:.2f}s)"
+    assert tool.summary(args, result) == f"Bash: Say hi\n$ echo hi (ok, {result['runtime']:.2f}s)"
 
 
 def test_summary_falls_back_to_the_bare_command_with_no_intent(tmp_path: Path) -> None:
