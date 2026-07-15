@@ -1270,6 +1270,10 @@ class Session:
                     call.name, json_exc, call.arguments)
                 raw_arguments = call.arguments
                 error = f"Invalid JSON in tool call arguments: {json_exc}"
+                # Remove the offending tool call args from the tool_use message so it
+                # doesn't get sent to the API on subsequent turns (which would
+                # cause a 400 Bad Request error due to the invalid JSON).
+                call.arguments = "{}"
 
             if error is None:
                 try:

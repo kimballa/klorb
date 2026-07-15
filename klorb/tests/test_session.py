@@ -1112,6 +1112,63 @@ def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising() ->
     assert user_message.processing_state == "complete"
 
 
+def test_malformed_json_tool_call_removed_from_tool_use_message() -> None:
+    """A tool call with invalid JSON arguments is has its arguments reset to `{}`
+    so the malformed data doesn't get sent to the API on subsequent turns (which would
+    cause a 400 Bad Request error due to the invalid JSON)."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"')]),  # missing closing brace
+        _reply("recovered"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    response = session.send_turn("call a tool with malformed arguments")
+
+    assert response == "recovered"
+    # The tool_use message should have the invalid tool call removed from tool_calls
+    tool_use_message = session.messages[3]
+    assert tool_use_message.role == "tool_use"
+    assert tool_use_message.tool_calls is not None
+    assert len(tool_use_message.tool_calls) == 1
+    assert tool_use_message.tool_calls[0].arguments == "{}"
+
+
+def test_malformed_json_among_valid_tool_calls_removes_only_the_bad_one() -> None:
+    """When a batch of tool calls contains a mix of valid and invalid JSON, only the
+    invalid one is removed from the tool_use message's tool_calls list."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([
+            ("call_1", "echo", '{"message": "valid"}'),
+            ("call_2", "echo", '{"message": "bad"'),  # missing closing brace
+        ]),
+        _reply("recovered"),
+    ]
+    config = SessionConfig(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    response = session.send_turn("call tools with one malformed")
+
+    assert response == "recovered"
+    tool_use_message = session.messages[3]
+    assert tool_use_message.role == "tool_use"
+    assert tool_use_message.tool_calls is not None
+    assert len(tool_use_message.tool_calls) == 2
+    assert tool_use_message.tool_calls[0].id == "call_1"
+    assert tool_use_message.tool_calls[0].arguments == '{"message": "valid"}'
+    # Two tool_response messages: one for the valid call, one for the malformed call
+    assert tool_use_message.tool_calls[1].id == "call_2"
+    assert tool_use_message.tool_calls[1].arguments == '{}' # replaced
+    tool_response_messages = [
+        m for m in session.messages if m.role == "tool_response"
+    ]
+    assert len(tool_response_messages) == 2
+
+
 def test_on_tool_call_fires_with_raw_arguments_for_malformed_json() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [

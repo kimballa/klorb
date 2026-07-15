@@ -2,17 +2,6 @@
 
 # Bugs:
 
-* Somehow the conversation can abruptly stop with this error in the history:
-  ```
-  Error: {"error":{"message":"Expecting value: line 1 column 511 (char 510)","type":"BadRequestError","param":null,"code":400}}
-  ```
-  We now have better logging in place but we still need to diagnose why this happens.
-
-
-* If the agent makes a malformed tool call, we reply with an error message, but also
-  we keep the malformed call in the conversation, and this can cause 400 Bad Request issues
-  on subsequent turns.
-
 * It's possible for the app to hang in a way that ^C doesn't work.
   We need to have a SIGINT handler that will actually abort the app if the user
   presses ^C repeatedly.
