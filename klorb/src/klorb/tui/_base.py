@@ -20,7 +20,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
+from textual import work
 from textual.app import App
+from textual.containers import VerticalScroll
 
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
@@ -30,9 +32,12 @@ from klorb.workspace import TrustManager
 
 
 class ReplAppBase(App[None]):
-    """Attribute declarations for every field `ReplApp.__init__` sets on `self`, so each
-    mixin file type-checks on its own despite referencing state that a different mixin (or
-    `ReplApp` itself) sets up. See the module docstring for why this class exists.
+    """Attribute and cross-mixin method declarations for every field/method `ReplApp` and its
+    mixins reference on `self` from outside the file that actually defines it, so each mixin
+    file type-checks on its own despite referencing state or behavior a different mixin (or
+    `ReplApp` itself) sets up. See the module docstring for why this class exists. Method
+    stubs here are never called -- every one is overridden by the mixin that actually owns it
+    once mixed into the concrete `ReplApp`.
     """
 
     _process_config: ProcessConfig
@@ -57,3 +62,16 @@ class ReplAppBase(App[None]):
     _running_tool_call_widgets: dict[str, RunningToolCallStatic]
     _tool_call_detail_shown: bool
     _history_pinned_to_bottom: bool
+
+    def _update_status_bar(self) -> None: ...
+
+    def _update_permission_badge(self) -> None: ...
+
+    def _update_palette_hint(self) -> None: ...
+
+    def _on_history_scroll_changed(self) -> None: ...
+
+    @work()
+    async def _run_startup_workspace_and_initial_message(self) -> None: ...
+
+    def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None: ...

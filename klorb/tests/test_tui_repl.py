@@ -46,6 +46,7 @@ from klorb.token_estimate import estimate_tokens
 from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
+from klorb.tui.mixins.key_actions import _CTRL_C_QUIT_WARNING, _INTERRUPTING_MESSAGE, CONFIG_MISSING_MESSAGE
 from klorb.tui.panels.ask_user_questions_panel import AskUserQuestionsPanel
 from klorb.tui.panels.confirm_screen import (
     CONFIRM_NO_ID,
@@ -74,9 +75,6 @@ from klorb.tui.panels.permission_ask_panel import (
     format_ask_context_body,
 )
 from klorb.tui.repl import (
-    _CTRL_C_QUIT_WARNING,
-    _INTERRUPTING_MESSAGE,
-    CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
     INTERACTION_PANEL_ID,
     OUTPUT_TOKENS_ID,
@@ -130,11 +128,12 @@ def _user_config_present(tmp_path: Path) -> Iterator[None]:
     """Make `user_config_path()` resolve to an existing file by default, so `ReplApp.on_mount`'s
     "config file not found" notice (see `CONFIG_MISSING_MESSAGE`) doesn't leak an extra
     `Static` into every other test's history assertions. The tests that specifically exercise
-    the notice re-patch `klorb.tui.repl.user_config_path` themselves, overriding this.
+    the notice re-patch `klorb.tui.mixins.key_actions.user_config_path` themselves, overriding
+    this.
     """
     config_path = tmp_path / "klorb-config.json"
     config_path.write_text("{}", encoding="utf-8")
-    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+    with patch("klorb.tui.mixins.key_actions.user_config_path", return_value=config_path):
         yield
 
 
@@ -145,7 +144,7 @@ def stub_force_exit() -> Iterator[MagicMock]:
     double-Ctrl+C test) would otherwise call the real `force_exit` and terminate the pytest
     process. Patching the name `ReplApp` imported keeps the wiring under test while making the
     exit a no-op the double-Ctrl+C tests can also assert against."""
-    with patch("klorb.tui.repl.force_exit") as mock_force_exit:
+    with patch("klorb.tui.mixins.key_actions.force_exit") as mock_force_exit:
         yield mock_force_exit
 
 
@@ -280,7 +279,7 @@ async def test_on_mount_configures_tiktoken_cache_env() -> None:
     session = _session(mock_provider)
     app = ReplApp(session=session)
 
-    with patch("klorb.tui.repl.configure_tiktoken_cache_env") as mock_configure_cache:
+    with patch("klorb.tui.mixins.key_actions.configure_tiktoken_cache_env") as mock_configure_cache:
         async with app.run_test():
             pass
 
@@ -577,7 +576,9 @@ async def test_shows_config_missing_notice_when_user_config_file_absent(tmp_path
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
-    with patch("klorb.tui.repl.user_config_path", return_value=tmp_path / "does-not-exist.json"):
+    with patch(
+        "klorb.tui.mixins.key_actions.user_config_path", return_value=tmp_path / "does-not-exist.json",
+    ):
         async with app.run_test():
             history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
             notice = history.query_one(".notice", Static)
@@ -590,7 +591,7 @@ async def test_omits_config_missing_notice_when_user_config_file_present(tmp_pat
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
-    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+    with patch("klorb.tui.mixins.key_actions.user_config_path", return_value=config_path):
         async with app.run_test():
             history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
             assert len(history.query(".notice")) == 0
