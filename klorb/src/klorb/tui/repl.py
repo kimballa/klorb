@@ -4,9 +4,11 @@ box pinned to the bottom of the screen.
 """
 
 import asyncio
+import importlib.resources
 import inspect
 import json
 import logging
+import random
 import sys
 import threading
 import time
@@ -174,7 +176,17 @@ MASCOT_ART = """\
  █░███x███
 ███████████
 ▟█▙     ▟█▙"""
-MASCOT_GREETING = "Roar! Let's go code a Thing!"
+def _random_greeting() -> str:
+    """Pick a random greeting from the packaged greetings.json resource."""
+    try:
+        text = importlib.resources.files("klorb.resources").joinpath("greetings.json").read_text(encoding="utf-8")
+        greetings = json.loads(text)
+        return random.choice(greetings)
+    except Exception:
+        return "Roar! Let's go code a Thing!"
+
+
+MASCOT_GREETING = _random_greeting()
 
 _INTERRUPTING_MESSAGE = "Interrupting… (press Ctrl+C again to force-quit)"
 """Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the

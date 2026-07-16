@@ -74,7 +74,7 @@
   # discovers at runtime. See docs/specs/model-framework.md.
   "klorb.resources" = [
     "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", "default-config.json", "template-config.json",
-    "tiktoken-cache/*/*", "models/*.json",
+    "tiktoken-cache/*/*", "models/*.json", "greetings.json",
   ]
 
 [tool.pytest.ini_options]
