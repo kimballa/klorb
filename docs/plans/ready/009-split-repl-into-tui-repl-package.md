@@ -1,10 +1,5 @@
 # Split `klorb/tui/repl.py` into cohesive modules under `klorb/tui/`
 
-Claude: this plan is a **draft**, not ready for implementation. It lays out a target module
-layout and the *mechanics* of how to move the code (so the move is done with cut/paste
-tooling, not retyped from context). Do not implement any part of this until it's moved to
-`ready/`.
-
 ## Context
 
 `klorb/src/klorb/tui/repl.py` is 3,456 lines and `klorb/tests/test_tui_repl.py` is 4,786
