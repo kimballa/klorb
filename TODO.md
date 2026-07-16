@@ -2,6 +2,11 @@
 
 # Bugs:
 
+* Long-running bash commands cannot be interrupted by the user. (Claude was right.)
+
+* When you hit `esc` it will put an "Interrupting..." msg in the history. When the
+  interrupt actually takes hold, it should switch to "<Interrupted>".
+
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML

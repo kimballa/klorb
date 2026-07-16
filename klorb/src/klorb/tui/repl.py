@@ -917,15 +917,15 @@ class ToolCallStatic(Static):
 
 _ANIMATED_RUNNING_TEXT = "Running..."
 """The literal text shown with a crawling bold-character animation while a tool call executes."""
-_ANIMATION_TICK_SECONDS = 0.12
-"""Interval between animation frames (seconds). At 0.12s per frame and 8 characters in
-`_ANIMATED_RUNNING_TEXT`, a full crawl cycle takes just under one second -- fast enough to
-feel responsive without being distracting."""
+_ANIMATION_TICK_SECONDS = 0.24
+"""Interval between animation frames (seconds). At 0.24s per frame and 9 characters in
+`_ANIMATED_RUNNING_TEXT`, a full crawl cycle takes just over two seconds -- slow enough to
+feel calm without being distracting."""
 
 
 class RunningToolCallStatic(ToolCallStatic):
     """A tool call widget shown while the tool is still executing: displays the tool's
-    pre-execution summary (e.g. ``Bash: <intent>\\n$ <command>``) plus a crawling bold
+    pre-execution summary (e.g. ``Bash: <intent>\\n$ <command>``) plus a crawling bright-white
     animation on the word "Running..." so the user knows the system hasn't frozen.
 
     Inherits from `ToolCallStatic` so ``history.query(ToolCallStatic)`` finds it in the DOM
@@ -953,15 +953,14 @@ class RunningToolCallStatic(ToolCallStatic):
 
     def _make_running_text(self) -> Text:
         """Build a `Text` with the tool label in default style and ``Running...`` where one
-        character is bold at the current crawl position."""
+        character is bright white at the current crawl position."""
         text = Text(self._label_text)
         running = _ANIMATED_RUNNING_TEXT
         pos = self._animation_pos % len(running)
+        text.append("\n")
         for i, ch in enumerate(running):
             if i == pos:
-                text.append(f"\n{ch}", style="bold")
-            elif i == 0:
-                text.append(f"\n{ch}")
+                text.append(ch, style="bright_white")
             else:
                 text.append(ch)
         return text
