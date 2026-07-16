@@ -24,6 +24,7 @@ from textual import work
 from textual.app import App
 from textual.containers import VerticalScroll
 
+from klorb.message import Message as ChatMessage
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic
@@ -75,3 +76,11 @@ class ReplAppBase(App[None]):
     async def _run_startup_workspace_and_initial_message(self) -> None: ...
 
     def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None: ...
+
+    def _submit_prompt(self, prompt_text: str) -> None: ...
+
+    def _mount_restored_history(self, messages: list[ChatMessage]) -> None: ...
+
+    def show_notice(self, message: str, *, error: bool = False) -> None: ...
+
+    def _refresh_header_title(self) -> None: ...
