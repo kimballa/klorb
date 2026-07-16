@@ -6,6 +6,8 @@ docs/specs/bash-tool-and-command-permissions.md.
 """
 
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -354,6 +356,37 @@ def test_timeout_kills_process_and_reports_it(tmp_path: Path) -> None:
     assert result["runtime"] < 2.0
 
 
+def test_cancel_event_sends_sigint_and_reports_cancellation(tmp_path: Path) -> None:
+    """Setting `Session.active_cancel_event` while a one-shot (`shell_lifetime="command"`)
+    command is running sends `SIGINT` to it immediately rather than waiting for
+    `tools.bash.timeout` to elapse — see `BashTool._execute`."""
+    process_config = ProcessConfig()
+    process_config.bash_timeout_seconds = 30.0
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["sleep", "*"]]), process_config=process_config)
+    assert context.session is not None
+    context.session.active_cancel_event = threading.Event()
+    tool = BashTool(context)
+
+    def _cancel_soon() -> None:
+        time.sleep(0.3)
+        assert context.session is not None
+        assert context.session.active_cancel_event is not None
+        context.session.active_cancel_event.set()
+
+    threading.Thread(target=_cancel_soon, daemon=True).start()
+
+    start = time.monotonic()
+    result = _apply(tool, "sleep 30")
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5.0
+    assert result["success"] is False
+    assert result["exit_status"] != 0
+    assert "canceled" in result["failure_reason"].lower()
+    assert "SIGINT Triggered by user" in result["stderr"]
+
+
 def test_stderr_is_captured(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["bash", "**"]]))
     tool = BashTool(context)
@@ -578,6 +611,39 @@ def test_timeout_kills_the_whole_persistent_shell(tmp_path: Path) -> None:
     assert revived["success"] is True
     assert revived["terminal_alive"] is True
     assert revived["stdout"] == "revived\n"
+
+
+def test_cancel_event_sends_sigint_to_a_running_persistent_shell_command(tmp_path: Path) -> None:
+    """Setting `Session.active_cancel_event` while a `shell_lifetime="session"` command is
+    running sends `SIGINT` to it immediately, same as the one-shot path — see
+    `PersistentShell._run_raw`. The whole non-interactive shell (not just `sleep`) dies to
+    `SIGINT` too, the same as it already does for a plain command's timeout (see
+    `test_timeout_kills_the_whole_persistent_shell`), so `terminal_alive` is `False`
+    afterward."""
+    process_config = ProcessConfig()
+    process_config.bash_timeout_seconds = 30.0
+    context = _persistent_context(tmp_path, process_config=process_config)
+    assert context.session is not None
+    context.session.active_cancel_event = threading.Event()
+    tool = BashTool(context)
+
+    def _cancel_soon() -> None:
+        time.sleep(0.3)
+        assert context.session is not None
+        assert context.session.active_cancel_event is not None
+        context.session.active_cancel_event.set()
+
+    threading.Thread(target=_cancel_soon, daemon=True).start()
+
+    start = time.monotonic()
+    result = _run_session(tool, "sleep 30")
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5.0
+    assert result["success"] is False
+    assert "canceled" in result["failure_reason"].lower()
+    assert "SIGINT Triggered by user" in result["stderr"]
+    assert result["terminal_alive"] is False
 
 
 def test_exit_inside_persistent_shell_reports_dead_terminal(tmp_path: Path) -> None:

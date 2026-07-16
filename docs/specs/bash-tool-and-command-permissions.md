@@ -433,6 +433,41 @@ docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md. On an unsandboxe
 entirely a no-op — there is no namespace to go stale — and directory grants remain enforced at the
 classification layer per command exactly as for the one-shot fallback.
 
+### Cancellation
+
+A running command — one-shot (`_execute`) or `shell_lifetime="session"`/`"new"`
+(`PersistentShell._run_raw`) — is interruptible mid-flight by the same Ctrl+C/Escape gesture
+that aborts an in-flight model turn (see docs/specs/interrupt-and-liveness-watchdog.md's
+"Ctrl+C semantics" section), not just at the next tool-call/round boundary
+`Session._dispatch_turn`/`_run_tool_calls` themselves check. `BashTool._active_cancel_event()`
+reads `Session.active_cancel_event` (set for the duration of `_dispatch_turn` — see
+docs/adrs/bash-cancellation-via-session-active-cancel-event.md) and both execution paths poll it
+every `_CANCEL_POLL_SECONDS` while waiting on the child, the same cadence the `!`-prefixed direct
+shell feature (`klorb.tui.shell.UserShellCommand`) already polls its own, separately-threaded
+`cancel_event`.
+
+Once it fires: `SIGINT` is sent to the whole process group first (the same delivery a real
+`Ctrl-C` would use), with up to `_TIMEOUT_GRACE_SECONDS` for the command to actually exit before
+escalating to an unconditional `SIGKILL` — identical to how each execution path already handles
+its own `tools.bash.timeout` expiring, just triggered by the cancel event instead of the
+deadline. A cancelled call is reported to the model as `success: false` regardless of whichever
+of the two ways it actually ended (exited cleanly in response to `SIGINT`, or had to be
+`SIGKILL`ed): `failure_reason` is a fixed, explicit "Command canceled..." message rather than
+whatever `_decode_exit` would otherwise infer from the child's own exit code, `exit_status` is
+forced to a non-zero value (the child's own code if it reported a distinct non-zero one, else
+the conventional `128 + SIGINT = 130`), and `stderr` has a literal `"SIGINT Triggered by user"`
+line appended — so the cancellation is visible to the model in the one field it's most likely to
+actually read, not just in `failure_reason`. For `shell_lifetime="session"`/`"new"`, the
+persistent shell itself usually survives a cancellation (a plain command dies to `SIGINT`
+without trapping it, well inside the grace period) and stays usable for the next call —
+`terminal_alive` reflects that normally, exactly as it would for a command that simply finished.
+
+The internal round-trips a persistent shell runs on its own behalf — the rc-file bootstrap, the
+`pwd` refresh after every command, and the `jobs -p`/`export -p` reconcile-on-grow probes — never
+receive a `cancel_event`: they're harness bookkeeping, not the model-issued command a user's
+interrupt is aimed at, and are short enough that leaving them uncancellable doesn't add any
+meaningful delay to an interrupt.
+
 ### Response shape
 
 `BashTool`'s result dict uses this codebase's ordinary snake_case tool-response convention:
@@ -593,3 +628,6 @@ taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
 * docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md
 * docs/adrs/bash-tool-requires-a-stated-intent-argument.md
 * docs/adrs/bounded-explicit-history-not-a-persistent-classifier-conversation.md
+* docs/adrs/bash-cancellation-via-session-active-cancel-event.md
+* docs/specs/interrupt-and-liveness-watchdog.md — the Ctrl+C/Escape gesture that drives this
+  doc's "Cancellation" section

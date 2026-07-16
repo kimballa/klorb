@@ -22,7 +22,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Callable
+from typing import IO, Any, Callable, Literal
 
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
@@ -70,7 +70,40 @@ persistent shell when the owning `Session` is closed — see `Session.close()`."
 
 _TIMEOUT_GRACE_SECONDS = 3.0
 """How long a persistent-shell command is given to finish after `SIGINT` before being escalated
-to `SIGKILL` on timeout — see `PersistentShell._run_raw`."""
+to `SIGKILL` on timeout or cancellation — see `PersistentShell._run_raw`."""
+
+_CANCEL_POLL_SECONDS = 0.1
+"""How often the one-shot (`BashTool._execute`) and persistent-shell (`PersistentShell._run_raw`)
+wait loops wake up to check `Session.active_cancel_event` while a command runs, so a Ctrl+C/
+Escape interrupt is noticed promptly rather than only once the command's own output arrives or
+its full `tools.bash.timeout` elapses. Mirrors `klorb.tui.shell`'s identical
+`_POLL_INTERVAL_SECONDS` for the `!`-prefixed direct-shell feature."""
+
+_CANCEL_FAILURE_REASON = (
+    "Command canceled: the user pressed Ctrl+C/Escape to interrupt this tool call.")
+"""`failure_reason` reported to the model when `Session.active_cancel_event` fires while this
+command is running — see `_execute`/`_execute_persistent`."""
+
+_CANCEL_STDERR_NOTICE = "SIGINT Triggered by user"
+"""Appended to the `stderr` returned to the model on a cancelled call, so the interruption is
+visible in the stream the model actually reads, not just in `failure_reason` — see
+`_append_cancel_notice`."""
+
+_CANCEL_EXIT_STATUS = 130
+"""Synthetic exit status reported for a cancelled call whose child process didn't itself report a
+distinct non-zero exit -- the conventional `128 + SIGINT` signal-death code (see
+`klorb.tools.bash._decode_exit`), used unconditionally rather than left `None`/`0` so the model
+always sees an unambiguous non-zero result for a cancelled call."""
+
+
+def _append_cancel_notice(stderr_text: str) -> str:
+    """Append `_CANCEL_STDERR_NOTICE` to `stderr_text` on its own line, so a cancelled call's
+    stderr always carries an explicit, model-visible marker of what happened — used by both
+    `_execute` and `_execute_persistent`."""
+    if stderr_text and not stderr_text.endswith("\n"):
+        stderr_text += "\n"
+    return stderr_text + _CANCEL_STDERR_NOTICE
+
 
 _PWD_TIMEOUT_SECONDS = 10.0
 """Timeout for the short internal round-trips `PersistentShell` runs on its own behalf — the
@@ -105,6 +138,10 @@ class PersistentCommandResult:
     """The shell's cwd after this command (via a `pwd` round-trip), or `None` if `terminal_alive`
     is `False`."""
     timed_out: bool
+    cancelled: bool
+    """Whether the caller's `cancel_event` (a Ctrl+C/Escape interrupt — see
+    `Session.active_cancel_event`) fired while this command was running, distinct from
+    `timed_out` — see `PersistentShell._run_raw`."""
 
 
 class PersistentShell:
@@ -181,18 +218,29 @@ class PersistentShell:
             self._mark_dead()
             return False
 
-    def run_command(self, command: str, timeout_seconds: float) -> PersistentCommandResult:
+    def run_command(
+        self, command: str, timeout_seconds: float,
+        cancel_event: "threading.Event | None" = None,
+    ) -> PersistentCommandResult:
         """Run `command` in this shell and return its result, including a refreshed
         `terminal_cwd` (a `pwd` round-trip run immediately afterward, via `_refresh_cwd`) when
-        the shell is still alive and the command didn't time out."""
-        stdout, stderr, exit_status, timed_out = self._run_raw(command, timeout_seconds)
-        cwd = self._refresh_cwd() if self.alive and not timed_out else self.cwd
+        the shell is still alive and the command didn't time out or get cancelled.
+
+        `cancel_event`, if given, is polled while the command runs (see `_run_raw`) so a
+        Ctrl+C/Escape interrupt (`Session.active_cancel_event`) reaches this specific running
+        command immediately rather than only at the next tool-call boundary. Only the outermost,
+        model-issued command should pass one — the internal bootstrap/`pwd`/`jobs -p`/`export -p`
+        round-trips below never do, since they're harness bookkeeping, not the thing a user's
+        interrupt is aimed at."""
+        stdout, stderr, exit_status, timed_out, cancelled = self._run_raw(
+            command, timeout_seconds, cancel_event)
+        cwd = self._refresh_cwd() if self.alive and not timed_out and not cancelled else self.cwd
         return PersistentCommandResult(
             stdout=stdout, stderr=stderr, exit_status=exit_status, terminal_alive=self.alive,
-            terminal_cwd=cwd if self.alive else None, timed_out=timed_out)
+            terminal_cwd=cwd if self.alive else None, timed_out=timed_out, cancelled=cancelled)
 
     def _refresh_cwd(self) -> str | None:
-        stdout, _stderr, exit_status, timed_out = self._run_raw("pwd", _PWD_TIMEOUT_SECONDS)
+        stdout, _stderr, exit_status, timed_out, _cancelled = self._run_raw("pwd", _PWD_TIMEOUT_SECONDS)
         if not self.alive or timed_out or exit_status != 0:
             return self.cwd
         self.cwd = stdout.strip()
@@ -205,7 +253,8 @@ class PersistentShell:
         `BashTool._execute_persistent`). A dead or timed-out probe conservatively reports `False`
         (there's no live shell whose jobs a rebuild could destroy). Cannot see already-`disown`'d
         processes — the same acknowledged gap `jobs` itself has."""
-        stdout, _stderr, _exit_status, timed_out = self._run_raw("jobs -p", _PWD_TIMEOUT_SECONDS)
+        stdout, _stderr, _exit_status, timed_out, _cancelled = self._run_raw(
+            "jobs -p", _PWD_TIMEOUT_SECONDS)
         if not self.alive or timed_out:
             return False
         return bool(stdout.strip())
@@ -217,29 +266,36 @@ class PersistentShell:
         `BashTool._rebuild_persistent_shell` and
         docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md). Returns `""` if the shell died
         or the probe failed, so a rebuild just proceeds without a replay rather than raising."""
-        stdout, _stderr, exit_status, timed_out = self._run_raw("export -p", _PWD_TIMEOUT_SECONDS)
+        stdout, _stderr, exit_status, timed_out, _cancelled = self._run_raw(
+            "export -p", _PWD_TIMEOUT_SECONDS)
         if not self.alive or timed_out or exit_status != 0:
             return ""
         return stdout
 
-    def _run_raw(self, command: str, timeout_seconds: float) -> tuple[str, str, int | None, bool]:
-        """Run `command` to completion (or timeout/death) and return raw
-        `(stdout, stderr, exit_status, timed_out)` — no cwd refresh, so `_refresh_cwd` can call
-        this itself without recursing into another cwd refresh.
+    def _run_raw(
+        self, command: str, timeout_seconds: float,
+        cancel_event: "threading.Event | None" = None,
+    ) -> tuple[str, str, int | None, bool, bool]:
+        """Run `command` to completion (or timeout/cancellation/death) and return raw
+        `(stdout, stderr, exit_status, timed_out, cancelled)` — no cwd refresh, so `_refresh_cwd`
+        can call this itself without recursing into another cwd refresh.
 
         See the module-level `PersistentShell` docstring for the sentinel-token protocol this
-        implements. On timeout: `SIGINT` is sent to the shell's whole process group first (the
-        same delivery `Ctrl-C` would use), and the sentinel wait continues for
-        `_TIMEOUT_GRACE_SECONDS` longer — an interactive `bash -i` normally survives `SIGINT`
-        itself (only the running foreground command dies), so a command that actually responds to
-        `SIGINT` finishes normally within the grace period and this shell stays alive. Only if the
-        sentinel still hasn't appeared by the end of the grace period (a command that ignores or
-        blocks `SIGINT`) is the whole process group escalated to `SIGKILL`, which cannot be
-        ignored and ends the persistent shell itself, not just the stuck command — there is no way
-        to kill only the stuck command without a pty/job-control layer this doesn't build.
+        implements. On timeout, or on `cancel_event` becoming set (a Ctrl+C/Escape interrupt):
+        `SIGINT` is sent to the shell's whole process group first (the same delivery `Ctrl-C`
+        would use), and the sentinel wait continues for `_TIMEOUT_GRACE_SECONDS` longer. Because
+        this shell runs non-interactively (no `-i` — see the class docstring), its own default
+        `SIGINT` disposition is to terminate, not survive it the way an interactive shell would:
+        a plain, non-trapping command's `SIGINT` typically ends the whole shell promptly, well
+        within the grace period, rather than leaving it alive for a next call. Only a command
+        (or a shell) that explicitly makes itself immune to `SIGINT` consumes the full grace
+        period before being escalated to an unconditional `SIGKILL` on the whole process group —
+        there is no way to kill only the stuck command without a pty/job-control layer this
+        doesn't build. A cancellation is reported as `cancelled=True` regardless of which of
+        these ways it actually ends, since either way the user asked for it to stop.
         """
         if not self.alive:
-            return "", "", None, False
+            return "", "", None, False, False
 
         token = uuid.uuid4().hex
         stdout_done_re = re.compile(rf"^__KLORB_DONE_{token}__ (-?\d+)\s*\Z")
@@ -251,7 +307,7 @@ class PersistentShell:
             f'printf \'\\n%s\\n\' "__KLORB_DONE_{token}__" >&2\n'
         )
         if not self._write_stdin(script):
-            return "", "", None, False
+            return "", "", None, False, False
 
         stdout_lines: list[str] = []
         stderr_lines: list[str] = []
@@ -260,24 +316,33 @@ class PersistentShell:
         stderr_done = False
         stderr_matched = False
         eof = False
-        sent_sigint = False
-        timed_out = False
+        # `None` until `SIGINT` is sent, then fixed as whichever of the two reasons triggered it
+        # first -- `"timeout"` (the caller's own `timeout_seconds` elapsed) or `"cancel"`
+        # (`cancel_event` fired) -- so a grace-period `SIGKILL` escalation and the final
+        # `timed_out`/`cancelled` verdict both know which one actually happened.
+        sigint_reason: Literal["timeout", "cancel"] | None = None
         deadline = time.monotonic() + timeout_seconds
 
         while not (stdout_done and stderr_done):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                if not sent_sigint:
+                if sigint_reason is None:
                     self._send_signal(signal.SIGINT)
-                    sent_sigint = True
-                    timed_out = True
+                    sigint_reason = "timeout"
                     deadline = time.monotonic() + _TIMEOUT_GRACE_SECONDS
                     continue
                 self._kill_process_group()
                 eof = True
                 break
+            if (
+                sigint_reason is None and cancel_event is not None and cancel_event.is_set()
+            ):
+                self._send_signal(signal.SIGINT)
+                sigint_reason = "cancel"
+                deadline = time.monotonic() + _TIMEOUT_GRACE_SECONDS
+                continue
             try:
-                stream_name, line = self._queue.get(timeout=remaining)
+                stream_name, line = self._queue.get(timeout=min(remaining, _CANCEL_POLL_SECONDS))
             except queue.Empty:
                 continue
             if line is None:
@@ -303,10 +368,13 @@ class PersistentShell:
 
         if eof:
             self._mark_dead()
-        elif sent_sigint and exit_status is not None:
-            # The sentinel showed up before the grace period ran out -- the command responded to
-            # SIGINT (or finished on its own in the meantime) and the shell is still usable.
-            timed_out = False
+        # If the sentinel showed up before the grace period ran out, the command responded to
+        # SIGINT (or finished on its own in the meantime) and the shell is still usable -- so
+        # `exit_status is not None` means it was never really a timeout, whichever reason sent
+        # the SIGINT. A cancellation still reports `cancelled=True` either way (see docstring
+        # above): the user asked for it to stop regardless of how cleanly that happened.
+        timed_out = sigint_reason == "timeout" and exit_status is None
+        cancelled = sigint_reason == "cancel"
 
         # Each `printf` in `script` above starts with a literal '\n' so the DONE marker always
         # lands on its own line even if the command's own last line had no trailing newline --
@@ -322,7 +390,7 @@ class PersistentShell:
         if stderr_matched and stderr_text.endswith("\n"):
             stderr_text = stderr_text[:-1]
 
-        return stdout_text, stderr_text, exit_status, timed_out
+        return stdout_text, stderr_text, exit_status, timed_out, cancelled
 
     def _send_signal(self, sig: int) -> None:
         try:
@@ -779,6 +847,18 @@ class BashTool(Tool):
             home=home, env=env, dirs=self._compute_sandbox_dirs(home),
             path_dirs=path_dirs_from_env())
 
+    def _active_cancel_event(self) -> "threading.Event | None":
+        """The in-flight turn's cancellation signal (`Session.active_cancel_event` — set for as
+        long as `Session._dispatch_turn` is running, which includes this very call, since a
+        `Tool.apply()` runs synchronously on `_dispatch_turn`'s own thread), or `None` when this
+        `BashTool` wasn't built from a real `Session` (e.g. a caller that constructs a
+        `ToolSetupContext` directly, as most unit tests do) — in which case a running command
+        simply isn't cancellable. Polled by `_execute`/`PersistentShell._run_raw` so a Ctrl+C/
+        Escape interrupt reaches a running command immediately via `SIGINT`, rather than only at
+        the next tool-call/round boundary `Session` itself checks."""
+        session = self.context.session
+        return session.active_cancel_event if session is not None else None
+
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()
         env = build_bash_env(self.context.session_config, self._bash_command)
@@ -833,30 +913,61 @@ class BashTool(Tool):
                 raise ValueError(f"{self._bash_command!r} not found; cannot run command") from exc
 
             timed_out = False
-            try:
-                process.wait(timeout=self._timeout_seconds)
-            except subprocess.TimeoutExpired:
-                # Kill the whole process group, not just `process`'s own pid: a background job
-                # the command (or its sourced ~/.bashrc) started -- and that survived bash's own
-                # tail-call-exec optimization, so it's a distinct process from `process.pid` --
-                # would otherwise outlive the timeout as an orphan. Safe because
-                # start_new_session=True above made this child its own process group leader.
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-                timed_out = True
+            cancelled = False
+            cancel_event = self._active_cancel_event()
+            deadline = time.monotonic() + self._timeout_seconds
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    # Kill the whole process group, not just `process`'s own pid: a background job
+                    # the command (or its sourced ~/.bashrc) started -- and that survived bash's own
+                    # tail-call-exec optimization, so it's a distinct process from `process.pid` --
+                    # would otherwise outlive the timeout as an orphan. Safe because
+                    # start_new_session=True above made this child its own process group leader.
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                    timed_out = True
+                    break
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    break
+                try:
+                    process.wait(timeout=min(remaining, _CANCEL_POLL_SECONDS))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+
+            if cancelled:
+                # Same SIGINT-first, grace-period-then-SIGKILL escalation
+                # `PersistentShell._run_raw` uses for its own cancellation path: give the command
+                # a chance to exit on its own in response to SIGINT before resorting to an
+                # unconditional SIGKILL.
+                os.killpg(process.pid, signal.SIGINT)
+                try:
+                    process.wait(timeout=_TIMEOUT_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
         runtime = time.monotonic() - start
 
-        if timed_out:
+        if cancelled:
             success = False
-            failure_reason: str | None = f"Command timed out at {self._timeout_seconds} seconds"
+            failure_reason: str | None = _CANCEL_FAILURE_REASON
+            exit_status = (
+                process.returncode if process.returncode not in (0, None) else _CANCEL_EXIT_STATUS)
+        elif timed_out:
+            success = False
+            failure_reason = f"Command timed out at {self._timeout_seconds} seconds"
             exit_status = process.returncode if process.returncode is not None else -1
         else:
             exit_status = process.returncode
             success, failure_reason = _decode_exit(exit_status)
 
-        stderr_path.write_text(
-            _strip_bash_shell_noise(stderr_path.read_text(encoding="utf-8", errors="replace")),
-            encoding="utf-8")
+        stderr_content = _strip_bash_shell_noise(
+            stderr_path.read_text(encoding="utf-8", errors="replace"))
+        if cancelled:
+            stderr_content = _append_cancel_notice(stderr_content)
+        stderr_path.write_text(stderr_content, encoding="utf-8")
 
         stdout_text, stdout_file = _spill(stdout_path, self._spill_bytes)
         stderr_text, stderr_file = _spill(stderr_path, self._spill_bytes)
@@ -991,32 +1102,41 @@ class BashTool(Tool):
         sandbox_notice = self._maybe_sandbox_notice()
 
         start = time.monotonic()
-        result = shell.run_command(command, self._timeout_seconds)
+        result = shell.run_command(command, self._timeout_seconds, self._active_cancel_event())
         runtime = time.monotonic() - start
 
         if not result.terminal_alive:
             bash_state[_PERSISTENT_SHELL_KEY] = None
 
-        if result.timed_out:
+        if result.cancelled:
             success = False
-            failure_reason: str | None = f"Command timed out at {self._timeout_seconds} seconds"
+            failure_reason: str | None = _CANCEL_FAILURE_REASON
+            exit_status: int | None = (
+                result.exit_status if result.exit_status not in (0, None) else _CANCEL_EXIT_STATUS)
+        elif result.timed_out:
+            success = False
+            failure_reason = f"Command timed out at {self._timeout_seconds} seconds"
+            exit_status = result.exit_status
         elif result.exit_status is None:
             success = False
             failure_reason = "Terminal closed before the command finished"
+            exit_status = None
         else:
-            success, failure_reason = _decode_exit(result.exit_status)
+            exit_status = result.exit_status
+            success, failure_reason = _decode_exit(exit_status)
 
+        stderr_for_model = _append_cancel_notice(result.stderr) if result.cancelled else result.stderr
         stdout_text, stdout_file, stderr_text, stderr_file = self._finalize_persistent_output(
-            result.stdout, result.stderr)
+            result.stdout, stderr_for_model)
 
         logger.info(
             "Bash command (shell_lifetime=%s) finished: exit_status=%s success=%s "
             "terminal_alive=%s runtime=%.2fs",
-            shell_lifetime, result.exit_status, success, result.terminal_alive, runtime)
+            shell_lifetime, exit_status, success, result.terminal_alive, runtime)
 
         response: dict[str, Any] = {
             "command": command,
-            "exit_status": result.exit_status,
+            "exit_status": exit_status,
             "success": success,
             "failure_reason": failure_reason,
             "stdout": stdout_text,

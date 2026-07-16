@@ -502,6 +502,16 @@ class Session:
         `self.context.session.tool_state` (see `klorb.tools.setup_context.ToolSetupContext.
         session`) and must `.setdefault(...)` its own key rather than assuming it's pre-populated
         — this dict starts empty for every new `Session`."""
+        self.active_cancel_event: threading.Event | None = None
+        """The in-flight turn's `TurnEventHandlers.cancel_event`, or `None` when no turn is
+        running — set at the top of `_dispatch_turn` and cleared in its `finally` once the turn
+        ends. Distinct from `tool_state`: this is how a currently-executing `Tool.apply()` call
+        (running synchronously on the same worker thread as `_dispatch_turn`, via
+        `self.context.session.active_cancel_event`) discovers the same `threading.Event` a
+        Ctrl+C/Escape interrupt sets, so a tool that owns a real subprocess (`BashTool`) can react
+        to cancellation immediately — e.g. sending `SIGINT` to a running shell command — rather
+        than only at the next tool-call/round boundary `_dispatch_turn`/`_run_tool_calls`
+        themselves check. See docs/specs/interrupt-and-liveness-watchdog.md."""
         self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
         self._compatibility_claude_markdown = (
@@ -1594,55 +1604,60 @@ class Session:
         drop_reasoning = self._drop_reasoning()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
 
+        self.active_cancel_event = callbacks.cancel_event
         try:
-            reply, _ = self._send_and_receive(
-                list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
-                tools, callbacks)
-
-            rounds = 0
-            while reply.role == "tool_use":
-                if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
-                    # Abort at the round boundary too, not just mid-stream: a turn that was
-                    # cancelled (Escape, or an interactive quit -- see
-                    # klorb.tui.repl.ReplApp._begin_exit) while a tool call was running, or while
-                    # its worker thread was parked awaiting a permission decision, would otherwise
-                    # keep issuing more rounds/streams before the provider's own mid-stream
-                    # cancel_event check (klorb.openrouter.send_prompt) got another chance to fire.
-                    raise ResponseAborted()
-                rounds += 1
-                if rounds > MAX_TOOL_CALL_ROUNDS:
-                    logger.warning(
-                        "Tool-call round limit reached (%d/%d) for %s; aborting turn.",
-                        rounds - 1, MAX_TOOL_CALL_ROUNDS, model_name)
-                    raise ToolCallLimitExceeded(
-                        f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
-                logger.info("Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
-                self._run_tool_calls(reply, callbacks)
+            try:
                 reply, _ = self._send_and_receive(
                     list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
                     tools, callbacks)
-        except ResponseAborted:
-            user_message.processing_state = "aborted"
-            logger.info("Turn aborted for %s", model_name)
-            raise
-        except Exception as exc:
-            user_message.processing_state = "error"
-            user_message.last_error = str(exc)
-            total_chars = sum(len(m.content) for m in self._messages)
-            logger.error(
-                "Turn failed for %s: %s (messages=%d, total_chars=%d)",
-                model_name, exc, len(self._messages), total_chars,
-            )
-            logger.error("Full exception details:", exc_info=True)
-            raise
 
-        user_message.processing_state = "complete"
-        user_message.last_error = None
-        logger.debug(
-            "Turn complete for %s: user num_tokens=%d, assistant num_tokens=%d, finish_reason=%s",
-            model_name, user_message.num_tokens, reply.num_tokens, reply.finish_reason,
-        )
-        return reply.content
+                rounds = 0
+                while reply.role == "tool_use":
+                    if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
+                        # Abort at the round boundary too, not just mid-stream: a turn that was
+                        # cancelled (Escape, or an interactive quit -- see
+                        # klorb.tui.repl.ReplApp._begin_exit) while a tool call was running, or while
+                        # its worker thread was parked awaiting a permission decision, would otherwise
+                        # keep issuing more rounds/streams before the provider's own mid-stream
+                        # cancel_event check (klorb.openrouter.send_prompt) got another chance to fire.
+                        raise ResponseAborted()
+                    rounds += 1
+                    if rounds > MAX_TOOL_CALL_ROUNDS:
+                        logger.warning(
+                            "Tool-call round limit reached (%d/%d) for %s; aborting turn.",
+                            rounds - 1, MAX_TOOL_CALL_ROUNDS, model_name)
+                        raise ToolCallLimitExceeded(
+                            f"Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call round trips in one turn.")
+                    logger.info(
+                        "Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
+                    self._run_tool_calls(reply, callbacks)
+                    reply, _ = self._send_and_receive(
+                        list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
+                        tools, callbacks)
+            except ResponseAborted:
+                user_message.processing_state = "aborted"
+                logger.info("Turn aborted for %s", model_name)
+                raise
+            except Exception as exc:
+                user_message.processing_state = "error"
+                user_message.last_error = str(exc)
+                total_chars = sum(len(m.content) for m in self._messages)
+                logger.error(
+                    "Turn failed for %s: %s (messages=%d, total_chars=%d)",
+                    model_name, exc, len(self._messages), total_chars,
+                )
+                logger.error("Full exception details:", exc_info=True)
+                raise
+
+            user_message.processing_state = "complete"
+            user_message.last_error = None
+            logger.debug(
+                "Turn complete for %s: user num_tokens=%d, assistant num_tokens=%d, finish_reason=%s",
+                model_name, user_message.num_tokens, reply.num_tokens, reply.finish_reason,
+            )
+            return reply.content
+        finally:
+            self.active_cancel_event = None
 
     def send_turn(
         self,

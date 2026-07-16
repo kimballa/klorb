@@ -30,24 +30,87 @@ the event loop runs on the main thread. Two distinct things can wedge:
    blocks the main thread. Key events — including `Ctrl+C` — queue up unprocessed; `action_*`
    handlers never run at all. Only a thread that isn't the main thread can escape this.
 
-## The three mechanisms
+## Ctrl+C semantics
+
+Pressing Ctrl+C does one of three things, decided fresh on every press:
+
+1. **Selected text.** If there's a live text selection — either a screen-level mouse-drag
+   selection, or a selection inside the focused `PromptInput` — Ctrl+C copies it to the
+   clipboard and does nothing else. This is handled entirely by Textual's own binding
+   resolution, never by `ReplApp.action_interrupt`: `PromptInput.action_copy` and
+   `SelectionSafeScreen.action_copy_text` both sit earlier in the per-key binding chain (focused
+   widget → ... → Screen → App) and, when there's something to copy, copy it and return without
+   raising `SkipAction` — the chain walk stops there and `action_interrupt` never runs at all.
+   Only when nothing is selected do both raise `SkipAction`, exactly like Textual's own base
+   implementations, letting the chain fall through to the App-level `ctrl+c` binding
+   (`action_interrupt`). Either override also calls `ReplApp._note_ctrl_c_copy()` to record the
+   press for the streak bookkeeping below, since `action_interrupt` itself never sees it.
+2. **Something running.** `ReplApp._turn_in_flight` covers both an in-flight model turn
+   (including a synchronous Bash tool call running inside it) and a `!`-prefixed direct shell
+   command. Ctrl+C interrupts it — identically to Escape (`action_abort_response`) — via
+   `ReplApp._interrupt_running_activity()`, which shows the "Interrupting…" notice
+   (`_note_interrupt_requested`) and sets whichever cancel event applies
+   (`_shell_cancel_event`, or the turn's `_cancel_event` via `_signal_turn_cancellation`). See
+   "Bash tool cancellation reaches the running child" below for what a turn's cancel event now
+   does that it didn't before this feature existed.
+3. **Nothing running, nothing selected.** Shows a "Press Ctrl+C again to quit." notice
+   (`_note_ctrl_c_quit_warning`) and does nothing else.
+
+Escape is bound only to case 2 (`action_abort_response`, hidden from the footer via
+`check_action` unless `_turn_in_flight`) — it has no copy-text or quit-warning meaning, since
+Ctrl+C's other two cases are specifically about a keystroke that's overloaded in a real
+terminal, not about giving Escape more jobs.
+
+### Ctrl+C streak bookkeeping and the double-press escalations
+
+`ReplApp._last_ctrl_c_at`/`_last_ctrl_c_kind` record the timestamp and outcome (`"copy"`,
+`"interrupt"`, or `"bare"`) of the most recent Ctrl+C press, of any of the three kinds above.
+`action_interrupt` (and the two copy-hook overrides) update this pair on every press. Two
+separate escalations read it, both scoped to `_DOUBLE_INTERRUPT_WINDOW_SECONDS`:
+
+* **Case 2, pressed twice in a row** (`previous_kind == "interrupt"`): the *same* running
+  activity is still in flight, meaning the first interrupt signal hasn't unwound it yet —
+  escalates straight to `_force_exit()`. This is the hang-mode-1 escape hatch described below.
+* **Case 3, pressed twice in a row** (`previous_kind == "bare"`): the ordinary "Ctrl+C again to
+  quit" gesture also escalates to `_force_exit()`. Critically, this only counts a *bare* press
+  as the predecessor — a copy or an interrupt press does not itself count as "the first of two
+  bare presses" toward quitting, so a press sequence like copy → (nothing selected/running) →
+  (still nothing) takes three presses total (the first copies, the second only warns as if it
+  were the first bare press, the third quits), not two. See docs/adrs/idle-ctrl-c-force-exits-
+  not-the-polite-quit-flow.md for why this bypasses the polite `_quit_after_maybe_saving()` flow
+  entirely rather than opening its save-prompt modal.
+
+### Bash tool cancellation reaches the running child
+
+`Session._dispatch_turn`/`_run_tool_calls` only check `callbacks.cancel_event` between tool
+calls/rounds, and `Tool.apply()` itself blocks the worker thread for the whole lifetime of
+whatever it's running — so a synchronous `BashTool` call inside an in-flight turn would
+otherwise be unreachable by Ctrl+C/Escape until its own next tool-call/round boundary.
+`Session.active_cancel_event` (set to
+`callbacks.cancel_event` for the duration of `_dispatch_turn`, see docs/adrs/bash-cancellation-
+via-session-active-cancel-event.md) exposes that same event to the tool actually running via
+`self.context.session.active_cancel_event`, so `BashTool._execute`/`PersistentShell._run_raw`
+poll it while waiting on the child process and send it `SIGINT` immediately once it fires — see
+docs/specs/bash-tool-and-command-permissions.md's "Cancellation" section for the full protocol
+and the tool-response shape a cancelled call reports back to the model.
+
+## The three hang-mode escape mechanisms
 
 ### 1. Interrupt feedback: "Interrupting…"
 
-`action_abort_response` (Escape) and `action_interrupt` (Ctrl+C, while a turn is in flight)
-mount a one-line `Interrupting…` notice into the history the first time they're pressed during a
-turn (`ReplApp._note_interrupt_requested`, reset per turn in `_finish_turn`). This runs on the
-event loop, so in hang mode (1) the user gets immediate confirmation the keystroke was received
-and the app isn't silently ignoring them — the difference between "it's working on stopping" and
-"it's deadlocked". The Ctrl+C notice also tells the user that a second Ctrl+C forces a quit.
+`action_abort_response` (Escape) and `_interrupt_running_activity` (Ctrl+C, case 2 above) mount
+a one-line `Interrupting…` notice into the history the first time they're pressed during a turn
+(`ReplApp._note_interrupt_requested`, reset per turn in `_finish_turn`). This runs on the event
+loop, so in hang mode (1) the user gets immediate confirmation the keystroke was received and
+the app isn't silently ignoring them — the difference between "it's working on stopping" and
+"it's deadlocked".
 
 ### 2. Double-Ctrl+C force-quit (hang mode 1)
 
-`action_interrupt` records the timestamp of each Ctrl+C. A second Ctrl+C within
+A second Ctrl+C landing on case 2 (see "Ctrl+C streak bookkeeping" above) within
 `_DOUBLE_INTERRUPT_WINDOW_SECONDS` triggers `ReplApp._force_exit`. Because hang mode (1) leaves
 the event loop alive, the key event is delivered and this handler runs, escaping without any
-wait even though the worker thread is permanently stuck. (A single Ctrl+C keeps its existing
-meaning: abort the in-flight turn, or — with nothing running — the ordinary quit flow.)
+wait even though the worker thread is permanently stuck.
 
 ### 3. Liveness watchdog (hang mode 2)
 
@@ -98,3 +161,14 @@ corrupt the *new* turn's state — exactly the concurrent-worker corruption `_tu
 exists to prevent. The only correct response to a worker that never unwinds is to exit the
 process, which is what the double-Ctrl+C and watchdog paths do. See
 docs/adrs/liveness-watchdog-over-reactive-arming.md.
+
+## See also
+
+* docs/specs/bash-tool-and-command-permissions.md — the "Cancellation" section this feature's
+  Ctrl+C/Escape signal actually drives for a running Bash tool call.
+* docs/specs/session-persistence.md — the "Saving" section covering `SaveOnQuitScreen`, the
+  Ctrl+Q quit-with-save-prompt flow this feature deliberately keeps separate from Ctrl+C.
+* docs/adrs/bash-cancellation-via-session-active-cancel-event.md
+* docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md
+* docs/adrs/liveness-watchdog-over-reactive-arming.md
+* docs/adrs/remove-sigint-handler-because-textual-disables-isig.md
