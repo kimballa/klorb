@@ -18,15 +18,25 @@ import asyncio
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from textual import work
 from textual.app import App
 from textual.containers import VerticalScroll
+from textual.widgets import Markdown, Static
 
 from klorb.message import Message as ChatMessage
 from klorb.process_config import ProcessConfig
-from klorb.session import Session
+from klorb.session import (
+    AskUserQuestionsAnswer,
+    AskUserQuestionsItemContext,
+    EscalatePrivilegesContext,
+    EscalatePrivilegesDecision,
+    PermissionAskContext,
+    PermissionDecision,
+    Session,
+    ToolCallEvent,
+)
 from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager
@@ -84,3 +94,60 @@ class ReplAppBase(App[None]):
     def show_notice(self, message: str, *, error: bool = False) -> None: ...
 
     def _refresh_header_title(self) -> None: ...
+
+    def _scroll_if_pinned(self, history: VerticalScroll, was_pinned: bool) -> None: ...
+
+    def _begin_exit(self) -> None: ...
+
+    def _ensure_turn_finished(self) -> None: ...
+
+    def _mount_response_widget(self, initial_text: str) -> Markdown:
+        raise NotImplementedError
+
+    def _update_response_widget(self, widget: Markdown, text: str) -> None: ...
+
+    def _mount_thinking_widget(self, initial_text: str) -> tuple[Static, Static]:
+        raise NotImplementedError
+
+    def _update_thinking_widget(self, widget: Static, text: str) -> None: ...
+
+    def _mount_reasoning_details_widget(self, text: str) -> tuple[Static, Static]:
+        raise NotImplementedError
+
+    def _update_reasoning_details_widget(self, widget: Static, text: str) -> None: ...
+
+    def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
+        raise NotImplementedError
+
+    def _mount_tool_call_widget(
+        self, summary_text: str, detail_text: str,
+    ) -> tuple[ToolCallStatic, Static]:
+        raise NotImplementedError
+
+    def _render_tool_call_summary(self, name: str, args: dict[str, Any]) -> str:
+        raise NotImplementedError
+
+    def _mount_running_tool_call_widget(
+        self, call_id: str, summary_text: str,
+    ) -> RunningToolCallStatic:
+        raise NotImplementedError
+
+    def _finalize_running_tool_call_widget(
+        self, widget: RunningToolCallStatic, summary_text: str, detail_text: str,
+    ) -> None: ...
+
+    def _on_tool_call_limit_reached(self, message: str) -> bool:
+        raise NotImplementedError
+
+    def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
+        raise NotImplementedError
+
+    def _on_ask_user_questions(
+        self, ask_ctx: AskUserQuestionsItemContext,
+    ) -> AskUserQuestionsAnswer:
+        raise NotImplementedError
+
+    def _on_escalate_privileges(
+        self, escalate_ctx: EscalatePrivilegesContext,
+    ) -> EscalatePrivilegesDecision:
+        raise NotImplementedError

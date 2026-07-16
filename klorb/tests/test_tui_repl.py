@@ -48,6 +48,7 @@ from klorb.tools.registry import ToolRegistry
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.formatting import _summarize_reasoning_details, format_token_count
 from klorb.tui.mixins.key_actions import _CTRL_C_QUIT_WARNING, _INTERRUPTING_MESSAGE, CONFIG_MISSING_MESSAGE
+from klorb.tui.mixins.rendering import REASONING_DETAILS_LABEL, THINKING_LABEL, TOOL_USE_LABEL
 from klorb.tui.panels.ask_user_questions_panel import AskUserQuestionsPanel
 from klorb.tui.panels.confirm_screen import (
     CONFIRM_NO_ID,
@@ -82,10 +83,7 @@ from klorb.tui.repl import (
     PALETTE_HINT_ID,
     PERMISSION_BADGE_ID,
     PROMPT_INPUT_ID,
-    REASONING_DETAILS_LABEL,
     STATUS_BAR_ID,
-    THINKING_LABEL,
-    TOOL_USE_LABEL,
     ReplApp,
     SelectionSafeScreen,
     _handle_repl_crash,
@@ -3168,7 +3166,7 @@ async def test_clear_rotates_log_file_when_session_log_enabled() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider), session_log_enabled=True)
 
-    with patch("klorb.tui.repl.configure_logging") as mock_configure_logging:
+    with patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
             await _invoke_clear_session(pilot)
 
@@ -3180,7 +3178,7 @@ async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider), session_log_enabled=False)
 
-    with patch("klorb.tui.repl.configure_logging") as mock_configure_logging:
+    with patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
             await _invoke_clear_session(pilot)
 
