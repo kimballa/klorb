@@ -220,7 +220,7 @@ class PersistentShell:
 
     def run_command(
         self, command: str, timeout_seconds: float,
-        cancel_event: "threading.Event | None" = None,
+        cancel_event: threading.Event | None = None,
     ) -> PersistentCommandResult:
         """Run `command` in this shell and return its result, including a refreshed
         `terminal_cwd` (a `pwd` round-trip run immediately afterward, via `_refresh_cwd`) when
@@ -274,7 +274,7 @@ class PersistentShell:
 
     def _run_raw(
         self, command: str, timeout_seconds: float,
-        cancel_event: "threading.Event | None" = None,
+        cancel_event: threading.Event | None = None,
     ) -> tuple[str, str, int | None, bool, bool]:
         """Run `command` to completion (or timeout/cancellation/death) and return raw
         `(stdout, stderr, exit_status, timed_out, cancelled)` — no cwd refresh, so `_refresh_cwd`
@@ -847,7 +847,7 @@ class BashTool(Tool):
             home=home, env=env, dirs=self._compute_sandbox_dirs(home),
             path_dirs=path_dirs_from_env())
 
-    def _active_cancel_event(self) -> "threading.Event | None":
+    def _active_cancel_event(self) -> threading.Event | None:
         """The in-flight turn's cancellation signal (`Session.active_cancel_event` — set for as
         long as `Session._dispatch_turn` is running, which includes this very call, since a
         `Tool.apply()` runs synchronously on `_dispatch_turn`'s own thread), or `None` when this
