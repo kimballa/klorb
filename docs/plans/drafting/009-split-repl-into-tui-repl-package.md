@@ -1,11 +1,9 @@
-# Split `klorb/tui/repl.py` into a `klorb.tui.repl` package
+# Split `klorb/tui/repl.py` into cohesive modules under `klorb/tui/`
 
 Claude: this plan is a **draft**, not ready for implementation. It lays out a target module
-layout and, per the request that produced it, the *mechanics* of how to move the code (so the
-move is done with cut/paste tooling, not retyped from context). The mixin-based split of
-`ReplApp` proposed below is a new pattern for this codebase and should get an explicit
-go/no-go during the pre-implementation architecture review, not be taken as locked in. Do not
-implement any part of this until it's moved to `ready/`.
+layout and the *mechanics* of how to move the code (so the move is done with cut/paste
+tooling, not retyped from context). Do not implement any part of this until it's moved to
+`ready/`.
 
 ## Context
 
@@ -39,9 +37,18 @@ imports from this package — `klorb/src/klorb/cli.py` does `from klorb.tui.repl
 run_repl`. Nothing else in `klorb/` reaches into `klorb.tui.*` directly; every other mention
 of `klorb.tui.repl.ReplApp` across the codebase (dozens, in ADRs and docstrings in
 `session.py`, `process_config.py`, `watchdog.py`, `risk_classifier.py`, etc.) is prose, not an
-import. That means everything currently under `klorb/tui/` is, in practice, REPL
-implementation detail — there is no second consumer yet that would justify keeping any of it
-at the `klorb.tui` level instead of under `klorb.tui.repl`.
+import.
+
+That fact settles a question this plan originally left open: whether the split should live
+under a new `klorb/tui/repl/` subpackage, or be rooted directly in `klorb/tui/`. `klorb.tui`
+has no meaning today beyond "the REPL" — there is no other Textual UI mode in this codebase
+for a `repl/` subpackage to be distinguished from. Adding that extra namespace segment would
+buy vocabulary, not clarity, for a distinction that doesn't exist yet. This plan roots
+everything directly under `klorb/tui/` instead. If a second, genuinely different TUI screen
+ever gets built, `klorb/tui/{app.py,mixins/,widgets/,panels/,commands/,...}` can be extracted
+into `klorb/tui/repl/` at that point — a small, well-contained move — rather than carrying the
+extra nesting now for a consumer that doesn't exist (see CLAUDE.md's guidance against
+designing for hypothetical future requirements).
 
 ## Goals
 
@@ -49,9 +56,12 @@ at the `klorb.tui` level instead of under `klorb.tui.repl`.
   (most source files here are under a few hundred lines; `permission_ask_panel.py` at 618
   lines is the biggest thing that *isn't* `repl.py` today).
 * One source file, one test file (`docs/plans/README-PLANS.md` conventions still apply: no
-  behavior change, this is pure restructuring).
-* `klorb.tui.repl.run_repl` keeps working unchanged for `cli.py` — this is a structural
-  refactor, not a public-API change.
+  behavior change, this is pure restructuring). Every panel gets an isolated, `ReplApp`-free
+  unit-test file, matching the pattern `AskUserQuestionsPanel` already has and
+  `EscalatePrivilegesPanel` currently lacks (see "Test layout" below).
+* `klorb.tui.run_repl` keeps working unchanged for `cli.py` (import path moves from
+  `klorb.tui.repl.run_repl` to `klorb.tui.run_repl` — a one-line, mechanical update to
+  `cli.py`, not a public-behavior change).
 * The move is mechanical: line ranges get cut from the old files into new ones with
   `sed`/sentinel-based extraction, not retyped by an agent reading and reproducing the code.
   Retyping ~8,300 lines of Textual/asyncio code from an LLM's own context is exactly how
@@ -61,8 +71,8 @@ at the `klorb.tui` level instead of under `klorb.tui.repl`.
 ## Non-goals
 
 * No behavior change. This plan does not touch what the REPL does, only where its code lives.
-* No change to `klorb/tui/`'s two real external touch points: `cli.py`'s
-  `from klorb.tui.repl import run_repl` and the CSS/keybindings the user sees.
+* No change to `klorb/tui/`'s real external touch point: the (relocated) `run_repl` `cli.py`
+  imports, and the CSS/keybindings the user sees.
 * Not attempting to also flatten/reorganize the 74 other flat files under `klorb/tests/` —
   only the tests that map onto the modules touched here move into a nested layout, per the
   task's explicit "tests can have a dir structure that matches the source they test, they
@@ -136,20 +146,21 @@ because there's only one class. Two ways to actually break it up:
   internally, and `ReplApp` is assembled as
   `class ReplApp(KeyActionsMixin, WorkspaceBootstrapMixin, ..., ReplAppBase):`) let the method
   bodies move verbatim — `self.foo(...)` still resolves at runtime via MRO regardless of
-  which mixin `foo` physically lives in, so there is no call-site rewriting at all. This is
-  the recommended approach below.
+  which mixin `foo` physically lives in, so there is no call-site rewriting at all. **This is
+  the approach this plan uses** — confirmed, not left open, despite it being a pattern new to
+  this codebase.
 
 The cost of mixins is typing: this repo's `make typecheck` runs mypy with
 `--disallow-untyped-calls`, `--disallow-untyped-globals`, and `--disallow-redefinition`, so a
 mixin method referencing `self.some_attr_set_by___init__` needs `some_attr` to be visible on
 `self`'s declared type from that file's point of view — mypy doesn't know that whichever
 concrete class eventually mixes this class in will also mix in the one that sets it. The fix
-is a shared, attribute-only typed base class described below.
+is a shared, attribute-only typed base class, `_base.py` below.
 
 ## Target source layout
 
 ```
-klorb/src/klorb/tui/repl/
+klorb/src/klorb/tui/
     __init__.py             # public surface only: re-exports ReplApp, run_repl
     constants.py            # DOM/widget ids, label strings, magic numbers shared by 2+ modules
     formatting.py           # pure helper functions: format_token_count,
@@ -182,10 +193,10 @@ klorb/src/klorb/tui/repl/
         palette.py                # moved from klorb/tui/palette.py
     panels/
         __init__.py
-        ask_user_questions_panel.py    # moved from klorb/tui/
-        confirm_screen.py               # moved from klorb/tui/
-        escalate_privileges_panel.py    # moved from klorb/tui/
-        permission_ask_panel.py         # moved from klorb/tui/
+        ask_user_questions_panel.py    # moved from klorb/tui/, unchanged
+        confirm_screen.py               # moved from klorb/tui/, unchanged
+        escalate_privileges_panel.py    # moved from klorb/tui/, unchanged
+        permission_ask_panel.py         # moved from klorb/tui/, unchanged
     commands/
         __init__.py
         init_commands.py         # moved from klorb/tui/
@@ -195,44 +206,43 @@ klorb/src/klorb/tui/repl/
         theme_commands.py        # moved from klorb/tui/
         thinking_commands.py     # moved from klorb/tui/
         trust_commands.py        # moved from klorb/tui/
-    shell.py                     # moved from klorb/tui/ (no natural group, small, stays flat)
+    shell.py                     # already at this path today; no move needed
 ```
 
-`klorb/src/klorb/tui/__init__.py` stays as the (currently 2-line) package marker; nothing
-else remains directly under `klorb/tui/` once this is done, since — per the "Context" section
-above — nothing outside `klorb.tui.repl` consumes any of it today. If a second consumer of one
-of these modules shows up later (e.g. a settings screen that isn't the REPL wanting
-`ConfirmScreen`), promote that specific module back up to `klorb/tui/` at that time; don't
-pre-emptively split now for a consumer that doesn't exist (see CLAUDE.md's guidance against
-designing for hypothetical future requirements).
+Confirmed groupings (not left open): `panels/` and `commands/` are real, intentional
+subpackages, not a flat dump.
 
-### Why `panels/` and `commands/` groupings
-
-`ask_user_questions_panel.py`, `confirm_screen.py`, `escalate_privileges_panel.py`, and
-`permission_ask_panel.py` are all "modal-ish interactive confirmation UI mounted into
-`#interaction-panel`" — the same conceptual group `docs/specs/terminal-repl.md`'s
-"Interaction panel" section already describes as one thing. `init_commands.py`,
-`model_commands.py`, `model_info_commands.py`, `session_commands.py`, `theme_commands.py`,
-`thinking_commands.py`, and `trust_commands.py` are all `SystemCommandProvider` subclasses
-feeding `ReplApp.COMMANDS` (Textual's built-in command palette) — same shape, same
-consumer, natural to browse together. Grouping them into subpackages is a placement call, not
-a mechanical necessity; if the architecture review would rather keep all 11 of these flat
-under `klorb/tui/repl/`, that's a smaller, equally valid variant of this plan.
+* `ask_user_questions_panel.py`, `confirm_screen.py`, `escalate_privileges_panel.py`, and
+  `permission_ask_panel.py` are all "modal-ish interactive confirmation UI mounted into
+  `#interaction-panel`" — the same conceptual group `docs/specs/terminal-repl.md`'s
+  "Interaction panel" section already describes as one thing.
+* `init_commands.py`, `model_commands.py`, `model_info_commands.py`, `session_commands.py`,
+  `theme_commands.py`, `thinking_commands.py`, and `trust_commands.py` are all
+  `SystemCommandProvider` subclasses feeding `ReplApp.COMMANDS` (Textual's built-in command
+  palette) — same shape, same consumer, natural to browse together.
 
 ### Public API surface (`__init__.py`)
 
-Only `ReplApp` and `run_repl` are re-exported from `klorb/tui/repl/__init__.py`. `run_repl`
-is the real external contract (`cli.py` imports it). `ReplApp` isn't imported anywhere outside
-`klorb/tui/` and its tests today, but dozens of docstrings elsewhere in the codebase refer to
-`klorb.tui.repl.ReplApp.<method>` as a stable, citable name for "the REPL app" — keeping
-`ReplApp` resolvable at that path costs nothing (`.flake8`'s existing
-`__init__.py:F401,F403` per-file-ignore already expects `__init__.py` files in this codebase
-to re-export) and avoids a wave of edits to unrelated files' docstrings. Everything else —
-`PromptInput`, the widget-id constants, `format_token_count`, `_handle_repl_crash`, etc. — is
-an internal implementation detail with no re-export; the two existing tests that import
-extras directly from `klorb.tui.repl` (`test_ask_user_questions_repl.py`,
-`test_escalate_privileges_repl.py`) update their imports to the specific new submodule
-instead (see "Test layout" below).
+Only `ReplApp` and `run_repl` are re-exported from `klorb/tui/__init__.py`. `run_repl` is the
+real external contract (`cli.py` imports it: update `cli.py`'s
+`from klorb.tui.repl import run_repl` to `from klorb.tui import run_repl`). `ReplApp` isn't
+imported anywhere outside `klorb/tui/` and its tests today, but dozens of docstrings elsewhere
+in the codebase refer to `klorb.tui.repl.ReplApp.<method>` as a stable, citable name for "the
+REPL app" — keeping `ReplApp` resolvable at `klorb.tui.ReplApp` (not `klorb.tui.app.ReplApp`)
+costs nothing (`.flake8`'s existing `__init__.py:F401,F403` per-file-ignore already expects
+`__init__.py` files in this codebase to re-export) and gives every one of those existing
+docstring citations a single mechanical find/replace target
+(`klorb.tui.repl.ReplApp` → `klorb.tui.ReplApp`) instead of needing to know which specific
+new submodule each method landed in. Everything else — `PromptInput`, the widget-id
+constants, `format_token_count`, `_handle_repl_crash`, etc. — is an internal implementation
+detail with no re-export; the two existing tests that import extras directly from
+`klorb.tui.repl` (`test_ask_user_questions_repl.py`, `test_escalate_privileges_repl.py`)
+update their imports to the specific new submodule instead (see "Test layout" below).
+
+Because `klorb.tui.repl` stops existing as a dotted path entirely under this layout (there is
+no `repl` submodule to re-export from anymore), every docstring across the codebase that
+cites `klorb.tui.repl.*` needs updating, not just the ones inside `klorb/tui/` itself — see
+"Docs" under "Mechanics" below.
 
 ### `_base.py` sketch
 
@@ -251,7 +261,7 @@ class ReplAppBase(App[None]):
 
 Populate this by grepping `__init__` (and any other assignment site) for `self\.\w+\s*=` once
 the core/lifecycle group has been extracted into `app.py`, not by re-deriving it from memory.
-Each mixin then reads `from klorb.tui.repl._base import ReplAppBase` and declares
+Each mixin then reads `from klorb.tui._base import ReplAppBase` and declares
 `class KeyActionsMixin(ReplAppBase):`. `app.py`'s `ReplApp` is the only class with a real
 `__init__` body; mixins have none.
 
@@ -268,7 +278,7 @@ today (line 1181, immediately before line 1222). This is the one widget class fr
 ## Target test layout
 
 ```
-klorb/tests/tui/repl/
+klorb/tests/tui/
     __init__.py
     conftest.py                    # fixtures/helpers currently at the top of
                                     #   test_tui_repl.py (lines ~1-236): _session,
@@ -297,11 +307,13 @@ klorb/tests/tui/repl/
         test_palette.py             # moved from klorb/tests/test_palette.py
     panels/
         __init__.py
+        test_ask_user_questions_panel.py     # renamed/moved from
+                                              #   klorb/tests/test_ask_user_questions_screen.py,
+                                              #   no content changes
         test_confirm_screen.py
-        test_permission_ask_panel.py    # subsumes the non-integration parts of today's
-                                          #   inline permission-ask-screen tests
-        # test_ask_user_questions_screen.py and the ask-user-questions/escalate-privileges
-        # *_repl.py integration tests: see below, these do not move into panels/.
+        test_escalate_privileges_panel.py    # NEW — see below, EscalatePrivilegesPanel has
+                                              #   no isolated test file today
+        test_permission_ask_panel.py
     commands/
         __init__.py
         test_init_commands.py           # moved from klorb/tests/
@@ -322,19 +334,33 @@ klorb/tests/tui/repl/
                                               #   (same reasoning)
 ```
 
-`klorb/tests/test_ask_user_questions_screen.py` (259 lines, tests `AskUserQuestionsPanel` in
-isolation, no `ReplApp`) is the one existing sibling test file that's already correctly scoped
-to a single panel module and just needs renaming/relocating to
-`klorb/tests/tui/repl/panels/test_ask_user_questions_panel.py`; no content surgery needed.
-There is no equivalent already-isolated test file for `EscalatePrivilegesPanel` —
-`klorb/tests/test_escalate_privileges.py` (checked: it tests
-`klorb.tools.escalate_privileges.escalate_privileges`/`.common`, unrelated to the TUI panel)
-is out of scope for this plan. `test_escalate_privileges_repl.py`'s tests are the only
-existing coverage of `EscalatePrivilegesPanel`, and per the grep at the top of this plan they
-exercise it together with `ReplApp`, so `panels/test_escalate_privileges_panel.py` starts
-empty/nonexistent unless the split of `test_escalate_privileges_repl.py` turns up individual
-tests that don't actually need a live `ReplApp` and can be pulled out into panel-only
-coverage.
+`klorb/tests/test_escalate_privileges.py` tests `klorb.tools.escalate_privileges.*` (checked:
+`EscalatePrivilegesTool`/`validate_scope`), an unrelated module despite the similar filename —
+out of scope for this plan, stays exactly where it is.
+
+### `EscalatePrivilegesPanel` needs a new isolated test file, not just a move
+
+Checked `test_escalate_privileges_repl.py`'s own docstring: "End-to-end tests: an
+`EscalatePrivileges` tool call drives `EscalatePrivilegesPanel` through a real `ReplApp`,
+mirroring `test_ask_user_questions_repl.py`." All four of its tests build a real `Session` +
+`ReplApp`, submit a prompt, and drive a full turn — there is currently no test of
+`EscalatePrivilegesPanel` in isolation the way `test_ask_user_questions_screen.py` tests
+`AskUserQuestionsPanel` (a small `_AskUserQuestionsTestApp(App[None])` scaffold that mounts
+the panel directly and drives its own rendering/keyboard-navigation, with no `Session` or
+`ReplApp` involved at all).
+
+So `panels/test_escalate_privileges_panel.py` is **net-new test-writing, not a mechanical
+extraction** — there's no existing code to cut from. Build it the same way
+`test_ask_user_questions_screen.py` is built: a minimal scaffold `App[None]` that mounts
+`EscalatePrivilegesPanel` directly, covering its rendering (header/option text for a given
+`EscalatePrivilegesContext`) and keyboard navigation/dismissal (`action_confirm`,
+`action_decline`, escape) in isolation. `test_escalate_privileges_repl.py`'s four existing
+tests still move to `test_escalate_privileges_integration.py` unchanged — they're the
+`ReplApp`-driven end-to-end coverage that stays valuable alongside the new panel-only tests,
+exactly mirroring how `test_ask_user_questions_repl.py` and `test_ask_user_questions_screen.py`
+coexist today. Read `permission_ask_panel.py`'s and `escalate_privileges_panel.py`'s own
+`compose()`/action methods before writing this file, so the new coverage reflects the panel's
+actual current widget IDs/structure rather than guessing from the integration tests' assertions.
 
 Every new test directory gets an `__init__.py` (empty, just a package marker) even though
 `pytest`'s default rootdir-based discovery doesn't strictly require one — this repo's
@@ -349,13 +375,14 @@ retype them into new files from its own understanding — that's how a dropped `
 silently-renamed local, or a reordered CSS rule sneaks in unnoticed. Everything below is
 built around cut/paste tooling instead.
 
-1. **Whole-file moves first** (`palette.py`, `shell.py`, the four panels, the seven command
-   providers). These are zero-content-risk: `git mv old/path new/path`, then a mechanical
-   `import`-path rewrite everywhere that referenced the old path (`grep -rl` for the old
-   dotted path across `klorb/src` and `klorb/tests`, then fix each hit — this is find/replace
-   on import lines, not code retyping). Run `make lint typecheck test` after this batch before
-   touching `repl.py` at all, so any import breakage is caught while the diff is still small
-   and easy to reason about.
+1. **Whole-file moves first** (`palette.py` → `widgets/`, the four panels → `panels/`, the
+   seven command providers → `commands/`; `shell.py` needs no move). These are
+   zero-content-risk: `git mv old/path new/path`, then a mechanical `import`-path rewrite
+   everywhere that referenced the old path (`grep -rl` for the old dotted path across
+   `klorb/src` and `klorb/tests`, then fix each hit — this is find/replace on import lines,
+   not code retyping). Run `make lint typecheck test` after this batch before touching
+   `repl.py` at all, so any import breakage is caught while the diff is still small and easy
+   to reason about.
 
 2. **Extracting a contiguous class or method group from `repl.py`** (every widget class, and
    each of the eight `ReplApp` method groups): use line-range extraction, not manual
@@ -384,8 +411,8 @@ built around cut/paste tooling instead.
    throughout the file). Handle them with a dedicated pass, *after* all the class/method
    groups have moved: `grep -n "^[A-Z_].* = \|^_[A-Z_].* = "` against what's left of
    `repl.py` to enumerate every remaining module-level constant, then for each one, `grep -rn`
-   its name across the new `klorb/tui/repl/` tree to see how many of the new files reference
-   it. Exactly one referencing file: move the constant to live in that file (colocate, don't
+   its name across the new `klorb/tui/` tree to see how many of the new files reference it.
+   Exactly one referencing file: move the constant to live in that file (colocate, don't
    centralize). Two or more: it goes in `constants.py`. This is the same "don't duplicate a
    constant across files" rule CLAUDE.md already states, applied to the split itself, and
    it's a mechanical grep-and-count decision, not a judgment call per constant.
@@ -407,31 +434,43 @@ built around cut/paste tooling instead.
    * Extract each test function (and any `@pytest.fixture`-decorated helper used only by
      tests moving together) by line range the same way as source code. Update the
      `from klorb.tui.repl import (...)` block at the top of each new test file to import only
-     the names that file actually uses, from wherever they now live.
+     the names that file actually uses, from wherever they now live under `klorb.tui.*`.
    * After the full split, re-run `pytest --collect-only -q`, diff test IDs against the
      baseline (module path changes are expected and fine; the *set of test names* and their
-     count should be unchanged), then `make lint typecheck test`.
+     count should be unchanged, plus whatever new tests were written for
+     `test_escalate_privileges_panel.py`), then `make lint typecheck test`.
 
-5. **Docs**: `docs/specs/terminal-repl.md` and the handful of other specs that cite
-   `klorb/src/klorb/tui/repl.py`'s old flat-file path (`grep -rl "klorb/src/klorb/tui\|klorb\.tui\."
-   docs/specs/`) need their file-path references updated to match, since specs describe
-   current state (CLAUDE.md's spec-writing rule). `docs/adrs/` entries that mention
-   `klorb.tui.repl.ReplApp` are historical decision records, not living docs — leave them
-   as-is, same as `docs/plans/archive/` is never touched after the fact. Write one new ADR
-   (`docs/adrs/split-repl-app-into-mixins-not-composition.md` or similar) recording the
-   mixin-vs-composition decision from "Current shape of `repl.py`" above, since that's exactly
-   the kind of framework-level architecture decision this codebase's ADR convention exists
-   for.
+5. **Docs**: because `klorb.tui.repl` stops existing as a dotted path (everything now lives
+   directly under `klorb.tui`), every citation of `klorb.tui.repl.*` needs updating, not just
+   ones inside `klorb/tui/` — this is a bigger sweep than a same-package internal move would
+   be:
+   * `grep -rl "klorb\.tui\.repl\|klorb/src/klorb/tui" klorb/src klorb/tests` — living code
+     (docstrings in `session.py`, `process_config.py`, `watchdog.py`, `risk_classifier.py`,
+     `workspace/trust_manager.py`, `token_estimate.py`, plus whatever lands in the new
+     `klorb/tui/` tree itself, and `test_process_config.py`/`test_schema_envelope.py`) — these
+     must be updated (CLAUDE.md: docstrings describe current code, not history), and it's a
+     mechanical `klorb.tui.repl.ReplApp` → `klorb.tui.ReplApp` (or the specific new submodule,
+     for anything more specific than the class name) find/replace, not prose rewriting.
+   * `grep -rl "klorb/src/klorb/tui\|klorb\.tui\." docs/specs/` — `docs/specs/terminal-repl.md`
+     and the handful of other specs that cite the old flat-file path need the same path
+     update, since specs describe current state (CLAUDE.md's spec-writing rule).
+   * `docs/adrs/` entries that mention `klorb.tui.repl.ReplApp` are historical decision
+     records, not living docs — leave them as-is, same as `docs/plans/archive/` is never
+     touched after the fact.
+   * Write one new ADR (`docs/adrs/split-repl-app-into-mixins-not-composition.md` or similar)
+     recording the mixin-vs-composition decision from "Current shape of `repl.py`" above,
+     since that's exactly the kind of framework-level architecture decision this codebase's
+     ADR convention exists for.
 
 ## Suggested execution order
 
 1. Whole-file moves of the 11 already-separate `klorb/tui/*.py` modules into
-   `klorb/tui/repl/{panels,commands,widgets}/` (step 1 above) + matching test file
-   relocations for the ones with existing 1:1 test files (`test_palette.py`,
-   `test_init_commands.py`, `test_model_commands.py`, `test_model_info_commands.py`,
-   `test_session_commands.py`, `test_theme_commands.py`, `test_thinking_commands.py`,
-   `test_trust_commands.py`, `test_shell.py`, `test_ask_user_questions_screen.py`). Verify
-   with `make lint typecheck test`.
+   `klorb/tui/{panels,commands,widgets}/` (step 1 above) + matching test file relocations for
+   the ones with existing 1:1 test files (`test_palette.py`, `test_init_commands.py`,
+   `test_model_commands.py`, `test_model_info_commands.py`, `test_session_commands.py`,
+   `test_theme_commands.py`, `test_thinking_commands.py`, `test_trust_commands.py`,
+   `test_shell.py`, `test_ask_user_questions_screen.py` → `test_ask_user_questions_panel.py`).
+   Verify with `make lint typecheck test`.
 2. Extract the widget classes (`PromptInput`, `ToolCallLimitScreen`/`ToolCallStatic`/
    `RunningToolCallStatic`, `PaletteHint`/`PermissionBadge`) out of `repl.py` into
    `widgets/`. Verify.
@@ -445,28 +484,10 @@ built around cut/paste tooling instead.
 5. What's left in `repl.py` (core/lifecycle + `SelectionSafeScreen` + `CSS`/`BINDINGS`) becomes
    `app.py`; `_handle_repl_crash`/`run_repl` become `entrypoint.py`; `repl.py` itself is
    deleted (`git mv` won't apply cleanly here since it's fanning out to many files — delete
-   once everything's confirmed extracted). Write `__init__.py`.
+   once everything's confirmed extracted). Write `__init__.py`, and update `cli.py`'s import.
 6. Constants/formatting sweep (step 3 of "Mechanics").
-7. Split `test_tui_repl.py` (step 4 of "Mechanics"), same incremental-with-verification
+7. Split `test_tui_repl.py` (step 4 of "Mechanics"), including writing the new
+   `panels/test_escalate_privileges_panel.py` coverage, same incremental-with-verification
    approach as step 4 here.
 8. Docs sweep + new ADR (step 5 of "Mechanics").
 9. Final full-repo `make lint typecheck test` pass.
-
-## Open questions for architecture review
-
-* **Mixins vs. flat-but-large.** This plan's central bet is that splitting `ReplApp` itself
-  (not just what surrounds it) is worth the mixin-typing machinery. A smaller, safer variant
-  of this plan would leave `ReplApp` as one big class in `app.py` (still shrinking `repl.py`
-  from 3,456 to ~2,600 lines just by moving the widgets and other files out) and stop there.
-  Given the task explicitly asked for `repl.py` to be broken into "sensible submodule
-  chunks" and a ~2,600-line single class would still read as "enormous" by this codebase's
-  own norms, this plan recommends going all the way to mixins — but it's a real trade-off
-  (new pattern, more files, `_base.py` bookkeeping) worth a deliberate yes/no rather than
-  silent default.
-* **`panels/`/`commands/`/`widgets/` subpackages vs. flat.** Called out inline above — not
-  load-bearing, easy to change either way at implementation time.
-* **Whether `EscalatePrivilegesPanel` has an existing isolated test file** — flagged above as
-  something to verify before assuming `test_escalate_privileges.py` slots into `panels/`
-  unchanged; it didn't show up in the `klorb.tui` import grep this plan was based on, so it
-  may test something else entirely (e.g. the session-level escalate-privileges flow rather
-  than the panel widget).
