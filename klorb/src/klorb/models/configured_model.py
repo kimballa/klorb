@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from klorb.models.model import Model
+from klorb.models.model import CacheMgmtStyle, Model
 
 MODEL_SCHEMA_NAME = "klorb-model"
 MODEL_SCHEMA_VERSION = "1.0.0"
@@ -25,6 +25,7 @@ class _ConfiguredModelData(BaseModel):
     capabilities: dict[str, Any] = {}
     klorb_capabilities: dict[str, Any] = {}
     drop_reasoning: bool = False
+    cache_mgmt_style: CacheMgmtStyle = "AUTOMATIC"
 
 
 class ConfiguredModel(Model):
@@ -64,3 +65,6 @@ class ConfiguredModel(Model):
 
     def drop_reasoning(self) -> bool:
         return self._data.drop_reasoning
+
+    def cache_mgmt_style(self) -> CacheMgmtStyle:
+        return self._data.cache_mgmt_style

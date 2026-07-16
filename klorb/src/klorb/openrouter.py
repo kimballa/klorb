@@ -31,6 +31,7 @@ sends only once) on every fragment for a given entry."""
 logger = logging.getLogger(__name__)
 
 
+
 def _log_api_error_context(
     exc: Exception,
     *,
@@ -150,12 +151,13 @@ class OpenRouterApiProvider(ApiProvider):
         messages: list[Message],
         system_prompt: str | None = None,
         model: str | None = None,
-        session_id: str | None = None,
+        session_id: str = "",
         reasoning: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         timeout: float | None = None,
         drop_reasoning: bool = False,
+        cache_mgmt_style: str = "AUTOMATIC",
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None,
@@ -197,6 +199,10 @@ class OpenRouterApiProvider(ApiProvider):
         """
         resolved_model = model or self._model
         api_messages = self._build_api_messages(messages, system_prompt, drop_reasoning)
+
+        # Anthropic explicit caching: add cache_control to each content block
+        if cache_mgmt_style == "ANTHROPIC_EXPLICIT":
+            api_messages = self._apply_explicit_cache_control(api_messages)
         total_content_chars = sum(
             len(str(m.get("content") or "")) for m in api_messages
         )
@@ -232,15 +238,14 @@ class OpenRouterApiProvider(ApiProvider):
                     preview,
                 )
         client = self.build_client()
-        extra_body: dict[str, Any] | None = None
-        if session_id is not None or reasoning is not None or response_format is not None:
-            extra_body = {}
-            if session_id is not None:
-                extra_body["session_id"] = session_id
-            if reasoning is not None:
-                extra_body["reasoning"] = reasoning
-            if response_format is not None:
-                extra_body["response_format"] = response_format
+        extra_body: dict[str, Any] = {"session_id": session_id}
+        if reasoning is not None:
+            extra_body["reasoning"] = reasoning
+        if response_format is not None:
+            extra_body["response_format"] = response_format
+        # Anthropic automatic caching: add cache_control once at the top-level request
+        if cache_mgmt_style == "ANTHROPIC_AUTOMATIC":
+            extra_body["cache_control"] = {"type": "ephemeral"}
         create_kwargs: dict[str, Any] = {
             "model": resolved_model,
             "messages": api_messages,
@@ -293,6 +298,7 @@ class OpenRouterApiProvider(ApiProvider):
         finish_reason: str | None = None
         completion_tokens = 0
         prompt_tokens = 0
+        cached_tokens = 0
         tool_call_accumulators: dict[int, dict[str, str]] = {}
         reasoning_details_accumulators: dict[int, dict[str, Any]] = {}
         try:
@@ -345,6 +351,8 @@ class OpenRouterApiProvider(ApiProvider):
                 if chunk.usage is not None:
                     completion_tokens = chunk.usage.completion_tokens
                     prompt_tokens = chunk.usage.prompt_tokens
+                    prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
+                    cached_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
         except ResponseAborted:
             raise
         except Exception as exc:
@@ -373,12 +381,22 @@ class OpenRouterApiProvider(ApiProvider):
                 id=accumulator["id"], name=accumulator["name"], arguments=accumulator["arguments"])
             for _, accumulator in sorted(tool_call_accumulators.items())
         ] or None
-        logger.debug(
-            "Received %d-character response from %s (finish_reason=%s, completion_tokens=%d, "
-            "prompt_tokens=%d, tool_calls=%s)",
-            len(content), resolved_model, finish_reason, completion_tokens, prompt_tokens,
-            [call.name for call in tool_calls] if tool_calls else None,
-        )
+        # Log usage stats including cache hit information
+        cache_pct = ((100.0 * cached_tokens) / prompt_tokens) if prompt_tokens > 0 else 0.0
+        if cached_tokens > 0:
+            logger.info(
+                "Usage for %s: prompt_tokens=%d, cached_tokens=%d (%.1f%%), "
+                "completion_tokens=%d",
+                resolved_model, prompt_tokens, cached_tokens, cache_pct,
+                completion_tokens,
+            )
+        else:
+            logger.debug(
+                "Received %d-character response from %s (finish_reason=%s, "
+                "completion_tokens=%d, prompt_tokens=%d, tool_calls=%s)",
+                len(content), resolved_model, finish_reason, completion_tokens, prompt_tokens,
+                [call.name for call in tool_calls] if tool_calls else None,
+            )
         reply = Message(
             content=content,
             role="assistant",
@@ -388,7 +406,39 @@ class OpenRouterApiProvider(ApiProvider):
             finish_reason=finish_reason,
             tool_calls=tool_calls,
         )
-        return ProviderResponse(message=reply, prompt_tokens=prompt_tokens)
+        return ProviderResponse(message=reply, prompt_tokens=prompt_tokens, cached_tokens=cached_tokens)
+
+    @staticmethod
+    def _apply_explicit_cache_control(
+        messages: list[ChatCompletionMessageParam],
+    ) -> list[ChatCompletionMessageParam]:
+        """Add cache_control with type ephemeral to every content block in each message.
+
+        This implements Anthropic's 'explicit' prompt caching strategy, where each
+        content block is individually tagged for caching.
+        """
+        result: list[ChatCompletionMessageParam] = []
+        for msg in messages:
+            msg_copy = dict(msg)
+            content = msg_copy.get("content")
+            if isinstance(content, str):
+                # Wrap string content in a content block and add cache_control
+                msg_copy["content"] = [
+                    {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                ]
+            elif isinstance(content, list):
+                # Add cache_control to each existing content block
+                new_content = []
+                for block in content:
+                    if isinstance(block, dict):
+                        block_copy = dict(block)
+                        block_copy["cache_control"] = {"type": "ephemeral"}
+                        new_content.append(block_copy)
+                    else:
+                        new_content.append(block)
+                msg_copy["content"] = new_content
+            result.append(cast(ChatCompletionMessageParam, msg_copy))
+        return result
 
     @staticmethod
     def _build_api_messages(

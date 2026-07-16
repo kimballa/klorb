@@ -7,6 +7,7 @@
   "family": "claude-sonnet",
   "model_version": "5.0",
   "settings": {},
+  "cache_mgmt_style": "ANTHROPIC_AUTOMATIC",
   "capabilities": {
     "vision": true,
     "thinking": true,

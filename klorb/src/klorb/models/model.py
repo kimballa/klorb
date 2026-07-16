@@ -10,6 +10,12 @@ ThinkingBudgetStyle = Literal["effort", "tokens"]
 """How a thinking-capable model wants its reasoning depth controlled: `"effort"` for a
 low/medium/high keyword, or `"tokens"` for a numeric reasoning token budget."""
 
+CacheMgmtStyle = Literal["ANTHROPIC_EXPLICIT", "ANTHROPIC_AUTOMATIC", "AUTOMATIC"]
+"""How prompt caching is managed for this model:
+- `"ANTHROPIC_EXPLICIT"`: Add cache_control with type ephemeral to each content block
+- `"ANTHROPIC_AUTOMATIC"`: Add cache_control with type ephemeral once at the top-level request
+- `"AUTOMATIC"`: No special cache_control handling needed (default)"""
+
 
 class Model(ABC):
     """Base class describing a model klorb can select and send prompts to."""
@@ -88,3 +94,12 @@ class Model(ABC):
         doesn't support, or doesn't want, past reasoning replayed as conversation history.
         """
         return False
+
+    def cache_mgmt_style(self) -> CacheMgmtStyle:
+        """Return how prompt caching is managed for this model.
+
+        Defaults to `"AUTOMATIC"`: no special cache_control handling is applied.
+        Override this to `"ANTHROPIC_EXPLICIT"` or `"ANTHROPIC_AUTOMATIC"` for models
+        that support Anthropic-style prompt caching.
+        """
+        return "AUTOMATIC"

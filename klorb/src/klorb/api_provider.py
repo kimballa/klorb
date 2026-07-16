@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from klorb.message import Message
+from klorb.models.model import CacheMgmtStyle
 
 
 class ProviderResponse(BaseModel):
@@ -27,6 +28,11 @@ class ProviderResponse(BaseModel):
     docs/adrs/count-every-message-tokens-client-side-with-tiktoken.md), since a provider's
     aggregate usage figures are reported per-request, not broken down per message, and can't
     be reconciled against individual messages without their own tokenizer anyway."""
+
+    cached_tokens: int = 0
+    """Number of input tokens that were served from the provider's prompt cache, as reported
+    in the response's usage stats. Zero when the provider doesn't report this metric. Used
+    to compute the cache hit ratio for logging/diagnostics."""
 
 
 class ResponseAborted(Exception):
@@ -51,12 +57,13 @@ class ApiProvider(ABC):
         messages: list[Message],
         system_prompt: str | None = None,
         model: str | None = None,
-        session_id: str | None = None,
+        session_id: str = "",
         reasoning: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         timeout: float | None = None,
         drop_reasoning: bool = False,
+        cache_mgmt_style: CacheMgmtStyle = "AUTOMATIC",
         on_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None,

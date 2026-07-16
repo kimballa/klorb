@@ -161,9 +161,10 @@ def test_total_tokens_used_grows_live_as_chunks_stream_in() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
         seen_totals.append(session.total_tokens_used())
+        assert on_chunk is not None
         on_chunk("hello")
         seen_totals.append(session.total_tokens_used())
         on_chunk(" there, world")
@@ -187,8 +188,9 @@ def test_aborted_placeholder_still_counts_its_partial_content() -> None:
     def aborting_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
         on_chunk("partial rep")
         raise ResponseAborted()
 
@@ -218,7 +220,7 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
     def first_round_then_cancel(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
         # Simulate the turn being cancelled (quit / Ctrl+C) while this round's reply is assembled.
         assert cancel_event is not None
@@ -281,9 +283,11 @@ def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
         seen_outputs.append(session.total_output_tokens_used())
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_chunk("hello")
         seen_outputs.append(session.total_output_tokens_used())
         on_thinking_chunk("thinking...")
@@ -349,7 +353,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
         session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
-        cancel_event=None)
+        cache_mgmt_style="AUTOMATIC", cancel_event=None)
     assert [m.content for m in session.messages] == [COMPOSED_COORDINATOR_PROMPT, "hi", "model reply"]
 
 
@@ -366,7 +370,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
         session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
-        cancel_event=None)
+        cache_mgmt_style="AUTOMATIC", cancel_event=None)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:
@@ -608,8 +612,10 @@ def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true() -> No
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_thinking_chunk("thinking...")
         on_chunk("hello")
         return _reply("hello")
@@ -633,8 +639,10 @@ def test_total_tokens_used_includes_thinking_by_default() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_thinking_chunk("thinking...")
         on_chunk("hello")
         return _reply("hello")
@@ -718,8 +726,10 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_chunk("Hel")
         on_chunk("lo")
         return _reply("Hello", num_tokens=2, prompt_tokens=10)
@@ -743,8 +753,10 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_chunk("Hel")
         on_chunk("lo")
         return _reply("Hello")
@@ -764,8 +776,10 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
         on_chunk("Hello")
@@ -795,8 +809,10 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_thinking_chunk("Let ")
         on_thinking_chunk("me think.")
         return _reply("Hello")
@@ -816,8 +832,9 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
         on_chunk("partial")
         raise RuntimeError("boom")
 
@@ -841,8 +858,9 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_thinking_chunk is not None
         on_thinking_chunk("partial thought")
         raise RuntimeError("boom")
 
@@ -879,8 +897,10 @@ def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None
     def aborting_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
+        assert on_thinking_chunk is not None
         on_thinking_chunk("thinking out loud")
         on_chunk("partial rep")
         raise ResponseAborted()
@@ -908,7 +928,7 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
         nonlocal calls_made
         calls_made += 1
@@ -944,8 +964,9 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
     ):
+        assert on_chunk is not None
         on_chunk("partial")
         raise RuntimeError("boom")
 

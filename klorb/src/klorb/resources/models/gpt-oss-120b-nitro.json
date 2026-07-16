@@ -20,5 +20,6 @@
   },
   "klorb_capabilities": {
     "BASH_SAFETY_EVAL": true
-  }
+  },
+  "cache_mgmt_style": "AUTOMATIC"
 }

@@ -26,6 +26,9 @@
 
 # Feature backlog
 
+* shell_lifetime should be an optional arg for the Bash tool; without it (null or empty str)
+  just use a command-scoped shell.
+
 * FindFile tool should (optionally) respect gitignore.
   * If it _would_ have returned a filename hidden by gitignore, it should set a flag in the output
     along with a message informing the agent that it can discover the gitignored files by re-findfile'ing

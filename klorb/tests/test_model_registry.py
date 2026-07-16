@@ -88,7 +88,7 @@ def test_default_registry_discovers_production_models() -> None:
     assert "openai/gpt-5-nano" in names
     assert "z-ai/glm-5.2" in names
     assert "anthropic/claude-sonnet-5" in names
-    assert "qwen/qwen3-coder-next" in names
+    assert "qwen/qwen3.7-plus" in names
     assert "moonshotai/kimi-k2.7-code" in names
     assert "openai/gpt-oss-120b:nitro" in names
 

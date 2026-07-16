@@ -3,20 +3,19 @@
     "name": "klorb-model",
     "version": "1.0.0"
   },
-  "name": "z-ai/glm-5.2",
-  "family": "glm",
-  "model_version": "5.2",
+  "name": "qwen/qwen3.7-plus",
+  "family": "qwen",
+  "model_version": "3.7",
   "settings": {
     "temperature": 0.2
   },
   "capabilities": {
-    "vision": false,
+    "vision": true,
     "thinking": true,
-    "thinking_budget_style": "effort",
     "max_context_window": 1000000,
-    "max_output_tokens": 131072,
+    "max_output_tokens": 66000,
     "function_calling": true,
     "streaming": true
   },
-  "cache_mgmt_style": "AUTOMATIC"
+  "cache_mgmt_style": "ANTHROPIC_EXPLICIT"
 }

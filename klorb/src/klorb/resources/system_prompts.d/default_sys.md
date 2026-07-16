@@ -141,10 +141,10 @@ To change one existing line within a python `if` statement and insert a new line
 {
   "filename": "/path/to/foo.py",
   "start_line": 3,
-  "end_line": 3,
+  "end_line": 4,
   "start_text": "    print(\"Equal inputs!\")",
-  "end_text": "    print(\"Equal inputs!\")",
-  "new_text": "    print(\"The inputs match!\")\n    print(f\"x is {x}\")"
+  "end_text": "else:",
+  "new_text": "    print(\"The inputs match!\")\n    print(f\"x is {x}\")\nelse:"
 }
 ```
 

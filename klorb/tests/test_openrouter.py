@@ -59,8 +59,22 @@ def _chunk(
 
 
 def _reply_chunks(content: str, completion_tokens: int = 1, prompt_tokens: int = 1) -> list[MagicMock]:
-    usage = MagicMock(completion_tokens=completion_tokens, prompt_tokens=prompt_tokens)
+    usage = MagicMock(
+        completion_tokens=completion_tokens,
+        prompt_tokens=prompt_tokens,
+        prompt_tokens_details=None,
+    )
     return [_chunk(content=content, finish_reason="stop", usage=usage)]
+
+
+def _usage(
+    completion_tokens: int = 1, prompt_tokens: int = 1,
+) -> MagicMock:
+    return MagicMock(
+        completion_tokens=completion_tokens,
+        prompt_tokens=prompt_tokens,
+        prompt_tokens_details=None,
+    )
 
 
 def test_get_api_key_returns_explicit_value() -> None:
@@ -102,7 +116,7 @@ def test_send_prompt_returns_model_response() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
         _chunk(content="hello there"),
-        _chunk(finish_reason="stop", usage=MagicMock(completion_tokens=7, prompt_tokens=3)),
+        _chunk(finish_reason="stop", usage=_usage(7, 3)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
 
@@ -117,7 +131,7 @@ def test_send_prompt_returns_model_response() -> None:
         messages=[{"role": "user", "content": "hi"}],
         stream=True,
         stream_options={"include_usage": True},
-        extra_body=None,
+        extra_body={"session_id": ""},
     )
 
 
@@ -133,7 +147,7 @@ def test_send_prompt_uses_default_model_when_unspecified() -> None:
         messages=[{"role": "user", "content": "hi"}],
         stream=True,
         stream_options={"include_usage": True},
-        extra_body=None,
+        extra_body={"session_id": ""},
     )
 
 
@@ -167,7 +181,7 @@ def test_send_prompt_prepends_system_prompt_when_given() -> None:
         messages=[{"role": "system", "content": "be nice"}, {"role": "user", "content": "hi"}],
         stream=True,
         stream_options={"include_usage": True},
-        extra_body=None,
+        extra_body={"session_id": ""},
     )
 
 
@@ -187,7 +201,7 @@ def test_send_prompt_streams_content_across_multiple_chunks() -> None:
     mock_client.chat.completions.create.return_value = [
         _chunk(content="Hel"),
         _chunk(content="lo"),
-        _chunk(finish_reason="stop", usage=MagicMock(completion_tokens=2, prompt_tokens=5)),
+        _chunk(finish_reason="stop", usage=_usage(2, 5)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_chunk = MagicMock()
@@ -202,7 +216,7 @@ def test_send_prompt_reads_usage_from_choiceless_final_chunk() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
         _chunk(content="hi"),
-        _chunk(usage=MagicMock(completion_tokens=4, prompt_tokens=9)),
+        _chunk(usage=_usage(4, 9)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
 
@@ -216,7 +230,7 @@ def test_send_prompt_skips_on_chunk_for_empty_deltas() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
         _chunk(content=""),
-        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_chunk = MagicMock()
@@ -229,7 +243,7 @@ def test_send_prompt_skips_on_chunk_for_empty_deltas() -> None:
 def test_send_prompt_works_without_on_chunk() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
-        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
 
@@ -250,7 +264,7 @@ def test_send_prompt_includes_reasoning_in_request_body() -> None:
         messages=[{"role": "user", "content": "hi"}],
         stream=True,
         stream_options={"include_usage": True},
-        extra_body={"reasoning": {"effort": "high"}},
+        extra_body={"session_id": "", "reasoning": {"effort": "high"}},
     )
 
 
@@ -277,7 +291,7 @@ def test_send_prompt_forwards_thinking_deltas_via_on_thinking_chunk() -> None:
     mock_client.chat.completions.create.return_value = [
         _chunk(reasoning="Let "),
         _chunk(reasoning="me think."),
-        _chunk(content="Hello", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="Hello", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_thinking_chunk = MagicMock()
@@ -292,7 +306,7 @@ def test_send_prompt_skips_on_thinking_chunk_for_empty_reasoning_deltas() -> Non
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
         _chunk(reasoning=""),
-        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_thinking_chunk = MagicMock()
@@ -306,7 +320,7 @@ def test_send_prompt_works_without_on_thinking_chunk() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
         _chunk(reasoning="thinking..."),
-        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
 
@@ -320,7 +334,7 @@ def test_send_prompt_accumulates_reasoning_details_fragments_by_index() -> None:
     mock_client.chat.completions.create.return_value = [
         _chunk(reasoning_details=[{"type": "reasoning.text", "text": "Let ", "index": 0}]),
         _chunk(reasoning_details=[{"type": "reasoning.text", "text": "me think.", "index": 0}]),
-        _chunk(content="Hello", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="Hello", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_reasoning_details = MagicMock()
@@ -340,7 +354,7 @@ def test_send_prompt_accumulates_reasoning_details_by_separate_index() -> None:
             {"type": "reasoning.text", "text": "visible", "index": 0},
             {"type": "reasoning.encrypted", "data": "opaque-blob", "index": 1},
         ]),
-        _chunk(content="Hello", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="Hello", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_reasoning_details = MagicMock()
@@ -356,7 +370,7 @@ def test_send_prompt_accumulates_reasoning_details_by_separate_index() -> None:
 def test_send_prompt_skips_on_reasoning_details_when_no_fragments() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = [
-        _chunk(content="hi", finish_reason="stop", usage=MagicMock(completion_tokens=1, prompt_tokens=1)),
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
     on_reasoning_details = MagicMock()
@@ -470,7 +484,7 @@ def test_send_prompt_reassembles_streamed_tool_call_fragments() -> None:
         _chunk(tool_calls=[_tool_call_delta(0, id="call_1", name="ReadFile", arguments="")]),
         _chunk(tool_calls=[_tool_call_delta(0, arguments='{"filename": ')]),
         _chunk(tool_calls=[_tool_call_delta(0, arguments='"f.txt"}')]),
-        _chunk(finish_reason="tool_calls", usage=MagicMock(completion_tokens=3, prompt_tokens=5)),
+        _chunk(finish_reason="tool_calls", usage=_usage(3, 5)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
 
@@ -489,7 +503,7 @@ def test_send_prompt_reassembles_multiple_parallel_tool_calls_by_index() -> None
             _tool_call_delta(0, id="call_1", name="ReadFile", arguments='{"filename": "a"}'),
             _tool_call_delta(1, id="call_2", name="ReadFile", arguments='{"filename": "b"}'),
         ]),
-        _chunk(finish_reason="tool_calls", usage=MagicMock(completion_tokens=3, prompt_tokens=5)),
+        _chunk(finish_reason="tool_calls", usage=_usage(3, 5)),
     ]
     provider = openrouter.OpenRouterApiProvider(client=mock_client)
 

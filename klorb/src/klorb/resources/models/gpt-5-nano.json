@@ -17,5 +17,6 @@
     "max_output_tokens": 128000,
     "function_calling": true,
     "streaming": true
-  }
+  },
+  "cache_mgmt_style": "AUTOMATIC"
 }

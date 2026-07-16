@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
 from klorb.message import Message, ToolCallRequest
-from klorb.models.model import Model
+from klorb.models.model import CacheMgmtStyle, Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
@@ -756,6 +756,12 @@ class Session:
         model = self.active_model()
         return model.drop_reasoning() if model is not None else False
 
+    def _cache_mgmt_style(self) -> CacheMgmtStyle:
+        """Return the cache management style for the active model (see
+        `Model.cache_mgmt_style`)."""
+        model = self.active_model()
+        return model.cache_mgmt_style() if model is not None else "AUTOMATIC"
+
     def _ensure_system_message(self) -> None:
         """Insert a `role="system"` `Message` at the very front of `self._messages`,
         recording the session's resolved system prompt (see `_resolve_system_prompt` —
@@ -1428,6 +1434,7 @@ class Session:
                 drop_reasoning=drop_reasoning, on_chunk=handle_chunk,
                 on_thinking_chunk=handle_thinking_chunk,
                 on_reasoning_details=handle_reasoning_details_chunk,
+                cache_mgmt_style=self._cache_mgmt_style(),
                 cancel_event=callbacks.cancel_event)
         except ResponseAborted:
             if thinking_placeholder is not None:
