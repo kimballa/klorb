@@ -3,13 +3,13 @@
 ## Summary
 
 A trusted workspace can pick a conversation back up where a previous interactive klorb
-process left off. Quitting the TUI (`klorb.tui.repl.ReplApp`, via Ctrl+Q or the "Quit the
+process left off. Quitting the TUI (`klorb.tui.ReplApp`, via Ctrl+Q or the "Quit the
 application" system command) offers to save the live `Session`'s `SessionConfig` and full
 message history to `last-session.json`; an unhandled exception saves it unconditionally, with
 no prompt (see "Saving on crash" below); opening klorb again in the same (trusted) workspace
 auto-loads that file and replaces the freshly-constructed `Session` with one built from it,
 re-rendering the history scroll to match. `klorb.workspace.last_session` owns reading and
-writing the file; `klorb.tui.repl.ReplApp` and `klorb.tui.repl.run_repl`/`_handle_repl_crash`
+writing the file; `klorb.tui.ReplApp` and `klorb.tui.run_repl`/`_handle_repl_crash`
 own the save prompt/crash-save and the reconstruction.
 
 ## How it works
@@ -38,7 +38,7 @@ semantics" section for why a repeated idle Ctrl+C force-exits directly instead.
 * If this app has no `TrustManager` (`workspace_trust_management_enabled()` is `False`) or the
   current workspace isn't trusted, no prompt is shown — the app just exits. An unresolved or
   untrusted workspace has no business writing into its per-project data directory.
-* Otherwise, asks "Save session state before quitting?" via `klorb.tui.confirm_screen.
+* Otherwise, asks "Save session state before quitting?" via `klorb.tui.panels.confirm_screen.
   SaveOnQuitScreen`, which has three outcomes rather than a plain yes/no: "Yes" writes the file
   (`klorb.workspace.last_session.write_last_session(workspace, session.config,
   session.messages)`, schema-enveloped per docs/specs/persisted-json-schema-versioning.md as
@@ -50,7 +50,7 @@ semantics" section for why a repeated idle Ctrl+C force-exits directly instead.
 * Otherwise (Yes/No chosen, or no prompt was shown at all), the app proceeds to exit via
   `_begin_exit()`.
 
-### Saving on crash (`klorb.tui.repl.run_repl` / `_handle_repl_crash`)
+### Saving on crash (`klorb.tui.run_repl` / `_handle_repl_crash`)
 
 `App.run()` never raises an unhandled exception back out to its caller — Textual's own
 `App._handle_exception` prints a traceback and exits the app instead (see
@@ -183,7 +183,7 @@ always-on behavior for a trusted workspace.
   unconditional whenever a save file exists for a trusted workspace, matching how the
   input-history store already auto-attaches with no prompt.
 * A headless one-shot run never saves or restores anything — this is TUI-only, gated on
-  `klorb.tui.repl.ReplApp`'s own `TrustManager`/workspace-trust machinery exactly like the
+  `klorb.tui.ReplApp`'s own `TrustManager`/workspace-trust machinery exactly like the
   input-history store (see docs/specs/projects-and-trust.md's "Out of scope" section, which
   notes the same limitation for that feature).
 * A malformed or wrong-schema `last-session.json` is treated as "nothing to restore"

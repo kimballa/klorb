@@ -205,7 +205,7 @@ config) has one place to live.
   `permission_framework` resolves to `"auto"` when `-y`/`--auto-approve` is given, else
   `"deny"` when the resolved `interactive` is `False`, else the `SessionConfig` default
   (`"ask"`) — see [[default-permission-framework-to-deny-headlessly]].
-* `klorb.tui.repl.ReplApp` (`klorb/src/klorb/tui/repl.py`) takes a `Session` instead of a
+* `klorb.tui.ReplApp` (`klorb/src/klorb/tui/app.py`) takes a `Session` instead of a
   raw provider/model pair. Every submitted prompt — typed by the user or passed in as
   `initial_message` — goes through `Session.send_turn()` on a background worker thread,
   passing `on_tool_call_limit_reached=self._on_tool_call_limit_reached`. Since that runs on

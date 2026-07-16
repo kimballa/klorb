@@ -12,9 +12,15 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 
 ## How it works
 
-* `klorb.tui.repl` (`klorb/src/klorb/tui/repl.py`) defines `ReplApp`, a `textual.app.App`
-  subclass, and `run_repl(session, initial_message, session_log_enabled)`, a thin function
-  that constructs and runs it. `ReplApp` takes a [[session-and-turns]] `Session`
+* `klorb.tui.ReplApp` (`klorb/src/klorb/tui/app.py`), a `textual.app.App` subclass, is
+  assembled from mixins under `klorb/src/klorb/tui/mixins/` (key handling/quit/watchdog,
+  workspace bootstrap/trust, status bar, prompt submission, rendering, and interaction
+  flows), each holding one cohesive slice of its methods verbatim; `app.py` itself keeps only
+  `CSS`/`BINDINGS`/`COMMANDS`, `__init__`, `compose`, and model/theme/thinking selection.
+  `klorb.tui.run_repl(session, initial_message, session_log_enabled)`
+  (`klorb/src/klorb/tui/entrypoint.py`) is a thin function that constructs and runs it;
+  `klorb.tui`'s own `__init__.py` re-exports both `ReplApp` and `run_repl` as the package's
+  only public surface. `ReplApp` takes a [[session-and-turns]] `Session`
   (constructing a default one if none is given) rather than a raw `ApiProvider`/model pair,
   so the REPL sends every turn through the same `Session.send_turn()` path a one-shot
   prompt uses. `session_log_enabled` records whether `cli.main()` turned on per-session
@@ -38,8 +44,8 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   a full-width band mounted into `#interaction-panel`, between the history scroll and the
   prompt input, rather than as a floating modal dialog — see
   docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md for why. Concretely,
-  `ReplApp` mounts a `klorb.tui.permission_ask_panel.PermissionAskPanel` or
-  `klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel` into `#interaction-panel` and
+  `ReplApp` mounts a `klorb.tui.panels.permission_ask_panel.PermissionAskPanel` or
+  `klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel` into `#interaction-panel` and
   `await`s an `asyncio.Future` its `on_dismiss` callback resolves — see those modules' own
   docstrings for each panel's own content/keyboard-navigation shape (the Allow/Deny × scope
   grid, the options list, the `+`/`[more...]` full-screen command expansion, and so on, which
@@ -54,7 +60,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   showed, and `"Decision: ..."` — so scrolling back through the session later shows not just
   that an approval or a question happened, but what was asked and what was decided, in context
   with the rest of the conversation.
-* `PermissionBadge` (`klorb.tui.repl`) shows the session's current
+* `PermissionBadge` (`klorb.tui.widgets.status_widgets`) shows the session's current
   `Session.config.permission_framework` value bracketed and right-justified (`[ask]`,
   `[auto]`, or `[deny]`) within a fixed-width cell (`PERMISSION_BADGE_WIDTH` — the longest
   value plus one, plus `PERMISSION_BADGE_HORIZONTAL_PADDING` since Textual's CSS `width` is
@@ -254,7 +260,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   type. `.thinking-body` and `.tool-call` (the *body* widgets, not their labels) carry no
   margin of their own, since the preceding label already opened the gap.
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
-  (`klorb/src/klorb/tui/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
+  (`klorb/src/klorb/tui/commands/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
   thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry
   per `ThinkingEffort` level, which cluttered the palette). Selecting `"Enable
   thinking"`/`"Disable thinking"` calls `ReplApp.set_thinking_enabled(bool)` directly, which

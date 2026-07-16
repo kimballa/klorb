@@ -131,21 +131,22 @@ OpenRouter's public models listing.
   Kimi K2 release), `xiaomi/mimo-v2.5` (Xiaomi's omnimodal agentic model), and
   `openai/gpt-oss-120b:nitro` (OpenAI's open-weight reasoning model, the only built-in
   model declaring `klorb_capabilities.BASH_SAFETY_EVAL`).
-* `klorb.tui.model_commands.ModelCommandProvider` (`klorb/src/klorb/tui/model_commands.py`)
+* `klorb.tui.commands.model_commands.ModelCommandProvider`
+  (`klorb/src/klorb/tui/commands/model_commands.py`)
   is a Textual `command.Provider` offering a single `"Change model (<current>)"` command.
   Selecting it pushes `ModelSelectionScreen`, a modal with a text `Input` filter box above an
   `OptionList`: typing narrows the list via `textual.fuzzy.Matcher` (the same matcher the
   palette itself uses for ranking/highlighting), up/down arrow keys move the highlight, and
-  Enter confirms — mirroring `klorb.tui.palette.PromptPalette`'s split-focus shape, where the
+  Enter confirms — mirroring `klorb.tui.widgets.palette.PromptPalette`'s split-focus shape, where the
   `Input` keeps keyboard focus throughout and drives the `OptionList` programmatically. The
   active model is marked with a trailing `(*)`, the same convention
-  `klorb.tui.theme_commands.ThemeSelectionScreen` uses for the active theme. On selection,
+  `klorb.tui.commands.theme_commands.ThemeSelectionScreen` uses for the active theme. On selection,
   `ReplApp.select_model(name)` updates the model used for subsequent
   `ApiProvider.send_prompt()` calls, updates the window's `sub_title` (shown in the `Header`
   widget), persists the choice to the per-user config file, and appends a `.notice` item to
   the history scroll confirming the switch (see [[avoid-toasts-prefer-history-notices]]).
-* `klorb.tui.model_info_commands.ModelInfoCommandProvider`
-  (`klorb/src/klorb/tui/model_info_commands.py`) offers a `"Show model info"` command.
+* `klorb.tui.commands.model_info_commands.ModelInfoCommandProvider`
+  (`klorb/src/klorb/tui/commands/model_info_commands.py`) offers a `"Show model info"` command.
   Selecting it fetches the active model's current pricing (`asyncio.to_thread`, so the
   blocking network call doesn't stall the Textual event loop — see below) and appends a
   `.notice` item to the history scroll (`ReplApp.show_notice()`, see

@@ -14,7 +14,7 @@ are the underlying palette primitives.
 
 ## How it works
 
-* `klorb.tui.palette` (`klorb/src/klorb/tui/palette.py`) defines the pieces shared between
+* `klorb.tui.widgets.palette` (`klorb/src/klorb/tui/widgets/palette.py`) defines the pieces shared between
   this inline typeahead and any future palette-driven UI:
   * `gather_palette_hits(app, query)` collects every `Hit`/`DiscoveryHit` every provider in
     `app.COMMANDS`/`app.screen.COMMANDS` yields for `query` (an empty `query` means
@@ -110,7 +110,7 @@ what points the user at palette-from-prompt as the primary way in.
 
 ### Converting `/clear`
 
-`SessionCommandProvider` (`klorb/src/klorb/tui/session_commands.py`) is the only provider
+`SessionCommandProvider` (`klorb/src/klorb/tui/commands/session_commands.py`) is the only provider
 `>clear` needs to match: its `search()`/`discover()` yield a `Hit`/`DiscoveryHit` for
 `CLEAR_SESSION_LABEL` (`"Clear session"`) alone. There's no special-cased `prompt_text ==
 "/clear"` check anywhere in `ReplApp.on_prompt_input_submitted` — a bare `/clear` typed as a

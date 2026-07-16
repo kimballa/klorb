@@ -81,10 +81,10 @@ catch-in-`Session`-and-callback plumbing rather than inventing a second mechanis
   rest of the batch and fails the whole tool call, naming the cancelled question and echoing
   back any answers already collected for earlier questions in the same call, together with a
   reminder not to keep guessing or re-asking the same thing a different way.
-* `ReplApp._on_ask_user_questions`/`_confirm_ask_user_questions` (`klorb.tui.repl`) is the
+* `ReplApp._on_ask_user_questions`/`_confirm_ask_user_questions` (`klorb.tui.mixins.interactions`) is the
   TUI's implementation, mirroring `_on_permission_ask`/`_confirm_permission_ask`: it blocks the
   worker thread running `Session.send_turn()` via `call_from_thread`, mounts
-  `klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel` for one question at a time into
+  `klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel` for one question at a time into
   the REPL's `#interaction-panel` (see [[terminal-repl]]'s "Interaction panel" section and
   docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md) on the app's own
   event loop, and returns once the user answers.
