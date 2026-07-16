@@ -414,3 +414,51 @@ def test_directory_path_still_recurses(tmp_path: Path) -> None:
         {"path": str(tmp_path), "queries": ["hello"]})
     assert _matched_filenames(result) == {"top.py", "nested.py", "notes.txt"}
     assert result["match_count"] == 4
+
+
+def test_gitignored_file_is_skipped_and_flagged(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["hello"]})
+
+    assert _matched_filenames(result) == {"top.py"}
+    assert result["gitignored_hidden"] is True
+    assert result["use_gitignore"] is True
+    assert "use_gitignore=false" in result["note"]
+
+
+def test_use_gitignore_false_searches_ignored_files(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = GrepTool(_context(tmp_path)).apply(
+        {"path": "", "queries": ["hello"], "use_gitignore": False})
+
+    assert _matched_filenames(result) == {"top.py", "nested.py", "notes.txt"}
+    assert result["gitignored_hidden"] is False
+    assert "note" not in result
+
+
+def test_gitignore_flag_in_list_files_mode(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = GrepTool(_context(tmp_path)).apply(
+        {"path": "", "queries": ["hello"], "outputStyle": "ListFiles"})
+
+    assert {Path(f).name for f in result["files"]} == {"top.py"}
+    assert result["gitignored_hidden"] is True
+    assert "use_gitignore=false" in result["note"]
+
+
+def test_explicit_single_file_ignores_gitignore_filtering(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    # A gitignored file named explicitly is still searched; the tree filter doesn't apply.
+    result = GrepTool(_context(tmp_path)).apply(
+        {"path": str(tmp_path / "sub" / "nested.py"), "queries": ["hello"]})
+
+    assert _matched_filenames(result) == {"nested.py"}
+    assert result["gitignored_hidden"] is False

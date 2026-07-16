@@ -113,6 +113,41 @@ def test_denied_subdir_is_skipped_not_raised(tmp_path: Path) -> None:
     assert names == {"top.py"}
 
 
+def test_gitignored_match_is_hidden_and_flagged(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = FindFileTool(_context(tmp_path)).apply({"dirname": "", "pattern": "*.py"})
+
+    names = {Path(m).name for m in result["matches"]}
+    assert names == {"top.py"}
+    assert result["gitignored_hidden"] is True
+    assert result["use_gitignore"] is True
+    assert "use_gitignore=false" in result["note"]
+
+
+def test_use_gitignore_false_includes_ignored_matches(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = FindFileTool(_context(tmp_path)).apply(
+        {"dirname": "", "pattern": "*.py", "use_gitignore": False})
+
+    names = {Path(m).name for m in result["matches"]}
+    assert names == {"top.py", "nested.py", "leaf_context.py"}
+    assert result["gitignored_hidden"] is False
+    assert "note" not in result
+
+
+def test_no_gitignore_hidden_flag_when_nothing_ignored(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = FindFileTool(_context(tmp_path)).apply({"dirname": "", "pattern": "*.py"})
+
+    assert result["gitignored_hidden"] is False
+    assert "note" not in result
+
+
 def test_summary_on_success(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     tool = FindFileTool(_context(tmp_path))

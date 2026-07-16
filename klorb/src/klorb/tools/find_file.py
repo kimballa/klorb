@@ -8,9 +8,13 @@ from typing import Any
 
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
-from klorb.tools.util import walk_readable_tree
+from klorb.tools.util import WalkReport, walk_readable_tree
 
 logger = logging.getLogger(__name__)
+
+_GITIGNORE_HIDDEN_NOTE = (
+    "Some matches were hidden because a .gitignore rule excludes them. Re-call FindFile with "
+    "use_gitignore=false to search gitignored files too.")
 
 
 class FindFileTool(Tool):
@@ -37,7 +41,10 @@ class FindFileTool(Tool):
             "'truncated' flag in the result means more matches exist than were returned. A "
             "subdirectory your readDirs permissions deny, or that requires confirmation, is "
             "silently skipped rather than failing the whole search — only dirname itself "
-            "raises if it isn't allowed."
+            "raises if it isn't allowed. Files excluded by the project's .gitignore rules are "
+            "skipped by default; when that happens the result sets 'gitignored_hidden' to true "
+            "and includes a 'note', and you can re-call with use_gitignore=false to search "
+            "gitignored files too."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -62,6 +69,13 @@ class FindFileTool(Tool):
                     "type": "boolean",
                     "description": "Match pattern case-insensitively. Defaults to false.",
                 },
+                "use_gitignore": {
+                    "type": "boolean",
+                    "description": (
+                        "Skip files and directories excluded by the project's .gitignore "
+                        "rules. Defaults to true; set false to search gitignored files too."
+                    ),
+                },
             },
             "required": ["pattern"],
             "additionalProperties": False,
@@ -75,15 +89,19 @@ class FindFileTool(Tool):
             raise ValueError(
                 "Missing required argument: 'pattern'. Provide the filename glob pattern to match.")
         case_insensitive = args.get("case_insensitive", False)
+        use_gitignore = args.get("use_gitignore", True)
         logger.debug(
-            "FindFile %r in %r (case_insensitive=%s)", pattern, dirname, case_insensitive)
+            "FindFile %r in %r (case_insensitive=%s, use_gitignore=%s)",
+            pattern, dirname, case_insensitive, use_gitignore)
 
         match_pattern = pattern.lower() if case_insensitive else pattern
 
         matches: list[str] = []
         truncated = False
         root_path: Path | None = None
-        for dir_path, _subdirs, filenames in walk_readable_tree(self.context, dirname):
+        report = WalkReport()
+        for dir_path, _subdirs, filenames in walk_readable_tree(
+                self.context, dirname, use_gitignore=use_gitignore, report=report):
             if root_path is None:
                 root_path = dir_path
             if truncated:
@@ -99,13 +117,18 @@ class FindFileTool(Tool):
 
         logger.debug("FindFile found %d match(es) (truncated=%s)", len(matches), truncated)
 
-        return {
+        result: dict[str, Any] = {
             "root": str(root_path) if root_path is not None else dirname,
             "pattern": pattern,
             "case_insensitive": case_insensitive,
+            "use_gitignore": use_gitignore,
             "matches": matches,
             "truncated": truncated,
+            "gitignored_hidden": report.gitignored_hidden,
         }
+        if report.gitignored_hidden:
+            result["note"] = _GITIGNORE_HIDDEN_NOTE
+        return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         pattern = args.get("pattern", "?")

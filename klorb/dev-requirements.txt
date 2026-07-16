@@ -13,7 +13,7 @@ aiosignal==1.4.0
     # via aiohttp
 annotated-types==0.7.0
     # via pydantic
-anyio==4.14.1
+anyio==4.14.2
     # via
     #   httpx
     #   openai
@@ -101,7 +101,7 @@ multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-mypy==2.2.0
+mypy==2.3.0
     # via klorb (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
@@ -112,7 +112,9 @@ packaging==26.2
     #   klorb (pyproject.toml)
     #   pytest
 pathspec==1.1.1
-    # via mypy
+    # via
+    #   klorb (pyproject.toml)
+    #   mypy
 pep8-naming==0.15.1
     # via klorb (pyproject.toml)
 pip==26.1.2
@@ -200,7 +202,7 @@ uc-micro-py==2.0.0
     # via linkify-it-py
 urllib3==2.7.0
     # via requests
-uv==0.11.28
+uv==0.11.29
     # via klorb (pyproject.toml)
 yarl==1.24.2
     # via aiohttp

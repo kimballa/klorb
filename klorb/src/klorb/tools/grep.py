@@ -12,6 +12,7 @@ from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 from klorb.tools.util import (
+    WalkReport,
     compile_queries,
     context_lines_for_matches,
     match_line_indices,
@@ -22,6 +23,10 @@ from klorb.tools.util import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GITIGNORE_HIDDEN_NOTE = (
+    "Some files were skipped without being searched because a .gitignore rule excludes them. "
+    "Re-call Grep with use_gitignore=false to search gitignored files too.")
 
 
 class GrepTool(Tool):
@@ -73,7 +78,10 @@ class GrepTool(Tool):
             "means more matches exist than were returned. A subdirectory your readDirs "
             "permissions deny, or that "
             "requires confirmation, is silently skipped rather than failing the whole search "
-            "— only the path itself raises if it isn't allowed. "
+            "— only the path itself raises if it isn't allowed. Files excluded by the project's "
+            ".gitignore rules are skipped without being searched by default; when that happens "
+            "the result sets 'gitignored_hidden' to true and includes a 'note', and you can "
+            "re-call with use_gitignore=false to search gitignored files too. "
             "Use outputStyle to control the level of detail: \"ListFiles\" returns just "
             "deduplicated filenames, \"Matches\" returns only the hit lines (default), and "
             "\"FullContext\" returns hit lines plus surrounding context."
@@ -128,6 +136,14 @@ class GrepTool(Tool):
                         "(default); \"FullContext\" returns hit lines plus surrounding context."
                     ),
                 },
+                "use_gitignore": {
+                    "type": "boolean",
+                    "description": (
+                        "Skip files and directories excluded by the project's .gitignore "
+                        "rules. Defaults to true; set false to search gitignored files too. "
+                        "Ignored only when path names a single file to search."
+                    ),
+                },
             },
             "required": ["queries"],
             "additionalProperties": False,
@@ -144,10 +160,13 @@ class GrepTool(Tool):
         is_regex = args.get("is_regex", False)
         case_insensitive = args.get("case_insensitive", False)
         file_glob = args.get("file_glob")
+        use_gitignore = args.get("use_gitignore", True)
         output_style = validate_output_style(args.get("outputStyle"))
         logger.debug(
-            "Grep %r in %r (is_regex=%s, case_insensitive=%s, file_glob=%s, outputStyle=%s)",
-            queries, search_path, is_regex, case_insensitive, file_glob, output_style)
+            "Grep %r in %r (is_regex=%s, case_insensitive=%s, file_glob=%s, use_gitignore=%s, "
+            "outputStyle=%s)",
+            queries, search_path, is_regex, case_insensitive, file_glob, use_gitignore,
+            output_style)
 
         compiled = compile_queries(
             queries, is_regex=is_regex, case_insensitive=case_insensitive)
@@ -159,6 +178,7 @@ class GrepTool(Tool):
         match_count = 0
         truncated = False
         root_path: Path | None = None
+        report = WalkReport()
 
         # Determine whether search_path is a single file or a directory tree.
         single_file: Path | None = None
@@ -202,7 +222,8 @@ class GrepTool(Tool):
                     match_count += len(matched_indices)
         else:
             # Directory tree search (existing recursive walk).
-            for dir_path, _subdirs, filenames in walk_readable_tree(self.context, search_path):
+            for dir_path, _subdirs, filenames in walk_readable_tree(
+                    self.context, search_path, use_gitignore=use_gitignore, report=report):
                 if root_path is None:
                     root_path = dir_path
                 if truncated:
@@ -248,28 +269,35 @@ class GrepTool(Tool):
             match_count, len(files) if output_style != "ListFiles" else len(list_files), truncated)
 
         if output_style == "ListFiles":
-            return {
+            result: dict[str, Any] = {
                 "root": str(root_path) if root_path is not None else search_path,
                 "queries": queries,
                 "is_regex": is_regex,
                 "case_insensitive": case_insensitive,
                 "file_glob": file_glob,
+                "use_gitignore": use_gitignore,
                 "files": list_files,
                 "match_count": match_count,
                 "truncated": truncated,
+                "gitignored_hidden": report.gitignored_hidden,
             }
-
-        return {
-            "root": str(root_path) if root_path is not None else search_path,
-            "queries": queries,
-            "is_regex": is_regex,
-            "case_insensitive": case_insensitive,
-            "file_glob": file_glob,
-            "context_lines": self._context_lines if output_style == "FullContext" else 0,
-            "files": files,
-            "match_count": match_count,
-            "truncated": truncated,
-        }
+        else:
+            result = {
+                "root": str(root_path) if root_path is not None else search_path,
+                "queries": queries,
+                "is_regex": is_regex,
+                "case_insensitive": case_insensitive,
+                "file_glob": file_glob,
+                "use_gitignore": use_gitignore,
+                "context_lines": self._context_lines if output_style == "FullContext" else 0,
+                "files": files,
+                "match_count": match_count,
+                "truncated": truncated,
+                "gitignored_hidden": report.gitignored_hidden,
+            }
+        if report.gitignored_hidden:
+            result["note"] = _GITIGNORE_HIDDEN_NOTE
+        return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")

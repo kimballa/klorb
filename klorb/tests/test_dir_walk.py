@@ -10,7 +10,7 @@ from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.util import walk_readable_tree
+from klorb.tools.util import WalkReport, walk_readable_tree
 from klorb.workspace import Workspace
 
 
@@ -130,6 +130,95 @@ def test_symlinked_subdir_is_not_descended(tmp_path: Path) -> None:
     assert dir_path == workspace.resolve()
     assert subdirs == []
     assert files == []
+
+
+def _visited(
+    results: list[tuple[Path, list[str], list[str]]], root: Path,
+) -> dict[str, tuple[list[str], list[str]]]:
+    return {
+        str(dir_path.relative_to(root)): (subdirs, files)
+        for dir_path, subdirs, files in results
+    }
+
+
+def test_gitignored_file_is_hidden_and_flagged(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("*.log\n")
+    (tmp_path / "debug.log").write_text("noise\n")
+
+    report = WalkReport()
+    results = list(walk_readable_tree(_context(tmp_path), "", report=report))
+
+    visited = _visited(results, tmp_path)
+    assert "debug.log" not in visited["."][1]
+    assert "top.txt" in visited["."][1]
+    assert report.gitignored_hidden is True
+
+
+def test_gitignored_subdir_is_pruned_and_flagged(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub_a/\n")
+
+    report = WalkReport()
+    results = list(walk_readable_tree(_context(tmp_path), "", report=report))
+
+    visited = _visited(results, tmp_path)
+    assert visited["."][0] == ["sub_b"]
+    assert "sub_a" not in visited
+    assert "sub_a/nested" not in visited
+    assert report.gitignored_hidden is True
+
+
+def test_use_gitignore_false_walks_everything(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("*.log\nsub_a/\n")
+    (tmp_path / "debug.log").write_text("noise\n")
+
+    report = WalkReport()
+    results = list(walk_readable_tree(_context(tmp_path), "", use_gitignore=False, report=report))
+
+    visited = _visited(results, tmp_path)
+    assert "debug.log" in visited["."][1]
+    assert "sub_a" in visited
+    assert report.gitignored_hidden is False
+
+
+def test_nested_gitignore_negation_reincludes(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("*.txt\n")
+    (tmp_path / "sub_a" / ".gitignore").write_text("!a.txt\n")
+
+    report = WalkReport()
+    results = list(walk_readable_tree(_context(tmp_path), "", report=report))
+
+    visited = _visited(results, tmp_path)
+    # Root-level `*.txt` hides top.txt, but the nested .gitignore re-includes sub_a/a.txt.
+    assert "top.txt" not in visited["."][1]
+    assert "a.txt" in visited["sub_a"][1]
+    assert report.gitignored_hidden is True
+
+
+def test_ancestor_gitignore_applies_to_subdir_search(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("*.txt\n")
+
+    report = WalkReport()
+    results = list(walk_readable_tree(_context(tmp_path), "sub_a", report=report))
+
+    visited = _visited(results, tmp_path)
+    # a.txt lives under the searched subdir but is hidden by the workspace-root .gitignore.
+    assert visited["sub_a"][1] == []
+    assert report.gitignored_hidden is True
+
+
+def test_no_report_argument_still_filters(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("*.txt\n")
+
+    results = list(walk_readable_tree(_context(tmp_path), ""))
+
+    visited = _visited(results, tmp_path)
+    assert "top.txt" not in visited["."][1]
 
 
 def test_symlinked_file_is_still_listed(tmp_path: Path) -> None:

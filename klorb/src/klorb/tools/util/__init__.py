@@ -35,7 +35,7 @@ re-exporting it here is cycle-free for the same reason.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
-from klorb.tools.util.dir_walk import walk_readable_tree
+from klorb.tools.util.dir_walk import WalkReport, walk_readable_tree
 from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit
 from klorb.tools.util.read_file_core import ReadFileCore
 from klorb.tools.util.search_core import (
@@ -55,6 +55,7 @@ __all__ = [
     "LineRangeEdit",
     "ReadFileCore",
     "VALID_OUTPUT_STYLES",
+    "WalkReport",
     "compile_queries",
     "context_lines_for_matches",
     "format_match_line",
