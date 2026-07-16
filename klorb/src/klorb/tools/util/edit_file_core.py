@@ -57,18 +57,15 @@ class EditFileCore:
             "start_text": {
                 "type": "string",
                 "description": (
-                    "The CURRENT content at start_line — exactly one line, verbatim, no "
-                    "trailing newline. Never the multi-line block being replaced (that's "
-                    "new_text) and never the replacement's first line either; this is only "
-                    "for verifying you're editing the right spot."
+                    "The CURRENT content at start_line — one line, verbatim, no "
+                    "trailing newline. For verifying you're editing the right spot."
                 ),
             },
             "end_text": {
                 "type": "string",
                 "description": (
-                    "The CURRENT content at end_line — exactly one line, verbatim, no "
-                    "trailing newline. Same rule as start_text: never the multi-line block "
-                    "being replaced, and never the replacement's last line either."
+                    "The CURRENT content at end_line — one line, verbatim, no "
+                    "trailing newline. Same rule as start_text."
                 ),
             },
             "new_text": {
@@ -83,9 +80,9 @@ class EditFileCore:
                 "type": ["string", "null"],
                 "description": (
                     "Optional. Raw content (no line numbers) immediately before start_line, "
-                    "used only to disambiguate multiple start_text/end_text matches. Only "
+                    "used to disambiguate multiple start_text/end_text matches. Only "
                     "include after an 'Ambiguous match' error. The empty string \"\" means "
-                    "there must be absolutely nothing before start_line (i.e. it's the very "
+                    "absolutely nothing before start_line (i.e. it's the very "
                     "first line). To omit, just send null."
                 ),
             },

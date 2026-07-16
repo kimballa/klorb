@@ -91,11 +91,9 @@ Use the Bash tool to verify, build, inspect, and explore your environment.
 **The rule:** `start_text` and `end_text` are each exactly ONE line of the *current* content
 — verbatim, with no trailing newline, and never including the `'N|'` line-number prefix that
 `ReadFile`/`ReadScratchpad` prepend for display. Everything else — every other old line, and
-all new content — goes in `new_text`, the only field that may be multi-line. The most common
-mistake is pasting the whole multi-line block being replaced into `start_text`/`end_text`;
-don't.
+all new content — goes in `new_text`, the only field that may be multi-line.
 
-Both tools replace the inclusive line range `[start_line, end_line]` with `new_text`, verified
+These tools replace the inclusive line range `[start_line, end_line]` with `new_text`, verified
 against `start_text`/`end_text`.
 
 * `start_line`/`end_line` are a location hint, not exact coordinates: modest drift (e.g. from
@@ -114,6 +112,41 @@ against `start_text`/`end_text`.
   completely empty file/scratchpad, the only valid call is `start_line=1, end_line=0,
   start_text="", end_text=""`. Apply multiple edits to the same target bottom-to-top (greatest
   line numbers first) to avoid drift.
+
+### Worked Example
+
+To change one existing line within a python `if` statement and insert a new line below it:
+
+1) ReadFile tool call:
+```json
+{
+  "filename": "/path/to/foo.py",
+  "start_line": 1
+}
+```
+
+2) ReadFile tool response:
+```json
+{
+  "start_line": 1,
+  "end_line": 5,
+  "total_lines": 5,
+  "truncated": false,
+  "content": "1|# Example script\n2|if x == y:\n3|    print(\"Equal inputs!\")\n4|else:\n5|    print(\"Not a match\")"
+}
+```
+
+3) EditFile tool call
+```json
+{
+  "filename": "/path/to/foo.py",
+  "start_line": 3,
+  "end_line": 3,
+  "start_text": "    print(\"Equal inputs!\")",
+  "end_text": "    print(\"Equal inputs!\")",
+  "new_text": "    print(\"The inputs match!\")\n    print(f\"x is {x}\")"
+}
+```
 
 ## Scratchpad
 

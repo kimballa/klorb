@@ -24,8 +24,8 @@ NAMESPACE_SCHEMA_PROPERTY = {
     "type": "string",
     "enum": ["global", "workspace"],
     "description": (
-        "\"global\" memories live under the user's home directory and apply across every "
-        "workspace; \"workspace\" memories live in this workspace's .klorb directory and "
+        "\"global\" memories live under the user's home directory and apply to all "
+        "workspaces; \"workspace\" memories live in this workspace's .klorb directory and "
         "apply only here."
     ),
 }

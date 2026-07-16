@@ -49,11 +49,9 @@ class EditMemoryTool(Tool):
     def description(self) -> str:
         return (
             "Replaces the inclusive 1-indexed line range [start_line, end_line] of a memory "
-            "file with new_text -- same mechanics as EditFile/EditScratchpad; see your system "
-            "prompt's guidance on those for how start_text/end_text/context_before/"
-            "context_after work, how drift tolerance and 'Ambiguous match' errors work, and "
-            "the empty-file/insert/delete conventions. A memory's first line is its topic and "
-            "must never be blank -- an edit that would leave it blank fails instead."
+            "file with new_text -- same mechanics as EditFile; see your system "
+            "prompt's guidance. A memory's first line is its topic and "
+            "must never be blank -- an edit that would leave it blank fails."
         )
 
     def parameters(self) -> dict[str, Any]:

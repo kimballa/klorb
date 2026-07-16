@@ -35,10 +35,8 @@ class EditScratchpadTool(Tool):
         return (
             "Replaces the inclusive 1-indexed line range [start_line, end_line] of your "
             "scratchpad with new_text -- same mechanics as EditFile, but for the scratchpad "
-            "rather than a named file, so there is no filename argument. See your system "
-            "prompt's guidance on EditFile/EditScratchpad for how start_text/end_text/"
-            "context_before/context_after work, how drift tolerance and 'Ambiguous match' "
-            "errors work, and the empty-scratchpad/insert/delete conventions."
+            "rather than a named file, so there is no filename argument. See the system "
+            "prompt's guidance on EditFile and EditScratchpad."
         )
 
     def parameters(self) -> dict[str, Any]:
