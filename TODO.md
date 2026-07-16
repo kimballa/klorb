@@ -7,8 +7,6 @@
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
   like `</Think>` in the middle of its output.
 
-* `grep -n * *` is already allowlisted but it keeps asking over and over; why?
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
