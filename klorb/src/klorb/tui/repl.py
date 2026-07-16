@@ -58,6 +58,7 @@ from klorb.session import (
     ToolCallEvent,
     TurnEventHandlers,
 )
+from klorb.session_statistics import SessionStatistics
 from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tools.registry import NoSuchToolException, ToolRegistry
 from klorb.tools.tool import (
@@ -1332,6 +1333,11 @@ class ReplApp(App[None]):
         stable display order — see `ModelCommandProvider`."""
         return sorted(model.name() for model in self._session.model_registry.models())
 
+    def get_session_statistics(self) -> SessionStatistics:
+        """Return the active session's running statistics — see
+        `klorb.tui.session_commands.SessionCommandProvider`."""
+        return self._session.statistics
+
     def select_model(self, name: str) -> None:
         """Make `name` the active model used for subsequent prompts, the default model for any
         future session started in this process, and — persisted to the per-user config file
@@ -1571,7 +1577,8 @@ class ReplApp(App[None]):
 
         if save:
             write_last_session(
-                self._session.config.workspace, self._session.config, self._session.messages)
+                self._session.config.workspace, self._session.config, self._session.messages,
+                statistics=self._session.statistics)
         else:
             clear_last_session(self._session.config.workspace)
         self._begin_exit()
@@ -1771,6 +1778,8 @@ class ReplApp(App[None]):
             model_registry=self._session.model_registry, process_config=self._process_config,
             tool_registry=ToolRegistry(self._process_config, restored_config))
         self._session.load_messages(state.messages)
+        if state.statistics is not None:
+            self._session.load_statistics(state.statistics)
         self.sub_title = restored_config.model
         self._update_status_bar()
         self._mount_restored_history(state.messages)
@@ -2986,7 +2995,8 @@ def _handle_repl_crash(app: ReplApp, crash_tee: CrashLogTee) -> None:
         return
     try:
         write_last_session(
-            live_session.config.workspace, live_session.config, live_session.messages)
+            live_session.config.workspace, live_session.config, live_session.messages,
+            statistics=live_session.statistics)
     except OSError:
         logger.warning("Could not save session state on crash.", exc_info=True)
         print("klorb crashed; could not save session state.", file=sys.stderr)

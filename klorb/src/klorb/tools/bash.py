@@ -1127,6 +1127,17 @@ class BashTool(Tool):
         self.context.session_config.read_dirs = DirRules(
             deny=list(read_dirs.deny), ask=list(read_dirs.ask), allow=[*read_dirs.allow, tmp_dir])
 
+    def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
+        """A shell command that ran but failed (non-zero exit, timeout, a dead persistent
+        terminal, or a reconcile-on-grow refusal) doesn't raise — `apply()` returns a result
+        dict carrying `"success": False` (see `_decode_exit` and `_execute_persistent`). So the
+        base class's `error is None` heuristic isn't enough here: honor the result's own
+        `"success"` flag once no exception was raised.
+        """
+        if error is not None:
+            return False
+        return bool(result.get("success")) if isinstance(result, dict) else True
+
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Prefix the rendered command with the model's own `intent` (when given), so the
         history scroll shows what the command is *for* alongside what it actually runs — e.g.

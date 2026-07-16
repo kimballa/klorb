@@ -17,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 from klorb.message import Message
 from klorb.schema_envelope import read_versioned_json, write_versioned_json
 from klorb.session import SessionConfig
+from klorb.session_statistics import SessionStatistics
 from klorb.workspace import Workspace
 from klorb.workspace.input_history import project_history_dir
 
@@ -37,6 +38,9 @@ class LastSessionState(BaseModel):
 
     config: SessionConfig
     messages: list[Message]
+    statistics: SessionStatistics | None = None
+    """Running statistics accumulated during the session, if saved.  Absent (``None``) in
+    files written by older klorb versions that predate session statistics tracking."""
 
 
 def last_session_path(workspace: Workspace) -> Path:
@@ -45,11 +49,17 @@ def last_session_path(workspace: Workspace) -> Path:
     return project_history_dir(workspace) / LAST_SESSION_FILENAME
 
 
-def write_last_session(workspace: Workspace, config: SessionConfig, messages: list[Message]) -> None:
+def write_last_session(
+    workspace: Workspace,
+    config: SessionConfig,
+    messages: list[Message],
+    statistics: SessionStatistics | None = None,
+) -> None:
     """Save `config` and `messages` to `workspace`'s `last-session.json`, schema-enveloped per
     docs/specs/persisted-json-schema-versioning.md. Overwrites any previously-saved state for
-    this workspace outright — there is only ever one "last" session per workspace."""
-    state = LastSessionState(config=config, messages=messages)
+    this workspace outright — there is only ever one "last" session per workspace.
+    Optionally includes `statistics` (session run-time counters) when provided."""
+    state = LastSessionState(config=config, messages=messages, statistics=statistics)
     write_versioned_json(
         last_session_path(workspace), state.model_dump(mode="json"),
         schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)

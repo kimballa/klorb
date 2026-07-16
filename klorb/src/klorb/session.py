@@ -28,11 +28,13 @@ from klorb.permissions.table import (
     PermissionOverride,
 )
 from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
+from klorb.session_statistics import SessionStatistics, ToolCallStats
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call, tool_call_logging_enabled
 from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
+from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.scratchpad.common import Scratchpad
 from klorb.workspace import Workspace
 
@@ -534,6 +536,12 @@ class Session:
         reads it via `self.context.session.scratchpad.path` (see `klorb.tools.scratchpad.common.
         scratchpad_path`), the same access pattern as `tool_state` above."""
         self.register_teardown("Scratchpad", self.scratchpad.cleanup)
+        self.statistics = SessionStatistics()
+        """Running tally of message counts, tool-call counts, and per-tool success/failure
+        breakdowns, updated incrementally as turns flow through `send_turn()` /
+        `_send_and_receive()` / `_run_tool_calls()`. Persisted alongside the session state
+        (see `klorb.workspace.last_session.LastSessionState.statistics`) so a restored session
+        continues accumulating from where the previous one left off."""
 
     @property
     def role(self) -> Role:
@@ -589,6 +597,15 @@ class Session:
         out-of-band on every turn regardless of what's recorded here.
         """
         self._messages = list(messages)
+
+    def load_statistics(self, statistics: SessionStatistics) -> None:
+        """Replace this session's running statistics with `statistics` — e.g. restoring a
+        previous interactive session's counts from `klorb.workspace.last_session`. Intended
+        to be called once, immediately after construction (alongside `load_messages()`),
+        before any `send_turn()`, so that new increments continue from where the previous
+        session left off rather than starting from zero.
+        """
+        self.statistics = statistics
 
     def set_permission_framework(self, value: PermissionFramework) -> None:
         """Change `config.permission_framework` to `value` and queue a system-harness
@@ -1258,6 +1275,7 @@ class Session:
 
             self._tool_calls_this_turn += 1
             self._tool_calls_this_session += 1
+            self.statistics.tool_calls += 1
             logger.info(
                 "Tool call %d/%d this turn, %d/%d this session: %s(%s) [id=%s]",
                 self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
@@ -1280,7 +1298,9 @@ class Session:
                 # doesn't get sent to the API on subsequent turns (which would
                 # cause a 400 Bad Request error due to the invalid JSON).
                 call.arguments = "{}"
+                self.statistics.malformed_tool_calls += 1
 
+            tool = None
             if error is None:
                 try:
                     tool = self._tool_registry.instantiate_tool(call.name)
@@ -1310,9 +1330,20 @@ class Session:
                             path=ask_exc.path, is_write=ask_exc.is_write,
                             resource_description=str(ask_exc)))
                         result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                except NoSuchToolException:
+                    logger.warning("Tool call %s: tool not found", call.name)
+                    error = f"No such tool: {call.name!r}"
+                    self.statistics.unknown_tool_calls += 1
                 except Exception as exc:
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
                     error = str(exc)
+            # Per-tool success/failure tracking (only when a Tool instance was resolved)
+            if tool is not None:
+                tool_stats = self.statistics.tools.setdefault(call.name, ToolCallStats())
+                if tool.is_success(args, result, error):
+                    tool_stats.success_count += 1
+                else:
+                    tool_stats.failed_count += 1
             content = _format_tool_response_content(result, error)
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)
@@ -1478,6 +1509,7 @@ class Session:
             thinking_placeholder.streaming_content = None
             thinking_placeholder.processing_state = "complete"
             thinking_placeholder.last_error = None
+            self.statistics.thinking_messages += 1
 
         if placeholder is not None:
             placeholder.content = result.message.content
@@ -1493,6 +1525,7 @@ class Session:
 
         if placeholder.tool_calls:
             placeholder.role = "tool_use"
+        self.statistics.response_messages += 1
 
         return placeholder, result
 
@@ -1657,6 +1690,7 @@ class Session:
             timestamp=datetime.now(),
         )
         self._messages.append(user_message)
+        self.statistics.user_messages += 1
         logger.info(
             "Sending turn to %s (%d messages in context)", self.active_model_name(), len(self._messages))
         return self._dispatch_turn(user_message, callbacks)

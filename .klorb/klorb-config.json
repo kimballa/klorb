@@ -52,7 +52,8 @@
         ["venv/bin/flake8", "--config", ".flake8", "*"],
         ["python3", "--version"],
         ["which", "**"],
-        ["head", "*", "*"]
+        ["head", "*", "*"],
+        ["cat"]
       ]
     },
     "shareEnv": [

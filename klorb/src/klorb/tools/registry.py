@@ -14,15 +14,11 @@ import klorb.tools as default_tools_package
 from klorb.permissions.table import PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
-
-
-class NoSuchToolException(Exception):
-    def __init__(self, tool_name: str) -> None:
-        super().__init__(f"No such tool: {tool_name!r}")
 
 
 class ToolRegistry:

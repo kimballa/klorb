@@ -95,6 +95,19 @@ class Tool(ABC):
     def apply(self, args: dict[str, Any]) -> Any:
         """Execute the tool with the given arguments and return its result."""
 
+    def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
+        """Return whether one call to this tool succeeded, given the parsed `args`, the raw
+        `result` returned by `apply()`, and the `error` string (or `None`). The default
+        implementation treats `error is None` as success — the tool didn't raise — and
+        `error is not None` as failure. Override for a tool whose result shape can indicate
+        failure even when no exception was raised (e.g. a tool that returns a status code
+        rather than raising on partial failure).
+
+        Called by `Session._run_tool_calls()` to update `SessionStatistics.tools` per-tool
+        success/failure counts — see `klorb.session_statistics.ToolCallStats`.
+        """
+        return error is None
+
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Return a one-line, human-friendly description of one call to this tool, shown by
         default wherever a UI renders tool call activity (see docs/specs/terminal-repl.md).

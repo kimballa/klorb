@@ -299,6 +299,21 @@ def test_nonzero_exit_reports_failure(tmp_path: Path) -> None:
     assert result["failure_reason"] == "Process completed normally with non-zero status"
 
 
+def test_is_success_reflects_a_nonzero_exit(tmp_path: Path) -> None:
+    """A command that ran but exited non-zero doesn't raise, so `error` is None; `is_success`
+    must consult the result's own `"success"` flag (used for per-tool statistics) rather than
+    the base class's `error is None` heuristic, which would miscount the failure as a success."""
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["false"], ["true"]]))
+    tool = BashTool(context)
+    failed = _apply(tool, "false")
+    assert failed["success"] is False
+    assert tool.is_success(args={}, result=failed, error=None) is False
+    ok = _apply(tool, "true")
+    assert ok["success"] is True
+    assert tool.is_success(args={}, result=ok, error=None) is True
+    assert tool.is_success(args={}, result=None, error="boom") is False
+
+
 def test_signal_death_is_decoded(tmp_path: Path) -> None:
     """A simple external command in tail position gets exec()'d directly by the outer bash
     (tail-call optimization, verified empirically -- see BashTool._decode_exit's docstring), so
