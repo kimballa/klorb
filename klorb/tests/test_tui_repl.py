@@ -66,6 +66,7 @@ from klorb.tui.permission_ask_panel import (
     format_ask_context_body,
 )
 from klorb.tui.repl import (
+    _INTERRUPTING_MESSAGE,
     CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
     INTERACTION_PANEL_ID,
@@ -128,6 +129,17 @@ def _user_config_present(tmp_path: Path) -> Iterator[None]:
     config_path.write_text("{}", encoding="utf-8")
     with patch("klorb.tui.repl.user_config_path", return_value=config_path):
         yield
+
+
+@pytest.fixture(autouse=True)
+def stub_force_exit() -> Iterator[MagicMock]:
+    """Neutralize `ReplApp._force_exit`'s `os._exit` for the whole TUI suite: every `ReplApp`
+    starts a real `LivenessWatchdog`, and a test that stalled the event loop long enough (or a
+    double-Ctrl+C test) would otherwise call the real `force_exit` and terminate the pytest
+    process. Patching the name `ReplApp` imported keeps the wiring under test while making the
+    exit a no-op the double-Ctrl+C tests can also assert against."""
+    with patch("klorb.tui.repl.force_exit") as mock_force_exit:
+        yield mock_force_exit
 
 
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
@@ -744,6 +756,111 @@ async def test_escape_aborts_a_streaming_response() -> None:
     # The user turn stays in history, tagged "aborted", rather than being discarded.
     assert [m.role for m in session.messages] == ["system", "user"]
     assert session.messages[-1].processing_state == "aborted"
+
+
+async def test_escape_shows_interrupting_notice() -> None:
+    """Escape during a streaming turn mounts the `Interrupting…` notice so the user gets
+    immediate confirmation the keypress landed — see `ReplApp._note_interrupt_requested`."""
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        streaming_started.set()
+        assert cancel_event is not None
+        cancel_event.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "hi"
+        await pilot.press("enter")
+        await _wait_until(pilot, streaming_started.is_set)
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert not history.query(".interrupting")
+        await pilot.press("escape")
+        await _wait_until(pilot, lambda: bool(history.query(".interrupting")))
+        await app.workers.wait_for_complete()
+
+        notices = history.query(".interrupting")
+        assert len(notices) == 1
+        assert str(notices.first(Static).render()) == _INTERRUPTING_MESSAGE
+
+
+async def test_double_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
+    """A second Ctrl+C within the window, while a turn that ignores its cancel signal is still in
+    flight, escalates to `_force_exit` — the escape for a worker that won't unwind."""
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+    release = threading.Event()
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        streaming_started.set()
+        # Deliberately ignore cancel_event: this stands in for a worker wedged inside a tool.
+        release.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    try:
+        async with app.run_test() as pilot:
+            app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "hi"
+            await pilot.press("enter")
+            await _wait_until(pilot, streaming_started.is_set)
+
+            await pilot.press("ctrl+c")  # first: abort request; turn stays in flight
+            assert app._turn_in_flight is True
+            await pilot.press("ctrl+c")  # second within window: force-exit
+            await _wait_until(pilot, lambda: stub_force_exit.called)
+    finally:
+        release.set()  # let the worker unwind so the harness can shut the app down
+
+    stub_force_exit.assert_called()
+
+
+async def test_turn_in_flight_cleared_when_worker_raises_base_exception() -> None:
+    """A `BaseException` out of `send_turn` (e.g. worker cancellation) slips past `except
+    Exception`; the `finally` backstop (`_ensure_turn_finished`) must still clear
+    `_turn_in_flight` and re-enable input so the app doesn't wedge — see
+    docs/specs/interrupt-and-liveness-watchdog.md."""
+
+    class _Boom(BaseException):
+        pass
+
+    streaming_started = threading.Event()
+    app = ReplApp(session=_session(MagicMock()))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        streaming_started.set()
+        raise _Boom()
+
+    app._session.send_turn = boom  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "hi"
+        await pilot.press("enter")
+        await _wait_until(pilot, streaming_started.is_set)
+        await _wait_until(pilot, lambda: app._turn_in_flight is False)
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        assert prompt_input.disabled is False
+
+
+async def test_watchdog_enabled_by_default_and_disabled_when_timeout_zero() -> None:
+    """The liveness watchdog is on by default (`watchdog.timeout` defaults to 10s) and fully off
+    when `watchdog.timeout <= 0`."""
+    default_app = ReplApp(session=_session(MagicMock()))
+    assert default_app._watchdog.enabled is True
+
+    disabled_config = ProcessConfig(watchdog_timeout_seconds=0)
+    disabled_app = ReplApp(session=_session(MagicMock()), process_config=disabled_config)
+    assert disabled_app._watchdog.enabled is False
+    async with disabled_app.run_test():
+        # A disabled watchdog never starts a thread even after on_mount.
+        assert disabled_app._watchdog._thread is None
 
 
 async def test_select_model_updates_active_model_and_subtitle() -> None:

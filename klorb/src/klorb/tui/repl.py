@@ -9,9 +9,10 @@ import json
 import logging
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, NoReturn, TypeVar
 
 from rich.text import Text
 from textual import events, work
@@ -28,6 +29,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Markdown, Static, TextArea
 
 from klorb.api_provider import ResponseAborted
+from klorb.diagnostics import dump_all_thread_stacks, thread_dump_path
 from klorb.logging_config import CrashLogTee, configure_logging, crash_log_path, session_log_path
 from klorb.message import Message as ChatMessage
 from klorb.message import ToolCallRequest
@@ -84,6 +86,7 @@ from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShe
 from klorb.tui.theme_commands import ThemeCommandProvider
 from klorb.tui.thinking_commands import ThinkingCommandProvider
 from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
+from klorb.watchdog import LivenessWatchdog, force_exit
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.input_history import append_history, load_history, project_history_path
 from klorb.workspace.last_session import (
@@ -172,6 +175,21 @@ MASCOT_ART = """\
 ███████████
 ▟█▙     ▟█▙"""
 MASCOT_GREETING = "Roar! Let's go code a Thing!"
+
+_INTERRUPTING_MESSAGE = "Interrupting… (press Ctrl+C again to force-quit)"
+"""Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the
+user gets immediate confirmation the keystroke was received (rather than wondering if the app has
+deadlocked) — see `ReplApp._note_interrupt_requested`."""
+
+_DOUBLE_INTERRUPT_WINDOW_SECONDS = 1.0
+"""A second Ctrl+C within this many seconds of the first (while a turn is in flight) force-exits
+the process via `ReplApp._force_exit`, the escape for a worker that won't unwind — see
+`ReplApp.action_interrupt` and docs/specs/interrupt-and-liveness-watchdog.md."""
+
+_FORCE_EXIT_CLEANUP_GRACE_SECONDS = 3.0
+"""How long the force-exit path waits for its best-effort cleanup (stack dump + session save) to
+finish before calling `os._exit` regardless — see `ReplApp._force_exit` and
+`klorb.watchdog.force_exit`."""
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -1242,6 +1260,18 @@ class ReplApp(App[None]):
         workspace's trust/registration state changes) layers it back in identically."""
         self._cancel_event: threading.Event | None = None
         self._shell_cancel_event: threading.Event | None = None
+        self._last_interrupt_at: float = 0.0
+        """`time.monotonic()` of the most recent Ctrl+C (`action_interrupt`). A second Ctrl+C
+        within `_DOUBLE_INTERRUPT_WINDOW_SECONDS` while a turn is in flight force-exits."""
+        self._interrupt_notice_shown: bool = False
+        """Whether the `_INTERRUPTING_MESSAGE` notice has already been shown for the current
+        turn (so repeated Escape/Ctrl+C don't stack duplicate notices) — reset in `_finish_turn`."""
+        self._watchdog: LivenessWatchdog = LivenessWatchdog(
+            self._process_config.watchdog_timeout_seconds, self._force_exit)
+        """Liveness watchdog force-exiting the process if the main-thread event loop stops
+        snoozing it (`_snooze_watchdog`) for `watchdog.timeout` seconds — the escape from a wedged
+        event loop. Started/snoozed in `on_mount`, disarmed in `on_unmount`. See
+        docs/specs/interrupt-and-liveness-watchdog.md."""
         self._turn_in_flight: bool = False
         """Authoritative "a model turn or shell command is currently running" guard, checked and
         set synchronously in `_submit_prompt`/`_submit_shell_command` and cleared in `_finish_turn`.
@@ -1510,7 +1540,9 @@ class ReplApp(App[None]):
         return True
 
     def action_abort_response(self) -> None:
-        """Signal the in-flight turn's worker thread to stop consuming the response stream."""
+        """Signal the in-flight turn's worker thread to stop consuming the response stream, and
+        show the `Interrupting…` notice so the user knows the keypress landed."""
+        self._note_interrupt_requested()
         self._signal_turn_cancellation()
 
     def _signal_turn_cancellation(self) -> None:
@@ -1537,10 +1569,25 @@ class ReplApp(App[None]):
         still-running turn is exactly what used to strand the turn's worker thread and hang process
         shutdown (see `_begin_exit`), and interrupting-then-quitting is both safer and the more
         conventional terminal gesture.
+
+        A *second* Ctrl+C within `_DOUBLE_INTERRUPT_WINDOW_SECONDS`, while a turn is in flight,
+        escalates to `_force_exit` (which never returns): the escape for a worker thread that
+        won't unwind in response to the first Ctrl+C's cancel signal. This handler runs on the
+        event loop, so it only helps when the loop is still alive — a wedged loop is the
+        `LivenessWatchdog`'s job instead. See docs/specs/interrupt-and-liveness-watchdog.md.
         """
+        now = time.monotonic()
+        double = (
+            self._turn_in_flight
+            and (now - self._last_interrupt_at) < _DOUBLE_INTERRUPT_WINDOW_SECONDS)
+        self._last_interrupt_at = now
+        if double:
+            self._force_exit()  # NoReturn.
         if self._shell_cancel_event is not None:
+            self._note_interrupt_requested()
             self._shell_cancel_event.set()
         elif self._turn_in_flight:
+            self._note_interrupt_requested()
             self._signal_turn_cancellation()
         else:
             self._quit_after_maybe_saving()
@@ -1688,6 +1735,14 @@ class ReplApp(App[None]):
         """
         configure_tiktoken_cache_env()
 
+        self._watchdog.start()
+        if self._watchdog.enabled:
+            # Snooze from a main-thread timer, so the snooze stops exactly when the event loop wedges
+            # (see docs/specs/interrupt-and-liveness-watchdog.md). Petting several times per
+            # timeout keeps `_last_snooze` comfortably fresh on a healthy loop.
+            self.set_interval(
+                min(1.0, self._process_config.watchdog_timeout_seconds / 4), self._snooze_watchdog)
+
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.border_title = "message"
         input_widget.styles.max_height = self._process_config.prompt_input_max_lines + 1
@@ -1708,6 +1763,69 @@ class ReplApp(App[None]):
             history.mount(Static(warning, classes="error", markup=False))
 
         self._run_startup_workspace_and_initial_message()
+
+    def on_unmount(self) -> None:
+        """Disarm the liveness watchdog as the app tears down, so it can't fire during the
+        post-run shutdown window (crash handling, session save) once the event loop has stopped
+        snoozing it — see `_snooze_watchdog` and docs/specs/interrupt-and-liveness-watchdog.md."""
+        self._watchdog.stop()
+
+    def _snooze_watchdog(self) -> None:
+        """Tell the liveness watchdog the event loop is alive. Driven by a `set_interval` timer on
+        the main thread (see `on_mount`), so it stops exactly when the loop wedges."""
+        self._watchdog.snooze()
+
+    def _collect_hang_diagnostics(self) -> None:
+        """Best-effort work done on the way out of a force-exit (from the double-Ctrl+C handler or
+        the watchdog): dump every thread's stack for a later post-mortem, then save the session
+        (when the workspace is trusted and there's anything to save) so a wedged conversation
+        isn't lost. Runs on `force_exit`'s throwaway cleanup thread, time-boxed by
+        `_FORCE_EXIT_CLEANUP_GRACE_SECONDS`, so blocking here can never prevent the exit; every
+        step is independently guarded because the process is already doomed."""
+        try:
+            workspace = self._session.config.workspace
+            dump_all_thread_stacks(thread_dump_path(workspace.path))
+        except Exception:
+            pass
+        try:
+            workspace = self._session.config.workspace
+            if self._trust_manager is not None and workspace.trusted and self._session.messages:
+                write_last_session(
+                    workspace, self._session.config, self._session.messages,
+                    statistics=self._session.statistics)
+        except Exception:
+            pass
+
+    def _force_exit(self) -> NoReturn:
+        """Last-ditch escape from a wedged klorb: dump thread stacks + save the session
+        (best-effort, time-boxed), then `os._exit`. Called by the watchdog (from its own thread)
+        and by the double-Ctrl+C handler (`action_interrupt`). Never returns — see
+        `klorb.watchdog.force_exit` and docs/specs/interrupt-and-liveness-watchdog.md."""
+        force_exit(self._collect_hang_diagnostics, _FORCE_EXIT_CLEANUP_GRACE_SECONDS)
+
+    def _note_interrupt_requested(self) -> None:
+        """Mount the `_INTERRUPTING_MESSAGE` notice into the history the first time Escape/Ctrl+C
+        is pressed during the current turn, so the user gets immediate confirmation the keystroke
+        landed (rather than wondering if the app has deadlocked). A no-op on repeat presses within
+        the same turn; `_interrupt_notice_shown` is reset in `_finish_turn`."""
+        if self._interrupt_notice_shown:
+            return
+        self._interrupt_notice_shown = True
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(_INTERRUPTING_MESSAGE, classes="notice interrupting", markup=False))
+        history.scroll_end(animate=False)
+
+    def _ensure_turn_finished(self) -> None:
+        """Backstop that runs `_finish_turn` iff a turn is still marked in flight — i.e. no
+        terminal handler already finished it. Called from `_send_prompt`/`_run_shell_command`'s
+        `finally` so that even a `BaseException` unwind of the worker thread (e.g.
+        `asyncio.CancelledError`, which slips past `except Exception`) still clears
+        `_turn_in_flight` and re-enables input. A no-op on the normal path, where a handler
+        already cleared the flag. See docs/specs/interrupt-and-liveness-watchdog.md."""
+        if not self._turn_in_flight:
+            return
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        self._finish_turn(history, self._history_pinned_to_bottom)
 
     @work()
     async def _run_startup_workspace_and_initial_message(self) -> None:
@@ -2101,20 +2219,29 @@ class ReplApp(App[None]):
                         self._update_shell_output_widget, output_widget, accumulated)
 
         error_message: str | None = None
+        # Outer try/finally guarantees `_turn_in_flight` clears however this worker unwinds,
+        # including a BaseException past the handlers below -- see `_send_prompt` for the rationale.
         try:
-            _, _, rc = UserShellCommand(command, shell_path=self._process_config.shell_command).run(
-                on_stdout=handle_output, on_stderr=handle_output,
-                timeout=self._process_config.shell_timeout_seconds, cancel_event=cancel_event)
-        except ShellCommandTimedOut:
-            timeout = self._process_config.shell_timeout_seconds
-            error_message = f"Shell command timed out after {timeout:g}s; killed."
-        except ShellCommandCancelled:
-            error_message = "Shell command interrupted."
-        else:
-            if rc != 0:
-                error_message = f"Shell command exited with status {rc}."
+            try:
+                _, _, rc = UserShellCommand(
+                    command, shell_path=self._process_config.shell_command).run(
+                        on_stdout=handle_output, on_stderr=handle_output,
+                        timeout=self._process_config.shell_timeout_seconds, cancel_event=cancel_event)
+            except ShellCommandTimedOut:
+                timeout = self._process_config.shell_timeout_seconds
+                error_message = f"Shell command timed out after {timeout:g}s; killed."
+            except ShellCommandCancelled:
+                error_message = "Shell command interrupted."
+            else:
+                if rc != 0:
+                    error_message = f"Shell command exited with status {rc}."
 
-        self.call_from_thread(self._finish_shell_command, error_message)
+            self.call_from_thread(self._finish_shell_command, error_message)
+        finally:
+            try:
+                self.call_from_thread(self._ensure_turn_finished)
+            except Exception:
+                pass
 
     def _mount_shell_output_widget(self, initial_text: str) -> Static:
         """Mount a new `Static` widget for a streaming shell command's output and return it.
@@ -2351,26 +2478,41 @@ class ReplApp(App[None]):
             self.call_from_thread(self._mount_tool_call_widget, summary_text, detail_text)
             round_index += 1
 
+        # The outer try/finally guarantees `_turn_in_flight` is cleared however this worker
+        # unwinds -- including a BaseException (e.g. asyncio.CancelledError / worker cancellation)
+        # that slips past `except Exception` below and would otherwise leave the flag stuck True
+        # forever. See `_ensure_turn_finished` and docs/specs/interrupt-and-liveness-watchdog.md.
         try:
-            response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
-                on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
-                on_reasoning_details=handle_reasoning_details_chunk,
-                cancel_event=cancel_event, on_tool_call_limit_reached=self._on_tool_call_limit_reached,
-                on_permission_ask=self._on_permission_ask,
-                on_ask_user_questions=self._on_ask_user_questions,
-                on_escalate_privileges=self._on_escalate_privileges,
-                on_tool_call=handle_tool_call))
-        except ResponseAborted:
-            self.call_from_thread(
-                self._handle_aborted_response, response_widget, accumulated,
-                thinking_widget, thinking_accumulated)
-        except Exception as exc:
-            self.call_from_thread(self._show_error, str(exc))
-        else:
-            if response_widget is not None:
-                self.call_from_thread(self._finalize_streamed_response, response_widget, response_text)
+            try:
+                response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
+                    on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
+                    on_reasoning_details=handle_reasoning_details_chunk,
+                    cancel_event=cancel_event,
+                    on_tool_call_limit_reached=self._on_tool_call_limit_reached,
+                    on_permission_ask=self._on_permission_ask,
+                    on_ask_user_questions=self._on_ask_user_questions,
+                    on_escalate_privileges=self._on_escalate_privileges,
+                    on_tool_call=handle_tool_call))
+            except ResponseAborted:
+                self.call_from_thread(
+                    self._handle_aborted_response, response_widget, accumulated,
+                    thinking_widget, thinking_accumulated)
+            except Exception as exc:
+                self.call_from_thread(self._show_error, str(exc))
             else:
-                self.call_from_thread(self._show_response, response_text)
+                if response_widget is not None:
+                    self.call_from_thread(
+                        self._finalize_streamed_response, response_widget, response_text)
+                else:
+                    self.call_from_thread(self._show_response, response_text)
+        finally:
+            # No-op on the normal path (a handler above already finished the turn); only does
+            # anything when the worker unwound without reaching one. Guarded because the event
+            # loop may already be gone during teardown.
+            try:
+                self.call_from_thread(self._ensure_turn_finished)
+            except Exception:
+                pass
 
     def _mount_response_widget(self, initial_text: str) -> Markdown:
         """Mount a new `Markdown` widget for a streaming response and return it. Also refreshes
@@ -2950,7 +3092,14 @@ class ReplApp(App[None]):
         abort/interrupt once a turn is done (successfully, in error, or aborted) — shared by
         both a model turn and a shell command, since only one of the two is ever in flight at a
         time. Clearing `_turn_in_flight` here (the terminal state of every model turn and shell
-        command) is what lets the next submit through.
+        command) is what lets the next submit through, and resetting `_interrupt_notice_shown`
+        re-arms the one-time `Interrupting…` notice for the next turn.
+
+        Reached on every path where `Session.send_turn`/the shell command returns or raises, via a
+        terminal handler; `_send_prompt`/`_run_shell_command` additionally call it from a `finally`
+        (through `_ensure_turn_finished`) so a `BaseException` unwind of the worker still gets here.
+        Idempotent enough for that backstop: a second call after the flag is already cleared just
+        re-does harmless UI resets.
 
         If a quit was requested while this turn was still running (`_exit_requested`, set by
         `_begin_exit`), the deferred `self.exit()` happens here — now that the worker thread has
@@ -2965,6 +3114,7 @@ class ReplApp(App[None]):
         self._cancel_event = None
         self._shell_cancel_event = None
         self._turn_in_flight = False
+        self._interrupt_notice_shown = False
         self.refresh_bindings()
         if self._exit_requested:
             self.exit()
@@ -3039,4 +3189,8 @@ def run_repl(
         if app.return_code == 1:
             _handle_repl_crash(app, crash_tee)
     finally:
+        # Belt-and-suspenders alongside `ReplApp.on_unmount`: make sure the liveness watchdog
+        # can't fire during post-run crash handling / save once the event loop has stopped
+        # snoozing it (see docs/specs/interrupt-and-liveness-watchdog.md).
+        app._watchdog.stop()
         crash_tee.close()

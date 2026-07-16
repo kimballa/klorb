@@ -116,6 +116,12 @@ DEFAULT_BASH_SPILL_BYTES = 8192
 in the tool result — see `ProcessConfig.bash_spill_bytes` and
 docs/specs/bash-tool-and-command-permissions.md."""
 
+DEFAULT_WATCHDOG_TIMEOUT_SECONDS = 10.0
+"""Default for `ProcessConfig.watchdog_timeout_seconds` — how many seconds the main-thread event
+loop may go without snoozing the liveness watchdog before it force-exits the process. See
+`klorb.watchdog.LivenessWatchdog` and docs/specs/interrupt-and-liveness-watchdog.md. A value of
+`0` or less disables the watchdog entirely."""
+
 DEFAULT_SHFMT_COMMAND = "shfmt"
 """Default `shfmt` binary name `BashTool` parses commands through (via
 `klorb.permissions.shell_parse.parse_command`) — resolved off `PATH` by default, since the
@@ -196,6 +202,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "providers.openrouter.baseUrl": "openrouter_base_url",
     "shell.command": "shell_command",
     "shell.timeout": "shell_timeout_seconds",
+    "watchdog.timeout": "watchdog_timeout_seconds",
     "tools.bash.command": "bash_command",
     "tools.bash.timeout": "bash_timeout_seconds",
     "tools.bash.spillBytes": "bash_spill_bytes",
@@ -273,6 +280,12 @@ class ProcessConfig(BaseModel):
     shfmt_command: str = DEFAULT_SHFMT_COMMAND
     """`shfmt` binary `BashTool` parses a requested command through before evaluating it against
     `SessionConfig.command_rules` — see `klorb.permissions.shell_parse`."""
+    watchdog_timeout_seconds: float = DEFAULT_WATCHDOG_TIMEOUT_SECONDS
+    """Seconds the main-thread event loop may go without snoozing the liveness watchdog before it
+    force-exits the process (best-effort session save + all-thread stack dump first) — the
+    last-ditch escape from a wedged event loop. `0` or less disables the watchdog. See
+    `klorb.watchdog.LivenessWatchdog`, `klorb.tui.repl.ReplApp._snooze_watchdog`, and
+    docs/specs/interrupt-and-liveness-watchdog.md."""
     bash_risk_classifier_enabled: bool = DEFAULT_BASH_RISK_CLASSIFIER_ENABLED
     """Whether `klorb.tui.repl.ReplApp._confirm_permission_ask` classifies a `BashTool` ask's
     risk via `klorb.permissions.risk_classifier.classify_command_risk()` before showing

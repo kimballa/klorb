@@ -131,6 +131,7 @@
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null,
+  "watchdog.timeout": 10.0,
   "compatibility.claudeMarkdown": false,
   "ui.theme": null
 }

@@ -28,7 +28,10 @@ or slicing a superset.
   default `DEFAULT_SHELL_COMMAND`, `/bin/bash` — the shell binary a `!`-prefixed REPL command
   is run through; see [[terminal-repl]]), `shell_timeout_seconds` (`float | None`, default
   `None` — how long a `!`-prefixed REPL command may run before it's killed; `None` means no
-  timeout), `compatibility_claude_markdown` (bool, default `False` — when `True`,
+  timeout), `watchdog_timeout_seconds` (`float`, default `DEFAULT_WATCHDOG_TIMEOUT_SECONDS`,
+  `10.0` — how long the main-thread event loop may go without snoozing the liveness watchdog
+  before it force-exits the process; `0` or less disables it; see
+  [[interrupt-and-liveness-watchdog]]), `compatibility_claude_markdown` (bool, default `False` — when `True`,
   `CLAUDE.md` is read from the workspace root and injected into the conversation alongside
   `AGENTS.md`; see [[workspace-context-files]]), and `theme` (`str | None`, default `None` —
   the Textual theme name selected via the TUI's theme picker (`ThemeCommandProvider`/
@@ -227,6 +230,7 @@ sit as flat keys alongside it at the top level:
   "providers.openrouter.baseUrl": "https://openrouter.ai/api/v1",
   "shell.command": "/bin/bash",
   "shell.timeout": null,
+  "watchdog.timeout": 10.0,
   "tools.bash.command": "/bin/bash",
   "tools.bash.timeout": 120.0,
   "tools.bash.spillBytes": 8192,
@@ -313,7 +317,8 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
   `tools.grep.contextLines`, `tools.findFile.maxResults`, `tools.scratchpad.contextLines`,
   `providers.openrouter.baseUrl`, `shell.command`,
-  `shell.timeout`, `tools.bash.command`, `tools.bash.timeout`, `tools.bash.spillBytes`,
+  `shell.timeout`, `watchdog.timeout`, `tools.bash.command`, `tools.bash.timeout`,
+  `tools.bash.spillBytes`,
   `tools.bash.shfmtCommand`, `compatibility.claudeMarkdown`, `tools.logCalls`, `ui.theme`) can
   be set at the top level.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,

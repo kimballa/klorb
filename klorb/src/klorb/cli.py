@@ -4,10 +4,7 @@
 import argparse
 import json
 import logging
-import os
-import signal
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -33,40 +30,6 @@ from klorb.tui.repl import run_repl
 from klorb.workspace import TrustManager
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Repeated-SIGINT force-abort handler
-# ---------------------------------------------------------------------------
-# Some hangs (e.g. a stuck subprocess or event-loop stall) leave normal ^C
-# delivery broken because the TUI layer is no longer processing input.  This
-# low-level Python SIGINT handler provides a last-resort escape: the *first*
-# ^C is forwarded to the default handler (KeyboardInterrupt), but a *second*
-# ^C within `_REPEAT_WINDOW` seconds triggers an immediate `os._exit(1)`,
-# bypassing all atexit hooks and TUI teardown.
-# ---------------------------------------------------------------------------
-_REPEAT_WINDOW: float = 1.0
-"""Seconds within which a second SIGINT triggers an immediate `os._exit`."""
-
-_last_sigint: float = 0.0
-"""Timestamp of the most recent SIGINT delivery (monotonic)."""
-
-
-def _sigint_handler(signum: int, frame: Any) -> None:
-    """Force-exit the process if two SIGINTs arrive within `_REPEAT_WINDOW`."""
-    global _last_sigint
-    now = time.monotonic()
-    if now - _last_sigint < _REPEAT_WINDOW:
-        # Second (or later) ^C in rapid succession → hard-abort.
-        sys.stderr.write(
-            "\nAborting — forced exit after repeated Ctrl+C.\n"
-        )
-        sys.stderr.flush()
-        os._exit(1)
-    _last_sigint = now
-    # Forward to the default handler (raises KeyboardInterrupt) so normal
-    # single-press ^C behaviour is preserved.
-    signal.default_int_handler(signum, frame)
-
 
 INIT_SUBCOMMAND = "init"
 SYSTEM_PROMPT_SUBCOMMAND = "system-prompt"
@@ -536,13 +499,6 @@ def main() -> None:
     ahead of the TUI taking over the terminal -- see
     docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md.
     """
-    # Install the repeated-SIGINT force-abort handler so a stuck process can
-    # be killed with rapid double-^C even when the TUI layer isn't processing
-    # input.  The handler is installed here (rather than at module level) so it
-    # only takes effect for the real CLI entry-point and not during tests or
-    # imports that happen to touch this module.
-    signal.signal(signal.SIGINT, _sigint_handler)
-
     load_dotenv()
 
     if len(sys.argv) > 1 and sys.argv[1] == INIT_SUBCOMMAND:
