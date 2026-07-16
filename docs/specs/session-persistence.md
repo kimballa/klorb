@@ -28,22 +28,27 @@ save slot.
 ### Saving (`ReplApp._quit_after_maybe_saving`)
 
 `action_quit` (bound to Ctrl+Q, and reached via the built-in "Quit the application" system
-command, and via `action_interrupt`'s Ctrl+C fallthrough when no shell command is running)
-delegates to `_quit_after_maybe_saving`, a `@work()` worker — needed because it awaits a
-`ConfirmScreen`'s dismissal, which Textual only permits from within an active worker's
-context (the same reason `trust_workspace`/`_bootstrap_new_workspace` are workers — see
-docs/specs/projects-and-trust.md).
+command, and via `:q`/`/quit`/`/exit`) delegates to `_quit_after_maybe_saving`, a `@work()`
+worker — needed because it awaits a `SaveOnQuitScreen`'s dismissal, which Textual only permits
+from within an active worker's context (the same reason `trust_workspace`/
+`_bootstrap_new_workspace` are workers — see docs/specs/projects-and-trust.md). Ctrl+C does
+*not* reach this method — see docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C
+semantics" section for why a repeated idle Ctrl+C force-exits directly instead.
 
 * If this app has no `TrustManager` (`workspace_trust_management_enabled()` is `False`) or the
   current workspace isn't trusted, no prompt is shown — the app just exits. An unresolved or
   untrusted workspace has no business writing into its per-project data directory.
-* Otherwise, asks "Save session state before quitting?"; on Yes,
-  `klorb.workspace.last_session.write_last_session(workspace, session.config,
-  session.messages)` writes the file (schema-enveloped per
-  docs/specs/persisted-json-schema-versioning.md as `{"name": "klorb-session", "version":
-  "1.0.0"}`), overwriting any previously-saved state for this workspace outright — there is
-  only ever one "last" session per workspace, not a history of them.
-* Either way, the app then exits (`self.exit()`).
+* Otherwise, asks "Save session state before quitting?" via `klorb.tui.confirm_screen.
+  SaveOnQuitScreen`, which has three outcomes rather than a plain yes/no: "Yes" writes the file
+  (`klorb.workspace.last_session.write_last_session(workspace, session.config,
+  session.messages)`, schema-enveloped per docs/specs/persisted-json-schema-versioning.md as
+  `{"name": "klorb-session", "version": "1.0.0"}`, overwriting any previously-saved state for
+  this workspace outright — there is only ever one "last" session per workspace, not a history
+  of them), "No" quits without saving, and "Cancel" (or Escape) aborts the quit entirely —
+  `_quit_after_maybe_saving` returns without calling `_begin_exit()`, leaving the session
+  running exactly as before.
+* Otherwise (Yes/No chosen, or no prompt was shown at all), the app proceeds to exit via
+  `_begin_exit()`.
 
 ### Saving on crash (`klorb.tui.repl.run_repl` / `_handle_repl_crash`)
 

@@ -18,6 +18,7 @@ from typing import Any, Literal, NoReturn, TypeVar
 
 from rich.text import Text
 from textual import events, work
+from textual.actions import SkipAction
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit
@@ -73,7 +74,7 @@ from klorb.tools.tool import (
     default_tool_call_summary,
 )
 from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel, format_ask_user_questions_answer
-from klorb.tui.confirm_screen import ConfirmScreen
+from klorb.tui.confirm_screen import ConfirmScreen, SaveOnQuitScreen
 from klorb.tui.escalate_privileges_panel import EscalatePrivilegesPanel, format_escalate_privileges_decision
 from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
 from klorb.tui.model_commands import ModelCommandProvider
@@ -193,20 +194,26 @@ def _random_greeting() -> str:
 
 MASCOT_GREETING = _random_greeting()
 
-_INTERRUPTING_MESSAGE = "Interrupting… (press Ctrl+C again to force-quit)"
+_INTERRUPTING_MESSAGE = "Interrupting… (Ctrl+C again to quit)"
 """Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the
 user gets immediate confirmation the keystroke was received (rather than wondering if the app has
 deadlocked) — see `ReplApp._note_interrupt_requested`."""
 
 _DOUBLE_INTERRUPT_WINDOW_SECONDS = 1.0
-"""A second Ctrl+C within this many seconds of the first (while a turn is in flight) force-exits
-the process via `ReplApp._force_exit`, the escape for a worker that won't unwind — see
-`ReplApp.action_interrupt` and docs/specs/interrupt-and-liveness-watchdog.md."""
+"""How long a Ctrl+C press's effect on the next one lasts, for `ReplApp.action_interrupt`'s
+streak escalation (interrupt/copy, then a warning, then a force-exit via `ReplApp._force_exit`
+— two presses total from a bare/idle start, three from a copy or an interrupt) — see
+docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C semantics" section."""
 
 _FORCE_EXIT_CLEANUP_GRACE_SECONDS = 3.0
 """How long the force-exit path waits for its best-effort cleanup (stack dump + session save) to
 finish before calling `os._exit` regardless — see `ReplApp._force_exit` and
 `klorb.watchdog.force_exit`."""
+
+_CTRL_C_QUIT_WARNING = "Press Ctrl+C again to quit."
+"""Shown in the history for an idle Ctrl+C press (nothing selected, nothing running) — a second
+press within `_DOUBLE_INTERRUPT_WINDOW_SECONDS` force-exits — see
+`ReplApp._note_ctrl_c_quit_warning`/`action_interrupt`."""
 
 _SI_SUFFIXES = ("", "k", "M", "B")
 
@@ -464,6 +471,21 @@ class PromptInput(TextArea):
     def _palette_widget(self) -> PromptPalette:
         """The sibling `PromptPalette` popup mounted just above this widget."""
         return self.screen.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+
+    def action_copy(self) -> None:
+        """Copy this box's own text selection to the clipboard, same as the base `TextArea.
+        action_copy`, but also records the press for `ReplApp.action_interrupt`'s Ctrl+C streak
+        bookkeeping (`ReplApp._note_ctrl_c_copy`) — see that method's docstring for why the
+        bookkeeping has to happen here rather than in `action_interrupt` itself. Raises
+        `SkipAction`, exactly like the base implementation, when nothing is selected, so the
+        binding chain falls through past this widget unchanged.
+        """
+        selected_text = self.selected_text
+        if not selected_text:
+            raise SkipAction()
+        self.app.copy_to_clipboard(selected_text)
+        if isinstance(self.app, ReplApp):
+            self.app._note_ctrl_c_copy()
 
     async def _on_key(self, event: events.Key) -> None:
         """Submit on Enter; insert a newline on Ctrl+Enter; walk the input history on
@@ -1180,6 +1202,22 @@ class SelectionSafeScreen(Screen[None]):
             return None, None
         return widget, offset
 
+    def action_copy_text(self) -> None:
+        """Copy the current screen-level (mouse-drag) text selection to the clipboard, same as
+        the base `Screen.action_copy_text`, but also records the press for `ReplApp.
+        action_interrupt`'s Ctrl+C streak bookkeeping (`ReplApp._note_ctrl_c_copy`) — see that
+        method's docstring for why the bookkeeping has to happen here rather than in
+        `action_interrupt` itself. Raises `SkipAction`, exactly like the base implementation,
+        when nothing is selected, so the binding chain falls through to `ReplApp.action_interrupt`
+        unchanged.
+        """
+        selection = self.get_selected_text()
+        if selection is None:
+            raise SkipAction()
+        self.app.copy_to_clipboard(selection)
+        if isinstance(self.app, ReplApp):
+            self.app._note_ctrl_c_copy()
+
 
 class ReplApp(App[None]):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
@@ -1359,9 +1397,14 @@ class ReplApp(App[None]):
         workspace's trust/registration state changes) layers it back in identically."""
         self._cancel_event: threading.Event | None = None
         self._shell_cancel_event: threading.Event | None = None
-        self._last_interrupt_at: float = 0.0
-        """`time.monotonic()` of the most recent Ctrl+C (`action_interrupt`). A second Ctrl+C
-        within `_DOUBLE_INTERRUPT_WINDOW_SECONDS` while a turn is in flight force-exits."""
+        self._last_ctrl_c_at: float = 0.0
+        """`time.monotonic()` of the most recent Ctrl+C press of any kind (copy, interrupt, or
+        idle/"bare") — paired with `_last_ctrl_c_kind` below to drive `action_interrupt`'s
+        streak escalation to `_force_exit` within `_DOUBLE_INTERRUPT_WINDOW_SECONDS`."""
+        self._last_ctrl_c_kind: Literal["copy", "interrupt", "bare"] | None = None
+        """What the most recent Ctrl+C press (at `_last_ctrl_c_at`) actually did — `None` before
+        the first one. See `action_interrupt`, `_note_ctrl_c_copy`, and docs/specs/interrupt-and-
+        liveness-watchdog.md's "Ctrl+C semantics" section."""
         self._interrupt_notice_shown: bool = False
         """Whether the `_INTERRUPTING_MESSAGE` notice has already been shown for the current
         turn (so repeated Escape/Ctrl+C don't stack duplicate notices) — reset in `_finish_turn`."""
@@ -1632,18 +1675,34 @@ class ReplApp(App[None]):
         event.prevent_default()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Hide the `abort_response` binding from the footer unless a response is currently
-        streaming in, since there's nothing for Escape to abort otherwise.
+        """Hide the `abort_response` binding from the footer unless something is currently
+        running (a streaming model turn — including a synchronous Bash tool call inside it — or
+        a `!`-prefixed shell command), since there's nothing for Escape to abort otherwise.
         """
         if action == "abort_response":
-            return self._cancel_event is not None
+            return self._turn_in_flight
         return True
 
     def action_abort_response(self) -> None:
-        """Signal the in-flight turn's worker thread to stop consuming the response stream, and
-        show the `Interrupting…` notice so the user knows the keypress landed."""
+        """Escape: interrupt whatever is currently running (an in-flight model turn — including
+        a Bash tool call inside it, see `Session.active_cancel_event` — or a `!`-prefixed shell
+        command), the same as a solitary Ctrl+C (`action_interrupt`) — but Escape only ever does
+        this; it has no copy-text or quit-warning meaning."""
+        self._interrupt_running_activity()
+
+    def _interrupt_running_activity(self) -> None:
+        """Show the `Interrupting…` notice and signal whatever's currently running to stop:
+        a `!`-prefixed shell command's `_shell_cancel_event`, or an in-flight model turn's
+        `_cancel_event` (`_signal_turn_cancellation`) — which also reaches a synchronous Bash
+        tool call running inside that turn via `Session.active_cancel_event`, causing it to send
+        `SIGINT` to its own child process rather than waiting for the next tool-call boundary.
+        Shared by Escape (`action_abort_response`) and a Ctrl+C that lands on running activity
+        (`action_interrupt`)."""
         self._note_interrupt_requested()
-        self._signal_turn_cancellation()
+        if self._shell_cancel_event is not None:
+            self._shell_cancel_event.set()
+        else:
+            self._signal_turn_cancellation()
 
     def _signal_turn_cancellation(self) -> None:
         """Tell an in-flight model turn's worker thread to unwind. Sets `_cancel_event` (so
@@ -1658,39 +1717,72 @@ class ReplApp(App[None]):
         if self._release_pending_interaction is not None:
             self._release_pending_interaction()
 
+    def _note_ctrl_c_copy(self) -> None:
+        """Record that the most recent Ctrl+C (or Cmd+C) press copied selected text to the
+        clipboard, for `action_interrupt`'s own streak bookkeeping. Called by
+        `SelectionSafeScreen.action_copy_text`/`PromptInput.action_copy` rather than from
+        `action_interrupt` itself: Textual's own binding-chain resolution runs those bindings
+        *ahead of* this app's `action_interrupt` and never falls through to it at all once a
+        selection exists to copy — see docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C
+        semantics" section."""
+        self._last_ctrl_c_at = time.monotonic()
+        self._last_ctrl_c_kind = "copy"
+
+    def _note_ctrl_c_quit_warning(self) -> None:
+        """Mount the "press again to quit" notice into the history for an idle Ctrl+C press —
+        see `action_interrupt`'s `"bare"` case."""
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.mount(Static(_CTRL_C_QUIT_WARNING, classes="notice", markup=False))
+        history.scroll_end(animate=False)
+
     def action_interrupt(self) -> None:
-        """Ctrl+C: interrupt whatever is running, mirroring a terminal's own Ctrl+C interrupting
-        the foreground job rather than closing the shell. A `!`-prefixed shell command is
-        terminated; otherwise an in-flight model turn is aborted (the same as Escape's
-        `action_abort_response`). Only when nothing at all is running does Ctrl+C fall through to
-        the ordinary quit flow.
+        """Ctrl+C: behavior depends on what's true right now, mirroring a terminal's own Ctrl+C
+        interrupting the foreground job rather than closing the shell (see docs/specs/interrupt-
+        and-liveness-watchdog.md's "Ctrl+C semantics" section):
 
-        Aborting an in-flight turn rather than quitting it is deliberate: quitting out from under a
-        still-running turn is exactly what used to strand the turn's worker thread and hang process
-        shutdown (see `_begin_exit`), and interrupting-then-quitting is both safer and the more
-        conventional terminal gesture.
+        * **Selected text.** Never reaches this method at all: Textual's own `Screen`/`TextArea`
+          bindings for Ctrl+C (`SelectionSafeScreen.action_copy_text`/`PromptInput.action_copy`)
+          run earlier in the binding chain and copy-and-stop, only falling through here (via
+          `SkipAction`) once nothing is selected. Both record the press via `_note_ctrl_c_copy`
+          so the streak logic below still knows a Ctrl+C just happened.
+        * **Something running** (`_turn_in_flight`: an in-flight model turn — including a
+          synchronous Bash tool call inside it — or a `!`-prefixed shell command) — *and* the
+          immediately preceding press, if any within the window, wasn't itself an interrupt or a
+          bare "nothing to do" press: interrupt it, identically to Escape
+          (`_interrupt_running_activity`). This only ever fires once per streak; it does not
+          re-signal on a later press even if the activity is still in flight, so it can't loop.
+        * **Everything else** (nothing running, or something's still running but this streak
+          already interrupted it once): shows a "press again to quit" notice
+          (`_note_ctrl_c_quit_warning`) — unless the *immediately preceding* press was itself one
+          of these "nothing new to do" presses within the window, in which case this one
+          force-exits (`_force_exit`, i.e. `os._exit`) instead.
 
-        A *second* Ctrl+C within `_DOUBLE_INTERRUPT_WINDOW_SECONDS`, while a turn is in flight,
-        escalates to `_force_exit` (which never returns): the escape for a worker thread that
-        won't unwind in response to the first Ctrl+C's cancel signal. This handler runs on the
-        event loop, so it only helps when the loop is still alive — a wedged loop is the
-        `LivenessWatchdog`'s job instead. See docs/specs/interrupt-and-liveness-watchdog.md.
+        Net effect: a solitary bare Ctrl+C (nothing selected, nothing running) takes two presses
+        to force-exit (warn, then quit); a copy or an interrupt takes three (the copy/interrupt
+        itself, then a warning, then a quit) — see docs/adrs/idle-ctrl-c-force-exits-not-the-
+        polite-quit-flow.md. A running activity is deliberately interrupted rather than the app
+        being quit out from under it: that would strand the turn's worker thread and hang
+        process shutdown (see `_begin_exit`), so interrupting-then-quitting is both safer and the
+        more conventional terminal gesture. This handler runs on the event loop, so its
+        force-exit escalation only helps when the loop is still alive — a wedged loop is the
+        `LivenessWatchdog`'s job instead.
         """
         now = time.monotonic()
-        double = (
-            self._turn_in_flight
-            and (now - self._last_interrupt_at) < _DOUBLE_INTERRUPT_WINDOW_SECONDS)
-        self._last_interrupt_at = now
-        if double:
+        within_window = (now - self._last_ctrl_c_at) < _DOUBLE_INTERRUPT_WINDOW_SECONDS
+        previous_kind = self._last_ctrl_c_kind
+        already_acted_on_this_streak = within_window and previous_kind in ("interrupt", "bare")
+
+        if self._turn_in_flight and not already_acted_on_this_streak:
+            self._last_ctrl_c_at = now
+            self._last_ctrl_c_kind = "interrupt"
+            self._interrupt_running_activity()
+            return
+
+        if within_window and previous_kind == "bare":
             self._force_exit()  # NoReturn.
-        if self._shell_cancel_event is not None:
-            self._note_interrupt_requested()
-            self._shell_cancel_event.set()
-        elif self._turn_in_flight:
-            self._note_interrupt_requested()
-            self._signal_turn_cancellation()
-        else:
-            self._quit_after_maybe_saving()
+        self._last_ctrl_c_at = now
+        self._last_ctrl_c_kind = "bare"
+        self._note_ctrl_c_quit_warning()
 
     async def action_quit(self) -> None:
         """Ctrl+Q (and the built-in "Quit the application" system command): ask whether to
@@ -1709,18 +1801,24 @@ class ReplApp(App[None]):
     async def _quit_after_maybe_saving(self) -> None:
         """If the current workspace is trusted and this app has a `TrustManager` (see
         `workspace_trust_management_enabled`), ask whether to save the session state before
-        quitting; on Yes, write the live `Session`'s config and message history to
-        `last-session.json` (`klorb.workspace.last_session.write_last_session`) so
+        quitting via `SaveOnQuitScreen`; "Yes" writes the live `Session`'s config and message
+        history to `last-session.json` (`klorb.workspace.last_session.write_last_session`) so
         `_maybe_restore_last_session` can pick it back up the next time klorb opens this
-        workspace. Either way, finishes by exiting the app. A no-op prompt (skipping straight
-        to `self.exit()`) when there's no `TrustManager` or the workspace isn't trusted, since
-        an unresolved or untrusted workspace has no business writing into its per-project data
-        directory, or there's no message history to save.
+        workspace, "No" quits without saving, and "Cancel" (or Escape) aborts the quit entirely —
+        this method returns without calling `_begin_exit()`, leaving the session running exactly
+        as before. A no-op prompt (skipping straight to `self.exit()`, with nothing to cancel out
+        of) when there's no `TrustManager` or the workspace isn't trusted, since an unresolved or
+        untrusted workspace has no business writing into its per-project data directory, or
+        there's no message history to save.
         """
         has_messages = len(self._session.messages) > 0
         save = False
         if self._trust_manager is not None and self._session.config.workspace.trusted and has_messages:
-            save = await self.push_screen_wait(ConfirmScreen("Save session state before quitting?"))
+            choice = await self.push_screen_wait(
+                SaveOnQuitScreen("Save session state before quitting?"))
+            if choice == "cancel":
+                return
+            save = choice == "save"
 
         if save:
             write_last_session(

@@ -46,7 +46,15 @@ from klorb.token_estimate import estimate_tokens
 from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel
-from klorb.tui.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
+from klorb.tui.confirm_screen import (
+    CONFIRM_NO_ID,
+    CONFIRM_YES_ID,
+    QUIT_CANCEL_ID,
+    QUIT_DISCARD_ID,
+    QUIT_SAVE_ID,
+    ConfirmScreen,
+    SaveOnQuitScreen,
+)
 from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.permission_ask_panel import (
     _MAX_COMMAND_PREVIEW_LINES,
@@ -66,6 +74,7 @@ from klorb.tui.permission_ask_panel import (
     format_ask_context_body,
 )
 from klorb.tui.repl import (
+    _CTRL_C_QUIT_WARNING,
     _INTERRUPTING_MESSAGE,
     CONFIG_MISSING_MESSAGE,
     HISTORY_ID,
@@ -789,9 +798,13 @@ async def test_escape_shows_interrupting_notice() -> None:
         assert str(notices.first(Static).render()) == _INTERRUPTING_MESSAGE
 
 
-async def test_double_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
-    """A second Ctrl+C within the window, while a turn that ignores its cancel signal is still in
-    flight, escalates to `_force_exit` — the escape for a worker that won't unwind."""
+async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
+    """Three Ctrl+C presses in a row, while a turn that ignores its cancel signal never unwinds,
+    escalates to `_force_exit` — the escape for a worker that won't unwind. The first interrupts
+    (turn stays in flight since it ignores the signal); the second, within the window, only
+    shows the "press again to quit" notice rather than immediately force-exiting, since an
+    interrupt is treated the same as a copy for streak-escalation purposes (see
+    `ReplApp.action_interrupt`); the third actually force-exits."""
     mock_provider = MagicMock()
     streaming_started = threading.Event()
     release = threading.Event()
@@ -812,8 +825,15 @@ async def test_double_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock
             await _wait_until(pilot, streaming_started.is_set)
 
             await pilot.press("ctrl+c")  # first: abort request; turn stays in flight
+            await pilot.pause()
             assert app._turn_in_flight is True
-            await pilot.press("ctrl+c")  # second within window: force-exit
+            stub_force_exit.assert_not_called()
+
+            await pilot.press("ctrl+c")  # second within window: only warns, doesn't force-exit
+            await pilot.pause()
+            stub_force_exit.assert_not_called()
+
+            await pilot.press("ctrl+c")  # third within window: force-exit
             await _wait_until(pilot, lambda: stub_force_exit.called)
     finally:
         release.set()  # let the worker unwind so the harness can shut the app down
@@ -1737,21 +1757,73 @@ async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(tmp_path: P
         assert app.is_running
 
 
-async def test_ctrl_c_quits_when_no_shell_command_is_running() -> None:
-    """With no `TrustManager` (as here), `action_interrupt`'s fallthrough to
-    `_quit_after_maybe_saving` skips the save prompt entirely and exits directly — but that
-    still happens inside a `@work()` worker (see `_quit_after_maybe_saving`), so the test
-    must wait for it to run before asserting `exit()` was called."""
+async def test_first_idle_ctrl_c_only_warns() -> None:
+    """A solitary Ctrl+C with nothing selected and nothing running shows the "press again to
+    quit" notice rather than quitting immediately — see `ReplApp.action_interrupt`'s `"bare"`
+    case and docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C semantics" section."""
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
         await pilot.press("ctrl+c")
-        await app.workers.wait_for_complete()
         await pilot.pause()
 
-        app.exit.assert_called_once()
+        app.exit.assert_not_called()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert _CTRL_C_QUIT_WARNING in _notice_texts(app)
+        assert history is not None
+
+
+async def test_second_idle_ctrl_c_within_window_quits(stub_force_exit: MagicMock) -> None:
+    """A second idle Ctrl+C within the window force-exits (`os._exit`, via `_force_exit`) rather
+    than going through the polite `_quit_after_maybe_saving` save-prompt flow — see
+    `ReplApp.action_interrupt`."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        stub_force_exit.assert_called()
+        app.exit.assert_not_called()  # force-exit bypasses the ordinary exit() path entirely
+
+
+async def test_third_ctrl_c_quits_after_an_interrupt_then_a_warning(
+    stub_force_exit: MagicMock,
+) -> None:
+    """When the first Ctrl+C in a rapid streak did something (interrupted a running shell
+    command, here), the next idle Ctrl+C only warns rather than quitting immediately — it takes
+    a *third* press within the window to force-exit. See `ReplApp.action_interrupt`'s streak
+    bookkeeping (`_last_ctrl_c_kind`)."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "!sleep 5"
+        await pilot.press("enter")
+        await _wait_until(pilot, lambda: app._shell_cancel_event is not None)
+
+        await pilot.press("ctrl+c")  # 1st: interrupts the running shell command
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        kind_after_first_press = app._last_ctrl_c_kind
+        assert kind_after_first_press == "interrupt"
+
+        await pilot.press("ctrl+c")  # 2nd: idle now, but only warns (doesn't quit)
+        await pilot.pause()
+        kind_after_second_press = app._last_ctrl_c_kind
+        assert kind_after_second_press == "bare"
+        stub_force_exit.assert_not_called()
+
+        await pilot.press("ctrl+c")  # 3rd: idle again within the window -- quits
+        await pilot.pause()
+        stub_force_exit.assert_called()
 
 
 def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tuple[str, str, str]:
@@ -4478,8 +4550,8 @@ async def test_quit_prompts_and_writes_last_session_on_yes(
 
         await pilot.press("ctrl+q")
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
-        assert isinstance(app.screen, ConfirmScreen)
-        await pilot.click(f"#{CONFIRM_YES_ID}")
+        assert isinstance(app.screen, SaveOnQuitScreen)
+        await pilot.click(f"#{QUIT_SAVE_ID}")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -4506,11 +4578,67 @@ async def test_quit_declining_save_prompt_does_not_write_file(
 
         await pilot.press("ctrl+q")
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
-        await pilot.click(f"#{CONFIRM_NO_ID}")
+        await pilot.click(f"#{QUIT_DISCARD_ID}")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         app.exit.assert_called_once()
+
+    assert read_last_session(workspace) is None
+
+
+async def test_quit_cancel_button_aborts_the_quit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `SaveOnQuitScreen`'s "Cancel" button dismisses the modal without quitting or saving —
+    the session keeps running exactly as before."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+    app._session.load_messages([_sample_message("hi")])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.exit = MagicMock()  # type: ignore[method-assign]
+
+        await pilot.press("ctrl+q")
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, SaveOnQuitScreen)
+        await pilot.click(f"#{QUIT_CANCEL_ID}")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        app.exit.assert_not_called()
+
+    assert read_last_session(workspace) is None
+
+
+async def test_quit_escape_dismisses_the_save_prompt_as_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escape on the `SaveOnQuitScreen` is equivalent to clicking "Cancel" — it aborts the quit
+    rather than declining to save (which is what "No" does)."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+    app._session.load_messages([_sample_message("hi")])
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.exit = MagicMock()  # type: ignore[method-assign]
+
+        await pilot.press("ctrl+q")
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, SaveOnQuitScreen)
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        app.exit.assert_not_called()
 
     assert read_last_session(workspace) is None
 
