@@ -176,7 +176,7 @@ flows alongside `command_text` everywhere that already threads through a `BashTo
 * `klorb.permissions.table.PermissionAskItem.intent` and `klorb.session.PermissionAskContext.
   intent` carry it onto every ask item a call produces, identically across items, the same way
   `command_text` does (see "Combining verdicts" above).
-* `klorb.tui.permission_ask_panel.PermissionAskPanel` shows an "Intent: ..." line beneath the risk
+* `klorb.tui.panels.permission_ask_panel.PermissionAskPanel` shows an "Intent: ..." line beneath the risk
   badge, above the command preview, whenever `ask_ctx.intent` is set; `format_ask_context_body()`
   includes the same line in the permanent history-scroll record `ReplApp` leaves behind once the
   panel is dismissed.
@@ -197,7 +197,7 @@ human-readable "what for" line rather than showing it only some of the time.
 
 ### LLM risk classifier (`klorb.permissions.risk_classifier`)
 
-Once a `BashTool` call has resolved to `"ask"`, `klorb.tui.repl.ReplApp._confirm_permission_ask`
+Once a `BashTool` call has resolved to `"ask"`, `klorb.tui.ReplApp._confirm_permission_ask`
 (never `BashTool`/`Session` themselves) optionally sends the whole compound command plus every
 one of its `PermissionAskItem`s to a small, cheap model, via
 `klorb.permissions.risk_classifier.resolve_item_risk_assessment()`, before `PermissionAskPanel`
@@ -246,7 +246,7 @@ spending another round trip. See
 docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md for why the actual
 classifier call site is `ReplApp` rather than `Session`, despite `Session` being where the full
 item list is first available, and why the gating/batching/caching logic itself instead lives in
-`klorb.permissions.risk_classifier` rather than `klorb.tui.repl`.
+`klorb.permissions.risk_classifier` rather than `klorb.tui`.
 
 `tools.bash.riskClassifier.enabled` (default `true`) is a full escape hatch: `false` sends no
 command text to a second LLM call at all, and behavior is exactly as if the classifier didn't
@@ -409,7 +409,7 @@ for how this differs from `docs/specs/permissions.md`'s one-shot `PermissionFram
 interjection.
 
 **Cleanup.** `Session.close()` kills any live persistent shell via a `"Bash"`-keyed teardown
-callback `BashTool` registers through `Session.register_teardown()`; `klorb.tui.repl.ReplApp.
+callback `BashTool` registers through `Session.register_teardown()`; `klorb.tui.ReplApp.
 clear_session()` calls `close()` on the outgoing `Session` before replacing it with a fresh one,
 and `PersistentShell.__init__` also registers its own `kill()` directly against `atexit`, so a
 klorb process exiting normally, via `^C`, or via an uncaught exception never leaves a bash process

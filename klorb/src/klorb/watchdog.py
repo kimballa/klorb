@@ -2,7 +2,7 @@
 """Last-ditch process force-exit for a wedged klorb: a shared `force_exit` (best-effort,
 time-boxed cleanup then `os._exit`) and a `LivenessWatchdog` daemon thread that triggers it when
 the main-thread event loop stops snoozing it. UI-agnostic library code — the TUI wires it up in
-`klorb.tui.repl.ReplApp`, but nothing here imports Textual. See
+`klorb.tui.ReplApp`, but nothing here imports Textual. See
 docs/specs/interrupt-and-liveness-watchdog.md and
 docs/adrs/liveness-watchdog-over-reactive-arming.md.
 """

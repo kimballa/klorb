@@ -108,10 +108,11 @@ project's config layer and expanded `ReadFile` boundary (see
 * Deliberately *not* re-exported from the `klorb.workspace` package's `__init__.py` (unlike
   `TrustManager`): `workspace_init` imports `klorb.process_config` for its schema/key constants,
   and `klorb.process_config` imports `Workspace` from `klorb.workspace` — re-exporting
-  `workspace_init` there too would make that a real import cycle. Callers (`klorb.tui.repl`)
-  import it from `klorb.workspace.workspace_init` directly.
+  `workspace_init` there too would make that a real import cycle. Callers
+  (`klorb.tui.mixins.workspace_bootstrap`) import it from `klorb.workspace.workspace_init`
+  directly.
 
-### Interactive bootstrap (`klorb.tui.repl.ReplApp`)
+### Interactive bootstrap (`klorb.tui.ReplApp`)
 
 Entirely opt-in: `ReplApp.__init__(trust_manager: TrustManager | None = None)` defaults to
 `None`, under which every piece of this section is a no-op — see
@@ -159,7 +160,7 @@ tool-call limits) are deliberately left alone, since a config file's declared de
 silently override a value the user may have already picked interactively earlier in the same
 session.
 
-### The "Trust workspace" command (`klorb.tui.trust_commands`, `ReplApp.trust_workspace`)
+### The "Trust workspace" command (`klorb.tui.commands.trust_commands`, `ReplApp.trust_workspace`)
 
 `TrustWorkspaceCommandProvider` offers "Trust workspace" via the palette (`Ctrl+P`, or
 `>trust`-narrowed from the prompt) exactly while `workspace_trust_management_enabled()` (a
@@ -197,10 +198,10 @@ so they aren't lost the next time klorb opens this workspace.
   against a real mechanism. Whenever such a per-project tier is built, it must be gated on
   `SessionConfig.workspace.trusted` the same way the config-file layer is here.
 * Reconstituting a previous session automatically for a trusted workspace is built — see
-  docs/specs/session-persistence.md — but as a `klorb.tui.repl.ReplApp`-level concern layered
+  docs/specs/session-persistence.md — but as a `klorb.tui.ReplApp`-level concern layered
   on top of the workspace resolution this spec covers, not as part of `Workspace` resolution
   or config-layer precedence itself.
-* The `Header`'s title (`ReplApp.format_title()`, `klorb.tui.repl`) shows the current workspace
+* The `Header`'s title (`ReplApp.format_title()`, `klorb.tui.app`) shows the current workspace
   path plus an `(Untrusted)` marker whenever `SessionConfig.workspace.trusted` is `False`,
   alongside the active model and (if thinking is enabled) its effort level — see
   `docs/specs/terminal-repl.md`.

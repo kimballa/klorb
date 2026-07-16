@@ -13,7 +13,8 @@ constants a `klorb-config.json` write needs, and `klorb.process_config` itself i
 `Workspace` from this module — re-exporting `workspace_init` here too would make that a real
 import cycle (`process_config` -> `workspace` -> `workspace_init` -> `process_config`) rather
 than the one-way dependency it is today. Callers that need `write_initial_project_config`/
-`write_session_defaults_to_project_config` (currently just `klorb.tui.repl`) import them from
+`write_session_defaults_to_project_config` (currently just
+`klorb.tui.mixins.workspace_bootstrap`) import them from
 `klorb.workspace.workspace_init` directly. Code within this package (`trust_manager.py`, which
 has no such dependency on `klorb.process_config`) imports `Workspace` back from here via a
 relative import, per this repo's own import-style rule for same-feature imports.

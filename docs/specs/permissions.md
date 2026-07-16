@@ -312,13 +312,13 @@ below), how it's resolved is governed by `SessionConfig.permission_framework`
   rest of this session, nothing persisted to disk. No callback is invoked either.
 * **`"ask"`** (the `SessionConfig` default) — falls through to the optional callback
   mechanism: when the interactive TUI is running, a panel mounted into the history scroll
-  (`klorb.tui.permission_ask_panel.PermissionAskPanel` — see [[terminal-repl]]'s "Interaction
+  (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel` — see [[terminal-repl]]'s "Interaction
   panel" section) asks the user how to proceed, instead of failing closed. This is wired in as
   an optional callback, not a change to the fail-closed default: `Session.send_turn()`/
   `retry_last_turn()` take an `on_permission_ask` parameter (`klorb.session.PermissionAskContext
   -> klorb.session.PermissionDecision`), threaded through to `Session._run_tool_calls()`. With
   no callback given, behavior is unchanged from the plain fail-closed case described above.
-  `ReplApp._on_permission_ask` (`klorb.tui.repl`) is the TUI's implementation, mirroring the
+  `ReplApp._on_permission_ask` (`klorb.tui.mixins.interactions`) is the TUI's implementation, mirroring the
   existing `on_tool_call_limit_reached`/`ToolCallLimitScreen` pattern: it blocks the worker
   thread running `Session.send_turn()` via `call_from_thread`, shows the panel on the app's own
   event loop, and returns once the user answers.
@@ -334,7 +334,7 @@ tally (see [[terminal-repl]]).
 ### Permission framework change interjection
 
 Changing `permission_framework` mid-conversation (today, only via the REPL's Shift+Tab
-cycling — `klorb.tui.repl.ReplApp._cycle_permission_framework`) takes effect for enforcement
+cycling — `klorb.tui.ReplApp._cycle_permission_framework`) takes effect for enforcement
 immediately, exactly as a direct assignment would, but the model itself is only told about
 the change once, at the start of the next turn: `Session.set_permission_framework(value)` is
 the one place that both mutates `config.permission_framework` and queues the notice, so any
@@ -420,7 +420,7 @@ requested ("Run command" for a `BashTool` item, "Read file"/"Write file" for a d
 item), a command preview (bold; truncated to a fixed number of rendered rows with a
 `[more...]` indicator — clickable, or reachable via the `+` key, never by Tab/focus, since a
 focusable `[more...]` would otherwise shadow every subsequent Enter keystroke meant for the
-grid below it — see `klorb.tui.permission_ask_panel._MoreIndicator`), and then the item's own
+grid below it — see `klorb.tui.panels.permission_ask_panel._MoreIndicator`), and then the item's own
 specific detail (`PermissionAskContext.
 resource_description`) — see
 [the ask-item command-text ADR](../adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md)

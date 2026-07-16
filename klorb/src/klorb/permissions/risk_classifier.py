@@ -11,7 +11,7 @@ resolved to `"ask"`. Each call is also a single, independent, stateless request 
 with the classifier model persists across calls. `resolve_item_risk_assessment()` wraps it with
 the gating (is this even a `BashTool` ask? is the classifier enabled?), batching (classify a whole
 compound command's items in one request), and caching (`Session.tool_state`) a caller needs —
-deliberately kept out of `klorb.tui.repl` so a future non-TUI consumer (e.g. a VSCode plugin) can
+deliberately kept out of `klorb.tui` so a future non-TUI consumer (e.g. a VSCode plugin) can
 call the exact same function rather than re-implementing this logic against its own UI layer; see
 that function's own docstring. It also threads in a bounded window of the user's own prior
 decisions this session (`record_decision_history()`/`HistoryEntry`) as calibration context for
@@ -66,7 +66,7 @@ class ItemRiskAssessment(BaseModel):
     `"command"`-kind item (`kind`/whether `suggested_pattern` is meaningful isn't itself
     round-tripped through this model, since only `"command"`-kind items ever have a
     `commandRules`-shaped grant to suggest a pattern for in the first place — see
-    `klorb.tui.repl.ReplApp._confirm_permission_ask`, which only consults `suggested_pattern` for
+    `klorb.tui.ReplApp._confirm_permission_ask`, which only consults `suggested_pattern` for
     an item whose own `PermissionAskItem.command` is set)."""
 
     item_id: str
@@ -93,7 +93,7 @@ class HistoryEntry(BaseModel):
     would show (its own `item_command_text`, falling back to `resource_description` for a
     structural item with no command text of its own — mirroring `_item_kind`'s own fallback).
     `decision` is a short, plain-English rendering of the user's `PermissionDecision` (via
-    `_format_decision_for_history`) — independent of `klorb.tui.permission_ask_panel.
+    `_format_decision_for_history`) — independent of `klorb.tui.panels.permission_ask_panel.
     format_permission_decision`'s own phrasing, since that one is tuned for a human reading a UI
     grid cell rather than a model reading a prompt, and this module must stay free of any `klorb.
     tui` import (see this module's own docstring on being usable from a future non-TUI UI layer)."""
@@ -104,7 +104,7 @@ class HistoryEntry(BaseModel):
 
 def _format_decision_for_history(decision: PermissionDecision) -> str:
     """Render `decision` as a short phrase for a `HistoryEntry` — deliberately not shared with
-    `klorb.tui.permission_ask_panel.format_permission_decision` (see `HistoryEntry`'s own
+    `klorb.tui.panels.permission_ask_panel.format_permission_decision` (see `HistoryEntry`'s own
     docstring for why): `"denied (explanation: ...)"` for a free-text submission (always
     `action="deny"`, `scope="once"` on its own — see `PermissionDecision.other_text`), otherwise
     `"<allowed|denied>, scope=<once|session|workspace|homedir>"`."""
@@ -126,7 +126,7 @@ def record_decision_history(
     riskClassifier.enabled` is off (nobody will ever read the history back).
 
     Called once per resolved ask, right after the user's `PermissionDecision` comes back —
-    `klorb.tui.repl.ReplApp._confirm_permission_ask` is the one caller today, immediately after
+    `klorb.tui.ReplApp._confirm_permission_ask` is the one caller today, immediately after
     the same point that already updates `_last_permission_action`/`_last_permission_scope`.
     """
     if ask_ctx.command_text is None or not process_config.bash_risk_classifier_enabled:
@@ -567,7 +567,7 @@ def resolve_item_risk_assessment(
     """This item's `ItemRiskAssessment`, or `None` if `tools.bash.riskClassifier.enabled` is off,
     `ask_ctx` isn't a `BashTool` ask at all (`command_text` unset — a plain directory-access ask
     has nothing for a command-risk classifier to say), or classification failed. This is the one
-    function any UI layer (`klorb.tui.repl.ReplApp`, or a future non-TUI equivalent such as a
+    function any UI layer (`klorb.tui.ReplApp`, or a future non-TUI equivalent such as a
     VSCode plugin) should call right before showing its own approval affordance for `ask_ctx` —
     it owns gating, batching, and caching, so a caller only ever needs to pull an
     `ItemRiskAssessment` out of it, never construct one itself.

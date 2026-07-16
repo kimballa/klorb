@@ -71,7 +71,7 @@ command reuses.
   scope reads `klorb.paths.KLORB_CONFIG_DIR`, a module-level constant computed at import
   time) — a pre-existing limitation tracked in `TODO.md`'s "Bugs" section, not something
   `klorb init` fixes on its own.
-* `klorb.tui.init_commands.InitCommandProvider` offers "Init local klorb config" via the
+* `klorb.tui.commands.init_commands.InitCommandProvider` offers "Init local klorb config" via the
   command palette (`Ctrl+P`, or `>init` narrowed from the prompt — see
   [[command-palette-from-prompt]]), always running `run_init("user", force=False)` for the
   REPL's own user and reporting the outcome via `App.show_notice()` — appending an `.error`
@@ -93,7 +93,7 @@ command reuses.
 * `klorb.token_estimate.configure_tiktoken_cache_env()` runs once per process, always before
   either the REPL or a one-shot prompt can trigger a token estimate: `klorb.cli.main()` calls
   it directly for a one-shot prompt (right after `configure_logging()` runs, so its log
-  message is actually visible on stderr), while `klorb.tui.repl.ReplApp.on_mount()` calls it
+  message is actually visible on stderr), while `klorb.tui.ReplApp.on_mount()` calls it
   for an interactive session, once the Textual app itself is running — see
   docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md for why the REPL doesn't
   just call it from `main()` the same way. It checks whether `klorb.token_estimate.

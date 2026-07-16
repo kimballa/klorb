@@ -47,7 +47,7 @@ this exists.
       prevent every other layer (and the process) from loading. Passing a `warnings: list[str]`
       collects this same message so a caller can surface it somewhere a user will actually
       see it, not just the log — `klorb.process_config.load_process_config` does this via
-      `ProcessConfig.config_warnings`, which `klorb.tui.repl.ReplApp` posts to the history
+      `ProcessConfig.config_warnings`, which `klorb.tui.ReplApp` posts to the history
       scroll at startup.
     * There is currently no version-upgrade logic: every schema in use today is `"1.0.0"`.
       When a format changes, the upgrade path belongs inside `read_versioned_json` (or a

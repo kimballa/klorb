@@ -35,7 +35,7 @@ or slicing a superset.
   `CLAUDE.md` is read from the workspace root and injected into the conversation alongside
   `AGENTS.md`; see [[workspace-context-files]]), and `theme` (`str | None`, default `None` —
   the Textual theme name selected via the TUI's theme picker (`ThemeCommandProvider`/
-  `ThemeSelectionScreen` in `klorb/src/klorb/tui/theme_commands.py`); `None` means no persisted
+  `ThemeSelectionScreen` in `klorb/src/klorb/tui/commands/theme_commands.py`); `None` means no persisted
   choice exists yet, so `ReplApp` falls back to Textual's own built-in default theme).
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
@@ -107,7 +107,7 @@ or slicing a superset.
   6. Overrides carried over from the previous session's saved state — still a placeholder
      (`_load_last_session_overrides()` always returns `{}`): `last-session.json` (see
      docs/specs/session-persistence.md) exists now, but its `SessionConfig` is restored by
-     `klorb.tui.repl.ReplApp._maybe_restore_last_session` directly, not through this layering
+     `klorb.tui.ReplApp._maybe_restore_last_session` directly, not through this layering
      step — that file's saved config is a plain dump of `SessionConfig`'s own fields, not the
      on-disk `sessionDefaults` shape this layer expects, and its message history has no
      `ProcessConfig`-shaped home to land in regardless. This layer stays reserved for a
@@ -175,7 +175,7 @@ or slicing a superset.
   `write_versioned_json`, preserving every other key already in the file — the same
   preserve-everything-else pattern `klorb.permissions.grant` uses for `readDirs`/`writeDirs`
   grants, generalized to an arbitrary scalar key.
-* `ReplApp.clear_session()` (`klorb/src/klorb/tui/repl.py`) rebuilds the new session's
+* `ReplApp.clear_session()` (`klorb/src/klorb/tui/mixins/prompt_submission.py`) rebuilds the new session's
   config by re-reading the config layers from disk (via `load_process_config()`, keeping
   just the session-scoped parts), then re-applying the CLI flags on top via
   `apply_cli_flags_to_session()` — so a config-file edit made between startup and the

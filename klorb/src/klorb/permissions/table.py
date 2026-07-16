@@ -54,7 +54,7 @@ class PermissionAskItem:
     neither it also carries, since a compound command can need several independent decisions
     (one per simple command and/or redirect target) that all still belong to the same one command
     the user actually typed or the model actually submitted. Purely a display aid for a
-    UI (`klorb.tui.permission_ask_panel.PermissionAskPanel`) to show what's actually being run,
+    UI (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`) to show what's actually being run,
     on top of `resource_description`'s per-item specific detail — never itself the resource a
     grant is checked or persisted against, unlike `path`/`command`.
 

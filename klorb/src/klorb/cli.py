@@ -26,7 +26,7 @@ from klorb.session import Session, SessionConfig
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens
 from klorb.tools.registry import ToolRegistry
-from klorb.tui.repl import run_repl
+from klorb.tui import run_repl
 from klorb.workspace import TrustManager
 
 logger = logging.getLogger(__name__)
@@ -485,7 +485,7 @@ def main() -> None:
     `docs/specs/klorb-init.md`.
 
     The current workspace's registration/trust state is resolved (never bootstrapped — that
-    needs the interactive TUI, see `klorb.tui.repl.ReplApp._resolve_workspace_trust`) via a
+    needs the interactive TUI, see `klorb.tui.ReplApp._resolve_workspace_trust`) via a
     fresh `TrustManager` before `load_process_config()` runs, so both a headless one-shot
     prompt and the REPL honor whatever trust decision a previous interactive session recorded
     for this directory. See docs/specs/projects-and-trust.md.
@@ -494,7 +494,7 @@ def main() -> None:
     logging is configured (so its log message is actually visible on stderr and, if enabled,
     the session log file), pointing tiktoken at the `klorb init`-installed cache if one is
     present. For an interactive session, that same call is instead made by
-    `klorb.tui.repl.ReplApp.on_mount()` once the Textual app is running, so its log message
+    `klorb.tui.ReplApp.on_mount()` once the Textual app is running, so its log message
     routes through the app's log (or the session log file) rather than leaking to raw stderr
     ahead of the TUI taking over the terminal -- see
     docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md.

@@ -280,7 +280,7 @@ class PermissionAskContext(BaseModel):
     `MultiPermissionAskRequired.items` list (including the item this context is itself about, in
     the same order), lets a UI batch work across a whole compound command's several asks even
     though they're each still asked about one at a time, in series — e.g.
-    `klorb.tui.repl.ReplApp._confirm_permission_ask` uses it to send `klorb.permissions.
+    `klorb.tui.ReplApp._confirm_permission_ask` uses it to send `klorb.permissions.
     risk_classifier.classify_command_risk()` every item in one request the first time any of
     them is seen, rather than once per item. `None` for a plain single-item
     `PermissionAskRequired` ask (that path never has `command_text` set at all, so there is
@@ -639,7 +639,7 @@ class Session:
         """Change `config.permission_framework` to `value` and queue a system-harness
         interjection (`PERMISSION_FRAMEWORK_INTERJECTIONS[value]`) for `send_turn()` to
         prepend onto the prompt of the next turn it dispatches. Callers that let the user
-        change this mode mid-conversation (e.g. `klorb.tui.repl.ReplApp`'s Shift+Tab
+        change this mode mid-conversation (e.g. `klorb.tui.ReplApp`'s Shift+Tab
         cycling) should call this instead of assigning `config.permission_framework`
         directly, so the model is told about the change. The enforcement value itself takes
         effect immediately, exactly as a direct assignment would — only the model-facing
@@ -698,7 +698,7 @@ class Session:
         onward since each teardown callback (e.g. `PersistentShell.kill`, `Scratchpad.cleanup`)
         is itself safe to call more than once.
 
-        Callers that replace a `Session` outright (`klorb.tui.repl.ReplApp.clear_session()`) must
+        Callers that replace a `Session` outright (`klorb.tui.ReplApp.clear_session()`) must
         call this on the outgoing `Session` first — nothing else tears it down, and a live
         `subprocess.Popen` handle would otherwise leak for the rest of the klorb process's
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
@@ -1616,7 +1616,7 @@ class Session:
                     if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
                         # Abort at the round boundary too, not just mid-stream: a turn that was
                         # cancelled (Escape, or an interactive quit -- see
-                        # klorb.tui.repl.ReplApp._begin_exit) while a tool call was running, or while
+                        # klorb.tui.ReplApp._begin_exit) while a tool call was running, or while
                         # its worker thread was parked awaiting a permission decision, would otherwise
                         # keep issuing more rounds/streams before the provider's own mid-stream
                         # cancel_event check (klorb.openrouter.send_prompt) got another chance to fire.
