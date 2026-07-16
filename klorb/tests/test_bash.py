@@ -287,6 +287,20 @@ def test_unknown_shell_lifetime_raises_value_error(tmp_path: Path) -> None:
         tool.apply({"command": "echo hi", "intent": "test intent", "shell_lifetime": "bogus"})
 
 
+@pytest.mark.parametrize("args_extra", [{}, {"shell_lifetime": None}, {"shell_lifetime": ""}])
+def test_omitted_shell_lifetime_runs_command_scoped(
+    tmp_path: Path, args_extra: dict[str, Any],
+) -> None:
+    # A missing key, a null, or an empty string all mean a fresh, command-scoped shell -- so the
+    # command runs successfully and the result carries none of the persistent-shell-only fields.
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
+    tool = BashTool(context)
+    result = tool.apply({"command": "echo hi", "intent": "test intent", **args_extra})
+    assert result["success"] is True
+    assert result["stdout"].strip() == "hi"
+    assert "terminal_alive" not in result
+
+
 # --- execution ---
 
 

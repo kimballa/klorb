@@ -20,10 +20,11 @@ host. Where it can't (no `bwrap` binary, or a kernel/container policy forbidding
 namespaces), it falls back to unsandboxed execution with a one-time notice; the permission
 classification above is enforced identically either way. See "Sandboxing" below.
 
-Every call also chooses a `shell_lifetime`: `"command"` (a fresh, non-persistent shell for that
+Every call may also choose a `shell_lifetime`: `"command"` (a fresh, non-persistent shell for that
 one call) or `"session"`/`"new"` (a single persistent shell reused across calls within a
-`Session`, keeping `cd`/exported-variable/background-job state between them). See "Execution" and
-"Session-scoped terminals" below.
+`Session`, keeping `cd`/exported-variable/background-job state between them). `shell_lifetime` is
+optional — a missing key, a `None`, or an empty string all default to `"command"`, the
+command-scoped shell. See "Execution" and "Session-scoped terminals" below.
 
 ## How it works
 
@@ -289,7 +290,8 @@ feed the classifier's own next prompt.
 
 ### Execution
 
-`shell_lifetime` selects how long the underlying shell process lives:
+`shell_lifetime` selects how long the underlying shell process lives. It's optional — a missing
+key, a `None`, or an empty string all default to `"command"`:
 
 * `"command"` — each call spawns its own fresh, non-persistent shell that exits when the command
   finishes: no `cd`, exported variable, or background job carries over to the next call.

@@ -533,7 +533,8 @@ class BashTool(Tool):
     a one-time notice the first time that happens in a given session (see `_sandbox_notice`) — the
     permission checks above are enforced identically either way.
 
-    `shell_lifetime` selects how long the underlying shell process lives: `"command"` spawns a
+    `shell_lifetime` is optional and selects how long the underlying shell process lives; a
+    missing key, a `None`, or an empty string all default to `"command"`. `"command"` spawns a
     fresh, non-persistent shell that exits when the command finishes (no state carries over to
     the next call); `"session"` reuses the one live persistent shell for this `Session` if one
     exists, or creates it otherwise; `"new"` kills any existing persistent shell first, then
@@ -569,7 +570,8 @@ class BashTool(Tool):
             "or requires confirmation rather than silently allowed. Returns exit_status, "
             "success, failure_reason (null on success), stdout/stderr (or stdout_file/"
             "stderr_file if the output is large), and runtime in seconds. shell_lifetime "
-            "selects the shell's lifetime: \"command\" (default behavior) starts a fresh, "
+            "is optional and selects the shell's lifetime; omit it (or pass null/empty) for the "
+            "default \"command\" behavior: \"command\" starts a fresh, "
             "non-persistent shell that exits when the command finishes, with no state (cwd, "
             "env vars, background jobs) carried over to the next call; \"session\" reuses this "
             "session's one persistent shell if it has one, or creates it otherwise, so cwd/env/"
@@ -604,13 +606,14 @@ class BashTool(Tool):
                     "type": "string",
                     "enum": ["command", "session", "new"],
                     "description": (
+                        "Optional; omit (or pass null/empty) for a fresh command-scoped shell. "
                         "\"command\": fresh, non-persistent shell for this call only. "
                         "\"session\": reuse (or create) this session's one persistent shell. "
                         "\"new\": close any existing persistent shell and start a fresh one."
                     ),
                 },
             },
-            "required": ["command", "intent", "shell_lifetime"],
+            "required": ["command", "intent"],
             "additionalProperties": False,
         }
 
@@ -630,10 +633,9 @@ class BashTool(Tool):
                 raise ValueError("Missing required argument: 'intent'. Include a human-readable " +
                                 "description of the command's purpose.")
 
-        try:
-            shell_lifetime = args["shell_lifetime"]
-        except KeyError:
-            raise ValueError("Missing required argument: 'shell_lifetime'. Must be command/session/new.")
+        # shell_lifetime is optional: a missing key, a null, or an empty string all mean "run this
+        # command in a fresh, command-scoped shell" -- exactly the same as an explicit "command".
+        shell_lifetime = args.get("shell_lifetime") or "command"
 
         if shell_lifetime not in ("command", "session", "new"):
             raise ValueError(
