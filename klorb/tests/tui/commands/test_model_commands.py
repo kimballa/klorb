@@ -1,12 +1,12 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.model_commands."""
+"""Tests for klorb.tui.commands.model_commands."""
 
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from textual.command import DiscoveryHit
 from textual.widgets import Input, Static
 
-from klorb.tui.model_commands import (
+from klorb.tui.commands.model_commands import (
     CHANGE_MODEL_LABEL,
     CURRENT_MODEL_MARKER,
     MODEL_HEADER_TEXT,

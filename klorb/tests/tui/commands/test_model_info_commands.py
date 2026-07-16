@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.model_info_commands."""
+"""Tests for klorb.tui.commands.model_info_commands."""
 
 from unittest.mock import MagicMock, patch
 
@@ -7,7 +7,7 @@ from textual.command import DiscoveryHit
 
 from klorb.models.configured_model import ConfiguredModel
 from klorb.models.openrouter_pricing import ModelPricing
-from klorb.tui.model_info_commands import (
+from klorb.tui.commands.model_info_commands import (
     MODEL_INFO_HEADER_TEXT,
     NOT_AVAILABLE,
     SHOW_MODEL_INFO_LABEL,
@@ -97,7 +97,7 @@ async def test_show_model_info_posts_a_history_notice_with_fetched_pricing() -> 
     provider = ModelInfoCommandProvider(mock_screen)
 
     with patch(
-        "klorb.tui.model_info_commands.fetch_openrouter_pricing", return_value=pricing,
+        "klorb.tui.commands.model_info_commands.fetch_openrouter_pricing", return_value=pricing,
     ) as mock_fetch:
         await provider._show_model_info()
 

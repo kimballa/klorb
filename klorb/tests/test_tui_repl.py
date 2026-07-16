@@ -45,8 +45,9 @@ from klorb.session import (
 from klorb.token_estimate import estimate_tokens
 from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
-from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel
-from klorb.tui.confirm_screen import (
+from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
+from klorb.tui.panels.ask_user_questions_panel import AskUserQuestionsPanel
+from klorb.tui.panels.confirm_screen import (
     CONFIRM_NO_ID,
     CONFIRM_YES_ID,
     QUIT_CANCEL_ID,
@@ -55,8 +56,7 @@ from klorb.tui.confirm_screen import (
     ConfirmScreen,
     SaveOnQuitScreen,
 )
-from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
-from klorb.tui.permission_ask_panel import (
+from klorb.tui.panels.permission_ask_panel import (
     _MAX_COMMAND_PREVIEW_LINES,
     _MAX_SECONDARY_TEXT_LINES,
     PERMISSION_ASK_COMMAND_ID,
@@ -98,7 +98,7 @@ from klorb.tui.repl import (
     _summarize_reasoning_details,
     format_token_count,
 )
-from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL
+from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace import input_history as input_history_module
 from klorb.workspace.input_history import project_history_path

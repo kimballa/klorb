@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel."""
+"""Tests for klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel."""
 
 from unittest.mock import MagicMock
 
@@ -9,7 +9,7 @@ from textual.widgets import Input, Static
 
 from klorb.session import AskUserQuestionsAnswer, AskUserQuestionsItemContext
 from klorb.tools.ask.common import QuestionOption
-from klorb.tui.ask_user_questions_panel import (
+from klorb.tui.panels.ask_user_questions_panel import (
     ASK_USER_QUESTIONS_HEADER_ID,
     ASK_USER_QUESTIONS_INPUT_ID,
     ASK_USER_QUESTIONS_LIST_ID,

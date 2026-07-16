@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.trust_commands."""
+"""Tests for klorb.tui.commands.trust_commands."""
 
 from unittest.mock import MagicMock
 
-from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
+from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
 
 
 def _screen(*, trust_management_enabled: bool, workspace_trusted: bool) -> MagicMock:

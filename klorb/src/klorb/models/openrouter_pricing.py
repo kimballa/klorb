@@ -6,7 +6,7 @@ token can change at any time -- providers reprice, promotional rates expire -- s
 deliberately never baked into a model's `klorb-model` JSON file (see
 docs/adrs/fetch-model-pricing-live-not-from-json.md). `fetch_openrouter_pricing()` asks
 OpenRouter for the current number instead, each time a caller (today, only "Show model
-info" — see `klorb.tui.model_info_commands`) wants to display it.
+info" — see `klorb.tui.commands.model_info_commands`) wants to display it.
 """
 
 import json

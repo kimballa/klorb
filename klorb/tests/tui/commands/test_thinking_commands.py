@@ -1,12 +1,12 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.thinking_commands."""
+"""Tests for klorb.tui.commands.thinking_commands."""
 
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from textual.command import DiscoveryHit
 from textual.widgets import OptionList, Static
 
-from klorb.tui.thinking_commands import (
+from klorb.tui.commands.thinking_commands import (
     THINKING_EFFORT_HEADER_TEXT,
     THINKING_EFFORT_LEVELS,
     ThinkingCommandProvider,

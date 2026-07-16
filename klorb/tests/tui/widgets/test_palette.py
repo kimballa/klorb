@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.palette."""
+"""Tests for klorb.tui.widgets.palette."""
 
 from textual.command import DiscoveryHit, Hit
 
-from klorb.tui.palette import _sort_key
+from klorb.tui.widgets.palette import _sort_key
 
 
 def _hit(score: float, text: str) -> Hit:

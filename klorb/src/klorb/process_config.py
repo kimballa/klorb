@@ -330,7 +330,7 @@ class ProcessConfig(BaseModel):
     still `None` — see `klorb.tool_call_log.tool_call_logging_enabled`."""
     theme: str | None = None
     """Name of the Textual theme selected via the TUI's theme picker (see
-    `klorb.tui.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`
+    `klorb.tui.commands.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`
     so it's restored on the next klorb session. `None` (the default) means no persisted choice
     exists yet; `ReplApp` falls back to Textual's own built-in default theme in that case."""
     config_warnings: list[str] = Field(default_factory=list)

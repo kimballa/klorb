@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.session_commands."""
+"""Tests for klorb.tui.commands.session_commands."""
 
 from unittest.mock import MagicMock
 
-from klorb.tui.session_commands import SessionCommandProvider
+from klorb.tui.commands.session_commands import SessionCommandProvider
 
 
 def test_clear_session_calls_app_clear_session() -> None:

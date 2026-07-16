@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Command palette provider and modal for picking a Textual theme, mirroring
-`klorb.tui.thinking_commands`'s command-plus-modal shape but sourcing its option list from
+`klorb.tui.commands.thinking_commands`'s command-plus-modal shape but sourcing its option list from
 `App.available_themes` instead of a fixed tuple.
 """
 

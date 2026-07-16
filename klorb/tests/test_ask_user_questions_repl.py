@@ -17,7 +17,7 @@ from klorb.message import Message, ToolCallRequest
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
-from klorb.tui.ask_user_questions_panel import ASK_USER_QUESTIONS_INPUT_ID, AskUserQuestionsPanel
+from klorb.tui.panels.ask_user_questions_panel import ASK_USER_QUESTIONS_INPUT_ID, AskUserQuestionsPanel
 from klorb.tui.repl import HISTORY_ID, PROMPT_INPUT_ID, PromptInput, ReplApp
 
 

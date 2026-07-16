@@ -18,7 +18,7 @@ from klorb.message import Message, ToolCallRequest
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
-from klorb.tui.escalate_privileges_panel import EscalatePrivilegesPanel
+from klorb.tui.panels.escalate_privileges_panel import EscalatePrivilegesPanel
 from klorb.tui.repl import HISTORY_ID, PROMPT_INPUT_ID, PromptInput, ReplApp
 
 

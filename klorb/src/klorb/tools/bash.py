@@ -612,7 +612,7 @@ class BashTool(Tool):
 
     `intent` is a required, model-supplied short statement of what `command` is trying to
     accomplish — shown alongside the command in the approval dialog and the history scroll (see
-    `summary()` and `klorb.tui.permission_ask_panel.PermissionAskPanel`), and passed to
+    `summary()` and `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`), and passed to
     `klorb.permissions.risk_classifier` so a command that looks deceptively different from its
     own stated intent scores as more risky. See docs/specs/bash-tool-and-command-permissions.md's
     "Agent-stated intent" section.
@@ -742,7 +742,7 @@ class BashTool(Tool):
 
         `command` (the model's original, unparsed command string) is set as every collected
         item's `command_text` — `analysis` alone has no notion of the raw command text, and a UI
-        (`klorb.tui.permission_ask_panel.PermissionAskPanel`) needs it to show what's actually
+        (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`) needs it to show what's actually
         being run, on top of each item's own specific `resource_description` detail (see
         `PermissionAskItem.command_text`). Every collected item also gets the same
         `is_compound` (`analysis.command_count > 1` — every executable node the walker visited,

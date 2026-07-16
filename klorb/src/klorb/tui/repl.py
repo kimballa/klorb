@@ -73,23 +73,26 @@ from klorb.tools.tool import (
     default_tool_call_detail,
     default_tool_call_summary,
 )
-from klorb.tui.ask_user_questions_panel import AskUserQuestionsPanel, format_ask_user_questions_answer
-from klorb.tui.confirm_screen import ConfirmScreen, SaveOnQuitScreen
-from klorb.tui.escalate_privileges_panel import EscalatePrivilegesPanel, format_escalate_privileges_decision
-from klorb.tui.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
-from klorb.tui.model_commands import ModelCommandProvider
-from klorb.tui.model_info_commands import ModelInfoCommandProvider
-from klorb.tui.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
-from klorb.tui.permission_ask_panel import (
+from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL, InitCommandProvider
+from klorb.tui.commands.model_commands import ModelCommandProvider
+from klorb.tui.commands.model_info_commands import ModelInfoCommandProvider
+from klorb.tui.commands.session_commands import SessionCommandProvider
+from klorb.tui.commands.theme_commands import ThemeCommandProvider
+from klorb.tui.commands.thinking_commands import ThinkingCommandProvider
+from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
+from klorb.tui.panels.ask_user_questions_panel import AskUserQuestionsPanel, format_ask_user_questions_answer
+from klorb.tui.panels.confirm_screen import ConfirmScreen, SaveOnQuitScreen
+from klorb.tui.panels.escalate_privileges_panel import (
+    EscalatePrivilegesPanel,
+    format_escalate_privileges_decision,
+)
+from klorb.tui.panels.permission_ask_panel import (
     PermissionAskPanel,
     format_ask_context_body,
     format_permission_decision,
 )
-from klorb.tui.session_commands import SessionCommandProvider
 from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShellCommand
-from klorb.tui.theme_commands import ThemeCommandProvider
-from klorb.tui.thinking_commands import ThinkingCommandProvider
-from klorb.tui.trust_commands import TRUST_WORKSPACE_LABEL, TrustWorkspaceCommandProvider
+from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
 from klorb.watchdog import LivenessWatchdog, force_exit
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.input_history import append_history, load_history, project_history_path
@@ -158,7 +161,7 @@ _COMMAND_PREVIEW_WIDTH_PADDING = 4
 """Horizontal space `PermissionAskPanel`'s own `padding: 1 2` (2 columns each side) consumes
 around its command preview — subtracted from the app's terminal width to estimate the preview's
 actual rendered width for `PermissionAskPanel`'s `preview_wrap_width` (see
-`ReplApp._confirm_permission_ask` and `klorb.tui.permission_ask_panel._command_preview`)."""
+`ReplApp._confirm_permission_ask` and `klorb.tui.panels.permission_ask_panel._command_preview`)."""
 _MIN_COMMAND_PREVIEW_WRAP_WIDTH = 20
 """Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable
 (if aggressively wrapped) preview rather than a degenerate near-zero width."""
@@ -323,7 +326,7 @@ class PromptInput(TextArea):
     detach. Clearing the session (see `ReplApp.clear_session()`) resets the history, the recall
     position, and the stashed draft.
 
-    Whenever the text starts with `>` (see `klorb.tui.palette`), up/down/enter instead drive the
+    Whenever the text starts with `>` (see `klorb.tui.widgets.palette`), up/down/enter instead drive the
     inline `PromptPalette` popup mounted just above this widget rather than history recall or
     submission: see `_on_key`'s palette branch and `_refresh_palette`.
     """
@@ -1498,7 +1501,7 @@ class ReplApp(App[None]):
 
     def get_active_model(self) -> Model | None:
         """Return the currently active `Model`, or `None` if `config.model` isn't a
-        registered model — see `klorb.tui.model_info_commands.ModelInfoCommandProvider`."""
+        registered model — see `klorb.tui.commands.model_info_commands.ModelInfoCommandProvider`."""
         return self._session.active_model()
 
     def available_model_names(self) -> list[str]:
@@ -1508,7 +1511,7 @@ class ReplApp(App[None]):
 
     def get_session_statistics(self) -> SessionStatistics:
         """Return the active session's running statistics — see
-        `klorb.tui.session_commands.SessionCommandProvider`."""
+        `klorb.tui.commands.session_commands.SessionCommandProvider`."""
         return self._session.statistics
 
     def select_model(self, name: str) -> None:

@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Command palette provider and modal for switching the active model, mirroring
-`klorb.tui.theme_commands`'s "one command that names the current value, opens a modal" shape
+`klorb.tui.commands.theme_commands`'s "one command that names the current value, opens a modal" shape
 — see docs/adrs/single-change-model-command-with-typeahead-modal.md for why models get a
 dedicated typeahead-filterable modal instead of one palette entry per model."""
 
@@ -53,7 +53,7 @@ def filter_model_names(model_names: list[str], query: str) -> list[str]:
 class _ModelOptionList(OptionList, can_focus=False):
     """The filtered model list. Never focused: `ModelSelectionScreen`'s filter `Input` keeps
     focus the whole time, and up/down/enter are forwarded here programmatically — the same
-    split-focus shape `klorb.tui.palette.PromptPalette` uses for the inline `>` palette."""
+    split-focus shape `klorb.tui.widgets.palette.PromptPalette` uses for the inline `>` palette."""
 
 
 class ModelSelectionScreen(ModalScreen[None]):

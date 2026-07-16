@@ -18,7 +18,7 @@ set rather than a long list the user has to scan."""
 class QuestionOption:
     """One multiple-choice option offered for a `QuestionSpec`. `recommended`, if set, marks
     the model's suggested answer — display order and any "(Recommended)" badge is a TUI
-    concern (see `klorb.tui.ask_user_questions_panel.AskUserQuestionsPanel`); this class
+    concern (see `klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel`); this class
     only carries the data.
     """
 

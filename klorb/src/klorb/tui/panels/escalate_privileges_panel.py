@@ -38,7 +38,7 @@ class EscalatePrivilegesPanel(Vertical):
 
     `ReplApp` mounts this into its full-width `#interaction-panel` container, below the history
     scroll and above the (disabled, visually muted) prompt input, rather than as a floating
-    modal \u2014 see `klorb.tui.permission_ask_panel.PermissionAskPanel`'s docstring for the shared
+    modal \u2014 see `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`'s docstring for the shared
     mechanics: `dismiss()` just invokes the `on_dismiss` callback given at construction, and
     `ReplApp` owns unmounting this panel and recording a permanent record of the exchange
     afterward.

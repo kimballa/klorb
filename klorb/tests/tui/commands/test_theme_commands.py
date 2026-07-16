@@ -1,12 +1,12 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.theme_commands."""
+"""Tests for klorb.tui.commands.theme_commands."""
 
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from textual.command import DiscoveryHit
 from textual.widgets import OptionList, Static
 
-from klorb.tui.theme_commands import (
+from klorb.tui.commands.theme_commands import (
     SELECT_THEME_LABEL,
     THEME_HEADER_TEXT,
     ThemeCommandProvider,

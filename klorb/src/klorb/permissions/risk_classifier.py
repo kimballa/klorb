@@ -93,7 +93,7 @@ class HistoryEntry(BaseModel):
     would show (its own `item_command_text`, falling back to `resource_description` for a
     structural item with no command text of its own — mirroring `_item_kind`'s own fallback).
     `decision` is a short, plain-English rendering of the user's `PermissionDecision` (via
-    `_format_decision_for_history`) — independent of `klorb.tui.permission_ask_panel.
+    `_format_decision_for_history`) — independent of `klorb.tui.panels.permission_ask_panel.
     format_permission_decision`'s own phrasing, since that one is tuned for a human reading a UI
     grid cell rather than a model reading a prompt, and this module must stay free of any `klorb.
     tui` import (see this module's own docstring on being usable from a future non-TUI UI layer)."""
@@ -104,7 +104,7 @@ class HistoryEntry(BaseModel):
 
 def _format_decision_for_history(decision: PermissionDecision) -> str:
     """Render `decision` as a short phrase for a `HistoryEntry` — deliberately not shared with
-    `klorb.tui.permission_ask_panel.format_permission_decision` (see `HistoryEntry`'s own
+    `klorb.tui.panels.permission_ask_panel.format_permission_decision` (see `HistoryEntry`'s own
     docstring for why): `"denied (explanation: ...)"` for a free-text submission (always
     `action="deny"`, `scope="once"` on its own — see `PermissionDecision.other_text`), otherwise
     `"<allowed|denied>, scope=<once|session|workspace|homedir>"`."""
