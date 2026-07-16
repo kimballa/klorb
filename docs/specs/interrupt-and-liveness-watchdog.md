@@ -61,24 +61,33 @@ Escape is bound only to case 2 (`action_abort_response`, hidden from the footer 
 Ctrl+C's other two cases are specifically about a keystroke that's overloaded in a real
 terminal, not about giving Escape more jobs.
 
-### Ctrl+C streak bookkeeping and the double-press escalations
+### Ctrl+C streak bookkeeping and the escalation ladder
 
 `ReplApp._last_ctrl_c_at`/`_last_ctrl_c_kind` record the timestamp and outcome (`"copy"`,
 `"interrupt"`, or `"bare"`) of the most recent Ctrl+C press, of any of the three kinds above.
-`action_interrupt` (and the two copy-hook overrides) update this pair on every press. Two
-separate escalations read it, both scoped to `_DOUBLE_INTERRUPT_WINDOW_SECONDS`:
+`action_interrupt` (and the two copy-hook overrides) update this pair on every press, and the
+same method reads it to decide what *this* press does, all scoped to
+`_DOUBLE_INTERRUPT_WINDOW_SECONDS`:
 
-* **Case 2, pressed twice in a row** (`previous_kind == "interrupt"`): the *same* running
-  activity is still in flight, meaning the first interrupt signal hasn't unwound it yet —
-  escalates straight to `_force_exit()`. This is the hang-mode-1 escape hatch described below.
-* **Case 3, pressed twice in a row** (`previous_kind == "bare"`): the ordinary "Ctrl+C again to
-  quit" gesture also escalates to `_force_exit()`. Critically, this only counts a *bare* press
-  as the predecessor — a copy or an interrupt press does not itself count as "the first of two
-  bare presses" toward quitting, so a press sequence like copy → (nothing selected/running) →
-  (still nothing) takes three presses total (the first copies, the second only warns as if it
-  were the first bare press, the third quits), not two. See docs/adrs/idle-ctrl-c-force-exits-
-  not-the-polite-quit-flow.md for why this bypasses the polite `_quit_after_maybe_saving()` flow
-  entirely rather than opening its save-prompt modal.
+* Case 2 (something running) only actually interrupts once per streak: if the immediately
+  preceding press, within the window, was itself an `"interrupt"` or a `"bare"` press, this press
+  does **not** re-signal the running activity even if it's still in flight — it falls through to
+  the warn/quit ladder below instead, exactly like case 3. This is deliberate: re-sending the
+  same signal on every subsequent press wouldn't help a command that's already ignoring it, and a
+  user holding Ctrl+C shouldn't have every repeat keystroke re-interrupt whatever happens to
+  start running next.
+* Otherwise (nothing running, or a running activity this streak already interrupted once): shows
+  the "Press Ctrl+C again to quit." notice (`_note_ctrl_c_quit_warning`) — unless the immediately
+  preceding press was *also* one of these "nothing new to do" presses within the window
+  (`previous_kind == "bare"`), in which case this press force-exits (`_force_exit()`) instead.
+
+Net effect: a solitary bare Ctrl+C (nothing selected, nothing running) takes **two** presses to
+force-exit — warn, then quit. A copy or an interrupt takes **three** — the copy/interrupt itself,
+then a warning (even if the interrupted activity is still shutting down), then a quit — since a
+copy or an interrupt only ever counts as the first step in the ladder, never as the first of two
+"nothing to do" presses. See docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md for why
+the final quit bypasses the polite `_quit_after_maybe_saving()` flow entirely rather than opening
+its save-prompt modal.
 
 ### Bash tool cancellation reaches the running child
 
@@ -105,12 +114,17 @@ loop, so in hang mode (1) the user gets immediate confirmation the keystroke was
 the app isn't silently ignoring them — the difference between "it's working on stopping" and
 "it's deadlocked".
 
-### 2. Double-Ctrl+C force-quit (hang mode 1)
+### 2. Repeated-Ctrl+C force-quit (hang mode 1)
 
-A second Ctrl+C landing on case 2 (see "Ctrl+C streak bookkeeping" above) within
-`_DOUBLE_INTERRUPT_WINDOW_SECONDS` triggers `ReplApp._force_exit`. Because hang mode (1) leaves
-the event loop alive, the key event is delivered and this handler runs, escaping without any
-wait even though the worker thread is permanently stuck.
+A Ctrl+C streak that starts by interrupting a running activity (see "Ctrl+C streak bookkeeping"
+above) reaches `ReplApp._force_exit` on its *third* press within `_DOUBLE_INTERRUPT_WINDOW_
+SECONDS` — the first interrupts, the second only warns (even though the stuck activity is still
+in flight), the third quits. Because hang mode (1) leaves the event loop alive, every one of
+those key events is delivered and `action_interrupt` runs each time, escaping without any wait
+even though the worker thread is permanently stuck. Never force-exiting on just the *second*
+press avoids nuking the whole process for an activity (a Bash command SIGINT'd a moment earlier,
+say) that was always going to end on its own within its grace period anyway — see
+docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md.
 
 ### 3. Liveness watchdog (hang mode 2)
 
@@ -119,7 +133,7 @@ wait even though the worker thread is permanently stuck.
 the agent — a model that streams no tokens for minutes is irrelevant, because token streaming
 happens on the worker thread while the main-thread loop keeps ticking its timers. The watchdog
 fires only when the main thread stops servicing its own timers for `watchdog.timeout` seconds:
-exactly hang mode (2), the one thing neither the key-event feedback nor the double-Ctrl+C can
+exactly hang mode (2), the one thing neither the key-event feedback nor a repeated Ctrl+C can
 escape. On firing it runs the same `_force_exit` path from its own thread, so it works even when
 the main thread and event loop are completely wedged.
 
@@ -128,7 +142,7 @@ Setting it to `0` or a negative value disables the watchdog entirely.
 
 ### Shared force-exit path
 
-Both the double-Ctrl+C handler and the watchdog call `klorb.watchdog.force_exit`, which:
+Both the repeated-Ctrl+C handler and the watchdog call `klorb.watchdog.force_exit`, which:
 
 1. runs a best-effort cleanup callback in a **separate daemon thread** — dumping every thread's
    stack (`klorb.diagnostics.dump_all_thread_stacks`) and, when the workspace is trusted, saving
@@ -159,7 +173,7 @@ to start, the zombie worker would still be live, and if it ever woke (e.g. a bas
 finally hitting its own timeout) it would fire `call_from_thread(_finalize/_finish_turn)` and
 corrupt the *new* turn's state — exactly the concurrent-worker corruption `_turn_in_flight`
 exists to prevent. The only correct response to a worker that never unwinds is to exit the
-process, which is what the double-Ctrl+C and watchdog paths do. See
+process, which is what the repeated-Ctrl+C and watchdog paths do. See
 docs/adrs/liveness-watchdog-over-reactive-arming.md.
 
 ## See also
@@ -170,5 +184,6 @@ docs/adrs/liveness-watchdog-over-reactive-arming.md.
   Ctrl+Q quit-with-save-prompt flow this feature deliberately keeps separate from Ctrl+C.
 * docs/adrs/bash-cancellation-via-session-active-cancel-event.md
 * docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md
+* docs/adrs/ctrl-c-interrupt-escalates-on-the-third-press-not-the-second.md
 * docs/adrs/liveness-watchdog-over-reactive-arming.md
 * docs/adrs/remove-sigint-handler-because-textual-disables-isig.md

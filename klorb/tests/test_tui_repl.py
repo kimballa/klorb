@@ -798,9 +798,13 @@ async def test_escape_shows_interrupting_notice() -> None:
         assert str(notices.first(Static).render()) == _INTERRUPTING_MESSAGE
 
 
-async def test_double_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
-    """A second Ctrl+C within the window, while a turn that ignores its cancel signal is still in
-    flight, escalates to `_force_exit` — the escape for a worker that won't unwind."""
+async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
+    """Three Ctrl+C presses in a row, while a turn that ignores its cancel signal never unwinds,
+    escalates to `_force_exit` — the escape for a worker that won't unwind. The first interrupts
+    (turn stays in flight since it ignores the signal); the second, within the window, only
+    shows the "press again to quit" notice rather than immediately force-exiting, since an
+    interrupt is treated the same as a copy for streak-escalation purposes (see
+    `ReplApp.action_interrupt`); the third actually force-exits."""
     mock_provider = MagicMock()
     streaming_started = threading.Event()
     release = threading.Event()
@@ -821,8 +825,15 @@ async def test_double_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock
             await _wait_until(pilot, streaming_started.is_set)
 
             await pilot.press("ctrl+c")  # first: abort request; turn stays in flight
+            await pilot.pause()
             assert app._turn_in_flight is True
-            await pilot.press("ctrl+c")  # second within window: force-exit
+            stub_force_exit.assert_not_called()
+
+            await pilot.press("ctrl+c")  # second within window: only warns, doesn't force-exit
+            await pilot.pause()
+            stub_force_exit.assert_not_called()
+
+            await pilot.press("ctrl+c")  # third within window: force-exit
             await _wait_until(pilot, lambda: stub_force_exit.called)
     finally:
         release.set()  # let the worker unwind so the harness can shut the app down

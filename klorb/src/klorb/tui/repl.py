@@ -194,15 +194,16 @@ def _random_greeting() -> str:
 
 MASCOT_GREETING = _random_greeting()
 
-_INTERRUPTING_MESSAGE = "Interrupting… (press Ctrl+C again to force-quit)"
+_INTERRUPTING_MESSAGE = "Interrupting… (Ctrl+C again to quit)"
 """Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the
 user gets immediate confirmation the keystroke was received (rather than wondering if the app has
 deadlocked) — see `ReplApp._note_interrupt_requested`."""
 
 _DOUBLE_INTERRUPT_WINDOW_SECONDS = 1.0
-"""A second Ctrl+C within this many seconds of the first (while a turn is in flight) force-exits
-the process via `ReplApp._force_exit`, the escape for a worker that won't unwind — see
-`ReplApp.action_interrupt` and docs/specs/interrupt-and-liveness-watchdog.md."""
+"""How long a Ctrl+C press's effect on the next one lasts, for `ReplApp.action_interrupt`'s
+streak escalation (interrupt/copy, then a warning, then a force-exit via `ReplApp._force_exit`
+— two presses total from a bare/idle start, three from a copy or an interrupt) — see
+docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C semantics" section."""
 
 _FORCE_EXIT_CLEANUP_GRACE_SECONDS = 3.0
 """How long the force-exit path waits for its best-effort cleanup (stack dump + session save) to
@@ -1745,31 +1746,33 @@ class ReplApp(App[None]):
           `SkipAction`) once nothing is selected. Both record the press via `_note_ctrl_c_copy`
           so the streak logic below still knows a Ctrl+C just happened.
         * **Something running** (`_turn_in_flight`: an in-flight model turn — including a
-          synchronous Bash tool call inside it — or a `!`-prefixed shell command): interrupt it,
-          identically to Escape (`_interrupt_running_activity`). A *second* Ctrl+C within
-          `_DOUBLE_INTERRUPT_WINDOW_SECONDS`, while the *same* activity is still in flight (i.e.
-          the immediately preceding press was also an `"interrupt"`), escalates to `_force_exit`
-          instead — the escape hatch for a worker that won't unwind in response to the signal.
-        * **Nothing running, nothing selected.** Shows a "press again to quit" notice. A second
-          such press within the window force-exits (`_force_exit`, i.e. `os._exit`) — but only
-          if the immediately preceding press was *also* this "nothing to do" case; a preceding
-          copy or interrupt press means this one is treated as the first "nothing to do" press,
-          not the second, so it takes one more within-window press to actually quit.
+          synchronous Bash tool call inside it — or a `!`-prefixed shell command) — *and* the
+          immediately preceding press, if any within the window, wasn't itself an interrupt or a
+          bare "nothing to do" press: interrupt it, identically to Escape
+          (`_interrupt_running_activity`). This only ever fires once per streak; it does not
+          re-signal on a later press even if the activity is still in flight, so it can't loop.
+        * **Everything else** (nothing running, or something's still running but this streak
+          already interrupted it once): shows a "press again to quit" notice
+          (`_note_ctrl_c_quit_warning`) — unless the *immediately preceding* press was itself one
+          of these "nothing new to do" presses within the window, in which case this one
+          force-exits (`_force_exit`, i.e. `os._exit`) instead.
 
-        Aborting an in-flight turn rather than quitting it (the "something running" case) is
-        deliberate: quitting out from under a still-running turn would strand the turn's worker
-        thread and hang process shutdown (see `_begin_exit`), so interrupting-then-quitting is
-        both safer and the more conventional terminal gesture. This handler runs on the event
-        loop, so its force-exit escalations only help when the loop is still alive — a wedged
-        loop is the `LivenessWatchdog`'s job instead.
+        Net effect: a solitary bare Ctrl+C (nothing selected, nothing running) takes two presses
+        to force-exit (warn, then quit); a copy or an interrupt takes three (the copy/interrupt
+        itself, then a warning, then a quit) — see docs/adrs/idle-ctrl-c-force-exits-not-the-
+        polite-quit-flow.md. A running activity is deliberately interrupted rather than the app
+        being quit out from under it: that would strand the turn's worker thread and hang
+        process shutdown (see `_begin_exit`), so interrupting-then-quitting is both safer and the
+        more conventional terminal gesture. This handler runs on the event loop, so its
+        force-exit escalation only helps when the loop is still alive — a wedged loop is the
+        `LivenessWatchdog`'s job instead.
         """
         now = time.monotonic()
         within_window = (now - self._last_ctrl_c_at) < _DOUBLE_INTERRUPT_WINDOW_SECONDS
         previous_kind = self._last_ctrl_c_kind
+        already_acted_on_this_streak = within_window and previous_kind in ("interrupt", "bare")
 
-        if self._turn_in_flight:
-            if within_window and previous_kind == "interrupt":
-                self._force_exit()  # NoReturn.
+        if self._turn_in_flight and not already_acted_on_this_streak:
             self._last_ctrl_c_at = now
             self._last_ctrl_c_kind = "interrupt"
             self._interrupt_running_activity()
