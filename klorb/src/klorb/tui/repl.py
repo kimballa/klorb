@@ -60,6 +60,7 @@ from klorb.session import (
     Session,
     ThinkingEffort,
     ToolCallEvent,
+    ToolCallStartedEvent,
     TurnEventHandlers,
 )
 from klorb.session_statistics import SessionStatistics
@@ -167,6 +168,7 @@ _InteractionResult = TypeVar("_InteractionResult")
 
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
+
 MASCOT_ART = """\
       o
      /
@@ -176,11 +178,14 @@ MASCOT_ART = """\
  █░███x███
 ███████████
 ▟█▙     ▟█▙"""
+
+
 def _random_greeting() -> str:
     """Pick a random greeting from the packaged greetings.json resource."""
     try:
-        text = importlib.resources.files("klorb.resources").joinpath("greetings.json").read_text(encoding="utf-8")
-        greetings = json.loads(text)
+        text = importlib.resources.files("klorb.resources").joinpath("greetings.json")\
+            .read_text(encoding="utf-8")
+        greetings: list[str] = json.loads(text)
         return random.choice(greetings)
     except Exception:
         return "Roar! Let's go code a Thing!"
@@ -910,6 +915,89 @@ class ToolCallStatic(Static):
         self.update(self._detail_text if show_detail else self._summary_text)
 
 
+_ANIMATED_RUNNING_TEXT = "Running..."
+"""The literal text shown with a crawling bold-character animation while a tool call executes."""
+_ANIMATION_TICK_SECONDS = 0.12
+"""Interval between animation frames (seconds). At 0.12s per frame and 8 characters in
+`_ANIMATED_RUNNING_TEXT`, a full crawl cycle takes just under one second -- fast enough to
+feel responsive without being distracting."""
+
+
+class RunningToolCallStatic(ToolCallStatic):
+    """A tool call widget shown while the tool is still executing: displays the tool's
+    pre-execution summary (e.g. ``Bash: <intent>\\n$ <command>``) plus a crawling bold
+    animation on the word "Running..." so the user knows the system hasn't frozen.
+
+    Inherits from `ToolCallStatic` so ``history.query(ToolCallStatic)`` finds it in the DOM
+    -- the Ctrl+O detail toggle and any other `ToolCallStatic`-aware query work unchanged.
+    Once the tool finishes, `finalize()` replaces the animated content with the final
+    summary/detail text and stops the timer. Constructed with ``markup=False``: the tool
+    label is arbitrary and must render verbatim, so per-character styling is applied via
+    `Rich.text.Text` spans rather than console markup.
+    """
+
+    def __init__(self, label_text: str) -> None:
+        # Initialize parent with empty placeholders; real content comes from the running
+        # animation and later finalize().
+        super().__init__("", "")
+        self._label_text = label_text
+        self._finalized: bool = False
+        self._detail_shown: bool = False
+        self._animation_pos: int = 0
+        self._timer: Any = None
+        # Override the parent's initial content with the running animation.
+        self.update(self._make_running_text())
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(_ANIMATION_TICK_SECONDS, self._tick)
+
+    def _make_running_text(self) -> Text:
+        """Build a `Text` with the tool label in default style and ``Running...`` where one
+        character is bold at the current crawl position."""
+        text = Text(self._label_text)
+        running = _ANIMATED_RUNNING_TEXT
+        pos = self._animation_pos % len(running)
+        for i, ch in enumerate(running):
+            if i == pos:
+                text.append(f"\n{ch}", style="bold")
+            elif i == 0:
+                text.append(f"\n{ch}")
+            else:
+                text.append(ch)
+        return text
+
+    def _tick(self) -> None:
+        """Advance the crawl animation by one position."""
+        if self._finalized:
+            return
+        self._animation_pos += 1
+        self.update(self._make_running_text())
+
+    def finalize(self, summary_text: str, detail_text: str) -> None:
+        """Stop the animation and replace the content with the final summary/detail text.
+        After this call, the widget behaves identically to a `ToolCallStatic` for the
+        Ctrl+O detail toggle."""
+        self._finalized = True
+        if self._timer is not None:
+            self._timer.stop()
+        self._summary_text = summary_text
+        self._detail_text = detail_text
+        self._apply_content()
+
+    def _apply_content(self) -> None:
+        """Set the widget's rendered content to either the detail or summary text."""
+        content = self._detail_text if self._detail_shown else self._summary_text
+        self.update(content)
+
+    def set_detail_shown(self, show_detail: bool) -> None:
+        """Update the rendered content to the detail view if `show_detail`, else the summary.
+        While still running (not yet finalized), this is a no-op -- there's no detail view
+        to show until the tool call completes."""
+        self._detail_shown = show_detail
+        if self._finalized:
+            self._apply_content()
+
+
 class PaletteHint(Static):
     """Renders `PALETTE_HINT_TEXT` styled like one of `Footer`'s own key-binding chips (e.g.
     `^q Quit`): the leading `>` in `$footer-key-foreground`/`-background` (bold, like a key),
@@ -1336,6 +1424,7 @@ class ReplApp(App[None]):
         `action="deny"`/`scope="once"` regardless of what was selected before switching to free
         text, since there's no meaningful grid cell an `Input` submission corresponds to)."""
         self._tool_call_widgets: list[ToolCallStatic] = []
+        self._running_tool_call_widgets: dict[str, RunningToolCallStatic] = {}
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
         if self._process_config.theme is not None and self._process_config.theme in self.available_themes:
@@ -2484,10 +2573,21 @@ class ReplApp(App[None]):
                 self.call_from_thread(
                     self._update_reasoning_details_widget, reasoning_details_widget, text)
 
+        def handle_tool_call_started(event: ToolCallStartedEvent) -> None:
+            summary_text = self._render_tool_call_summary(event.name, event.args)
+            self.call_from_thread(
+                self._mount_running_tool_call_widget, event.call_id, summary_text)
+
         def handle_tool_call(event: ToolCallEvent) -> None:
             nonlocal round_index
             summary_text, detail_text = self._render_tool_call(event)
-            self.call_from_thread(self._mount_tool_call_widget, summary_text, detail_text)
+            running_widget = self._running_tool_call_widgets.pop(event.call_id, None)
+            if running_widget is not None:
+                self.call_from_thread(
+                    self._finalize_running_tool_call_widget,
+                    running_widget, summary_text, detail_text)
+            else:
+                self.call_from_thread(self._mount_tool_call_widget, summary_text, detail_text)
             round_index += 1
 
         # The outer try/finally guarantees `_turn_in_flight` is cleared however this worker
@@ -2504,6 +2604,7 @@ class ReplApp(App[None]):
                     on_permission_ask=self._on_permission_ask,
                     on_ask_user_questions=self._on_ask_user_questions,
                     on_escalate_privileges=self._on_escalate_privileges,
+                    on_tool_call_started=handle_tool_call_started,
                     on_tool_call=handle_tool_call))
             except ResponseAborted:
                 self.call_from_thread(
@@ -2679,6 +2780,56 @@ class ReplApp(App[None]):
         self._tool_call_widgets.append(widget)
         self._update_status_bar()
         return widget, label_widget
+
+    def _render_tool_call_summary(self, name: str, args: dict[str, Any]) -> str:
+        """Render a tool call's pre-execution summary (the label shown in the running
+        indicator) by calling `Tool.summary(args)` with no `result` or `error`. Every
+        tool's `summary()` produces a meaningful label when called this way -- e.g.
+        ``Bash: <intent>\\n$ <command>`` for BashTool -- since the result/error suffix is
+        only appended when those parameters are non-`None`. Falls back to the module-level
+        `default_tool_call_summary()` if the tool name isn't registered.
+        """
+        registry = self._session.tool_registry
+        try:
+            if registry is None:
+                raise KeyError(name)
+            tool = registry.instantiate_tool(name)
+        except (KeyError, NoSuchToolException):
+            return default_tool_call_summary(name, args, None)
+        return tool.summary(args)
+
+    def _mount_running_tool_call_widget(
+        self, call_id: str, summary_text: str,
+    ) -> RunningToolCallStatic:
+        """Mount a ``<Tool use>`` label followed by a `RunningToolCallStatic` showing the
+        tool's pre-execution label with a crawling ``Running...`` animation. Stores the
+        widget in `_running_tool_call_widgets` keyed by `call_id` so the eventual
+        `handle_tool_call` completion callback can finalize it in place rather than mounting
+        a duplicate. Also tracks it in `_tool_call_widgets` for the Ctrl+O detail toggle.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
+        history.mount(label_widget)
+        widget = RunningToolCallStatic(summary_text)
+        history.mount(widget)
+        self._scroll_if_pinned(history, was_pinned)
+        self._tool_call_widgets.append(widget)
+        self._running_tool_call_widgets[call_id] = widget
+        self._update_status_bar()
+        return widget
+
+    def _finalize_running_tool_call_widget(
+        self, widget: RunningToolCallStatic, summary_text: str, detail_text: str,
+    ) -> None:
+        """Stop the running indicator animation and replace it with the final
+        summary/detail text. Called from `handle_tool_call` via `call_from_thread` when a
+        tool call completes -- the widget was mounted earlier by
+        `_mount_running_tool_call_widget` and is already in the history scroll and the
+        Ctrl+O tracking list."""
+        widget.finalize(summary_text, detail_text)
+        widget.set_detail_shown(self._tool_call_detail_shown)
+        self._update_status_bar()
 
     def _mount_restored_history(self, messages: list[ChatMessage]) -> None:
         """Re-render `messages` — a previous session's history, already loaded onto

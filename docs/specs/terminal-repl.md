@@ -216,7 +216,18 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   replacing the `"ctrl+o"` entry in `self._bindings.key_to_bindings` (this `ReplApp`
   instance's own mutable copy of the merged class-level `BINDINGS`) and calling
   `refresh_bindings()`, since a `Binding`'s description is otherwise fixed at `BINDINGS`
-  class-definition time.
+  class-definition time. Before a tool call finishes, a `RunningToolCallStatic` widget
+  (inheriting from `ToolCallStatic`) is mounted with the tool's pre-execution summary (via
+  `Tool.summary(args)` with no `result`) plus a crawling bold-character animation on the
+  word "Running..." (see
+  [[show-tool-calls-before-completion-with-running-indicator]]). The animation uses
+  `Rich.text.Text` spans at 120ms per frame so the user knows the system hasn't frozen.
+  When the tool completes, `finalize()` replaces the animated content with the final
+  summary/detail text and stops the timer. The widget remains a `RunningToolCallStatic`
+  instance in the DOM, so `history.query(ToolCallStatic)` and `Ctrl+O` both work unchanged.
+  `_running_tool_call_widgets` (a `call_id`-keyed dict on `ReplApp`) links the "started"
+  mount to the "completed" finalize; a tool call that was never started (e.g. malformed
+  JSON arguments) falls back to the original `_mount_tool_call_widget` path.
 * A turn with tool calls is really a sequence of rounds under the hood (see
   [[session-and-turns]]'s `Session._dispatch_turn`): each round streams its own
   thinking/response text, then, if it ends in a tool-call request, `Session` dispatches those

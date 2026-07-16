@@ -405,20 +405,37 @@ class ToolCallEvent(BaseModel):
     failure itself."""
 
 
+class ToolCallStartedEvent(BaseModel):
+    """Reports that a tool call is about to start executing, to
+    `TurnEventHandlers.on_tool_call_started`, fired once per call from `_run_tool_calls`
+    right before `tool.apply(args)`. Carries the same `call_id`/`name`/`args` the later
+    `ToolCallEvent` will carry, so a UI can link the "started" widget to its eventual
+    completion and show a running indicator before the tool's actual work begins.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    call_id: str
+    name: str
+    args: dict[str, Any]
+
+
 class TurnEventHandlers(BaseModel):
     """Immutable bundle of the optional callbacks (and cancellation signal) a caller can
     supply for one turn: `on_chunk`/`on_thinking_chunk`/`on_reasoning_details` (streamed
     response text, reasoning text, and structured reasoning payload respectively),
     `cancel_event` (abort a turn mid-stream), `on_tool_call_limit_reached` (ask whether to
-    raise a safety cap), `on_permission_ask` (ask how to resolve an `"ask"` permission
+    raise a safety cap), `on_permission_ask` (ask how to resolve an `\"ask\"` permission
     verdict), `on_ask_user_questions` (ask the user one `AskUserQuestions` tool-call
     question), `on_escalate_privileges` (ask the user to approve a session-only
-    `EscalatePrivileges` grant), and `on_tool_call` (report one finished tool call, for display). Replaces
-    passing these as separate keyword arguments through `send_turn()`/`retry_last_turn()`/
-    `_dispatch_turn()` and everything they call — a single object here means a future addition
-    only touches this class, not every method's signature along the chain. `frozen=True` since
-    a `TurnEventHandlers` is built once per turn and never mutated; `arbitrary_types_allowed=True`
-    is needed for the `threading.Event` field (`Callable` fields validate natively without it).
+    `EscalatePrivileges` grant), `on_tool_call_started` (report a tool call about to run,
+    for a running indicator), and `on_tool_call` (report one finished tool call, for
+    display). Replaces passing these as separate keyword arguments through
+    `send_turn()`/`retry_last_turn()`/`_dispatch_turn()` and everything they call — a
+    single object here means a future addition only touches this class, not every method's
+    signature along the chain. `frozen=True` since a `TurnEventHandlers` is built once per
+    turn and never mutated; `arbitrary_types_allowed=True` is needed for the
+    `threading.Event` field (`Callable` fields validate natively without it).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -435,6 +452,7 @@ class TurnEventHandlers(BaseModel):
     on_escalate_privileges: (
         Callable[[EscalatePrivilegesContext], EscalatePrivilegesDecision] | None
     ) = None
+    on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
 
 
@@ -1305,6 +1323,9 @@ class Session:
                 try:
                     tool = self._tool_registry.instantiate_tool(call.name)
                     logger.debug("Tool call %s parsed arguments: %r", call.name, args)
+                    if callbacks.on_tool_call_started is not None:
+                        callbacks.on_tool_call_started(ToolCallStartedEvent(
+                            call_id=call.id, name=call.name, args=args))
                     result = tool.apply(args)
                     logger.info("Tool call %s succeeded: %s", call.name, result)
                 except MultiPermissionAskRequired as multi_ask_exc:
