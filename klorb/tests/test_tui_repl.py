@@ -46,6 +46,7 @@ from klorb.token_estimate import estimate_tokens
 from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
+from klorb.tui.formatting import _summarize_reasoning_details, format_token_count
 from klorb.tui.mixins.key_actions import _CTRL_C_QUIT_WARNING, _INTERRUPTING_MESSAGE, CONFIG_MISSING_MESSAGE
 from klorb.tui.panels.ask_user_questions_panel import AskUserQuestionsPanel
 from klorb.tui.panels.confirm_screen import (
@@ -88,8 +89,6 @@ from klorb.tui.repl import (
     ReplApp,
     SelectionSafeScreen,
     _handle_repl_crash,
-    _summarize_reasoning_details,
-    format_token_count,
 )
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
