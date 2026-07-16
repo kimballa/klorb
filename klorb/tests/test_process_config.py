@@ -364,7 +364,7 @@ def test_malformed_config_layer_is_skipped_rather_than_crashing_startup(
 
 def test_malformed_config_layer_is_collected_into_config_warnings(tmp_path: Path) -> None:
     """`ProcessConfig.config_warnings` is how a malformed layer's parse failure reaches a
-    user-visible surface (`klorb.tui.repl.ReplApp.on_mount`) rather than only `logger.error`,
+    user-visible surface (`klorb.tui.ReplApp.on_mount`) rather than only `logger.error`,
     which an interactive user is likely to never see."""
     path = tmp_path / ".klorb" / "klorb-config.json"
     path.parent.mkdir(parents=True, exist_ok=True)

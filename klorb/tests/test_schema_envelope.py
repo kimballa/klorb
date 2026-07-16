@@ -65,7 +65,7 @@ def test_malformed_json_is_skipped_and_logged_rather_than_raising(
 def test_malformed_json_warning_includes_line_context_around_the_error(tmp_path: Path) -> None:
     """The `warnings` list collects a message naming the file and a small excerpt of the lines
     around the parse error (see `klorb.schema_envelope._format_json_error_context`), not just
-    a bare byte offset — this is what `klorb.tui.repl.ReplApp` posts to the history scroll."""
+    a bare byte offset — this is what `klorb.tui.ReplApp` posts to the history scroll."""
     path = tmp_path / "klorb-config.json"
     path.write_text('{\n  "model": "some/model",\n  "thinking.effort": "high",\n}\n', encoding="utf-8")
 

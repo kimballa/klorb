@@ -103,7 +103,7 @@ def configure_tiktoken_cache_env() -> None:
     yet (e.g. a fresh install that hasn't run `klorb init`) — tiktoken falls back to its own
     default cache/download behavior in that case. Called once per process: from
     `klorb.cli.main()` for a one-shot prompt (after logging is configured, so the message
-    below is actually visible), or from `klorb.tui.repl.ReplApp.on_mount()` for an interactive
+    below is actually visible), or from `klorb.tui.ReplApp.on_mount()` for an interactive
     session (once the Textual app itself is running, so the message routes through the app's
     log / the session log file instead of the `TextualHandler`'s raw-stderr fallback for
     logging that happens before any app is active) — see

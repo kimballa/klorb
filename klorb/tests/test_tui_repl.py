@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.repl."""
+"""Tests for klorb.tui.app.ReplApp and its mixins."""
 
 import asyncio
 import contextlib
@@ -45,7 +45,18 @@ from klorb.session import (
 from klorb.token_estimate import estimate_tokens
 from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
+from klorb.tui.app import ReplApp, SelectionSafeScreen
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
+from klorb.tui.constants import (
+    HISTORY_ID,
+    INTERACTION_PANEL_ID,
+    OUTPUT_TOKENS_ID,
+    PALETTE_HINT_ID,
+    PERMISSION_BADGE_ID,
+    PROMPT_INPUT_ID,
+    STATUS_BAR_ID,
+)
+from klorb.tui.entrypoint import _handle_repl_crash
 from klorb.tui.formatting import _summarize_reasoning_details, format_token_count
 from klorb.tui.mixins.key_actions import _CTRL_C_QUIT_WARNING, _INTERRUPTING_MESSAGE, CONFIG_MISSING_MESSAGE
 from klorb.tui.mixins.rendering import REASONING_DETAILS_LABEL, THINKING_LABEL, TOOL_USE_LABEL
@@ -75,18 +86,6 @@ from klorb.tui.panels.permission_ask_panel import (
     ExpandedCommandScreen,
     PermissionAskPanel,
     format_ask_context_body,
-)
-from klorb.tui.repl import (
-    HISTORY_ID,
-    INTERACTION_PANEL_ID,
-    OUTPUT_TOKENS_ID,
-    PALETTE_HINT_ID,
-    PERMISSION_BADGE_ID,
-    PROMPT_INPUT_ID,
-    STATUS_BAR_ID,
-    ReplApp,
-    SelectionSafeScreen,
-    _handle_repl_crash,
 )
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -1035,7 +1034,7 @@ async def test_select_model_persists_to_the_user_config_file(tmp_path: Path) -> 
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
-    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+    with patch("klorb.tui.app.user_config_path", return_value=config_path):
         async with app.run_test():
             app.select_model("other/model")
 
@@ -1059,7 +1058,7 @@ async def test_set_thinking_enabled_persists_to_the_user_config_file(tmp_path: P
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
-    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+    with patch("klorb.tui.app.user_config_path", return_value=config_path):
         async with app.run_test():
             app.set_thinking_enabled(False)
 
@@ -1083,7 +1082,7 @@ async def test_set_thinking_effort_persists_to_the_user_config_file(tmp_path: Pa
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
-    with patch("klorb.tui.repl.user_config_path", return_value=config_path):
+    with patch("klorb.tui.app.user_config_path", return_value=config_path):
         async with app.run_test():
             app.set_thinking_effort("low")
 
@@ -3049,7 +3048,7 @@ async def test_clear_carries_over_thinking_settings_from_process_config(
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
-    with patch("klorb.tui.repl.user_config_path", return_value=process_user_config_path()):
+    with patch("klorb.tui.app.user_config_path", return_value=process_user_config_path()):
         async with app.run_test() as pilot:
             app.set_thinking_enabled(False)
             app.set_thinking_effort("low")

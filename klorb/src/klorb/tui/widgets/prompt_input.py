@@ -195,7 +195,7 @@ class PromptInput(TextArea):
         `SkipAction`, exactly like the base implementation, when nothing is selected, so the
         binding chain falls through past this widget unchanged.
         """
-        from klorb.tui.repl import ReplApp  # breaks a circular import: ReplApp composes PromptInput
+        from klorb.tui.app import ReplApp  # breaks a circular import: ReplApp composes PromptInput
 
         selected_text = self.selected_text
         if not selected_text:

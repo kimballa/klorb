@@ -17,8 +17,10 @@ from klorb.message import Message, ToolCallRequest
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
+from klorb.tui import ReplApp
+from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
 from klorb.tui.panels.ask_user_questions_panel import ASK_USER_QUESTIONS_INPUT_ID, AskUserQuestionsPanel
-from klorb.tui.repl import HISTORY_ID, PROMPT_INPUT_ID, PromptInput, ReplApp
+from klorb.tui.widgets.prompt_input import PromptInput
 
 
 async def _wait_until(pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 2.0) -> None:

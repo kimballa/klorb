@@ -16,7 +16,7 @@ class SupportsTrustWorkspace(Protocol):
 
     def workspace_trust_management_enabled(self) -> bool:
         """Whether this app was given a `TrustManager` at all — workspace trust management is
-        entirely opt-in (see `klorb.tui.repl.ReplApp`), so this command stays hidden rather
+        entirely opt-in (see `klorb.tui.ReplApp`), so this command stays hidden rather
         than acting on a workspace nobody asked to track."""
 
     def is_workspace_trusted(self) -> bool:
@@ -25,7 +25,7 @@ class SupportsTrustWorkspace(Protocol):
     def trust_workspace(self) -> None:
         """Confirm with the user, then trust the current workspace.
 
-        On the real `klorb.tui.repl.ReplApp`, this is a `@work()`-decorated method: calling it
+        On the real `klorb.tui.ReplApp`, this is a `@work()`-decorated method: calling it
         starts a Textual worker and returns immediately (the worker itself is what awaits the
         user's confirmation), rather than a coroutine this Protocol's caller need await."""
 

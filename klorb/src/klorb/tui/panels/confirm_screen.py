@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """A reusable Yes/No confirmation modal, shared by every workspace-trust prompt
-(`klorb.tui.repl.ReplApp`'s workspace-bootstrap flow and its "Trust workspace" palette
+(`klorb.tui.ReplApp`'s workspace-bootstrap flow and its "Trust workspace" palette
 command — see docs/specs/projects-and-trust.md) so each one isn't its own near-identical
-`ModalScreen` subclass. Distinct from `klorb.tui.repl.ToolCallLimitScreen`, an earlier, narrower
-yes/no modal this doesn't replace — see
+`ModalScreen` subclass. Distinct from `klorb.tui.widgets.tool_call_widgets.ToolCallLimitScreen`,
+an earlier, narrower yes/no modal this doesn't replace — see
 docs/adrs/reuse-a-generic-confirmscreen-for-workspace-trust-prompts.md.
 """
 
@@ -100,7 +100,7 @@ class SaveOnQuitScreen(ModalScreen[SaveOnQuitChoice]):
 
     A separate class from `ConfirmScreen` rather than a third option bolted onto it: every other
     `ConfirmScreen` call site (workspace-trust prompts) is a genuine yes/no question with no
-    sensible "cancel" — see `klorb.tui.repl.ReplApp._quit_after_maybe_saving`, the only caller of
+    sensible "cancel" — see `klorb.tui.ReplApp._quit_after_maybe_saving`, the only caller of
     this screen.
     """
 

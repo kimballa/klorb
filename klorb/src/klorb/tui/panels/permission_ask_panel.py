@@ -277,7 +277,7 @@ class PermissionAskPanel(Vertical):
     mirroring `PermissionAskContext`'s own `path`/`command` mutual exclusivity; neither is set
     for a structural item, which has no persistable rule at any scope but `"once"`.
 
-    `initial_action`/`initial_scope` seed the starting cursor position — `klorb.tui.repl.ReplApp`
+    `initial_action`/`initial_scope` seed the starting cursor position — `klorb.tui.ReplApp`
     threads through the previous prompt's final selection here (see
     `ReplApp._last_permission_selection`) when several asks are shown back-to-back for one
     compound tool call, so the user doesn't have to re-navigate to the same spot for every item.

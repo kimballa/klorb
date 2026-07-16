@@ -18,8 +18,10 @@ from klorb.message import Message, ToolCallRequest
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
+from klorb.tui import ReplApp
+from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
 from klorb.tui.panels.escalate_privileges_panel import EscalatePrivilegesPanel
-from klorb.tui.repl import HISTORY_ID, PROMPT_INPUT_ID, PromptInput, ReplApp
+from klorb.tui.widgets.prompt_input import PromptInput
 
 
 @pytest.fixture(autouse=True)

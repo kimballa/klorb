@@ -147,7 +147,7 @@ than stall the approval panel."""
 
 DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD = 9
 """Default for `ProcessConfig.bash_risk_classifier_too_risky_threshold` — the `risk_score`
-(inclusive) at or above which `klorb.tui.repl.ReplApp._confirm_permission_ask` pre-selects
+(inclusive) at or above which `klorb.tui.ReplApp._confirm_permission_ask` pre-selects
 `PermissionAskPanel`'s `Deny, once` cell instead of the remembered previous cell; see
 `klorb.permissions.risk_classifier.CommandRiskReport`."""
 
@@ -284,10 +284,10 @@ class ProcessConfig(BaseModel):
     """Seconds the main-thread event loop may go without snoozing the liveness watchdog before it
     force-exits the process (best-effort session save + all-thread stack dump first) — the
     last-ditch escape from a wedged event loop. `0` or less disables the watchdog. See
-    `klorb.watchdog.LivenessWatchdog`, `klorb.tui.repl.ReplApp._snooze_watchdog`, and
+    `klorb.watchdog.LivenessWatchdog`, `klorb.tui.ReplApp._snooze_watchdog`, and
     docs/specs/interrupt-and-liveness-watchdog.md."""
     bash_risk_classifier_enabled: bool = DEFAULT_BASH_RISK_CLASSIFIER_ENABLED
-    """Whether `klorb.tui.repl.ReplApp._confirm_permission_ask` classifies a `BashTool` ask's
+    """Whether `klorb.tui.ReplApp._confirm_permission_ask` classifies a `BashTool` ask's
     risk via `klorb.permissions.risk_classifier.classify_command_risk()` before showing
     `PermissionAskPanel` — an escape hatch for a user who doesn't want command text sent to a
     second LLM call at all (cost, latency, or data-sensitivity reasons). `False` means exactly
@@ -337,7 +337,7 @@ class ProcessConfig(BaseModel):
     """Human-readable messages describing any config layer `load_process_config()` had to skip
     over while assembling this `ProcessConfig` — today, only a layer whose file isn't valid
     JSON at all (see `klorb.schema_envelope.parse_versioned_json`'s `warnings` parameter).
-    `klorb.tui.repl.ReplApp` posts each of these to the history scroll at startup (and again for
+    `klorb.tui.ReplApp` posts each of these to the history scroll at startup (and again for
     any newly-discovered ones after `_apply_workspace_config`'s reload), since a `logger.error`
     call alone is easy for an interactive user to miss entirely."""
     argv: list[str] = Field(default_factory=list)
@@ -433,7 +433,7 @@ def persist_theme(theme_name: str) -> None:
 def persist_session_default(path: Path, on_disk_key: str, value: Any) -> None:
     """Merge `sessionDefaults.<on_disk_key> = value` into the config file at `path`, preserving
     every other key in the file untouched — auto-creating `path` (and its parent directory)
-    with a minimal schema envelope if it doesn't exist yet. Used by `klorb.tui.repl.ReplApp` to
+    with a minimal schema envelope if it doesn't exist yet. Used by `klorb.tui.ReplApp` to
     make an interactively-selected setting (e.g. `select_model`) the default the next time
     klorb starts, not just for the rest of the current process — see
     docs/specs/process-and-session-config.md.

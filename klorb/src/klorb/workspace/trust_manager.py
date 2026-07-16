@@ -7,7 +7,7 @@ silently honored). See docs/specs/projects-and-trust.md.
 Every read or write of `projects.json` goes through a `TrustManager` instance so there's a
 single owner of the file's I/O; the caller (`klorb.cli.main()`, or a test) is responsible for
 constructing one `TrustManager` per process and threading it to every place that needs it
-(`klorb.process_config.load_process_config`, `klorb.tui.repl.ReplApp`) rather than this module
+(`klorb.process_config.load_process_config`, `klorb.tui.ReplApp`) rather than this module
 reaching for a module-level global — see docs/adrs/thread-trustmanager-explicitly-not-a-global-singleton.md.
 """
 
