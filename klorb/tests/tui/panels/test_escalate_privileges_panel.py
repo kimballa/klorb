@@ -164,3 +164,24 @@ async def test_escape_denies_regardless_of_selected_row() -> None:
         await pilot.pause()
 
         assert app.decision == EscalatePrivilegesDecision(approved=False)
+
+
+async def test_bracketed_description_does_not_crash_at_reflow() -> None:
+    """The description embeds an arbitrary filesystem path (e.g. the workspace root), which can
+    contain a literal `[` that Rich would otherwise parse as console markup and crash the
+    compositor with a `MarkupError` at reflow (not at `Static.render()`, so this must mount
+    through a real app to reproduce). See
+    docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+    app = _EscalatePrivilegesTestApp(_ctx(
+        description="Grant Klorb read/write access to /workspace/[foo]/.klorb/ for the rest of "
+        "this session."))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Reaching here without a MarkupError is the assertion; confirm the description
+        # rendered verbatim.
+        text = app.query_one(f"#{ESCALATE_PRIVILEGES_TEXT_ID}", Static)
+        assert str(text.render()) == (
+            "Grant Klorb read/write access to /workspace/[foo]/.klorb/ for the rest of "
+            "this session.")
