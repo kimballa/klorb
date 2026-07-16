@@ -81,24 +81,22 @@ from klorb.tui.repl import (
     INTERACTION_PANEL_ID,
     OUTPUT_TOKENS_ID,
     PALETTE_HINT_ID,
-    PALETTE_HINT_TEXT,
     PERMISSION_BADGE_ID,
     PROMPT_INPUT_ID,
     REASONING_DETAILS_LABEL,
     STATUS_BAR_ID,
     THINKING_LABEL,
     TOOL_USE_LABEL,
-    PermissionBadge,
-    PromptInput,
     ReplApp,
     SelectionSafeScreen,
-    ToolCallLimitScreen,
-    ToolCallStatic,
     _handle_repl_crash,
     _summarize_reasoning_details,
     format_token_count,
 )
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
+from klorb.tui.widgets.prompt_input import PromptInput
+from klorb.tui.widgets.status_widgets import PALETTE_HINT_TEXT, PermissionBadge
+from klorb.tui.widgets.tool_call_widgets import ToolCallLimitScreen, ToolCallStatic
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace import input_history as input_history_module
 from klorb.workspace.input_history import project_history_path
