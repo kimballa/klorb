@@ -112,3 +112,8 @@ class StatusBarMixin(ReplAppBase):
         """`PromptInput` posts this on Shift+Tab; hand off to `_cycle_permission_framework()`."""
         self._cycle_permission_framework()
 
+    def on_permission_badge_clicked(self, event: "PermissionBadge.Clicked") -> None:
+        """`PermissionBadge` posts this when clicked; hand off to `_cycle_permission_framework()`
+        — the mouse equivalent of the Shift+Tab handler above."""
+        self._cycle_permission_framework()
+

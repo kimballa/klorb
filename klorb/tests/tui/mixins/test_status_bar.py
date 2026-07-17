@@ -250,6 +250,27 @@ async def test_shift_tab_cycles_permission_framework() -> None:
         assert str(session.config.permission_framework) == "ask"
 
 
+async def test_clicking_permission_badge_cycles_permission_framework() -> None:
+    """A mouse click on the badge advances the framework the same way Shift+Tab does (see
+    `PermissionBadge.Clicked` / `on_permission_badge_clicked`)."""
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        assert str(session.config.permission_framework) == "ask"
+
+        await pilot.click(PermissionBadge)
+        await pilot.pause()
+        assert str(session.config.permission_framework) == "auto"
+        badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        assert str(badge.render()) == "[auto]"
+
+        await pilot.click(PermissionBadge)
+        await pilot.pause()
+        assert str(session.config.permission_framework) == "deny"
+
+
 async def test_palette_hint_shown_only_while_the_box_is_empty_or_bare_gt() -> None:
     app = ReplApp(session=_session(MagicMock()))
 
