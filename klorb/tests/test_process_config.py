@@ -91,7 +91,7 @@ def test_default_config_layer_strips_the_schema_envelope() -> None:
 
 def test_default_config_layer_pre_allows_create_edit_skill() -> None:
     layer = _real_default_config_layer([])
-    assert ["internal", "create-edit-skill"] in layer["sessionDefaults"]["skillRules"]["allow"]
+    assert "internal/create-edit-skill" in layer["sessionDefaults"]["skillRules"]["allow"]
 
 
 def test_default_config_layer_is_merged_when_no_other_config_files_exist(
@@ -777,14 +777,14 @@ def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path:
 
 def test_skill_rules_concatenate_across_layers(tmp_path: Path) -> None:
     """See docs/specs/skills.md: like commandRules, a later layer's skillRules entries add to,
-    rather than replace, every earlier layer's, and each on-disk entry is a two-element
-    ["<namespace>", "<name>"] array coerced to a tuple."""
+    rather than replace, every earlier layer's, and each on-disk entry is a "<namespace>/<name>"
+    fully-qualified skill name parsed into a tuple."""
     _write_config(
         tmp_path / "user-config" / "klorb-config.json",
-        {"sessionDefaults": {"skillRules": {"allow": [["user", "a"]], "deny": [["user", "x"]]}}})
+        {"sessionDefaults": {"skillRules": {"allow": ["user/a"], "deny": ["user/x"]}}})
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",
-        {"sessionDefaults": {"skillRules": {"allow": [["workspace", "b"]]}}})
+        {"sessionDefaults": {"skillRules": {"allow": ["workspace/b"]}}})
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.skill_rules.allow == [("user", "a"), ("workspace", "b")]
@@ -792,10 +792,10 @@ def test_skill_rules_concatenate_across_layers(tmp_path: Path) -> None:
 
 
 def test_skill_rules_skip_malformed_entries(tmp_path: Path) -> None:
-    """A skillRules entry that isn't a two-element array is skipped rather than crashing load."""
+    """A skillRules entry without a '<namespace>/<name>' separator is skipped, not a crash."""
     _write_config(
         tmp_path / "etc" / "klorb-config.json",
-        {"sessionDefaults": {"skillRules": {"allow": [["internal", "ok"], ["too", "many", "parts"]]}}})
+        {"sessionDefaults": {"skillRules": {"allow": ["internal/ok", "bogus-no-slash"]}}})
 
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.session.skill_rules.allow == [("internal", "ok")]

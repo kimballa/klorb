@@ -81,7 +81,7 @@ def test_workspace_scope_persists_to_project_file(tmp_path: Path) -> None:
     assert session_config.skill_rules.allow == [("workspace", "s")]
     assert process_config.session.skill_rules.allow == [("workspace", "s")]
     defaults = _read_session_defaults(project_config_path(session_config.workspace.path))
-    assert defaults["skillRules"]["allow"] == [["workspace", "s"]]
+    assert defaults["skillRules"]["allow"] == ["workspace/s"]
 
 
 def test_homedir_scope_persists_to_user_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,7 +89,7 @@ def test_homedir_scope_persists_to_user_file(tmp_path: Path, monkeypatch: pytest
     apply_skill_permission_grant("allow", "homedir", session_config, None, ("user", "s"))
     user_file = tmp_path / "homedir" / "klorb-config.json"
     defaults = _read_session_defaults(user_file)
-    assert defaults["skillRules"]["allow"] == [["user", "s"]]
+    assert defaults["skillRules"]["allow"] == ["user/s"]
 
 
 def test_homedir_scope_cleans_redundant_workspace_ask(tmp_path: Path) -> None:
@@ -101,10 +101,10 @@ def test_homedir_scope_cleans_redundant_workspace_ask(tmp_path: Path) -> None:
     # Put an ask entry into the workspace file to be cleaned.
     project_file = project_config_path(session_config.workspace.path)
     raw = read_versioned_json(project_file, expected_schema_name=CONFIG_SCHEMA_NAME)
-    raw[SESSION_DEFAULTS_KEY]["skillRules"]["ask"] = [["internal", "t"]]
+    raw[SESSION_DEFAULTS_KEY]["skillRules"]["ask"] = ["internal/t"]
     from klorb.schema_envelope import write_versioned_json
     write_versioned_json(project_file, raw, schema_name=CONFIG_SCHEMA_NAME, schema_version="1.0.0")
 
     apply_skill_permission_grant("allow", "homedir", session_config, process_config, ("internal", "t"))
     defaults = _read_session_defaults(project_file)
-    assert ["internal", "t"] not in defaults["skillRules"]["ask"]
+    assert "internal/t" not in defaults["skillRules"]["ask"]

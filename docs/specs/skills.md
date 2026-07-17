@@ -167,8 +167,10 @@ PermissionsTable`:
 * `SkillRules` (`klorb.permissions.skill_access`, a pydantic model mirroring `CommandRules`):
   `deny`/`ask`/`allow`, each a `list[tuple[str, str]]` of exact `(namespace, name)` pairs. Lives
   on `SessionConfig.skill_rules`, on-disk as `sessionDefaults.skillRules` (each entry a
-  two-element `["<namespace>", "<name>"]` array), concatenated across config layers exactly like
-  `commandRules`.
+  fully-qualified skill name string `"<namespace>/<name>"` — unambiguous since a name has no path
+  separator, and friendlier in a hand-edited config than a nested array; `format_fqsn`/`parse_fqsn`
+  in `klorb.permissions.skill_access` are the single serialization seam), concatenated across
+  config layers exactly like `commandRules`.
 * `SkillsAccessTable` matches by exact tuple equality only (like `FileAccessTable`'s exact-path
   equality, not `DirectoryAccessTable`'s containment). A pair matching no rule evaluates to `None`,
   normalized to `"ask"` by `normalize_skill_verdict` — the same "no permissive default" fallback
@@ -186,7 +188,7 @@ PermissionsTable`:
   persistent-scope grant goes through `klorb.permissions.skill_grant.apply_skill_permission_grant`
   (mirroring `command_grant`). A persisted grant records the full `(namespace, name)` pair.
 * Packaged skills expected to be safe by default (starting with `/create-edit-skill`) are
-  pre-populated into `skillRules.allow` — as `["internal", "<name>"]` pairs — by
+  pre-populated into `skillRules.allow` — as `"internal/<name>"` strings — by
   `klorb.resources/default-config.json`, the same way that file pre-populates `readFiles.allow` for
   `/dev/null`. Because the entry names the `internal` namespace explicitly, a workspace- or
   user-tier skill of the same name does not inherit its `allow`.
@@ -252,7 +254,7 @@ docs/adrs/discover-claude-skills-dir-as-a-second-workspace-source.md.
 ## Configuration
 
 * `sessionDefaults.skillRules` — `{"deny": [...], "ask": [...], "allow": [...]}`, each a list of
-  two-element `["<namespace>", "<name>"]` arrays (`namespace` one of `workspace`/`user`/
+  fully-qualified skill-name strings `"<namespace>/<name>"` (`namespace` one of `workspace`/`user`/
   `internal`), backing `SessionConfig.skill_rules`. Concatenated across config layers like
   `commandRules`.
 * `compatibility.claudeSkills` — `bool`, default `false` (see above).
@@ -265,7 +267,7 @@ docs/adrs/discover-claude-skills-dir-as-a-second-workspace-source.md.
   workspace is trusted, its `.klorb/klorb-config.json` — the least-trusted config layer — is read,
   and its `skillRules.allow` entries concatenate into the list every other layer's rules are
   evaluated against. So a trusted repository could ship both `.klorb/skills/foo/` and a
-  `.klorb/klorb-config.json` granting `["workspace", "foo"]`, making `foo` activate with no ask.
+  `.klorb/klorb-config.json` granting `"workspace/foo"`, making `foo` activate with no ask.
   This is the same shape as the `readDirs.allow` known risk in `permissions`, accepted for the same
   reason: reaching this state requires an explicit interactive decision to trust the workspace,
   which vouches for both its shipped skills and its config file. Keying grants on `(namespace,

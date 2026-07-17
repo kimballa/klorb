@@ -1,12 +1,16 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.skill_access."""
 
+import pytest
+
 from klorb.permissions.skill_access import (
     VALID_NAMESPACES,
     SkillRules,
     SkillsAccessTable,
     evaluate_skill,
+    format_fqsn,
     normalize_skill_verdict,
+    parse_fqsn,
 )
 
 
@@ -40,8 +44,12 @@ def test_ask_category() -> None:
     assert evaluate_skill(rules, ("user", "foo")) == "ask"
 
 
-def test_rules_coerce_lists_to_tuples() -> None:
-    # On-disk shape is a two-element list; pydantic coerces to a tuple.
-    rules = SkillRules.model_validate({"allow": [["internal", "foo"]]})
-    assert rules.allow == [("internal", "foo")]
-    assert evaluate_skill(rules, ("internal", "foo")) == "allow"
+def test_fqsn_round_trips() -> None:
+    assert format_fqsn(("internal", "create-edit-skill")) == "internal/create-edit-skill"
+    assert parse_fqsn("workspace/add-cli-flag") == ("workspace", "add-cli-flag")
+    assert parse_fqsn(format_fqsn(("user", "foo"))) == ("user", "foo")
+
+
+def test_parse_fqsn_requires_separator() -> None:
+    with pytest.raises(ValueError, match="namespace"):
+        parse_fqsn("no-separator")

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from klorb.permissions.grant import GrantAction, GrantScope
-from klorb.permissions.skill_access import SkillId, SkillRules
+from klorb.permissions.skill_access import SkillId, SkillRules, format_fqsn, parse_fqsn
 from klorb.process_config import (
     CONFIG_SCHEMA_NAME,
     CONFIG_SCHEMA_VERSION,
@@ -40,23 +40,25 @@ def _apply_decision_to_table(
     return SkillRules(deny=new_target, ask=new_ask, allow=list(rules.allow))
 
 
-def _skill_id_to_json(skill_id: SkillId) -> list[str]:
-    return [skill_id[0], skill_id[1]]
+def _fqsn_list(raw_category: Any) -> list[SkillId]:
+    """Parse a config file's `skillRules` category (a list of `"<namespace>/<name>"` strings),
+    skipping any malformed (non-string or separator-less) entry."""
+    return [parse_fqsn(entry) for entry in raw_category if isinstance(entry, str) and "/" in entry]
 
 
 def _skill_rules_from_json(raw: dict[str, Any]) -> SkillRules:
     return SkillRules(
-        deny=[tuple(pair) for pair in raw.get("deny", [])],
-        ask=[tuple(pair) for pair in raw.get("ask", [])],
-        allow=[tuple(pair) for pair in raw.get("allow", [])],
+        deny=_fqsn_list(raw.get("deny", [])),
+        ask=_fqsn_list(raw.get("ask", [])),
+        allow=_fqsn_list(raw.get("allow", [])),
     )
 
 
-def _skill_rules_to_json(rules: SkillRules) -> dict[str, list[list[str]]]:
+def _skill_rules_to_json(rules: SkillRules) -> dict[str, list[str]]:
     return {
-        "deny": [_skill_id_to_json(pair) for pair in rules.deny],
-        "ask": [_skill_id_to_json(pair) for pair in rules.ask],
-        "allow": [_skill_id_to_json(pair) for pair in rules.allow],
+        "deny": [format_fqsn(pair) for pair in rules.deny],
+        "ask": [format_fqsn(pair) for pair in rules.ask],
+        "allow": [format_fqsn(pair) for pair in rules.allow],
     }
 
 

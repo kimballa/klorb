@@ -19,6 +19,21 @@ SkillId = tuple[str, str]
 """A skill's `(namespace, name)` identity -- the candidate type `SkillsAccessTable` matches."""
 
 
+def format_fqsn(skill_id: SkillId) -> str:
+    """The fully-qualified skill name `"<namespace>/<name>"` -- the on-disk serialization of a
+    `skillRules` entry. Unambiguous because a skill name contains no path separator."""
+    return f"{skill_id[0]}/{skill_id[1]}"
+
+
+def parse_fqsn(fqsn: str) -> SkillId:
+    """Parse a fully-qualified skill name `"<namespace>/<name>"` into `(namespace, name)`, splitting
+    on the first `/`. Raises `ValueError` if there's no `/`."""
+    namespace, sep, name = fqsn.partition("/")
+    if not sep:
+        raise ValueError(f"skill rule must be a '<namespace>/<name>' string: {fqsn!r}")
+    return (namespace, name)
+
+
 class SkillRules(BaseModel):
     """One `skillRules` config key's `deny`/`ask`/`allow` rule lists of `(namespace, name)` pairs.
     On disk each entry is a two-element `["<namespace>", "<name>"]` array (pydantic coerces it to a

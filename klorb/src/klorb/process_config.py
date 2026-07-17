@@ -17,7 +17,7 @@ from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.skill_access import SkillRules
+from klorb.permissions.skill_access import SkillId, SkillRules, parse_fqsn
 from klorb.permissions.table import Verdict
 from klorb.schema_envelope import parse_versioned_json, read_versioned_json, write_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig, ThinkingEffort
@@ -565,7 +565,7 @@ def load_process_config(
     concatenated_read_files: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
     concatenated_write_files: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
     concatenated_command_rules: dict[str, list[list[str]]] = {"deny": [], "ask": [], "allow": []}
-    concatenated_skill_rules: dict[str, list[tuple[str, str]]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_skill_rules: dict[str, list[SkillId]] = {"deny": [], "ask": [], "allow": []}
     concatenated_share_env: list[str] = []
     merged_set_env: dict[str, str] = {}
 
@@ -583,11 +583,11 @@ def load_process_config(
             concatenated_command_rules[category].extend(layer_command_rules.get(category, []))
         layer_skill_rules = session_layer.pop("skillRules", None) or {}
         for category in ("deny", "ask", "allow"):
-            for pair in layer_skill_rules.get(category, []):
-                # Each on-disk entry is a two-element ["<namespace>", "<name>"] array; a malformed
-                # entry (wrong length) is skipped rather than crashing config load.
-                if isinstance(pair, (list, tuple)) and len(pair) == 2:
-                    concatenated_skill_rules[category].append((str(pair[0]), str(pair[1])))
+            for entry in layer_skill_rules.get(category, []):
+                # Each on-disk entry is a "<namespace>/<name>" string; a malformed entry (not a
+                # string, or missing the separator) is skipped rather than crashing config load.
+                if isinstance(entry, str) and "/" in entry:
+                    concatenated_skill_rules[category].append(parse_fqsn(entry))
         concatenated_share_env.extend(session_layer.pop("shareEnv", None) or [])
         merged_set_env.update(session_layer.pop("setEnv", None) or {})
         merged_session_defaults.update(session_layer)
