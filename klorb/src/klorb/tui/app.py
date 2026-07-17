@@ -12,6 +12,7 @@ from typing import Literal
 
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult, SystemCommand
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.geometry import Offset
@@ -243,6 +244,7 @@ class ReplApp(
         ("ctrl+q", "quit", "Quit"),
         ("escape", "abort_response", "Abort"),
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
+        Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
     ]
     COMMANDS = App.COMMANDS | {
         InitCommandProvider, ModelCommandProvider, ModelInfoCommandProvider, SessionCommandProvider,
