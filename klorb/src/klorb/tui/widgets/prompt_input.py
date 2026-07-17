@@ -195,12 +195,7 @@ class PromptInput(TextArea):
         everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
         popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
-        or leaves palette mode). Shift+Tab never reaches here at all: it's a `priority=True`
-        app-level binding (`ReplApp.BINDINGS` -> `ReplApp.action_cycle_permission_framework`),
-        which Textual checks from the `App` down before forwarding the key event to whatever
-        widget currently has focus -- see that method's docstring for why a focus-dependent
-        interception here isn't enough (this box is disabled and blurred during an in-flight
-        turn or an open interaction panel, exactly when Shift+Tab is most likely to be needed).
+        or leaves palette mode).
 
         `self._last_key` records the key currently being processed for `on_text_area_changed`
         to read: a mutation-binding key like backspace or delete (see

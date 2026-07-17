@@ -244,7 +244,7 @@ class ReplApp(
         ("ctrl+q", "quit", "Quit"),
         ("escape", "abort_response", "Abort"),
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
-        Binding("shift+tab", "cycle_permission_framework", "Permission", show=False, priority=True),
+        Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
     ]
     COMMANDS = App.COMMANDS | {
         InitCommandProvider, ModelCommandProvider, ModelInfoCommandProvider, SessionCommandProvider,

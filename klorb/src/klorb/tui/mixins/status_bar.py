@@ -93,18 +93,15 @@ class StatusBarMixin(ReplAppBase):
         """Advance `Session.config.permission_framework` to the next value in
         `PERMISSION_FRAMEWORK_CYCLE` (wrapping around), and flash the badge to draw the eye
         to the change. Bound to Shift+Tab as a `priority=True` app-level binding (see
-        `ReplApp.BINDINGS`) rather than something `PromptInput` intercepts while focused: a
-        priority binding is checked from the `App` down before the key event is ever forwarded
-        to whatever widget currently has focus (see Textual's `App._check_bindings`), so this
-        fires regardless of focus — including while `PromptInput` is disabled and blurred
-        during an in-flight turn or an open interaction panel, exactly when a user is most
-        likely to want to flip the framework (e.g. to `"auto"` so an about-to-be-asked
-        permission just proceeds). Without `priority=True`, a disabled/blurred `PromptInput`
-        would leave Shift+Tab to fall through to `Screen`'s own default `shift+tab ->
-        app.focus_previous` binding instead. Goes through `Session.set_permission_framework()`,
-        not a direct assignment, so the model is told about the change via a system-harness
-        interjection prepended to the next turn — see docs/specs/permissions.md's "Permission
-        framework change interjection" section.
+        `ReplApp.BINDINGS`): a priority binding is checked from the `App` down before the key
+        event is forwarded to whatever widget currently has focus (see Textual's
+        `App._check_bindings`), so this fires regardless of focus -- including while
+        `PromptInput` is disabled and blurred during an in-flight turn or an open interaction
+        panel, exactly when a user is most likely to want to flip the framework (e.g. to
+        `"auto"` so an about-to-be-asked permission just proceeds). Goes through
+        `Session.set_permission_framework()`, not a direct assignment, so the model is told
+        about the change via a system-harness interjection prepended to the next turn — see
+        docs/specs/permissions.md's "Permission framework change interjection" section.
         """
         current = self._session.config.permission_framework
         next_index = (PERMISSION_FRAMEWORK_CYCLE.index(current) + 1) % len(PERMISSION_FRAMEWORK_CYCLE)

@@ -69,16 +69,12 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `ReplApp._update_permission_badge()` sets the initial value (no flash) from `on_mount()`.
   Shift+Tab cycles it through `PERMISSION_FRAMEWORK_CYCLE` (`"ask"` → `"auto"` → `"deny"` →
   back to `"ask"`) via `ReplApp.action_cycle_permission_framework()`, bound as a
-  `priority=True` app-level binding in `ReplApp.BINDINGS` rather than intercepted by
-  `PromptInput` while focused: a priority binding is checked from the `App` down before the
-  key event is forwarded to whatever widget currently has focus, so it fires regardless of
-  focus state -- including while `PromptInput` is disabled and blurred during an in-flight
-  turn or an open interaction panel (a `PromptInput`-focus-dependent interception would
-  otherwise leave Shift+Tab to fall through to `Screen`'s own default `shift+tab ->
-  app.focus_previous` binding at exactly the moment it's most likely to be needed). Since
-  Shift+Tab isn't otherwise meaningful in this single-input-focus app, claiming it globally
-  has no other binding to conflict with. `action_cycle_permission_framework()` flashes the
-  badge: a quick 150ms spark of bright yellow (the same `$footer-key-foreground` as the
+  `priority=True` app-level binding in `ReplApp.BINDINGS`. A priority binding is checked from
+  the `App` down before the key event is forwarded to whatever widget currently has focus, so
+  it fires regardless of focus state -- including while `PromptInput` is disabled and blurred
+  during an in-flight turn or an open interaction panel, exactly when a user is most likely to
+  want to flip the framework. `action_cycle_permission_framework()` flashes the badge: a
+  quick 150ms spark of bright yellow (the same `$footer-key-foreground` as the
   footer's own key-binding chips), then a longer 400ms glow of bright/bold white, before
   settling back to its normal color — an intentionally uneven two-step cadence (see
   `PermissionBadge._FLASH_YELLOW_SECONDS`/`_FLASH_WHITE_SECONDS`), since two equal-length
