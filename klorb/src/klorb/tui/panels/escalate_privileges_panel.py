@@ -116,9 +116,15 @@ class EscalatePrivilegesPanel(Vertical):
         self._on_dismiss = on_dismiss
 
     def compose(self) -> ComposeResult:
-        widgets: list[Widget] = [Static(self.header_text(), id=ESCALATE_PRIVILEGES_HEADER_ID)]
+        # `markup=False` on the header and description: the description embeds arbitrary
+        # filesystem paths, which are parsed as console markup by default and would crash the
+        # compositor at reflow on a literal `[` (see
+        # docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md).
+        widgets: list[Widget] = [
+            Static(self.header_text(), id=ESCALATE_PRIVILEGES_HEADER_ID, markup=False)]
         widgets.append(Static(
-            self._escalate_ctx.description, id=ESCALATE_PRIVILEGES_TEXT_ID, classes=_SECTION_END_CLASS))
+            self._escalate_ctx.description, id=ESCALATE_PRIVILEGES_TEXT_ID,
+            classes=_SECTION_END_CLASS, markup=False))
         widgets.append(Vertical(
             Static("Approve", id=ESCALATE_PRIVILEGES_ROW_APPROVE_ID),
             Static("Deny", id=ESCALATE_PRIVILEGES_ROW_DENY_ID),
