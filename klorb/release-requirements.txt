@@ -41,7 +41,7 @@ mdit-py-plugins==0.6.1
     # via textual
 mdurl==0.1.2
     # via markdown-it-py
-openai==2.45.0
+openai==2.46.0
     # via klorb (pyproject.toml)
 pathspec==1.1.1
     # via klorb (pyproject.toml)
@@ -58,6 +58,8 @@ pygments==2.20.0
     #   rich
     #   textual
 python-dotenv==1.2.2
+    # via klorb (pyproject.toml)
+pyyaml==6.0.3
     # via klorb (pyproject.toml)
 regex==2026.7.10
     # via tiktoken

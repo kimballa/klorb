@@ -17,6 +17,7 @@ from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.permissions.file_access import FileRules
+from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import Verdict
 from klorb.schema_envelope import parse_versioned_json, read_versioned_json, write_versioned_json
 from klorb.session import THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig, ThinkingEffort
@@ -185,12 +186,12 @@ headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md an
 [[default-permission-framework-to-deny-headlessly]]. `role_name` is likewise deliberately
 absent: the operating role is set by code (defaulting to the coordinator role), never by a
 config file — see docs/specs/roles-and-system-prompts.md.
-`readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`shareEnv`/`setEnv` are also
-deliberately absent — `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`shareEnv`
-are merged by list concatenation and `setEnv` merges key-by-key (a later layer's
-value for the same key replaces an earlier layer's), none of them the 1:1 scalar replacement
-`_route_keys()` implements — so `load_process_config()` handles all seven separately, ahead of
-`_route_keys()` — see docs/specs/permissions.md and
+`readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`shareEnv`/`setEnv`
+are also deliberately absent — `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/
+`skillRules`/`shareEnv` are merged by list concatenation and `setEnv` merges key-by-key (a later
+layer's value for the same key replaces an earlier layer's), none of them the 1:1 scalar
+replacement `_route_keys()` implements — so `load_process_config()` handles all eight separately,
+ahead of `_route_keys()` — see docs/specs/permissions.md and docs/specs/skills.md and
 docs/specs/bash-tool-and-command-permissions.md. `workspace` is deliberately absent too:
 it has no on-disk key at all, by design — see `SessionConfig.workspace`/
 docs/specs/projects-and-trust.md — a project must never be able to grant itself trust via its
@@ -225,6 +226,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.riskClassifier.tooRiskyThreshold": "bash_risk_classifier_too_risky_threshold",
     "tools.bash.riskClassifier.historySize": "bash_risk_classifier_history_size",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
+    "compatibility.claudeSkills": "compatibility_claude_skills",
     LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
     THEME_CONFIG_KEY: "theme",
 }
@@ -336,6 +338,13 @@ class ProcessConfig(BaseModel):
     compatibility shim for projects that carry Claude-Code-style instructions in a `CLAUDE.md`
     file; `AGENTS.md` and `.klorb/INSTRUCTIONS.md` are always read (once trusted), since
     they're klorb's own conventions."""
+    compatibility_claude_skills: bool = False
+    """Whether to additionally discover `workspace`-namespace skills from
+    `${workspace_root}/.claude/skills/` (alongside `.klorb/skills/`), when the workspace is
+    trusted — a compatibility shim for projects that ship Claude-Code-style skills, mirroring
+    `compatibility_claude_markdown`. Read by `klorb.tools.skill.common` (via the skill tools' and
+    `Session`'s discovery calls). Default `False`: only `.klorb/skills/` is discovered for the
+    workspace tier. See docs/specs/skills.md."""
     log_tool_calls: bool | None = None
     """Whether to append an out-of-band, file-based record of every tool call to
     `tool-calls.log` under `KLORB_STATE_DIR` — see `klorb.tool_call_log`. Also
@@ -521,10 +530,11 @@ def load_process_config(
     argparse `Namespace` shape.
 
     One exception to the "`dict.update`, not a deep merge" rule above:
-    `sessionDefaults.readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules` are
-    concatenated across layers instead of replaced — a layer's `deny`/`ask`/`allow` entries add
-    to, rather than replace, every earlier layer's — since a stricter rule from any layer must
-    never be discardable by a looser rule from another. See docs/specs/permissions.md.
+    `sessionDefaults.readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`
+    are concatenated across layers instead of replaced — a layer's `deny`/`ask`/`allow` entries
+    add to, rather than replace, every earlier layer's — since a stricter rule from any layer must
+    never be discardable by a looser rule from another. See docs/specs/permissions.md and
+    docs/specs/skills.md.
     `sessionDefaults.shareEnv` is
     likewise concatenated (a layer's env var names add to every earlier layer's);
     `sessionDefaults.setEnv` merges key-by-key instead (a later layer's value for the same key
@@ -558,6 +568,7 @@ def load_process_config(
     concatenated_read_files: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
     concatenated_write_files: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
     concatenated_command_rules: dict[str, list[list[str]]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_skill_rules: dict[str, list[tuple[str, str]]] = {"deny": [], "ask": [], "allow": []}
     concatenated_share_env: list[str] = []
     merged_set_env: dict[str, str] = {}
 
@@ -573,6 +584,13 @@ def load_process_config(
         layer_command_rules = session_layer.pop("commandRules", None) or {}
         for category in ("deny", "ask", "allow"):
             concatenated_command_rules[category].extend(layer_command_rules.get(category, []))
+        layer_skill_rules = session_layer.pop("skillRules", None) or {}
+        for category in ("deny", "ask", "allow"):
+            for pair in layer_skill_rules.get(category, []):
+                # Each on-disk entry is a two-element ["<namespace>", "<name>"] array; a malformed
+                # entry (wrong length) is skipped rather than crashing config load.
+                if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                    concatenated_skill_rules[category].append((str(pair[0]), str(pair[1])))
         concatenated_share_env.extend(session_layer.pop("shareEnv", None) or [])
         merged_set_env.update(session_layer.pop("setEnv", None) or {})
         merged_session_defaults.update(session_layer)
@@ -598,6 +616,7 @@ def load_process_config(
     session_overrides["read_files"] = FileRules(**concatenated_read_files)
     session_overrides["write_files"] = FileRules(**concatenated_write_files)
     session_overrides["command_rules"] = CommandRules(**concatenated_command_rules)
+    session_overrides["skill_rules"] = SkillRules(**concatenated_skill_rules)
     session_overrides["share_env"] = concatenated_share_env
     session_overrides["set_env"] = merged_set_env
     session_overrides["workspace"] = workspace

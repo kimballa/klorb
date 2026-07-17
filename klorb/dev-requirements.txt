@@ -105,7 +105,7 @@ mypy==2.3.0
     # via klorb (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
-openai==2.45.0
+openai==2.46.0
     # via klorb (pyproject.toml)
 packaging==26.2
     # via
@@ -157,6 +157,8 @@ pytest-timeout==2.4.0
     # via klorb (pyproject.toml)
 python-dotenv==1.2.2
     # via klorb (pyproject.toml)
+pyyaml==6.0.3
+    # via klorb (pyproject.toml)
 regex==2026.7.10
     # via tiktoken
 requests==2.34.2
@@ -182,6 +184,8 @@ tiktoken==0.13.0
     # via klorb (pyproject.toml)
 tqdm==4.68.4
     # via openai
+types-pyyaml==6.0.12.20260518
+    # via klorb (pyproject.toml)
 typing-extensions==4.16.0
     # via
     #   aiohttp

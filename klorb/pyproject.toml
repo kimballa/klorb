@@ -22,6 +22,7 @@
     "coolname >= 2.0.0, < 6.0.0",
     "tiktoken >= 0.13.0, < 1.0.0",
     "pathspec >= 0.12, < 2.0",
+    "PyYAML >= 6.0, < 7.0",
     # Pinned exact, not an open-ended constraint: shfmt-py's own package version doesn't map
     # 1:1 to the shfmt version it bundles, so a routine upgrade could silently change the
     # bundled shfmt version and trip klorb.permissions.shell_parse's AST-shape assumptions with
@@ -53,6 +54,7 @@
     "pytest-asyncio>=1.4.0,<2.0.0",
     "pytest-timeout>=2.4.0,<3.0.0",
     "textual-dev>=1.8.0",
+    "types-PyYAML >= 6.0, < 7.0",
   ]
 
 [tool.setuptools.package-data]
@@ -72,9 +74,14 @@
   #
   # models/*.json ships the built-in klorb-model JSON files klorb.models.registry.ModelRegistry
   # discovers at runtime. See docs/specs/model-framework.md.
+  #
+  # skills/**/* ships the built-in (namespace "internal") skills klorb discovers at runtime via
+  # importlib.resources -- one directory per skill, each holding at minimum a SKILL.md plus any
+  # supporting files that skill's own instructions reference. See docs/specs/skills.md.
   "klorb.resources" = [
     "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", "default-config.json", "template-config.json",
     "tiktoken-cache/*/*", "models/*.json", "greetings.json",
+    "skills/*/SKILL.md", "skills/*/**/*",
   ]
 
 [tool.pytest.ini_options]

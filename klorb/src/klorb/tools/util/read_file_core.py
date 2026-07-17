@@ -3,13 +3,21 @@
 `klorb.tools.util`'s package docstring for how the two tools each hold one of these as a member
 and delegate to it."""
 
+from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 
 class ReadFileCore:
     """Reads up to `max_lines` lines from `path`, prefixed with 1-indexed line numbers — the
-    shared mechanic behind `ReadFileTool` and `ReadScratchpadTool`."""
+    shared mechanic behind `ReadFileTool`, `ReadScratchpadTool`, `ReadMemoryTool`, and
+    `ReadSkillFileTool`.
+
+    Reads go through `open_resource()`, which handles both a real filesystem `Path` and any other
+    `importlib.resources` `Traversable` (a packaged resource that may have no filesystem path at
+    all — e.g. `ReadSkillFileTool` reading an `internal`-tier skill file from a zip/wheel-installed
+    klorb, see docs/specs/skills.md). A subclass may override `open_resource()` to obtain the
+    handle differently."""
 
     def __init__(self, max_lines: int) -> None:
         self._max_lines = max_lines
@@ -41,9 +49,20 @@ class ReadFileCore:
             },
         }
 
-    def apply(self, path: Path, args: dict[str, Any]) -> dict[str, Any]:
+    def open_resource(self, path: Traversable) -> IO[str]:
+        """Open `path` for text reading and return the file handle `apply()` reads from. A real
+        filesystem `Path` is opened with the builtin `open()`; any other `Traversable` (a packaged
+        resource with no filesystem path) is opened via its own `open()` through the
+        `importlib.resources` loader. A subclass may override to obtain the handle differently."""
+        if isinstance(path, Path):
+            return open(path, encoding="utf-8")
+        return path.open("r", encoding="utf-8")
+
+    def apply(self, path: Traversable, args: dict[str, Any]) -> dict[str, Any]:
         """Read `path` per `args`' `start_line`/`end_line`, returning `start_line`, `end_line`,
-        `total_lines`, `truncated`, and `content` (the caller adds `filename` if it has one).
+        `total_lines`, `truncated`, and `content` (the caller adds `filename`/`name` if it has
+        one). `args`' `start_line`/`end_line` are validated (raising `ValueError`) before `path` is
+        opened via `open_resource()`.
         """
         start_line = args.get("start_line")
         end_line = args.get("end_line")
@@ -62,7 +81,7 @@ class ReadFileCore:
             raise ValueError(
                 f"end_line ({end_line}) must be >= start_line ({effective_start})")
 
-        with open(path, encoding="utf-8") as file:
+        with self.open_resource(path) as file:
             all_lines = file.read().splitlines()
         total_lines = len(all_lines)
 
