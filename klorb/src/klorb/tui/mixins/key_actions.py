@@ -258,6 +258,7 @@ class KeyActionsMixin(ReplAppBase):
                 statistics=self._session.statistics)
         else:
             clear_last_session(self._session.config.workspace)
+            self._session.close()
         self._begin_exit()
 
     def _begin_exit(self) -> None:
