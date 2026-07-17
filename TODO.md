@@ -22,10 +22,6 @@
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
 
-* Sometimes the bash risk classifier suggests an allow pattern like `* -c *` which is pretty crazy
-  and should not be a valid result. `* --version` or `* --help`, maybe. But a wildcard for argv[0]
-  needs to come with some pretty hard guarantees that the rest of the command is universally safe.
-
 * if there hasn't been a privilege escalation, ${projRoot}/.klorb/ should be
   mounted into bubblewrap sandbox as read-only so that commands like `git status` don't show managed
   klorb-settings.json as deleted. (After a scope=workspace priv escalation, it

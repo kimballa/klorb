@@ -228,7 +228,12 @@ it was proposed for: `classify_command_risk` runs each `"command"`-kind item's p
 uses at evaluation time) and blanks any pattern that doesn't actually match that item's argv, so a
 hallucinated abstraction — a mistyped token, a dropped required argument, an over-narrow literal —
 is never shown or persisted; a blanked pattern makes the UI fall back to the deterministic
-literal-argv grant exactly as if the model had returned no pattern for that item. `PermissionAskPanel` shows the score as a badge near its header and the rationale
+literal-argv grant exactly as if the model had returned no pattern for that item. A pattern that
+*does* match the argv but wildcards the program name (argv0) itself — e.g. `["*", "-c", "*"]` — is
+blanked the same way, since generalizing argv0 into a wildcard would grant an open-ended class of
+unrelated commands regardless of which binary runs them; the only wildcard-argv0 pattern kept is
+the version/help query `["*", "--version"]`/`["*", "--help"]` (and `-h`/`-V`/`--usage`/`-?`), which
+is safe no matter what program it names. `PermissionAskPanel` shows the score as a badge near its header and the rationale
 always in italics (additionally colored by score band) beneath the command preview; a score at or
 above `tools.bash.riskClassifier.tooRiskyThreshold` pre-selects `Deny, once` as the panel's
 starting cursor cell — a nudge, never a block: every grid cell stays reachable and confirmable
