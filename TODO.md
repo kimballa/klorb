@@ -22,11 +22,6 @@
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
 
-* if there hasn't been a privilege escalation, ${projRoot}/.klorb/ should be
-  mounted into bubblewrap sandbox as read-only so that commands like `git status` don't show managed
-  klorb-settings.json as deleted. (After a scope=workspace priv escalation, it
-  should mount r/w.)
-
 # Feature backlog
 
 * Add a structured wrapper around all tool call responses.

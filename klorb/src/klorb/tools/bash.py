@@ -837,7 +837,8 @@ class BashTool(Tool):
             read_dirs=config.read_dirs,
             write_dirs=config.write_dirs,
             read_files=config.read_files,
-            write_files=config.write_files)
+            write_files=config.write_files,
+            approved_scopes=config.approved_scopes)
 
     def _bwrap_prefix(self, env: dict[str, str], home: Path) -> list[str]:
         """The `bwrap ... --` argv prefix for this session, to prepend to a shell invocation.

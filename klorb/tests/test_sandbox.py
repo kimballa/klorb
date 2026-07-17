@@ -131,9 +131,94 @@ def test_read_dirs_deny_and_privileged_dirs_are_masked(tmp_path: Path) -> None:
         workspace_root=ws, home=tmp_path / "home", trusted=True,
         read_dirs=DirRules(deny=[secret]), write_dirs=DirRules())
     assert secret.resolve() in dirs.mask
-    # <workspace>/.klorb and the process-wide klorb dirs come from the shared privileged-dir list.
+    # The process-wide klorb dirs are masked; the workspace's own .klorb is bound, not masked.
+    klorb_dir = (ws / ".klorb").resolve()
     for privileged in privileged_dirs(ws):
-        assert privileged in dirs.mask
+        if privileged == klorb_dir:
+            assert privileged not in dirs.mask
+        else:
+            assert privileged in dirs.mask
+
+
+def test_workspace_klorb_dir_is_bound_read_only_by_default(tmp_path: Path) -> None:
+    """The workspace `.klorb/` dir is bound (so `git status` sees its managed files) rather than
+    masked, and read-only until a scope=workspace escalation."""
+    ws = tmp_path / "ws"
+    dirs = compute_sandbox_dirs(
+        workspace_root=ws, home=tmp_path / "home", trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules())
+    klorb_dir = (ws / ".klorb").resolve()
+    assert dirs.workspace_config_dir == klorb_dir
+    assert dirs.workspace_config_writable is False
+    assert klorb_dir not in dirs.mask
+
+
+def test_workspace_klorb_dir_is_read_write_after_workspace_escalation(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    dirs = compute_sandbox_dirs(
+        workspace_root=ws, home=tmp_path / "home", trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules(), approved_scopes={"workspace"})
+    assert dirs.workspace_config_dir == (ws / ".klorb").resolve()
+    assert dirs.workspace_config_writable is True
+
+
+def test_argv_binds_workspace_klorb_read_only_after_the_masks(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    ws = tmp_path / "ws"
+    klorb_dir = ws / ".klorb"
+    klorb_dir.mkdir(parents=True)
+    (klorb_dir / "klorb-config.json").write_text("{}\n")
+    dirs = compute_sandbox_dirs(
+        workspace_root=ws, home=home, trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules())
+    argv = build_bwrap_argv(
+        workspace_root=ws, home=home, env={"HOME": str(home)}, dirs=dirs)
+
+    # The workspace root is bound read-write; .klorb is ro-bound afterward so it wins for its subtree.
+    ws_bind_idx = next(
+        i for i, tok in enumerate(argv) if tok == "--bind" and argv[i + 1] == str(ws.resolve()))
+    klorb_bind_idx = next(
+        i for i, tok in enumerate(argv)
+        if tok == "--ro-bind" and argv[i + 1] == str(klorb_dir.resolve()))
+    assert klorb_bind_idx > ws_bind_idx
+    # It must not also be masked with an empty tmpfs.
+    assert not any(
+        tok == "--tmpfs" and argv[i + 1] == str(klorb_dir.resolve())
+        for i, tok in enumerate(argv))
+
+
+def test_argv_binds_workspace_klorb_read_write_after_escalation(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    ws = tmp_path / "ws"
+    klorb_dir = ws / ".klorb"
+    klorb_dir.mkdir(parents=True)
+    dirs = compute_sandbox_dirs(
+        workspace_root=ws, home=home, trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules(), approved_scopes={"workspace"})
+    argv = build_bwrap_argv(
+        workspace_root=ws, home=home, env={"HOME": str(home)}, dirs=dirs)
+
+    assert any(
+        tok == "--bind" and argv[i + 1] == str(klorb_dir.resolve())
+        and argv[i + 2] == str(klorb_dir.resolve())
+        for i, tok in enumerate(argv))
+
+
+def test_writable_workspace_klorb_grows_the_reconcile_snapshot(tmp_path: Path) -> None:
+    """A scope=workspace escalation flips .klorb from read-only to read-write; that must grow the
+    reconcile-on-grow snapshot so the persistent shell rebuilds with .klorb now writable."""
+    ws = tmp_path / "ws"
+    home = tmp_path / "home"
+    before = allowed_dir_snapshot(compute_sandbox_dirs(
+        workspace_root=ws, home=home, trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules()))
+    after = allowed_dir_snapshot(compute_sandbox_dirs(
+        workspace_root=ws, home=home, trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules(), approved_scopes={"workspace"}))
+    assert (ws / ".klorb").resolve() in after
+    assert (ws / ".klorb").resolve() not in before
 
 
 def test_read_allow_under_a_write_allow_is_not_double_bound(tmp_path: Path) -> None:

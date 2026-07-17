@@ -522,9 +522,19 @@ filesystem policy):
   binds for the workspace root (when trusted) and every `writeDirs.allow` entry, read-only binds
   for `readDirs.allow` entries; PATH-derived read-only top-up binds for toolchains outside
   `/usr`/`$HOME`; then an empty `--tmpfs` mask over every `readDirs.deny` entry and every
-  `privileged_dirs()` entry (`<workspace>/.klorb`, the klorb config/data/state dirs) — masked with
+  process-wide `privileged_dirs()` entry (the klorb config/data/state dirs) — masked with
   `--tmpfs` rather than empty-placeholder binds, so no host-side placeholder needs cleanup; see
   docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
+* **The workspace's own `<workspace>/.klorb` dir** is the one privileged dir that is *bound*
+  rather than masked: an empty `--tmpfs` over it would make a sandboxed `git status` report its
+  tracked, managed files (`klorb-config.json`, ...) as *deleted* — they're in the index but absent
+  from the masked working tree. So it is bound read-only by default (visible to git, but the shell
+  can't rewrite managed settings), and read-write once the session has a `scope="workspace"`
+  `EscalatePrivileges` grant — the same escalation that lifts the file tools' privileged-path deny
+  on it. The bind is emitted after the directory masks (so it wins over the whole-workspace bind
+  for that subtree), and the writable form grows the reconcile-on-grow snapshot so an escalation
+  rebuilds the live persistent shell with `.klorb` now writable. See
+  docs/adrs/bind-workspace-klorb-in-sandbox-so-git-status-is-clean.md.
 * **Individual files.** The same one-source-of-truth idea extends to `readFiles`/`writeFiles`,
   which name single files by exact path (`klorb.permissions.file_access`) rather than directories.
   An existing `readFiles.deny` file that lands inside a bound directory (e.g. `~/.git-credentials`
