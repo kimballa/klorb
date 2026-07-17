@@ -20,7 +20,12 @@ from klorb.message import Message, ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.table import PermissionAskRequired, PermissionOverride
+from klorb.permissions.table import (
+    MultiPermissionAskRequired,
+    PermissionAskItem,
+    PermissionAskRequired,
+    PermissionOverride,
+)
 from klorb.process_config import ProcessConfig
 from klorb.role import CoordinatorRole
 from klorb.session import (
@@ -2151,3 +2156,72 @@ def test_multi_ask_permission_framework_deny_fails_closed_without_asking(tmp_pat
     assert response == "done"
     assert "Permission requires confirmation" in _tool_response_content(session)
     on_permission_ask.assert_not_called()
+
+
+def test_multi_ask_resolve_threads_skill_field_into_ask_context(tmp_path: Path) -> None:
+    """A `MultiPermissionAskRequired` item carrying `.skill` (rather than `.path`/`.command`)
+    must reach `on_permission_ask`'s `PermissionAskContext.skill` -- exercises
+    `Session._resolve_multi_permission_ask` directly, since no real tool raises a skill-bearing
+    `MultiPermissionAskRequired` today (only `BashTool` produces multi-item asks, and never for
+    a skill)."""
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = Session(config, provider=MagicMock(), tool_registry=MagicMock())
+    item = PermissionAskItem("activate skill internal/s", skill=("internal", "s"))
+    multi_ask_exc = MultiPermissionAskRequired("ask", items=[item])
+    on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
+    call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
+
+    session._resolve_multi_permission_ask(
+        call, {}, multi_ask_exc, TurnEventHandlers(on_permission_ask=on_permission_ask))
+
+    (ctx,), _ = on_permission_ask.call_args
+    assert ctx.skill == ("internal", "s")
+    assert ctx.path is None
+    assert ctx.command is None
+
+
+def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None:
+    """A `scope="once"` decision for a skill item must retry through a `PermissionOverride`
+    whose `skills` set covers the pair -- exercises `Session._retry_after_multi_permission_
+    decisions` directly, mirroring `test_permission_ask_once_retry_failure_falls_through_to_
+    generic_error`'s mocked-registry approach for the single-ask path."""
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    mock_tool = MagicMock()
+    mock_tool.apply.return_value = "ok"
+    mock_registry = MagicMock()
+    mock_registry.instantiate_tool.return_value = mock_tool
+    session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
+    item = PermissionAskItem("activate skill internal/s", skill=("internal", "s"))
+    call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
+
+    result, error = session._retry_after_multi_permission_decisions(
+        call, {}, [item], [PermissionDecision(action="allow", scope="once")])
+
+    assert result == "ok"
+    assert error is None
+    mock_registry.instantiate_tool.assert_called_once_with(
+        "whatever", permission_override=PermissionOverride(skills=frozenset({("internal", "s")})))
+    # "once" must not have touched the session's live skillRules.
+    assert config.skill_rules.allow == []
+
+
+def test_multi_ask_persistent_scope_applies_skill_grant(tmp_path: Path) -> None:
+    """A persistent-scope decision for a skill item must persist via
+    `apply_skill_permission_grant` -- reflected in the live `SessionConfig.skill_rules` for a
+    `"session"`-scope grant."""
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    mock_tool = MagicMock()
+    mock_tool.apply.return_value = "ok"
+    mock_registry = MagicMock()
+    mock_registry.instantiate_tool.return_value = mock_tool
+    session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
+    item = PermissionAskItem("activate skill internal/s", skill=("internal", "s"))
+    call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
+
+    result, error = session._retry_after_multi_permission_decisions(
+        call, {}, [item], [PermissionDecision(action="allow", scope="session")])
+
+    assert result == "ok"
+    assert error is None
+    assert config.skill_rules.allow == [("internal", "s")]
+    mock_registry.instantiate_tool.assert_called_once_with("whatever", permission_override=None)

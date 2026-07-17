@@ -12,7 +12,7 @@ import pytest
 from klorb import process_config as process_config_module
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.command_grant import (
-    _apply_decision_to_table,
+    _writer,
     apply_command_permission_grant,
     compute_command_grant_patterns,
 )
@@ -47,19 +47,19 @@ def test_promotes_matched_ask_rules_own_pattern() -> None:
         ["git", "push", "?"]]
 
 
-# --- _apply_decision_to_table ---
+# --- _writer.apply_decision ---
 
 
 def test_apply_decision_to_table_allow_appends_and_removes_ask() -> None:
     rules = CommandRules(ask=[["git", "push", "?"]])
-    result = _apply_decision_to_table(rules, [["git", "push", "?"]], "allow")
+    result = _writer.apply_decision(rules, [["git", "push", "?"]], "allow")
     assert result.allow == [["git", "push", "?"]]
     assert result.ask == []
 
 
 def test_apply_decision_to_table_deny_writes_deny_not_allow() -> None:
     rules = CommandRules(ask=[["rm", "?"]])
-    result = _apply_decision_to_table(rules, [["rm", "?"]], "deny")
+    result = _writer.apply_decision(rules, [["rm", "?"]], "deny")
     assert result.deny == [["rm", "?"]]
     assert result.allow == []
     assert result.ask == []
@@ -68,7 +68,7 @@ def test_apply_decision_to_table_deny_writes_deny_not_allow() -> None:
 def test_apply_decision_to_table_never_mutates_input_in_place() -> None:
     original_ask = [["git", "push", "?"]]
     rules = CommandRules(ask=list(original_ask))
-    _apply_decision_to_table(rules, [["git", "push", "?"]], "allow")
+    _writer.apply_decision(rules, [["git", "push", "?"]], "allow")
     assert rules.ask == original_ask
 
 

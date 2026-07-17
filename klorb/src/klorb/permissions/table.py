@@ -30,12 +30,21 @@ class PermissionAskRequired(Exception):
     `Session.on_permission_ask`, `klorb.permissions.grant`) can act on the specific resource
     without re-parsing `resource_description`. Both are optional and default to `None`/`False`
     so existing callers that only care about the message string are unaffected.
+
+    `skill`, when set, is the `(namespace, name)` identity of a skill whose `skillRules` verdict
+    is `"ask"` (raised by `ActivateSkill`/`ReadSkillFile` -- see docs/specs/skills.md); it's the
+    skill-resource analogue of `path`, threaded onto `Session.PermissionAskContext` and persisted
+    via `klorb.permissions.skill_grant`. A skill ask never carries a `path`.
     """
 
-    def __init__(self, message: str, *, path: Path | None = None, is_write: bool = False) -> None:
+    def __init__(
+        self, message: str, *, path: Path | None = None, is_write: bool = False,
+        skill: tuple[str, str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.path = path
         self.is_write = is_write
+        self.skill = skill
 
 
 class PermissionAskItem:
@@ -43,11 +52,13 @@ class PermissionAskItem:
     decision — a single tool call can raise several of these at once (e.g. `BashTool`: several
     simple commands and/or redirection targets found within one parsed shell command).
 
-    Exactly one of `path`/`command` is set, or neither: `path` (plus `is_write`) for a
+    Exactly one of `path`/`command`/`skill` is set, or none: `path` (plus `is_write`) for a
     directory-access item, matching `PermissionAskRequired`'s own shape; `command` (an argv
-    pattern) for a bash-command-rule item with no filesystem resource; neither for a structural
-    item (the walker couldn't classify something at all) that has no persistable rule of its own
-    — only "once"/"deny" make sense for that last case, never a session/workspace/homedir grant.
+    pattern) for a bash-command-rule item with no filesystem resource; `skill` (a
+    `(namespace, name)` pair) for a skill-activation item (see docs/specs/skills.md); none for a
+    structural item (the walker couldn't classify something at all) that has no persistable rule
+    of its own — only "once"/"deny" make sense for that last case, never a
+    session/workspace/homedir grant.
 
     `command_text`, when set, is the full, unparsed command string a `BashTool` call originated
     from — set on every ask item that call produces, regardless of which of `path`/`command`/
@@ -87,6 +98,7 @@ class PermissionAskItem:
         path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
         command_text: str | None = None, is_compound: bool = False,
         item_command_text: str | None = None, intent: str | None = None,
+        skill: tuple[str, str] | None = None,
     ) -> None:
         self.resource_description = resource_description
         self.path = path
@@ -96,6 +108,7 @@ class PermissionAskItem:
         self.is_compound = is_compound
         self.item_command_text = item_command_text
         self.intent = intent
+        self.skill = skill
 
 
 class PermissionOverride:
@@ -108,10 +121,12 @@ class PermissionOverride:
     mirrors `PermissionAskItem.path` (checked via membership, e.g.
     `klorb.permissions.workspace.evaluate_write`), `commands` mirrors `PermissionAskItem.command`
     (each entry the exact argv tuple that was asked about, not a pattern — checked via membership
-    in `klorb.tools.bash.BashTool._classify`), and `reasons` mirrors a structural item's
+    in `klorb.tools.bash.BashTool._classify`), `reasons` mirrors a structural item's
     `resource_description` (the deterministic forced-ask reason text `klorb.permissions.
     shell_parse.parse_command` produces for the same command on every parse, since a structural
-    item has no other stable identifier to bypass by).
+    item has no other stable identifier to bypass by), and `skills` mirrors
+    `PermissionAskItem.skill` (each entry a `(namespace, name)` pair a once-scoped activation was
+    approved for — checked via membership in `klorb.tools.skill.common.raise_if_skill_not_allowed`).
     """
 
     def __init__(
@@ -119,10 +134,12 @@ class PermissionOverride:
         paths: frozenset[Path] = frozenset(),
         commands: frozenset[tuple[str, ...]] = frozenset(),
         reasons: frozenset[str] = frozenset(),
+        skills: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         self.paths = paths
         self.commands = commands
         self.reasons = reasons
+        self.skills = skills
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, PermissionOverride):
@@ -130,12 +147,13 @@ class PermissionOverride:
         return (
             self.paths == other.paths
             and self.commands == other.commands
-            and self.reasons == other.reasons)
+            and self.reasons == other.reasons
+            and self.skills == other.skills)
 
     def __repr__(self) -> str:
         return (
             f"PermissionOverride(paths={self.paths!r}, commands={self.commands!r}, "
-            f"reasons={self.reasons!r})")
+            f"reasons={self.reasons!r}, skills={self.skills!r})")
 
 
 class MultiPermissionAskRequired(Exception):
@@ -209,20 +227,21 @@ def stricter_verdict(a: Verdict, b: Verdict) -> Verdict:
 
 def raise_if_not_allowed(
     verdict: Verdict, *, resource_description: str,
-    path: Path | None = None, is_write: bool = False,
+    path: Path | None = None, is_write: bool = False, skill: tuple[str, str] | None = None,
 ) -> None:
     """Enforce `verdict`: raise `PermissionError` for `"deny"`, `PermissionAskRequired` for
     `"ask"` (failing closed — see `PermissionAskRequired`), or return normally for `"allow"`.
 
     This is the single seam where "ask fails closed as deny-but-distinctly-typed" is
     implemented, so swapping it for real interactive confirmation later is a one-function
-    change rather than a change at every tool call site. `path`/`is_write` are forwarded onto
-    `PermissionAskRequired` so interactive callers (see `Session.on_permission_ask`) can act on
-    the specific resource; both are optional, so callers that don't have them handy (or don't
+    change rather than a change at every tool call site. `path`/`is_write`/`skill` are forwarded
+    onto `PermissionAskRequired` so interactive callers (see `Session.on_permission_ask`) can act
+    on the specific resource; all are optional, so callers that don't have them handy (or don't
     need them) can omit them.
     """
     if verdict == "deny":
         raise PermissionError(f"Permission denied: {resource_description}")
     if verdict == "ask":
         raise PermissionAskRequired(
-            f"Permission requires confirmation: {resource_description}", path=path, is_write=is_write)
+            f"Permission requires confirmation: {resource_description}",
+            path=path, is_write=is_write, skill=skill)

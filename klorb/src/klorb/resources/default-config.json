@@ -69,6 +69,13 @@
         "/dev/urandom"
       ]
     },
+    "skillRules": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+        "internal/create-edit-skill"
+      ]
+    },
     "commandRules": {
       "deny": [
         ["rm", "-rf", "/"]
@@ -134,5 +141,6 @@
   "shell.timeout": null,
   "watchdog.timeout": 10.0,
   "compatibility.claudeMarkdown": false,
+  "compatibility.claudeSkills": false,
   "ui.theme": null
 }

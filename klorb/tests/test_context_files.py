@@ -184,7 +184,7 @@ def test_send_turn_prepends_project_guidance_interjection(tmp_path: Path) -> Non
     assert session._context_files_seeded is True
 
 
-def test_send_turn_no_interjection_when_untrusted(tmp_path: Path) -> None:
+def test_send_turn_no_context_file_interjection_when_untrusted(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("Be careful with tests.")
 
     mock_provider = MagicMock()
@@ -194,7 +194,12 @@ def test_send_turn_no_interjection_when_untrusted(tmp_path: Path) -> None:
 
     user_msgs = _user_messages(session)
     assert len(user_msgs) == 1
-    assert "SystemInterjection" not in user_msgs[0].content
+    # The workspace-trust gate keeps the untrusted workspace's AGENTS.md out of the prompt: no
+    # ProjectGuidance interjection, and none of the file's content. This module's autouse
+    # `_neutralize_packaged_skills` fixture stubs skill discovery to always return `[]`, so no
+    # AvailableSkills interjection can ride here either -- the prompt is untouched.
+    assert '<SystemInterjection subject="ProjectGuidance">' not in user_msgs[0].content
+    assert "Be careful with tests." not in user_msgs[0].content
     assert user_msgs[0].content == "do the task"
     assert session._context_files_seeded is True
 

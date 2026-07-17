@@ -18,6 +18,7 @@ import tiktoken
 import klorb.tools as tools_package
 from klorb.api_provider import ApiProvider
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
@@ -40,6 +41,13 @@ class EvalCase:
     that ran it, returns `None` on success or a human-readable failure reason."""
     setup_files: dict[str, str] = field(default_factory=dict)
     """Workspace-relative path -> initial file content, written before `prompt` is sent."""
+    workspace_trusted: bool = False
+    """Whether the eval workspace is trusted. `False` (the default) matches most cases; a skill
+    case sets it `True` so workspace-tier skills under `.klorb/skills/` are discoverable."""
+    skill_rules: SkillRules | None = None
+    """`skillRules` for the session, so a skill case can pre-`allow` the `(namespace, name)` it
+    exercises (a headless eval has no interactive surface to answer an activation ask). `None`
+    (the default) leaves the session's rules empty."""
     expected_tool_calls: int | None = None
     """Rough number of tool calls a competent, error-free run should need (e.g. one `ReadFile`
     plus one `EditFile`). Compared against `CaseResult.num_tool_calls` to flag an otherwise
@@ -145,8 +153,9 @@ def run_case(
 
         session_config = SessionConfig(
             model=model, interactive=False, thinking_enabled=False,
-            workspace=Workspace(path=workspace_root),
-            read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]))
+            workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
+            read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]),
+            skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
         tool_registry = ToolRegistry(ProcessConfig(), session_config, package=tools_package)
         session = Session(session_config, provider=provider, tool_registry=tool_registry)
 

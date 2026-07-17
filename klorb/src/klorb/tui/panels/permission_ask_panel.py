@@ -106,7 +106,7 @@ def _cell_id(column: int, row: int) -> str:
 
 
 def format_ask_context_body(ask_ctx: PermissionAskContext) -> str:
-    """Render `ask_ctx`'s intent (if any), command/path preview, and its own
+    """Render `ask_ctx`'s intent (if any), command/path/skill preview, and its own
     `resource_description` detail as a flat block of text, for the history-scroll record
     `ReplApp` leaves behind once a `PermissionAskPanel` is dismissed (see
     `ReplApp._record_interaction_history`) — the same pieces of information
@@ -119,8 +119,19 @@ def format_ask_context_body(ask_ctx: PermissionAskContext) -> str:
         lines.append(ask_ctx.item_command_text or ask_ctx.command_text)
     elif ask_ctx.path is not None:
         lines.append(str(ask_ctx.path))
+    elif ask_ctx.skill is not None:
+        lines.append(_skill_preview_text(ask_ctx.skill))
     lines.append(ask_ctx.resource_description)
     return "\n".join(lines)
+
+
+def _skill_preview_text(skill: tuple[str, str]) -> str:
+    """The `/<name> (<namespace>)` preview line a skill-activation ask shows in place of the
+    command/path preview a `BashTool`/directory ask shows -- `namespace` is the skill's
+    discovery tier (`workspace`/`user`/`internal`), so the user can tell which one is being
+    asked about before deciding how broadly to grant it."""
+    namespace, name = skill
+    return f"/{name} ({namespace})"
 
 
 def format_permission_decision(decision: PermissionDecision) -> str:
@@ -241,8 +252,9 @@ class PermissionAskPanel(Vertical):
     permanent record of the exchange into the history scroll afterward.
 
     Above the grid: a styled header naming the kind of access being requested ("Run command" if
-    `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set — see
-    `header_text`), then, when `ask_ctx.intent` is set (every `BashTool` ask item carries one —
+    `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set, else
+    "Activate skill" if `ask_ctx.skill` is set — see `header_text`), then, when `ask_ctx.intent`
+    is set (every `BashTool` ask item carries one —
     see `klorb.permissions.table.PermissionAskItem.intent`), an "Intent: ..." line showing the
     model's own short statement of what the command is trying to accomplish, then a command
     preview (long commands truncated to
@@ -273,9 +285,12 @@ class PermissionAskPanel(Vertical):
     recorded at — so the panel's copy can name the real scope of the grant up front: per the
     design decision behind this feature, an unmentioned path is always granted at its
     *containing directory* (never the single file the model happens to be touching right now),
-    and an unmentioned command is granted at its exact argv. At most one of the two is set,
-    mirroring `PermissionAskContext`'s own `path`/`command` mutual exclusivity; neither is set
-    for a structural item, which has no persistable rule at any scope but `"once"`.
+    and an unmentioned command is granted at its exact argv. `granted_skill` is simpler: a skill
+    grant always covers exactly the `(namespace, name)` pair being asked about, no widening
+    computation needed, so it's just `ask_ctx.skill` passed straight through. At most one of the
+    three is set, mirroring `PermissionAskContext`'s own `path`/`command`/`skill` mutual
+    exclusivity; none is set for a structural item, which has no persistable rule at any scope
+    but `"once"`.
 
     `initial_action`/`initial_scope` seed the starting cursor position — `klorb.tui.ReplApp`
     threads through the previous prompt's final selection here (see
@@ -417,6 +432,7 @@ class PermissionAskPanel(Vertical):
         self, ask_ctx: PermissionAskContext, *,
         granted_paths: list[Path] | None = None,
         granted_command_patterns: list[list[str]] | None = None,
+        granted_skill: tuple[str, str] | None = None,
         initial_action: _Action = "allow",
         initial_scope: _Scope = "once",
         risk_score: int | None = None,
@@ -428,6 +444,7 @@ class PermissionAskPanel(Vertical):
         self._ask_ctx = ask_ctx
         self._granted_paths = granted_paths
         self._granted_command_patterns = granted_command_patterns
+        self._granted_skill = granted_skill
         self._column = _ACTIONS.index(initial_action)
         self._row = _SCOPES.index(initial_scope)
         self._risk_score = risk_score
@@ -471,6 +488,9 @@ class PermissionAskPanel(Vertical):
             # `markup=False`: a filesystem path can contain `[` and must render verbatim.
             preview_section.append(Static(
                 str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID, markup=False))
+        elif self._ask_ctx.skill is not None:
+            preview_section.append(Static(
+                _skill_preview_text(self._ask_ctx.skill), id=PERMISSION_ASK_COMMAND_ID))
         if self._risk_rationale is not None:
             # `markup=False`: the rationale is model-generated free text and must render verbatim.
             preview_section.append(Static(
@@ -535,6 +555,8 @@ class PermissionAskPanel(Vertical):
             kind = "Run command"
         elif self._ask_ctx.path is not None:
             kind = "Write file" if self._ask_ctx.is_write else "Read file"
+        elif self._ask_ctx.skill is not None:
+            kind = "Activate skill"
         else:
             kind = "Confirm"
         return f"Permission requested: {kind}"
@@ -562,6 +584,10 @@ class PermissionAskPanel(Vertical):
             return Content.assemble(
                 "Any persistent Allow choice below grants: ",
                 (patterns, "$text-accent bold"))
+        if self._granted_skill is not None:
+            return Content.assemble(
+                "Any persistent Allow choice below grants: ",
+                (_skill_preview_text(self._granted_skill), "$text-accent bold"))
         return None
 
     def _refresh_selection(self) -> None:

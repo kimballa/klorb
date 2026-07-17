@@ -170,7 +170,9 @@ class InteractionsMixin(ReplAppBase):
         here (rather than threaded in from wherever `ask_ctx` was built) purely so the panel can
         show the directory/command pattern a persistent grant would actually cover; both are
         pure and read-only, so calling them again inside `_on_permission_ask`/
-        `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap.
+        `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap. A
+        skill ask needs no such recomputation: its persistent grant always covers exactly
+        `ask_ctx.skill`, so that pair is passed straight through as `granted_skill`.
         Seeds the panel's grid cursor from `_last_permission_action`/`_last_permission_scope`
         and updates both from the returned decision, so a run of several asks for one compound
         tool call starts each next prompt where the previous one left off — unless
@@ -198,6 +200,7 @@ class InteractionsMixin(ReplAppBase):
 
         granted_paths = None
         granted_command_patterns = None
+        granted_skill = None
         if ask_ctx.path is not None:
             granted_paths = compute_grant_paths(
                 self._session.config.read_dirs, self._session.config.write_dirs,
@@ -208,6 +211,10 @@ class InteractionsMixin(ReplAppBase):
             else:
                 granted_command_patterns = compute_command_grant_patterns(
                     self._session.config.command_rules, ask_ctx.command)
+        elif ask_ctx.skill is not None:
+            # A skill grant always covers exactly the pair being asked about -- no widening
+            # computation needed the way a path/command grant has.
+            granted_skill = ask_ctx.skill
 
         decision_future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         preview_wrap_width = max(
@@ -221,6 +228,7 @@ class InteractionsMixin(ReplAppBase):
             initial_action, initial_scope = "deny", "once"
         panel = PermissionAskPanel(
             ask_ctx, granted_paths=granted_paths, granted_command_patterns=granted_command_patterns,
+            granted_skill=granted_skill,
             initial_action=initial_action, initial_scope=initial_scope,
             risk_score=risk_assessment.risk_score if risk_assessment is not None else None,
             risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,

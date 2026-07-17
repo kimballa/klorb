@@ -1,5 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Synthesized EvalCase tasks covering ReadFile, CreateFile, EditFile, ReplaceAll, and ListDir.
+"""Synthesized EvalCase tasks covering ReadFile, CreateFile, EditFile, ReplaceAll, ListDir, and
+the skill tools (ActivateSkill/ReadSkillFile).
 
 Each case's `check` inspects the resulting workspace file state only, never `final_response`
 text — see docs/adrs/grade-tool-evals-by-filesystem-state.md. Content comparisons tolerate
@@ -26,6 +27,7 @@ some other way.
 import json
 from pathlib import Path
 
+from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.session import Session
 
@@ -619,6 +621,50 @@ LIST_DIR_FIND_SUBDIRECTORY_WITH_MARKER = EvalCase(
 )
 
 
+def _check_read_skill_file_extracts_marker(workspace_root: Path, session: Session) -> str | None:
+    path = workspace_root / "answer.txt"
+    if not path.exists():
+        return "answer.txt was not created"
+    content = _read(path).strip()
+    expected = "QW7RANGE42"
+    if expected not in content:
+        return f"answer.txt should contain the calibration code {expected!r}, got {content!r}"
+    return None
+
+
+# The calibration code lives only in the skill's supporting file (reference/calibration.txt),
+# never in the prompt or in SKILL.md, so the model can only produce it by activating the skill and
+# reading that file with ReadSkillFile. The skill is pre-allowed (headless eval, no ask surface)
+# and the workspace trusted so the workspace-tier skill is discoverable.
+READ_SKILL_FILE_EXTRACTS_MARKER = EvalCase(
+    name="read_skill_file_extracts_marker",
+    prompt=(
+        "Use the sensor-calibration skill to look up the calibration code for the sensor, then "
+        "write just that code into answer.txt, nothing else."
+    ),
+    setup_files={
+        ".klorb/skills/sensor-calibration/SKILL.md": (
+            "---\n"
+            "description: Look up the calibration code for a sensor.\n"
+            "---\n\n"
+            "# Sensor calibration\n\n"
+            "The sensor's calibration code is recorded in the supporting file "
+            "`reference/calibration.txt`. To answer a calibration-code question, read that file "
+            "and report the code exactly as written there.\n"
+        ),
+        ".klorb/skills/sensor-calibration/reference/calibration.txt": (
+            "Sensor calibration code: QW7RANGE42\n"
+        ),
+    },
+    workspace_trusted=True,
+    skill_rules=SkillRules(allow=[("workspace", "sensor-calibration")]),
+    check=_check_read_skill_file_extracts_marker,
+    # ActivateSkill(sensor-calibration) + ReadSkillFile(reference/calibration.txt) +
+    # CreateFile(answer.txt).
+    expected_tool_calls=3,
+)
+
+
 CASES: list[EvalCase] = [
     CREATE_FILE_BASIC,
     CREATE_FILE_NESTED_DIRECTORY,
@@ -641,4 +687,5 @@ CASES: list[EvalCase] = [
     LIST_DIR_ROOT_INVENTORY,
     LIST_DIR_COUNT_FILES_IN_SUBDIRECTORY,
     LIST_DIR_FIND_SUBDIRECTORY_WITH_MARKER,
+    READ_SKILL_FILE_EXTRACTS_MARKER,
 ]

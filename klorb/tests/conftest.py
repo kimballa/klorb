@@ -50,6 +50,19 @@ def _isolate_user_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr("klorb.models.registry.KLORB_DATA_DIR", tmp_path / "klorb-data-dir")
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_packaged_skills(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `Session`'s available-skills interjection see no skills by default, so no test
+    anywhere in the suite accidentally gets an `<AvailableSkills>` `<SystemInterjection>` prepended
+    onto its first turn from the always-present packaged `internal` skills (e.g. create-edit-skill,
+    which is discoverable regardless of workspace trust). Mirrors `_isolate_config_layers`'s
+    blanking of the packaged config layer. Tests that specifically cover skill discovery /
+    interjections (see test_skills_session.py) restore the real `discover_skills` themselves via
+    their own `monkeypatch.setattr("klorb.session.discover_skills", ...)`.
+    """
+    monkeypatch.setattr("klorb.session.discover_skills", lambda **kwargs: [])
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _configure_tiktoken_cache_dir() -> None:
     """Point tiktoken at the machine's `klorb init`-installed bundled cache, if there is one,

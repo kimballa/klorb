@@ -3,6 +3,7 @@
 
 import json
 import logging
+import re
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -21,6 +22,7 @@ from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
 from klorb.permissions.file_access import FileRules
+from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import (
     MultiPermissionAskRequired,
     PermissionAskItem,
@@ -36,6 +38,7 @@ from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.scratchpad.common import Scratchpad
+from klorb.tools.skill.common import DiscoveredSkill, discover_skills
 from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -46,6 +49,10 @@ if TYPE_CHECKING:
     # type-checking-only import is enough (see
     # docs/adrs/tool-setup-context-carries-process-and-session-config.md).
     from klorb.tools.registry import ToolRegistry
+    # `GrantAction`/`GrantScope` are simple `Literal` aliases living in `klorb.permissions.grant`,
+    # which imports `SessionConfig` from this module for real — so a type-checking-only import
+    # avoids the cycle while still letting `_apply_ask_grant` annotate its parameters.
+    from klorb.permissions.grant import GrantAction, GrantScope
     # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
     # from this module, so importing it for real here would be circular too. `Session` stores
     # (and reads a couple of fields off) a `ProcessConfig` it's handed, but never constructs one
@@ -153,6 +160,23 @@ def _wrap_system_interjection(subject: str, message: str) -> str:
     return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
 
 
+_SKILL_MENTION_RE = re.compile(r"(?:^|\s)/([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _skill_mention_tokens(prompt: str) -> list[str]:
+    """Every distinct `/<token>` slug mentioned in `prompt`, in first-seen order. A cheap,
+    disk-free candidate extraction `Session._build_skill_reference_interjection` runs before
+    deciding whether a skill-discovery scan is even worth doing for this turn."""
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for match in _SKILL_MENTION_RE.finditer(prompt):
+        token = match.group(1)
+        if token not in seen:
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
 
 class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
@@ -216,6 +240,11 @@ class SessionConfig(BaseModel):
     Lives on `SessionConfig`, not `ProcessConfig`, for the same reason `read_dirs`/`write_dirs`
     do: the interactive "ask" flow lets a user approve a command pattern for the rest of the
     session."""
+    skill_rules: SkillRules = Field(default_factory=SkillRules)
+    """`skillRules`-config-driven allow/ask/deny rules `ActivateSkill`/`ReadSkillFile` consult,
+    matched by exact `(namespace, name)` identity — see `klorb.permissions.skill_access` and
+    docs/specs/skills.md. Lives on `SessionConfig` like `command_rules`, so the interactive "ask"
+    flow can approve a skill for the rest of the session."""
     share_env: list[str] = Field(default_factory=list)
     """Names of environment variables `BashTool` passes through from the klorb process's own
     environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see
@@ -297,6 +326,9 @@ class PermissionAskContext(BaseModel):
     is_compound: bool = False
     item_command_text: str | None = None
     intent: str | None = None
+    skill: tuple[str, str] | None = None
+    """The `(namespace, name)` identity of a skill whose `skillRules` verdict is `"ask"` — the
+    skill-resource analogue of `path`. `None` for every non-skill ask. See docs/specs/skills.md."""
     resource_description: str
     sibling_items: list[PermissionAskItem] | None = None
 
@@ -517,6 +549,11 @@ class Session:
         self._compatibility_claude_markdown = (
             process_config.compatibility_claude_markdown if process_config is not None else False
         )
+        self._compatibility_claude_skills = (
+            process_config.compatibility_claude_skills if process_config is not None else False
+        )
+        """Whether to also discover workspace-namespace skills from `.claude/skills/`. See
+        docs/specs/skills.md."""
         self._log_tool_calls = tool_call_logging_enabled(
             process_config.log_tool_calls if process_config is not None else None
         )
@@ -530,6 +567,11 @@ class Session:
         a caller that constructs a `Session` without a `ProcessConfig` at all, as most
         unit tests do)."""
         self._messages: list[Message] = []
+        self._skills_seeded = False
+        """Whether `send_turn()` has already computed the one-shot `AvailableSkills`
+        `<SystemInterjection>` for the first turn (see `_build_available_skills_interjection`). Set
+        unconditionally the first time it's checked, so the standing list is locked for the
+        session."""
         self._context_files_seeded = False
         """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the
         one-shot `ProjectGuidance` `<SystemInterjection>` carrying the workspace's
@@ -912,6 +954,70 @@ class Session:
             filenames.append("CLAUDE.md")
         return filenames
 
+    def _discover_skills(self) -> list[DiscoveredSkill]:
+        """Discover every currently-discoverable, non-`deny`-verdicted skill from this session's
+        live `config`. See `klorb.tools.skill.common.discover_skills` and docs/specs/skills.md."""
+        return discover_skills(
+            workspace_root=self.config.workspace.path,
+            workspace_trusted=self.config.workspace.trusted,
+            claude_skills_compat=self._compatibility_claude_skills,
+            skill_rules=self.config.skill_rules,
+        )
+
+    @staticmethod
+    def _format_skill_list(skills: list[DiscoveredSkill]) -> str:
+        """Render `skills` as the newline-joined `- <name> (<namespace>): <description>` bullet
+        list shared by both skill interjections. A skill with an empty description contributes
+        just `- <name> (<namespace>)`."""
+        lines = [
+            f"- {skill.name} ({skill.namespace}): {skill.description}" if skill.description
+            else f"- {skill.name} ({skill.namespace})"
+            for skill in skills
+        ]
+        return "\n".join(lines)
+
+    def _build_available_skills_interjection(self, skills: list[DiscoveredSkill]) -> str | None:
+        """Return the body `send_turn()` wraps in an `AvailableSkills` `<SystemInterjection>` and
+        prepends onto the first turn's prompt, or `None` if no skill is discoverable. Lists every
+        discoverable, non-`deny`-verdicted skill. Built once and locked for the session — see
+        `_skills_seeded` and docs/specs/skills.md. `skills` is whatever `send_turn()` already
+        discovered for this turn -- see that method for why it isn't rediscovered here."""
+        if not skills:
+            return None
+        return (
+            "The following skills are available. A skill is a set of instructions for one "
+            "bounded, reusable task. When one is relevant to what you're doing, load its full "
+            "instructions with ActivateSkill(namespace=\"<namespace>\", name=\"<name>\") and "
+            "follow them. Use SearchSkills to narrow this list by keyword.\n"
+            + self._format_skill_list(skills)
+        )
+
+    def _build_skill_reference_interjection(
+        self, tokens: list[str], skills: list[DiscoveredSkill] | None,
+    ) -> str | None:
+        """Return the body `send_turn()` wraps in a `SkillReference` `<SystemInterjection>` for
+        this turn only, or `None` if `tokens` names no discoverable skill. `tokens` is every
+        `/<name>` slug `send_turn()` already found in the turn's prompt via
+        `_skill_mention_tokens()`; `skills` is the discovery scan it ran for those tokens (`None`
+        when there was nothing to look up, since no scan was attempted in that case). Reminds the
+        model to load a mentioned skill via `ActivateSkill`. See docs/specs/skills.md."""
+        if not tokens or not skills:
+            return None
+        by_name = {skill.name: skill for skill in skills}
+        mentioned: list[DiscoveredSkill] = []
+        seen: set[str] = set()
+        for token in tokens:
+            if token in by_name and token not in seen:
+                seen.add(token)
+                mentioned.append(by_name[token])
+        if not mentioned:
+            return None
+        return (
+            "Your message mentions one or more skills by name. Load a skill's full instructions "
+            "with ActivateSkill(namespace=\"<namespace>\", name=\"<name>\") before acting on it.\n"
+            + self._format_skill_list(mentioned)
+        )
+
     def _confirm_limit_increase(
         self,
         scope: Literal["turn", "session"],
@@ -968,28 +1074,29 @@ class Session:
         scope) or `other_text` with no retry. Any exception from the retried call (including a
         second `PermissionAskRequired`) is reported the same generic way an ordinary tool
         failure is — never a second ask.
+
+        Handles both a directory-access ask (`ask_exc.path` set) and a skill-activation ask
+        (`ask_exc.skill` set): the persistent-scope grant is dispatched by `_apply_ask_grant`, and
+        a `scope="once"` retry carries the resource on the matching `PermissionOverride` field
+        (`paths` vs. `skills`).
         """
-        assert ask_exc.path is not None
+        assert ask_exc.path is not None or ask_exc.skill is not None
         if decision.other_text is not None:
             return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
         if decision.action == "deny":
             if decision.scope != "once":
-                # Local import: `klorb.permissions.grant` imports `SessionConfig` from this
-                # module, so importing it at module scope here would be circular.
-                from klorb.permissions.grant import apply_permission_grant
-                apply_permission_grant(
-                    "deny", decision.scope, self.config, self._process_config,
-                    ask_exc.path, ask_exc.is_write)
+                self._apply_ask_grant("deny", decision.scope, ask_exc)
             return None, f"Permission denied: {ask_exc}"
         if decision.scope in ("session", "workspace", "homedir"):
-            from klorb.permissions.grant import apply_permission_grant
-            apply_permission_grant(
-                "allow", decision.scope, self.config, self._process_config,
-                ask_exc.path, ask_exc.is_write)
+            self._apply_ask_grant("allow", decision.scope, ask_exc)
         assert self._tool_registry is not None
         try:
             if decision.scope == "once":
-                override = PermissionOverride(paths=frozenset({ask_exc.path}))
+                if ask_exc.skill is not None:
+                    override = PermissionOverride(skills=frozenset({ask_exc.skill}))
+                else:
+                    assert ask_exc.path is not None
+                    override = PermissionOverride(paths=frozenset({ask_exc.path}))
                 tool = self._tool_registry.instantiate_tool(call.name, permission_override=override)
             else:
                 tool = self._tool_registry.instantiate_tool(call.name)
@@ -997,6 +1104,27 @@ class Session:
         except Exception as exc:
             logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
             return None, str(exc)
+
+    def _apply_ask_grant(
+        self,
+        action: "GrantAction",
+        scope: "GrantScope",
+        ask_exc: PermissionAskRequired,
+    ) -> None:
+        """Persist a single-item permission grant for `ask_exc` at `scope`, dispatching to
+        `apply_skill_permission_grant` for a skill ask (`ask_exc.skill` set) and
+        `apply_permission_grant` for a directory ask (`ask_exc.path` set). The imports are local to
+        avoid a circular import back into this module.
+        """
+        if ask_exc.skill is not None:
+            from klorb.permissions.skill_grant import apply_skill_permission_grant
+            apply_skill_permission_grant(
+                action, scope, self.config, self._process_config, ask_exc.skill)
+            return
+        assert ask_exc.path is not None
+        from klorb.permissions.grant import apply_permission_grant
+        apply_permission_grant(
+            action, scope, self.config, self._process_config, ask_exc.path, ask_exc.is_write)
 
     def _retry_after_multi_permission_decisions(
         self,
@@ -1010,9 +1138,10 @@ class Session:
         — and calls this with a shorter `decisions` list than `items` — at the first `"deny"`
         answer; see that method). Applies every persistent-scope `"allow"` decision's grant
         (via `klorb.permissions.grant.apply_permission_grant` for a `path` item,
-        `klorb.permissions.command_grant.apply_command_permission_grant` for a `command` item —
-        a structural item with neither has no rule to persist, so any `decision` for it other
-        than `action="deny"` is a no-op grant-wise). Every `scope="once"` decision instead
+        `klorb.permissions.command_grant.apply_command_permission_grant` for a `command` item,
+        `klorb.permissions.skill_grant.apply_skill_permission_grant` for a `skill` item — a
+        structural item with none of the three has no rule to persist, so any `decision` for it
+        other than `action="deny"` is a no-op grant-wise). Every `scope="once"` decision instead
         contributes its item to a single `PermissionOverride` (see `ToolSetupContext.
         permission_override`) covering all of them at once, since retrying happens exactly once
         for the whole call — never once per item, as re-parsing/re-evaluating after each
@@ -1035,16 +1164,20 @@ class Session:
         # at module scope here would be circular.
         from klorb.permissions.command_grant import apply_command_permission_grant
         from klorb.permissions.grant import apply_permission_grant
+        from klorb.permissions.skill_grant import apply_skill_permission_grant
 
         once_paths: set[Path] = set()
         once_commands: set[tuple[str, ...]] = set()
         once_reasons: set[str] = set()
+        once_skills: set[tuple[str, str]] = set()
         for item, decision in zip(items, decisions):
             if decision.scope == "once":
                 if item.path is not None:
                     once_paths.add(item.path)
                 elif item.command is not None:
                     once_commands.add(tuple(item.command))
+                elif item.skill is not None:
+                    once_skills.add(item.skill)
                 else:
                     once_reasons.add(item.resource_description)
                 continue
@@ -1055,12 +1188,15 @@ class Session:
             elif item.command is not None:
                 apply_command_permission_grant(
                     decision.action, decision.scope, self.config, self._process_config, item.command)
+            elif item.skill is not None:
+                apply_skill_permission_grant(
+                    decision.action, decision.scope, self.config, self._process_config, item.skill)
 
         override = None
-        if once_paths or once_commands or once_reasons:
+        if once_paths or once_commands or once_reasons or once_skills:
             override = PermissionOverride(
                 paths=frozenset(once_paths), commands=frozenset(once_commands),
-                reasons=frozenset(once_reasons))
+                reasons=frozenset(once_reasons), skills=frozenset(once_skills))
 
         assert self._tool_registry is not None
         try:
@@ -1105,7 +1241,7 @@ class Session:
                 path=item.path, is_write=item.is_write, command=item.command,
                 command_text=item.command_text, is_compound=item.is_compound,
                 item_command_text=item.item_command_text, intent=item.intent,
-                resource_description=item.resource_description,
+                skill=item.skill, resource_description=item.resource_description,
                 sibling_items=multi_ask_exc.items))
             decisions.append(decision)
             if decision.action == "deny" or decision.other_text is not None:
@@ -1345,7 +1481,8 @@ class Session:
                 except EscalatePrivilegesRequired as escalate_exc:
                     result, error = self._resolve_escalate_privileges(call, escalate_exc, callbacks)
                 except PermissionAskRequired as ask_exc:
-                    if ask_exc.path is None or self.config.permission_framework == "deny":
+                    has_resource = ask_exc.path is not None or ask_exc.skill is not None
+                    if not has_resource or self.config.permission_framework == "deny":
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                         error = str(ask_exc)
                     elif self.config.permission_framework == "auto":
@@ -1358,7 +1495,7 @@ class Session:
                         error = str(ask_exc)
                     else:
                         decision = callbacks.on_permission_ask(PermissionAskContext(
-                            path=ask_exc.path, is_write=ask_exc.is_write,
+                            path=ask_exc.path, is_write=ask_exc.is_write, skill=ask_exc.skill,
                             resource_description=str(ask_exc)))
                         result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
                 except NoSuchToolException:
@@ -1701,15 +1838,22 @@ class Session:
         cleared: a standing interjection keeps appearing on every subsequent turn for as long as
         its provider keeps returning a message.
 
+        A `SkillReference` interjection is prepended for this turn when the user's own `prompt`
+        mentions a discoverable skill by `/<name>`, and — on the first turn only — the one-shot
+        `AvailableSkills` catalog is prepended (see `_build_skill_reference_interjection`/
+        `_build_available_skills_interjection` and docs/specs/skills.md).
+
         Finally, the very first time `send_turn()` is ever called on this `Session`
         (`self._context_files_seeded` still `False`), `_build_context_files_interjection()` is
         consulted once; a non-`None` result is wrapped in a `<SystemInterjection
         subject="ProjectGuidance">` tag and prepended last, so it ends up as the outermost —
         i.e. first-read — preamble to the whole prompt, ahead of the `PermissionFramework`/
-        standing interjections above. `self._context_files_seeded` is then set unconditionally,
-        so this never runs again for the rest of the `Session`'s lifetime, matching every other
-        one-shot interjection's "fires once" contract — see docs/specs/workspace-context-files.md.
+        standing/skill interjections above. `self._context_files_seeded` is then set
+        unconditionally, so this never runs again for the rest of the `Session`'s lifetime,
+        matching every other one-shot interjection's "fires once" contract — see
+        docs/specs/workspace-context-files.md.
         """
+        original_prompt = prompt
         if self._pending_permission_framework_interjection is not None:
             interjection = _wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)
@@ -1719,6 +1863,22 @@ class Session:
             message = self._standing_interjection_providers[subject]()
             if message is not None:
                 prompt = f"{_wrap_system_interjection(subject, message)}\n{prompt}"
+        skill_mention_tokens = _skill_mention_tokens(original_prompt)
+        discovered_skills: list[DiscoveredSkill] | None = None
+        if skill_mention_tokens or not self._skills_seeded:
+            # A single scan feeds both interjections below, so turn 1 (which needs both) doesn't
+            # pay for two independent discovery scans, and a later turn with no `/name` mention
+            # at all (the common case) doesn't pay for one either.
+            discovered_skills = self._discover_skills()
+        skill_reference = self._build_skill_reference_interjection(
+            skill_mention_tokens, discovered_skills)
+        if skill_reference is not None:
+            prompt = f"{_wrap_system_interjection('SkillReference', skill_reference)}\n{prompt}"
+        if not self._skills_seeded:
+            self._skills_seeded = True
+            available_skills = self._build_available_skills_interjection(discovered_skills or [])
+            if available_skills is not None:
+                prompt = f"{_wrap_system_interjection('AvailableSkills', available_skills)}\n{prompt}"
         if not self._context_files_seeded:
             self._context_files_seeded = True
             project_guidance = self._build_context_files_interjection()

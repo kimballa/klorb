@@ -25,7 +25,10 @@
       "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q)",
       "Bash(PYTHONPATH=src:tests venv/bin/pytest * -q -k *)",
       "Bash(venv/bin/isort --diff *)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Skill(code-review)",
+      "Skill(code-review:*)",
+      "Bash(venv/bin/pip show *)"
     ]
   },
   "hooks": {

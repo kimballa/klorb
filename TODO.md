@@ -24,6 +24,10 @@
 
 # Feature backlog
 
+* ActivateSkill.summary() should report the number of tokens loaded in the skill.md.
+* When adding skills list <SystemInterjection> we should notify the TUI how many tokens
+  were used to compose a skills list.
+
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.
   See https://claudecertificationguide.com/learn/2-tool-design-mcp/2-2-structured-error-responses
