@@ -15,4 +15,4 @@ PERMISSION_BADGE_ID = "permission-badge"
 
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
 """The order Shift+Tab cycles `Session.config.permission_framework` through -- see
-`ReplApp._cycle_permission_framework`."""
+`ReplApp.action_cycle_permission_framework`."""

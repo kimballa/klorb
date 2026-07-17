@@ -119,8 +119,8 @@ class PermissionBadge(Static):
     a custom `render()` uses — a fixed width sized for the longest value
     (`"[auto]"`/`"[deny]"`) plus one, with the text right-justified within it, means a
     shorter value like `"[ask]"` is left-padded rather than ever clipping a longer one's
-    trailing `]`. `ReplApp._cycle_permission_framework()` (bound to Shift+Tab, and reached by
-    clicking the badge — see `Clicked`) calls
+    trailing `]`. `ReplApp.action_cycle_permission_framework()` (bound to Shift+Tab, and
+    reached by clicking the badge — see `Clicked`) calls
     `flash_to()` whenever the value changes, which briefly flashes the chip bright yellow
     (the same `$footer-key-foreground` used for the footer's own key-binding chips) for
     `_FLASH_YELLOW_SECONDS`, then bright/bold white for the longer `_FLASH_WHITE_SECONDS`,
@@ -135,7 +135,7 @@ class PermissionBadge(Static):
     class Clicked(Message):
         """Posted when the user clicks the badge, asking `ReplApp` to advance the permission
         framework to the next value — the same cycle Shift+Tab drives (see
-        `StatusBarMixin.on_permission_badge_clicked` / `_cycle_permission_framework`)."""
+        `StatusBarMixin.on_permission_badge_clicked` / `action_cycle_permission_framework`)."""
 
     COMPONENT_CLASSES = {"permission-badge--flash-yellow", "permission-badge--flash-white"}
 
@@ -173,8 +173,8 @@ class PermissionBadge(Static):
     def on_click(self, event: events.Click) -> None:
         """Post `Clicked` (and stop the event) so a click on the badge cycles the permission
         framework — the mouse equivalent of the Shift+Tab binding. The value change and its
-        flash happen in `ReplApp._cycle_permission_framework`, not here, so both entry points
-        stay identical."""
+        flash happen in `ReplApp.action_cycle_permission_framework`, not here, so both entry
+        points stay identical."""
         event.stop()
         self.post_message(self.Clicked())
 

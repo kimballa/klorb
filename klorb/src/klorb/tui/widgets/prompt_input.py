@@ -86,21 +86,6 @@ class PromptInput(TextArea):
         def control(self) -> "PromptInput":
             return self.prompt_input
 
-    class CyclePermissionFramework(Message):
-        """Posted when the user presses Shift+Tab, to cycle
-        `Session.config.permission_framework` -- see
-        `ReplApp.on_prompt_input_cycle_permission_framework`. Handled at the `ReplApp` level
-        (rather than acted on directly here) since `PromptInput` has no reference to the
-        `Session`."""
-
-        def __init__(self, prompt_input: "PromptInput") -> None:
-            self.prompt_input = prompt_input
-            super().__init__()
-
-        @property
-        def control(self) -> "PromptInput":
-            return self.prompt_input
-
     def on_mount(self) -> None:
         """Initialize the per-instance input-history state.
 
@@ -210,10 +195,7 @@ class PromptInput(TextArea):
         everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
         popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
-        or leaves palette mode). Shift+Tab is intercepted ahead of all of that (even
-        `_palette_mode`) and posts `CyclePermissionFramework` instead of falling through to
-        `Screen`'s own default Shift+Tab binding (`"app.focus_previous"`), since this app has
-        nothing else meaningful to focus.
+        or leaves palette mode).
 
         `self._last_key` records the key currently being processed for `on_text_area_changed`
         to read: a mutation-binding key like backspace or delete (see
@@ -228,11 +210,6 @@ class PromptInput(TextArea):
         """
         key = event.key
         self._last_key = key
-        if key == "shift+tab":
-            event.stop()
-            event.prevent_default()
-            self.post_message(self.CyclePermissionFramework(self))
-            return
         if self._isearch_active:
             # While a reverse-i-search is in progress, the keystroke vocabulary narrows to
             # what readline accepts mid-search: printable characters extend the query,

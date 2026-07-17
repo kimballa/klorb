@@ -108,6 +108,17 @@ The Klorb project is organized as a collection of subprojects:
   version. Record change history — what changed, why, and what alternatives were rejected — in
   an ADR (docs/adrs/) instead; cross-reference it by name from the docstring/comment/spec if the
   current behavior's rationale needs a pointer.
+* Default to no comment; add one only when the WHY is genuinely non-obvious. Keep it to a
+  sentence or two.
+  * Don't narrate what a method *isn't* doing, alternatives it doesn't take, or where else a
+    concern is handled instead ("this doesn't do X because Y handles it in Z" style asides).
+    State what the code does, not a tour of the design space around it.
+  * If the rationale needs more than a sentence or two, that's a sign it belongs in a spec or
+    ADR, not the docstring — write it there and leave a short pointer (`see docs/specs/foo.md`)
+    in the code instead of inlining it.
+  * This applies double to code review responses and to docstrings on methods that are
+    straightforward once named well: prefer trusting the reader over pre-empting every question
+    they might not even ask.
 
 ## Important SDLC CI/CD commands
 

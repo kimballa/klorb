@@ -83,20 +83,24 @@ class StatusBarMixin(ReplAppBase):
         """Set the permission badge to show `Session.config.permission_framework`
         (`[ask]`/`[auto]`/`[deny]`), so the user always knows whether tool-permission asks
         are being shown interactively, auto-approved, or auto-denied. Called once from
-        `on_mount()`, with no flash -- `_cycle_permission_framework()` is what changes the
-        value (and flashes the badge) after startup.
+        `on_mount()`, with no flash -- `action_cycle_permission_framework()` is what changes
+        the value (and flashes the badge) after startup.
         """
         badge = self.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
         badge.set_value(self._session.config.permission_framework)
 
-    def _cycle_permission_framework(self) -> None:
+    def action_cycle_permission_framework(self) -> None:
         """Advance `Session.config.permission_framework` to the next value in
         `PERMISSION_FRAMEWORK_CYCLE` (wrapping around), and flash the badge to draw the eye
-        to the change. Bound to Shift+Tab via `PromptInput.CyclePermissionFramework` (see
-        `on_prompt_input_cycle_permission_framework`) since Shift+Tab isn't otherwise
-        meaningful in this single-input-focus app. Goes through `Session.set_permission_
-        framework()`, not a direct assignment, so the model is told about the change via a
-        system-harness interjection prepended to the next turn — see
+        to the change. Bound to Shift+Tab as a `priority=True` app-level binding (see
+        `ReplApp.BINDINGS`): a priority binding is checked from the `App` down before the key
+        event is forwarded to whatever widget currently has focus (see Textual's
+        `App._check_bindings`), so this fires regardless of focus -- including while
+        `PromptInput` is disabled and blurred during an in-flight turn or an open interaction
+        panel, exactly when a user is most likely to want to flip the framework (e.g. to
+        `"auto"` so an about-to-be-asked permission just proceeds). Goes through
+        `Session.set_permission_framework()`, not a direct assignment, so the model is told
+        about the change via a system-harness interjection prepended to the next turn — see
         docs/specs/permissions.md's "Permission framework change interjection" section.
         """
         current = self._session.config.permission_framework
@@ -106,14 +110,8 @@ class StatusBarMixin(ReplAppBase):
         badge = self.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
         badge.flash_to(next_value)
 
-    def on_prompt_input_cycle_permission_framework(
-        self, event: "PromptInput.CyclePermissionFramework",
-    ) -> None:
-        """`PromptInput` posts this on Shift+Tab; hand off to `_cycle_permission_framework()`."""
-        self._cycle_permission_framework()
-
     def on_permission_badge_clicked(self, event: "PermissionBadge.Clicked") -> None:
-        """`PermissionBadge` posts this when clicked; hand off to `_cycle_permission_framework()`
-        — the mouse equivalent of the Shift+Tab handler above."""
-        self._cycle_permission_framework()
-
+        """`PermissionBadge` posts this when clicked; hand off to
+        `action_cycle_permission_framework()` — the mouse equivalent of the Shift+Tab
+        binding."""
+        self.action_cycle_permission_framework()

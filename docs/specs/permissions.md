@@ -334,7 +334,7 @@ tally (see [[terminal-repl]]).
 ### Permission framework change interjection
 
 Changing `permission_framework` mid-conversation (today, only via the REPL's Shift+Tab
-cycling — `klorb.tui.ReplApp._cycle_permission_framework`) takes effect for enforcement
+cycling — `klorb.tui.ReplApp.action_cycle_permission_framework`) takes effect for enforcement
 immediately, exactly as a direct assignment would, but the model itself is only told about
 the change once, at the start of the next turn: `Session.set_permission_framework(value)` is
 the one place that both mutates `config.permission_framework` and queues the notice, so any
