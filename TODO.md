@@ -2,16 +2,6 @@
 
 # Bugs:
 
-* In dir_walk.py the `_walk()` method I think sets report.gitignored_hidden too eagerly. I think
-  this is set to true any time it simply does not descend into some directory. But that field
-  should only be set to true if such a dir actually had a relevant file in it!
-  * To be clear, this means FindFile needs to unconditionally walk into gitignored dirs, see if
-    it matches files, and if so then set gitignored_hidden and _don't_ report the filenames
-    back to the agent.
-  * The Grep command, otoh, should *not* actually search thru files that are excluded by gitignore.
-    In which case its warning flag should be set that it didn't bother to search some set of files
-    that might be a match.
-
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -35,6 +25,11 @@
 * Sometimes the bash risk classifier suggests an allow pattern like `* -c *` which is pretty crazy
   and should not be a valid result. `* --version` or `* --help`, maybe. But a wildcard for argv[0]
   needs to come with some pretty hard guarantees that the rest of the command is universally safe.
+
+* if there hasn't been a privilege escalation, ${projRoot}/.klorb/ should be
+  mounted into bubblewrap sandbox as read-only so that commands like `git status` don't show managed
+  klorb-settings.json as deleted. (After a scope=workspace priv escalation, it
+  should mount r/w.)
 
 # Feature backlog
 

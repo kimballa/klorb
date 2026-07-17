@@ -428,6 +428,20 @@ def test_gitignored_file_is_skipped_and_flagged(tmp_path: Path) -> None:
     assert "use_gitignore=false" in result["note"]
 
 
+def test_no_gitignore_hidden_flag_when_ignored_files_are_filtered_out_by_glob(tmp_path: Path) -> None:
+    """gitignored_hidden means "a file I'd have searched went unsearched," so a gitignored
+    directory whose files are all excluded by `file_glob` anyway must not set it — those files
+    would never have been searched regardless of gitignore. Here `sub/` holds no `*.md` file."""
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = GrepTool(_context(tmp_path)).apply(
+        {"path": "", "queries": ["hello"], "file_glob": "*.md"})
+
+    assert result["gitignored_hidden"] is False
+    assert "note" not in result
+
+
 def test_use_gitignore_false_searches_ignored_files(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     (tmp_path / ".gitignore").write_text("sub/\n")

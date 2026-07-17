@@ -148,6 +148,21 @@ def test_no_gitignore_hidden_flag_when_nothing_ignored(tmp_path: Path) -> None:
     assert "note" not in result
 
 
+def test_no_gitignore_hidden_flag_when_ignored_files_do_not_match_pattern(tmp_path: Path) -> None:
+    """A gitignored directory that holds no file matching the glob must NOT set
+    gitignored_hidden — the flag means "a match was hidden," not "something was ignored."
+    Here `sub/` (with only `*.py` files) is gitignored while we search for `*.md`."""
+    _make_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text("sub/\n")
+
+    result = FindFileTool(_context(tmp_path)).apply({"dirname": "", "pattern": "*.md"})
+
+    names = {Path(m).name for m in result["matches"]}
+    assert names == {"readme.md"}
+    assert result["gitignored_hidden"] is False
+    assert "note" not in result
+
+
 def test_summary_on_success(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     tool = FindFileTool(_context(tmp_path))

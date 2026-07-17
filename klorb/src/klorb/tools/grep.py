@@ -12,7 +12,6 @@ from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 from klorb.tools.util import (
-    WalkReport,
     compile_queries,
     context_lines_for_matches,
     match_line_indices,
@@ -178,7 +177,11 @@ class GrepTool(Tool):
         match_count = 0
         truncated = False
         root_path: Path | None = None
-        report = WalkReport()
+        # Set true only when a gitignored file that *would have been searched* (passing file_glob,
+        # if given) is skipped — not merely because some gitignored entry exists — so the flag
+        # means "some file I'd have searched went unsearched," never "some unrelated ignored file
+        # exists." Grep never reads a gitignored file, matching its skip-don't-peek contract.
+        gitignored_hidden = False
 
         # Determine whether search_path is a single file or a directory tree.
         single_file: Path | None = None
@@ -222,12 +225,18 @@ class GrepTool(Tool):
                     match_count += len(matched_indices)
         else:
             # Directory tree search (existing recursive walk).
-            for dir_path, _subdirs, filenames in walk_readable_tree(
-                    self.context, search_path, use_gitignore=use_gitignore, report=report):
+            for dir_path, _subdirs, filenames, gitignored_filenames in walk_readable_tree(
+                    self.context, search_path, use_gitignore=use_gitignore):
                 if root_path is None:
                     root_path = dir_path
                 if truncated:
                     break
+                if not gitignored_hidden:
+                    for filename in gitignored_filenames:
+                        if file_glob and not fnmatch.fnmatch(filename, file_glob):
+                            continue
+                        gitignored_hidden = True
+                        break
                 for filename in filenames:
                     if file_glob and not fnmatch.fnmatch(filename, file_glob):
                         continue
@@ -279,7 +288,7 @@ class GrepTool(Tool):
                 "files": list_files,
                 "match_count": match_count,
                 "truncated": truncated,
-                "gitignored_hidden": report.gitignored_hidden,
+                "gitignored_hidden": gitignored_hidden,
             }
         else:
             result = {
@@ -293,9 +302,9 @@ class GrepTool(Tool):
                 "files": files,
                 "match_count": match_count,
                 "truncated": truncated,
-                "gitignored_hidden": report.gitignored_hidden,
+                "gitignored_hidden": gitignored_hidden,
             }
-        if report.gitignored_hidden:
+        if gitignored_hidden:
             result["note"] = _GITIGNORE_HIDDEN_NOTE
         return result
 

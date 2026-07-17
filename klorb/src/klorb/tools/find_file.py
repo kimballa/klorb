@@ -8,7 +8,7 @@ from typing import Any
 
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
-from klorb.tools.util import WalkReport, walk_readable_tree
+from klorb.tools.util import walk_readable_tree
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,10 @@ class FindFileTool(Tool):
             "'truncated' flag in the result means more matches exist than were returned. A "
             "subdirectory your readDirs permissions deny, or that requires confirmation, is "
             "silently skipped rather than failing the whole search — only dirname itself "
-            "raises if it isn't allowed. Files excluded by the project's .gitignore rules are "
-            "skipped by default; when that happens the result sets 'gitignored_hidden' to true "
-            "and includes a 'note', and you can re-call with use_gitignore=false to search "
-            "gitignored files too."
+            "raises if it isn't allowed. Matches whose file is excluded by the project's "
+            ".gitignore rules are not listed by default; when a gitignored file would have "
+            "matched, the result sets 'gitignored_hidden' to true and includes a 'note', and "
+            "you can re-call with use_gitignore=false to list gitignored matches too."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -99,9 +99,12 @@ class FindFileTool(Tool):
         matches: list[str] = []
         truncated = False
         root_path: Path | None = None
-        report = WalkReport()
-        for dir_path, _subdirs, filenames in walk_readable_tree(
-                self.context, dirname, use_gitignore=use_gitignore, report=report):
+        # Set true only once a file that *actually matches the glob* is found among the gitignored
+        # entries — not merely because some gitignored entry exists — so the "hidden matches" note
+        # never fires on a search whose pattern matches nothing that gitignore excluded.
+        gitignored_match_found = False
+        for dir_path, _subdirs, filenames, gitignored_filenames in walk_readable_tree(
+                self.context, dirname, use_gitignore=use_gitignore):
             if root_path is None:
                 root_path = dir_path
             if truncated:
@@ -114,6 +117,12 @@ class FindFileTool(Tool):
                     truncated = True
                     break
                 matches.append(str(dir_path / filename))
+            if not gitignored_match_found:
+                for filename in gitignored_filenames:
+                    candidate = filename.lower() if case_insensitive else filename
+                    if fnmatch.fnmatch(candidate, match_pattern):
+                        gitignored_match_found = True
+                        break
 
         logger.debug("FindFile found %d match(es) (truncated=%s)", len(matches), truncated)
 
@@ -124,9 +133,9 @@ class FindFileTool(Tool):
             "use_gitignore": use_gitignore,
             "matches": matches,
             "truncated": truncated,
-            "gitignored_hidden": report.gitignored_hidden,
+            "gitignored_hidden": gitignored_match_found,
         }
-        if report.gitignored_hidden:
+        if gitignored_match_found:
             result["note"] = _GITIGNORE_HIDDEN_NOTE
         return result
 
