@@ -420,6 +420,7 @@ class ReplApp(
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(message, classes="error" if error else "notice", markup=False))
+        history.scroll_end(animate=False)
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Every default system command except "Theme" — `ThemeCommandProvider` supersedes it

@@ -106,11 +106,25 @@ class SessionStatistics(BaseModel):
         lines.append("Token Usage")
         lines.append("-" * 40)
         total_all_tokens = self.input_tokens + self.output_tokens
-        lines.append(f"  Input tokens:         {self.input_tokens:,}")
-        lines.append(f"  Output tokens:        {self.output_tokens:,}")
-        lines.append(f"  Cached tokens:        {self.cached_tokens:,}")
-        lines.append(f"  Total tokens:         {total_all_tokens:,}")
-        lines.append(f"  Total cost:           ${self.total_cost:.6f}")
+
         cache_pct = ((100.0 * self.cached_tokens) / self.input_tokens) if self.input_tokens > 0 else 0.0
-        lines.append(f"  Cache hit ratio:      {cache_pct:.1f}%")
+
+        # Format numbers with commas
+        input_str = f"{self.input_tokens:,}"
+        cached_str = f"{self.cached_tokens:,}"
+        output_str = f"{self.output_tokens:,}"
+        total_str = f"{total_all_tokens:,}"
+        cost_str = f"${self.total_cost:.3f}"
+
+        # Right-align numbers to the widest one
+        max_width = max(len(input_str), len(cached_str), len(output_str), len(total_str), len(cost_str))
+        label_w = 18
+
+        lines.append(f"  {'Input tokens:':<{label_w}}{input_str:>{max_width}}")
+        lines.append(f"  {'Cached tokens:':<{label_w}}{cached_str:>{max_width}} ({cache_pct:.1f}%)")
+        lines.append(f"  {'Output tokens:':<{label_w}}{output_str:>{max_width}}")
+        lines.append(f"  {'-' * (label_w + max_width)}")
+        lines.append(f"  {'Total tokens:':<{label_w}}{total_str:>{max_width}}")
+        lines.append("")
+        lines.append(f"  {'Cost:':<{label_w}}{cost_str:>{max_width}}")
         return "\n".join(lines)
