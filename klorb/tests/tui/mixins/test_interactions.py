@@ -862,6 +862,41 @@ async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_an
         assert "Decision: Deny — Once" in history_text
 
 
+async def test_permission_ask_history_record_floats_above_the_tool_use_block(
+    tmp_path: Path,
+) -> None:
+    """The `<Approval>` record for a tool call's permission ask is mounted *above* that call's
+    `<Tool use>` block, not below its `Running…` indicator — so reading top-to-bottom the
+    decision precedes the call it authorized (see `_running_tool_call_anchor`)."""
+    target = tmp_path / "f.txt"
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([_ask_permission_call("call_1", target)]),
+        _reply("final answer"),
+    ]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = _session_with_tools(mock_provider, config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please touch a file"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        children = list(app.query_one(f"#{HISTORY_ID}", VerticalScroll).children)
+        record_index = next(
+            i for i, c in enumerate(children) if c.has_class("interaction-record-label"))
+        tool_use_index = next(
+            i for i, c in enumerate(children) if c.has_class("tool-call-label"))
+        assert record_index < tool_use_index
+
+
 async def test_confirm_permission_ask_truncates_a_long_single_line_command_to_fit_the_terminal() -> None:
     """Regression test: a single very long line with no explicit newline must still be
     truncated once shown through a real, sized `ReplApp` -- `_confirm_permission_ask` computes

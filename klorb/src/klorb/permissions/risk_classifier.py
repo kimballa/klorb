@@ -23,6 +23,7 @@ classifier itself alive as a growing conversation.
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -33,7 +34,11 @@ from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
 from klorb.permissions.command_access import pattern_matches_argv
 from klorb.permissions.table import PermissionAskItem
-from klorb.process_config import DEFAULT_BASH_RISK_CLASSIFIER_MODEL, ProcessConfig
+from klorb.process_config import (
+    DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS,
+    DEFAULT_BASH_RISK_CLASSIFIER_MODEL,
+    ProcessConfig,
+)
 from klorb.session import PermissionAskContext, PermissionDecision, Session
 
 logger = logging.getLogger(__name__)
@@ -196,7 +201,14 @@ matches `git status` or `git --no-pager status` but not `git --a --b status`.
 Always propose the LEAST permissive generalization consistent with what's actually safe to
 repeat: generalize a file path, commit message, or other varying argument before generalizing a
 flag. Never suggest widening a destructive flag (`-rf`, `--force`, and similar) into a wildcard
-position -- keep those literal in the pattern. For an item whose `kind` is not `"command"`
+position -- keep those literal in the pattern.
+
+The FIRST token (argv0, the program name) must almost always be a literal -- the program itself
+determines what the command does, so a wildcard there means "any program at all" and is never a
+safe thing to generalize. The one exception is a pattern that merely asks any program to print its
+version or help and exit, i.e. exactly `["*", "--version"]` or `["*", "--help"]` (or `-h`/`-V`).
+Anything else with a wildcard argv0 -- e.g. `["*", "-c", "*"]`, `["**", "status"]` -- is invalid
+and will be rejected; keep the program name literal instead. For an item whose `kind` is not `"command"`
 (`"redirect"`/`"structural"`), `suggested_pattern` has no real use downstream; return an empty
 list for it.
 
@@ -379,6 +391,59 @@ def _try_parse_report(reply_text: str) -> tuple[CommandRiskReport | None, str | 
         return None, f"reply does not conform to the CommandRiskReport schema: {exc}"
 
 
+_WILDCARD_TOKENS = frozenset({"*", "?", "**"})
+"""The three special `suggested_pattern` tokens (see `_SYSTEM_PROMPT`'s grammar section) — used
+by `_has_unsafe_wildcard_argv0` to recognize a pattern that wildcards the program name (argv0)."""
+
+_SAFE_WILDCARD_ARGV0_FLAGS = frozenset({"--version", "--help", "-h", "-V", "--usage", "-?"})
+"""The only second tokens that make a wildcard-argv0 pattern acceptable: flags that merely ask a
+program to print its version/help and exit, which are safe no matter which program runs them. See
+`_has_unsafe_wildcard_argv0`."""
+
+
+def _has_unsafe_wildcard_argv0(pattern: list[str]) -> bool:
+    """Whether `pattern` wildcards the program name (argv0) in a way that can't be trusted. A
+    wildcard in argv0 position means "any program at all," so the rest of the pattern would have to
+    be safe regardless of which binary runs it — which is essentially never true, since the program
+    *is* what decides what happens. The one defensible exception is asking an arbitrary program for
+    its version or help and nothing else: a pattern of exactly `["*", <version/help flag>]` (see
+    `_SAFE_WILDCARD_ARGV0_FLAGS`). Everything else with a wildcard argv0 — `["*", "-c", "*"]`,
+    `["**", "status"]`, `["?", "run"]` — is unsafe, so a persistent grant is never built from it.
+    """
+    if not pattern or pattern[0] not in _WILDCARD_TOKENS:
+        return False
+    return not (
+        len(pattern) == 2 and pattern[0] == "*" and pattern[1] in _SAFE_WILDCARD_ARGV0_FLAGS)
+
+
+def _discard_unsafe_wildcard_argv0_patterns(
+    report: CommandRiskReport, items: list[PermissionAskItem],
+) -> None:
+    """Blank out any `"command"`-kind item's `suggested_pattern` that wildcards argv0 unsafely
+    (`_has_unsafe_wildcard_argv0`). Such a pattern would generalize the *program name* itself into
+    a wildcard — e.g. `["*", "-c", "*"]`, which any `<anything> -c <anything>` command would
+    satisfy — so persisting it as a `commandRules` grant would auto-approve a whole open-ended
+    class of unrelated (and potentially dangerous) commands. Blanking it makes the caller fall back
+    to `klorb.permissions.command_grant.compute_command_grant_patterns`'s deterministic literal-argv
+    grant, exactly as for a pattern discarded by `_discard_nonmatching_suggested_patterns`.
+
+    Correlation is by the `item-<index>` id in `items` order; `"redirect"`/`"structural"` items
+    have no argv-shaped grant and are left untouched.
+    """
+    for index, item in enumerate(items):
+        if item.command is None:
+            continue
+        assessment = next((a for a in report.items if a.item_id == f"item-{index}"), None)
+        if assessment is None or not assessment.suggested_pattern:
+            continue
+        if _has_unsafe_wildcard_argv0(assessment.suggested_pattern):
+            logger.info(
+                "Bash risk classifier suggested a pattern (%s) that wildcards the program name "
+                "(argv0) unsafely; discarding it and falling back to a literal-argv grant",
+                assessment.suggested_pattern)
+            assessment.suggested_pattern = []
+
+
 def _discard_nonmatching_suggested_patterns(
     report: CommandRiskReport, items: list[PermissionAskItem],
 ) -> None:
@@ -421,6 +486,7 @@ def classify_command_risk(
     api_provider: ApiProvider,
     model: str,
     timeout: float,
+    e2e_timeout: float = DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS,
     intent: str | None = None,
     history: list[HistoryEntry] | None = None,
 ) -> CommandRiskReport | None:
@@ -428,14 +494,24 @@ def classify_command_risk(
     call's worth, in the same order `MultiPermissionAskRequired.items` carries them) in a single
     request, using `model` via `api_provider` (the same `ApiProvider` instance the caller's main
     conversation uses, just pointed at a different, cheap model). Returns `None` on any failure —
-    a request error, a request that exceeds `timeout`, or a reply that still fails to parse as a
-    `CommandRiskReport` after one retry — so the caller can fall back to pre-existing behavior
-    (no risk badge/rationale, today's literal-argv grant-pattern fallback) exactly as if the
-    classifier had never run. Never raises: `_classify_command_risk` implements the specific
-    request/parse/retry flow, and any exception it doesn't itself already turn into a `None`
-    return (e.g. an `ApiProvider` test double replying with something that isn't even textual) is
-    caught here as a last-resort backstop, so a caller never needs its own try/except around this
-    ergonomics-only feature.
+    a request error, a request that exceeds `timeout`, the whole call exceeding `e2e_timeout`, or a
+    reply that still fails to parse as a `CommandRiskReport` after one retry — so the caller can
+    fall back to pre-existing behavior (no risk badge/rationale, today's literal-argv grant-pattern
+    fallback) exactly as if the classifier had never run. Never raises: `_classify_command_risk`
+    implements the specific request/parse/retry flow, and any exception it doesn't itself already
+    turn into a `None` return (e.g. an `ApiProvider` test double replying with something that isn't
+    even textual) is caught here as a last-resort backstop, so a caller never needs its own
+    try/except around this ergonomics-only feature.
+
+    `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt` (which the
+    underlying client applies per HTTP request, and for a streaming reply effectively per socket
+    read). `e2e_timeout` is a hard wall-clock ceiling on this whole call — both the initial request
+    and the one parse-retry combined — enforced by a `threading.Timer` that sets the same
+    `cancel_event` `send_prompt` already honors, so a slow reply that keeps trickling bytes (never
+    stalling a single read long enough to trip `timeout`) is still cut off and turned into a `None`
+    return. This is the bound that actually keeps the approval flow responsive; see
+    `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS` for why it must stay below the liveness
+    watchdog's timeout.
 
     `intent`, when given, is the model's own `BashTool` `intent` argument — see `klorb.tools.
     bash.BashTool` and docs/specs/bash-tool-and-command-permissions.md's "Agent-stated intent"
@@ -455,24 +531,41 @@ def classify_command_risk(
     stateless request: `history` is data threaded in from the caller's own storage, not a
     conversation this function itself accumulates across calls.
 
-    Before returning, every `"command"`-kind item's `suggested_pattern` is validated against that
-    item's own argv (`_discard_nonmatching_suggested_patterns`): a pattern the model returned that
-    doesn't actually match the command it was for is blanked, so a hallucinated abstraction is
-    never shown or persisted as a grant that wouldn't re-approve the command it was vetted for.
+    Before returning, every `"command"`-kind item's `suggested_pattern` is validated: a pattern
+    that doesn't actually match the command it was for is blanked
+    (`_discard_nonmatching_suggested_patterns`), as is one that wildcards the program name (argv0)
+    unsafely — e.g. `["*", "-c", "*"]` — which would otherwise persist as a grant matching an
+    open-ended class of unrelated commands (`_discard_unsafe_wildcard_argv0_patterns`). Either way
+    a rejected pattern is blanked so a hallucinated or over-broad abstraction is never shown or
+    persisted as a grant.
     """
     started = time.perf_counter()
+    # A hard end-to-end deadline for the whole call: when it elapses, set `cancel_event`, which
+    # `send_prompt`'s stream-closer thread watches and acts on by closing the in-flight stream --
+    # unblocking a read that `timeout` alone would let trickle on indefinitely.
+    cancel_event = threading.Event()
+    deadline_timer = threading.Timer(e2e_timeout, cancel_event.set)
+    deadline_timer.daemon = True
+    deadline_timer.start()
     try:
         report = _classify_command_risk(
-            command_text, items, api_provider, model, timeout, intent, history)
+            command_text, items, api_provider, model, timeout, cancel_event, intent, history)
     except Exception:
         logger.warning("Bash risk classifier failed unexpectedly", exc_info=True)
         report = None
+    finally:
+        deadline_timer.cancel()
     elapsed = time.perf_counter() - started
+    if report is None and cancel_event.is_set():
+        logger.warning(
+            "Bash risk classifier exceeded its %.1fs end-to-end deadline after %.2fs; giving up",
+            e2e_timeout, elapsed)
     logger.info(
         "Bash risk classifier finished in %.2fs (model=%s, items=%d, result=%s)",
         elapsed, model, len(items), "report" if report is not None else "None")
     if report is not None:
         _discard_nonmatching_suggested_patterns(report, items)
+        _discard_unsafe_wildcard_argv0_patterns(report, items)
     # TODO(aaron): once a structured audit log for permission decisions exists, record an entry
     # here pairing `command_text`/`items` with `report` (or the `None` fallback) -- this is the
     # "this command _____ got this risk assessment: _____" injection point.
@@ -485,6 +578,7 @@ def _classify_command_risk(
     api_provider: ApiProvider,
     model: str,
     timeout: float,
+    cancel_event: threading.Event,
     intent: str | None = None,
     history: list[HistoryEntry] | None = None,
 ) -> CommandRiskReport | None:
@@ -497,7 +591,7 @@ def _classify_command_risk(
     try:
         response = api_provider.send_prompt(
             messages, system_prompt=system_prompt, model=model,
-            response_format=response_format, timeout=timeout)
+            response_format=response_format, timeout=timeout, cancel_event=cancel_event)
     except Exception:
         logger.warning(
             "Bash risk classifier request failed after %.2fs",
@@ -511,6 +605,9 @@ def _classify_command_risk(
     if report is not None:
         return report
 
+    # Don't spend the retry round trip if the end-to-end deadline has already elapsed.
+    if cancel_event.is_set():
+        return None
     logger.info("Bash risk classifier reply failed to parse (%s); retrying once", error)
     messages.append(_message("assistant", str(response.message.content)))
     messages.append(_message("user", (
@@ -521,7 +618,7 @@ def _classify_command_risk(
     try:
         response = api_provider.send_prompt(
             messages, system_prompt=system_prompt, model=model,
-            response_format=response_format, timeout=timeout)
+            response_format=response_format, timeout=timeout, cancel_event=cancel_event)
     except Exception:
         logger.warning(
             "Bash risk classifier retry request failed after %.2fs",
@@ -599,8 +696,9 @@ def resolve_item_risk_assessment(
     history = _recent_history(session, process_config)
     report = classify_command_risk(
         ask_ctx.command_text, items, api_provider=session.provider, model=model,
-        timeout=process_config.bash_risk_classifier_timeout_seconds, intent=ask_ctx.intent,
-        history=history)
+        timeout=process_config.bash_risk_classifier_timeout_seconds,
+        e2e_timeout=process_config.bash_risk_classifier_e2e_timeout_seconds,
+        intent=ask_ctx.intent, history=history)
     if report is None:
         return None
     for index, item in enumerate(items):

@@ -10,7 +10,7 @@ from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.util import WalkReport, walk_readable_tree
+from klorb.tools.util import walk_readable_tree
 from klorb.workspace import Workspace
 
 
@@ -40,16 +40,26 @@ def _make_tree(root: Path) -> None:
     (root / "sub_b" / "b.txt").write_text("b\n")
 
 
+def _visited(
+    results: list[tuple[Path, list[str], list[str], list[str]]], root: Path,
+) -> dict[str, tuple[list[str], list[str], list[str]]]:
+    """`{relative_dir: (subdir_names, file_names, gitignored_file_names)}` for `results`."""
+    return {
+        str(dir_path.relative_to(root)): (subdirs, files, ignored)
+        for dir_path, subdirs, files, ignored in results
+    }
+
+
 def test_walks_every_level_of_a_nested_tree(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 
     results = list(walk_readable_tree(_context(tmp_path), ""))
 
-    visited = {str(dir_path.relative_to(tmp_path)): (subdirs, files) for dir_path, subdirs, files in results}
-    assert visited["."] == (["sub_a", "sub_b"], ["top.txt"])
-    assert visited["sub_a"] == (["nested"], ["a.txt"])
-    assert visited["sub_a/nested"] == ([], ["deep.txt"])
-    assert visited["sub_b"] == ([], ["b.txt"])
+    visited = _visited(results, tmp_path)
+    assert visited["."] == (["sub_a", "sub_b"], ["top.txt"], [])
+    assert visited["sub_a"] == (["nested"], ["a.txt"], [])
+    assert visited["sub_a/nested"] == ([], ["deep.txt"], [])
+    assert visited["sub_b"] == ([], ["b.txt"], [])
 
 
 def test_missing_root_raises_file_not_found(tmp_path: Path) -> None:
@@ -85,11 +95,11 @@ def test_denied_subdir_is_pruned_not_raised(tmp_path: Path) -> None:
     context = _context(tmp_path, read_dirs=DirRules(deny=[tmp_path / "sub_a"]))
     results = list(walk_readable_tree(context, ""))
 
-    visited = {str(dir_path.relative_to(tmp_path)): (subdirs, files) for dir_path, subdirs, files in results}
-    assert visited["."] == (["sub_b"], ["top.txt"])
+    visited = _visited(results, tmp_path)
+    assert visited["."] == (["sub_b"], ["top.txt"], [])
     assert "sub_a" not in visited
     assert "sub_a/nested" not in visited
-    assert visited["sub_b"] == ([], ["b.txt"])
+    assert visited["sub_b"] == ([], ["b.txt"], [])
 
 
 def test_ask_subdir_is_pruned_not_raised(tmp_path: Path) -> None:
@@ -98,8 +108,8 @@ def test_ask_subdir_is_pruned_not_raised(tmp_path: Path) -> None:
     context = _context(tmp_path, read_dirs=DirRules(ask=[tmp_path / "sub_a"]))
     results = list(walk_readable_tree(context, ""))
 
-    visited = {str(dir_path.relative_to(tmp_path)): (subdirs, files) for dir_path, subdirs, files in results}
-    assert visited["."] == (["sub_b"], ["top.txt"])
+    visited = _visited(results, tmp_path)
+    assert visited["."] == (["sub_b"], ["top.txt"], [])
     assert "sub_a" not in visited
 
 
@@ -110,7 +120,7 @@ def test_klorb_dir_is_implicitly_pruned(tmp_path: Path) -> None:
 
     results = list(walk_readable_tree(_context(tmp_path), ""))
 
-    visited = {str(dir_path.relative_to(tmp_path)) for dir_path, _, _ in results}
+    visited = {str(dir_path.relative_to(tmp_path)) for dir_path, _, _, _ in results}
     assert visited == {"."}
 
 
@@ -126,61 +136,53 @@ def test_symlinked_subdir_is_not_descended(tmp_path: Path) -> None:
     results = list(walk_readable_tree(_context(workspace), ""))
 
     assert len(results) == 1
-    dir_path, subdirs, files = results[0]
+    dir_path, subdirs, files, ignored = results[0]
     assert dir_path == workspace.resolve()
     assert subdirs == []
     assert files == []
+    assert ignored == []
 
 
-def _visited(
-    results: list[tuple[Path, list[str], list[str]]], root: Path,
-) -> dict[str, tuple[list[str], list[str]]]:
-    return {
-        str(dir_path.relative_to(root)): (subdirs, files)
-        for dir_path, subdirs, files in results
-    }
-
-
-def test_gitignored_file_is_hidden_and_flagged(tmp_path: Path) -> None:
+def test_gitignored_file_is_surfaced_separately_not_dropped(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     (tmp_path / ".gitignore").write_text("*.log\n")
     (tmp_path / "debug.log").write_text("noise\n")
 
-    report = WalkReport()
-    results = list(walk_readable_tree(_context(tmp_path), "", report=report))
+    results = list(walk_readable_tree(_context(tmp_path), ""))
 
-    visited = _visited(results, tmp_path)
-    assert "debug.log" not in visited["."][1]
-    assert "top.txt" in visited["."][1]
-    assert report.gitignored_hidden is True
+    subdirs, files, ignored = _visited(results, tmp_path)["."]
+    assert "debug.log" not in files
+    assert "top.txt" in files
+    assert "debug.log" in ignored
 
 
-def test_gitignored_subdir_is_pruned_and_flagged(tmp_path: Path) -> None:
+def test_gitignored_subdir_is_still_descended_but_its_files_are_gitignored(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     (tmp_path / ".gitignore").write_text("sub_a/\n")
 
-    report = WalkReport()
-    results = list(walk_readable_tree(_context(tmp_path), "", report=report))
+    results = list(walk_readable_tree(_context(tmp_path), ""))
 
     visited = _visited(results, tmp_path)
+    # The ignored dir is dropped from its parent's kept subdirs...
     assert visited["."][0] == ["sub_b"]
-    assert "sub_a" not in visited
-    assert "sub_a/nested" not in visited
-    assert report.gitignored_hidden is True
+    # ...but is still walked, with every file inside it reported as gitignored.
+    assert visited["sub_a"] == ([], [], ["a.txt"])
+    assert visited["sub_a/nested"] == ([], [], ["deep.txt"])
 
 
-def test_use_gitignore_false_walks_everything(tmp_path: Path) -> None:
+def test_use_gitignore_false_walks_everything_with_no_gitignored_files(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     (tmp_path / ".gitignore").write_text("*.log\nsub_a/\n")
     (tmp_path / "debug.log").write_text("noise\n")
 
-    report = WalkReport()
-    results = list(walk_readable_tree(_context(tmp_path), "", use_gitignore=False, report=report))
+    results = list(walk_readable_tree(_context(tmp_path), "", use_gitignore=False))
 
     visited = _visited(results, tmp_path)
     assert "debug.log" in visited["."][1]
+    assert "sub_a" in visited["."][0]
     assert "sub_a" in visited
-    assert report.gitignored_hidden is False
+    # Nothing is ever reported as gitignored when the filter is off.
+    assert all(ignored == [] for _subdirs, _files, ignored in visited.values())
 
 
 def test_nested_gitignore_negation_reincludes(tmp_path: Path) -> None:
@@ -188,37 +190,26 @@ def test_nested_gitignore_negation_reincludes(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text("*.txt\n")
     (tmp_path / "sub_a" / ".gitignore").write_text("!a.txt\n")
 
-    report = WalkReport()
-    results = list(walk_readable_tree(_context(tmp_path), "", report=report))
+    results = list(walk_readable_tree(_context(tmp_path), ""))
 
     visited = _visited(results, tmp_path)
     # Root-level `*.txt` hides top.txt, but the nested .gitignore re-includes sub_a/a.txt.
     assert "top.txt" not in visited["."][1]
+    assert "top.txt" in visited["."][2]
     assert "a.txt" in visited["sub_a"][1]
-    assert report.gitignored_hidden is True
+    assert "a.txt" not in visited["sub_a"][2]
 
 
 def test_ancestor_gitignore_applies_to_subdir_search(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     (tmp_path / ".gitignore").write_text("*.txt\n")
 
-    report = WalkReport()
-    results = list(walk_readable_tree(_context(tmp_path), "sub_a", report=report))
+    results = list(walk_readable_tree(_context(tmp_path), "sub_a"))
 
     visited = _visited(results, tmp_path)
     # a.txt lives under the searched subdir but is hidden by the workspace-root .gitignore.
     assert visited["sub_a"][1] == []
-    assert report.gitignored_hidden is True
-
-
-def test_no_report_argument_still_filters(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    (tmp_path / ".gitignore").write_text("*.txt\n")
-
-    results = list(walk_readable_tree(_context(tmp_path), ""))
-
-    visited = _visited(results, tmp_path)
-    assert "top.txt" not in visited["."][1]
+    assert visited["sub_a"][2] == ["a.txt"]
 
 
 def test_symlinked_file_is_still_listed(tmp_path: Path) -> None:
@@ -232,5 +223,6 @@ def test_symlinked_file_is_still_listed(tmp_path: Path) -> None:
     results = list(walk_readable_tree(_context(workspace), ""))
 
     assert len(results) == 1
-    _dir_path, _subdirs, files = results[0]
+    _dir_path, _subdirs, files, ignored = results[0]
     assert files == ["link.txt"]
+    assert ignored == []

@@ -53,6 +53,31 @@ class SessionStatistics(BaseModel):
     """Number of tool calls whose `arguments` string failed to parse as JSON (a
     `json.JSONDecodeError` before any tool is instantiated)."""
 
+    input_tokens: int = 0
+    """Aggregate input (prompt) tokens billed across all requests in this session."""
+
+    output_tokens: int = 0
+    """Aggregate output (completion) tokens billed across all requests in this session."""
+
+    cached_tokens: int = 0
+    """Aggregate input tokens served from the provider prompt cache across all requests."""
+
+    total_cost: float = 0.0
+    """Aggregate monetary cost across all requests in this session. Zero when the
+    provider does not report cost."""
+
+    def record_usage(
+        self,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        """Accumulate one request's token usage into the session totals."""
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cached_tokens += cached_tokens
+        self.total_cost += cost
 
     def format_report(self) -> str:
         """Return a human-readable, multi-line summary suitable for display in the history
@@ -76,4 +101,30 @@ class SessionStatistics(BaseModel):
                     f"    {tool_name}: {stats.success_count} succeeded, "
                     f"{stats.failed_count} failed ({total} total)"
                 )
+        # --- token usage ---
+        lines.append("")
+        lines.append("Token Usage")
+        lines.append("-" * 40)
+        total_all_tokens = self.input_tokens + self.output_tokens
+
+        cache_pct = ((100.0 * self.cached_tokens) / self.input_tokens) if self.input_tokens > 0 else 0.0
+
+        # Format numbers with commas
+        input_str = f"{self.input_tokens:,}"
+        cached_str = f"{self.cached_tokens:,}"
+        output_str = f"{self.output_tokens:,}"
+        total_str = f"{total_all_tokens:,}"
+        cost_str = f"${self.total_cost:.3f}"
+
+        # Right-align numbers to the widest one
+        max_width = max(len(input_str), len(cached_str), len(output_str), len(total_str), len(cost_str))
+        label_w = 18
+
+        lines.append(f"  {'Input tokens:':<{label_w}}{input_str:>{max_width}}")
+        lines.append(f"  {'Cached tokens:':<{label_w}}{cached_str:>{max_width}} ({cache_pct:.1f}%)")
+        lines.append(f"  {'Output tokens:':<{label_w}}{output_str:>{max_width}}")
+        lines.append(f"  {'-' * (label_w + max_width)}")
+        lines.append(f"  {'Total tokens:':<{label_w}}{total_str:>{max_width}}")
+        lines.append("")
+        lines.append(f"  {'Cost:':<{label_w}}{cost_str:>{max_width}}")
         return "\n".join(lines)

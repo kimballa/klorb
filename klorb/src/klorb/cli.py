@@ -587,6 +587,7 @@ def main() -> None:
             print()
         else:
             print(response)
+        session.close()
 
 
 if __name__ == "__main__":

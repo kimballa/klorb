@@ -199,6 +199,35 @@ async def test_turn_in_flight_cleared_when_worker_raises_base_exception() -> Non
         assert prompt_input.disabled is False
 
 
+async def test_a_tool_call_mounts_a_running_spinner_before_it_runs() -> None:
+    """Every tool call — not just Bash — mounts a `RunningToolCallStatic` (the `<Tool use>` +
+    `Running…` spinner) before its work begins, via the generic `on_tool_call_started` path, so a
+    slow tool like FindFile/Grep shows activity while it runs rather than appearing frozen."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("done"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    mounted: list[str] = []
+    original = ReplApp._mount_running_tool_call_widget
+
+    def spy(self: ReplApp, call_id: str, summary_text: str) -> Any:
+        mounted.append(call_id)
+        return original(self, call_id, summary_text)
+
+    with patch.object(ReplApp, "_mount_running_tool_call_widget", spy):
+        async with app.run_test() as pilot:
+            app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "please echo"
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+    assert mounted == ["call_1"]
+
+
 async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
     mock_provider = MagicMock()
     streaming_started = threading.Event()

@@ -110,3 +110,8 @@ class StatusBarMixin(ReplAppBase):
         badge = self.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
         badge.flash_to(next_value)
 
+    def on_permission_badge_clicked(self, event: "PermissionBadge.Clicked") -> None:
+        """`PermissionBadge` posts this when clicked; hand off to
+        `action_cycle_permission_framework()` — the mouse equivalent of the Shift+Tab
+        binding."""
+        self.action_cycle_permission_framework()

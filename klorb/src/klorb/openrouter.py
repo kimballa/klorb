@@ -299,6 +299,7 @@ class OpenRouterApiProvider(ApiProvider):
         completion_tokens = 0
         prompt_tokens = 0
         cached_tokens = 0
+        total_cost = 0.0
         tool_call_accumulators: dict[int, dict[str, str]] = {}
         reasoning_details_accumulators: dict[int, dict[str, Any]] = {}
         try:
@@ -353,6 +354,7 @@ class OpenRouterApiProvider(ApiProvider):
                     prompt_tokens = chunk.usage.prompt_tokens
                     prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
                     cached_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+                    total_cost = getattr(chunk.usage, "cost", 0.0) or 0.0
         except ResponseAborted:
             raise
         except Exception as exc:
@@ -406,7 +408,11 @@ class OpenRouterApiProvider(ApiProvider):
             finish_reason=finish_reason,
             tool_calls=tool_calls,
         )
-        return ProviderResponse(message=reply, prompt_tokens=prompt_tokens, cached_tokens=cached_tokens)
+        return ProviderResponse(
+            message=reply, prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens, cached_tokens=cached_tokens,
+            total_cost=total_cost,
+        )
 
     @staticmethod
     def _apply_explicit_cache_control(

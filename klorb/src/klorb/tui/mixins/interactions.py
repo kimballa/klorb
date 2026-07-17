@@ -118,14 +118,27 @@ class InteractionsMixin(ReplAppBase):
         approval happened, but what was asked and what was decided. Constructed with
         `markup=False`: `body` can be arbitrary command text or file paths, which must render
         verbatim.
+
+        The record is floated *above* the `<Tool use>` block of the tool call that triggered
+        the ask (see `_running_tool_call_anchor`), rather than appended below its `Running…`
+        indicator: an ask is raised from inside a call's `apply()`, so the running-tool widget
+        is already mounted by the time we get here, and reading top-to-bottom the decision
+        belongs before the call it authorized, not after it. When no tool call is running (no
+        anchor), the record is simply appended at the end as usual.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
-        history.mount(Static(INTERACTION_RECORD_LABEL, classes="interaction-record-label"))
-        history.mount(Static(header_text, classes="interaction-record-body", markup=False))
-        history.mount(Static(body, classes="interaction-record-body", markup=False))
-        history.mount(Static(
-            f"Decision: {decision_text}", classes="interaction-record-decision", markup=False))
+        records = (
+            Static(INTERACTION_RECORD_LABEL, classes="interaction-record-label"),
+            Static(header_text, classes="interaction-record-body", markup=False),
+            Static(body, classes="interaction-record-body", markup=False),
+            Static(f"Decision: {decision_text}", classes="interaction-record-decision", markup=False),
+        )
+        anchor = self._running_tool_call_anchor()
+        if anchor is not None:
+            history.mount(*records, before=anchor)
+        else:
+            history.mount(*records)
         self._scroll_if_pinned(history, was_pinned)
 
     def _register_interaction_future(
@@ -173,7 +186,14 @@ class InteractionsMixin(ReplAppBase):
         bounded history, so a later `resolve_item_risk_assessment` call this session can use it as
         calibration context — see that function's own docstring.
         """
-        risk_assessment = resolve_item_risk_assessment(
+        # Offload to a worker thread: `resolve_item_risk_assessment` makes a blocking, potentially
+        # multi-second HTTP call to the risk-classifier model. Running it inline here would freeze
+        # this event-loop thread for the duration, which both hangs the UI and starves the
+        # main-thread timer that snoozes the liveness watchdog -- a slow (but not wedged) classifier
+        # response would then trip a false force-exit. Awaiting it off-thread keeps the loop
+        # servicing its snooze timer throughout. See docs/specs/interrupt-and-liveness-watchdog.md.
+        risk_assessment = await asyncio.to_thread(
+            resolve_item_risk_assessment,
             ask_ctx, session=self._session, process_config=self._process_config)
 
         granted_paths = None

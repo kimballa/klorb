@@ -224,6 +224,29 @@ class RenderingMixin(ReplAppBase):
         self._update_status_bar()
         return widget
 
+    def _running_tool_call_anchor(self) -> Static | None:
+        """The `<Tool use>` label widget mounted just above the tool call currently running,
+        if any — so an interaction record (a permission ask / question / escalation raised from
+        inside that call's `apply()`) can be floated above the whole `<Tool use>` block that
+        triggered it, rather than appended below its `Running…` indicator. Tool calls run
+        serially, so at most one running-tool widget is un-finalized at a time; this returns
+        that widget's immediately-preceding `.tool-call-label` sibling (or the running widget
+        itself, defensively, if no such label precedes it), and `None` when nothing is running.
+        """
+        if not self._running_tool_call_widgets:
+            return None
+        widget = list(self._running_tool_call_widgets.values())[-1]
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        children = list(history.children)
+        try:
+            index = children.index(widget)
+        except ValueError:
+            return None
+        label = children[index - 1] if index > 0 else None
+        if isinstance(label, Static) and label.has_class("tool-call-label"):
+            return label
+        return widget
+
     def _finalize_running_tool_call_widget(
         self, widget: RunningToolCallStatic, summary_text: str, detail_text: str,
     ) -> None:

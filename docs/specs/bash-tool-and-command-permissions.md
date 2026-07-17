@@ -228,7 +228,12 @@ it was proposed for: `classify_command_risk` runs each `"command"`-kind item's p
 uses at evaluation time) and blanks any pattern that doesn't actually match that item's argv, so a
 hallucinated abstraction — a mistyped token, a dropped required argument, an over-narrow literal —
 is never shown or persisted; a blanked pattern makes the UI fall back to the deterministic
-literal-argv grant exactly as if the model had returned no pattern for that item. `PermissionAskPanel` shows the score as a badge near its header and the rationale
+literal-argv grant exactly as if the model had returned no pattern for that item. A pattern that
+*does* match the argv but wildcards the program name (argv0) itself — e.g. `["*", "-c", "*"]` — is
+blanked the same way, since generalizing argv0 into a wildcard would grant an open-ended class of
+unrelated commands regardless of which binary runs them; the only wildcard-argv0 pattern kept is
+the version/help query `["*", "--version"]`/`["*", "--help"]` (and `-h`/`-V`/`--usage`/`-?`), which
+is safe no matter what program it names. `PermissionAskPanel` shows the score as a badge near its header and the rationale
 always in italics (additionally colored by score band) beneath the command preview; a score at or
 above `tools.bash.riskClassifier.tooRiskyThreshold` pre-selects `Deny, once` as the panel's
 starting cursor cell — a nudge, never a block: every grid cell stays reachable and confirmable
@@ -259,9 +264,16 @@ model to score upward), not by escalating to a costlier model. Left unset (the d
 picks the model itself — see [[model-framework]]'s note on
 `ModelRegistry.find_by_capability("BASH_SAFETY_EVAL")` — rather than a hardcoded literal;
 setting this key explicitly always overrides that pick.
-`tools.bash.riskClassifier.timeout` (default `5.0`) bounds this one request's wall-clock time,
-separate from `tools.bash.timeout` (which bounds the shell command's own runtime once it
-actually runs).
+`tools.bash.riskClassifier.timeout` (default `5.0`) is the per-request budget the underlying
+client applies — and, for a streaming reply, effectively per socket read, so a reply that keeps
+trickling bytes can outlast it without ever tripping it. `tools.bash.riskClassifier.e2eTimeout`
+(default `10.0`) is therefore the hard wall-clock ceiling on the *whole* `classify_command_risk()`
+call (initial request plus the one parse-retry combined): when it elapses, `classify_command_risk`
+sets the same `cancel_event` `send_prompt` honors, closing the in-flight stream and degrading to
+`None`. Both are separate from `tools.bash.timeout` (which bounds the shell command's own runtime
+once it actually runs). The e2e ceiling must stay below `watchdog.timeout`, since this classifier
+call runs on the approval flow: a classifier slower than the watchdog would otherwise look like a
+wedged event loop and force-exit the process — see [[interrupt-and-liveness-watchdog]].
 
 **Prior-decision history.** Every `classify_command_risk()` call remains a single, independent,
 stateless request — no conversation with the classifier model persists across calls (see
@@ -510,9 +522,19 @@ filesystem policy):
   binds for the workspace root (when trusted) and every `writeDirs.allow` entry, read-only binds
   for `readDirs.allow` entries; PATH-derived read-only top-up binds for toolchains outside
   `/usr`/`$HOME`; then an empty `--tmpfs` mask over every `readDirs.deny` entry and every
-  `privileged_dirs()` entry (`<workspace>/.klorb`, the klorb config/data/state dirs) — masked with
+  process-wide `privileged_dirs()` entry (the klorb config/data/state dirs) — masked with
   `--tmpfs` rather than empty-placeholder binds, so no host-side placeholder needs cleanup; see
   docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
+* **The workspace's own `<workspace>/.klorb` dir** is the one privileged dir that is *bound*
+  rather than masked: an empty `--tmpfs` over it would make a sandboxed `git status` report its
+  tracked, managed files (`klorb-config.json`, ...) as *deleted* — they're in the index but absent
+  from the masked working tree. So it is bound read-only by default (visible to git, but the shell
+  can't rewrite managed settings), and read-write once the session has a `scope="workspace"`
+  `EscalatePrivileges` grant — the same escalation that lifts the file tools' privileged-path deny
+  on it. The bind is emitted after the directory masks (so it wins over the whole-workspace bind
+  for that subtree), and the writable form grows the reconcile-on-grow snapshot so an escalation
+  rebuilds the live persistent shell with `.klorb` now writable. See
+  docs/adrs/bind-workspace-klorb-in-sandbox-so-git-status-is-clean.md.
 * **Individual files.** The same one-source-of-truth idea extends to `readFiles`/`writeFiles`,
   which name single files by exact path (`klorb.permissions.file_access`) rather than directories.
   An existing `readFiles.deny` file that lands inside a bound directory (e.g. `~/.git-credentials`
@@ -574,6 +596,7 @@ dedupe against, so it shows the notice on every call instead of silently droppin
   "tools.bash.riskClassifier.enabled": true,
   "tools.bash.riskClassifier.model": "openai/gpt-5-nano",
   "tools.bash.riskClassifier.timeout": 5.0,
+  "tools.bash.riskClassifier.e2eTimeout": 10.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
   "tools.bash.riskClassifier.historySize": 20
 }

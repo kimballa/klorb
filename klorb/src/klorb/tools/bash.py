@@ -39,8 +39,9 @@ from klorb.sandbox import (
     path_dirs_from_env,
 )
 from klorb.session import SessionConfig
+from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool, truncate_lines
+from klorb.tools.tool import truncate_lines
 
 logger = logging.getLogger(__name__)
 
@@ -579,7 +580,7 @@ def _spill(path: Path, spill_bytes: int) -> tuple[str | None, str | None]:
     return None, str(path)
 
 
-class BashTool(Tool):
+class BashTool(InterruptibleTool):
     """Runs a single shell command string on the model's behalf.
 
     The command is parsed via `shfmt --to-json` (`klorb.permissions.shell_parse.parse_command`),
@@ -837,7 +838,8 @@ class BashTool(Tool):
             read_dirs=config.read_dirs,
             write_dirs=config.write_dirs,
             read_files=config.read_files,
-            write_files=config.write_files)
+            write_files=config.write_files,
+            approved_scopes=config.approved_scopes)
 
     def _bwrap_prefix(self, env: dict[str, str], home: Path) -> list[str]:
         """The `bwrap ... --` argv prefix for this session, to prepend to a shell invocation.
@@ -846,18 +848,6 @@ class BashTool(Tool):
             workspace_root=self.context.session_config.workspace.path.resolve(),
             home=home, env=env, dirs=self._compute_sandbox_dirs(home),
             path_dirs=path_dirs_from_env())
-
-    def _active_cancel_event(self) -> threading.Event | None:
-        """The in-flight turn's cancellation signal (`Session.active_cancel_event` — set for as
-        long as `Session._dispatch_turn` is running, which includes this very call, since a
-        `Tool.apply()` runs synchronously on `_dispatch_turn`'s own thread), or `None` when this
-        `BashTool` wasn't built from a real `Session` (e.g. a caller that constructs a
-        `ToolSetupContext` directly, as most unit tests do) — in which case a running command
-        simply isn't cancellable. Polled by `_execute`/`PersistentShell._run_raw` so a Ctrl+C/
-        Escape interrupt reaches a running command immediately via `SIGINT`, rather than only at
-        the next tool-call/round boundary `Session` itself checks."""
-        session = self.context.session
-        return session.active_cancel_event if session is not None else None
 
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()

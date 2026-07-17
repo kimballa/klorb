@@ -296,6 +296,10 @@ class ReplApp(
         self._interrupt_notice_shown: bool = False
         """Whether the `_INTERRUPTING_MESSAGE` notice has already been shown for the current
         turn (so repeated Escape/Ctrl+C don't stack duplicate notices) — reset in `_finish_turn`."""
+        self._interrupt_notice_widget: Static | None = None
+        """The `_INTERRUPTING_MESSAGE` notice `Static` mounted by `_note_interrupt_requested`,
+        kept so `_finish_turn` can rewrite it to `_INTERRUPTED_MESSAGE` once the interrupt has
+        actually taken hold (the turn has wound down) — reset in `_finish_turn`."""
         self._watchdog: LivenessWatchdog = LivenessWatchdog(
             self._process_config.watchdog_timeout_seconds, self._force_exit)
         """Liveness watchdog force-exiting the process if the main-thread event loop stops
@@ -422,6 +426,7 @@ class ReplApp(
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(message, classes="error" if error else "notice", markup=False))
+        history.scroll_end(animate=False)
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Every default system command except "Theme" — `ThemeCommandProvider` supersedes it

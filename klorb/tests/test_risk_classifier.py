@@ -4,11 +4,14 @@ docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section.
 """
 
 import json
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 from xml.etree import ElementTree
 
+import pytest
 from fixtures.sample_models import sample_model_registry
 
 from klorb.api_provider import ProviderResponse
@@ -20,6 +23,7 @@ from klorb.permissions.risk_classifier import (
     _build_user_message,
     _cdata,
     _default_classifier_model,
+    _has_unsafe_wildcard_argv0,
     _recent_history,
     _response_format,
     classify_command_risk,
@@ -114,6 +118,72 @@ def test_classify_command_risk_discards_a_suggested_pattern_that_does_not_match_
 
     assert report is not None
     assert report.items[0].suggested_pattern == []
+
+
+@pytest.mark.parametrize("pattern", [
+    ["*", "-c", "*"],
+    ["*", "run", "*"],
+    ["*"],
+    ["?", "--version"],
+    ["**", "--version"],
+    ["**", "status"],
+    ["*", "--version", "*"],
+])
+def test_has_unsafe_wildcard_argv0_true_for_wildcard_program_name(pattern: list[str]) -> None:
+    assert _has_unsafe_wildcard_argv0(pattern) is True
+
+
+@pytest.mark.parametrize("pattern", [
+    ["git", "**"],
+    ["grep", "-rn", "TODO", "*"],
+    ["*", "--version"],
+    ["*", "--help"],
+    ["*", "-h"],
+    [],
+])
+def test_has_unsafe_wildcard_argv0_false_for_literal_or_version_help_argv0(pattern: list[str]) -> None:
+    assert _has_unsafe_wildcard_argv0(pattern) is False
+
+
+def test_classify_command_risk_discards_a_wildcard_argv0_pattern() -> None:
+    """`["*", "-c", "*"]` matches the `bash -c ...` argv, so it survives the argv-match check --
+    but it wildcards the program name itself, which would grant an open-ended class of unrelated
+    commands, so it is blanked and the caller falls back to a literal-argv grant."""
+    items = [_command_item(["bash", "-c", "ls"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 5, "overall_rationale": "runs an arbitrary command string",
+        "items": [{
+            "item_id": "item-0", "risk_score": 5, "rationale": "arbitrary command",
+            "suggested_pattern": ["*", "-c", "*"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        "bash -c ls", items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == []
+
+
+def test_classify_command_risk_keeps_a_wildcard_argv0_version_query() -> None:
+    """`["*", "--version"]` is the one accepted wildcard-argv0 shape -- asking any program for its
+    version is safe regardless of which program runs it -- so it is preserved."""
+    items = [_command_item(["cmake", "--version"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 0, "overall_rationale": "prints a version",
+        "items": [{
+            "item_id": "item-0", "risk_score": 0, "rationale": "prints a version",
+            "suggested_pattern": ["*", "--version"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        "cmake --version", items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == ["*", "--version"]
 
 
 def test_classify_command_risk_leaves_a_structural_items_pattern_untouched() -> None:
@@ -212,6 +282,49 @@ def test_classify_command_risk_returns_none_on_timeout_error() -> None:
         "echo hi", items, api_provider=provider, model="some/model", timeout=5.0)
 
     assert report is None
+
+
+def test_classify_command_risk_passes_a_cancel_event_into_send_prompt() -> None:
+    """`send_prompt` is handed a `threading.Event` so the end-to-end deadline can close an
+    in-flight stream (see `classify_command_risk`)."""
+    items = [_command_item(["echo", "hi"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
+
+    classify_command_risk(
+        "echo hi", items, api_provider=provider, model="some/model", timeout=5.0)
+
+    _, kwargs = provider.send_prompt.call_args
+    assert isinstance(kwargs["cancel_event"], threading.Event)
+
+
+def test_classify_command_risk_cancels_a_stream_that_exceeds_the_e2e_deadline() -> None:
+    """A reply that never arrives (a `send_prompt` that blocks until its `cancel_event` fires,
+    mimicking a stream that keeps the connection open without completing) is cut off by the
+    end-to-end deadline and degraded to `None`, rather than blocking for the full per-read
+    `timeout`. This is the behavior that keeps a slow classifier from starving the liveness
+    watchdog -- see `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS`."""
+    items = [_command_item(["echo", "hi"])]
+    provider = MagicMock()
+
+    def _blocking_send_prompt(
+        *_args: object, cancel_event: threading.Event, **_kwargs: object,
+    ) -> ProviderResponse:
+        # Wait far longer than the e2e deadline; only the deadline's cancel should release us.
+        if cancel_event.wait(timeout=5.0):
+            raise RuntimeError("stream aborted by cancel_event")
+        return _reply(_valid_report_json(["item-0"]))
+
+    provider.send_prompt.side_effect = _blocking_send_prompt
+
+    started = time.perf_counter()
+    report = classify_command_risk(
+        "echo hi", items, api_provider=provider, model="some/model", timeout=5.0,
+        e2e_timeout=0.1)
+    elapsed = time.perf_counter() - started
+
+    assert report is None
+    assert elapsed < 2.0, "should return at the e2e deadline, not after the full per-read timeout"
 
 
 def test_classify_command_risk_never_raises_on_a_completely_unmocked_provider() -> None:

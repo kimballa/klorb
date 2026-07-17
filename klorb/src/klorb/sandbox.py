@@ -22,7 +22,12 @@ from pathlib import Path
 from typing import Literal
 
 from klorb.paths import KLORB_DATA_DIR, KLORB_STATE_DIR
-from klorb.permissions.directory_access import DirRules, canonicalize_dir, privileged_dirs
+from klorb.permissions.directory_access import (
+    DirRules,
+    canonicalize_dir,
+    privileged_dirs,
+    workspace_klorb_dir,
+)
 from klorb.permissions.file_access import FileRules
 
 logger = logging.getLogger(__name__)
@@ -163,9 +168,10 @@ class SandboxDirs:
     mask: tuple[Path, ...]
     """Directories hidden with an empty `--tmpfs` overlay: every `readDirs.deny` entry (`~/.ssh`,
     `~/.aws`, ... — the same denylist the file tools honor) and every `privileged_dirs()` entry
-    (`<workspace>/.klorb`, the process-wide klorb config/data/state dirs). Applied last in the
-    argv so they override any read-write bind (e.g. the whole-home bind) that would otherwise
-    expose them."""
+    (the process-wide klorb config/data/state dirs). Applied last in the argv so they override any
+    read-write bind (e.g. the whole-home bind) that would otherwise expose them. The workspace's
+    own `<workspace>/.klorb` dir is deliberately *not* here — it's bound instead (see
+    `workspace_config_dir`)."""
     mask_files: tuple[Path, ...]
     """Individual files hidden with a `--ro-bind /dev/null` overlay: every existing `readFiles.deny`
     entry (`~/.git-credentials`, `~/.netrc`, ... — single-file secrets that sit directly inside an
@@ -184,6 +190,19 @@ class SandboxDirs:
     write_files: tuple[Path, ...]
     """Individual existing files to bind read-write (`--bind`), from `writeFiles.allow` — same
     treatment as `read_files`, but read-write, and taking precedence when a path is in both."""
+    workspace_config_dir: Path | None = None
+    """The workspace's own `<workspace>/.klorb` directory, bound (not masked) so a sandboxed
+    command sees its managed files present rather than an empty `--tmpfs` — otherwise `git status`
+    reports `.klorb/klorb-config.json` (and friends) as *deleted*, since they exist in the index
+    but not in the masked working tree. `None` only if the workspace root can't be resolved.
+    Bound read-only by default (`workspace_config_writable=False`) and read-write once the session
+    has a `scope="workspace"` escalation. `build_bwrap_argv` emits it after the directory masks so
+    this ro/rw decision wins over the whole-workspace bind for that subtree."""
+    workspace_config_writable: bool = False
+    """Whether `workspace_config_dir` is bound read-write — `True` only after a
+    `scope="workspace"` `EscalatePrivileges` grant (see `SessionConfig.approved_scopes`), which is
+    also what lifts the privileged-path deny on that dir for the file tools. `False` binds it
+    read-only: visible to `git`, but the managed klorb settings can't be modified from the shell."""
 
 
 def compute_sandbox_dirs(
@@ -195,6 +214,7 @@ def compute_sandbox_dirs(
     write_dirs: DirRules,
     read_files: FileRules | None = None,
     write_files: FileRules | None = None,
+    approved_scopes: set[str] | None = None,
 ) -> SandboxDirs:
     """Derive the `SandboxDirs` bind sets from a session's permission tables. Every rule path is
     canonicalized against `workspace_root` exactly as `DirectoryAccessTable`/`FileAccessTable`
@@ -207,9 +227,17 @@ def compute_sandbox_dirs(
     masked out via the `mask_files` set, rather than enumerated as separate binds. Individual
     `readFiles.allow`/`writeFiles.allow` files carry into `read_files`/`write_files` so an exact
     file grant outside every directory bind is still reachable inside the sandbox.
+
+    `approved_scopes` is the session's `EscalatePrivileges` grants (see
+    `SessionConfig.approved_scopes`). It gates the workspace's own `<workspace>/.klorb` dir: that
+    dir is always *bound* rather than masked (so `git status` sees its managed files instead of
+    reporting them deleted — see `SandboxDirs.workspace_config_dir`), read-only by default and
+    read-write once `"workspace"` is approved. The process-wide `KLORB_*_DIR` locations stay in the
+    `mask` set regardless.
     """
     workspace_root = workspace_root.resolve(strict=False)
     home = home.resolve(strict=False)
+    approved_scopes = approved_scopes or set()
 
     def canon(paths: Iterable[Path]) -> list[Path]:
         return [canonicalize_dir(path, workspace_root) for path in paths]
@@ -226,7 +254,13 @@ def compute_sandbox_dirs(
         d for d in read_only
         if not any(d == w or d.is_relative_to(w) for w in read_write)}
 
-    mask = set(canon(read_dirs.deny)) | set(privileged_dirs(workspace_root))
+    # The workspace `.klorb/` dir is bound (visible), not masked, so managed settings show up to
+    # git instead of reading as deleted. Drop it from the mask set regardless of whether
+    # `privileged_dirs` still lists it (it omits it once `"workspace"` is approved), and bind it
+    # separately below — read-write only after that same escalation.
+    workspace_config = workspace_klorb_dir(workspace_root)
+    mask = set(canon(read_dirs.deny)) | set(privileged_dirs(workspace_root, approved_scopes))
+    mask.discard(workspace_config)
 
     def existing_file_rules(rules: FileRules | None, attr: str) -> set[Path]:
         if rules is None:
@@ -243,7 +277,9 @@ def compute_sandbox_dirs(
         mask=tuple(sorted(mask, key=str)),
         mask_files=tuple(sorted(mask_files, key=str)),
         read_files=tuple(sorted(read_allow_files, key=str)),
-        write_files=tuple(sorted(write_allow_files, key=str)))
+        write_files=tuple(sorted(write_allow_files, key=str)),
+        workspace_config_dir=workspace_config,
+        workspace_config_writable="workspace" in approved_scopes)
 
 
 def allowed_dir_snapshot(dirs: SandboxDirs) -> frozenset[Path]:
@@ -252,10 +288,18 @@ def allowed_dir_snapshot(dirs: SandboxDirs) -> frozenset[Path]:
     sandbox is rebuilt only when this set *grows* between commands (an interactive grant added a
     directory or file `allow`). The `mask`/`mask_files` sets are deliberately excluded — they come
     from the static deny lists and `privileged_dirs()`, all stable for the life of the process, so
-    they never drive a rebuild."""
-    return (
+    they never drive a rebuild.
+
+    The workspace `.klorb/` dir is included only once it becomes *writable* (after a
+    `scope="workspace"` escalation), so that escalation grows the set and rebuilds the live shell
+    with `.klorb` now read-write; its read-only pre-escalation binding is stable and left out so it
+    never churns the snapshot."""
+    snapshot = (
         frozenset(dirs.read_write) | frozenset(dirs.read_only)
         | frozenset(dirs.read_files) | frozenset(dirs.write_files))
+    if dirs.workspace_config_dir is not None and dirs.workspace_config_writable:
+        snapshot = snapshot | {dirs.workspace_config_dir}
+    return snapshot
 
 
 def _is_covered(path: Path, roots: Sequence[Path]) -> bool:
@@ -328,7 +372,10 @@ def build_bwrap_argv(
       top of the fresh tmpfs rather than being wiped by it); a read-write whole-tree `$HOME` bind;
       read-write binds for `dirs.read_write` and read-only binds for `dirs.read_only` beyond what
       those already cover; PATH-derived read-only top-up binds for `path_dirs`; an empty `--tmpfs`
-      mask over every `dirs.mask` directory; individual binds for `dirs.read_files`/
+      mask over every `dirs.mask` directory; a bind of the workspace's own `.klorb/` dir
+      (`dirs.workspace_config_dir`) — read-only, or read-write after a `scope="workspace"`
+      escalation — applied after the masks so a sandboxed `git status` sees its managed files
+      rather than reporting them deleted; individual binds for `dirs.read_files`/
       `dirs.write_files` that aren't already reachable (an exact file grant outside every directory
       bind, with `--dir`-synthesized parents); and finally a `--ro-bind /dev/null` mask over every
       reachable `dirs.mask_files` file. The masks are applied after the binds so they win over the
@@ -412,6 +459,15 @@ def build_bwrap_argv(
     for klorb_dir in (KLORB_DATA_DIR.resolve(strict=False), KLORB_STATE_DIR.resolve(strict=False)):
         if klorb_dir.exists():
             args += ["--ro-bind", str(klorb_dir), str(klorb_dir)]
+
+    # The workspace's own .klorb/ dir is bound (not masked) so a sandboxed `git status` sees its
+    # managed files present rather than reporting them deleted. Emitted here -- after the directory
+    # masks and after the whole-workspace bind -- so this ro/rw decision wins for that subtree:
+    # read-only by default, read-write only after a scope=workspace escalation. Its parent
+    # (the workspace root) is already bound, so no --dir synthesis is needed.
+    if dirs.workspace_config_dir is not None and dirs.workspace_config_dir.exists():
+        mode = "--bind" if dirs.workspace_config_writable else "--ro-bind"
+        args += [mode, str(dirs.workspace_config_dir), str(dirs.workspace_config_dir)]
 
     # Individual allowed files that aren't already reachable: bind each one into place so an exact
     # readFiles/writeFiles grant for a path outside every directory bind (or for a single file

@@ -89,19 +89,29 @@ copy or an interrupt only ever counts as the first step in the ladder, never as 
 the final quit bypasses the polite `_quit_after_maybe_saving()` flow entirely rather than opening
 its save-prompt modal.
 
-### Bash tool cancellation reaches the running child
+### Interruptible-tool cancellation reaches the running work
 
 `Session._dispatch_turn`/`_run_tool_calls` only check `callbacks.cancel_event` between tool
 calls/rounds, and `Tool.apply()` itself blocks the worker thread for the whole lifetime of
-whatever it's running — so a synchronous `BashTool` call inside an in-flight turn would
+whatever it's running — so a long synchronous tool call inside an in-flight turn would
 otherwise be unreachable by Ctrl+C/Escape until its own next tool-call/round boundary.
 `Session.active_cancel_event` (set to
 `callbacks.cancel_event` for the duration of `_dispatch_turn`, see docs/adrs/bash-cancellation-
 via-session-active-cancel-event.md) exposes that same event to the tool actually running via
-`self.context.session.active_cancel_event`, so `BashTool._execute`/`PersistentShell._run_raw`
-poll it while waiting on the child process and send it `SIGINT` immediately once it fires — see
-docs/specs/bash-tool-and-command-permissions.md's "Cancellation" section for the full protocol
-and the tool-response shape a cancelled call reports back to the model.
+`self.context.session.active_cancel_event`. The `klorb.tools.interruptible_tool.InterruptibleTool`
+base class packages access to it as `_active_cancel_event()`, and every tool whose work can run
+long enough to want mid-flight interruption inherits from it:
+
+* `BashTool._execute`/`PersistentShell._run_raw` poll it while waiting on the child process and
+  send it `SIGINT` immediately once it fires — see docs/specs/bash-tool-and-command-permissions.md's
+  "Cancellation" section for the full protocol and the tool-response shape a cancelled call reports.
+* `GrepTool`/`FindFileTool` poll it between directories (and, for `Grep`, before reading each file)
+  as they walk the tree, stopping promptly and returning whatever partial results they had with a
+  `cancelled: true` flag rather than finishing a search over a huge tree the user already abandoned.
+
+Because `on_tool_call_started` fires for *every* tool before its `apply()`, all of these also mount
+the shared `<Tool use>` + `Running…` spinner while they work (see docs/specs/terminal-repl.md), so a
+slow search shows activity rather than appearing frozen.
 
 ## The three hang-mode escape mechanisms
 

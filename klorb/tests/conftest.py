@@ -1,6 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """Shared pytest fixtures for klorb's test suite."""
 
+import glob
+import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -70,3 +73,21 @@ def _fast_pilot_idle_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     own code does with the simulated input.
     """
     monkeypatch.setattr("textual._wait.SLEEP_GRANULARITY", 0.005)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_scratchpad_dirs() -> Iterator[None]:
+    """Remove any `klorb-scratchpad-*` temp dirs created during a test.
+
+    Tests that create a `Session` or `Scratchpad` without calling `close()`/`cleanup()`
+    leave behind a `tempfile.mkdtemp(prefix="klorb-scratchpad-")` directory. The ``atexit``
+    backstop registered at creation time only fires when the *process* exits, so without
+    per-test cleanup these directories accumulate across the test suite run.  This fixture
+    snapshots the existing dirs before the test runs, then removes only the new ones that
+    appeared during it — leaving any scratchpad belonging to a live session untouched.
+    """
+    before = set(glob.glob("/tmp/klorb-scratchpad-*"))
+    yield
+    for d in glob.glob("/tmp/klorb-scratchpad-*"):
+        if d not in before:
+            shutil.rmtree(d, ignore_errors=True)
