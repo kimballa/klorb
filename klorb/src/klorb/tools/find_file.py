@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool
 from klorb.tools.util import walk_readable_tree
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ _GITIGNORE_HIDDEN_NOTE = (
     "use_gitignore=false to search gitignored files too.")
 
 
-class FindFileTool(Tool):
+class FindFileTool(InterruptibleTool):
     """Recursively searches a directory tree for files whose bare name (not full path) matches
     a glob `pattern` (e.g. `*.py` or `*_context*`), reusing
     `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory
@@ -98,15 +98,22 @@ class FindFileTool(Tool):
 
         matches: list[str] = []
         truncated = False
+        cancelled = False
         root_path: Path | None = None
         # Set true only once a file that *actually matches the glob* is found among the gitignored
         # entries — not merely because some gitignored entry exists — so the "hidden matches" note
         # never fires on a search whose pattern matches nothing that gitignore excluded.
         gitignored_match_found = False
+        # Polled between directories so a Ctrl+C/Escape interrupt stops a search over a large tree
+        # promptly, returning whatever matches were found so far — see `InterruptibleTool`.
+        cancel_event = self._active_cancel_event()
         for dir_path, _subdirs, filenames, gitignored_filenames in walk_readable_tree(
                 self.context, dirname, use_gitignore=use_gitignore):
             if root_path is None:
                 root_path = dir_path
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
             if truncated:
                 break
             for filename in filenames:
@@ -124,7 +131,9 @@ class FindFileTool(Tool):
                         gitignored_match_found = True
                         break
 
-        logger.debug("FindFile found %d match(es) (truncated=%s)", len(matches), truncated)
+        logger.debug(
+            "FindFile found %d match(es) (truncated=%s, cancelled=%s)",
+            len(matches), truncated, cancelled)
 
         result: dict[str, Any] = {
             "root": str(root_path) if root_path is not None else dirname,
@@ -133,6 +142,7 @@ class FindFileTool(Tool):
             "use_gitignore": use_gitignore,
             "matches": matches,
             "truncated": truncated,
+            "cancelled": cancelled,
             "gitignored_hidden": gitignored_match_found,
         }
         if gitignored_match_found:
@@ -149,7 +159,8 @@ class FindFileTool(Tool):
         suffix = "+" if result.get("truncated") else ""
         plural = "es" if count != 1 else ""
         root = result.get("root", args.get("dirname", "?"))
-        return f"Find file: {pattern!r} in {root} ({count}{suffix} match{plural})"
+        cancelled = " — interrupted" if result.get("cancelled") else ""
+        return f"Find file: {pattern!r} in {root} ({count}{suffix} match{plural}{cancelled})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with `result["matches"]` capped to its

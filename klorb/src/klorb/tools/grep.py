@@ -9,8 +9,8 @@ from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
+from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool
 from klorb.tools.util import (
     compile_queries,
     context_lines_for_matches,
@@ -28,7 +28,7 @@ _GITIGNORE_HIDDEN_NOTE = (
     "Re-call Grep with use_gitignore=false to search gitignored files too.")
 
 
-class GrepTool(Tool):
+class GrepTool(InterruptibleTool):
     """Recursively searches a directory tree for lines matching any of `queries` (each matched
     as a literal substring by default, or as a distinct Python regex when `is_regex` is true —
     a line matching any one of them counts as a hit, equivalent to `grep -e 'seq1' -e 'seq2'
@@ -176,12 +176,17 @@ class GrepTool(Tool):
         files: list[dict[str, Any]] = []
         match_count = 0
         truncated = False
+        cancelled = False
         root_path: Path | None = None
         # Set true only when a gitignored file that *would have been searched* (passing file_glob,
         # if given) is skipped — not merely because some gitignored entry exists — so the flag
         # means "some file I'd have searched went unsearched," never "some unrelated ignored file
         # exists." Grep never reads a gitignored file, matching its skip-don't-peek contract.
         gitignored_hidden = False
+        # Polled between directories and before reading each file so a Ctrl+C/Escape interrupt stops
+        # a search over a large tree promptly, returning whatever matched so far — see
+        # `InterruptibleTool`.
+        cancel_event = self._active_cancel_event()
 
         # Determine whether search_path is a single file or a directory tree.
         single_file: Path | None = None
@@ -231,6 +236,9 @@ class GrepTool(Tool):
                     root_path = dir_path
                 if truncated:
                     break
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    break
                 if not gitignored_hidden:
                     for filename in gitignored_filenames:
                         if file_glob and not fnmatch.fnmatch(filename, file_glob):
@@ -240,6 +248,9 @@ class GrepTool(Tool):
                 for filename in filenames:
                     if file_glob and not fnmatch.fnmatch(filename, file_glob):
                         continue
+                    if cancel_event is not None and cancel_event.is_set():
+                        cancelled = True
+                        break
                     file_path = dir_path / filename
                     try:
                         text = file_path.read_text(encoding="utf-8")
@@ -272,10 +283,13 @@ class GrepTool(Tool):
                     match_count += len(matched_indices)
                     if truncated:
                         break
+                if cancelled:
+                    break
 
         logger.debug(
-            "Grep found %d match(es) in %d file(s) (truncated=%s)",
-            match_count, len(files) if output_style != "ListFiles" else len(list_files), truncated)
+            "Grep found %d match(es) in %d file(s) (truncated=%s, cancelled=%s)",
+            match_count, len(files) if output_style != "ListFiles" else len(list_files),
+            truncated, cancelled)
 
         if output_style == "ListFiles":
             result: dict[str, Any] = {
@@ -288,6 +302,7 @@ class GrepTool(Tool):
                 "files": list_files,
                 "match_count": match_count,
                 "truncated": truncated,
+                "cancelled": cancelled,
                 "gitignored_hidden": gitignored_hidden,
             }
         else:
@@ -302,6 +317,7 @@ class GrepTool(Tool):
                 "files": files,
                 "match_count": match_count,
                 "truncated": truncated,
+                "cancelled": cancelled,
                 "gitignored_hidden": gitignored_hidden,
             }
         if gitignored_hidden:
@@ -318,7 +334,8 @@ class GrepTool(Tool):
         suffix = "+" if result.get("truncated") else ""
         plural = "es" if count != 1 else ""
         root = result.get("root", args.get("path", "?"))
-        return f"Grep: {queries!r} in {root} ({count}{suffix} match{plural})"
+        cancelled = " — interrupted" if result.get("cancelled") else ""
+        return f"Grep: {queries!r} in {root} ({count}{suffix} match{plural}{cancelled})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with `result["files"]` capped to its

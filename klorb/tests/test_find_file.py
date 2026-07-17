@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.find_file."""
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.find_file import FindFileTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -137,6 +138,35 @@ def test_use_gitignore_false_includes_ignored_matches(tmp_path: Path) -> None:
     assert names == {"top.py", "nested.py", "leaf_context.py"}
     assert result["gitignored_hidden"] is False
     assert "note" not in result
+
+
+def test_find_file_is_interrupted_by_the_turn_cancel_event(tmp_path: Path) -> None:
+    """An already-set `Session.active_cancel_event` (a Ctrl+C/Escape interrupt) stops the search
+    at the first directory and reports `cancelled: True` rather than walking the whole tree —
+    see `InterruptibleTool`."""
+    _make_tree(tmp_path)
+    session_config = SessionConfig(
+        workspace=Workspace(path=tmp_path), read_dirs=DirRules(), write_dirs=DirRules())
+    session = Session(config=session_config)
+    try:
+        session.active_cancel_event = threading.Event()
+        session.active_cancel_event.set()
+        context = ToolSetupContext(
+            process_config=ProcessConfig(find_file_max_results=500),
+            session_config=session_config, session=session)
+
+        result = FindFileTool(context).apply({"dirname": "", "pattern": "*.py"})
+
+        assert result["cancelled"] is True
+        assert result["matches"] == []
+    finally:
+        session.close()
+
+
+def test_find_file_cancelled_is_false_on_a_normal_run(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    result = FindFileTool(_context(tmp_path)).apply({"dirname": "", "pattern": "*.py"})
+    assert result["cancelled"] is False
 
 
 def test_no_gitignore_hidden_flag_when_nothing_ignored(tmp_path: Path) -> None:
