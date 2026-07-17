@@ -29,10 +29,20 @@ class ProviderResponse(BaseModel):
     aggregate usage figures are reported per-request, not broken down per message, and can't
     be reconciled against individual messages without their own tokenizer anyway."""
 
+    completion_tokens: int = 0
+    """Total output tokens billed for this request (the model's reply tokens), as reported
+    by the provider's usage stats. Used for aggregate session-level token tracking in
+    `SessionStatistics`."""
+
     cached_tokens: int = 0
     """Number of input tokens that were served from the provider's prompt cache, as reported
     in the response's usage stats. Zero when the provider doesn't report this metric. Used
     to compute the cache hit ratio for logging/diagnostics."""
+
+    total_cost: float = 0.0
+    """Monetary cost of this request as reported by the provider (e.g. OpenRouter's
+    `usage.cost`). Zero when the provider doesn't report cost. Accumulated across the
+    session in `SessionStatistics`."""
 
 
 class ResponseAborted(Exception):

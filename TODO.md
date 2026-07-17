@@ -2,7 +2,23 @@
 
 # Bugs:
 
-* scratchpad dirs building up in /tmp/
+* These seem backwards:
+```
+<Tool use>
+Bash: Run all tests
+$ /home/aaron/src/klorb/klorb/venv/bin/python -m pytest klorb/tests/ -x -q 2>&1 | tail -40
+Running...
+
+<Approval>
+Permission requested: Run command
+Intent: Run all tests
+/home/aaron/src/klorb/klorb/venv/bin/python -m pytest klorb/tests/ -x -q
+run command: /home/aaron/src/klorb/klorb/venv/bin/python -m pytest klorb/tests/ -x -q
+Decision: Allow — Once
+```
+  ... The tool use posted first, immediately diverted to an approval (approved), and then went to
+  actually really run the bash tool call. The Approval decision readout needs to float above the
+  Tool use block in the history.
 
 * When you hit `esc` it will put an "Interrupting..." msg in the history. When the
   interrupt actually takes hold, it should switch to "<Interrupted>".

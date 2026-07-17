@@ -1557,6 +1557,12 @@ class Session:
         if placeholder.tool_calls:
             placeholder.role = "tool_use"
         self.statistics.response_messages += 1
+        self.statistics.record_usage(
+            input_tokens=result.prompt_tokens,
+            output_tokens=result.completion_tokens,
+            cached_tokens=result.cached_tokens,
+            cost=result.total_cost,
+        )
 
         return placeholder, result
 
