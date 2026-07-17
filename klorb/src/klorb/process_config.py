@@ -339,12 +339,9 @@ class ProcessConfig(BaseModel):
     file; `AGENTS.md` and `.klorb/INSTRUCTIONS.md` are always read (once trusted), since
     they're klorb's own conventions."""
     compatibility_claude_skills: bool = False
-    """Whether to additionally discover `workspace`-namespace skills from
-    `${workspace_root}/.claude/skills/` (alongside `.klorb/skills/`), when the workspace is
-    trusted — a compatibility shim for projects that ship Claude-Code-style skills, mirroring
-    `compatibility_claude_markdown`. Read by `klorb.tools.skill.common` (via the skill tools' and
-    `Session`'s discovery calls). Default `False`: only `.klorb/skills/` is discovered for the
-    workspace tier. See docs/specs/skills.md."""
+    """Whether to also discover `workspace`-namespace skills from `${workspace_root}/.claude/skills/`
+    (alongside `.klorb/skills/`) when the workspace is trusted — a compatibility shim mirroring
+    `compatibility_claude_markdown`. See docs/specs/skills.md."""
     log_tool_calls: bool | None = None
     """Whether to append an out-of-band, file-based record of every tool call to
     `tool-calls.log` under `KLORB_STATE_DIR` — see `klorb.tool_call_log`. Also

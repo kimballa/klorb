@@ -226,9 +226,8 @@ class SessionConfig(BaseModel):
     skill_rules: SkillRules = Field(default_factory=SkillRules)
     """`skillRules`-config-driven allow/ask/deny rules `ActivateSkill`/`ReadSkillFile` consult,
     matched by exact `(namespace, name)` identity — see `klorb.permissions.skill_access` and
-    docs/specs/skills.md. Lives on `SessionConfig`, not `ProcessConfig`, for the same reason
-    `command_rules` does: the interactive "ask" flow lets a user approve a skill for the rest of
-    the session (see `klorb.permissions.skill_grant`)."""
+    docs/specs/skills.md. Lives on `SessionConfig` like `command_rules`, so the interactive "ask"
+    flow can approve a skill for the rest of the session."""
     share_env: list[str] = Field(default_factory=list)
     """Names of environment variables `BashTool` passes through from the klorb process's own
     environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see
@@ -311,9 +310,8 @@ class PermissionAskContext(BaseModel):
     item_command_text: str | None = None
     intent: str | None = None
     skill: tuple[str, str] | None = None
-    """The `(namespace, name)` identity of a skill whose `skillRules` verdict is `"ask"` (an
-    `ActivateSkill`/`ReadSkillFile` item — see docs/specs/skills.md), the skill-resource analogue
-    of `path`. `None` for every non-skill ask; a skill ask never carries a `path`/`command`."""
+    """The `(namespace, name)` identity of a skill whose `skillRules` verdict is `"ask"` — the
+    skill-resource analogue of `path`. `None` for every non-skill ask. See docs/specs/skills.md."""
     resource_description: str
     sibling_items: list[PermissionAskItem] | None = None
 
@@ -537,10 +535,8 @@ class Session:
         self._compatibility_claude_skills = (
             process_config.compatibility_claude_skills if process_config is not None else False
         )
-        """Whether to additionally discover workspace-namespace skills from
-        `${workspace_root}/.claude/skills/` (alongside `.klorb/skills/`), when the workspace is
-        trusted — a Claude-Code-compatibility shim mirroring `_compatibility_claude_markdown`. See
-        `klorb.tools.skill.common` and docs/specs/skills.md."""
+        """Whether to also discover workspace-namespace skills from `.claude/skills/`. See
+        docs/specs/skills.md."""
         self._log_tool_calls = tool_call_logging_enabled(
             process_config.log_tool_calls if process_config is not None else None
         )
@@ -555,13 +551,10 @@ class Session:
         unit tests do)."""
         self._messages: list[Message] = []
         self._skills_seeded = False
-        """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the one-shot
-        `<AvailableSkills>` `<SystemInterjection>` onto the very first turn's prompt — see
-        `_build_available_skills_interjection()`. Set unconditionally the first time it's checked,
-        even when there was nothing to prepend (no discoverable skills), and never recomputed: the
-        standing list is locked for the session, so a skill added or removed mid-session isn't
-        reflected until a `/clear` starts a fresh `Session`. `SearchSkills`/`ActivateSkill`/
-        `ReadSkillFile` rescan on demand, so a mid-session skill is still reachable through them."""
+        """Whether `send_turn()` has already computed the one-shot `AvailableSkills`
+        `<SystemInterjection>` for the first turn (see `_build_available_skills_interjection`). Set
+        unconditionally the first time it's checked, so the standing list is locked for the
+        session."""
         self._context_files_seeded = False
         """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the
         one-shot `ProjectGuidance` `<SystemInterjection>` carrying the workspace's
@@ -945,11 +938,8 @@ class Session:
         return filenames
 
     def _discover_skills(self) -> list[DiscoveredSkill]:
-        """Discover every currently-discoverable, non-`deny`-verdicted skill across the three
-        tiers, from this session's live `config` — the single point both skill interjections
-        (`_build_available_skills_interjection`, `_build_skill_reference_interjection`) resolve
-        skills through, so they can never disagree on what's discoverable. See
-        `klorb.tools.skill.common.discover_skills` and docs/specs/skills.md."""
+        """Discover every currently-discoverable, non-`deny`-verdicted skill from this session's
+        live `config`. See `klorb.tools.skill.common.discover_skills` and docs/specs/skills.md."""
         return discover_skills(
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
@@ -968,18 +958,10 @@ class Session:
         )
 
     def _build_available_skills_interjection(self) -> str | None:
-        """Return the body `send_turn()` wraps in a `<SystemInterjection subject=
-        "AvailableSkills">` tag and prepends onto the very first turn's prompt, or `None` if no
-        skill is discoverable.
-
-        Built once, from a single disk scan of the three tiers, and then locked for the rest of
-        the session (see `_skills_seeded`): the standing list is not recompiled, so a skill added
-        or removed mid-session isn't reflected here until a `/clear` starts a fresh `Session`.
-        Every discoverable skill whose `(namespace, name)` doesn't evaluate to `"deny"` is listed
-        (an untrusted workspace contributes none of its own, since the workspace tier is skipped
-        entirely there). This deliberately keeps the list off the system prompt — a workspace-tier
-        skill's project-supplied `description` rides in a user-turn interjection the model can tell
-        apart from harness authority, the same trust placement as `ProjectGuidance`."""
+        """Return the body `send_turn()` wraps in an `AvailableSkills` `<SystemInterjection>` and
+        prepends onto the first turn's prompt, or `None` if no skill is discoverable. Lists every
+        discoverable, non-`deny`-verdicted skill. Built once and locked for the session — see
+        `_skills_seeded` and docs/specs/skills.md."""
         skills = self._discover_skills()
         if not skills:
             return None
@@ -992,16 +974,10 @@ class Session:
         )
 
     def _build_skill_reference_interjection(self, prompt: str) -> str | None:
-        """Return the body `send_turn()` wraps in a `<SystemInterjection subject="SkillReference">`
-        tag for this turn only, or `None` if `prompt` mentions no discoverable skill.
-
-        Scans only the user's own `prompt` text (never the model's output) for a `/<name>` token
-        naming a currently-discoverable, non-`deny`-verdicted skill, and reminds the model that
-        `ActivateSkill` is how to load it — a reminder, not the skill's body, which still loads
-        through `ActivateSkill` and its permission gate. A `/whatever` that doesn't resolve to a
-        real skill name produces nothing (it's just an ordinary slash — a path, a division sign).
-        Unlike the available-skills list, this fires every turn a skill is textually mentioned, so
-        it rescans live rather than using the locked standing list."""
+        """Return the body `send_turn()` wraps in a `SkillReference` `<SystemInterjection>` for
+        this turn only, or `None` if `prompt` mentions no discoverable skill. Scans `prompt` for a
+        `/<name>` token naming a currently-discoverable, non-`deny`-verdicted skill and reminds the
+        model to load it via `ActivateSkill`. See docs/specs/skills.md."""
         skills = self._discover_skills()
         if not skills:
             return None
@@ -1079,11 +1055,9 @@ class Session:
         failure is — never a second ask.
 
         Handles both a directory-access ask (`ask_exc.path` set) and a skill-activation ask
-        (`ask_exc.skill` set — see docs/specs/skills.md): a persistent-scope grant goes through
-        `klorb.permissions.grant.apply_permission_grant` for the former and
-        `klorb.permissions.skill_grant.apply_skill_permission_grant` for the latter (dispatched by
-        `_apply_ask_grant`), and a `scope="once"` retry carries the resource on the matching
-        `PermissionOverride` field (`paths` vs. `skills`).
+        (`ask_exc.skill` set): the persistent-scope grant is dispatched by `_apply_ask_grant`, and
+        a `scope="once"` retry carries the resource on the matching `PermissionOverride` field
+        (`paths` vs. `skills`).
         """
         assert ask_exc.path is not None or ask_exc.skill is not None
         if decision.other_text is not None:
@@ -1116,12 +1090,10 @@ class Session:
         scope: "GrantScope",
         ask_exc: PermissionAskRequired,
     ) -> None:
-        """Persist a single-item permission grant for `ask_exc` at `scope` — dispatching to
-        `klorb.permissions.skill_grant.apply_skill_permission_grant` for a skill-activation ask
-        (`ask_exc.skill` set) and `klorb.permissions.grant.apply_permission_grant` for a
-        directory-access ask (`ask_exc.path` set). The imports are local because both modules
-        import `SessionConfig` from this module, so importing them at module scope would be
-        circular.
+        """Persist a single-item permission grant for `ask_exc` at `scope`, dispatching to
+        `apply_skill_permission_grant` for a skill ask (`ask_exc.skill` set) and
+        `apply_permission_grant` for a directory ask (`ask_exc.path` set). The imports are local to
+        avoid a circular import back into this module.
         """
         if ask_exc.skill is not None:
             from klorb.permissions.skill_grant import apply_skill_permission_grant
@@ -1837,14 +1809,10 @@ class Session:
         cleared: a standing interjection keeps appearing on every subsequent turn for as long as
         its provider keeps returning a message.
 
-        If the user's own `prompt` text mentions a currently-discoverable skill by `/<name>`,
-        a `<SystemInterjection subject="SkillReference">` reminder is prepended for this turn only
-        (see `_build_skill_reference_interjection`) — scanned from the original prompt text, before
-        any interjection above is prepended, so only the user's words trigger it. The very first
-        time `send_turn()` is ever called (`self._skills_seeded` still `False`), the one-shot
-        `<SystemInterjection subject="AvailableSkills">` catalog of every discoverable, non-denied
-        skill is likewise consulted once and prepended (see `_build_available_skills_interjection`),
-        then locked for the session — see docs/specs/skills.md.
+        A `SkillReference` interjection is prepended for this turn when the user's own `prompt`
+        mentions a discoverable skill by `/<name>`, and — on the first turn only — the one-shot
+        `AvailableSkills` catalog is prepended (see `_build_skill_reference_interjection`/
+        `_build_available_skills_interjection` and docs/specs/skills.md).
 
         Finally, the very first time `send_turn()` is ever called on this `Session`
         (`self._context_files_seeded` still `False`), `_build_context_files_interjection()` is

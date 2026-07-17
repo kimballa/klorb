@@ -1,19 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Computes and persists permission grants for `ActivateSkill`'s `(namespace, name)` asks -- the
-`skillRules` counterpart to `klorb.permissions.command_grant`'s command grants. What gets added to
+`skillRules` counterpart to `klorb.permissions.command_grant`. Records what gets added to
 `skillRules.allow`/`.deny` (and removed from `.ask`), in memory and on disk, when a user answers a
-skill-activation ask with a persistent scope. See docs/specs/skills.md and docs/specs/permissions.md's
-"Interactive ask confirmation" section, whose granularity and cross-file rules this module mirrors
-for a different resource kind.
-
-Writes directly to `klorb-config.json` files via `pathlib`/`json` (through `klorb.schema_envelope`),
-exactly like `klorb.permissions.command_grant` -- trusted harness code acting on an explicit
-interactive user decision, not the agent, and not routed through any `klorb.permissions` check
-itself.
-
-A persisted grant records the full `(namespace, name)` pair, never a bare name: a grant a user
-made for `("internal", "create-edit-skill")` can never be inherited by a same-named
-`("workspace", "create-edit-skill")` skill a repository ships to shadow it.
+skill-activation ask with a persistent scope. See docs/specs/skills.md and docs/specs/permissions.md.
 """
 
 from pathlib import Path
@@ -38,11 +27,9 @@ _SKILL_RULES_KEY = "skillRules"
 def _apply_decision_to_table(
     rules: SkillRules, skill_id: SkillId, action: GrantAction,
 ) -> SkillRules:
-    """Return a NEW `SkillRules`: `skill_id` appended to `action`'s own list (deduped against that
-    list's existing entries), and any `ask` entry equal to `skill_id` removed. The *other* category
-    is left untouched -- same reasoning as `klorb.permissions.command_grant._apply_decision_to_table`.
-    Never mutates `rules` in place, per `SkillRules`'s documented immutable-by-convention contract.
-    """
+    """Return a NEW `SkillRules`: `skill_id` appended to `action`'s list (deduped), and any `ask`
+    entry equal to `skill_id` removed. The other category is left untouched. Never mutates `rules`
+    in place."""
     target = rules.allow if action == "allow" else rules.deny
     new_target = list(target)
     if skill_id not in new_target:
@@ -95,10 +82,9 @@ def _apply_grant_to_file(path: Path, skill_id: SkillId, action: GrantAction) -> 
 
 
 def _clean_ask_entries_only(path: Path, skill_id: SkillId) -> None:
-    """Best-effort: if `path` exists and its own `skillRules.ask` contains `skill_id`, remove it and
-    write the file back -- WITHOUT adding anything to either `allow`/`deny` list. A no-op if `path`
-    doesn't exist or nothing matches. Mirrors `klorb.permissions.command_grant`'s homedir-may-clean-
-    workspace asymmetry."""
+    """Best-effort: if `path` exists and its `skillRules.ask` contains `skill_id`, remove it and
+    write the file back, adding nothing to `allow`/`deny`. A no-op if `path` doesn't exist or
+    nothing matches."""
     if not path.is_file():
         return
     raw, file_skill_rules = _load_file_skill_rules(path)

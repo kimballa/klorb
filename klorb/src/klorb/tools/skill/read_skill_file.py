@@ -14,19 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class ReadSkillFileTool(Tool):
-    """Reads up to `max_lines` lines from a supporting file bundled with a skill — one of the
-    relative paths `ActivateSkill` returned in its `files` manifest — delegating the line-range
-    mechanic to `self.read_file_core` (a `klorb.tools.util.ReadFileCore`), the same one `ReadFile`/
-    `ReadMemory` use.
+    """Reads up to `max_lines` lines from a supporting file bundled with a skill (one of the
+    relative paths in `ActivateSkill`'s `files` manifest), via `self.read_file_core` (a
+    `klorb.tools.util.ReadFileCore`).
 
-    `namespace`/`name` are validated and resolved exactly as in `ActivateSkill`, and `path` is
-    resolved as a safe relative path confined to the skill's directory: it must be relative (no
-    leading `/` or `~`), contain no `..` component, and stay within the skill directory after
-    symlink resolution. Reading a supporting file is gated by the skill's own `skillRules` verdict
-    — the same gate `ActivateSkill` applies, raising no second, independent ask beyond activation:
-    a `"deny"` skill's files are unreadable, and an un-activated `"ask"` skill's files raise the
-    same activation ask. Like `ActivateSkill`, it bypasses `readDirs`/the `.klorb` hard gate
-    structurally. See docs/specs/skills.md.
+    `namespace`/`name` are resolved as in `ActivateSkill`, and `path` is confined to the skill
+    directory (relative, no `..`, within the directory after symlink resolution). Reading is gated
+    by the skill's `skillRules` verdict -- the same gate as `ActivateSkill`, raising no second ask.
+    See docs/specs/skills.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:

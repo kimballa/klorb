@@ -18,19 +18,12 @@ logger = logging.getLogger(__name__)
 
 class ActivateSkillTool(Tool):
     """Resolves a `(namespace, name)` pair to a skill and returns its full `SKILL.md` content plus
-    a sorted, recursively-enumerated manifest of every regular file in the skill directory (paths
-    relative to that directory) — the model is then expected to follow those instructions for the
-    rest of the task, reaching any supporting file through `ReadSkillFile` using exactly those
-    relative paths.
+    a sorted manifest of every file in the skill directory (paths relative to it). The model
+    follows those instructions and reaches any supporting file through `ReadSkillFile`.
 
-    Loading a skill's instructions is gated by its `skillRules` verdict (see
-    docs/specs/skills.md and `klorb.permissions.skill_access`): a `"deny"` raises, an `"ask"`
-    interrupts for the user's approval (the first activation of a given skill), and an `"allow"`
-    (or a session/once grant made in answer to that ask) proceeds. A `(namespace, name)` that
-    resolves to no skill is a plain `ValueError`, with no permission question raised. Reading a
-    skill's directory bypasses `readDirs`/the `.klorb` self-tampering hard gate structurally,
-    because `name` is a validated bare slug into a harness-resolved namespace directory, never a
-    model-supplied path into the rest of the filesystem.
+    Gated by the skill's `skillRules` verdict: `"deny"` raises, `"ask"` interrupts for approval,
+    `"allow"` proceeds. An unknown `(namespace, name)` is a plain `ValueError`. See
+    docs/specs/skills.md.
     """
 
     def name(self) -> str:

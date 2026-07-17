@@ -14,19 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 class SearchSkillsTool(Tool):
-    """Searches every discoverable skill (across the workspace/user/internal tiers) for any of
-    `queries`, each matched as a literal, case-insensitive substring against both the skill's
-    `name` and its full `SKILL.md` body (frontmatter included) — the same `grep -i -F` construction
-    `SearchMemories` uses. Returns a flat list of `{namespace, name, description}` for every skill
-    with a hit; there is no matched-line detail, since a skill's name/description are already fully
-    exposed by the standing available-skills list — `SearchSkills` exists to *narrow* that list,
-    not to reveal anything new.
+    """Searches every discoverable skill for any of `queries`, each matched as a literal,
+    case-insensitive substring against both the skill's `name` and its full `SKILL.md` body.
+    Returns a flat list of `{namespace, name, description}` for every skill with a hit.
 
-    Respects the workspace-trust gate on the workspace tier (an untrusted workspace contributes
-    none of its own skills) and excludes any skill whose `(namespace, name)` currently evaluates to
-    `"deny"`, exactly as the available-skills list does — so it never re-surfaces a skill the model
-    structurally cannot activate. Requires no `skillRules` check of its own: it discloses nothing
-    beyond what the standing list already put in context. See docs/specs/skills.md.
+    Respects the workspace-trust gate and excludes any skill whose `(namespace, name)` evaluates to
+    `"deny"`. See docs/specs/skills.md.
     """
 
     def name(self) -> str:

@@ -71,7 +71,8 @@ offline against mocks. They run under their own `make evals` target instead — 
     tokenizer). This is the fixed per-turn prompt cost of offering a tool, as distinct from
     `CaseResult`'s per-case tool-call metrics.
 * `klorb/evals/cases.py` holds the synthesized `EvalCase` list covering `ReadFile`, `CreateFile`,
-  `EditFile`, and `ReplaceAll` — see its module docstring for the full list of scenarios.
+  `EditFile`, `ReplaceAll`, `ListDir`, and the skill tools (`ActivateSkill`/`ReadSkillFile`) — see
+  its module docstring for the full list of scenarios.
 * `klorb/evals/report.py` renders a `list[CaseResult]` (plus an optional `tool_token_counts`) as
   a markdown report: `render_summary()`'s block (pass count, conditional-pass count, total
   duration, total/average tool calls), an optional "Tool definitions" section (each tool's name
@@ -131,9 +132,11 @@ flagged `CONDITIONAL PASS` instead of blending in with a clean `PASS` — see
 
 ## Out of scope
 
-* Only the four file tools (`ReadFile`, `CreateFile`, `EditFile`, `ReplaceAll`) are covered
-  today; the harness itself is tool-agnostic (any `klorb.tools` package works) and can grow to
-  cover future tools by adding more `EvalCase`s.
+* The file tools (`ReadFile`, `CreateFile`, `EditFile`, `ReplaceAll`), `ListDir`, and the skill
+  tools (`ActivateSkill`/`ReadSkillFile`) are covered today; the harness itself is tool-agnostic
+  (any `klorb.tools` package works) and can grow to cover future tools by adding more `EvalCase`s.
+  An `EvalCase` may set `workspace_trusted`/`skill_rules` for a scenario (e.g. a skill case) that
+  needs a trusted workspace or a pre-`allow`ed skill.
 * No LLM-as-judge grading, and no fuzzy/semantic matching of `final_response` — see
   [[grade-tool-evals-by-filesystem-state]].
 * Not wired into `make test` or CI's default gate — see [[tool-evals-skip-without-api-key]].
