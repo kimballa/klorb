@@ -62,6 +62,7 @@ class ReplAppBase(App[None]):
     _last_ctrl_c_at: float
     _last_ctrl_c_kind: Literal["copy", "interrupt", "bare"] | None
     _interrupt_notice_shown: bool
+    _interrupt_notice_widget: Static | None
     _watchdog: LivenessWatchdog
     _turn_in_flight: bool
     _interaction_lock: asyncio.Lock
@@ -100,6 +101,8 @@ class ReplAppBase(App[None]):
     def _begin_exit(self) -> None: ...
 
     def _ensure_turn_finished(self) -> None: ...
+
+    def _resolve_interrupt_notice(self) -> None: ...
 
     def _mount_response_widget(self, initial_text: str) -> Markdown:
         raise NotImplementedError

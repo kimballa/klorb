@@ -490,7 +490,9 @@ class PromptSubmissionMixin(ReplAppBase):
         both a model turn and a shell command, since only one of the two is ever in flight at a
         time. Clearing `_turn_in_flight` here (the terminal state of every model turn and shell
         command) is what lets the next submit through, and resetting `_interrupt_notice_shown`
-        re-arms the one-time `Interrupting…` notice for the next turn.
+        re-arms the one-time `Interrupting…` notice for the next turn. Just before that reset,
+        `_resolve_interrupt_notice` rewrites this turn's `Interrupting…` notice (if any) to
+        `<Interrupted>`, now that reaching here means the interrupt has actually taken hold.
 
         Reached on every path where `Session.send_turn`/the shell command returns or raises, via a
         terminal handler; `_send_prompt`/`_run_shell_command` additionally call it from a `finally`
@@ -511,6 +513,7 @@ class PromptSubmissionMixin(ReplAppBase):
         self._cancel_event = None
         self._shell_cancel_event = None
         self._turn_in_flight = False
+        self._resolve_interrupt_notice()
         self._interrupt_notice_shown = False
         self.refresh_bindings()
         if self._exit_requested:

@@ -43,6 +43,12 @@ _INTERRUPTING_MESSAGE = "Interrupting… (Ctrl+C again to quit)"
 user gets immediate confirmation the keystroke was received (rather than wondering if the app has
 deadlocked) — see `KeyActionsMixin._note_interrupt_requested`."""
 
+_INTERRUPTED_MESSAGE = "<Interrupted>"
+"""What the `_INTERRUPTING_MESSAGE` notice is rewritten to once the interrupt has actually taken
+hold — i.e. the turn it was interrupting has finished winding down (`_finish_turn` →
+`_resolve_interrupt_notice`), turning the transient "Interrupting…" into a settled record that it
+did."""
+
 _DOUBLE_INTERRUPT_WINDOW_SECONDS = 1.0
 """How long a Ctrl+C press's effect on the next one lasts, for `KeyActionsMixin.action_interrupt`'s
 streak escalation (interrupt/copy, then a warning, then a force-exit via
@@ -443,8 +449,24 @@ class KeyActionsMixin(ReplAppBase):
             return
         self._interrupt_notice_shown = True
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        history.mount(Static(_INTERRUPTING_MESSAGE, classes="notice interrupting", markup=False))
+        notice = Static(_INTERRUPTING_MESSAGE, classes="notice interrupting", markup=False)
+        self._interrupt_notice_widget = notice
+        history.mount(notice)
         history.scroll_end(animate=False)
+
+    def _resolve_interrupt_notice(self) -> None:
+        """Rewrite this turn's `_INTERRUPTING_MESSAGE` notice to `_INTERRUPTED_MESSAGE` once the
+        interrupt has actually taken hold — called from `_finish_turn`, which is reached only
+        after the interrupted turn has finished winding down. A no-op when no interrupt notice
+        was shown this turn (`_interrupt_notice_widget is None`), so an uninterrupted turn's
+        completion leaves the history untouched. Clears `_interrupt_notice_widget` afterward so
+        the next turn starts fresh (`_interrupt_notice_shown` is reset alongside it in
+        `_finish_turn`)."""
+        if self._interrupt_notice_widget is not None:
+            self._interrupt_notice_widget.update(_INTERRUPTED_MESSAGE)
+            self._interrupt_notice_widget.remove_class("interrupting")
+            self._interrupt_notice_widget.add_class("interrupted")
+            self._interrupt_notice_widget = None
 
     def _ensure_turn_finished(self) -> None:
         """Backstop that runs `_finish_turn` iff a turn is still marked in flight — i.e. no

@@ -2,9 +2,6 @@
 
 # Bugs:
 
-* When you hit `esc` it will put an "Interrupting..." msg in the history. When the
-  interrupt actually takes hold, it should switch to "<Interrupted>".
-
 * In dir_walk.py the `_walk()` method I think sets report.gitignored_hidden too eagerly. I think
   this is set to true any time it simply does not descend into some directory. But that field
   should only be set to true if such a dir actually had a relevant file in it!

@@ -14,7 +14,12 @@ from klorb.api_provider import ResponseAborted
 from klorb.process_config import ProcessConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
-from klorb.tui.mixins.key_actions import _CTRL_C_QUIT_WARNING, _INTERRUPTING_MESSAGE, CONFIG_MISSING_MESSAGE
+from klorb.tui.mixins.key_actions import (
+    _CTRL_C_QUIT_WARNING,
+    _INTERRUPTED_MESSAGE,
+    _INTERRUPTING_MESSAGE,
+    CONFIG_MISSING_MESSAGE,
+)
 from klorb.tui.widgets.prompt_input import PromptInput
 
 
@@ -62,7 +67,45 @@ async def test_omits_config_missing_notice_when_user_config_file_present(tmp_pat
 
 async def test_escape_shows_interrupting_notice() -> None:
     """Escape during a streaming turn mounts the `Interrupting…` notice so the user gets
-    immediate confirmation the keypress landed — see `ReplApp._note_interrupt_requested`."""
+    immediate confirmation the keypress landed — see `ReplApp._note_interrupt_requested`. The
+    notice reads `Interrupting…` while the turn is still winding down (the fake turn stays parked
+    on `release` after acknowledging its cancel signal)."""
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+    release = threading.Event()
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        streaming_started.set()
+        assert cancel_event is not None
+        cancel_event.wait(timeout=5)
+        release.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "hi"
+        await pilot.press("enter")
+        await _wait_until(pilot, streaming_started.is_set)
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert not history.query(".interrupting")
+        await pilot.press("escape")
+        await _wait_until(pilot, lambda: bool(history.query(".interrupting")))
+
+        notices = history.query(".interrupting")
+        assert len(notices) == 1
+        assert str(notices.first(Static).render()) == _INTERRUPTING_MESSAGE
+
+        release.set()
+        await app.workers.wait_for_complete()
+
+
+async def test_interrupting_notice_becomes_interrupted_once_the_turn_finishes() -> None:
+    """Once the interrupted turn has actually wound down (`_finish_turn`), the transient
+    `Interrupting…` notice is rewritten in place to `<Interrupted>` — its `interrupting` class
+    swapped for `interrupted`, no second notice mounted — see `_resolve_interrupt_notice`."""
     mock_provider = MagicMock()
     streaming_started = threading.Event()
 
@@ -81,14 +124,16 @@ async def test_escape_shows_interrupting_notice() -> None:
         await _wait_until(pilot, streaming_started.is_set)
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert not history.query(".interrupting")
         await pilot.press("escape")
-        await _wait_until(pilot, lambda: bool(history.query(".interrupting")))
         await app.workers.wait_for_complete()
+        await pilot.pause()
 
-        notices = history.query(".interrupting")
-        assert len(notices) == 1
-        assert str(notices.first(Static).render()) == _INTERRUPTING_MESSAGE
+        assert not history.query(".interrupting")
+        # The rewritten notice keeps its `notice` class; `.notice.interrupted` distinguishes it
+        # from the standalone "(interrupted)" marker `_handle_aborted_response` also mounts.
+        interrupted = history.query(".notice.interrupted")
+        assert len(interrupted) == 1
+        assert str(interrupted.first(Static).render()) == _INTERRUPTED_MESSAGE
 
 
 async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
