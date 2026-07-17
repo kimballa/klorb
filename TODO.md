@@ -139,3 +139,6 @@
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)
 
 * Context auto-compaction
+
+* Vector database indexing of skills and memories for fuzzier search of both.
+  * ... and then do vectordb indexing of the codebase, too.
