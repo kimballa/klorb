@@ -2,7 +2,7 @@
 
 # Bugs:
 
-* Long-running bash commands cannot be interrupted by the user. (Claude was right.)
+* scratchpad dirs building up in /tmp/
 
 * When you hit `esc` it will put an "Interrupting..." msg in the history. When the
   interrupt actually takes hold, it should switch to "<Interrupted>".

@@ -4,6 +4,8 @@ docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section.
 """
 
 import json
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -212,6 +214,49 @@ def test_classify_command_risk_returns_none_on_timeout_error() -> None:
         "echo hi", items, api_provider=provider, model="some/model", timeout=5.0)
 
     assert report is None
+
+
+def test_classify_command_risk_passes_a_cancel_event_into_send_prompt() -> None:
+    """`send_prompt` is handed a `threading.Event` so the end-to-end deadline can close an
+    in-flight stream (see `classify_command_risk`)."""
+    items = [_command_item(["echo", "hi"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
+
+    classify_command_risk(
+        "echo hi", items, api_provider=provider, model="some/model", timeout=5.0)
+
+    _, kwargs = provider.send_prompt.call_args
+    assert isinstance(kwargs["cancel_event"], threading.Event)
+
+
+def test_classify_command_risk_cancels_a_stream_that_exceeds_the_e2e_deadline() -> None:
+    """A reply that never arrives (a `send_prompt` that blocks until its `cancel_event` fires,
+    mimicking a stream that keeps the connection open without completing) is cut off by the
+    end-to-end deadline and degraded to `None`, rather than blocking for the full per-read
+    `timeout`. This is the behavior that keeps a slow classifier from starving the liveness
+    watchdog -- see `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS`."""
+    items = [_command_item(["echo", "hi"])]
+    provider = MagicMock()
+
+    def _blocking_send_prompt(
+        *_args: object, cancel_event: threading.Event, **_kwargs: object,
+    ) -> ProviderResponse:
+        # Wait far longer than the e2e deadline; only the deadline's cancel should release us.
+        if cancel_event.wait(timeout=5.0):
+            raise RuntimeError("stream aborted by cancel_event")
+        return _reply(_valid_report_json(["item-0"]))
+
+    provider.send_prompt.side_effect = _blocking_send_prompt
+
+    started = time.perf_counter()
+    report = classify_command_risk(
+        "echo hi", items, api_provider=provider, model="some/model", timeout=5.0,
+        e2e_timeout=0.1)
+    elapsed = time.perf_counter() - started
+
+    assert report is None
+    assert elapsed < 2.0, "should return at the e2e deadline, not after the full per-read timeout"
 
 
 def test_classify_command_risk_never_raises_on_a_completely_unmocked_provider() -> None:

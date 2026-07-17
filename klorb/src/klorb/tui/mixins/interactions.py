@@ -173,7 +173,14 @@ class InteractionsMixin(ReplAppBase):
         bounded history, so a later `resolve_item_risk_assessment` call this session can use it as
         calibration context — see that function's own docstring.
         """
-        risk_assessment = resolve_item_risk_assessment(
+        # Offload to a worker thread: `resolve_item_risk_assessment` makes a blocking, potentially
+        # multi-second HTTP call to the risk-classifier model. Running it inline here would freeze
+        # this event-loop thread for the duration, which both hangs the UI and starves the
+        # main-thread timer that snoozes the liveness watchdog -- a slow (but not wedged) classifier
+        # response would then trip a false force-exit. Awaiting it off-thread keeps the loop
+        # servicing its snooze timer throughout. See docs/specs/interrupt-and-liveness-watchdog.md.
+        risk_assessment = await asyncio.to_thread(
+            resolve_item_risk_assessment,
             ask_ctx, session=self._session, process_config=self._process_config)
 
         granted_paths = None

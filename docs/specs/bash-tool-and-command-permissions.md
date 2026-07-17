@@ -259,9 +259,16 @@ model to score upward), not by escalating to a costlier model. Left unset (the d
 picks the model itself — see [[model-framework]]'s note on
 `ModelRegistry.find_by_capability("BASH_SAFETY_EVAL")` — rather than a hardcoded literal;
 setting this key explicitly always overrides that pick.
-`tools.bash.riskClassifier.timeout` (default `5.0`) bounds this one request's wall-clock time,
-separate from `tools.bash.timeout` (which bounds the shell command's own runtime once it
-actually runs).
+`tools.bash.riskClassifier.timeout` (default `5.0`) is the per-request budget the underlying
+client applies — and, for a streaming reply, effectively per socket read, so a reply that keeps
+trickling bytes can outlast it without ever tripping it. `tools.bash.riskClassifier.e2eTimeout`
+(default `10.0`) is therefore the hard wall-clock ceiling on the *whole* `classify_command_risk()`
+call (initial request plus the one parse-retry combined): when it elapses, `classify_command_risk`
+sets the same `cancel_event` `send_prompt` honors, closing the in-flight stream and degrading to
+`None`. Both are separate from `tools.bash.timeout` (which bounds the shell command's own runtime
+once it actually runs). The e2e ceiling must stay below `watchdog.timeout`, since this classifier
+call runs on the approval flow: a classifier slower than the watchdog would otherwise look like a
+wedged event loop and force-exit the process — see [[interrupt-and-liveness-watchdog]].
 
 **Prior-decision history.** Every `classify_command_risk()` call remains a single, independent,
 stateless request — no conversation with the classifier model persists across calls (see
@@ -574,6 +581,7 @@ dedupe against, so it shows the notice on every call instead of silently droppin
   "tools.bash.riskClassifier.enabled": true,
   "tools.bash.riskClassifier.model": "openai/gpt-5-nano",
   "tools.bash.riskClassifier.timeout": 5.0,
+  "tools.bash.riskClassifier.e2eTimeout": 10.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
   "tools.bash.riskClassifier.historySize": 20
 }

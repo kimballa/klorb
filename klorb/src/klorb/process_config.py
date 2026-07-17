@@ -145,6 +145,17 @@ from `bash_timeout_seconds` (which bounds the actual shell command's own runtime
 interactive round trip that happens before the command even runs, so it should fail fast rather
 than stall the approval panel."""
 
+DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS = 10.0
+"""Default for `ProcessConfig.bash_risk_classifier_e2e_timeout_seconds` — a hard wall-clock ceiling
+on the *entire* `klorb.permissions.risk_classifier.classify_command_risk()` call (its initial
+request plus the one parse-retry it may make), enforced by cancelling the in-flight stream when it
+elapses. Distinct from `bash_risk_classifier_timeout_seconds`, which the underlying client applies
+per *request* — and, for a streaming reply, effectively per socket read: a reply that keeps
+trickling bytes can run far past that per-request budget without any single read ever tripping it.
+This end-to-end cap is what actually bounds how long the approval panel can wait on the classifier,
+and must stay below `watchdog_timeout_seconds` so a slow (but not wedged) classifier can't be
+mistaken for a hung event loop and force-exit the process."""
+
 DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD = 9
 """Default for `ProcessConfig.bash_risk_classifier_too_risky_threshold` — the `risk_score`
 (inclusive) at or above which `klorb.tui.ReplApp._confirm_permission_ask` pre-selects
@@ -210,6 +221,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.riskClassifier.enabled": "bash_risk_classifier_enabled",
     "tools.bash.riskClassifier.model": "bash_risk_classifier_model",
     "tools.bash.riskClassifier.timeout": "bash_risk_classifier_timeout_seconds",
+    "tools.bash.riskClassifier.e2eTimeout": "bash_risk_classifier_e2e_timeout_seconds",
     "tools.bash.riskClassifier.tooRiskyThreshold": "bash_risk_classifier_too_risky_threshold",
     "tools.bash.riskClassifier.historySize": "bash_risk_classifier_history_size",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
@@ -311,6 +323,8 @@ class ProcessConfig(BaseModel):
     """Wall-clock seconds `classify_command_risk()`'s request is allowed to take before it's
     treated as a failure (falling back to no risk badge/rationale) — separate from
     `bash_timeout_seconds`, which bounds the shell command's own runtime instead."""
+    bash_risk_classifier_e2e_timeout_seconds: float = DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS
+    """See `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS`."""
     bash_risk_classifier_too_risky_threshold: int = DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD
     """See `DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD`."""
     bash_risk_classifier_history_size: int = DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE

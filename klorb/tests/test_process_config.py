@@ -722,6 +722,7 @@ def test_bash_risk_classifier_defaults_when_no_config_files_exist(tmp_path: Path
     assert process_config.bash_risk_classifier_enabled is True
     assert process_config.bash_risk_classifier_model is None
     assert process_config.bash_risk_classifier_timeout_seconds == 5.0
+    assert process_config.bash_risk_classifier_e2e_timeout_seconds == 10.0
     assert process_config.bash_risk_classifier_too_risky_threshold == 9
     assert process_config.bash_risk_classifier_history_size == 20
 
@@ -739,6 +740,9 @@ def test_default_config_layer_matches_bash_risk_classifier_field_defaults() -> N
     assert layer["tools.bash.riskClassifier.model"] == defaults.bash_risk_classifier_model
     assert layer["tools.bash.riskClassifier.timeout"] == defaults.bash_risk_classifier_timeout_seconds
     assert (
+        layer["tools.bash.riskClassifier.e2eTimeout"]
+        == defaults.bash_risk_classifier_e2e_timeout_seconds)
+    assert (
         layer["tools.bash.riskClassifier.tooRiskyThreshold"]
         == defaults.bash_risk_classifier_too_risky_threshold)
     assert (
@@ -751,6 +755,7 @@ def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path:
         "tools.bash.riskClassifier.enabled": False,
         "tools.bash.riskClassifier.model": "openai/other-model",
         "tools.bash.riskClassifier.timeout": 2.5,
+        "tools.bash.riskClassifier.e2eTimeout": 7.5,
         "tools.bash.riskClassifier.tooRiskyThreshold": 6,
         "tools.bash.riskClassifier.historySize": 5,
     })
@@ -760,5 +765,6 @@ def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path:
     assert process_config.bash_risk_classifier_enabled is False
     assert process_config.bash_risk_classifier_model == "openai/other-model"
     assert process_config.bash_risk_classifier_timeout_seconds == 2.5
+    assert process_config.bash_risk_classifier_e2e_timeout_seconds == 7.5
     assert process_config.bash_risk_classifier_too_risky_threshold == 6
     assert process_config.bash_risk_classifier_history_size == 5

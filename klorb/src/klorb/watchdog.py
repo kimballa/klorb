@@ -8,6 +8,7 @@ docs/adrs/liveness-watchdog-over-reactive-arming.md.
 """
 
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -47,6 +48,7 @@ def force_exit(
     trusted to run a normal `sys.exit`/teardown path, so nothing beyond the best-effort cleanup
     is attempted."""
     run_bounded_cleanup(cleanup, grace_seconds)
+    print("Watchdog forced exit!", file=sys.stderr, flush=True)
     os._exit(exit_code)
 
 

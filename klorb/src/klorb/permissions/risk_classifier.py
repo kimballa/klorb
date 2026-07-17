@@ -23,6 +23,7 @@ classifier itself alive as a growing conversation.
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -33,7 +34,11 @@ from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
 from klorb.permissions.command_access import pattern_matches_argv
 from klorb.permissions.table import PermissionAskItem
-from klorb.process_config import DEFAULT_BASH_RISK_CLASSIFIER_MODEL, ProcessConfig
+from klorb.process_config import (
+    DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS,
+    DEFAULT_BASH_RISK_CLASSIFIER_MODEL,
+    ProcessConfig,
+)
 from klorb.session import PermissionAskContext, PermissionDecision, Session
 
 logger = logging.getLogger(__name__)
@@ -421,6 +426,7 @@ def classify_command_risk(
     api_provider: ApiProvider,
     model: str,
     timeout: float,
+    e2e_timeout: float = DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS,
     intent: str | None = None,
     history: list[HistoryEntry] | None = None,
 ) -> CommandRiskReport | None:
@@ -428,14 +434,24 @@ def classify_command_risk(
     call's worth, in the same order `MultiPermissionAskRequired.items` carries them) in a single
     request, using `model` via `api_provider` (the same `ApiProvider` instance the caller's main
     conversation uses, just pointed at a different, cheap model). Returns `None` on any failure —
-    a request error, a request that exceeds `timeout`, or a reply that still fails to parse as a
-    `CommandRiskReport` after one retry — so the caller can fall back to pre-existing behavior
-    (no risk badge/rationale, today's literal-argv grant-pattern fallback) exactly as if the
-    classifier had never run. Never raises: `_classify_command_risk` implements the specific
-    request/parse/retry flow, and any exception it doesn't itself already turn into a `None`
-    return (e.g. an `ApiProvider` test double replying with something that isn't even textual) is
-    caught here as a last-resort backstop, so a caller never needs its own try/except around this
-    ergonomics-only feature.
+    a request error, a request that exceeds `timeout`, the whole call exceeding `e2e_timeout`, or a
+    reply that still fails to parse as a `CommandRiskReport` after one retry — so the caller can
+    fall back to pre-existing behavior (no risk badge/rationale, today's literal-argv grant-pattern
+    fallback) exactly as if the classifier had never run. Never raises: `_classify_command_risk`
+    implements the specific request/parse/retry flow, and any exception it doesn't itself already
+    turn into a `None` return (e.g. an `ApiProvider` test double replying with something that isn't
+    even textual) is caught here as a last-resort backstop, so a caller never needs its own
+    try/except around this ergonomics-only feature.
+
+    `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt` (which the
+    underlying client applies per HTTP request, and for a streaming reply effectively per socket
+    read). `e2e_timeout` is a hard wall-clock ceiling on this whole call — both the initial request
+    and the one parse-retry combined — enforced by a `threading.Timer` that sets the same
+    `cancel_event` `send_prompt` already honors, so a slow reply that keeps trickling bytes (never
+    stalling a single read long enough to trip `timeout`) is still cut off and turned into a `None`
+    return. This is the bound that actually keeps the approval flow responsive; see
+    `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS` for why it must stay below the liveness
+    watchdog's timeout.
 
     `intent`, when given, is the model's own `BashTool` `intent` argument — see `klorb.tools.
     bash.BashTool` and docs/specs/bash-tool-and-command-permissions.md's "Agent-stated intent"
@@ -461,13 +477,26 @@ def classify_command_risk(
     never shown or persisted as a grant that wouldn't re-approve the command it was vetted for.
     """
     started = time.perf_counter()
+    # A hard end-to-end deadline for the whole call: when it elapses, set `cancel_event`, which
+    # `send_prompt`'s stream-closer thread watches and acts on by closing the in-flight stream --
+    # unblocking a read that `timeout` alone would let trickle on indefinitely.
+    cancel_event = threading.Event()
+    deadline_timer = threading.Timer(e2e_timeout, cancel_event.set)
+    deadline_timer.daemon = True
+    deadline_timer.start()
     try:
         report = _classify_command_risk(
-            command_text, items, api_provider, model, timeout, intent, history)
+            command_text, items, api_provider, model, timeout, cancel_event, intent, history)
     except Exception:
         logger.warning("Bash risk classifier failed unexpectedly", exc_info=True)
         report = None
+    finally:
+        deadline_timer.cancel()
     elapsed = time.perf_counter() - started
+    if report is None and cancel_event.is_set():
+        logger.warning(
+            "Bash risk classifier exceeded its %.1fs end-to-end deadline after %.2fs; giving up",
+            e2e_timeout, elapsed)
     logger.info(
         "Bash risk classifier finished in %.2fs (model=%s, items=%d, result=%s)",
         elapsed, model, len(items), "report" if report is not None else "None")
@@ -485,6 +514,7 @@ def _classify_command_risk(
     api_provider: ApiProvider,
     model: str,
     timeout: float,
+    cancel_event: threading.Event,
     intent: str | None = None,
     history: list[HistoryEntry] | None = None,
 ) -> CommandRiskReport | None:
@@ -497,7 +527,7 @@ def _classify_command_risk(
     try:
         response = api_provider.send_prompt(
             messages, system_prompt=system_prompt, model=model,
-            response_format=response_format, timeout=timeout)
+            response_format=response_format, timeout=timeout, cancel_event=cancel_event)
     except Exception:
         logger.warning(
             "Bash risk classifier request failed after %.2fs",
@@ -511,6 +541,9 @@ def _classify_command_risk(
     if report is not None:
         return report
 
+    # Don't spend the retry round trip if the end-to-end deadline has already elapsed.
+    if cancel_event.is_set():
+        return None
     logger.info("Bash risk classifier reply failed to parse (%s); retrying once", error)
     messages.append(_message("assistant", str(response.message.content)))
     messages.append(_message("user", (
@@ -521,7 +554,7 @@ def _classify_command_risk(
     try:
         response = api_provider.send_prompt(
             messages, system_prompt=system_prompt, model=model,
-            response_format=response_format, timeout=timeout)
+            response_format=response_format, timeout=timeout, cancel_event=cancel_event)
     except Exception:
         logger.warning(
             "Bash risk classifier retry request failed after %.2fs",
@@ -599,8 +632,9 @@ def resolve_item_risk_assessment(
     history = _recent_history(session, process_config)
     report = classify_command_risk(
         ask_ctx.command_text, items, api_provider=session.provider, model=model,
-        timeout=process_config.bash_risk_classifier_timeout_seconds, intent=ask_ctx.intent,
-        history=history)
+        timeout=process_config.bash_risk_classifier_timeout_seconds,
+        e2e_timeout=process_config.bash_risk_classifier_e2e_timeout_seconds,
+        intent=ask_ctx.intent, history=history)
     if report is None:
         return None
     for index, item in enumerate(items):
