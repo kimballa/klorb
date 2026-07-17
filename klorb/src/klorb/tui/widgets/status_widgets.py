@@ -117,7 +117,7 @@ class PermissionBadge(Static):
     a custom `render()` uses — a fixed width sized for the longest value
     (`"[auto]"`/`"[deny]"`) plus one, with the text right-justified within it, means a
     shorter value like `"[ask]"` is left-padded rather than ever clipping a longer one's
-    trailing `]`. `ReplApp._cycle_permission_framework()` (bound to Shift+Tab) calls
+    trailing `]`. `ReplApp.action_cycle_permission_framework()` (bound to Shift+Tab) calls
     `flash_to()` whenever the value changes, which briefly flashes the chip bright yellow
     (the same `$footer-key-foreground` used for the footer's own key-binding chips) for
     `_FLASH_YELLOW_SECONDS`, then bright/bold white for the longer `_FLASH_WHITE_SECONDS`,

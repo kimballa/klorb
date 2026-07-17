@@ -250,6 +250,47 @@ async def test_shift_tab_cycles_permission_framework() -> None:
         assert str(session.config.permission_framework) == "ask"
 
 
+async def test_shift_tab_cycles_permission_framework_while_prompt_input_is_disabled() -> None:
+    """Shift+Tab must keep cycling `permission_framework` while `PromptInput` is disabled and
+    blurred -- e.g. during an in-flight turn (see `PromptSubmissionMixin._send_prompt`) -- since
+    that's exactly when a user is most likely to want to flip it (e.g. to `"auto"` so an
+    about-to-be-asked permission just proceeds). A focus-dependent interception in `PromptInput`
+    itself can't do this: disabling the box blurs it, and Shift+Tab would otherwise fall through
+    to `Screen`'s own default `shift+tab -> app.focus_previous` binding instead -- see
+    `ReplApp.action_cycle_permission_framework`'s docstring."""
+    mock_provider = MagicMock()
+    turn_streaming = threading.Event()
+    release_turn = threading.Event()
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        turn_streaming.set()
+        release_turn.wait(timeout=5)
+        return _reply()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, turn_streaming.is_set)
+        await pilot.pause()
+        assert prompt_input.disabled is True
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert str(session.config.permission_framework) == "auto"
+        badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
+        assert str(badge.render()) == "[auto]"
+
+        release_turn.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
 async def test_palette_hint_shown_only_while_the_box_is_empty_or_bare_gt() -> None:
     app = ReplApp(session=_session(MagicMock()))
 
