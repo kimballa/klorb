@@ -132,6 +132,8 @@ class ReplAppBase(App[None]):
     ) -> RunningToolCallStatic:
         raise NotImplementedError
 
+    def _running_tool_call_anchor(self) -> Static | None: ...
+
     def _finalize_running_tool_call_widget(
         self, widget: RunningToolCallStatic, summary_text: str, detail_text: str,
     ) -> None: ...
