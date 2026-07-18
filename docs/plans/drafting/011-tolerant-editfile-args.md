@@ -39,6 +39,12 @@ This is purely additive: the classic five-field call is still valid and still th
 form for long replacement spans. Nothing about the on-disk result, the drift search, the
 "Ambiguous match" recovery, or the result dict changes.
 
+Separately, the plan also sharpens the feedback for calls that don't even parse as JSON (a total
+tool-call failure, before any tool runs) — precise break-point offsets, an XML-vs-JSON detector,
+a common-escaping-mistakes primer, and an edit-argument-specific escaping nudge — since the edit
+tools are the biggest source of the large, heavily-escaped string arguments where JSON escaping
+goes wrong. See "Tool-call argument parse errors" below.
+
 ## Motivation
 
 Two eval-adjacent frictions motivate this:
@@ -228,6 +234,94 @@ already carries the worked example. Add:
 `EditMemory`/`EditScratchpad` inherit this section (the memories note already says "same edit
 mechanics as EditFile above"); no per-tool prose duplication.
 
+## Tool-call argument parse errors
+
+The forms above make a *well-formed* JSON call more forgiving. This section covers the case one
+level earlier: the model's `arguments` string doesn't parse as JSON *at all*, so no tool's
+`apply()` (and none of the desugaring above) is ever reached. Today this is handled in
+`Session._run_tool_calls` (`klorb/src/klorb/session.py`), which on `json.JSONDecodeError` sends
+back exactly `f"Invalid JSON in tool call arguments: {json_exc}"` and blanks `call.arguments` to
+`"{}"` so the malformed string isn't replayed to the API. That one line is the whole feedback the
+model gets — and a total parse failure is the most expensive kind, because the model learns
+nothing precise and typically retries the same malformed shape. This is worth investing a
+multi-line, teaching response in: better the agent learns exactly how to quote and escape than
+burn three rejected calls rediscovering it.
+
+Most of this is **tool-agnostic** — a malformed `arguments` string is malformed for any tool — so
+it lands in `session.py`'s decode-error branch (or a small `klorb.tools.util` /
+`klorb.tools.tool` helper it calls), not in `EditFileCore`. The last bullet is edit-specific and
+keys off the edit tools' own argument names. It's in this plan because the edit tools are by far
+the biggest producers of large, heavily-escaped string arguments (`start_text`/`end_text`/
+`old_text`/`new_text` routinely carry quotes, backslashes, and newlines), so they're where JSON
+escaping goes wrong most often — but the general improvements should be written to benefit every
+tool.
+
+### 1. Be precise about *where* the JSON broke
+
+`json.JSONDecodeError`'s `str()` already carries `line N column M (char K)` and a reason
+(`"Expecting ',' delimiter"`, `"Unterminated string starting at"`, etc.), and today's message
+does interpolate the whole exception — so the offset is technically present but buried. Make it
+explicit and structured: surface `json_exc.lineno`, `json_exc.colno`, `json_exc.pos`, and
+`json_exc.msg` as named parts, and quote the offending fragment — a short window of the raw
+string around `json_exc.pos` (e.g. ~40 chars each side, with a caret/marker at the position) so
+the model sees the exact spot, not just a number it has to count to. Confirm the raw string is
+still available at that point (it is: `raw_arguments = call.arguments` is captured before the
+blanking).
+
+### 2. Detect XML-shaped input and say so specifically
+
+If the first non-whitespace character of the raw `arguments` string is `<`, the model almost
+certainly emitted XML/markup instead of JSON. Short-circuit to a specific message rather than the
+generic decode error: state that the arguments look like XML/markup but the tool-call ABI is
+**JSON only**, and include a short concrete example of what a good call looks like, e.g.:
+
+```
+{ "filename": "foo.py", "start_line": 12, "new_text": "..." }
+```
+
+so the model has a correct shape to pattern-match against. (One inline example, not a per-tool
+one — the point is "JSON objects look like this," not a schema dump.)
+
+### 3. In the general syntax-error case, teach the common mistakes
+
+When it's a genuine JSON syntax error (not the XML case), append a compact multi-line reminder of
+the handful of mistakes that actually cause these, each with a *bad → good* contrast so the
+lesson is concrete rather than abstract. Cover at least:
+
+* **Unescaped double quotes inside a string** (the dominant failure for edit tools) — emphatic,
+  because it's both the most common and the least obvious:
+  `"new_text": "print("hi")"` → `"new_text": "print(\"hi\")"`.
+* **Mismatched / unbalanced brackets or braces** — a missing or extra `}`/`]`.
+* **Comma problems** — a trailing comma before `}`/`]`, or a missing comma between members:
+  `{"a": 1 "b": 2}` → `{"a": 1, "b": 2}`.
+* **Mismatched quotes** — a string opened with `"` and never closed, or single quotes used for a
+  JSON string (`'x'` → `"x"`).
+
+Keep each item to a line or two; the whole block is a fixed teaching string, not generated per
+error. It's deliberately multi-line — the token cost of one good explanation is far below the
+cost of several repeated failing calls.
+
+### 4. Edit-argument-specific escaping hint
+
+If any of the literal substrings `start_text`, `end_text`, `old_text`, or `new_text` appear in
+the raw (unparsed) `arguments` string, add an emphatic, targeted note: the call was almost
+certainly an edit tool carrying file content in one of those fields, and file content is exactly
+what breaks JSON when its embedded double quotes and backslashes aren't escaped — so **double-
+check the quoting and escaping of those argument values specifically**. This heuristic is a cheap
+substring scan of the raw string (no parse needed, since parsing already failed) and is the one
+piece that's edit-aware; gate it so it only fires when one of those names is actually present, so
+a malformed call to some other tool doesn't get an irrelevant edit lecture.
+
+### Where this lives
+
+The decode-error branch at `session.py:1462` builds the `error` string; factor the assembly
+(offset framing, XML short-circuit, common-mistakes block, edit-arg substring check) into a
+dedicated helper (proposed: `klorb.tools.tool.describe_tool_arg_json_error(name, raw_arguments,
+json_exc)` alongside the existing `default_invalid_tool_call_detail`) so it's unit-testable
+without driving a whole `Session`, and so both the model-facing `error` and the UI-facing
+`default_invalid_tool_call_detail` can draw from the same source. `statistics.malformed_tool_calls`
+accounting and the `call.arguments = "{}"` blanking are unchanged.
+
 ## Tests (`klorb/tests/test_edit_file.py`)
 
 The widened matrix multiplies the argument combinations, so enumerate and unit-test them all
@@ -272,6 +366,19 @@ Parametrize where the bodies are identical across spellings (e.g. #8's four alia
 representative subset for `EditScratchpad`/`EditMemory` via their existing test modules to prove
 the shared core reaches all three tools (no need to re-run the full matrix three times — one
 smoke test per wrapper that the new forms are wired through).
+
+**Parse-error helper tests** (new, alongside `tool.py`'s tests — the helper is tool-agnostic, so
+these don't belong in `test_edit_file.py`): drive `describe_tool_arg_json_error()` directly with
+raw strings and assert on the returned message:
+
+* offset framing names the correct `line`/`column`/`char` and quotes the fragment around the
+  break point;
+* a raw string whose first non-whitespace char is `<` yields the XML-specific message with the
+  JSON example, and does **not** emit the generic common-mistakes block;
+* an unescaped-inner-quote string yields the common-mistakes block including the escape contrast;
+* a raw string containing `new_text` (still malformed) yields the edit-argument escaping note;
+* a malformed call to a non-edit tool (none of the four names present) does **not** get the
+  edit-argument note.
 
 ## Evals (`klorb/evals/cases.py`)
 
@@ -386,7 +493,11 @@ investigative mode, and it costs a second model round-trip.
 * `klorb/src/klorb/tools/edit_file.py`, `.../tools/scratchpad/edit.py`,
   `.../tools/memory/edit_memory.py` — relaxed `required` lists.
 * `klorb/src/klorb/resources/system_prompts.d/default_sys.md` — edit examples + decision rule.
-* `klorb/tests/test_edit_file.py` (+ small smoke additions to the scratchpad/memory edit tests).
+* `klorb/src/klorb/session.py` — decode-error branch calls the new parse-error helper.
+* `klorb/src/klorb/tools/tool.py` — new `describe_tool_arg_json_error()` helper (offset framing,
+  XML short-circuit, common-mistakes block, edit-arg substring hint).
+* `klorb/tests/test_edit_file.py` (+ small smoke additions to the scratchpad/memory edit tests);
+  new parse-error-helper tests alongside `tool.py`'s tests.
 * `klorb/evals/cases.py`, `klorb/evals/run_evals.py` — new cases + `--self-review`.
 * `klorb/src/klorb/permissions/directory_access.py` (or a `klorb.tools.util` sibling) — the
   tempdir-readable helper.
