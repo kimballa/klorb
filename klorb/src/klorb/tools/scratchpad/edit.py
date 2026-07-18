@@ -43,7 +43,7 @@ class EditScratchpadTool(Tool):
         return {
             "type": "object",
             "properties": self.edit_file_core.parameter_properties(),
-            "required": ["start_line", "end_line", "start_text", "end_text", "new_text"],
+            "required": ["start_line", "new_text"],
             "additionalProperties": False,
         }
 

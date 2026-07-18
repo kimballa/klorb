@@ -65,10 +65,7 @@ class EditMemoryTool(Tool):
                 },
                 **self.edit_file_core.parameter_properties(),
             },
-            "required": [
-                "namespace", "filename", "start_line", "end_line", "start_text", "end_text",
-                "new_text",
-            ],
+            "required": ["namespace", "filename", "start_line", "new_text"],
             "additionalProperties": False,
         }
 

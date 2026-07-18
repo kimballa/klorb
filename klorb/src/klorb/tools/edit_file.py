@@ -18,8 +18,8 @@ class EditFileTool(Tool):
     `new_text` — delegating that mechanic to `self.edit_file_core` (a
     `klorb.tools.util.EditFileCore`), the same one `EditScratchpadTool` uses, so it's written
     and tested once. See your system prompt's guidance on `EditFile`/`EditScratchpad` for the
-    `start_text`/`end_text`/`context_before`/`context_after` conventions, drift tolerance, and
-    "Ambiguous match" handling.
+    `start_text`/`end_text`/`old_text`/`context_before`/`context_after` conventions, drift
+    tolerance, and "Ambiguous match" handling.
 
     `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
     `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
@@ -52,7 +52,7 @@ class EditFileTool(Tool):
                 },
                 **self.edit_file_core.parameter_properties(),
             },
-            "required": ["filename", "start_line", "end_line", "start_text", "end_text", "new_text"],
+            "required": ["filename", "start_line", "new_text"],
             "additionalProperties": False,
         }
 

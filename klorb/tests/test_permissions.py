@@ -8,11 +8,13 @@ from pathlib import Path
 
 import pytest
 
+import klorb.permissions.directory_access as directory_access_module
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.directory_access import (
     DirectoryAccessTable,
     DirRules,
     canonicalize_dir,
+    create_tempdir_for_session,
     find_workspace_root,
     is_privileged_path,
     privileged_dirs,
@@ -805,3 +807,122 @@ def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path)
         permission_override=PermissionOverride(paths=frozenset({path})))
     with pytest.raises(PermissionError, match="EscalatePrivileges"):
         resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")
+
+
+# --- create_tempdir_for_session ---
+
+
+def test_create_tempdir_for_session_grants_read_access_and_returns_the_path(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    directory = create_tempdir_for_session(session_config)
+
+    assert directory.is_dir()
+    assert directory in session_config.read_dirs.allow
+
+
+def test_create_tempdir_for_session_default_mode_grants_no_write_access(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    directory = create_tempdir_for_session(session_config)
+
+    assert directory not in session_config.write_dirs.allow
+
+
+def test_create_tempdir_for_session_mode_w_also_grants_write_access(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    directory = create_tempdir_for_session(session_config, mode="w")
+
+    assert directory in session_config.read_dirs.allow
+    assert directory in session_config.write_dirs.allow
+
+
+def test_create_tempdir_for_session_preserves_existing_dirrules_entries(tmp_path: Path) -> None:
+    deny = [tmp_path / "denied"]
+    ask = [tmp_path / "asked"]
+    allow = [tmp_path / "existing-allow"]
+    session_config = SessionConfig(
+        workspace=Workspace(path=tmp_path), read_dirs=DirRules(deny=deny, ask=ask, allow=allow))
+
+    directory = create_tempdir_for_session(session_config)
+
+    assert session_config.read_dirs.deny == deny
+    assert session_config.read_dirs.ask == ask
+    assert allow[0] in session_config.read_dirs.allow
+    assert directory in session_config.read_dirs.allow
+
+
+def test_create_tempdir_for_session_does_not_mutate_a_shared_allow_list(tmp_path: Path) -> None:
+    """DirRules documents its lists as immutable after construction, since a SessionConfig
+    template's DirRules can be shared (via model_copy()'s shallow copy) across several cloned
+    sessions -- create_tempdir_for_session honors that by replacing session_config.read_dirs
+    with a new DirRules rather than appending to the existing allow list in place, so granting
+    one session a scratch directory can't silently widen every session sharing the template's
+    DirRules."""
+    shared_allow = [tmp_path / "template-allow"]
+    shared_rules = DirRules(allow=shared_allow)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path), read_dirs=shared_rules)
+
+    create_tempdir_for_session(session_config)
+
+    assert session_config.read_dirs is not shared_rules
+    assert shared_rules.allow == shared_allow
+    assert len(shared_allow) == 1
+
+
+def test_create_tempdir_for_session_mode_w_does_not_mutate_a_shared_write_allow_list(
+    tmp_path: Path,
+) -> None:
+    shared_allow = [tmp_path / "template-allow"]
+    shared_rules = DirRules(allow=shared_allow)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path), write_dirs=shared_rules)
+
+    create_tempdir_for_session(session_config, mode="w")
+
+    assert session_config.write_dirs is not shared_rules
+    assert shared_rules.allow == shared_allow
+    assert len(shared_allow) == 1
+
+
+def test_create_tempdir_for_session_without_remove_on_exit_is_not_registered_for_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(directory_access_module, "_tempdirs_to_remove_on_exit", [])
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    directory = create_tempdir_for_session(session_config)
+
+    assert directory_access_module._tempdirs_to_remove_on_exit == []
+    assert directory.is_dir()
+
+
+def test_create_tempdir_for_session_with_remove_on_exit_registers_and_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(directory_access_module, "_tempdirs_to_remove_on_exit", [])
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    directory = create_tempdir_for_session(session_config, remove_on_exit=True)
+
+    assert directory_access_module._tempdirs_to_remove_on_exit == [directory]
+    assert directory.is_dir()
+
+    directory_access_module._remove_registered_tempdirs()
+
+    assert not directory.exists()
+
+
+def test_create_tempdir_for_session_registers_the_atexit_handler_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(directory_access_module, "_tempdirs_to_remove_on_exit", [])
+    register_calls: list[object] = []
+    monkeypatch.setattr(directory_access_module.atexit, "register", register_calls.append)
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    create_tempdir_for_session(session_config, remove_on_exit=True)
+    create_tempdir_for_session(session_config, remove_on_exit=True)
+
+    assert len(register_calls) == 1
+    assert len(directory_access_module._tempdirs_to_remove_on_exit) == 2

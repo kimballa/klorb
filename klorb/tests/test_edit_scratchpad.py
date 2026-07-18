@@ -172,9 +172,23 @@ def test_name_and_parameters(tmp_path: Path) -> None:
     parameters = tool.parameters()
 
     assert tool.name() == "EditScratchpad"
-    assert set(parameters["required"]) == {
-        "start_line", "end_line", "start_text", "end_text", "new_text"}
+    assert set(parameters["required"]) == {"start_line", "new_text"}
+    assert "old_text" in parameters["properties"]
     assert "filename" not in parameters["properties"]
+
+
+def test_old_text_form_is_wired_through(tmp_path: Path) -> None:
+    """Smoke test that the widened argument matrix (see docs/specs/tool-framework.md)
+    reaches EditScratchpad via the shared EditFileCore -- the full matrix is exercised against
+    EditFile in test_edit_file.py."""
+    scratchpad = _write(tmp_path, "a\nb\nc\nd\n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "start_line": 2, "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert scratchpad.read_text() == "a\nB\nC\nd\n"
+    assert result["requested_end_line"] == 3
 
 
 def test_summary_reports_a_line_diff(tmp_path: Path) -> None:

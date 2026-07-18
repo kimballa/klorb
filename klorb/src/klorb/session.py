@@ -39,6 +39,7 @@ from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.scratchpad.common import Scratchpad
 from klorb.tools.skill.common import DiscoveredSkill, discover_skills
+from klorb.tools.tool import describe_tool_arg_json_error
 from klorb.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -1413,8 +1414,11 @@ class Session:
         `arguments` string that fails to parse (`json.JSONDecodeError`) is reported back the
         same way — as this call's `tool_response`, with `args={}` (no tool ever runs) — rather
         than propagating out and aborting the whole turn, so a single malformed tool call
-        doesn't take down every other call/round in flight. `ToolCallEvent.raw_arguments`
-        carries the unparsed string in this case, for a UI to display.
+        doesn't take down every other call/round in flight. The `tool_response`'s text comes
+        from `klorb.tools.tool.describe_tool_arg_json_error()`, a teaching message (break-point
+        offset, XML detection, common JSON mistakes, an edit-argument-specific escaping nudge)
+        rather than the bare decode-error string. `ToolCallEvent.raw_arguments` carries the
+        unparsed string in this case, for a UI to display.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -1464,7 +1468,7 @@ class Session:
                     "Tool call %s had malformed JSON arguments (%s): %s",
                     call.name, json_exc, call.arguments)
                 raw_arguments = call.arguments
-                error = f"Invalid JSON in tool call arguments: {json_exc}"
+                error = describe_tool_arg_json_error(call.name, raw_arguments, json_exc)
                 # Remove the offending tool call args from the tool_use message so it
                 # doesn't get sent to the API on subsequent turns (which would
                 # cause a 400 Bad Request error due to the invalid JSON).

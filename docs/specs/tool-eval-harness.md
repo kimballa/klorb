@@ -27,9 +27,16 @@ offline against mocks. They run under their own `make evals` target instead — 
     to their initial content, written before the prompt is sent), `check` — a
     `Callable[[Path, Session], str | None]` invoked with the case's temp `workspace_root` and
     the `Session` that ran it, returning `None` on success or a human-readable failure reason —
-    and `expected_tool_calls` (`int | None`, default `None`): the number of tool calls a
+    `expected_tool_calls` (`int | None`, default `None`): the number of tool calls a
     competent, error-free run should need, used only to flag an otherwise-passing case as a
-    `CaseResult.conditional` pass (see [[eval-conditional-pass-on-excess-tool-calls]]).
+    `CaseResult.conditional` pass (see [[eval-conditional-pass-on-excess-tool-calls]]) — and
+    `soft_check` (same signature as `check`, default `None`): run only when `check` itself
+    passes, for a case whose file-state outcome is correct but whose *shape* (which tool-call
+    form the model reached for) is a yellow flag rather than a failure — e.g. proving a long-span
+    `EditFile` call used `start_text`/`end_text` rather than a token-wasteful `old_text` (see
+    docs/specs/tool-framework.md). A non-`None` `soft_check` return also flags the
+    result `CaseResult.conditional`, via `CaseResult.soft_failure_reason`, without flipping
+    `passed` to `False`.
   * `CaseResult` — the outcome of running one `EvalCase`: `passed`, `duration_s`,
     `num_tool_calls`, `tool_call_counts` (`dict[str, int]`, per tool name), `tool_call_log`
     (`list[ToolCallLogEntry]` — the ordered, raw request/response transcript: each entry's
@@ -37,8 +44,13 @@ offline against mocks. They run under their own `make evals` target instead — 
     `role="tool_response"` message's `content`), `failure_reason`, `error` (set instead of
     running `check` at all if `send_turn()` itself raised), `final_response` (the model's
     closing text, kept for the report only — never used for grading), `expected_tool_calls`
-    (copied from the case), and the `conditional` property — true when `passed` is true but
-    `num_tool_calls > expected_tool_calls` — see [[eval-conditional-pass-on-excess-tool-calls]].
+    (copied from the case), `soft_failure_reason` (set when `EvalCase.soft_check` ran and
+    reported a problem), `generated_tokens` (an informational, non-graded `tiktoken` estimate of
+    how many tokens this case's run generated — its tool-call `arguments` strings plus
+    `final_response` — under the eval model's encoding; the closest proxy this harness has to
+    cost without real token accounting), and the `conditional` property — true when `passed` is
+    true but either `num_tool_calls > expected_tool_calls` or `soft_failure_reason` is set — see
+    [[eval-conditional-pass-on-excess-tool-calls]].
   * `run_case(case, *, model, provider) -> CaseResult` — the per-case runner. For each case it:
     1. Creates a fresh temp directory and writes `setup_files` into it.
     2. Builds a `SessionConfig(model=model, interactive=False, thinking_enabled=False,
@@ -56,7 +68,11 @@ offline against mocks. They run under their own `make evals` target instead — 
        of a bespoke one.
     5. Reads tool-call metrics back off `session.messages` (every `role="tool_use"` message's
        `tool_calls`), then runs `case.check(workspace_root, session)` (skipped, and `error` set
-       instead, if `send_turn()` raised).
+       instead, if `send_turn()` raised); if `check` passed and `case.soft_check` is set, runs
+       that too.
+    6. Estimates `generated_tokens` from `final_response` plus every tool call's raw `arguments`
+       string, under `model`'s `tiktoken` encoding (the same one `tool_token_counts()` below
+       uses).
   * `run_evaluation(cases, *, model, provider) -> list[CaseResult]` — runs every case in
     sequence (cases are cheap, and sequential order keeps a failing case's model output easy to
     correlate with its position in the printed report) and returns their results.
@@ -78,14 +94,16 @@ offline against mocks. They run under their own `make evals` target instead — 
   duration, total/average tool calls), an optional "Tool definitions" section (each tool's name
   and its `tool_token_counts()` value, largest first) when `tool_token_counts` is given, then one
   section per case (prompt, `status_label()`'s `PASS`/`CONDITIONAL PASS`/`FAIL`, duration, tool
-  calls made vs. expected, failure reason or error if any). `status_label(result, color=...)` is
-  the single place that turns a `CaseResult` into its three-way status string (green `PASS`,
-  yellow `CONDITIONAL PASS`, red `FAIL`) — shared with `run_evals.py`'s live per-case progress
-  printer so both agree on the same status for the same result. `render_case_detail(result,
+  calls made vs. expected, `generated_tokens`, failure/soft-check reason or error if any).
+  `status_label(result, color=...)` is the single place that turns a `CaseResult` into its
+  three-way status string (green `PASS`, yellow `CONDITIONAL PASS` — either over budget on tool
+  calls or `soft_failure_reason` set, red `FAIL`) — shared with `run_evals.py`'s live per-case
+  progress printer so both agree on the same status for the same result. `render_case_detail(result,
   color=...)` renders one case's tool-call transcript (`  -> Tool(args)` / `  <- response`, red
-  when the response starts with `"Error:"`) plus its tool-call counts and status line — the same
-  block `render_report()`'s per-case section and `run_evals.py`'s live progress printer both show,
-  factored out so `run_evals.py` can also write it (with `color=False`) to `evals.log`.
+  when the response starts with `"Error:"`) plus its tool-call counts, `generated_tokens`,
+  optional soft-check reason, and status line — the same block `render_report()`'s per-case
+  section and `run_evals.py`'s live progress printer both show, factored out so `run_evals.py`
+  can also write it (with `color=False`) to `evals.log`.
 * `klorb/evals/colors.py` is a minimal ANSI-color helper: `use_color(stream)` reports whether
   `stream.isatty()`, and `colorize(text, color, enabled=...)` wraps `text` in ANSI codes only
   when `enabled` — callers decide and pass that decision in explicitly, so nothing in this
@@ -118,6 +136,21 @@ offline against mocks. They run under their own `make evals` target instead — 
     `evals.log` then holds just the summary block. This file isn't committed (see the repo-root
     `.gitignore`'s `evals.log` entry) — it's a scrollback aid for the run that just happened, not
     build output.
+  * `--self-review` (off by default) closes the loop after `evals.log` is written:
+    `_run_self_review()` mints a scratch temp directory via
+    `klorb.permissions.directory_access.create_tempdir_for_session(session_config,
+    remove_on_exit=True)`, copies `evals.log` into it, and sends a fresh, non-interactive
+    `Session` on the same model/provider a prompt that names the copied log's path, reminds it to
+    `ReadFile` the path, explains the log's three-way grading vocabulary (so `CONDITIONAL PASS`
+    reads as a yellow flag, not pass-or-fail), and asks it to diagnose which *tools'* ergonomics
+    (not only `EditFile`) caused failures or retries and propose up to five prioritized, concrete
+    fixes. The review session's `workspace.trusted=True` so the `readDirs.allow` grant on the
+    scratch directory actually lifts the read boundary onto it (see
+    `resolve_and_evaluate_read()`'s trusted-mode branch). The diagnosis is printed to the
+    terminal and appended to `evals.log` as a final `## Self-review` section (`_write_eval_log()`
+    re-run with `self_review=<text>`), so it reaches both outputs identically rather than only
+    the terminal. It does not affect `main()`'s exit code. When `--self-review` isn't passed, the
+    run prints a one-line reminder that it's available.
 
 ## Adding a new eval case
 
@@ -128,7 +161,13 @@ minimal: only what the case's prompt actually depends on. Set `expected_tool_cal
 number of calls a clean run needs (a `ReadFile` to see current content, plus one `EditFile` or
 `ReplaceAll` to change it, is the common shape) so a case that only passes after retries gets
 flagged `CONDITIONAL PASS` instead of blending in with a clean `PASS` — see
-[[eval-conditional-pass-on-excess-tool-calls]].
+[[eval-conditional-pass-on-excess-tool-calls]]. If a case's whole point is proving a *specific*
+call shape is reachable or preferred (not just that the file ends up correct), inspect
+`session.messages` for the argument shape actually used — either as a hard `check` failure (the
+shape *is* the pass/fail bar, as the `edit_file_ambiguous_match_*` and
+`edit_file_single_line_shortcut`/`edit_file_old_text_*` cases do) or as a `soft_check` when a
+different, correct-but-suboptimal shape should downgrade to `CONDITIONAL PASS` rather than fail
+outright.
 
 ## Out of scope
 

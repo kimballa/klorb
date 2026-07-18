@@ -695,6 +695,258 @@ def test_multiline_end_text_truncates_to_first_line(tmp_path: Path) -> None:
     assert result["content"] == "1|x"
 
 
+# --- Widened argument matrix: old_text, the single-line shortcut, and hint aliases (see
+# docs/specs/tool-framework.md) ---
+
+
+def test_single_line_shortcut_with_end_text_omitted(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert "feedback" not in result
+
+
+def test_single_line_shortcut_with_end_text_empty_string(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "b", "end_text": "", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert "feedback" not in result
+
+
+def test_old_text_multiline_end_line_omitted(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2,
+        "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert file_path.read_text() == "a\nB\nC\nd\n"
+    assert result["requested_end_line"] == 3
+    assert "feedback" not in result
+
+
+def test_old_text_multiline_end_line_supplied_and_matching(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 3,
+        "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert file_path.read_text() == "a\nB\nC\nd\n"
+    assert "feedback" not in result
+
+
+def test_old_text_one_line_end_line_omitted(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2,
+        "old_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert result["requested_end_line"] == 2
+    assert "feedback" not in result
+
+
+def test_multiline_start_text_with_no_end_text_is_treated_as_old_text(tmp_path: Path) -> None:
+    """Form 6: a multi-line start_text with end_text omitted is reinterpreted as old_text
+    (contrast with test_multiline_start_text_truncates_to_first_line, which supplies a
+    non-empty end_text and keeps the classic truncation behavior)."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2,
+        "start_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert file_path.read_text() == "a\nB\nC\nd\n"
+    assert result["feedback"] == [
+        "btw, start_text held multiple lines with no end_text, so it was treated as "
+        "old_text; you can pass old_text directly next time."]
+
+
+@pytest.mark.parametrize("alias", ["line", "line_num", "line_no", "line_number"])
+def test_old_text_accepts_line_hint_aliases(tmp_path: Path, alias: str) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), alias: 2,
+        "old_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert result["feedback"] == [f"the line hint is start_line; {alias!r} was accepted this time."]
+
+
+def test_old_text_with_start_line_and_matching_alias_is_not_a_conflict(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "line_no": 2,
+        "old_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert "feedback" not in result
+
+
+def test_old_text_relocates_within_drift_radius(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "p\nq\nr\ns\nt\nu\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1,
+        "old_text": "s\nt", "new_text": "S\nT",
+    })
+
+    assert file_path.read_text() == "p\nq\nr\nS\nT\nu\n"
+    assert result["line_hint_matched"] is False
+    assert result["start_line"] == 4
+
+
+def test_old_text_interior_line_mismatch_raises_precise_error(tmp_path: Path) -> None:
+    """A block whose first and last lines match but whose interior differs from the file has
+    no valid candidate -- proving old_text is verified in full, not just at its endpoints."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nWRONG\nd\n")
+
+    with pytest.raises(ValueError, match=r"old_text does not match.*line #3 differs"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2,
+            "old_text": "b\nc\nd", "new_text": "B\nC\nD",
+        })
+
+    assert file_path.read_text() == "a\nb\nWRONG\nd\n"
+
+
+def test_old_text_fuzzy_whitespace_interior_line_resolves(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\n  b  \nc\nd\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2,
+        "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert file_path.read_text() == "a\nB\nC\nd\n"
+    assert result["fuzzyWhitespaceMatch"] is True
+
+
+def test_old_text_and_start_text_both_present_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="Provide old_text, or start_text/end_text, not both"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2,
+            "old_text": "b", "start_text": "b", "new_text": "B",
+        })
+
+
+def test_old_text_and_end_text_both_present_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="Provide old_text, or start_text/end_text, not both"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2,
+            "old_text": "b", "end_text": "b", "new_text": "B",
+        })
+
+
+def test_old_text_end_line_count_mismatch_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    with pytest.raises(ValueError, match=r"old_text has 2 line\(s\), but end_line=4"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 4,
+            "old_text": "b\nc", "new_text": "B\nC",
+        })
+
+
+def test_neither_old_text_nor_start_text_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="No anchor: provide start_text"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 2, "new_text": "B",
+        })
+
+
+def test_no_line_hint_in_any_spelling_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="Missing required argument: 'start_line'"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_text": "b", "end_text": "b", "new_text": "B",
+        })
+
+
+def test_conflicting_start_line_and_alias_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match=r"Conflicting line hints: start_line=2 vs line_no=3"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "line_no": 3,
+            "old_text": "b", "new_text": "B",
+        })
+
+
+def test_single_line_start_text_end_text_omitted_end_line_mismatch_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="Omit-end_text is only for single-line edits"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 3,
+            "start_text": "b", "new_text": "B",
+        })
+
+
+def test_empty_old_text_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="old_text must be the non-empty block to replace"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "old_text": "", "new_text": "B",
+        })
+
+
+def test_multiline_start_text_with_end_text_still_truncates_not_old_text(tmp_path: Path) -> None:
+    """Form 6 does not trigger when end_text is also supplied -- the classic
+    truncate-to-first-line behavior (and its advisory feedback) applies instead."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1, "end_line": 2,
+        "start_text": "a\nb", "end_text": "b", "new_text": "x",
+    })
+
+    assert file_path.read_text() == "x\nc\n"
+    assert result["feedback"] == [
+        "btw, start_text should only be one line - the first line of the block to "
+        "replace. The first '\n' and everything afterward was ignored. Next time, "
+        "save tokens! Provide only one line of start_text to begin the replacement "
+        "region match."]
+
+
+def test_new_text_missing_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="Missing required argument: 'new_text'"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 1,
+            "start_text": "a", "end_text": "a",
+        })
+
+
 
 
 def test_path_outside_workspace_root_rejected(tmp_path: Path) -> None:
@@ -730,10 +982,15 @@ def test_name_and_parameters(tmp_path: Path) -> None:
     parameters = tool.parameters()
 
     assert tool.name() == "EditFile"
-    assert set(parameters["required"]) == {
-        "filename", "start_line", "end_line", "start_text", "end_text", "new_text"}
-    assert {"context_before", "context_after"} <= set(parameters["properties"])
-    assert not {"context_before", "context_after"} & set(parameters["required"])
+    assert set(parameters["required"]) == {"filename", "start_line", "new_text"}
+    assert {
+        "context_before", "context_after", "old_text", "line", "line_num", "line_no",
+        "line_number", "start_text", "end_text", "end_line",
+    } <= set(parameters["properties"])
+    assert not {
+        "context_before", "context_after", "old_text", "line", "line_num", "line_no",
+        "line_number", "start_text", "end_text", "end_line",
+    } & set(parameters["required"])
 
 
 # --- Permission-table integration (see docs/specs/permissions.md) ---

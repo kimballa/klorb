@@ -15,8 +15,20 @@ from klorb.tools.tool import (
     default_invalid_tool_call_summary,
     default_tool_call_detail,
     default_tool_call_summary,
+    describe_tool_arg_json_error,
     truncate_lines,
 )
+
+
+def _decode_error(raw: str) -> json.JSONDecodeError:
+    """Produce a real `json.JSONDecodeError` for `raw` by actually trying to parse it, so tests
+    exercise `describe_tool_arg_json_error()` against the same exception shape
+    `Session._run_tool_calls` catches, not a hand-built stand-in."""
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return exc
+    raise AssertionError(f"expected {raw!r} to fail to parse as JSON")
 
 
 def test_tool_cannot_be_instantiated_directly() -> None:
@@ -101,3 +113,58 @@ def test_truncate_lines_caps_long_text_with_an_ellipsis_line() -> None:
     text = "\n".join(str(i) for i in range(20))
     truncated = truncate_lines(text, max_lines=8)
     assert truncated == "\n".join(str(i) for i in range(8)) + "\n..."
+
+
+# --- describe_tool_arg_json_error() (see docs/specs/tool-framework.md's
+# "Tool-call argument parse errors" section) ---
+
+
+def test_describe_tool_arg_json_error_offset_framing_names_the_break_point() -> None:
+    raw = '{"pattern": "foo" "path": "."}'
+    exc = _decode_error(raw)
+
+    message = describe_tool_arg_json_error("Grep", raw, exc)
+
+    assert f"line {exc.lineno}, column {exc.colno} (char {exc.pos})" in message
+    assert exc.msg in message
+    assert raw[max(0, exc.pos - 5):exc.pos + 5] in message
+    assert "^" in message
+
+
+def test_describe_tool_arg_json_error_detects_xml_and_skips_common_mistakes() -> None:
+    raw = "<tool_call><name>Grep</name></tool_call>"
+    exc = _decode_error(raw)
+
+    message = describe_tool_arg_json_error("Grep", raw, exc)
+
+    assert "XML/markup" in message
+    assert '"filename": "foo.py"' in message
+    assert "Common JSON mistakes" not in message
+
+
+def test_describe_tool_arg_json_error_common_mistakes_includes_escape_contrast() -> None:
+    raw = '{"new_text": "print("hi")"}'
+    exc = _decode_error(raw)
+
+    message = describe_tool_arg_json_error("EditFile", raw, exc)
+
+    assert "Common JSON mistakes" in message
+    assert 'print(\\"hi\\")' in message
+
+
+def test_describe_tool_arg_json_error_flags_edit_tool_args_when_present() -> None:
+    raw = '{"filename": "foo.py", "new_text": "abc" "start_line": 1}'
+    exc = _decode_error(raw)
+
+    message = describe_tool_arg_json_error("EditFile", raw, exc)
+
+    assert "edit-tool call" in message
+
+
+def test_describe_tool_arg_json_error_omits_edit_hint_when_no_edit_args_present() -> None:
+    raw = '{"pattern": "foo" "path": "."}'
+    exc = _decode_error(raw)
+
+    message = describe_tool_arg_json_error("Grep", raw, exc)
+
+    assert "edit-tool call" not in message

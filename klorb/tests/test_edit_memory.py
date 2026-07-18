@@ -189,8 +189,24 @@ def test_name_and_parameters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     parameters = tool.parameters()
 
     assert tool.name() == "EditMemory"
-    assert set(parameters["required"]) == {
-        "namespace", "filename", "start_line", "end_line", "start_text", "end_text", "new_text"}
+    assert set(parameters["required"]) == {"namespace", "filename", "start_line", "new_text"}
+    assert "old_text" in parameters["properties"]
+
+
+def test_old_text_form_is_wired_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Smoke test that the widened argument matrix (see docs/specs/tool-framework.md)
+    reaches EditMemory via the shared EditFileCore -- the full matrix is exercised against
+    EditFile in test_edit_file.py."""
+    context = _context(tmp_path, monkeypatch)
+    path = _write(context, "global", "notes.md", "Topic\nb\nc\nd\n")
+
+    result = EditMemoryTool(context).apply({
+        "namespace": "global", "filename": "notes.md",
+        "start_line": 2, "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert path.read_text() == "Topic\nB\nC\nd\n"
+    assert result["requested_end_line"] == 3
 
 
 def test_summary_reports_a_line_diff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

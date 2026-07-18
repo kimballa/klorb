@@ -93,27 +93,35 @@ Use the Bash tool to verify, build, inspect, and explore your environment.
 `ReadFile`/`ReadScratchpad` prepend for display. Everything else — every other old line, and
 all new content — goes in `new_text`, the only field that may be multi-line.
 
+**Decision rule:** for a long multi-line replacement, `start_line`/`end_line` + one-line
+`start_text`/`end_text` is the most token-efficient anchor (you never repeat the interior). For
+a short block (~1–5 lines), `old_text` (the whole block, verbatim) is easier and often more
+compact — `end_line` is inferred for you. Never send both `old_text` and `start_text`/`end_text`
+in the same call.
+
 These tools replace the inclusive line range `[start_line, end_line]` with `new_text`, verified
-against `start_text`/`end_text`.
+against `start_text`/`end_text` (or against `old_text`, when you use that form instead).
 
 * `start_line`/`end_line` are a location hint, not exact coordinates: modest drift (e.g. from
-  an earlier edit in the same turn shifting later lines) is tolerated automatically when
-  `start_text`/`end_text` still match together nearby — the response reports the corrected
-  location and `line_hint_matched=false`. Re-read only when no matching location is found
-  nearby.
+  an earlier edit in the same turn shifting later lines) is tolerated automatically when the
+  anchor still matches nearby — the response reports the corrected location and
+  `line_hint_matched=false`. Re-read only when no matching location is found nearby. `old_text`
+  gets the same drift tolerance.
 * An "Ambiguous match" error means more than one nearby location matches. Retry with
   `context_before`/`context_after` (raw content immediately before/after the target), using
   the exact values the error names; `""` there asserts "nothing is on that side," which
   differs from omitting the argument entirely.
 * Anchoring to non-empty start/end lines works better than blank ones, which have many
   possible matches in a given range.
+* **Replacing exactly one line?** Set `start_line == end_line` and omit `end_text`; `start_text`
+  alone anchors it.
 * To insert without deleting, set `start_line == end_line` to an existing line and fold that
-  line's original text into `new_text`. To delete, pass an empty `new_text`. To insert into a
-  completely empty file/scratchpad, the only valid call is `start_line=1, end_line=0,
-  start_text="", end_text=""`. Apply multiple edits to the same target bottom-to-top (greatest
-  line numbers first) to avoid drift.
+  line's original text into `new_text` (see the worked example below). To delete, pass an empty
+  `new_text`. To insert into a completely empty file/scratchpad, the only valid call is
+  `start_line=1, end_line=0, start_text="", end_text=""`. Apply multiple edits to the same
+  target bottom-to-top (greatest line numbers first) to avoid drift.
 
-### Worked Example
+### Worked Example: start_text/end_text, for a long span
 
 To change one existing line within a python `if` statement and insert a new line below it:
 
@@ -145,6 +153,36 @@ To change one existing line within a python `if` statement and insert a new line
   "start_text": "    print(\"Equal inputs!\")",
   "end_text": "else:",
   "new_text": "    print(\"The inputs match!\")\n    print(f\"x is {x}\")\nelse:"
+}
+```
+
+### Worked Example: old_text, for a short block
+
+Same file as above; replacing lines 2–4 (a 3-line block) is more compact as `old_text` than as
+`start_text`/`end_text` — `end_line` is inferred from the block's own line count, so it's
+omitted here:
+
+```json
+{
+  "filename": "/path/to/foo.py",
+  "start_line": 2,
+  "old_text": "if x == y:\n    print(\"Equal inputs!\")\nelse:",
+  "new_text": "if x == y:\n    print(\"The inputs match!\")\nelse:"
+}
+```
+
+### Worked Example: single-line shortcut, to insert after a line
+
+To add a line right after line 12 (`    return result`) without touching anything else, "replace"
+that line with itself plus the new line — `end_text` is omitted since `start_line == end_line`:
+
+```json
+{
+  "filename": "/path/to/foo.py",
+  "start_line": 12,
+  "end_line": 12,
+  "start_text": "    return result",
+  "new_text": "    return result\n    # end of helper"
 }
 ```
 
