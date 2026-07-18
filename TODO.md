@@ -32,6 +32,8 @@
 * Hotkeys like ^o to show/hide detail should work even while we're "blocked" waiting on the
   model to respond.
 
+* Have an agent do a pass over all/most source (or do it in sections) to remove existing over-explaining comments that recapitulate decisions already captured in ADRs, explain what a function _doesn't_ do, is overly-specific specific and brittle, etc. 
+
 # Feature backlog
 
 * When adding skills list <SystemInterjection> we should notify the TUI how many tokens
