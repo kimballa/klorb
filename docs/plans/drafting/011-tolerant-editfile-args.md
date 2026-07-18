@@ -105,6 +105,15 @@ Notes:
   with single-line `start_text` and no `old_text` is an error (there's no block to count and no
   second anchor). This keeps the "omit `end_line`" affordance exclusively in `old_text` mode,
   where it's unambiguous.
+* **Form 2 vs. Form 3 — are they the same?** (raised in review.) No — they take *different
+  arguments*. Form 2 anchors on `start_text` (the classic anchor field) and is strictly one line;
+  Form 3 anchors on `old_text` and generalizes to any number of lines. They *converge in effect*
+  only in the single-line case (a 1-line `old_text` with `end_line == start_line` produces the
+  same edit as Form 2), and that convergence is deliberate: we accept both so an agent that
+  reaches for either field name for a one-liner succeeds, rather than having to remember which one
+  the tool "wants." The forms are kept as separate table rows because their *argument shapes*
+  differ, not because they describe two different edits — that's the whole point of widening the
+  accepted surface. Neither is removed.
 * **Form 6** — precedence rule: multi-line content in `start_text` is treated as `old_text`
   **only when `end_text` is empty or missing**. A multi-line `start_text` *with* a non-empty
   `end_text` keeps today's behavior: `start_text` is truncated to its first line with the
@@ -139,6 +148,19 @@ Notes:
 The empty-file insertion path (`start_line=1, end_line=0, start_text="", end_text=""`) is
 untouched and remains the sole insert-into-empty form; it is deliberately *not* re-expressed in
 `old_text` terms (there is no block to anchor).
+
+**Inserting after an existing line** (into a non-empty file) needs no special form: "replace" the
+line you want to insert after with *itself plus the new content*. The single-line shortcut makes
+this compact — e.g. to add a footer line right after line 12 (`return result`):
+
+```json
+{ "filename": "foo.py", "start_line": 12, "end_line": 12,
+  "start_text": "    return result",
+  "new_text": "    return result\n    # end of helper" }
+```
+
+`start_text` still anchors the one real line; `new_text` carries that line back verbatim followed
+by the inserted line(s). A worked version of this goes in the system prompt (see below).
 
 ## Implementation shape
 
@@ -188,9 +210,26 @@ unchanged. This is a strict superset of the endpoints check, so a genuine wrong-
 Unchanged shape (`requested_start_line`, `requested_end_line`, `start_line`, `end_line`,
 `line_hint_matched`, `new_total_lines`, `content`, optional `fuzzyWhitespaceMatch`/`whitespace`/
 `feedback`). When `end_line` was inferred (not supplied), `requested_end_line` echoes the
-inferred value. Add a terse `feedback` note when an alias spelling was used
-("btw, the line hint is `start_line`; `line_no` was accepted this time"), consistent with the
-existing token-saving nudges — but keep these advisory, never errors.
+inferred value.
+
+**When to emit `feedback` (raised in review — would per-form feedback help or just confuse?).**
+The rule: emit `feedback` only when the harness did something the agent might not have *intended*,
+never for a clean use of a first-class form. Concretely:
+
+* **Clean forms 2–5** (single-line shortcut, any `old_text` form) — **no feedback**. These are
+  supported idioms; nudging on them would be noise and would wrongly imply the agent did something
+  off-pattern.
+* **Form 6 — the implicit `start_text` → `old_text` conversion** — **do** emit a terse feedback
+  ("btw, `start_text` held multiple lines with no `end_text`, so it was treated as `old_text`; you
+  can pass `old_text` directly next time"). Here the agent may not realize a reinterpretation
+  happened, so surfacing it — advisory, after a successful edit — teaches the direct form without
+  blocking anything. This matches the precedent already set by the multi-line-`start_text`
+  truncation advisory the codebase emits today, so it's a known-non-confusing pattern.
+* **Alias spelling** — emit the existing terse note ("the line hint is `start_line`; `line_no` was
+  accepted this time").
+
+All of these stay advisory `feedback`, never errors, consistent with the existing token-saving
+nudges.
 
 ### 4. Schema and `required` changes (all three tool wrappers + core)
 
@@ -225,6 +264,10 @@ already carries the worked example. Add:
   > infers `end_line` for you. Never send both.
 * A note on the **single-line shortcut**: when replacing exactly one line, set
   `start_line == end_line` and omit `end_text`; `start_text` alone anchors it.
+* A short **insert-after worked example** (call + response) showing the "replace a line with
+  itself plus a footer" idiom — the existing prose already says to fold the original line into
+  `new_text`, but a concrete example removes the ambiguity of how, and pairs naturally with the
+  single-line shortcut note above.
 * A **second worked example** alongside the existing one, showing the `old_text` form for a
   2–3 line change (call + response), so the model sees both idioms side by side. Keep the
   existing `start_text`/`end_text` worked example as the long-span exemplar.
@@ -396,10 +439,14 @@ new shape was available. Proposed new cases:
 2. **`edit_file_old_text_small_block`** — replace a 3-line block; assert result + that an
    `EditFile` call carried `old_text` and omitted `end_line`. Proves forms 3–4. **(Priority 1.)**
 3. **`edit_file_old_text_vs_start_end_long_span`** — a ~15-line replacement where `start_text`/
-   `end_text` is the efficient form; grade on state + `expected_tool_calls` (a model that tried
-   to stuff 15 lines into `old_text` still passes state-wise, but the token/efficiency signal
-   shows up if we later add a token check). Mostly a companion to #2 to cover the "long span →
-   prefer start/end" half of the decision rule. **(Priority 3.)**
+   `end_text` is the efficient form. Since we don't do expected-token counting today, this case is
+   only useful if it **inspects `session.messages`** and checks that the edit used
+   `start_text`/`end_text` and did **not** send the whole span as `old_text`. Grading is
+   three-way: correct file state *and* start/end used → **pass**; correct file state but the span
+   was sent as `old_text` → **conditional pass** (the edit worked, it was just the token-wasteful
+   shape); wrong file state → **fail**. This needs a small harness affordance for a check that can
+   report "correct-but-suboptimal" as conditional rather than failure — see below. Companion to #2,
+   covering the "long span → prefer start/end" half of the decision rule. **(Priority 3.)**
 4. **`edit_file_old_text_drifted`** — the `old_text` block has been shifted by an earlier edit in
    the same turn; assert it still lands (drift + full-block verification). **(Priority 2.)**
 5. **`edit_file_old_text_repeated_block`** — two identical multi-line blocks in the file; the
@@ -414,6 +461,34 @@ Recommend landing priorities 1–2 (cases 1, 2, 4, 5) with this plan and holding
 first four surface gaps. Add each to the `CASES` list and give each a realistic
 `expected_tool_calls` so a stumbled retry shows as a conditional pass.
 
+**Harness affordance — a check that can report "conditional".** Today `CaseResult.conditional` is
+derived solely from `num_tool_calls > expected_tool_calls` (see
+[[eval-conditional-pass-on-excess-tool-calls]]); a `check()` can only say pass (`None`) or fail (a
+string). Case 3 wants a third outcome — *correct file state via a suboptimal call shape* — that
+should surface as a conditional pass, not a hard fail (a wasteful-but-correct edit is a yellow
+flag, exactly what "conditional" already means) and not a silent pass. Extend the check contract
+minimally: let `EvalCase` carry an optional second `soft_check` (same signature as `check`) run
+only when `check` passes; a non-`None` return marks the result `conditional` with that string as
+the reason, without flipping `passed` to `False`. `run_case()` sets a new
+`CaseResult.soft_failure_reason`, and `CaseResult.conditional` becomes "over tool-call budget **or**
+a soft-check reason is set." This keeps the existing count-based path untouched and gives case 3
+(and any future "did it use the efficient shape?" case) a clean home. Case 3's `soft_check`
+inspects `session.messages` for an `old_text` argument spanning the long region and returns a
+reason if found.
+
+### Per-case generated-token counts in the report
+
+The harness already carries a `tiktoken` estimator (`_encoding_for_model()`, used by
+`tool_token_counts()`), so it's cheap to also report how many tokens each case's run *generated* —
+a direct read on the "is the model being verbose / using wasteful call shapes?" question this plan
+cares about, and the closest proxy we have to cost without real token accounting. Add a per-case
+generated-token estimate to the summary: sum the estimator's count over the case's assistant
+output — its tool-call `arguments` strings (already captured verbatim in
+`CaseResult.tool_call_log`) plus `final_response`. This is an informational column for the user to
+read, **not** a graded threshold (per Out of scope). It pairs with case 3: a run that used
+`old_text` for a long span will visibly carry more generated tokens than one that used
+`start_text`/`end_text`.
+
 ### Eval harness `--self-review` flag
 
 Add a `--self-review` argument to `klorb/evals/run_evals.py` that closes the loop: feed the eval
@@ -421,58 +496,81 @@ output back to the agent under test and ask it to propose tool improvements.
 
 Behavior when `--self-review` is passed:
 
-1. Run the suite as normal.
-2. Write the **full** eval output (the same detailed per-case transcript + summary
-   `_write_eval_log` already produces, un-colorized) to a file in a fresh temp directory that the
-   agent is granted read access to.
+1. Run the suite as normal — which already writes the full detailed log to `EVAL_LOG_PATH`
+   (`evals.log`) via `_write_eval_log()`.
+2. Mint an agent-readable temp directory (see the helper below) and **copy the existing
+   `evals.log` into it** with the standard filesystem utils, rather than re-rendering the output a
+   second way — the log the harness already produces is exactly the artifact we want the agent to
+   read. The temp directory is registered for removal on process exit (see helper).
 3. Start a review `Session` (same model/provider) whose `read_dirs.allow` includes that temp
    directory, with a prompt that:
-   * tells it the path to the results file and **reminds it to use its `ReadFile` tool** to read
-     it (it can page a long file);
-   * asks it to diagnose which tool ergonomics caused failures/retries and propose concrete
-     changes to the edit tools that would raise the success rate;
+   * tells it the path to the copied results file and **reminds it to use its `ReadFile` tool** to
+     read it (it can page a long file);
+   * **explains the log's grading vocabulary** — pass (correct and efficient), **conditional pass**
+     (correct file state but off-pattern: more tool calls than expected, or a suboptimal call
+     shape — a yellow flag, still counted as passing), and failure (wrong result or an error) — so
+     it interprets `[CONDITIONAL PASS]` entries correctly rather than treating them as either clean
+     or broken;
+   * asks it to diagnose which **tool** ergonomics caused failures and retries and propose concrete
+     changes that would raise the success rate — scoped to the tools in general, not only the edit
+     tools (parse-error feedback, `ReadFile` pagination, `ListDir`, etc. are all fair game);
    * instructs it to **number and prioritize** its suggestions and emit the **top five at most**.
-4. Print the agent's self-diagnosis message to the console for the user to read.
+4. Surface the agent's self-diagnosis message to the user through the **same output path the rest
+   of the run already uses** — the eval console output is tee-captured to the fs logger, so writing
+   the diagnosis there (not a bespoke `print`) means it reaches the user's terminal and the
+   captured log identically to every other line of the run.
 
-**The temp-dir + read-grant helper.** The task rightly flags that "mint a temp dir and grant the
-agent `readDirs` on it" is a pattern we should have a library function for. We don't today — the
-scratchpad tools *bypass* the permission tables entirely
-([[scratchpad-tools-bypass-permission-tables]]) rather than granting a dir, and the eval harness
-builds `read_dirs=DirRules(allow=[workspace_root])` inline. Add a small helper (proposed:
-`klorb.permissions.directory_access.tempdir_readable_by_session()` or a
-`klorb.tools.util` sibling) that:
+**The temp-dir + read-grant helper.** The task flags that "mint a temp dir and grant an agent
+`readDirs` on it" should be a library function; we don't have one today (the scratchpad tools
+*bypass* the permission tables entirely, per [[scratchpad-tools-bypass-permission-tables]], and the
+eval harness builds `read_dirs=DirRules(allow=[workspace_root])` inline). Per review, it lands in
+the **permissions package** (e.g. `klorb.permissions.directory_access`), not `tools.util` — it's
+general directory/permissions plumbing, not tool-specific — with an **active name**, e.g.
+`create_tempdir_readable_by(session_config, *, remove_on_exit=False)`. It:
 
-* creates a `tempfile.mkdtemp()` directory (caller owns cleanup, or it returns a context
-  manager),
-* returns its `Path` alongside a `DirRules` (or appends to an existing `SessionConfig.read_dirs`)
-  with that path in `.allow`, canonicalized via `canonicalize_dir`.
+* creates a `tempfile.mkdtemp()` directory and appends its `canonicalize_dir`-canonicalized path
+  to the given `SessionConfig.read_dirs.allow` (returning the `Path`);
+* takes a `remove_on_exit: bool = False` flag. When `True`, the directory is appended to a
+  module-global list; the **first** time anything is added, an `atexit` handler is registered
+  once; that handler `shutil.rmtree`s every directory in the list on process exit. When `False`
+  (the default), the caller owns cleanup, exactly as today's inline callers do. This gives the
+  eval path automatic teardown (`remove_on_exit=True`) without every caller re-implementing it.
 
-The eval `--self-review` path is its first caller; during implementation, grep for other inline
-`DirRules(allow=[...])` construction sites (the harness's own, at minimum) and migrate any that
-are really "grant read on this scratch location" to the helper, so the abstraction earns its
-keep. If it turns out the eval path is genuinely the only site, still add the helper as the task
-requests, but keep it minimal.
+The eval `--self-review` path is its first caller. During implementation, grep for other inline
+`DirRules(allow=[...])` "grant read on a scratch location" sites (the harness's own at minimum) and
+migrate the ones that fit; if the eval path turns out to be the only one, still add the helper as
+requested but keep it minimal.
 
 Keep `--self-review` off by default (a normal `make evals` run is unchanged); it's an opt-in
-investigative mode, and it costs a second model round-trip.
+investigative mode that costs a second model round-trip. **When it's disabled, the run's summary
+should print a one-line suggestion** to re-run with `--self-review` for an agent-authored critique
+of the tools, so the affordance is discoverable without reading the flag list.
 
-## Design decisions to confirm with the reviewer
+## Design decisions (resolved in review)
 
-1. **Full-block `old_text` verification vs. endpoints-only.** Recommended: verify the whole
-   block. It's strictly safer and the tokens are already spent. The drift-search ADR's
-   "don't recapitulate large spans just to anchor" concern was about *forcing* the caller to
-   send interior content they otherwise wouldn't; here the caller *chose* `old_text` and sent it,
-   so verifying it isn't extra burden. Confirm this reading.
+All four were confirmed by the reviewer.
+
+1. **Full-block `old_text` verification vs. endpoints-only.** *Decided: verify the whole block.*
+   It's strictly safer and the tokens are already spent. The drift-search ADR's "don't
+   recapitulate large spans just to anchor" concern was about *forcing* the caller to send interior
+   content they otherwise wouldn't; here the caller *chose* `old_text` and sent it, so verifying it
+   isn't extra burden.
 2. **Aliases in schema as bare no-description properties vs. `additionalProperties` relaxation.**
-   Recommended: bare `{"type": "integer"}` properties, keeping `additionalProperties: False`.
-   Cheaper and safer than opening the schema. Confirm.
+   *Decided: bare `{"type": "integer"}` properties, keeping `additionalProperties: False`.*
+   Cheaper and safer than opening the schema.
 3. **`required` relaxed to `["filename", "start_line", "new_text"]`** (validation moved into
-   `apply()`), rather than an `anyOf`/`oneOf` schema expressing "start_text-or-old_text". `anyOf`
-   is poorly and inconsistently honored across providers and would bloat the repeated schema;
-   in-`apply()` validation with explanatory errors is the codebase's existing idiom. Confirm.
-4. **Form-6 precedence** (multi-line `start_text` → `old_text` *only* when `end_text` is
-   empty/missing; otherwise keep today's truncation). Confirm this back-compat carve-out is
-   wanted rather than simply always treating multi-line `start_text` as `old_text`.
+   `apply()`), rather than an `anyOf`/`oneOf` schema expressing "start_text-or-old_text".
+   *Decided.* `anyOf` is poorly and inconsistently honored across providers and would bloat the
+   repeated schema; in-`apply()` validation with explanatory errors is the codebase's existing
+   idiom.
+4. **Form-6 precedence** — multi-line `start_text` → `old_text` *only* when `end_text` is
+   empty/missing; otherwise keep today's truncation. *Decided: keep the carve-out.* Rationale
+   (from review): always treating a multi-line `start_text` as `old_text` would reopen the question
+   of how to reconcile `old_text` with a supplied `end_text` (should `end_text` be the last line of
+   `old_text`, or the line *after* it?), and those semantics aren't dialed in. Restricting the
+   conversion to the `end_text`-absent case sidesteps that ambiguity entirely; if agents later
+   stumble on the `start_text`+`end_text`+multi-line case in practice, we can revisit it then with
+   evidence.
 
 ## Out of scope
 
@@ -480,8 +578,9 @@ investigative mode, and it costs a second model round-trip.
   `context_after`.
 * No batch/multi-edit API (rejected in the drift-search ADR; unchanged here).
 * No change to `ReadFile`/`ReplaceAll`/other tools.
-* No new token-cost check in the eval report (case #3 above is written so one could be added
-  later, but adding it is a separate change).
+* No *automated* token-cost pass/fail *check* in the eval report — grading stays state- and
+  shape-based (case #3 uses a shape `soft_check`, not a token threshold). Printing per-case
+  generated-token counts for the user to eyeball is in scope, though — see the evals section.
 * Turning any of this plan's durable behavior into a spec happens at implementation time, per
   README-PLANS: fold the accepted-argument contract into `docs/specs/` and record the
   endpoints-vs-full-block and schema-`required` decisions as ADRs.
@@ -498,7 +597,13 @@ investigative mode, and it costs a second model round-trip.
   XML short-circuit, common-mistakes block, edit-arg substring hint).
 * `klorb/tests/test_edit_file.py` (+ small smoke additions to the scratchpad/memory edit tests);
   new parse-error-helper tests alongside `tool.py`'s tests.
-* `klorb/evals/cases.py`, `klorb/evals/run_evals.py` — new cases + `--self-review`.
-* `klorb/src/klorb/permissions/directory_access.py` (or a `klorb.tools.util` sibling) — the
-  tempdir-readable helper.
+* `klorb/evals/cases.py` — new cases (incl. case 3's `soft_check`).
+* `klorb/evals/harness.py` — optional `EvalCase.soft_check` + `CaseResult.soft_failure_reason`
+  wired into `CaseResult.conditional`; per-case generated-token estimate.
+* `klorb/evals/run_evals.py` — `--self-review` flag and its review-session flow; the
+  disabled-mode "re-run with --self-review" suggestion.
+* `klorb/evals/report.py` — the per-case generated-token column in the summary.
+* `klorb/src/klorb/permissions/directory_access.py` — the
+  `create_tempdir_readable_by(..., remove_on_exit=False)` helper (with the `atexit`-registered
+  global cleanup list).
 * New ADR(s) under `docs/adrs/`; new/updated spec under `docs/specs/` at implementation time.
