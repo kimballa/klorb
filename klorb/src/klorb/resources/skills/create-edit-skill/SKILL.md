@@ -22,17 +22,22 @@ authored at runtime):
   trusted. Lives in one of two source directories, both sharing the same `workspace` namespace:
   * `${workspaceRoot}/.klorb/skills/<name>/` — klorb's own convention.
   * `${workspaceRoot}/.claude/skills/<name>/` — Claude Code's convention, discovered as a second
-    source for `workspace` skills when `compatibility.claudeSkills` is enabled (see
-    docs/specs/skills.md's "Claude-skills compatibility").
+    source for `workspace` skills only when the `compatibility.claudeSkills` flag is on.
 * **user** — `$KLORB_DATA_DIR/skills/<name>/` (default `~/.local/share/klorb/skills/`) — a skill
   available to you across every workspace.
 
-**When creating a *new* workspace-tier skill**, check whether `${workspaceRoot}/.claude/skills/`
-already exists. If it does, ask the user whether to store the new skill there or under
-`.klorb/skills/` — the repo has already committed to a convention by having that directory, and
-only the user knows whether to stay consistent with it or start using klorb's own convention going
-forward. If `.claude/skills/` does not exist, just use `.klorb/skills/` without asking. When
-*editing* an existing skill, use whichever directory it already lives in — there's nothing to ask.
+Before deciding, check the `config.compatibility.claudeSkills` flag in the system prompt's own
+`## Metadata` section (it's always there — no file access needed). If that flag is off,
+`.claude/skills/` isn't discovered at all, so putting a new skill there would be silently inert —
+just use `.klorb/skills/` without asking.
+
+**When creating a *new* workspace-tier skill** and `compatibility.claudeSkills` is on, check
+whether `${workspaceRoot}/.claude/skills/` already exists. If it does, ask the user whether to
+store the new skill there or under `.klorb/skills/` — the repo has already committed to a
+convention by having that directory, and only the user knows whether to stay consistent with it or
+start using klorb's own convention going forward. If `.claude/skills/` does not exist, just use
+`.klorb/skills/` without asking. When *editing* an existing skill, use whichever directory it
+already lives in — there's nothing to ask.
 
 The directory basename **is** the skill's `name`; there is no `name` field in the frontmatter to
 keep in sync with it. Use a lower-kebab-case slug with no path separators.

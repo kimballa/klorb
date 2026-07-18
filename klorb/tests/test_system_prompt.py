@@ -2,8 +2,10 @@
 """Tests for klorb.system_prompt."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 from fixtures.sample_models import sample_model_registry
 
 from klorb.role import COORDINATOR_ROLE_NAME, get_role
@@ -15,6 +17,9 @@ from klorb.system_prompt import (
     resolve_prompt_file,
     wrap_agent_role,
 )
+
+if TYPE_CHECKING:
+    from klorb.process_config import ProcessConfig
 
 
 @pytest.fixture
@@ -38,22 +43,37 @@ COMPOSED_COORDINATOR_PROMPT = (
     f"{DEFAULT_PROMPT}\n\n{wrap_agent_role(COORDINATOR_PROMPT)}")  # type: ignore[arg-type]
 
 
-def _with_metadata(prompt: str, model: str, knowledge_cutoff: str | None = None) -> str:
+def _with_metadata(
+    prompt: str,
+    model: str,
+    knowledge_cutoff: str | None = None,
+    claude_markdown: bool = False,
+    claude_skills: bool = False,
+) -> str:
     """Append the expected ``## Metadata`` section that `SystemPrompt.resolve()` adds."""
-    lines = [f"* **Model**: `{model}`"]
+    metadata: dict[str, object] = {"model": model}
     if knowledge_cutoff is not None:
-        lines.append(f"* **Knowledge cutoff**: {knowledge_cutoff}")
-    return f"{prompt}\n\n## Metadata\n\n" + "\n".join(lines)
+        metadata["knowledgeCutoff"] = knowledge_cutoff
+    metadata["config"] = {
+        "compatibility.claudeMarkdown": claude_markdown,
+        "compatibility.claudeSkills": claude_skills,
+    }
+    yaml_str = yaml.safe_dump(metadata, sort_keys=False)
+    return f"{prompt}\n\n## Metadata\n\n```yaml\n{yaml_str}```"
 
 
-def _system_prompt(model: str, role_name: str = COORDINATOR_ROLE_NAME) -> SystemPrompt:
+def _system_prompt(
+    model: str,
+    role_name: str = COORDINATOR_ROLE_NAME,
+    process_config: "ProcessConfig | None" = None,
+) -> SystemPrompt:
     """Build a `SystemPrompt` for `model`/`role_name` against the sample-models registry,
     without needing a full `Session`."""
     from klorb.session import SessionConfig
     config = SessionConfig(model=model, role_name=role_name)
     role = get_role(role_name)
     registry = sample_model_registry()
-    return SystemPrompt(config, role, registry)
+    return SystemPrompt(config, role, registry, process_config)
 
 
 def test_wrap_agent_role_wraps_in_tag(user_config_dir: Path) -> None:
@@ -114,6 +134,21 @@ def test_resolve_reflects_mid_session_model_change(user_config_dir: Path) -> Non
     sp._config.model = "alpha"
     expected = f"You are Alpha.\n\n{wrap_agent_role(COORDINATOR_PROMPT)}"  # type: ignore[arg-type]
     assert sp.resolve() == _with_metadata(expected, "alpha", knowledge_cutoff="2024-01-01")
+
+
+def test_metadata_reports_compatibility_flags_from_process_config(user_config_dir: Path) -> None:
+    from klorb.process_config import ProcessConfig
+    process_config = ProcessConfig(compatibility_claude_markdown=True, compatibility_claude_skills=True)
+    sp = _system_prompt("some/unregistered-model", process_config=process_config)
+    assert sp.resolve() == _with_metadata(
+        COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model",
+        claude_markdown=True, claude_skills=True)
+
+
+def test_metadata_defaults_compatibility_flags_false_without_process_config(
+        user_config_dir: Path) -> None:
+    sp = _system_prompt("some/unregistered-model")
+    assert sp.resolve() == _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
 
 
 def test_mangle_model_name_replaces_slashes_and_colons() -> None:

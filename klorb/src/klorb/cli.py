@@ -262,7 +262,7 @@ def run_system_prompt_cli(argv: list[str]) -> int:
         workspace=workspace,
     )
     role = get_role(args.role)
-    system_prompt = SystemPrompt(session_config, role, ModelRegistry())
+    system_prompt = SystemPrompt(session_config, role, ModelRegistry(), process_config)
 
     default_prompt = system_prompt.default_prompt()
     role_prompt = system_prompt.role_prompt()

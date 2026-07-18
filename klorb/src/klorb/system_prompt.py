@@ -21,7 +21,9 @@ sites and the prompt-file tree layout this builds on.
 from __future__ import annotations
 
 import importlib.resources
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from klorb.paths import KLORB_CONFIG_DIR
 
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     # `config.model` change is reflected on the next `resolve()` call.
     from klorb.models.model import Model
     from klorb.models.registry import ModelRegistry
+    from klorb.process_config import ProcessConfig
     from klorb.role import Role
     from klorb.session import SessionConfig
     # isort: on
@@ -110,10 +113,21 @@ class SystemPrompt:
     the same walks inline (see docs/specs/roles-and-system-prompts.md).
     """
 
-    def __init__(self, config: "SessionConfig", role: Role, model_registry: ModelRegistry) -> None:
+    def __init__(
+        self,
+        config: "SessionConfig",
+        role: Role,
+        model_registry: ModelRegistry,
+        process_config: "ProcessConfig | None" = None,
+    ) -> None:
         self._config = config
         self._role = role
         self._model_registry = model_registry
+        self._process_config = process_config
+        """The `ProcessConfig` this prompt was constructed with, or `None` (e.g. a test building
+        a `SystemPrompt` directly). Read only for the `config` block of `_metadata_section()`; a
+        `None` here reports both `compatibility.claude*` flags as their `False` default rather
+        than omitting the block."""
 
     def _active_model(self) -> Model | None:
         """Return the registered `Model` for `config.model`, or `None` if it isn't
@@ -153,15 +167,31 @@ class SystemPrompt:
         return self._role.system_prompt(model)
 
     def _metadata_section(self) -> str:
-        """Build a `## Metadata` section listing the current model name (and, when the
-        active model reports one, its `Model.knowledge_cutoff()`), appended at the end of
-        the assembled system prompt so the model always knows its own identifier."""
-        lines = [f"* **Model**: `{self._config.model}`"]
+        """Build a `## Metadata` section reporting the current model name (and, when the
+        active model reports one, its `Model.knowledge_cutoff()`) plus a nested `config` block
+        of the `compatibility.claude*` flags, rendered as YAML (via `yaml.safe_dump`) so the
+        model can read it as one structured block instead of hand-formatted bullets. Appended
+        at the end of the assembled system prompt so the model always knows its own identifier
+        and the compatibility flags in effect — e.g. whether `.claude/skills/` is discovered at
+        all, which `create-edit-skill` needs to know before offering it as a place to store a new
+        skill. See docs/specs/skills.md's "Claude-skills compatibility"."""
+        metadata: dict[str, Any] = {"model": self._config.model}
         model = self._active_model()
         knowledge_cutoff = model.knowledge_cutoff() if model is not None else None
         if knowledge_cutoff is not None:
-            lines.append(f"* **Knowledge cutoff**: {knowledge_cutoff}")
-        return "## Metadata\n\n" + "\n".join(lines)
+            metadata["knowledgeCutoff"] = knowledge_cutoff
+        metadata["config"] = {
+            "compatibility.claudeMarkdown": (
+                self._process_config.compatibility_claude_markdown
+                if self._process_config is not None else False
+            ),
+            "compatibility.claudeSkills": (
+                self._process_config.compatibility_claude_skills
+                if self._process_config is not None else False
+            ),
+        }
+        yaml_str = yaml.safe_dump(metadata, sort_keys=False)
+        return f"## Metadata\n\n```yaml\n{yaml_str}```"
 
     def resolve(self) -> str:
         """Resolve the full system prompt by concatenating the default walk's result with
