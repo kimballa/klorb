@@ -131,6 +131,28 @@ def test_describe_tool_arg_json_error_offset_framing_names_the_break_point() -> 
     assert "^" in message
 
 
+def test_describe_tool_arg_json_error_caret_lands_under_the_offending_line_for_multiline_json() -> None:
+    """A multi-line raw_arguments string (an edit tool's new_text carrying an unescaped literal
+    newline, exactly as happens in practice) must render its caret directly beneath the line
+    naming exc.lineno, not after the whole excerpt block -- see
+    klorb.json_error_display.format_json_error_context, shared with
+    klorb.schema_envelope's config-parse-error rendering."""
+    raw = '{"filename": "foo.py",\n"new_text": "line-one\nline-two", "start_line": 1}'
+    exc = _decode_error(raw)
+    assert exc.lineno > 1  # the failure is on the raw string's second physical line
+
+    message = describe_tool_arg_json_error("EditFile", raw, exc)
+
+    lines = message.split("\n")
+    error_line_index = next(
+        i for i, line in enumerate(lines) if line.strip().startswith(f"{exc.lineno} |"))
+    error_line = lines[error_line_index]
+    caret_line = lines[error_line_index + 1]
+    assert caret_line.strip().endswith("^")
+    content_start = error_line.index("|") + 2
+    assert caret_line.index("^") - content_start == exc.colno - 1
+
+
 def test_describe_tool_arg_json_error_detects_xml_and_skips_common_mistakes() -> None:
     raw = "<tool_call><name>Grep</name></tool_call>"
     exc = _decode_error(raw)

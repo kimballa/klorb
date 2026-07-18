@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from klorb.json_error_display import format_json_error_context
+
 if TYPE_CHECKING:
     # Deferred to break a cycle: klorb.tools.setup_context -> klorb.process_config ->
     # klorb.session -> klorb.tools.tool (for describe_tool_arg_json_error). ToolSetupContext is
@@ -77,21 +79,6 @@ _EDIT_ARG_ESCAPE_HINT = (
 )
 
 
-def _json_error_fragment(raw_arguments: str, pos: int, window: int = 40) -> str:
-    """Quote the raw `arguments` string around byte offset `pos` (±`window` characters) with a
-    caret on the line beneath it marking the exact break point, so a model sees the offending
-    spot instead of a bare character count it has to count out itself. Embedded newlines within
-    the window are preserved in the fragment (so multi-line JSON stays readable) and mirrored
-    into the caret line, keeping the caret aligned when the break point is on the fragment's
-    last physical line."""
-    start = max(0, pos - window)
-    end = min(len(raw_arguments), pos + window)
-    fragment = raw_arguments[start:end]
-    prefix = fragment[:pos - start]
-    caret_line = "".join(ch if ch == "\n" else " " for ch in prefix) + "^"
-    return f"{fragment}\n{caret_line}"
-
-
 def describe_tool_arg_json_error(name: str, raw_arguments: str, json_exc: json.JSONDecodeError) -> str:
     """Describe why `raw_arguments` (a tool call's raw, unparsed `arguments` string) failed to
     parse as JSON, for a total tool-call parse failure -- the case where no tool's `apply()`
@@ -99,17 +86,19 @@ def describe_tool_arg_json_error(name: str, raw_arguments: str, json_exc: json.J
     (`klorb.session.Session._run_tool_calls`'s `json.JSONDecodeError` branch) and the UI-facing
     `default_invalid_tool_call_detail()` draw from, so the model gets a teaching response
     instead of the bare `str(json_exc)` alone: the precise break-point offset with the
-    offending fragment quoted, an XML-vs-JSON detector (a total parse failure is often a model
-    emitting markup instead of a JSON object), a fixed primer on the handful of mistakes that
-    actually cause these, and -- since edit tools are by far the biggest producers of large,
-    heavily-escaped string arguments -- an edit-argument-specific escaping nudge gated on
-    whether the raw string even mentions one of those argument names.
+    offending line(s) quoted and a caret (`klorb.json_error_display.format_json_error_context`,
+    shared with `klorb.schema_envelope`'s config-parse-error rendering), an XML-vs-JSON detector
+    (a total parse failure is often a model emitting markup instead of a JSON object), a fixed
+    primer on the handful of mistakes that actually cause these, and -- since edit tools are by
+    far the biggest producers of large, heavily-escaped string arguments -- an edit-argument-
+    specific escaping nudge gated on whether the raw string even mentions one of those argument
+    names.
     """
     header = f"Invalid JSON in tool call arguments for {name!r}."
     offset = (
         f"Parse error at line {json_exc.lineno}, column {json_exc.colno} "
         f"(char {json_exc.pos}): {json_exc.msg}")
-    fragment = _json_error_fragment(raw_arguments, json_exc.pos)
+    fragment = format_json_error_context(raw_arguments, json_exc)
 
     if raw_arguments.lstrip().startswith("<"):
         xml_body = (
