@@ -37,6 +37,12 @@
 
 # Feature backlog
 
+* Get session name from a nano LLM, based on the first user prompt. Return both a "title" for the user and a kebab-case slug of up to 4 words.
+  * use that for session id instead of "exuberant-turkey" or whatever.
+  * fall back to the random slug only if nano LLM unavailable.
+  * add a NANO_CLASSIFIER flag to the model klorb_capabilities dict.
+  * tui should show the session name on a line between the message input and the footer: "Session: (title)". If we're just starting cold, it should say "New session..."
+
 * If the user prompt msg mentions the word "skill" or "/skill", add a system interjection observing that fact and suggesting to the agent that it consider which skills might apply to this request and reminding it about SearchSkills.
 
 * When adding skills list <SystemInterjection> we should notify the TUI or log file how many tokens
