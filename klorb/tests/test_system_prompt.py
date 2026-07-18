@@ -38,6 +38,14 @@ COMPOSED_COORDINATOR_PROMPT = (
     f"{DEFAULT_PROMPT}\n\n{wrap_agent_role(COORDINATOR_PROMPT)}")  # type: ignore[arg-type]
 
 
+def _with_metadata(prompt: str, model: str, knowledge_cutoff: str | None = None) -> str:
+    """Append the expected ``## Metadata`` section that `SystemPrompt.resolve()` adds."""
+    lines = [f"* **Model**: `{model}`"]
+    if knowledge_cutoff is not None:
+        lines.append(f"* **Knowledge cutoff**: {knowledge_cutoff}")
+    return f"{prompt}\n\n## Metadata\n\n" + "\n".join(lines)
+
+
 def _system_prompt(model: str, role_name: str = COORDINATOR_ROLE_NAME) -> SystemPrompt:
     """Build a `SystemPrompt` for `model`/`role_name` against the sample-models registry,
     without needing a full `Session`."""
@@ -84,28 +92,28 @@ def test_role_prompt_uses_model_specific_role_file(user_config_dir: Path) -> Non
 
 def test_resolve_combines_default_and_role_for_coordinator(user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model")
-    assert sp.resolve() == COMPOSED_COORDINATOR_PROMPT
+    assert sp.resolve() == _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
 
 
 def test_resolve_returns_default_when_role_walk_is_none(user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model", role_name="no-such-role")
-    assert sp.resolve() == DEFAULT_PROMPT
+    assert sp.resolve() == _with_metadata(DEFAULT_PROMPT or "", "some/unregistered-model")
 
 
 def test_resolve_uses_registered_model_prompt_as_default(user_config_dir: Path) -> None:
     sp = _system_prompt("alpha")
     expected = f"You are Alpha.\n\n{wrap_agent_role(COORDINATOR_PROMPT)}"  # type: ignore[arg-type]
-    assert sp.resolve() == expected
+    assert sp.resolve() == _with_metadata(expected, "alpha", knowledge_cutoff="2024-01-01")
 
 
 def test_resolve_reflects_mid_session_model_change(user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model")
-    assert sp.resolve() == COMPOSED_COORDINATOR_PROMPT
+    assert sp.resolve() == _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
 
     # Simulate a mid-session model change.
     sp._config.model = "alpha"
     expected = f"You are Alpha.\n\n{wrap_agent_role(COORDINATOR_PROMPT)}"  # type: ignore[arg-type]
-    assert sp.resolve() == expected
+    assert sp.resolve() == _with_metadata(expected, "alpha", knowledge_cutoff="2024-01-01")
 
 
 def test_mangle_model_name_replaces_slashes_and_colons() -> None:

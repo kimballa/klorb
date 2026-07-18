@@ -20,3 +20,6 @@ class AlphaModel(Model):
 
     def capabilities(self) -> dict[str, Any]:
         return {"vision": True, "thinking": False, "max_context_window": 8_000}
+
+    def knowledge_cutoff(self) -> str | None:
+        return "2024-01-01"

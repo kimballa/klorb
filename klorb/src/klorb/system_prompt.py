@@ -152,19 +152,32 @@ class SystemPrompt:
         model = self._active_model()
         return self._role.system_prompt(model)
 
+    def _metadata_section(self) -> str:
+        """Build a `## Metadata` section listing the current model name (and, when the
+        active model reports one, its `Model.knowledge_cutoff()`), appended at the end of
+        the assembled system prompt so the model always knows its own identifier."""
+        lines = [f"* **Model**: `{self._config.model}`"]
+        model = self._active_model()
+        knowledge_cutoff = model.knowledge_cutoff() if model is not None else None
+        if knowledge_cutoff is not None:
+            lines.append(f"* **Knowledge cutoff**: {knowledge_cutoff}")
+        return "## Metadata\n\n" + "\n".join(lines)
+
     def resolve(self) -> str:
         """Resolve the full system prompt by concatenating the default walk's result with
-        the role walk's. The default walk's result is always the base; when the role walk
-        also produces a prompt, it's wrapped in an `<AgentRole>` tag (`wrap_agent_role`) and
-        appended after the default prompt, separated by a blank line — so a role's
-        instructions layer onto the default ones rather than replacing them. When the role
-        walk resolves nothing, the default walk's result is returned as-is, with no
-        `<AgentRole>` block at all.
+        the role walk's, then appending a `Metadata` section. The default walk's result is
+        always the base; when the role walk also produces a prompt, it's wrapped in an
+        `<AgentRole>` tag (`wrap_agent_role`) and appended after the default prompt,
+        separated by a blank line — so a role's instructions layer onto the default ones
+        rather than replacing them. When the role walk resolves nothing, the default walk's
+        result is used as-is. The `Metadata` section is always last, regardless of role.
 
         Re-derived fresh on each call, so it always reflects the *current* `config.model` —
         see docs/specs/roles-and-system-prompts.md."""
         default_prompt = self.default_prompt()
         role_prompt = self.role_prompt()
         if role_prompt is None:
-            return default_prompt
-        return f"{default_prompt}\n\n{wrap_agent_role(role_prompt)}"
+            body = default_prompt
+        else:
+            body = f"{default_prompt}\n\n{wrap_agent_role(role_prompt)}"
+        return f"{body}\n\n{self._metadata_section()}"

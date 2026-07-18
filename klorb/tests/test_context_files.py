@@ -197,11 +197,15 @@ def test_send_turn_no_context_file_interjection_when_untrusted(tmp_path: Path) -
     # The workspace-trust gate keeps the untrusted workspace's AGENTS.md out of the prompt: no
     # ProjectGuidance interjection, and none of the file's content. This module's autouse
     # `_neutralize_packaged_skills` fixture stubs skill discovery to always return `[]`, so no
-    # AvailableSkills interjection can ride here either -- the prompt is untouched.
+    # AvailableSkills interjection can ride here either. The one-shot `metadata` interjection
+    # still fires regardless of workspace trust, carrying the session start time and root.
     assert '<SystemInterjection subject="ProjectGuidance">' not in user_msgs[0].content
     assert "Be careful with tests." not in user_msgs[0].content
-    assert user_msgs[0].content == "do the task"
+    assert '<SystemInterjection subject="metadata">' in user_msgs[0].content
+    assert "The workspace root is" in user_msgs[0].content
+    assert user_msgs[0].content.endswith("do the task")
     assert session._context_files_seeded is True
+    assert session._metadata_seeded is True
 
 
 def test_send_turn_only_prepends_interjection_once(tmp_path: Path) -> None:

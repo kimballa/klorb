@@ -6,6 +6,7 @@
   "name": "anthropic/claude-sonnet-5",
   "family": "claude-sonnet",
   "model_version": "5.0",
+  "knowledge_cutoff": null,
   "settings": {},
   "cache_mgmt_style": "ANTHROPIC_AUTOMATIC",
   "capabilities": {

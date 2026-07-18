@@ -2,6 +2,16 @@
 
 # Bugs:
 
+* Why do so many models have trouble with the EditFile tool, specifically `end_text` ?
+  * Do not require end_text for single-line changes. start_line=end_line=N, start_text, new_text.
+  * For single-line changes, also accept just "line_num, old_text, new_text".
+  * For multi-line changes, also accept start_line, end_line, old_text, new_text.
+  * For multi-line changes, if end_text is missing and start_text is multi-lines, treat the
+    start_text as a multi-line "old_text" to fully match.
+  * When we have total-failure JSON calls it's often because of unmatched JSON delimiters
+    or improperly-escaped quotes or newlines. Specifically call that out as a possible issue.
+    Be precise about syntax issues.
+
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -24,7 +34,6 @@
 
 # Feature backlog
 
-* ActivateSkill.summary() should report the number of tokens loaded in the skill.md.
 * When adding skills list <SystemInterjection> we should notify the TUI how many tokens
   were used to compose a skills list.
 
@@ -37,14 +46,6 @@
   turn with several dozen tool uses, it may hit its output token limit and just
   cut itself off, with no indication to the user that the conversation has been
   abandoned and needs a nudge.
-
-* The SystemPrompt can include some dynamic information about the current state of things:
-  * Model name
-  * Model knowledge cutoff date
-  * Add a <SystemInterjection> into the 1st user message:
-    * Date/time the session started
-    * Workspace root name
-    * Maybe add the detailed `git log -1` including "`whatchanged`" filenames.
 
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it

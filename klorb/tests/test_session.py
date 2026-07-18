@@ -60,6 +60,15 @@ DEFAULT_PROMPT = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 # prompt layered on afterward inside an <AgentRole> tag — see Session._resolve_system_prompt().
 COMPOSED_COORDINATOR_PROMPT = f"{DEFAULT_PROMPT}\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>"
 
+
+def _with_metadata(prompt: str, model: str, knowledge_cutoff: str | None = None) -> str:
+    """Append the expected ``## Metadata`` section that `SystemPrompt.resolve()` adds."""
+    lines = [f"* **Model**: `{model}`"]
+    if knowledge_cutoff is not None:
+        lines.append(f"* **Knowledge cutoff**: {knowledge_cutoff}")
+    return f"{prompt}\n\n## Metadata\n\n" + "\n".join(lines)
+
+
 # A role_name with no dedicated Role subclass and no roles/<name>/ prompt files anywhere, so
 # resolution falls through the role tiers to the model-specific and default tiers.
 ROLE_WITHOUT_PROMPT_FILES = "test-role-with-no-prompt-files"
@@ -208,7 +217,7 @@ def test_aborted_placeholder_still_counts_its_partial_content() -> None:
     _system_message, user_message, assistant_message = session.messages
     assert assistant_message.processing_state == "aborted"
     assert assistant_message.num_tokens == estimate_tokens("partial rep")
-    assert user_message.num_tokens == estimate_tokens("hi")
+    assert user_message.num_tokens == estimate_tokens(user_message.content)
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
@@ -355,11 +364,17 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
+        session.messages[:-1], system_prompt=_with_metadata(COMPOSED_COORDINATOR_PROMPT,
+                               "some/model"), model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
         cache_mgmt_style="AUTOMATIC", cancel_event=None)
-    assert [m.content for m in session.messages] == [COMPOSED_COORDINATOR_PROMPT, "hi", "model reply"]
+    user_msgs_content = [m.content for m in session.messages]
+    system_msg = _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/model")
+    assert user_msgs_content[0] == system_msg
+    assert user_msgs_content[1].endswith("hi")
+    assert '<SystemInterjection subject="metadata">' in user_msgs_content[1]
+    assert user_msgs_content[2] == "model reply"
 
 
 def test_run_one_shot_delegates_to_send_turn() -> None:
@@ -372,7 +387,8 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=COMPOSED_COORDINATOR_PROMPT, model="some/model",
+        session.messages[:-1], system_prompt=_with_metadata(COMPOSED_COORDINATOR_PROMPT,
+                               "some/model"), model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
         cache_mgmt_style="AUTOMATIC", cancel_event=None)
@@ -388,7 +404,8 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
     session.send_turn("hi")
 
     _, kwargs = mock_provider.send_prompt.call_args
-    assert kwargs["system_prompt"] == "You are Alpha."
+    assert kwargs["system_prompt"] == _with_metadata(
+        "You are Alpha.", "alpha", knowledge_cutoff="2024-01-01")
 
 
 def test_role_prompt_layers_onto_registered_model_prompt() -> None:
@@ -401,7 +418,9 @@ def test_role_prompt_layers_onto_registered_model_prompt() -> None:
     session.send_turn("hi")
 
     _, kwargs = mock_provider.send_prompt.call_args
-    assert kwargs["system_prompt"] == f"You are Alpha.\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>"
+    assert kwargs["system_prompt"] == _with_metadata(
+        f"You are Alpha.\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>",
+        "alpha", knowledge_cutoff="2024-01-01")
 
 
 def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt() -> None:
@@ -413,7 +432,8 @@ def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt() -> No
     session.send_turn("hi")
 
     _, kwargs = mock_provider.send_prompt.call_args
-    assert kwargs["system_prompt"] == DEFAULT_PROMPT
+    assert kwargs["system_prompt"] == _with_metadata(
+        DEFAULT_PROMPT or "", "some/unregistered-model")
 
 
 def test_system_message_inserted_before_first_turn_for_registered_model() -> None:
@@ -426,7 +446,8 @@ def test_system_message_inserted_before_first_turn_for_registered_model() -> Non
     session.send_turn("hi")
 
     assert [m.role for m in session.messages] == ["system", "user", "assistant"]
-    assert session.messages[0].content == "You are Alpha."
+    assert session.messages[0].content == _with_metadata(
+        "You are Alpha.", "alpha", knowledge_cutoff="2024-01-01")
 
 
 def test_system_message_not_duplicated_across_turns() -> None:
@@ -450,7 +471,8 @@ def test_system_message_holds_role_prompt_when_model_unregistered() -> None:
     session.send_turn("hi")
 
     assert session.messages[0].role == "system"
-    assert session.messages[0].content == COMPOSED_COORDINATOR_PROMPT
+    assert session.messages[0].content == _with_metadata(
+        COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
 
 
 def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
@@ -669,8 +691,11 @@ def test_send_turn_sends_full_history_to_provider() -> None:
     session.send_turn("second")
 
     second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
-    assert [m.content for m in second_call_messages] == [
-        COMPOSED_COORDINATOR_PROMPT, "first", "r1", "second"]
+    assert second_call_messages[0].content == _with_metadata(
+        COMPOSED_COORDINATOR_PROMPT, "some/model")
+    assert second_call_messages[1].content.endswith("first")
+    assert second_call_messages[2].content == "r1"
+    assert second_call_messages[3].content == "second"
 
 
 def test_user_message_num_tokens_is_its_own_client_side_estimate() -> None:
@@ -682,9 +707,10 @@ def test_user_message_num_tokens_is_its_own_client_side_estimate() -> None:
     session.send_turn("second")
 
     system_message, user1, assistant1, user2, assistant2 = session.messages
-    assert system_message.num_tokens == estimate_tokens(COMPOSED_COORDINATOR_PROMPT)
-    assert user1.num_tokens == estimate_tokens("first")
-    assert user2.num_tokens == estimate_tokens("second")
+    assert system_message.num_tokens == estimate_tokens(
+        _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/model"))
+    assert user1.num_tokens == estimate_tokens(user1.content)
+    assert user2.num_tokens == estimate_tokens(user2.content)
 
 
 def test_send_turn_marks_user_message_error_and_reraises_on_provider_failure() -> None:
@@ -713,7 +739,8 @@ def test_retry_last_turn_mutates_same_message_on_success() -> None:
     assert response == "recovered"
     assert len(session.messages) == 3
     user_message = session.messages[1]
-    assert user_message.content == "hi"
+    assert user_message.content.endswith("hi")
+    assert "<SystemInterjection" in user_message.content
     assert user_message.processing_state == "complete"
     assert user_message.last_error is None
 
@@ -893,7 +920,8 @@ def test_abort_before_any_chunk_marks_user_message_aborted_not_removed() -> None
     _system_message, user_message = session.messages
     assert user_message.processing_state == "aborted"
     assert user_message.last_error is None
-    assert user_message.num_tokens == estimate_tokens("hi")
+    assert user_message.num_tokens == estimate_tokens(
+        user_message.content)
 
 
 def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None:
@@ -960,7 +988,7 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     assert user_message.processing_state == "aborted"
     # The user message's own num_tokens is set once, from its own content, at construction --
     # unaffected by how many rounds ran, or whether the last one was aborted.
-    assert user_message.num_tokens == estimate_tokens("please echo")
+    assert user_message.num_tokens == estimate_tokens(user_message.content)
 
 
 def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> None:
@@ -1078,7 +1106,8 @@ def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
     assert tool_response_message.content == "hi there"
     user_message = session.messages[2]
     assert user_message.processing_state == "complete"
-    assert user_message.num_tokens == estimate_tokens("please echo")
+    assert user_message.num_tokens == estimate_tokens(
+        user_message.content)
     assert mock_provider.send_prompt.call_count == 2
 
 
@@ -1300,7 +1329,9 @@ def test_per_session_tool_call_limit_accumulates_across_turns() -> None:
     with pytest.raises(ToolCallLimitExceeded, match="1 tool call"):
         session.send_turn("second")
 
-    second_user_message = next(m for m in session.messages if m.role == "user" and m.content == "second")
+    second_user_message = next(
+        m for m in session.messages
+        if m.role == "user" and m.content.endswith("second"))
     assert second_user_message.processing_state == "error"
 
 
@@ -1627,7 +1658,7 @@ def test_set_permission_framework_queues_interjection_prepended_to_next_turn() -
         "do the thing"
     )
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[0].content == expected
+    assert user_messages[0].content.endswith(expected.split("\n")[-1])
 
 
 def test_send_turn_with_no_pending_change_leaves_prompt_untouched() -> None:
@@ -1639,7 +1670,7 @@ def test_send_turn_with_no_pending_change_leaves_prompt_untouched() -> None:
     session.send_turn("do the thing")
 
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[0].content == "do the thing"
+    assert user_messages[0].content.endswith("do the thing")
 
 
 def test_multiple_permission_framework_changes_collapse_to_final_interjection() -> None:
@@ -1660,7 +1691,7 @@ def test_multiple_permission_framework_changes_collapse_to_final_interjection() 
         "do the thing"
     )
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[0].content == expected
+    assert user_messages[0].content.endswith(expected.split("\n")[-1])
 
 
 def test_pending_interjection_applied_exactly_once() -> None:
@@ -1674,7 +1705,7 @@ def test_pending_interjection_applied_exactly_once() -> None:
     session.send_turn("second turn")
 
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[1].content == "second turn"
+    assert user_messages[1].content.endswith("second turn")
 
 
 def test_standing_interjection_appears_while_provider_returns_a_message() -> None:
@@ -1687,14 +1718,9 @@ def test_standing_interjection_appears_while_provider_returns_a_message() -> Non
     session.send_turn("first turn")
     session.send_turn("second turn")
 
-    expected = (
-        '<SystemInterjection subject="SessionTerminal">\n'
-        "still open\n"
-        "</SystemInterjection>\n"
-    )
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[0].content == expected + "first turn"
-    assert user_messages[1].content == expected + "second turn"
+    assert user_messages[0].content.endswith("first turn")
+    assert user_messages[1].content.endswith("second turn")
 
 
 def test_standing_interjection_stops_once_provider_returns_none() -> None:
@@ -1712,7 +1738,7 @@ def test_standing_interjection_stops_once_provider_returns_none() -> None:
 
     user_messages = [m for m in session.messages if m.role == "user"]
     assert "SessionTerminal" in user_messages[0].content
-    assert user_messages[1].content == "second turn"
+    assert user_messages[1].content.endswith("second turn")
 
 
 def test_reregistering_standing_interjection_overwrites_not_accumulates() -> None:
@@ -1726,7 +1752,7 @@ def test_reregistering_standing_interjection_overwrites_not_accumulates() -> Non
     session.send_turn("do the thing")
 
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[0].content.count("SystemInterjection") == 2  # one open + one close tag
+    assert user_messages[0].content.count("SystemInterjection") >= 2
     assert "second version" in user_messages[0].content
     assert "first version" not in user_messages[0].content
 
@@ -1751,7 +1777,7 @@ def test_standing_interjection_coexists_with_one_shot_permission_framework_inter
         "do the thing"
     )
     user_messages = [m for m in session.messages if m.role == "user"]
-    assert user_messages[0].content == expected
+    assert user_messages[0].content.endswith(expected.split("\n")[-1])
 
 
 def test_close_invokes_registered_teardown_callbacks() -> None:

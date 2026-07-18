@@ -581,6 +581,13 @@ class Session:
         checked, even when there was nothing to prepend (workspace untrusted, or no applicable
         file exists on disk), so a later turn never re-reads the filesystem or re-prepends
         anything."""
+        self._metadata_seeded = False
+        """Whether `send_turn()` has already prepended the one-shot `Metadata`
+        `<SystemInterjection>` carrying the session start time and workspace root name onto
+        the very first turn's prompt. Set unconditionally the first time it's checked."""
+        self._session_started_at = datetime.now()
+        """Timestamp recorded at session construction, used as the session's start time in the
+        one-shot `Metadata` interjection prepended to the first user message."""
         self._pending_permission_framework_interjection: str | None = None
         """Set by `set_permission_framework()` to the harness message queued for the next
         `send_turn()` call to prepend onto its `prompt`, or `None` if no permission-framework
@@ -1852,6 +1859,9 @@ class Session:
         unconditionally, so this never runs again for the rest of the `Session`'s lifetime,
         matching every other one-shot interjection's "fires once" contract — see
         docs/specs/workspace-context-files.md.
+
+        On the first turn only, a one-shot `metadata` interjection carrying the session
+        start time and workspace root name is also prepended (see `self._metadata_seeded`).
         """
         original_prompt = prompt
         if self._pending_permission_framework_interjection is not None:
@@ -1884,6 +1894,15 @@ class Session:
             project_guidance = self._build_context_files_interjection()
             if project_guidance is not None:
                 prompt = f"{_wrap_system_interjection('ProjectGuidance', project_guidance)}\n{prompt}"
+        if not self._metadata_seeded:
+            self._metadata_seeded = True
+            started_at = self._session_started_at.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+            workspace_root = str(self.config.workspace.path)
+            metadata_body = (
+                f"The session began at {started_at}.\n"
+                f"The workspace root is `{workspace_root}`."
+            )
+            prompt = f"{_wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
         user_message = Message(
             content=prompt,
             role="user",

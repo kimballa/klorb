@@ -88,6 +88,8 @@ def test_activate_allow_returns_content_and_manifest(tmp_path: Path) -> None:
     assert result["name"] == "s"
     assert "step one" in result["content"]
     assert result["files"] == ["SKILL.md", "ref.md"]
+    assert isinstance(result["tokens"], int)
+    assert result["tokens"] > 0
 
 
 def test_activate_deny_raises_permission_error(tmp_path: Path) -> None:

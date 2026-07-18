@@ -6,6 +6,7 @@
   "name": "moonshotai/kimi-k2.7-code",
   "family": "kimi-code",
   "model_version": "2.7",
+  "knowledge_cutoff": null,
   "settings": {
     "temperature": 0.2
   },

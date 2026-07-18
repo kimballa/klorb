@@ -6,6 +6,7 @@
   "name": "openai/gpt-oss-120b:nitro",
   "family": "gpt-oss",
   "model_version": "120b",
+  "knowledge_cutoff": "2024-06-30",
   "settings": {
     "temperature": 0.2
   },

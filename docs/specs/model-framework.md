@@ -48,6 +48,10 @@ OpenRouter's public models listing.
     with version `"5"` — so these tease the two apart, letting a caller detect that e.g.
     `"anthropic/claude-sonnet-5"` and a future `"anthropic/claude-sonnet-5.1"` share a
     family even though their full names differ.
+  * `knowledge_cutoff() -> str | None`, a concrete method returning `None` by default: the
+    model's training data cutoff as an ISO-8601 date string (e.g. `"2024-06-30"`), taken
+    verbatim from OpenRouter's `/models` listing's own `knowledge_cutoff` field, or `None`
+    when OpenRouter doesn't publish one for that model.
   * `klorb_capabilities() -> dict[str, Any]`, a concrete method returning `{}` by default.
     Distinct from `capabilities()`'s raw provider-reported facts, these are klorb-curated
     flags (e.g. `{"BASH_SAFETY_EVAL": True}`) naming tasks a model is especially suited for,
@@ -76,6 +80,7 @@ OpenRouter's public models listing.
     "name": "anthropic/claude-sonnet-5",
     "family": "claude-sonnet",
     "model_version": "5.0",
+    "knowledge_cutoff": null,
     "settings": {"temperature": 0.2},
     "capabilities": {
       "vision": true,
@@ -92,7 +97,9 @@ OpenRouter's public models listing.
   ```
 
   `drop_reasoning` is optional, defaulting to `false` when omitted — every packaged model
-  today omits it. There is no `pricing` field — see
+  today omits it. `knowledge_cutoff` is likewise optional, defaulting to `null`/`None` when
+  omitted or when OpenRouter doesn't publish a cutoff for that model — most packaged models
+  today have it set to `null` for this reason. There is no `pricing` field — see
   [[fetch-model-pricing-live-not-from-json]]. Every JSON
   key besides `schema` uses the same snake_case as the `Model.capabilities()`/
   `klorb_capabilities()` dicts it's read into (rather than the dot-delineated lowerCamelCase

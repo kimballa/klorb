@@ -21,6 +21,7 @@ class _ConfiguredModelData(BaseModel):
     name: str
     family: str | None = None
     model_version: str | None = None
+    knowledge_cutoff: str | None = None
     settings: dict[str, Any] = {}
     capabilities: dict[str, Any] = {}
     klorb_capabilities: dict[str, Any] = {}
@@ -59,6 +60,9 @@ class ConfiguredModel(Model):
 
     def model_version(self) -> str | None:
         return self._data.model_version
+
+    def knowledge_cutoff(self) -> str | None:
+        return self._data.knowledge_cutoff
 
     def klorb_capabilities(self) -> dict[str, Any]:
         return self._data.klorb_capabilities

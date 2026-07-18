@@ -6,6 +6,7 @@
   "name": "qwen/qwen3.7-plus",
   "family": "qwen",
   "model_version": "3.7",
+  "knowledge_cutoff": null,
   "settings": {
     "temperature": 0.2
   },

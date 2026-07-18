@@ -71,6 +71,19 @@ def test_family_and_model_version_read_from_data() -> None:
     assert model.model_version() == "5.0"
 
 
+def test_knowledge_cutoff_defaults_to_none() -> None:
+    model = ConfiguredModel({"name": "some/model"}, source="test")
+
+    assert model.knowledge_cutoff() is None
+
+
+def test_knowledge_cutoff_reads_from_data() -> None:
+    model = ConfiguredModel(
+        {"name": "openai/gpt-5-nano", "knowledge_cutoff": "2024-05-31"}, source="test")
+
+    assert model.knowledge_cutoff() == "2024-05-31"
+
+
 def test_klorb_capabilities_defaults_to_an_empty_dict() -> None:
     model = ConfiguredModel({"name": "some/model"}, source="test")
 

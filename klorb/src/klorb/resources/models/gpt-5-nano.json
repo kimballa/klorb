@@ -6,6 +6,7 @@
   "name": "openai/gpt-5-nano",
   "family": "gpt-nano",
   "model_version": "5.0",
+  "knowledge_cutoff": "2024-05-31",
   "settings": {
     "temperature": 0.2
   },

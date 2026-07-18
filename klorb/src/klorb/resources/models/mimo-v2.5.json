@@ -6,6 +6,7 @@
   "name": "xiaomi/mimo-v2.5",
   "family": "mimo",
   "model_version": "2.5",
+  "knowledge_cutoff": null,
   "settings": {
     "temperature": 0.2
   },

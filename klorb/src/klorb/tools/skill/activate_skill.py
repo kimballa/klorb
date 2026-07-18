@@ -5,6 +5,7 @@ into the model's context, gated by the skill's `skillRules` verdict."""
 import logging
 from typing import Any
 
+from klorb.token_estimate import estimate_tokens
 from klorb.tools.skill.common import (
     NAMESPACE_SCHEMA_PROPERTY,
     read_skill_md,
@@ -83,6 +84,7 @@ class ActivateSkillTool(Tool):
             "name": resolved.name,
             "content": content,
             "files": files,
+            "tokens": estimate_tokens(content) if content else 0,
         }
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
@@ -93,9 +95,12 @@ class ActivateSkillTool(Tool):
         if not isinstance(result, dict):
             return f"Activate skill: {namespace}/{name}"
         file_count = len(result.get("files", []))
+        content = result.get("content", "")
+        tokens = estimate_tokens(content) if content else 0
         return (
             f"Activate skill: {result.get('namespace', namespace)}/{result.get('name', name)} "
-            f"({file_count} file{'s' if file_count != 1 else ''})"
+            f"({file_count} file{'s' if file_count != 1 else ''}, {tokens} token"
+            f"{'s' if tokens != 1 else ''})"
         )
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:

@@ -6,6 +6,7 @@
   "name": "z-ai/glm-5.2",
   "family": "glm",
   "model_version": "5.2",
+  "knowledge_cutoff": null,
   "settings": {
     "temperature": 0.2
   },

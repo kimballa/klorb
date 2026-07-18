@@ -72,6 +72,11 @@ class Model(ABC):
         unknown. See `family()`."""
         return None
 
+    def knowledge_cutoff(self) -> str | None:
+        """Return this model's training data knowledge cutoff date as an ISO-8601 date
+        string (e.g. `"2024-06-30"`), or `None` if unknown/unpublished."""
+        return None
+
     def klorb_capabilities(self) -> dict[str, Any]:
         """Return a dict of klorb-curated capability flags for this model — e.g.
         `{"BASH_SAFETY_EVAL": True}` — distinct from `capabilities()`'s raw provider-reported
