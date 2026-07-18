@@ -120,6 +120,36 @@ def test_insert_into_empty_file_rejects_nonzero_end_line(tmp_path: Path) -> None
         })
 
 
+def test_insert_into_empty_file_with_end_text_omitted(tmp_path: Path) -> None:
+    """end_text is schema-optional everywhere else in the single-line-shortcut path, so the
+    legacy empty-file insert convention must accept it omitted too, not just explicitly ""."""
+    file_path = _write(tmp_path, "sample.txt", "")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1, "end_line": 0,
+        "start_text": "", "new_text": "hello\nworld",
+    })
+
+    assert file_path.read_text() == "hello\nworld\n"
+    assert result["new_total_lines"] == 2
+
+
+def test_empty_anchors_do_not_bypass_anchor_verification_on_a_non_empty_file(tmp_path: Path) -> None:
+    """The legacy-empty-insert carve-out is keyed on start_line=1/end_line=0, not merely on
+    start_text/end_text being empty -- otherwise a multi-line span with blank lines at both
+    endpoints would skip anchor verification entirely and silently delete its (non-blank)
+    interior. Regression test for that data-loss bug."""
+    file_path = _write(tmp_path, "sample.txt", "\nIMPORTANT-A\nIMPORTANT-B\n\n")
+
+    with pytest.raises(ValueError, match="Omit-end_text is only for single-line edits"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 4,
+            "start_text": "", "end_text": "", "new_text": "REPLACED",
+        })
+
+    assert file_path.read_text() == "\nIMPORTANT-A\nIMPORTANT-B\n\n"
+
+
 def test_whole_file_replacement(tmp_path: Path) -> None:
     file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
 
@@ -669,6 +699,26 @@ def test_boolean_line_number_raises(tmp_path: Path) -> None:
         })
 
 
+def test_non_string_start_text_raises_a_named_value_error(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match=r"start_text must be a string, got 123"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 1,
+            "start_text": 123, "end_text": "a", "new_text": "x",
+        })
+
+
+def test_non_string_end_text_raises_a_named_value_error(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match=r"end_text must be a string, got 123"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 1,
+            "start_text": "a", "end_text": 123, "new_text": "x",
+        })
+
+
 def test_multiline_start_text_truncates_to_first_line(tmp_path: Path) -> None:
     file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
 
@@ -803,6 +853,37 @@ def test_old_text_with_start_line_and_matching_alias_is_not_a_conflict(tmp_path:
     assert "feedback" not in result
 
 
+@pytest.mark.parametrize("alias", ["line", "line_num", "line_no", "line_number"])
+def test_line_hint_aliases_also_work_outside_old_text_mode(tmp_path: Path, alias: str) -> None:
+    """Line-hint aliases are schema-legal on every call, not just old_text ones -- the classic
+    start_text/end_text form must honor them too, not silently ignore them (contrast with
+    test_old_text_accepts_line_hint_aliases, which covers the old_text form). end_line still
+    has no alias of its own, so it's supplied explicitly here -- only the start-line hint is
+    substitutable."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), alias: 2, "end_line": 2,
+        "start_text": "b", "end_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert result["feedback"] == [f"the line hint is start_line; {alias!r} was accepted this time."]
+
+
+@pytest.mark.parametrize("alias", ["line", "line_num", "line_no", "line_number"])
+def test_line_hint_aliases_also_work_with_single_line_shortcut(tmp_path: Path, alias: str) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), alias: 2, "end_line": 2,
+        "start_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert result["feedback"] == [f"the line hint is start_line; {alias!r} was accepted this time."]
+
+
 def test_old_text_relocates_within_drift_radius(tmp_path: Path) -> None:
     file_path = _write(tmp_path, "sample.txt", "p\nq\nr\ns\nt\nu\n")
 
@@ -884,7 +965,7 @@ def test_neither_old_text_nor_start_text_raises(tmp_path: Path) -> None:
 def test_no_line_hint_in_any_spelling_raises(tmp_path: Path) -> None:
     file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
 
-    with pytest.raises(ValueError, match="Missing required argument: 'start_line'"):
+    with pytest.raises(ValueError, match="Missing required argument: provide 'start_line'"):
         EditFileTool(_context(tmp_path)).apply({
             "filename": str(file_path), "start_text": "b", "end_text": "b", "new_text": "B",
         })
@@ -982,14 +1063,14 @@ def test_name_and_parameters(tmp_path: Path) -> None:
     parameters = tool.parameters()
 
     assert tool.name() == "EditFile"
-    assert set(parameters["required"]) == {"filename", "start_line", "new_text"}
+    assert set(parameters["required"]) == {"filename", "new_text"}
     assert {
         "context_before", "context_after", "old_text", "line", "line_num", "line_no",
-        "line_number", "start_text", "end_text", "end_line",
+        "line_number", "start_text", "end_text", "end_line", "start_line",
     } <= set(parameters["properties"])
     assert not {
         "context_before", "context_after", "old_text", "line", "line_num", "line_no",
-        "line_number", "start_text", "end_text", "end_line",
+        "line_number", "start_text", "end_text", "end_line", "start_line",
     } & set(parameters["required"])
 
 
@@ -1120,6 +1201,31 @@ def test_summary_on_failure_includes_the_error_and_still_computes_the_diff_count
     }
 
     assert tool.summary(args, error="not found") == "Edit file: missing.txt (+1/-1) failed: not found"
+
+
+def test_summary_reports_the_diff_count_for_old_text_without_end_line(tmp_path: Path) -> None:
+    """end_line is legitimately absent from args for an old_text call that lets it be inferred
+    -- summary() must recover the diff count from result's requested_end_line rather than
+    silently dropping it (regression test: this used to fail isinstance(end_line, int))."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "start_line": 2, "old_text": "b\nc", "new_text": "B\nC\nD"}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Edit file: {file_path} (+3/-2)"
+
+
+def test_summary_reports_the_diff_count_for_a_line_hint_alias(tmp_path: Path) -> None:
+    """start_line is legitimately absent from args for a line-hint-alias call -- summary() must
+    recover the diff count from result's requested_start_line rather than silently dropping it."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "line_no": 2, "old_text": "b", "new_text": "B"}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == f"Edit file: {file_path} (+1/-1)"
 
 
 def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path) -> None:

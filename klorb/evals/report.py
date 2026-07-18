@@ -52,6 +52,12 @@ def render_case_detail(result: CaseResult, *, color: bool) -> str:
     pass/fail status line) — the same detail `run_evals`'s per-case progress printer shows as
     each case finishes, factored out here so it can also be written verbatim (with `color=False`)
     to `evals.log` for cases that failed or conditionally passed.
+
+    A FAILed case's `error`/`failure_reason` is included (same precedence as `render_report()`:
+    `error` first, since it means `check()` never ran at all, then `failure_reason`, then
+    `soft_failure_reason`) — `evals.log` is the transcript `run_evals.py --self-review` feeds
+    back to a model asked to diagnose *why* cases failed, so this detail is exactly what that
+    diagnosis needs.
     """
     lines: list[str] = []
     for entry in result.tool_call_log:
@@ -61,7 +67,11 @@ def render_case_detail(result: CaseResult, *, color: bool) -> str:
         lines.append(colorize(f"  <- {entry.response}", response_color, enabled=color))
     lines.append(f"- **Tool call counts**: {result.num_tool_calls} {result.tool_call_counts}")
     lines.append(f"- **Generated tokens (est.)**: {result.generated_tokens}")
-    if result.soft_failure_reason is not None:
+    if result.error is not None:
+        lines.append(f"- **Error**: {result.error}")
+    elif result.failure_reason is not None:
+        lines.append(f"- **Failure reason**: {result.failure_reason}")
+    elif result.soft_failure_reason is not None:
         lines.append(f"- **Soft-check reason**: {result.soft_failure_reason}")
     status = status_label(result, color=color)
     lines.append(f"  [{status}] {result.name} ({result.duration_s:.2f}s)")

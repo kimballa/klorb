@@ -189,8 +189,9 @@ def test_name_and_parameters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     parameters = tool.parameters()
 
     assert tool.name() == "EditMemory"
-    assert set(parameters["required"]) == {"namespace", "filename", "start_line", "new_text"}
+    assert set(parameters["required"]) == {"namespace", "filename", "new_text"}
     assert "old_text" in parameters["properties"]
+    assert "start_line" not in parameters["required"]
 
 
 def test_old_text_form_is_wired_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

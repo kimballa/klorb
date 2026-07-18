@@ -52,7 +52,7 @@ class EditFileTool(Tool):
                 },
                 **self.edit_file_core.parameter_properties(),
             },
-            "required": ["filename", "start_line", "new_text"],
+            "required": ["filename", "new_text"],
             "additionalProperties": False,
         }
 
@@ -82,13 +82,20 @@ class EditFileTool(Tool):
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts are computed from
-        the call's own `start_line`/`end_line`/`new_text` args (not `result`), so the summary
-        is identical on success and failure and unaffected by drift relocation, which preserves
-        the requested span's length.
+        `start_line`/`end_line`/`new_text` -- preferring `result`'s `requested_start_line`/
+        `requested_end_line` (the call's line hint after normalization: alias-resolved, and, for
+        an `old_text` call that omitted `end_line`, inferred from its line count) when a `result`
+        is available, and falling back to the call's own raw args otherwise (a failed call has
+        no `result`, and `_normalize_edit_args()` may have raised before resolving either value).
+        Unaffected by drift relocation either way, which preserves the requested span's length.
         """
         filename = args.get("filename", "?")
         diff = ""
-        start_line, end_line, new_text = args.get("start_line"), args.get("end_line"), args.get("new_text")
+        if isinstance(result, dict):
+            start_line, end_line = result.get("requested_start_line"), result.get("requested_end_line")
+        else:
+            start_line, end_line = args.get("start_line"), args.get("end_line")
+        new_text = args.get("new_text")
         if isinstance(start_line, int) and isinstance(end_line, int) and isinstance(new_text, str):
             removed = end_line - start_line + 1
             added = new_text.count("\n") + 1 if new_text else 0

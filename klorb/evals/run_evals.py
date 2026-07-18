@@ -4,6 +4,7 @@ markdown report. See docs/specs/tool-eval-harness.md.
 """
 
 import argparse
+import logging
 import os
 import shutil
 import sys
@@ -23,6 +24,8 @@ from .cases import CASES
 from .colors import colorize, use_color
 from .harness import CaseResult, run_evaluation, tool_token_counts
 from .report import render_case_detail, render_report, render_summary
+
+logger = logging.getLogger(__name__)
 
 EVAL_MODEL_ENV_VAR = "KLORB_EVAL_MODEL"
 EVAL_LOG_PATH = Path("evals.log")
@@ -115,10 +118,12 @@ def _run_self_review(*, model: str, provider: OpenRouterApiProvider, log_path: P
         workspace=Workspace(path=Path.cwd(), trusted=True))
     review_dir = create_tempdir_for_session(session_config, remove_on_exit=True)
     copied_log = review_dir / log_path.name
+    logger.debug("Copying eval log %s to scratch tempdir as %s for self-review", log_path, copied_log)
     shutil.copy(log_path, copied_log)
 
     tool_registry = ToolRegistry(ProcessConfig(), session_config, package=tools_package)
     session = Session(session_config, provider=provider, tool_registry=tool_registry)
+    logger.debug("Spawning self-review session on model %r", model)
     return session.send_turn(_SELF_REVIEW_PROMPT_TEMPLATE.format(log_path=copied_log))
 
 

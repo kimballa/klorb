@@ -172,8 +172,9 @@ def test_name_and_parameters(tmp_path: Path) -> None:
     parameters = tool.parameters()
 
     assert tool.name() == "EditScratchpad"
-    assert set(parameters["required"]) == {"start_line", "new_text"}
+    assert set(parameters["required"]) == {"new_text"}
     assert "old_text" in parameters["properties"]
+    assert "start_line" not in parameters["required"]
     assert "filename" not in parameters["properties"]
 
 
