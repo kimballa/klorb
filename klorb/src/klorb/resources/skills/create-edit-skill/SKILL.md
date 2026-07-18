@@ -1,26 +1,38 @@
 ---
 description: >
   How to author or edit a klorb skill: pick the right tier directory, escalate privileges for
-  it, then create or edit SKILL.md (and any supporting files) with the ordinary file tools.
-  Use when the user asks to write, add, change, or fix a skill.
+  it if needed, then create or edit SKILL.md (and any supporting files) with the ordinary file
+  tools. Use when the user asks to write, add, change, or fix a skill.
 ---
 
 # Creating and editing a klorb skill
 
 A skill is a directory whose basename is its `name` (a lower-kebab-case slug), containing at
 minimum a `SKILL.md`. There is no `CreateSkill`/`EditSkill` tool: a skill is authored with the
-ordinary `EscalatePrivileges` + `CreateFile`/`EditFile`/`ReadFile` tools, because a skill
-directory lives inside a privileged directory the file tools are otherwise hard-blocked from.
+ordinary `CreateFile`/`EditFile`/`ReadFile` tools, preceded by `EscalatePrivileges` whenever the
+tier directory is one of the privileged ones those tools are otherwise hard-blocked from
+(`.klorb/skills/` and the user tier, but not `.claude/skills/` — see step 3).
 
 ## 1. Pick the tier and directory
 
 A skill lives in one of two writable tiers (the third, `internal`, ships inside klorb and is not
 authored at runtime):
 
-* **workspace** — `${workspaceRoot}/.klorb/skills/<name>/` — a skill specific to this project.
-  Only discoverable when the workspace is trusted.
+* **workspace** — a skill specific to this project. Only discoverable when the workspace is
+  trusted. Lives in one of two source directories, both sharing the same `workspace` namespace:
+  * `${workspaceRoot}/.klorb/skills/<name>/` — klorb's own convention.
+  * `${workspaceRoot}/.claude/skills/<name>/` — Claude Code's convention, discovered as a second
+    source for `workspace` skills when `compatibility.claudeSkills` is enabled (see
+    docs/specs/skills.md's "Claude-skills compatibility").
 * **user** — `$KLORB_DATA_DIR/skills/<name>/` (default `~/.local/share/klorb/skills/`) — a skill
   available to you across every workspace.
+
+**When creating a *new* workspace-tier skill**, check whether `${workspaceRoot}/.claude/skills/`
+already exists. If it does, ask the user whether to store the new skill there or under
+`.klorb/skills/` — the repo has already committed to a convention by having that directory, and
+only the user knows whether to stay consistent with it or start using klorb's own convention going
+forward. If `.claude/skills/` does not exist, just use `.klorb/skills/` without asking. When
+*editing* an existing skill, use whichever directory it already lives in — there's nothing to ask.
 
 The directory basename **is** the skill's `name`; there is no `name` field in the frontmatter to
 keep in sync with it. Use a lower-kebab-case slug with no path separators.
@@ -47,11 +59,15 @@ instructions point it at them.
 
 ## 3. Escalate privileges for the tier
 
-The file tools hard-block writes into privileged directories, so escalate first:
+The file tools hard-block writes into privileged directories, so escalate first — except
+`.claude/skills/`, which isn't privileged:
 
-* **workspace tier:** call `EscalatePrivileges(scope="workspace")`. In a trusted workspace this
-  lifts the `.klorb/` block, and the trusted workspace's own `writeDirs.allow` already covers
+* **`.klorb/skills/...`:** call `EscalatePrivileges(scope="workspace")`. In a trusted workspace
+  this lifts the `.klorb/` block, and the trusted workspace's own `writeDirs.allow` already covers
   `.klorb/skills/`, so no further approval is needed.
+* **`.claude/skills/...`:** not inside `.klorb/`, so it's an ordinary project directory gated by
+  the regular `writeDirs` rules, not the hard block. No `EscalatePrivileges` call — write it with
+  the plain file tools like any other workspace file, subject to the normal ask/allow flow.
 * **user tier:** call `EscalatePrivileges(scope="homedir")`. Approving it grants session-level
   read/write access to `$KLORB_DATA_DIR` (and the other klorb home directories) so the file tools
   can write beneath `$KLORB_DATA_DIR/skills/`.
