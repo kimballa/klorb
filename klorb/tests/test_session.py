@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import fixtures.sample_tools as sample_tools_package
 import pytest
+import yaml
 from fixtures.sample_models import NO_SUCH_DIR, sample_model_registry
 
 from klorb import process_config as process_config_module
@@ -61,12 +62,23 @@ DEFAULT_PROMPT = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 COMPOSED_COORDINATOR_PROMPT = f"{DEFAULT_PROMPT}\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>"
 
 
-def _with_metadata(prompt: str, model: str, knowledge_cutoff: str | None = None) -> str:
+def _with_metadata(
+    prompt: str,
+    model: str,
+    knowledge_cutoff: str | None = None,
+    claude_markdown: bool = False,
+    claude_skills: bool = False,
+) -> str:
     """Append the expected ``## Metadata`` section that `SystemPrompt.resolve()` adds."""
-    lines = [f"* **Model**: `{model}`"]
+    metadata: dict[str, Any] = {"model": model}
     if knowledge_cutoff is not None:
-        lines.append(f"* **Knowledge cutoff**: {knowledge_cutoff}")
-    return f"{prompt}\n\n## Metadata\n\n" + "\n".join(lines)
+        metadata["knowledgeCutoff"] = knowledge_cutoff
+    metadata["config"] = {
+        "compatibility.claudeMarkdown": claude_markdown,
+        "compatibility.claudeSkills": claude_skills,
+    }
+    yaml_str = yaml.safe_dump(metadata, sort_keys=False)
+    return f"{prompt}\n\n## Metadata\n\n```yaml\n{yaml_str}```"
 
 
 # A role_name with no dedicated Role subclass and no roles/<name>/ prompt files anywhere, so

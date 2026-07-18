@@ -34,6 +34,10 @@
 
 * Have an agent do a pass over all/most source (or do it in sections) to remove existing over-explaining comments that recapitulate decisions already captured in ADRs, explain what a function _doesn't_ do, is overly-specific specific and brittle, etc. 
 
+* Find a markdown linter and wire it into `make lint` for all the `.md` files under
+  `klorb.resources` (packaged skills, system prompts, etc.), so malformed frontmatter or broken
+  formatting in a packaged `SKILL.md`/prompt file gets caught in CI instead of at read time.
+
 # Feature backlog
 
 * When adding skills list <SystemInterjection> we should notify the TUI how many tokens
@@ -105,7 +109,11 @@
 
 * Skills in <built-in-skills-dir>, ~/.klorb/skills, projRoot/.klorb/skills/
     * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
-    * If `compatibility.claudeSkills` is true, include projRoot/.claude/skills/
+    * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
+      privileged directory requiring `EscalatePrivileges(scope="workspace")` the same as
+      `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
+      into a directory klorb itself trusts and auto-discovers deserves the same escalation
+      klorb's own skills directory gets.
 * Integrate with chainlink for todo tracking
     * TodoList tool
     * TodoWrite tool

@@ -511,7 +511,7 @@ class Session:
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
-        self._system_prompt = SystemPrompt(config, self._role, self._model_registry)
+        self._system_prompt = SystemPrompt(config, self._role, self._model_registry, process_config)
         self._process_config = process_config
         """The `ProcessConfig` this session was constructed with, or `None`. Kept around (beyond
         the fields already pulled out of it above) so `_retry_after_permission_decision` can
