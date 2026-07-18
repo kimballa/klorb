@@ -35,10 +35,12 @@
   abandoned and needs a nudge.
 
 * The SystemPrompt can include some dynamic information about the current state of things:
-  * Date/time the session started
   * Model name
   * Model knowledge cutoff date
-  * Maybe add the detailed `git log -1` including "`whatchanged`" filenames.
+  * Add a <SystemInterjection> into the 1st user message:
+    * Date/time the session started
+    * Workspace root name
+    * Maybe add the detailed `git log -1` including "`whatchanged`" filenames.
 
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
@@ -100,6 +102,16 @@
 * Integrate with chainlink for todo tracking
     * TodoList tool
     * TodoWrite tool
+* Add tips/suggestions:
+  * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
+    compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
+* Improve Workspace trust msg:
+  * When querying about workspace trust, list any workspace skills auto-allowed by config.
+
+* Eventually when we have a lot of skills, the skill list that is auto-advertised in the
+  initial SystemInterjection should be pruned and only display some top most-relevant
+  skills or most-frequently-used skills. Let the agent discover others via SearchSkills.
+
 
 * Subagent spawning
   * When an agent spawns a subagent for a different role, the subagent gets a new child

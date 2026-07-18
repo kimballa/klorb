@@ -46,7 +46,7 @@ The Klorb project is organized as a collection of subprojects:
   whatsoever (so that the VSCode plugin, or other mechanisms, can use it too). The CLI is
   included in the same python packages as the library logic for convenience and harmonized
   dependencies, but none of the agentic stuff should be directly intertwined in the CLI side.
-* `vscode-plugin` - Plugin for VSCode to use the Klorb harness.
+* `vscode-plugin` - Plugin for VSCode to use the Klorb harness. (Not yet implemented)
 
 # rules for development
 
@@ -122,14 +122,15 @@ The Klorb project is organized as a collection of subprojects:
 
 ## Important SDLC CI/CD commands
 
-Always run lint, typecheck, and test through the Makefile. Don't freelance with pyflakes
-or pytest.
+*Always* run lint, typecheck, and test through the Makefile. Do not run pyflakes, mypy,
+or pytest directly!
 
 Here are the officially-sanctioned CI commands:
 
 * use `make lint` for linting.
 * use `make typecheck` for typechecking.
 * use `make test` to invoke test suites.
+* These are run in the `klorb/` subdir, or from the root with `make -C klorb <target>`
 
 ## Import Rules
 
@@ -138,6 +139,7 @@ Here are the officially-sanctioned CI commands:
 * If possible, put imports at the top of the file or module. Do not use
   inline imports within a method body unless absolutely required to break
   a detected circular import.
+* Use `isort`-compatible import order
 
 ## Cloud / Remote Agent Behavior
 
@@ -161,7 +163,7 @@ The following are **critical** instructions for invoking shell commands:
   approved bash shell commands.
 * All the commands necessary to perform the full software development / test / review loop
   are already pre-approved. You should not need per-tool-call approval from the user.
-* Do not pipe the output of one command directly to another; doing so voids prior approval.
+* Do not pipe the output of one command directly to another; doing so can void prior approval.
   (The following are examples of forbidden patterns: `command1 | grep <pattern>` or
   `command1 | jq <expr>`). Direct the output of `command1` in each case into a temp file
   and then read it into the second command from the file.
@@ -189,5 +191,5 @@ Examples of BAD bash commands:
 When you make up complex commands, you waste more time waiting for user approval than if
 you had just stuck to using the pre-approved "make" commands, even if `make test`, etc,
 would run a larger number of tests or typecheck more files than an alternative you can
-generate.  CPU time is fast. User effort is slow. The user is very sad when you make him
+generate. CPU time is fast. User effort is slow. The user is very sad when you make him
 proofread bash statements if a clean alternative was already provided for you.
