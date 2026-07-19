@@ -2,16 +2,6 @@
 
 # Bugs:
 
-* Why do so many models have trouble with the EditFile tool, specifically `end_text` ?
-  * Do not require end_text for single-line changes. start_line=end_line=N, start_text, new_text.
-  * For single-line changes, also accept just "line_num, old_text, new_text".
-  * For multi-line changes, also accept start_line, end_line, old_text, new_text.
-  * For multi-line changes, if end_text is missing and start_text is multi-lines, treat the
-    start_text as a multi-line "old_text" to fully match.
-  * When we have total-failure JSON calls it's often because of unmatched JSON delimiters
-    or improperly-escaped quotes or newlines. Specifically call that out as a possible issue.
-    Be precise about syntax issues.
-
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -29,7 +19,9 @@
   ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
   done by Textual's draw-over algorithm? This may not be fixable.
 
-* Have an agent do a pass over all/most source (or do it in sections) to remove existing over-explaining comments that recapitulate decisions already captured in ADRs, explain what a function _doesn't_ do, is overly-specific specific and brittle, etc. 
+* Have an agent do a pass over all/most source (or do it in sections) to remove existing
+  over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
+  function _doesn't_ do, is overly-specific specific and brittle, etc.
 
 * Find a markdown linter and wire it into `make lint` for all the `.md` files under
   `klorb.resources` (packaged skills, system prompts, etc.), so malformed frontmatter or broken
@@ -39,18 +31,24 @@
 
 * Change "Coordinator" agent role name to "Operator".
 
-* operator system prompt with how-to-work loop should explicitly encourage it to consider available skills when choosing how to perform a user's request when processing a user turn.
+* operator system prompt with how-to-work loop should explicitly encourage it to consider available
+  skills when choosing how to perform a user's request when processing a user turn.
 
-* Get session name from a nano LLM, based on the first user prompt. Return both a "title" for the user and a kebab-case slug of up to 4 words.
+* Get session name from a nano LLM, based on the first user prompt. Return both a "title" for the
+  user and a kebab-case slug of up to 4 words.
   * use that for session id instead of "exuberant-turkey" or whatever.
   * fall back to the random slug only if nano LLM unavailable.
   * add a NANO_CLASSIFIER flag to the model klorb_capabilities dict.
-  * tui should show the session name on a line between the message input and the footer: "Session: (title)". If we're just starting cold, it should say "New session..."
+  * tui should show the session name on a line between the message input and the footer: "Session:
+    (title)". If we're just starting cold, it should say "New session..."
 
-* If the user prompt msg mentions the word "skill" or "/skill", add a system interjection observing that fact and suggesting to the agent that it consider which skills might apply to this request and reminding it about SearchSkills.
+* If the user prompt msg mentions the word "skill" or "/skill", add a system interjection observing
+  that fact and suggesting to the agent that it consider which skills might apply to this request
+  and reminding it about SearchSkills.
 
 * When adding skills list <SystemInterjection> we should notify the TUI or log file how many tokens
-  were used to compose a skills list.
+
+* Yes/No or Yes/No/Cancel modals should accept 'y' and 'n' hotkeys.
 
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.
@@ -72,7 +70,7 @@
 * CLI subcommand: `klorb show-config` should show the merged config from all the json files it loads.
 
 * Each per-project subdir in `.local/share/klorb/...` should include a `logs` subdir with symlinks
-  to all the log files in `.local/state/ associated w/ the project. Really the other way around: put the true logs in the per project folders and symlink from a common place. Then the log roll reaper could start from the common symlink side when picking things to remove and also clean up dead symlinks. 
+  to all the log files in `.local/state/ associated w/ the project. Really the other way around: put the true logs in the per project folders and symlink from a common place. Then the log roll reaper could start from the common symlink side when picking things to remove and also clean up dead symlinks.
 
 * Risk classifier (risk_classifier.py) "Command comments to review must not be trusted" instructions
   should be put in an eval that judges how well the model resists malicious prompt input.
