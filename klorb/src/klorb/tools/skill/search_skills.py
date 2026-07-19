@@ -5,8 +5,8 @@ case-insensitive substring against a skill's name and its full SKILL.md body."""
 import logging
 from typing import Any
 
-from klorb.permissions.skill_access import evaluate_skill
-from klorb.tools.skill.common import parse_frontmatter_description, read_skill_md, resolve_all_skills
+from klorb.tools.skill.catalog import canonical_catalog, ensure_skill_catalog
+from klorb.tools.skill.common import read_skill_md
 from klorb.tools.tool import Tool
 from klorb.tools.util import compile_queries, validate_queries
 
@@ -64,25 +64,21 @@ class SearchSkillsTool(Tool):
 
         compiled = compile_queries(queries, case_insensitive=True)
         workspace = self.context.session_config.workspace
-        skill_rules = self.context.session_config.skill_rules
-        claude_skills_compat = self.context.process_config.compatibility_claude_skills
+        ensure_skill_catalog(
+            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
+            claude_skills_compat=self.context.process_config.compatibility_claude_skills)
 
         results: list[dict[str, str]] = []
-        for resolved in resolve_all_skills(
-                workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-                claude_skills_compat=claude_skills_compat):
-            if evaluate_skill(skill_rules, (resolved.namespace, resolved.name)) == "deny":
-                continue
+        for skill in canonical_catalog().discoverable(self.context.session_config.skill_rules):
             try:
-                body = read_skill_md(resolved)
+                body = read_skill_md(skill)
             except (OSError, UnicodeDecodeError):
                 body = ""
-            if compiled.search(resolved.name) or compiled.search(body):
+            if compiled.search(skill.name) or compiled.search(body):
                 results.append({
-                    "namespace": resolved.namespace,
-                    "name": resolved.name,
-                    # Parsed from the already-read body so SKILL.md isn't read a second time.
-                    "description": parse_frontmatter_description(body),
+                    "namespace": skill.namespace,
+                    "name": skill.name,
+                    "description": skill.description,
                 })
 
         logger.debug("SearchSkills found %d skill(s)", len(results))

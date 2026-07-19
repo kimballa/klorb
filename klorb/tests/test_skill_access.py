@@ -15,7 +15,8 @@ from klorb.permissions.skill_access import (
 
 
 def test_valid_namespaces() -> None:
-    assert VALID_NAMESPACES == ("workspace", "user", "internal")
+    # Precedence order: user (homedir), then workspace (project), then internal (packaged).
+    assert VALID_NAMESPACES == ("user", "workspace", "internal")
 
 
 def test_unmatched_pair_evaluates_to_none_normalized_to_ask() -> None:
@@ -45,8 +46,8 @@ def test_ask_category() -> None:
 
 
 def test_fqsn_round_trips() -> None:
-    assert format_fqsn(("internal", "create-edit-skill")) == "internal/create-edit-skill"
-    assert parse_fqsn("workspace/add-cli-flag") == ("workspace", "add-cli-flag")
+    assert format_fqsn(("internal", "create-edit-skill")) == "internal:create-edit-skill"
+    assert parse_fqsn("workspace:add-cli-flag") == ("workspace", "add-cli-flag")
     assert parse_fqsn(format_fqsn(("user", "foo"))) == ("user", "foo")
 
 

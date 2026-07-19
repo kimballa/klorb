@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
+from typing import Any, Protocol
 
 import yaml
 
@@ -21,6 +22,7 @@ from klorb.paths import KLORB_DATA_DIR
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, canonicalize_dir
 from klorb.permissions.skill_access import VALID_NAMESPACES, Namespace, SkillId, SkillRules, evaluate_skill
 from klorb.permissions.table import PermissionOverride, raise_if_not_allowed
+from klorb.token_estimate import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,25 @@ class ResolvedSkill:
     root: Traversable
 
 
+class SkillLocation(Protocol):
+    """Structural type shared by `ResolvedSkill` and `klorb.tools.skill.model.Skill`: anything
+    with a resolved `(namespace, name)` identity and a `root` `Traversable` to read files from.
+    Lets `read_skill_md`/`skill_file_manifest`/`resolve_skill_file` serve both a fresh
+    `resolve_skill()` result and a catalog-held `Skill` without duplicating the file-reading
+    logic. Declared with read-only `@property` members (rather than plain attributes) because
+    both implementers are frozen -- a frozen dataclass's/pydantic model's fields are read-only
+    from mypy's perspective, and a plain-attribute Protocol member requires a settable one."""
+
+    @property
+    def namespace(self) -> Namespace: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def root(self) -> Traversable: ...
+
+
 @dataclass(frozen=True)
 class DiscoveredSkill:
     """One entry in the available-skills list / a `SearchSkills` hit: a skill's `(namespace,
@@ -87,38 +108,51 @@ def validate_skill_name(name: object) -> str:
         raise ValueError("skill name must be a non-empty string")
     if not is_valid_skill_name(name):
         raise ValueError(
-            f"skill name must be a bare slug with no path separator or '..' component: {name!r}")
+            f"skill name must be a bare slug with no path separator, ':', or '..' component: "
+            f"{name!r}")
     return name
 
 
 def is_valid_skill_name(name: str) -> bool:
-    """Whether `name` is usable as a skill directory basename: non-empty, no path separator, and
-    not `.`/`..`."""
-    return bool(name) and "/" not in name and "\\" not in name and name not in (".", "..")
+    """Whether `name` is usable as a skill directory basename: non-empty, no path separator or
+    `:` (the fully-qualified-skill-name separator -- see `klorb.permissions.skill_access.
+    format_fqsn`), and not `.`/`..`."""
+    return (
+        bool(name) and "/" not in name and "\\" not in name and ":" not in name
+        and name not in (".", "..")
+    )
 
 
-def parse_frontmatter_description(text: str) -> str:
-    """Return a `SKILL.md`'s `description` frontmatter field, or `""` if it has none.
+def parse_frontmatter(text: str) -> dict[str, Any]:
+    """Return a `SKILL.md`'s full YAML frontmatter as a raw `dict`, or `{}` if it has none or
+    fails to parse.
 
     Parses the leading `---`-fenced YAML block with `yaml.safe_load` (never `yaml.load` -- the
-    frontmatter is project-supplied content). A missing block, malformed YAML, a non-mapping
-    document, or a missing/non-string `description` all yield `""`, so a malformed skill is still
-    discoverable with an empty description.
+    frontmatter is project-supplied content). A missing block, malformed YAML, or a non-mapping
+    document all yield `{}`, so a malformed skill is still discoverable with no frontmatter
+    attributes. This is the source `klorb.tools.skill.model.Skill.raw`/`.description`/the
+    frontmatter `name` alias are all read from -- see `klorb.tools.skill.catalog`.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        return ""
+        return {}
     closing_index = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
     if closing_index is None:
-        return ""
+        return {}
     block = "\n".join(lines[1:closing_index])
     try:
         data = yaml.safe_load(block)
     except yaml.YAMLError:
-        return ""
+        return {}
     if not isinstance(data, dict):
-        return ""
-    description = data.get("description")
+        return {}
+    return data
+
+
+def parse_frontmatter_description(text: str) -> str:
+    """Return a `SKILL.md`'s `description` frontmatter field, or `""` if it has none or the
+    field isn't a string. A thin projection of `parse_frontmatter`."""
+    description = parse_frontmatter(text).get("description")
     if not isinstance(description, str):
         return ""
     return description.strip()
@@ -235,12 +269,12 @@ def resolve_skill(
     return None
 
 
-def read_skill_md(resolved: ResolvedSkill) -> str:
+def read_skill_md(resolved: SkillLocation) -> str:
     """Return `resolved`'s full `SKILL.md` content."""
     return resolved.root.joinpath(SKILL_FILE_NAME).read_text(encoding="utf-8")
 
 
-def read_skill_description(resolved: ResolvedSkill) -> str:
+def read_skill_description(resolved: SkillLocation) -> str:
     """Return `resolved`'s one-line `description` frontmatter, or `""` on any read/parse problem."""
     try:
         text = read_skill_md(resolved)
@@ -271,7 +305,7 @@ def _iter_relative_files(node: Traversable, prefix: str, root_real: Path | None)
     return files
 
 
-def skill_file_manifest(resolved: ResolvedSkill) -> list[str]:
+def skill_file_manifest(resolved: SkillLocation) -> list[str]:
     """A sorted `find -type f`-style manifest of every regular file beneath `resolved`'s directory,
     each path relative to that directory (including `SKILL.md`) -- the `path` values a model then
     passes to `ReadSkillFile`. A symlink that escapes the skill directory is excluded, the same
@@ -280,7 +314,7 @@ def skill_file_manifest(resolved: ResolvedSkill) -> list[str]:
     return sorted(_iter_relative_files(resolved.root, "", root_real))
 
 
-def resolve_skill_file(resolved: ResolvedSkill, path: str) -> Traversable:
+def resolve_skill_file(resolved: SkillLocation, path: str) -> Traversable:
     """Resolve a supporting-file `path` to the `Traversable` it names, confined to `resolved`'s
     directory. `path` must be relative (no leading `/` or `~`) and contain no `..` component;
     raises `ValueError` for a malformed/escaping `path` and `FileNotFoundError` if nothing is
@@ -317,29 +351,6 @@ def resolve_skill_file(resolved: ResolvedSkill, path: str) -> Traversable:
     return target
 
 
-def resolve_and_gate_skill(
-    *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
-    skill_rules: SkillRules, override: PermissionOverride | None,
-    namespace: object, name: object,
-) -> ResolvedSkill:
-    """Validate `namespace`/`name`, resolve the pair to a `ResolvedSkill`, and enforce its
-    `skillRules` verdict -- the shared front half of `ActivateSkill` and `ReadSkillFile`. Raises
-    `ValueError` for a malformed argument or an unknown pair, and
-    `PermissionError`/`PermissionAskRequired` per `raise_if_skill_not_allowed`."""
-    validated_namespace = validate_namespace(namespace)
-    validated_name = validate_skill_name(name)
-    resolved = resolve_skill(
-        workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-        claude_skills_compat=claude_skills_compat,
-        namespace=validated_namespace, name=validated_name)
-    if resolved is None:
-        raise ValueError(f"no such skill: {validated_namespace}/{validated_name}")
-    raise_if_skill_not_allowed(
-        skill_rules, override, validated_namespace, validated_name,
-        description=read_skill_description(resolved))
-    return resolved
-
-
 def raise_if_skill_not_allowed(
     skill_rules: SkillRules, override: PermissionOverride | None,
     namespace: Namespace, name: str, *, description: str,
@@ -361,3 +372,20 @@ def raise_if_skill_not_allowed(
     detail = f": {description}" if description else ""
     raise_if_not_allowed(
         verdict, resource_description=f"activate skill {namespace}/{name}{detail}", skill=skill_id)
+
+
+def skill_activation_payload(skill: SkillLocation) -> dict[str, Any]:
+    """Build the `{namespace, name, content, files, tokens}` payload for a resolved, gated
+    skill -- `skill`'s full `SKILL.md` content plus its file manifest. This is the single piece
+    of code both `ActivateSkillTool.apply()` and `Session`'s `UserSkillActivation` interjection
+    (for a user prompt that *starts* with a skill reference, see docs/specs/skills.md) use to
+    turn a `Skill` into what the model sees, so the two paths can never drift apart."""
+    content = read_skill_md(skill)
+    files = skill_file_manifest(skill)
+    return {
+        "namespace": skill.namespace,
+        "name": skill.name,
+        "content": content,
+        "files": files,
+        "tokens": estimate_tokens(content) if content else 0,
+    }

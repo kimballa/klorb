@@ -17,9 +17,9 @@ _SKILL_RULES_KEY = "skillRules"
 
 
 def _fqsn_list(raw_category: Any) -> list[SkillId]:
-    """Parse a config file's `skillRules` category (a list of `"<namespace>/<name>"` strings),
+    """Parse a config file's `skillRules` category (a list of `"<namespace>:<name>"` strings),
     skipping any malformed (non-string or separator-less) entry."""
-    return [parse_fqsn(entry) for entry in raw_category if isinstance(entry, str) and "/" in entry]
+    return [parse_fqsn(entry) for entry in raw_category if isinstance(entry, str) and ":" in entry]
 
 
 def _skill_rules_from_json(raw: dict[str, Any]) -> SkillRules:

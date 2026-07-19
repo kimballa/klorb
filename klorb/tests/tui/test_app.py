@@ -232,6 +232,21 @@ async def test_select_theme_announces_change_in_history_scroll() -> None:
         assert "Changed current theme to `nord`." in _notice_texts(app)
 
 
+async def test_reload_skills_rebuilds_catalog_and_announces_count(tmp_path: Path) -> None:
+    workspace = Workspace(path=tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager=None)
+
+    async with app.run_test() as pilot:
+        skill_dir = tmp_path / ".klorb" / "skills" / "do-thing"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\ndescription: does the thing\n---\n\nsteps\n")
+
+        app.reload_skills()
+        await pilot.pause()
+
+        assert "Reloaded skill catalog: 1 skill found." in _notice_texts(app)
+
+
 async def test_get_system_commands_excludes_builtin_theme_command() -> None:
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))

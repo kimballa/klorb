@@ -9,13 +9,14 @@ import pytest
 from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import PermissionAskRequired, PermissionOverride
 from klorb.tools.skill import common as skill_common
+from klorb.tools.skill.catalog import SkillCatalog, build_catalogs, resolve_and_gate_skill
 from klorb.tools.skill.common import (
     discover_skills,
     is_valid_skill_name,
+    parse_frontmatter,
     parse_frontmatter_description,
     raise_if_skill_not_allowed,
     resolve_all_skills,
-    resolve_and_gate_skill,
     resolve_skill,
     resolve_skill_file,
     skill_file_manifest,
@@ -62,7 +63,7 @@ def test_validate_namespace() -> None:
 
 def test_validate_skill_name_rejects_separators_and_traversal() -> None:
     assert validate_skill_name("add-cli-flag") == "add-cli-flag"
-    for bad in ["", "..", ".", "a/b", "a\\b", "../x"]:
+    for bad in ["", "..", ".", "a/b", "a\\b", "../x", "internal:foo"]:
         with pytest.raises(ValueError, match="skill name"):
             validate_skill_name(bad)
 
@@ -72,6 +73,7 @@ def test_is_valid_skill_name() -> None:
     assert not is_valid_skill_name("")
     assert not is_valid_skill_name("..")
     assert not is_valid_skill_name("a/b")
+    assert not is_valid_skill_name("a:b")
 
 
 # --- frontmatter parsing ---
@@ -95,6 +97,18 @@ def test_safe_load_refuses_python_object_tags(tmp_path: Path) -> None:
     # A hostile !!python/object tag must not construct anything; it parses to empty description.
     text = "---\ndescription: !!python/object/apply:os.system ['echo hi']\n---\n"
     assert parse_frontmatter_description(text) == ""
+
+
+def test_parse_frontmatter_returns_raw_dict() -> None:
+    text = "---\nname: my-skill\ndescription: does the thing\n---\n\nbody"
+    assert parse_frontmatter(text) == {"name": "my-skill", "description": "does the thing"}
+
+
+def test_parse_frontmatter_missing_or_malformed_yields_empty_dict() -> None:
+    assert parse_frontmatter("no frontmatter here") == {}
+    assert parse_frontmatter("---\nnot closed\n") == {}
+    assert parse_frontmatter("---\n: : bad yaml :\n---\n") == {}
+    assert parse_frontmatter("---\n- a\n- b\n---\n") == {}
 
 
 # --- discovery / precedence ---
@@ -145,7 +159,9 @@ def test_denied_skill_excluded_from_discovery(tmp_path: Path) -> None:
     assert [s.name for s in found] == ["shown"]
 
 
-def test_workspace_shadows_user_and_internal(tmp_path: Path) -> None:
+def test_user_shadows_workspace_and_internal(tmp_path: Path) -> None:
+    # Precedence order is user (homedir), then workspace (project), then internal (packaged) --
+    # a homedir skill overrides a same-named project skill.
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "dup", "workspace copy")
     _write_skill(tmp_path / "data" / "skills", "dup", "user copy")
@@ -153,7 +169,7 @@ def test_workspace_shadows_user_and_internal(tmp_path: Path) -> None:
         workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
     dup = [r for r in resolved if r.name == "dup"]
     assert len(dup) == 1
-    assert dup[0].namespace == "workspace"
+    assert dup[0].namespace == "user"
 
 
 def test_claude_skills_compat_adds_workspace_source(tmp_path: Path) -> None:
@@ -295,9 +311,26 @@ def test_override_never_bypasses_deny() -> None:
             SkillRules(deny=[("internal", "s")]), override, "internal", "s", description="d")
 
 
+def _catalog(tmp_path: Path, ws: Path, *, claude_skills_compat: bool = False) -> SkillCatalog:
+    _, canonical = build_catalogs(
+        workspace_root=ws, workspace_trusted=True, claude_skills_compat=claude_skills_compat)
+    return canonical
+
+
 def test_resolve_and_gate_unknown_skill_raises_value_error(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     with pytest.raises(ValueError, match="no such skill"):
         resolve_and_gate_skill(
-            workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-            skill_rules=SkillRules(), override=None, namespace="workspace", name="ghost")
+            catalog=_catalog(tmp_path, ws), skill_rules=SkillRules(), override=None,
+            namespace="workspace", name="ghost")
+
+
+def test_resolve_and_gate_finds_catalog_skill(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_skill(ws / ".klorb" / "skills", "s", "does the thing")
+    skill = resolve_and_gate_skill(
+        catalog=_catalog(tmp_path, ws), skill_rules=SkillRules(allow=[("workspace", "s")]),
+        override=None, namespace="workspace", name="s")
+    assert skill.namespace == "workspace"
+    assert skill.name == "s"
+    assert skill.description == "does the thing"

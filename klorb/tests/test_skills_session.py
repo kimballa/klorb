@@ -1,7 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Session-level skill behavior: the AvailableSkills / SkillReference interjections and the
-ActivateSkill permission-ask -> grant -> retry flow through Session._run_tool_calls."""
+"""Session-level skill behavior: the AvailableSkills / SkillReference / UserSkillActivation
+interjections, the process-wide skill catalog, and the ActivateSkill permission-ask -> grant ->
+retry flow through Session._run_tool_calls."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -14,23 +16,8 @@ from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
 from klorb.session import PermissionAskContext, PermissionDecision, Session, SessionConfig, TurnEventHandlers
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.skill import common as skill_common
-from klorb.tools.skill.common import discover_skills as real_discover_skills
+from klorb.tools.skill import catalog as skill_catalog
 from klorb.workspace import Workspace
-
-
-@pytest.fixture(autouse=True)
-def _real_discovery_with_empty_internal_tier(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Restore the real `discover_skills` in `klorb.session` (the suite-wide conftest fixture
-    neutralizes it) but point the internal tier at an empty dir, so only skills these tests write
-    into the workspace tier are discovered."""
-    internal = tmp_path / "internal-skills"
-    internal.mkdir()
-    monkeypatch.setattr(skill_common, "internal_skills_dir", lambda: internal)
-    monkeypatch.setattr(skill_common, "KLORB_DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr("klorb.session.discover_skills", real_discover_skills)
 
 
 def _write_skill(base: Path, name: str, description: str, *, body: str = "instructions") -> Path:
@@ -174,21 +161,131 @@ def test_skill_reference_fires_each_turn_mentioned(tmp_path: Path) -> None:
     assert "SkillReference" in contents[1]
 
 
-# --- discovery caching ---
-
-
-def test_first_turn_discovery_runs_once_even_with_a_skill_mention(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Turn 1 needs both the AvailableSkills list and (when mentioned) a SkillReference
-    reminder; both must share one discovery scan rather than running it twice."""
+def test_skill_reference_resolves_colon_qualified_fqsn(tmp_path: Path) -> None:
+    """A mention like `/workspace:do-thing` resolves that exact (namespace, name) pair, not just
+    a bare-name search -- see docs/specs/skills.md."""
     provider = MagicMock()
     provider.send_prompt.return_value = _reply()
     session = _session(tmp_path, provider=provider)
     _write_skill(_workspace_skills(session), "do-thing", "does the thing")
 
-    spy = MagicMock(side_effect=real_discover_skills)
-    monkeypatch.setattr("klorb.session.discover_skills", spy)
+    session.send_turn("not first: please use /workspace:do-thing here")
+    content = _user_content(session)
+    assert '<SystemInterjection subject="SkillReference">' in content
+    assert "- do-thing (workspace): does the thing" in content
+
+
+# --- UserSkillActivation (a prompt that starts with a skill reference) ---
+
+
+def test_leading_skill_reference_activates_unconditionally(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "do-thing")]), provider=provider)
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="the exact steps")
+
+    session.send_turn("/do-thing please handle this now")
+    content = _user_content(session)
+    assert '<SystemInterjection subject="UserSkillActivation">' in content
+    assert "the exact steps" in content
+    assert "please handle this now" in content
+    # It's excluded from the more casual SkillReference reminder, since it already got the full
+    # activation treatment.
+    assert "SkillReference" not in content
+
+
+def test_leading_skill_reference_not_activated_without_allow(tmp_path: Path) -> None:
+    """An "ask"-verdicted skill never gets its content auto-injected -- only the ordinary
+    SkillReference reminder, so the model still has to call ActivateSkill and go through the
+    normal approval flow."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(tmp_path, provider=provider)  # empty rules -> ask
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="secret steps")
+
+    session.send_turn("/do-thing please handle this now")
+    content = _user_content(session)
+    assert "UserSkillActivation" not in content
+    assert "secret steps" not in content
+    assert '<SystemInterjection subject="SkillReference">' in content
+
+
+def test_leading_skill_reference_denied_gets_no_special_treatment(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(deny=[("workspace", "do-thing")]), provider=provider)
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+
+    session.send_turn("/do-thing please handle this now")
+    content = _user_content(session)
+    assert "UserSkillActivation" not in content
+    assert "SkillReference" not in content
+
+
+def test_other_mention_alongside_leading_activation_still_referenced(tmp_path: Path) -> None:
+    """"/skill-1 bla bla /skill-2": skill-1 (leading) is unconditionally activated; skill-2,
+    mentioned elsewhere in the same message, still gets an ordinary SkillReference reminder."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path,
+        skill_rules=SkillRules(allow=[("workspace", "skill-1"), ("workspace", "skill-2")]),
+        provider=provider)
+    _write_skill(_workspace_skills(session), "skill-1", "the first skill", body="steps one")
+    _write_skill(_workspace_skills(session), "skill-2", "the second skill", body="steps two")
+
+    session.send_turn("/skill-1 bla bla /skill-2")
+    content = _user_content(session)
+    assert '<SystemInterjection subject="UserSkillActivation">' in content
+    assert "steps one" in content
+    assert '<SystemInterjection subject="SkillReference">' in content
+    reference_block = content.split('<SystemInterjection subject="SkillReference">', 1)[1].split(
+        "</SystemInterjection>", 1)[0]
+    assert "- skill-2 (workspace): the second skill" in reference_block
+    # skill-1 shouldn't also show up in the casual reminder list (it's excluded because the
+    # leading-mention activation already fully handled it) -- even though it's still listed in
+    # the separate, unrelated AvailableSkills interjection.
+    assert "skill-1" not in reference_block
+
+
+def test_leading_skill_activation_uses_canonical_name_in_message(tmp_path: Path) -> None:
+    """A user may type a skill by its frontmatter-alias name; the interjection still names it by
+    its canonical (directory-basename) identity."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "do-thing")]), provider=provider)
+    skill_dir = _workspace_skills(session) / "do-thing"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: alias-name\ndescription: does the thing\n---\n\nthe steps\n")
+
+    session.send_turn("/alias-name go")
+    content = _user_content(session)
+    assert '<SystemInterjection subject="UserSkillActivation">' in content
+    assert "invoked skill do-thing" in content
+    payload = json.loads(content.split("apply this skill:\n", 1)[1].split("\n</SystemInterjection>")[0])
+    assert payload["name"] == "do-thing"
+
+
+# --- Process-wide catalog: built once, not per turn ---
+
+
+def test_catalog_built_once_even_with_a_skill_mention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turn 1 needs the AvailableSkills list, the SkillReference reminder, and (for a leading
+    mention) the UserSkillActivation check -- all three must share one process-wide catalog
+    rather than each re-scanning the tiers."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(tmp_path, provider=provider)
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+
+    spy = MagicMock(side_effect=skill_catalog.build_catalogs)
+    monkeypatch.setattr(skill_catalog, "build_catalogs", spy)
     session.send_turn("please run /do-thing now")
 
     assert spy.call_count == 1
@@ -197,20 +294,20 @@ def test_first_turn_discovery_runs_once_even_with_a_skill_mention(
     assert "SkillReference" in content
 
 
-def test_no_discovery_scan_on_a_later_turn_with_no_slash_mention(
+def test_catalog_not_rebuilt_on_a_later_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Once the AvailableSkills list is seeded, a later turn whose prompt contains no `/` at
-    all must not re-run skill discovery at all -- the cheap token scan alone rules it out."""
+    """Once the process-wide catalog is built on turn 1, a later turn -- mention or not -- must
+    not trigger another disk scan."""
     provider = MagicMock()
     provider.send_prompt.return_value = _reply()
     session = _session(tmp_path, provider=provider)
     _write_skill(_workspace_skills(session), "do-thing", "does the thing")
-    session.send_turn("first turn, seeds AvailableSkills")
+    session.send_turn("first turn, builds the catalog")
 
-    spy = MagicMock(side_effect=real_discover_skills)
-    monkeypatch.setattr("klorb.session.discover_skills", spy)
-    session.send_turn("second turn, no slash mention at all")
+    spy = MagicMock(side_effect=skill_catalog.build_catalogs)
+    monkeypatch.setattr(skill_catalog, "build_catalogs", spy)
+    session.send_turn("second turn, mentions /do-thing again")
 
     spy.assert_not_called()
 
