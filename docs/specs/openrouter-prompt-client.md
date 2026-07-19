@@ -120,7 +120,7 @@ mechanism the rest of the harness will build on to talk to models.
 
 ## Usage
 
-```
+```bash
 klorb -m "What is the capital of France?"
 klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
 ```

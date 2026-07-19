@@ -50,7 +50,7 @@ helpers, and this is one tool).
   option in the same question with a validation error back to the model, same as any
   other malformed-arguments case. The label is always rendered in bold, along a `:`, e.g.:
 
-  ```
+  ```text
   **Session cookie:** Simpler, but ties auth...
   ```
 

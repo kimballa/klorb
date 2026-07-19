@@ -119,7 +119,7 @@ way to reach `clear_session()`.
 
 ## Usage
 
-```
+```text
 > palette                       # shown in the status row while the box is empty
 >                                # shows every command (discover())
 >clear                          # narrows to "Clear session"

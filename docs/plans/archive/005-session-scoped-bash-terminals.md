@@ -67,7 +67,7 @@ files), a persistent shell never exits between commands, so there's no process-e
 wait on. Each command needs an explicit, in-band "this command is done, here's its exit status"
 marker written to the shell's own stdin, and the reader threads watch for it:
 
-```
+```bash
 <command>
 __klorb_ec=$?
 printf '\n%s %d\n' "__KLORB_DONE_<token>__" "$__klorb_ec"

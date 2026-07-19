@@ -24,7 +24,7 @@ model is reached through — is the primary axis a prompt hangs on. See
 
 Both tiers share one layout, rooted at a `system_prompts.d/` directory:
 
-```
+```text
 system_prompts.d/
   default_sys.md            # role- and model-agnostic default
   <mangled-model>.md        # role-agnostic, model-tuned override

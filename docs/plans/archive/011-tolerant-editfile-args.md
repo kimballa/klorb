@@ -318,7 +318,7 @@ certainly emitted XML/markup instead of JSON. Short-circuit to a specific messag
 generic decode error: state that the arguments look like XML/markup but the tool-call ABI is
 **JSON only**, and include a short concrete example of what a good call looks like, e.g.:
 
-```
+```json
 { "filename": "foo.py", "start_line": 12, "new_text": "..." }
 ```
 

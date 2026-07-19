@@ -260,7 +260,7 @@ and are available only while working in a trusted workspace.
 The harness system will continue to advise you of important system information throughout
 the conversation. User messages may have header content wrapped in xml-like blocks like so:
 
-```
+```text
   <SystemInterjection subject="example">Content injected by harness</SystemInterjection>
 ```
 

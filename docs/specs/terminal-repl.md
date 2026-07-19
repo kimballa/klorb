@@ -346,7 +346,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
 
 ## Usage
 
-```
+```bash
 klorb                          # starts the interactive REPL using the default model
 klorb --model anthropic/claude-3.5-sonnet   # starts the REPL with a specific model
 klorb -m "What is 2+2?"        # single-shot prompt/response, no REPL

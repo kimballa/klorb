@@ -107,7 +107,7 @@ command reuses.
 
 ## Usage
 
-```
+```bash
 klorb init                    # --user, unless running as root
 klorb init --user
 klorb init --system           # must be run as root; refuses otherwise

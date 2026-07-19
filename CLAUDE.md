@@ -12,7 +12,7 @@ overrides that are particular to Claude Code, on top of everything AGENTS.md alr
 * When `CLAUDE_CODE_REMOTE=true`, submit completed work as a pull request using the `gh` CLI
   rather than presenting changes interactively:
 
-  ```
+  ```bash
   gh pr create --title "..." --body "..."
   ```
 

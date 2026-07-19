@@ -15,7 +15,7 @@ skill's full `SKILL.md` into context.
 A skill is a directory whose basename is its `name` — a lower-kebab-case slug — containing at
 minimum a `SKILL.md`:
 
-```
+```text
 <skill-name>/
   SKILL.md
   <any other supporting files the skill's own instructions reference>
@@ -110,7 +110,7 @@ stable, cacheable prefix (`roles-and-system-prompts`), and a workspace-tier skil
 project-supplied `description` rides in a *user-turn* interjection the model can tell apart from
 harness authority.
 
-```
+```text
 <SystemInterjection subject="AvailableSkills">
 The following skills are available. ...
 - add-cli-flag (workspace): Add a new command-line flag to the klorb CLI...
