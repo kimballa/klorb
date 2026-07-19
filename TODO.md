@@ -29,8 +29,6 @@
 
 # Feature backlog
 
-* Hard-exclude any dir named `.git` from Grep tool.
-
 * When adding skills list <SystemInterjection> we should notify the TUI or log file how many tokens
 
 * Add a structured wrapper around all tool call responses.
