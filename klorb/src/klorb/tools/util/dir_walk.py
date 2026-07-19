@@ -126,6 +126,7 @@ def _walk(
                 # Hard-coded, unconditional: a nested .git dir is never listed, descended, or
                 # counted as a gitignore-hidden entry. Only the walk's own root (handled in
                 # `walk_readable_tree`, never reaching this loop) is exempt.
+                logger.debug("walk_readable_tree skipping .git dir %s", entry)
                 continue
             subdirs.append(entry)
         else:
