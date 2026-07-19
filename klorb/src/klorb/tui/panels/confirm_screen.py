@@ -29,7 +29,8 @@ class ConfirmScreen(ModalScreen[bool]):
     """Shows `message` with Yes/No buttons; dismisses `True`/`False` accordingly. Escape (or
     the "No" button) always dismisses `False`. `yes_label`/`no_label` default to "Yes"/"No"
     but can be overridden for a more specific affirmative/negative phrasing. Left/Right arrow
-    keys move focus between the two buttons, same as Tab/Shift+Tab.
+    keys move focus between the two buttons, same as Tab/Shift+Tab. Press `y` to accept or
+    `n` to decline without moving focus.
     """
 
     CSS = """
@@ -61,6 +62,8 @@ class ConfirmScreen(ModalScreen[bool]):
 
     BINDINGS = [
         ("escape", "decline", "No"),
+        ("y", "accept", "Yes"),
+        ("n", "decline", "No"),
         Binding("left", "app.focus_previous", "Focus Previous", show=False),
         Binding("right", "app.focus_next", "Focus Next", show=False),
     ]
@@ -87,6 +90,9 @@ class ConfirmScreen(ModalScreen[bool]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == CONFIRM_YES_ID)
 
+    def action_accept(self) -> None:
+        self.dismiss(True)
+
     def action_decline(self) -> None:
         self.dismiss(False)
 
@@ -97,6 +103,7 @@ class SaveOnQuitScreen(ModalScreen[SaveOnQuitChoice]):
     saving), or `"cancel"` (don't quit at all — dismisses the modal and leaves the session
     running exactly as if it had never been opened). Escape (or the "Cancel" button) dismisses
     `"cancel"`. Left/Right arrow keys move focus between the three buttons, same as Tab/Shift+Tab.
+    Press `y` to save, `n` to discard without moving focus.
 
     A separate class from `ConfirmScreen` rather than a third option bolted onto it: every other
     `ConfirmScreen` call site (workspace-trust prompts) is a genuine yes/no question with no
@@ -133,6 +140,8 @@ class SaveOnQuitScreen(ModalScreen[SaveOnQuitChoice]):
 
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
+        ("y", "save", "Save"),
+        ("n", "discard", "Discard"),
         Binding("left", "app.focus_previous", "Focus Previous", show=False),
         Binding("right", "app.focus_next", "Focus Next", show=False),
     ]
@@ -162,6 +171,12 @@ class SaveOnQuitScreen(ModalScreen[SaveOnQuitChoice]):
             self.dismiss("discard")
         else:
             self.dismiss("cancel")
+
+    def action_save(self) -> None:
+        self.dismiss("save")
+
+    def action_discard(self) -> None:
+        self.dismiss("discard")
 
     def action_cancel(self) -> None:
         self.dismiss("cancel")

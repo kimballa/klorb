@@ -16,7 +16,8 @@ class ToolCallLimitScreen(ModalScreen[bool]):
     """Modal asking whether to double a tool-call safety limit and keep going, shown when
     `Session` reports one has been reached (see `ReplApp._on_tool_call_limit_reached`).
     "Yes" or Enter (via the focused "Yes" button) confirms; "No" or Escape declines. Left/Right
-    arrow keys move focus between the two buttons, same as Tab/Shift+Tab.
+    arrow keys move focus between the two buttons, same as Tab/Shift+Tab. Press `y` to accept or
+    `n` to decline without moving focus.
     """
 
     CSS = """
@@ -48,6 +49,8 @@ class ToolCallLimitScreen(ModalScreen[bool]):
 
     BINDINGS = [
         ("escape", "decline", "No"),
+        ("y", "accept", "Yes"),
+        ("n", "decline", "No"),
         Binding("left", "app.focus_previous", "Focus Previous", show=False),
         Binding("right", "app.focus_next", "Focus Next", show=False),
     ]
@@ -71,6 +74,9 @@ class ToolCallLimitScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "tool-call-limit-yes")
+
+    def action_accept(self) -> None:
+        self.dismiss(True)
 
     def action_decline(self) -> None:
         self.dismiss(False)

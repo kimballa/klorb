@@ -1,8 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Renders a legible excerpt of a JSON parse error for a human or a model to read — shared by
-`klorb.schema_envelope` (a hand-edited config file that failed to parse) and
-`klorb.tools.tool.describe_tool_arg_json_error()` (a tool call's malformed `arguments` string),
-so both present the same way instead of drifting apart as two independently-tuned renderers.
+"""Renders a legible excerpt of a JSON parse error for a human or a model to read.
 """
 
 import json
