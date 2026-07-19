@@ -43,7 +43,7 @@ class EditScratchpadTool(Tool):
         return {
             "type": "object",
             "properties": self.edit_file_core.parameter_properties(),
-            "required": ["start_line", "end_line", "start_text", "end_text", "new_text"],
+            "required": ["new_text"],
             "additionalProperties": False,
         }
 
@@ -61,13 +61,19 @@ class EditScratchpadTool(Tool):
         return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts are computed from
-        the call's own `start_line`/`end_line`/`new_text` args (not `result`), so the summary
-        is identical on success and failure and unaffected by drift relocation, which preserves
-        the requested span's length.
+        """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts prefer `result`'s
+        `requested_start_line`/`requested_end_line` (the call's line hint after normalization --
+        alias-resolved, and, for an `old_text` call that omitted `end_line`, inferred from its
+        line count) when a `result` is available, falling back to the call's own raw args
+        otherwise (a failed call has no `result`). Unaffected by drift relocation either way,
+        which preserves the requested span's length.
         """
         diff = ""
-        start_line, end_line, new_text = args.get("start_line"), args.get("end_line"), args.get("new_text")
+        if isinstance(result, dict):
+            start_line, end_line = result.get("requested_start_line"), result.get("requested_end_line")
+        else:
+            start_line, end_line = args.get("start_line"), args.get("end_line")
+        new_text = args.get("new_text")
         if isinstance(start_line, int) and isinstance(end_line, int) and isinstance(new_text, str):
             removed = end_line - start_line + 1
             added = new_text.count("\n") + 1 if new_text else 0

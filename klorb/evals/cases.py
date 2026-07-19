@@ -22,6 +22,12 @@ returns more than one candidate — these check that the model actually recovers
 `context_before`/`context_after` (inspecting `session.messages` for those arguments, not just
 the resulting content), rather than passing only because it stumbled onto the right file state
 some other way.
+
+A further handful cover the widened `EditFile` argument matrix (see
+docs/specs/tool-framework.md): the single-line shortcut (`start_line == end_line`,
+`end_text` omitted) and `old_text` (the whole replacement block verbatim). Since the file ends
+up correct either way a case is written, these also inspect `session.messages` for the specific
+argument shape the case exists to prove is reachable, not just the resulting content.
 """
 
 import json
@@ -665,6 +671,157 @@ READ_SKILL_FILE_EXTRACTS_MARKER = EvalCase(
 )
 
 
+def _check_edit_file_single_line_shortcut(workspace_root: Path, session: Session) -> str | None:
+    expected = ["Hello there", "Goodbye"]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "greeting.txt"), "greeting.txt")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any(
+        call.get("start_line") == call.get("end_line") and not call.get("end_text")
+        for call in edit_calls
+    ):
+        return (
+            "expected at least one EditFile call to use the single-line shortcut "
+            "(start_line == end_line, end_text omitted or empty) rather than repeating "
+            "start_text as end_text"
+        )
+    return None
+
+
+EDIT_FILE_SINGLE_LINE_SHORTCUT = EvalCase(
+    name="edit_file_single_line_shortcut",
+    prompt=(
+        "In greeting.txt, change line 1 (currently 'Hello world') to instead read "
+        "'Hello there'. Leave every other line exactly as it is."
+    ),
+    setup_files={"greeting.txt": "Hello world\nGoodbye\n"},
+    check=_check_edit_file_single_line_shortcut,
+    expected_tool_calls=2,
+)
+
+
+def _check_edit_file_old_text_small_block(workspace_root: Path, session: Session) -> str | None:
+    expected = [
+        "def total(items):", "    result = sum(items)", "    return result", "",
+        "print(total([1, 2, 3]))",
+    ]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "notes.py"), "notes.py")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any(call.get("old_text") and "end_line" not in call for call in edit_calls):
+        return (
+            "expected at least one EditFile call to replace the block with old_text (the "
+            "whole block verbatim) and omit end_line, letting it be inferred from old_text's "
+            "line count"
+        )
+    return None
+
+
+EDIT_FILE_OLD_TEXT_SMALL_BLOCK = EvalCase(
+    name="edit_file_old_text_small_block",
+    prompt=(
+        "notes.py defines a 3-line total() function that always returns 0 instead of summing "
+        "its argument. Replace those exact 3 lines with:\n"
+        "def total(items):\n"
+        "    result = sum(items)\n"
+        "    return result\n"
+        "Leave the blank line and the print statement below it exactly as they are."
+    ),
+    setup_files={
+        "notes.py": "def total(items):\n    result = 0\n    return result\n\nprint(total([1, 2, 3]))\n",
+    },
+    check=_check_edit_file_old_text_small_block,
+    expected_tool_calls=3,
+)
+
+
+def _check_edit_file_old_text_drifted(workspace_root: Path, session: Session) -> str | None:
+    expected = [
+        "# HEADER", "# inserted by edit", "def greet(name):", "    msg = 'Hi ' + name",
+        "    return msg", "", "print(greet('world'))",
+    ]
+    mismatch = _first_mismatch(expected, _lines(workspace_root / "app.py"), "app.py")
+    if mismatch is not None:
+        return mismatch
+    edit_calls = _tool_call_args(session, "EditFile")
+    if not any(call.get("old_text") for call in edit_calls):
+        return (
+            "expected at least one EditFile call to replace the greet() function's 3-line "
+            "body with old_text -- proving the block still resolves via drift + full-block "
+            "verification even after the earlier insertion shifted its line numbers"
+        )
+    return None
+
+
+EDIT_FILE_OLD_TEXT_DRIFTED = EvalCase(
+    name="edit_file_old_text_drifted",
+    prompt=(
+        "app.py has a header comment on line 1, then a 3-line greet() function definition, a "
+        "blank line, and a print statement. Make two changes: first, insert a new line right "
+        "after the header comment reading '# inserted by edit'. Second, replace the greet() "
+        "function's whole 3-line body (the def line, the msg line, and the return line) so its "
+        "message starts with 'Hi ' instead of 'Hello ' (leave the parameter name and return "
+        "logic unchanged). Leave the blank line and print statement exactly as they are."
+    ),
+    setup_files={
+        "app.py": (
+            "# HEADER\ndef greet(name):\n    msg = 'Hello ' + name\n    return msg\n\n"
+            "print(greet('world'))\n"
+        ),
+    },
+    check=_check_edit_file_old_text_drifted,
+    expected_tool_calls=4,
+)
+
+
+_REPEATED_BLOCK_FILLER_LINES = 25
+"""More filler lines than EditFile's default drift search radius (20, see
+DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS), so a start_line hint near the first configure() block
+can't accidentally also reach the second, identical one."""
+
+_REPEATED_BLOCK_CONTENT = (
+    "# top marker\n"
+    "def configure():\n"
+    "    value = 0\n"
+    "    return value\n"
+    + "".join(f"# filler {i}\n" for i in range(1, _REPEATED_BLOCK_FILLER_LINES + 1))
+    + "def configure():\n"
+    "    value = 0\n"
+    "    return value\n"
+)
+
+
+def _check_edit_file_old_text_repeated_block(workspace_root: Path, session: Session) -> str | None:
+    lines = _lines(workspace_root / "config.py")
+    expected_first = ["def configure():", "    value = 1", "    return value"]
+    expected_second = ["def configure():", "    value = 0", "    return value"]
+    if lines[1:4] != expected_first:
+        return f"the first configure() block (lines 2-4) should read {expected_first!r}, got {lines[1:4]!r}"
+    if lines[-3:] != expected_second:
+        return (
+            f"the second, distant configure() block should be unchanged {expected_second!r}, "
+            f"got {lines[-3:]!r}"
+        )
+    return None
+
+
+EDIT_FILE_OLD_TEXT_REPEATED_BLOCK = EvalCase(
+    name="edit_file_old_text_repeated_block",
+    prompt=(
+        "config.py defines configure() near the top of the file (returning value = 0), and, "
+        "much further down, a second, identical-looking configure() block that must NOT be "
+        "touched. Change ONLY the first configure() function (the one near the top) so it "
+        "returns value = 1 instead of value = 0. Leave every other line, including the second "
+        "configure() block further down, exactly as it is."
+    ),
+    setup_files={"config.py": _REPEATED_BLOCK_CONTENT},
+    check=_check_edit_file_old_text_repeated_block,
+    expected_tool_calls=3,
+)
+
+
 CASES: list[EvalCase] = [
     CREATE_FILE_BASIC,
     CREATE_FILE_NESTED_DIRECTORY,
@@ -688,4 +845,8 @@ CASES: list[EvalCase] = [
     LIST_DIR_COUNT_FILES_IN_SUBDIRECTORY,
     LIST_DIR_FIND_SUBDIRECTORY_WITH_MARKER,
     READ_SKILL_FILE_EXTRACTS_MARKER,
+    EDIT_FILE_SINGLE_LINE_SHORTCUT,
+    EDIT_FILE_OLD_TEXT_SMALL_BLOCK,
+    EDIT_FILE_OLD_TEXT_DRIFTED,
+    EDIT_FILE_OLD_TEXT_REPEATED_BLOCK,
 ]

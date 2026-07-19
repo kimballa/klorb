@@ -12,12 +12,25 @@ tables defined here (`evaluate_write()`, `resolve_and_evaluate_read()`) live in
 `TYPE_CHECKING` only, avoiding the same cycle.
 """
 
+import atexit
+import logging
+import shutil
+import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.table import PermissionsTable
+
+if TYPE_CHECKING:
+    # SessionConfig pulls in this module (for DirRules), so the import stays TYPE_CHECKING-only
+    # to avoid a cycle -- create_tempdir_for_session() only ever touches session_config's
+    # attributes, never instantiates a SessionConfig itself.
+    from klorb.session import SessionConfig
+
+logger = logging.getLogger(__name__)
 
 KLORB_PROJECT_DIR_NAME = ".klorb"
 """Name of the directory (immediate child of a workspace root) that holds klorb's own
@@ -165,3 +178,56 @@ def find_workspace_root(cwd: Path) -> Path:
         if marker.is_dir() and not marker.is_symlink():
             return candidate
     return current
+
+
+_tempdirs_to_remove_on_exit: list[Path] = []
+"""Directories `create_tempdir_for_session(..., remove_on_exit=True)` has registered for
+`atexit` cleanup -- module-global since the `atexit` handler itself is registered once, the
+first time any caller opts in, and needs a single shared list to sweep."""
+
+
+def _remove_registered_tempdirs() -> None:
+    """`atexit` handler for `_tempdirs_to_remove_on_exit`: best-effort `shutil.rmtree()`s every
+    directory in it, ignoring one a caller already removed itself."""
+    for directory in _tempdirs_to_remove_on_exit:
+        logger.debug("atexit: removing registered scratch tempdir %s", directory)
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def create_tempdir_for_session(
+    session_config: "SessionConfig", *, mode: Literal["r", "w"] = "r", remove_on_exit: bool = False,
+) -> Path:
+    """Create a fresh `tempfile.mkdtemp()` directory, grant `session_config` `readDirs` access
+    to it (a new `DirRules` with the directory's canonicalized path appended to `allow`,
+    replacing `session_config.read_dirs` rather than mutating its `allow` list in place -- see
+    `DirRules`'s immutable-after-construction contract), and return the canonicalized path.
+    General directory/permissions plumbing for "mint a scratch location for an agent session" —
+    e.g. `klorb.evals.run_evals`'s `--self-review` review session, which needs to read a copy of
+    the eval log.
+
+    `mode="w"` also grants `writeDirs` access to the same directory (a matching new `DirRules`
+    replacing `session_config.write_dirs`) — `"w"` implies read access too, since a directory a
+    session can write to but not read back is rarely useful. The default, `"r"`, grants read
+    access only.
+
+    `remove_on_exit`, when `True`, registers the directory for automatic `shutil.rmtree()`
+    cleanup at process exit (an `atexit` handler is registered once, the first time any caller
+    opts in) instead of leaving cleanup to the caller — the default, `False`, matches every
+    existing inline `DirRules(allow=[...])` grant site, which owns its own cleanup.
+    """
+    workspace_root = session_config.workspace.path
+    directory = canonicalize_dir(Path(tempfile.mkdtemp()), workspace_root)
+    logger.debug("Created scratch tempdir %s (mode=%r)", directory, mode)
+    session_config.read_dirs = DirRules(
+        deny=session_config.read_dirs.deny, ask=session_config.read_dirs.ask,
+        allow=[*session_config.read_dirs.allow, directory])
+    if mode == "w":
+        session_config.write_dirs = DirRules(
+            deny=session_config.write_dirs.deny, ask=session_config.write_dirs.ask,
+            allow=[*session_config.write_dirs.allow, directory])
+    if remove_on_exit:
+        logger.debug("Registering scratch tempdir %s for atexit cleanup", directory)
+        if not _tempdirs_to_remove_on_exit:
+            atexit.register(_remove_registered_tempdirs)
+        _tempdirs_to_remove_on_exit.append(directory)
+    return directory

@@ -9,6 +9,13 @@ All feature tasks must have a spec. Specs are written in docs/specs/. They expla
 how the feature works and how it's built. These are especially important for framework-like
 features that other features are built upon.
 
+Prefer updating and embellishing an existing spec over creating a new file when you add to or
+rework a feature incrementally. Search docs/specs/ for a file that already covers the area
+you're touching (e.g. a tool's existing behavior spec) before writing a new one — folding new
+semantics into the existing spec keeps one current-state document per feature area instead of
+scattering related facts across several. Only start a new spec file for a genuinely new
+feature that isn't an extension of something already documented.
+
 Key architecture decisions are captured in architecture decision records (ADRs). ADRs
 are short documents that record a decision, with the format:
 
@@ -108,6 +115,13 @@ The Klorb project is organized as a collection of subprojects:
   version. Record change history — what changed, why, and what alternatives were rejected — in
   an ADR (docs/adrs/) instead; cross-reference it by name from the docstring/comment/spec if the
   current behavior's rationale needs a pointer.
+* Add `logger.debug()` calls around consequential actions and workflows: creating or removing
+  files/directories, registering cleanup handlers (`atexit`, etc.), granting or widening
+  permissions, spawning subprocesses or sessions, and similar state-changing or multi-step
+  operations. Err on the side of logging more of these than feels necessary — they're what makes
+  a failure or a surprising side effect diagnosable after the fact, and `debug` level keeps them
+  out of the way otherwise. This is distinct from user-facing `logger.info()`/`logger.warning()`
+  calls, which should stay reserved for what a user actually needs to see.
 * Default to no comment; add one only when the WHY is genuinely non-obvious. Keep it to a
   sentence or two.
   * Don't narrate what a method *isn't* doing, alternatives it doesn't take, or where else a

@@ -1,9 +1,8 @@
+@AGENTS.md
 
-Most standing instruction information is stored in `AGENTS.md`; read it immediately
-at the start of every session, before doing any work.
-
-This file only contains Claude-specific advice / overrides that are particular to
-Claude Code; you must read AGENTS.md to get the total set of repository-specific instructions.
+The content in AGENTS.md (inlined above) is equally important as the content in this file —
+do not treat it as lower-priority background. This file only adds Claude-specific advice /
+overrides that are particular to Claude Code, on top of everything AGENTS.md already says.
 
 ## Cloud / Remote Agent Behavior
 

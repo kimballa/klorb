@@ -55,6 +55,13 @@ class EvalCase:
     than that — typically a sign it stumbled into retries (e.g. a rejected `EditFile` call)
     before eventually recovering. `None` (the default) means no threshold is checked for this
     case. See docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
+    soft_check: Callable[[Path, Session], str | None] | None = None
+    """Run only when `check` passes (same signature): a non-`None` return marks the result
+    `conditional` with that string as `CaseResult.soft_failure_reason`, without flipping
+    `passed` to `False` -- for a case whose file-state outcome is correct but whose *shape*
+    (which tool-call form the model reached for) is a yellow flag rather than a failure, e.g.
+    proving a long-span edit used `start_text`/`end_text` rather than a token-wasteful
+    `old_text`. `None` (the default) means no shape check runs for this case."""
 
 
 @dataclass(frozen=True)
@@ -90,17 +97,27 @@ class CaseResult:
     """Set instead of running `check()` at all if `session.send_turn()` itself raised."""
     expected_tool_calls: int | None = None
     """Copied from the `EvalCase.expected_tool_calls` that produced this result."""
+    soft_failure_reason: str | None = None
+    """Set when `EvalCase.soft_check` ran (only possible when `check` itself passed) and
+    reported a problem — see `EvalCase.soft_check` and `conditional` below."""
+    generated_tokens: int = 0
+    """Informational estimate (not a graded threshold) of how many tokens this case's run
+    generated: the case's tool-call `arguments` strings (`tool_call_log`, verbatim) plus
+    `final_response`, under the eval model's `tiktoken` encoding (see
+    `harness._encoding_for_model()`) -- the closest proxy this harness has to cost without real
+    token accounting. Read by report.py's per-case output; never compared against a threshold."""
 
     @property
     def conditional(self) -> bool:
-        """True if this case passed but took more tool calls than `expected_tool_calls` — a
-        sign the model likely stumbled into a rejected call and retried before recovering,
-        rather than a clean sign of genuine failure. See report.py's `[CONDITIONAL PASS]`
-        status and docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
-        return (
-            self.passed
-            and self.expected_tool_calls is not None
-            and self.num_tool_calls > self.expected_tool_calls
+        """True if this case passed but either took more tool calls than `expected_tool_calls`
+        or its `soft_check` flagged a suboptimal-but-correct call shape (`soft_failure_reason`
+        set) — a sign the model likely stumbled into a rejected call and retried before
+        recovering, or reached for a token-wasteful form, rather than a clean sign of genuine
+        failure. See report.py's `[CONDITIONAL PASS]` status and
+        docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
+        return self.passed and (
+            (self.expected_tool_calls is not None and self.num_tool_calls > self.expected_tool_calls)
+            or self.soft_failure_reason is not None
         )
 
 
@@ -175,8 +192,16 @@ def run_case(
             tool_call_counts[entry.name] = tool_call_counts.get(entry.name, 0) + 1
 
         failure_reason: str | None = None
+        soft_failure_reason: str | None = None
         if error is None:
             failure_reason = case.check(workspace_root, session)
+            if failure_reason is None and case.soft_check is not None:
+                soft_failure_reason = case.soft_check(workspace_root, session)
+
+        encoding = _encoding_for_model(model)
+        generated_tokens = len(encoding.encode(final_response))
+        for entry in tool_call_log:
+            generated_tokens += len(encoding.encode(entry.arguments))
 
         result = CaseResult(
             name=case.name,
@@ -189,6 +214,8 @@ def run_case(
             failure_reason=failure_reason,
             error=error,
             expected_tool_calls=case.expected_tool_calls,
+            soft_failure_reason=soft_failure_reason,
+            generated_tokens=generated_tokens,
         )
         if on_complete is not None:
             on_complete(result)

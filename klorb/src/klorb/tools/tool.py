@@ -3,11 +3,17 @@
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from klorb.tools.setup_context import ToolSetupContext
+from klorb.json_error_display import format_json_error_context
+
+if TYPE_CHECKING:
+    # Deferred to break a cycle: klorb.tools.setup_context -> klorb.process_config ->
+    # klorb.session -> klorb.tools.tool (for describe_tool_arg_json_error). ToolSetupContext is
+    # only ever used here as a type annotation, never instantiated, so this is safe.
+    from klorb.tools.setup_context import ToolSetupContext
 
 
 def default_tool_call_summary(name: str, args: dict[str, Any], error: str | None) -> str:
@@ -50,6 +56,62 @@ def default_invalid_tool_call_detail(name: str, raw_arguments: str, error: str) 
     )
 
 
+_EDIT_ARG_NAMES = ("start_text", "end_text", "old_text", "new_text")
+
+_COMMON_JSON_MISTAKES = (
+    "Common JSON mistakes:\n"
+    "- Unescaped double quotes inside a string (the dominant cause for edit tools): "
+    "`\"new_text\": \"print(\"hi\")\"` -> `\"new_text\": \"print(\\\"hi\\\")\"`.\n"
+    "- Mismatched/unbalanced brackets or braces: a missing or extra `}`/`]`.\n"
+    "- Comma problems: a trailing comma before `}`/`]`, or a missing comma between members: "
+    "`{\"a\": 1 \"b\": 2}` -> `{\"a\": 1, \"b\": 2}`.\n"
+    "- Mismatched quotes: a string opened with `\"` and never closed, or single quotes used "
+    "for a JSON string: `'x'` -> `\"x\"`."
+)
+
+_XML_JSON_EXAMPLE = '{ "filename": "foo.py", "start_line": 12, "new_text": "..." }'
+
+_EDIT_ARG_ESCAPE_HINT = (
+    "This looks like an edit-tool call (it mentions start_text/end_text/old_text/new_text) "
+    "carrying file content -- exactly where embedded double quotes and backslashes break JSON "
+    "when they aren't escaped. Double-check the quoting/escaping of those argument values "
+    "specifically."
+)
+
+
+def describe_tool_arg_json_error(name: str, raw_arguments: str, json_exc: json.JSONDecodeError) -> str:
+    """Describe why `raw_arguments` (a tool call's raw, unparsed `arguments` string) failed to
+    parse as JSON, for a total tool-call parse failure -- the case where no tool's `apply()`
+    ever runs at all. This is the single source both the model-facing `tool_response` error
+    (`klorb.session.Session._run_tool_calls`'s `json.JSONDecodeError` branch) and the UI-facing
+    `default_invalid_tool_call_detail()` draw from, so the model gets a teaching response
+    instead of the bare `str(json_exc)` alone: the precise break-point offset with the
+    offending line(s) quoted and a caret (`klorb.json_error_display.format_json_error_context`,
+    shared with `klorb.schema_envelope`'s config-parse-error rendering), an XML-vs-JSON detector
+    (a total parse failure is often a model emitting markup instead of a JSON object), a fixed
+    primer on the handful of mistakes that actually cause these, and -- since edit tools are by
+    far the biggest producers of large, heavily-escaped string arguments -- an edit-argument-
+    specific escaping nudge gated on whether the raw string even mentions one of those argument
+    names.
+    """
+    header = f"Invalid JSON in tool call arguments for {name!r}."
+    offset = (
+        f"Parse error at line {json_exc.lineno}, column {json_exc.colno} "
+        f"(char {json_exc.pos}): {json_exc.msg}")
+    fragment = format_json_error_context(raw_arguments, json_exc)
+
+    if raw_arguments.lstrip().startswith("<"):
+        xml_body = (
+            "The arguments look like XML/markup, not JSON. Tool-call arguments must be a "
+            f"single JSON object, e.g.:\n{_XML_JSON_EXAMPLE}")
+        return "\n\n".join([header, offset, fragment, xml_body])
+
+    parts = [header, offset, fragment, _COMMON_JSON_MISTAKES]
+    if any(arg_name in raw_arguments for arg_name in _EDIT_ARG_NAMES):
+        parts.append(_EDIT_ARG_ESCAPE_HINT)
+    return "\n\n".join(parts)
+
+
 def truncate_lines(text: str, max_lines: int) -> str:
     """Return `text` unchanged if it has at most `max_lines` lines, otherwise its first
     `max_lines` lines followed by a trailing `"..."` line — used by a `detail_view()` override
@@ -71,11 +133,11 @@ class Tool(ABC):
     `context` in its own `__init__`.
     """
 
-    def __init__(self, context: ToolSetupContext) -> None:
+    def __init__(self, context: "ToolSetupContext") -> None:
         self._context = context
 
     @property
-    def context(self) -> ToolSetupContext:
+    def context(self) -> "ToolSetupContext":
         """Return the `ToolSetupContext` this tool was constructed with."""
         return self._context
 
