@@ -18,7 +18,7 @@ configuration. Disabled by default; enabled by any of three independent sources.
     in append mode (`"a"`) so it's created if it doesn't exist yet and never truncated if it
     does. An entry is:
 
-    ```
+    ```text
     ---
     2026-07-08T14:03:21.123456
     Request:

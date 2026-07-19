@@ -21,8 +21,8 @@
 * Reasoning: `textual.markup.escape()` is *less conservative than the parser that actually
   applies the markup* — it does not neutralize every construct the parser treats as special.
   Concretely, it leaves `$`-variable syntax alone: after escaping, a pattern like `echo [$HOME]`
-  is still consumed by the parser and renders as `echo ` — the `[$HOME]` is silently dropped, not
-  shown as literal text. Silent truncation is especially dangerous on the permission-grant line,
+  is still consumed by the parser and renders as `echo` followed by a trailing space — the
+  `[$HOME]` is silently dropped, not shown as literal text. Silent truncation is especially dangerous on the permission-grant line,
   whose entire job is to state exactly what a persistent Allow will grant; a user could approve a
   broader scope than the one displayed. `markup=False` sidesteps parsing entirely for
   whole-widget cases, and a pre-built `Content` sidesteps it for span-styled cases while still

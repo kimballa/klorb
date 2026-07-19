@@ -106,6 +106,7 @@ than propagating out and aborting the whole turn.
 The `tool_response` text (and the UI's `default_invalid_tool_call_detail()` rendering, via
 `ToolCallEvent.raw_arguments`) both come from one shared, tool-agnostic helper,
 `klorb.tools.tool.describe_tool_arg_json_error(name, raw_arguments, json_exc)`:
+
 * **Offset framing** — `json_exc.lineno`/`colno`/`pos`/`msg` named explicitly, plus the raw
   string quoted for ~40 characters on each side of the break point with a caret line marking
   the exact position, rather than a bare character count the model has to count out itself.

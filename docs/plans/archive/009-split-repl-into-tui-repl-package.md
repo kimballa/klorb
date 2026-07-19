@@ -8,7 +8,7 @@ margin, and both keep growing because every new REPL behavior has nowhere else t
 rest of `klorb/src/klorb/tui/` is 12 more files (2,470 lines) that exist only to be consumed
 by `repl.py` and its tests:
 
-```
+```text
 klorb/src/klorb/tui/
     __init__.py                    (2 lines)
     ask_user_questions_panel.py    (229)
@@ -154,7 +154,7 @@ is a shared, attribute-only typed base class, `_base.py` below.
 
 ## Target source layout
 
-```
+```text
 klorb/src/klorb/tui/
     __init__.py             # public surface only: re-exports ReplApp, run_repl
     constants.py            # DOM/widget ids, label strings, magic numbers shared by 2+ modules
@@ -272,7 +272,7 @@ today (line 1181, immediately before line 1222). This is the one widget class fr
 
 ## Target test layout
 
-```
+```text
 klorb/tests/tui/
     __init__.py
     conftest.py                    # fixtures/helpers currently at the top of

@@ -7,10 +7,10 @@
   which `directory_access.privileged_dirs()` consults to *omit* those dirs from the
   self-tampering deny list. Omission from the privileged list is necessary but not sufficient for
   a real write:
-  - A **read** in trusted mode goes through `resolve_and_evaluate_read()`, which skips the
+  * A **read** in trusted mode goes through `resolve_and_evaluate_read()`, which skips the
     workspace-root boundary (`canonicalize_candidate`, not `resolve_within_workspace`) — but then
     falls back to `"ask"` when nothing in `readDirs` matches, and nothing grants `KLORB_DATA_DIR`.
-  - A **write** goes through `resolve_and_evaluate_write()`, which — after `is_privileged_path()`
+  * A **write** goes through `resolve_and_evaluate_write()`, which — after `is_privileged_path()`
     and `write_files` — calls the hard `resolve_within_workspace()` boundary raise *before*
     `writeDirs` is ever consulted. `KLORB_DATA_DIR` is outside `workspace_root`, so that boundary
     rejects the path regardless of `approved_scopes`, which does not touch the boundary at all.

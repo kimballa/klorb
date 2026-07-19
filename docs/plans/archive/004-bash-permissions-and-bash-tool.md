@@ -3,21 +3,20 @@
 Design plan for the `BashTool` bullet in `TODO.md` and the bash-command resource kind that
 `docs/specs/permissions.md`'s "Out of scope" section forward-references.
 
-
 Claude: This plan is **partially ready**.
-- shfmt / command parsing: ready
-- bashtool overarching implementation / availability: ready
-- permissions allowlist/denylist: ready
-- running commands without bubblewrap: ready
-- everything to do with sessionConfig / config files: ready
+
+* shfmt / command parsing: ready
+* bashtool overarching implementation / availability: ready
+* permissions allowlist/denylist: ready
+* running commands without bubblewrap: ready
+* everything to do with sessionConfig / config files: ready
 
 The only thing that is **not ready** is actually building bubblewrap command lines for sandboxing of
 subprocesse. Since we are currently doing all our work in cloud environments or dev containers,
 bubblewrap does not work in those environments, and thus we cannot properly develop the command line
 for them. So we should implement all the **other** parts of this project, i.e., "everywhere klorb
-would 'fall back' to a non-bubblewrapped execution, make it work, and the _actual_ do-the-bubblewrap
+would 'fall back' to a non-bubblewrapped execution, make it work, and the *actual* do-the-bubblewrap
 part should just be left as a stub for now."
-
 
 ## Context
 
@@ -53,7 +52,6 @@ These are in service of the following goals:
    (auto-approval; allowlist; explicit user approval), and execution outcomes can be audit logged
    clearly.
 
-
 ## Existing components to employ
 
 ### Internal tools
@@ -68,7 +66,7 @@ engine can evaluate, without the classifier itself becoming the weak point.
 
 ### External tools
 
-* mvdan/sh (https://github.com/mvdan/sh) is a bash shell command parser, which
+* mvdan/sh (<https://github.com/mvdan/sh>) is a bash shell command parser, which
   will allow AST parsing of bash commands and application of various rules
   * enforcing "always-ask" behavior for certain things, like HEREDOC, variable expansion, etc.
   * breaking up commands into subcommands (by '&&', '||', ';' as well as nested within `if..fi`,
@@ -81,11 +79,9 @@ engine can evaluate, without the classifier itself becoming the weak point.
     for the user's system. But we will still need to shell out to this to invoke it.
 * The "bubblewrap" sandboxing system (`bwrap(1)`) - see manpage:
 
-  https://manpages.debian.org/testing/bubblewrap/bwrap.1.en.html
+  <https://manpages.debian.org/testing/bubblewrap/bwrap.1.en.html>
   ... Using `bwrap` to wrap around commands the agent wants to run via bash tool is
   the main mechanism by which we implement approach #2.
-
-
 
 ## Things *not* to use
 
@@ -176,7 +172,7 @@ Tested directly against this repo's own dev environment:
   dev machine, sourcing the real `~/.bashrc` under `-i` does export `PS1`, even though a plain
   `bash -c` (no `-i`) never does. This only matters if some downstream tool uses "is `$PS1` set"
   as its own (nonstandard, rare) interactivity heuristic rather than `isatty()`, but since it's
-  cheap to close off entirely: prepend `unset PS1; unset PS2; ` to the actual command string
+  cheap to close off entirely: prepend `unset PS1; unset PS2;` to the actual command string
   within the same `-c` argument, *after* rc-file sourcing has already happened but before the
   model's requested command runs — verified this reliably removes `PS1` from the target command's
   own child environment without needing `--rcfile`/`-i` changes.
@@ -188,7 +184,6 @@ fills in PATH/toolchain variables the same way it would for the user's own shell
 mounted-through home directory. `shareEnv`/`setEnv` remain useful for anything that genuinely
 isn't derivable by re-running `.bashrc` (e.g. ambient session-only state like `SSH_AUTH_SOCK`),
 but no longer need to enumerate ordinary toolchain setup.
-
 
 ## Running the command
 
@@ -210,8 +205,8 @@ stdin is routed in from /dev/null.
 ### stdout and stderr
 
 * We capture stdout and stderr to tmpfiles.
-    * They should be chmod 0600 before any content gets into them.
-    * They are put in a special tmpdir (subdir of /tmp/) where we auto-grant read access to the
+  * They should be chmod 0600 before any content gets into them.
+  * They are put in a special tmpdir (subdir of /tmp/) where we auto-grant read access to the
       agent.
 * We make sure that if klorb dies mid-process, the tmpfiles are vacuumed up. These files must be
   destroyed before klorb exits.
@@ -231,6 +226,7 @@ stdin is routed in from /dev/null.
 
 We report `exitStatus` as an integer in the response schema.
 We also report `success` as true/false.
+
 * true requires exit status 0.
 We also report a `failureReason` field which is str or null
 * it's null if success is true.
@@ -370,11 +366,11 @@ The command starting with `bwrap ....` should always include these args:
   --bind /home/foo/src/projRoot`
 * ... If there are any directories the user denied *within* some parent that is mounted, then use
   --ro-bind to mount an empty tempdir in their place that masks them out.
-  * This includes <workspaceRoot>/.klorb/ by default
+  * This includes `<workspaceRoot>`/.klorb/ by default
 * --die-with-parent
 * --new-session
 * --cap-drop ALL
-* --chdir <workspaceRoot>
+* --chdir `<workspaceRoot>`
 
 **uid/gid**: do *not* pass `--unshare-user` or `--uid`/`--gid` explicitly. Per `bwrap --help`,
 unprivileged (non-setuid) bwrap creates a user namespace implicitly as needed regardless of
@@ -622,7 +618,6 @@ fallback logic and test collection (e.g. a `pytest.mark.skipif`/autouse fixture 
 rather than hand-rolling a second, potentially-divergent Docker-detection heuristic just for
 tests.
 
-
 ## Sandboxing session-lifetime (persistent) shells
 
 Everything above assumes a `bwrap` sandbox is built fresh per command: compute the mount list from
@@ -772,7 +767,6 @@ changes that story.
   existing standing `"SessionTerminal"` interjection — the former is per-call and precise, the
   latter avoids growing the schema; decide during implementation.
 
-
 ## CommandRules parsing / matching with shfmt
 
 * `CommandRules` matching semantics:
@@ -893,4 +887,3 @@ granted it, and even with network granted, the executed script can only touch
 * Argv-pattern token syntax details beyond whole-token wildcards (case sensitivity, glob-style
   matching within a single token) — sketched in "CommandRules parsing / matching with shfmt"
   above, not fully specified. Claude needs to make some decisions.
-

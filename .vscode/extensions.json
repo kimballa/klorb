@@ -4,6 +4,7 @@
         "ms-python.autopep8",
         "anthropic.claude-code",
         "ms-vscode.makefile-tools",
-        "ms-python.vscode-pylance"
+        "ms-python.vscode-pylance",
+        "davidanson.vscode-markdownlint"
     ]
 }

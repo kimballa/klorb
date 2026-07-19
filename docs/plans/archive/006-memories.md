@@ -23,7 +23,7 @@ Memories are stored in markdown files in well-defined directories:
 * `workspace` memories are stored in `${workspaceRoot}/.klorb/memories/`
 
 The agent does not think of these as specific paths, though. The agent thinks
-about two _flat_ namespaces of files.
+about two *flat* namespaces of files.
 
 * The tools each take a `namespace` argument of either `global` or `workspace`
 * The tools take a `filename` argument for a `name-of-a-memory.md` file within
@@ -31,7 +31,7 @@ about two _flat_ namespaces of files.
   * The path separator character is forbidden, as are any attempts to escape the
     relevant `..../memories/` dir through `..`, etc.
 
-The Create, Read, and Edit tools operate through the same common basis as 
+The Create, Read, and Edit tools operate through the same common basis as
 CreateFile, ReadFile, EditFile already do with the shared componentry for these
 tools already shared with e.g. ReadScratchpad and EditScratchpad.
 
@@ -43,11 +43,10 @@ from ReadFile and EditFile, but that is a task needed as part of this plan.
 
 * In general memories are considered ordinary markdown files and the agent is free
   to record in them as it sees fit.
-* The first line of the file is the _topic_ of the memory file.
+* The first line of the file is the *topic* of the memory file.
 * The first line must not be empty. A `CreateFile` or `EditFile` tool call
   that would cause the first line to be blank must fail, and provide an error
   back to the agent that informs it about this restriction.
-
 
 ## Listing memories
 
@@ -72,13 +71,12 @@ The ListMemories tool returns an object of the following format:
 * If there are no global (or workspace) memories, then they are reported like `"global": []`
   or `"workspace": []`.
 
-
 ## Searching memories
 
 The search process should operate similar to other Grep and SearchScratchpad
-tools, accepting a list of `queries`. It should return structured json objects identifying all the hits, 
+tools, accepting a list of `queries`. It should return structured json objects identifying all the hits,
 with both `namespace` and `filename` attributes so the agent knows where they
-belong. The `filename` attr should just be the filename _within_ the namespace dir, not the 
+belong. The `filename` attr should just be the filename *within* the namespace dir, not the
 complete path to the file. We **never** report the full `/path/to/memories/filename.md`.
 
 The `filename` should also be the subject of the search. That is, the line-by-line `re.match` search
@@ -98,9 +96,10 @@ at the process level:
 * `tools.memory.createPermission`
 * `tools.memory.deletePermission`
 
-The value for each is one of `deny`, `ask`, `allow`. 
+The value for each is one of `deny`, `ask`, `allow`.
 
 System defaults:
+
 * read: allow
 * edit: allow
 * create: ask
@@ -108,16 +107,16 @@ System defaults:
 
 ### Workspace memories are only accessible in trusted workspaces
 
-The `.klorb/memories/` dir of **untrusted** workspaces are not accessible to the tools. 
+The `.klorb/memories/` dir of **untrusted** workspaces are not accessible to the tools.
 
 * ListMemories returns an empty list for the `workspace` namespace.
 * SearchMemories does not iterate over any of the files for searching.
-* ReadMemory, CreateMemory, and EditMemory for a workspace memory are all instantly 
+* ReadMemory, CreateMemory, and EditMemory for a workspace memory are all instantly
   permission-denied without appeal to the user.
 
 ## System prompt
 
-The primary system prompt is altered to have a section about memories, explaining briefly 
+The primary system prompt is altered to have a section about memories, explaining briefly
 what its purpose is (to remember important details of how to work within the workspace, or
 user preferences or directives that span across all workspaces, in a way that is durable
 across sessions).
@@ -224,6 +223,7 @@ across sessions).
   asserted again at the tool layer to confirm the tool actually calls the shared validator.
 
 ### `DeleteMemoryTool` (`test_delete_memory.py`, new pattern — no existing `DeleteFile` tool
+
 to mirror)
 
 * Deletes an existing memory file; raises a clear error for a nonexistent `filename` rather
@@ -236,6 +236,7 @@ to mirror)
 * `filename` traversal/separator rejection, same as `CreateMemory`.
 
 ### `CreateFileCore` extraction (`test_create_file_core.py`, new — parallels
+
 `ReadFileCore`/`EditFileCore`)
 
 * Once `CreateFileTool`'s file-creation mechanic is pulled out into
@@ -250,6 +251,7 @@ to mirror)
   `read_file_core`/`edit_file_core` delegation tests for the Read/Edit pairs.
 
 ### System prompt (`test_system_prompt.py` or wherever `default_sys.md` content is
+
 asserted, if anywhere)
 
 * If there's an existing test asserting specific sections appear in

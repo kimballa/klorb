@@ -8,18 +8,18 @@ prompt.
 When the `>` character is the first character in the prompt, the palette autocomplete-chooser list
 should appear as a "pop-up" just above the prompt textbox, justified to the left side of the screen.
 The "search" box prompt at the top of the default palette chooser modal is not necessary, just show the
-items. (Because the prompt textbox _is_ the "Search box" in this mode.)
+items. (Because the prompt textbox *is* the "Search box" in this mode.)
 
 ## Main behavior
 
-The text in the prompt textbox, _without_ the leading `>` character, is used as the typeahead search
+The text in the prompt textbox, *without* the leading `>` character, is used as the typeahead search
 into palette options.
 
 The user can use the up/down arrow keys to browse the palette and highlight a different option, just
 as in the case when the palette modal is opened with ^p.
 
 When the user presses `enter` and a palette option is selected, it's executed, just as if the row
-was selected in the Textual-built-in palette chooser experience. 
+was selected in the Textual-built-in palette chooser experience.
 
 At the same time, the prompt textbox is cleared and readied for a new prompt input.
 
@@ -29,7 +29,7 @@ do with it.
 
 ### History browsing
 
-When the user presses enter to select the palette option, the input textbox contents are 
+When the user presses enter to select the palette option, the input textbox contents are
 replaced with `>` followed by the full "standard" name of the palette option. e.g. `>cle` might
 get replaced with `>Clear session`.
 
@@ -47,15 +47,15 @@ root is the standard name. We should only trap the "root name" / "standard name"
 such cases, as modifying the setting by using the palette cmd would immediately make recall of that same
 string (e.g. with `(High)` at the end) not find the setting in question.
 
-_That said_, for palette options that represent toggles ("Enable Foo" / "Disable Foo") and
+*That said*, for palette options that represent toggles ("Enable Foo" / "Disable Foo") and
 dynamically show one or the other, we should actually just record whatever it was the user enacted.
 i.e. if the user selects `>Disable Foo`, then we write `>Disable Foo` into the command history.
 
 ## UI changes
 
 * `^p` does remain a way to invoke the system palette search built inot Textual.
-* We do _not_ show `^p palette` on the statusbar at the bottom of the screen any more.
-  * Instead, when the prompt textbox is empty, we show `> palette`. 
+* We do *not* show `^p palette` on the statusbar at the bottom of the screen any more.
+  * Instead, when the prompt textbox is empty, we show `> palette`.
   * When the user types anything other than `>`, we then hide that UI hint element.
 
 ## Getting it out of the way
@@ -70,7 +70,7 @@ i.e. if the user selects `>Disable Foo`, then we write `>Disable Foo` into the c
 
 * The `/clear` command should now be `>clear`. There is already a palette option for clear. So this
   just means that palette cmd provider becomes the only mechanism by which this is activated; we don't
-  hardcode a check for `prompt == '/clear'` on prompt submission anymore. 
+  hardcode a check for `prompt == '/clear'` on prompt submission anymore.
 * We also did some extra shenanigans on that provider in @session_commands.py so that `/clear` would
   work in the palette, too. This is now effectively backwards. The palette just needs to search for
   `clear`.

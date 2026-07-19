@@ -42,16 +42,18 @@ helpers, and this is one tool).
 ```
 
 * `header`: short chip label (roughly ≤12 chars), shown as a small title/breadcrumb —
-  e.g. `"Q2/3: Auth method"` when several questions are asked in one call. 
+  e.g. `"Q2/3: Auth method"` when several questions are asked in one call.
 * `question`: the full question text, ending in `?`.
 * `options`: zero, or ~2-4 entries. `label` is required; `description` is optional (a short
   clarifying line). At most one option per question may set `recommended: true` —
   `parameters()`/`apply()` reject a `questions` payload with more than one `recommended`
   option in the same question with a validation error back to the model, same as any
   other malformed-arguments case. The label is always rendered in bold, along a `:`, e.g.:
-  ```
+
+  ```text
   **Session cookie:** Simpler, but ties auth...
   ```
+
   * The agent is free to produce zero options. In which case we just ask the question and give
     the user a text box where they are expected to reply.
   * It is an error to produce exactly one option plus the implicit 'other'.
@@ -245,9 +247,8 @@ motivated reason (interactivity, not a fixed harness-owned location).
   >   Going in circles is a symptom of missing information, not a puzzle to be reasoned
   >   through alone.
 
-
 ... this is a good time to take stock of default_sys.md and do an overall edit pass. In
-particular, you should use <XmlTags>...</XmlTags> to separate distinct sections of the
+particular, you should use `<XmlTags>...</XmlTags>` to separate distinct sections of the
 system prompt rather than ever-more-nested markdown subsection headings. XML tags add
 and reinforce structure in a way that is more helpful to the agent over time.
 
@@ -267,6 +268,7 @@ and reinforce structure in a way that is more helpful to the agent over time.
   better — follow `EditFileTool`'s precedent for a tool-specific `summary()`).
 
 ### `Session._run_tool_calls`'s `AskUserQuestionsRequired` branch
+
 (`test_session_ask_user_questions.py`, mirroring how permission-ask branches are tested)
 
 * `callbacks.on_ask_user_questions is None`: the tool call fails with a clear error;
@@ -284,6 +286,7 @@ and reinforce structure in a way that is more helpful to the agent over time.
   callback's `AskUserQuestionsAnswer` verbatim.
 
 ### `AskUserQuestionsScreen` (`test_ask_user_questions_screen.py`, mirroring
+
 `test_permission_ask_screen.py` if one exists, else driven the way other Textual screen
 tests in this repo are)
 
@@ -301,6 +304,7 @@ tests in this repo are)
   multi-question call's Nth screen.
 
 ### `ReplApp._on_ask_user_questions`/`_confirm_ask_user_questions`
+
 (`test_repl_ask_user_questions.py` or wherever `_on_permission_ask` is covered)
 
 * The worker-thread callback hops onto the Textual event loop via `call_from_thread` and
@@ -312,6 +316,7 @@ tests in this repo are)
   alongside `on_permission_ask`/`on_tool_call`.
 
 ### System prompt (`test_system_prompt.py` or wherever `default_sys.md` content is
+
 asserted)
 
 * Assert the revised "ambiguous task" bullet's consequential-ambiguity carve-out

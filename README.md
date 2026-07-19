@@ -1,7 +1,7 @@
 
 # klorb
 
-```
+```text
       o
      /
     ▄▄▄
@@ -22,7 +22,7 @@ own provisioning steps. For the Python harness and CLI, see
 
 The top-level `make cloud_setup` target performs the installation steps described there
 (`make venv` and `make install_dev_deps` in `klorb/`) in one step along with a few other
-setup activities. It's used to provision ephemeral cloud development environments; see 
+setup activities. It's used to provision ephemeral cloud development environments; see
 `bin/claude-session-start.sh`.
 
 Create a top-level `.env` file (see `env.template` for a starter) and populate your

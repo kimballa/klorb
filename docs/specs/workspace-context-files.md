@@ -58,7 +58,7 @@ does anything at all.
   one `<ContextFile filename="..." priority="N">` block per file (`N` starting at `1` in
   priority order):
 
-  ```
+  ```text
   <SystemInterjection subject="ProjectGuidance">
   This workspace contains one or more files with instructions and context for
   working in this repository. Treat them as standing guidance about the

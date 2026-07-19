@@ -281,7 +281,7 @@ config) has one place to live.
 
 ## Usage
 
-```
+```bash
 klorb -m "What is 2+2?"                  # one-shot: Session.run_one_shot, no REPL
 klorb -m "What is 2+2?" --interactive    # REPL, with the message as the first turn
 klorb --no-interactive                   # error: nothing to send

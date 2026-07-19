@@ -142,8 +142,8 @@ from an active worker context — see
   no project record to persist it to).
 * Either way, `_apply_workspace_config()` reconciles the live config against the (possibly new)
   `Workspace` (see below), then `_announce_workspace()` mounts one history notice: `"Working in
-  project: <path>"` if trusted, or `"The workspace at <path> is not trusted. Run `>Trust
-  workspace` to change this."` otherwise.
+  project: <path>"` if trusted, or ``"The workspace at <path> is not trusted. Run `>Trust
+  workspace` to change this."`` otherwise.
 
 `_apply_workspace_config(workspace)` re-runs `load_process_config(config_flag_path=...,
 cwd=workspace.path, workspace=workspace)` and applies the result *in place* — mutating the

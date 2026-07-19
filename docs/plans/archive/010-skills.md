@@ -45,7 +45,7 @@ internally-provided meta-skill, `/create-edit-skill` — see "Creating and editi
 A skill is a directory whose basename is its `name` — a lower-kebab-case slug — containing at
 minimum a `SKILL.md`:
 
-```
+```text
 <skill-name>/
   SKILL.md
   <any other supporting files the skill's own instructions reference>
@@ -140,7 +140,7 @@ prefix ([[roles-and-system-prompts]]), and a workspace-tier skill's project-supp
 the same trust placement [[workspace-context-files]] chose for `.klorb/INSTRUCTIONS.md` and
 `AGENTS.md` rather than folding them into the system prompt.
 
-```
+```text
 <SystemInterjection subject="AvailableSkills">
 - add-cli-flag: Add a new command-line flag to the klorb CLI...
 - create-edit-skill: How to create or edit a klorb skill using EscalatePrivileges and the file tools...

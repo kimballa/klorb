@@ -3,20 +3,20 @@
 
 ## Context
 
-  * Packaging can't place `/etc/klorb/klorb-config.json` or `~/.config/klorb/klorb-config.json`
+* Packaging can't place `/etc/klorb/klorb-config.json` or `~/.config/klorb/klorb-config.json`
     at install time on its own — modern wheels don't reliably support `data_files`-style
     absolute install destinations, and neither `pip install` nor `uv install` has any notion of
     "was this a sudo, site-wide install vs. a per-user one" to branch on anyway. `etc/klorb-
     config.json` in the repo stays an uninstalled reference file for now.
-  * Add a `klorb init` CLI command instead: `klorb init --system` copies the reference config to
+* Add a `klorb init` CLI command instead: `klorb init --system` copies the reference config to
     `/etc/klorb/klorb-config.json`, refusing loudly if not running as root; `klorb init --user`
     copies it to `$KLORB_CONFIG_DIR/klorb-config.json` (default `~/.config/klorb`). Both should
     refuse to clobber an existing file without an explicit `--force`.
-  * Could double as (or share code with) the entry point for the per-project `.klorb/` bootstrap
+* Could double as (or share code with) the entry point for the per-project `.klorb/` bootstrap
     flow above — same "copy a starter config into place" idea, just a different destination and
     trust prompt.
 
-## Flow:
+## Flow
 
 * You can run `klorb init [{--system | --user}]` directly from the command line at any time.
   * default is `--user` unless your username is `root`.
@@ -29,9 +29,9 @@
       confirmation).
   * Parsing of the `--system`, `--user`, and `--force` args is only activated if `init` is
     a positional arg immediately after the process name (i.e., argv[1] = `init`).
-  * it should make any necessary directories (/etc/klorb or path elements required for 
+  * it should make any necessary directories (/etc/klorb or path elements required for
     `$KLORB_CONFIG_DIR`)
-  * Directory-wise, this uses the same defaults / env var mapping that normal invocation of `bin/klorb` 
+  * Directory-wise, this uses the same defaults / env var mapping that normal invocation of `bin/klorb`
     uses.  That is to say: it should load the dotenv and respect environment variables as overrides
     of the internal defaults, using `paths.py` per the normal route of the interactive klorb TUI.
   * Then it writes out the reference config to this location.
@@ -48,7 +48,7 @@ whatever `...../bin/klorb` process got put on the argv for the klorb process run
 Announce on stderr that you have done so.
 
 If this already exists, don't overwrite it unless --force is specified, in which case remove the
-existing symlink and create a new one. 
+existing symlink and create a new one.
 
 When installing in --user mode, create `~/.local/bin/` if needed.
 

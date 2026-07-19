@@ -11,9 +11,11 @@ overrides that are particular to Claude Code, on top of everything AGENTS.md alr
   set to another value during interactive terminal sessions.
 * When `CLAUDE_CODE_REMOTE=true`, submit completed work as a pull request using the `gh` CLI
   rather than presenting changes interactively:
-  ```
+
+  ```bash
   gh pr create --title "..." --body "..."
   ```
+
 * **Never push directly to `main`.** Always work on a named feature branch and open a PR.
 * When running as an interactive Claude Code terminal session (`CLAUDE_CODE_REMOTE` is not
   `"true"`), do **not** submit a PR automatically — present your changes to the user for review.
@@ -44,10 +46,12 @@ The following are **critical** instructions for invoking shell commands:
   to read anyway.
 
 Examples of GOOD bash commands:
+
 * `make lint typecheck test`
 * `make test`
 
 Examples of BAD bash commands:
+
 * `PYTHONPATH=./src:./tests venv/bin/pytest -q tests/ 2>&1 | tail -30`
 * `make test | tail -30`
 

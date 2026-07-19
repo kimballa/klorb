@@ -1,0 +1,35 @@
+// © Copyright 2026 Aaron Kimball
+//
+// markdownlint-cli2 configuration for klorb's Markdown: docs/ (specs, ADRs, plans),
+// the root-level agent-instruction files, and klorb.resources' system-prompt bodies.
+// Invoked by the top-level `make lint` and by `klorb/Makefile`'s `lint` target.
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint-cli2/main/schema/markdownlint-cli2-config-schema.json",
+  "config": {
+    "default": true,
+
+    // klorb's docs favor long, soft-wrapped prose lines over hard-wrapping at a fixed
+    // column; enforcing a line-length cap would just produce noisy diffs.
+    "MD013": false,
+
+    // CLAUDE.md opens with an `@AGENTS.md` import directive rather than a heading, and
+    // the system-prompt bodies under klorb/src/klorb/resources/system_prompts.d/ are
+    // LLM-facing prose, not developer documentation, so neither is expected to open
+    // with a top-level heading.
+    "MD041": false,
+
+    // Match this repo's already-established conventions so `fix: true` converges
+    // instead of fighting the majority style.
+    "MD004": { "style": "asterisk" },
+    "MD048": { "style": "backtick" },
+    // Asterisk (not underscore) emphasis/strong avoids colliding with the underscores
+    // in inline snake_case identifiers (`session_config`, `thinking_effort`, ...) that
+    // fill klorb's docs.
+    "MD049": { "style": "asterisk" },
+    "MD050": { "style": "asterisk" }
+  },
+  "fix": true,
+  "gitignore": true,
+  "noBanner": true,
+  "noProgress": true
+}
