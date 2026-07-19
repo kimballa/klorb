@@ -178,6 +178,18 @@ def _skill_mention_tokens(prompt: str) -> list[str]:
     return tokens
 
 
+_SKILL_WORD_RE = re.compile(r"(?<![a-zA-Z0-9])skills?\b|/skills?\b", re.IGNORECASE)
+
+
+def _prompt_mentions_skill(prompt: str) -> bool:
+    """Return ``True`` if ``prompt`` contains the word "skill" or "/skill" (case-insensitive).
+
+    Used by `Session.send_turn()` to decide whether to prepend the ``SkillReminder``
+    system interjection — a lightweight hint that suggests the agent look for relevant
+    skills via `SearchSkills` before proceeding.
+    """
+    return bool(_SKILL_WORD_RE.search(prompt))
+
 
 class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
@@ -1892,6 +1904,13 @@ class Session:
             skill_mention_tokens, discovered_skills)
         if skill_reference is not None:
             prompt = f"{_wrap_system_interjection('SkillReference', skill_reference)}\n{prompt}"
+        if _prompt_mentions_skill(original_prompt):
+            skill_reminder = (
+                "The user's message mentions the word \"skill\" or \"/skill\". Consider whether "
+                "a relevant skill exists that should be loaded first — use SearchSkills to look "
+                "for matching skills, then ActivateSkill to load one before proceeding."
+            )
+            prompt = f"{_wrap_system_interjection('SkillReminder', skill_reminder)}\n{prompt}"
         if not self._skills_seeded:
             self._skills_seeded = True
             available_skills = self._build_available_skills_interjection(discovered_skills or [])
