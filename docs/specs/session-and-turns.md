@@ -226,6 +226,55 @@ config) has one place to live.
   stays open afterward. Passing `--no-interactive` without `-m`/`--message` is a usage error
   (there would be nothing to send).
 
+## Session naming
+
+* `klorb.session_naming` derives a short human title and a kebab-case id slug for a fresh
+  interactive session from its first submitted prompt, via a cheap/fast model — mirroring
+  `klorb.permissions.risk_classifier`'s structured-output/`e2e_timeout`/one-retry pattern for
+  an unrelated small-model classification task. Triggered only from the interactive TUI
+  (`klorb.tui.mixins.prompt_submission.PromptSubmissionMixin._run_session_naming`, called from
+  `_send_prompt`'s worker thread right before `Session.send_turn()`), never for a one-shot
+  `-m`/`--message` invocation.
+* `generate_session_name(prompt_text, *, api_provider, model, timeout, e2e_timeout, reasoning=None)
+  -> SessionName | None` sends one request asking for a `title` (a short plain-English summary)
+  and a `slug` (kebab-case, at most 4 words, validated by a pydantic `field_validator`).
+  Returns `None` on any failure — a request error, `timeout`/`e2e_timeout` exceeded, or a reply
+  that still fails to parse/validate after one retry — never raises. `_default_naming_model`
+  picks a model the same way `klorb.permissions.risk_classifier._default_classifier_model`
+  does: the first registered model whose `Model.klorb_capabilities()` reports `"NANO_CLASSIFIER"`
+  (`ModelRegistry.find_by_capability`), falling back to `DEFAULT_SESSION_CLASSIFIER_MODEL`
+  (`"openai/gpt-5-nano"`, which declares that capability in its packaged
+  `resources/models/gpt-5-nano.json`). `_thinking_effort_for` requests `{"effort": "low"}`
+  when the resolved model is thinking-capable, so this one-shot summarization task doesn't
+  inherit a costlier provider-side reasoning default.
+* On success, `rename_session_id(old_id, slug)` replaces the random-nonce suffix of
+  `Session.id` (assigned at construction by `generate_session_id()`, see "Filesystem paths and
+  logging" below) with the derived `slug`, keeping the `yyyy-mm-dd-hh-mm` timestamp prefix —
+  e.g. `2026-07-19-14-30-happy-otter` becomes `2026-07-19-14-30-fix-auth-bug`.
+  `PromptSubmissionMixin._run_session_naming` also renames the session's already-open log file
+  to match (see [[paths-and-logging]]) and updates the TUI's `SESSION_NAME_ID` status line
+  (`"Session: <title>"`, between the prompt input and the footer) to the derived title.
+* On failure (or while `klorb.session_naming` is otherwise unavailable), `Session.id` keeps its
+  original random nonce, and the status line instead shows that same nonce
+  (`session_id_suffix(session.id)`) as its "title" — so the line always reflects the actual
+  session id rather than getting stuck on a generic placeholder.
+* Naming is attempted at most once per `Session` instance, tracked by `ReplApp.
+  _session_naming_pending` (`True` from construction, `/clear`, and restoring the last saved
+  session; set `False` the moment `_run_session_naming` runs, before it even knows whether
+  naming will succeed) — so a failed/timed-out attempt is never retried on a later prompt
+  within the same session, and the status line resets to `"New session..."` whenever a fresh
+  `Session` replaces the active one.
+* `classifier.model` / `classifier.timeout` / `classifier.e2eTimeout` (`PROCESS_KEY_MAP`, top
+  level — see [[process-and-session-config]]) configure
+  `ProcessConfig.session_classifier_model`/`_timeout_seconds`/`_e2e_timeout_seconds`, defaulting
+  to unset/`5.0`/`10.0`. Named generically (`classifier`, not `sessionNamer`) since this same
+  small/cheap classifier model choice may be reused for other structured-output tasks beyond
+  session naming.
+* While the classifier call is in flight, history shows an animated "Getting ready..." notice
+  (`klorb.tui.widgets.tool_call_widgets.GettingReadyStatic`) — the same crawling
+  bright-white-character animation `RunningToolCallStatic` uses for "Running...", via the
+  shared `klorb.tui.formatting.crawl_animation_text` helper.
+
 ## Usage
 
 ```

@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Tool-call widgets: the safety-limit confirmation modal and the running/finished
-tool-call summary statics mounted into the REPL history."""
+"""Tool-call widgets: the safety-limit confirmation modal, the running/finished tool-call
+summary statics, and the session-naming "Getting ready..." notice, all mounted into the REPL
+history."""
 
 from typing import Any
 
@@ -10,6 +11,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
+
+from klorb.tui.formatting import ANIMATION_TICK_SECONDS, crawl_animation_text
 
 
 class ToolCallLimitScreen(ModalScreen[bool]):
@@ -102,11 +105,8 @@ class ToolCallStatic(Static):
 
 
 _ANIMATED_RUNNING_TEXT = "Running..."
-"""The literal text shown with a crawling bold-character animation while a tool call executes."""
-_ANIMATION_TICK_SECONDS = 0.24
-"""Interval between animation frames (seconds). At 0.24s per frame and 9 characters in
-`_ANIMATED_RUNNING_TEXT`, a full crawl cycle takes just over two seconds -- slow enough to
-feel calm without being distracting."""
+"""The literal text shown with a crawling bold-character animation (`crawl_animation_text`)
+while a tool call executes."""
 
 
 class RunningToolCallStatic(ToolCallStatic):
@@ -135,20 +135,14 @@ class RunningToolCallStatic(ToolCallStatic):
         self.update(self._make_running_text())
 
     def on_mount(self) -> None:
-        self._timer = self.set_interval(_ANIMATION_TICK_SECONDS, self._tick)
+        self._timer = self.set_interval(ANIMATION_TICK_SECONDS, self._tick)
 
     def _make_running_text(self) -> Text:
         """Build a `Text` with the tool label in default style and ``Running...`` where one
         character is bright white at the current crawl position."""
         text = Text(self._label_text)
-        running = _ANIMATED_RUNNING_TEXT
-        pos = self._animation_pos % len(running)
         text.append("\n")
-        for i, ch in enumerate(running):
-            if i == pos:
-                text.append(ch, style="bright_white")
-            else:
-                text.append(ch)
+        text.append_text(crawl_animation_text(_ANIMATED_RUNNING_TEXT, self._animation_pos))
         return text
 
     def _tick(self) -> None:
@@ -181,3 +175,37 @@ class RunningToolCallStatic(ToolCallStatic):
         self._detail_shown = show_detail
         if self._finalized:
             self._apply_content()
+
+
+_GETTING_READY_TEXT = "Getting ready..."
+"""The literal text shown with a crawling bold-character animation (`crawl_animation_text`)
+while the first-turn session-naming classifier call (`klorb.session_naming`) is in flight."""
+
+
+class GettingReadyStatic(Static):
+    """Animated notice mounted into history while the first-turn session-naming classifier
+    call is in flight -- the naming-step analog of `RunningToolCallStatic`'s "Running..."
+    animation, via the same `crawl_animation_text`. Constructed with `markup=False` for
+    consistency with the other animated statics here, even though its text is a fixed literal
+    rather than arbitrary content. `remove_self()` stops the timer before unmounting,
+    mirroring `RunningToolCallStatic.finalize()`'s own timer teardown.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("", markup=False)
+        self._animation_pos = 0
+        self._timer: Any = None
+        self.update(crawl_animation_text(_GETTING_READY_TEXT, 0))
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(ANIMATION_TICK_SECONDS, self._tick)
+
+    def _tick(self) -> None:
+        self._animation_pos += 1
+        self.update(crawl_animation_text(_GETTING_READY_TEXT, self._animation_pos))
+
+    def remove_self(self) -> None:
+        """Stop the crawl-animation timer, then unmount this widget from the history scroll."""
+        if self._timer is not None:
+            self._timer.stop()
+        self.remove()

@@ -14,9 +14,16 @@ from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.session import Session, ToolCallEvent, ToolCallStartedEvent, TurnEventHandlers
+from klorb.session_naming import (
+    _default_naming_model,
+    _thinking_effort_for,
+    generate_session_name,
+    rename_session_id,
+    session_id_suffix,
+)
 from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
-from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
+from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.formatting import _summarize_reasoning_details
 from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShellCommand
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -249,6 +256,9 @@ class PromptSubmissionMixin(ReplAppBase):
         prompt_input.clear_input_history()
         prompt_input.focus()
         self._update_status_bar()
+        self._session_naming_pending = True
+        session_name = self.query_one(f"#{SESSION_NAME_ID}", Static)
+        session_name.update(NEW_SESSION_LABEL)
 
     def _submit_prompt(self, prompt_text: str) -> None:
         """Echo `prompt_text` into the history, disable the input, and dispatch it. The echoed
@@ -313,7 +323,15 @@ class PromptSubmissionMixin(ReplAppBase):
         `thinking_widget` at that point necessarily belong to the round that was still
         streaming when Escape fired, matching the single round's worth of content `Session`
         keeps for it.
+
+        Before any of that, if `_session_naming_pending` is still `True` for the active
+        `Session`, this is its first submitted prompt: `_run_session_naming` runs (and
+        completes, or falls back) on this same worker thread before `Session.send_turn()` is
+        called, so the first turn's own request never races the naming classifier's.
         """
+        if self._session_naming_pending:
+            self._run_session_naming(prompt_text)
+
         response_widget: Markdown | None = None
         accumulated = ""
         response_round: int | None = None
@@ -419,8 +437,54 @@ class PromptSubmissionMixin(ReplAppBase):
             except Exception:
                 pass
 
+    def _run_session_naming(self, prompt_text: str) -> None:
+        """Derive a `klorb.session_naming.SessionName` from `prompt_text` (this session's first
+        submitted prompt) and apply it: rename `self._session.id` (keeping its timestamp
+        prefix, swapping in the derived kebab-case slug), rename the session log file to
+        match, and update the `SESSION_NAME_ID` status line to the derived title. Falls back to
+        leaving `self._session.id` untouched and showing its own random nonce slug
+        (`klorb.session_naming.session_id_suffix`) as the status line text if naming fails
+        (timeout, unavailable classifier, malformed reply -- see `generate_session_name`'s own
+        "never raises, returns `None` on failure" contract).
 
+        Runs synchronously on `_send_prompt`'s worker thread, before `Session.send_turn()` is
+        called -- see that method's docstring. Sets `_session_naming_pending = False`
+        immediately (not only on success) so a failed/timed-out attempt is never retried on a
+        later prompt within the same `Session`. Mounts a `GettingReadyStatic` into history for
+        the call's duration (mirroring `_mount_running_tool_call_widget`'s "show progress while
+        a worker-thread call is in flight" pattern), removing it in a `finally` so it's cleaned
+        up on every exit path.
+        """
+        self._session_naming_pending = False
+        getting_ready = self.call_from_thread(self._mount_getting_ready_widget)
+        try:
+            model = (
+                self._process_config.session_classifier_model
+                or _default_naming_model(self._session))
+            reasoning = _thinking_effort_for(self._session, model)
+            result = generate_session_name(
+                prompt_text, api_provider=self._session.provider, model=model,
+                timeout=self._process_config.session_classifier_timeout_seconds,
+                e2e_timeout=self._process_config.session_classifier_e2e_timeout_seconds,
+                reasoning=reasoning)
+        finally:
+            self.call_from_thread(getting_ready.remove_self)
 
+        if result is None:
+            self.call_from_thread(
+                self._update_session_name_line, session_id_suffix(self._session.id))
+            return
+
+        new_id = rename_session_id(self._session.id, result.slug)
+        if self._session_log_enabled:
+            old_log_path = session_log_path(self._session.id)
+            new_log_path = session_log_path(new_id)
+            configure_logging(repl_mode=True, log_path=None)  # release the file handle
+            if old_log_path.exists():
+                old_log_path.rename(new_log_path)
+            configure_logging(repl_mode=True, log_path=new_log_path)
+        self._session.id = new_id
+        self.call_from_thread(self._update_session_name_line, result.title)
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""

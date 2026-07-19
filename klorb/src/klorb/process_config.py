@@ -170,6 +170,24 @@ along with the item actually being scored, so a run of similar approvals/denials
 same session can inform how aggressively the classifier generalizes its next `suggested_pattern`
 — see `klorb.permissions.risk_classifier.record_decision_history`."""
 
+DEFAULT_SESSION_CLASSIFIER_MODEL = "openai/gpt-5-nano"
+"""Last-resort model `klorb.session_naming._default_naming_model` falls back to when
+`ProcessConfig.session_classifier_model` is unset (the normal case) and no registered model
+declares the `"NANO_CLASSIFIER"` `klorb_capabilities` flag — independent of `SessionConfig.model`
+(the main conversation's own model). Named generically (not e.g. `SESSION_NAMER_MODEL`) since
+this same small/cheap classifier model choice may be reused for other structured-output tasks
+beyond session naming."""
+
+DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS = 5.0
+"""Default for `ProcessConfig.session_classifier_timeout_seconds` — mirrors
+`DEFAULT_BASH_RISK_CLASSIFIER_TIMEOUT_SECONDS`'s rationale: a short, fail-fast per-request
+budget for a classifier call that happens before the session's real turn is dispatched."""
+
+DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS = 10.0
+"""Default for `ProcessConfig.session_classifier_e2e_timeout_seconds` — a hard wall-clock ceiling
+on the entire `klorb.session_naming.generate_session_name()` call (initial request plus one
+parse-retry), mirroring `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS`'s rationale."""
+
 SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",
     "thinking.enabled": "thinking_enabled",
@@ -225,6 +243,9 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.riskClassifier.e2eTimeout": "bash_risk_classifier_e2e_timeout_seconds",
     "tools.bash.riskClassifier.tooRiskyThreshold": "bash_risk_classifier_too_risky_threshold",
     "tools.bash.riskClassifier.historySize": "bash_risk_classifier_history_size",
+    "classifier.model": "session_classifier_model",
+    "classifier.timeout": "session_classifier_timeout_seconds",
+    "classifier.e2eTimeout": "session_classifier_e2e_timeout_seconds",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
     "compatibility.claudeSkills": "compatibility_claude_skills",
     LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
@@ -331,6 +352,20 @@ class ProcessConfig(BaseModel):
     """See `DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD`."""
     bash_risk_classifier_history_size: int = DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE
     """See `DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE`."""
+    session_classifier_model: str | None = None
+    """Model `klorb.session_naming.generate_session_name()` sends its request to, via the same
+    `ApiProvider` instance the main conversation uses. `None` (the default, and
+    `default-config.json`'s own packaged value) means klorb picks the model itself: `klorb.
+    session_naming._default_naming_model` looks up a registered model whose `Model.
+    klorb_capabilities()` reports `"NANO_CLASSIFIER"` (`klorb.models.registry.ModelRegistry.
+    find_by_capability`), falling back to `DEFAULT_SESSION_CLASSIFIER_MODEL` if none is
+    registered. Setting this to an explicit model name always wins over that lookup."""
+    session_classifier_timeout_seconds: float = DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS
+    """Wall-clock seconds `generate_session_name()`'s request is allowed to take before it's
+    treated as a failure (falling back to today's random-nonce session id and no displayed
+    title)."""
+    session_classifier_e2e_timeout_seconds: float = DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS
+    """See `DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS`."""
     compatibility_claude_markdown: bool = False
     """Whether to read `CLAUDE.md` from the workspace root and fold it into the
     `ProjectGuidance` interjection alongside `AGENTS.md` and `.klorb/INSTRUCTIONS.md` (see

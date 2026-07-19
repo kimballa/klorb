@@ -9,6 +9,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
 from textual.containers import VerticalScroll
 
 from klorb.permissions.directory_access import DirRules
@@ -110,6 +111,27 @@ def _format_workspace_path(
     if len(full) <= max_chars or len(path.parts) < 2:
         return full
     return ".../" + "/".join(path.parts[-2:])
+
+
+ANIMATION_TICK_SECONDS = 0.24
+"""Interval between "still working" crawl-animation frames (seconds) -- see
+`crawl_animation_text`. At 0.24s per frame and 9 characters in e.g. `"Running..."`, a full
+crawl cycle takes just over two seconds -- slow enough to feel calm without being distracting.
+Shared by `RunningToolCallStatic` and `GettingReadyStatic`, which each drive their own
+`Widget.set_interval` timer at this rate."""
+
+
+def crawl_animation_text(word: str, position: int) -> Text:
+    """One frame of the "still working" crawl animation: `word` with the character at
+    `position % len(word)` in `bright_white` and every other character in default style --
+    e.g. `RunningToolCallStatic`'s "Running..." while a tool call executes, or
+    `GettingReadyStatic`'s "Getting ready..." while the first-turn session-naming classifier
+    call is in flight."""
+    text = Text()
+    pos = position % len(word)
+    for i, ch in enumerate(word):
+        text.append(ch, style="bright_white" if i == pos else "")
+    return text
 
 
 def _pinned_to_bottom(history: VerticalScroll) -> bool:

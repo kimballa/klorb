@@ -319,8 +319,10 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `providers.openrouter.baseUrl`, `shell.command`,
   `shell.timeout`, `watchdog.timeout`, `tools.bash.command`, `tools.bash.timeout`,
   `tools.bash.spillBytes`,
-  `tools.bash.shfmtCommand`, `compatibility.claudeMarkdown`, `tools.logCalls`, `ui.theme`) can
-  be set at the top level.
+  `tools.bash.shfmtCommand`, `classifier.model`, `classifier.timeout`, `classifier.e2eTimeout`,
+  `compatibility.claudeMarkdown`, `tools.logCalls`, `ui.theme`) can
+  be set at the top level. `classifier.*` configures the first-turn session-naming classifier
+  model/timeouts — see [[session-and-turns]]'s "Session naming" section.
   `thinking.tokenBudgets`, being a nested object (`{"low": ...,
   "medium": ..., "high": ...}`), is replaced wholesale by a config layer that sets it —
   there's no per-key deep merge, so a layer overriding it must repeat every `ThinkingEffort`

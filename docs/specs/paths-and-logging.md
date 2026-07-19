@@ -62,6 +62,12 @@ paths or calling `logging.basicConfig` itself.
     defaults ADR](
     ../adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md) for why
     one-shot prompts default to neither.
+  * If the interactive TUI's first-turn session-naming classifier renames `Session.id` (see
+    [[session-and-turns]]'s "Session naming" section), `PromptSubmissionMixin.
+    _run_session_naming` closes the current `FileHandler` (`configure_logging(repl_mode=True,
+    log_path=None)`), renames the log file on disk to `session_log_path()` of the new id, and
+    reopens `configure_logging` pointed at the renamed path — so the log file's own name always
+    tracks `session.id`, and no log content already written is lost across the rename.
 * `klorb.logging_config` also exposes crash-log capture for the interactive REPL:
   * `crash_log_path(workspace_root: Path) -> Path` builds
     `<tempdir>/klorb-crash-<workspace basename>-<timestamp>.log` (the OS temp directory, not

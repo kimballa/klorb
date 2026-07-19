@@ -21,7 +21,7 @@ from klorb.tools.tool import (
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID
 from klorb.tui.formatting import _summarize_reasoning_details
-from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, RunningToolCallStatic, ToolCallStatic
 
 THINKING_LABEL = "<Thinking>"
 REASONING_DETAILS_LABEL = "<Reasoning>"
@@ -222,6 +222,21 @@ class RenderingMixin(ReplAppBase):
         self._tool_call_widgets.append(widget)
         self._running_tool_call_widgets[call_id] = widget
         self._update_status_bar()
+        return widget
+
+    def _mount_getting_ready_widget(self) -> GettingReadyStatic:
+        """Mount a `GettingReadyStatic` into history, showing an animated "Getting ready..."
+        notice while `PromptSubmissionMixin._run_session_naming`'s classifier call is in
+        flight -- the naming-step analog of `_mount_running_tool_call_widget`, but with no
+        `_running_tool_call_widgets`/`_tool_call_widgets` tracking, since this widget is
+        always removed outright (`GettingReadyStatic.remove_self`) rather than finalized in
+        place once naming resolves.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        widget = GettingReadyStatic()
+        history.mount(widget)
+        self._scroll_if_pinned(history, was_pinned)
         return widget
 
     def _running_tool_call_anchor(self) -> Static | None:

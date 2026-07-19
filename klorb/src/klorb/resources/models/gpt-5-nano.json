@@ -19,5 +19,8 @@
     "function_calling": true,
     "streaming": true
   },
+  "klorb_capabilities": {
+    "NANO_CLASSIFIER": true
+  },
   "cache_mgmt_style": "AUTOMATIC"
 }

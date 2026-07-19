@@ -11,7 +11,7 @@ from klorb.session import Session
 from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
-from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
+from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.formatting import _concat_dir_rules
 from klorb.tui.panels.confirm_screen import ConfirmScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
@@ -103,6 +103,9 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             self._session.load_statistics(state.statistics)
         self.sub_title = restored_config.model
         self._update_status_bar()
+        self._session_naming_pending = True
+        session_name = self.query_one(f"#{SESSION_NAME_ID}", Static)
+        session_name.update(NEW_SESSION_LABEL)
         self._mount_restored_history(state.messages)
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:

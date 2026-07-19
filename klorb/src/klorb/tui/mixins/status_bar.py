@@ -13,6 +13,7 @@ from klorb.tui.constants import (
     PERMISSION_BADGE_ID,
     PERMISSION_FRAMEWORK_CYCLE,
     PROMPT_INPUT_ID,
+    SESSION_NAME_ID,
     STATUS_BAR_ID,
 )
 from klorb.tui.formatting import _pinned_to_bottom, format_token_count
@@ -78,6 +79,17 @@ class StatusBarMixin(ReplAppBase):
 
         output_tokens = self.query_one(f"#{OUTPUT_TOKENS_ID}", Static)
         output_tokens.update(f"\u2193 {format_token_count(self._session.total_output_tokens_used())}")
+
+    def _update_session_name_line(self, text: str) -> None:
+        """Set the `SESSION_NAME_ID` line to `"Session: <text>"` -- called by
+        `PromptSubmissionMixin._run_session_naming` once the first-turn classifier resolves
+        (`text` is the derived title) or falls back (`text` is the session id's own random
+        nonce slug, via `klorb.session_naming.session_id_suffix`). `clear_session()`/
+        `_maybe_restore_last_session()` instead reset the line directly to `NEW_SESSION_LABEL`
+        (no `"Session: "` prefix), matching `compose()`'s own initial value.
+        """
+        session_name = self.query_one(f"#{SESSION_NAME_ID}", Static)
+        session_name.update(f"Session: {text}")
 
     def _update_permission_badge(self) -> None:
         """Set the permission badge to show `Session.config.permission_framework`

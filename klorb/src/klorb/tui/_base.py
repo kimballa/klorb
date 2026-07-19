@@ -37,7 +37,7 @@ from klorb.session import (
     Session,
     ToolCallEvent,
 )
-from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, RunningToolCallStatic, ToolCallStatic
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager
 
@@ -74,8 +74,14 @@ class ReplAppBase(App[None]):
     _running_tool_call_widgets: dict[str, RunningToolCallStatic]
     _tool_call_detail_shown: bool
     _history_pinned_to_bottom: bool
+    _session_naming_pending: bool
 
     def _update_status_bar(self) -> None: ...
+
+    def _update_session_name_line(self, text: str) -> None: ...
+
+    def _mount_getting_ready_widget(self) -> GettingReadyStatic:
+        raise NotImplementedError
 
     def _update_permission_badge(self) -> None: ...
 

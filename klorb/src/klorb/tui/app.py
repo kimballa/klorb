@@ -36,10 +36,12 @@ from klorb.tui.commands.trust_commands import TrustWorkspaceCommandProvider
 from klorb.tui.constants import (
     HISTORY_ID,
     INTERACTION_PANEL_ID,
+    NEW_SESSION_LABEL,
     OUTPUT_TOKENS_ID,
     PALETTE_HINT_ID,
     PERMISSION_BADGE_ID,
     PROMPT_INPUT_ID,
+    SESSION_NAME_ID,
     STATUS_BAR_ID,
 )
 from klorb.tui.formatting import _format_workspace_path
@@ -132,6 +134,12 @@ class ReplApp(
     #prompt-input.interaction-active {
         height: 1;
         color: $text-muted;
+    }
+
+    #session-name {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
     }
 
     #status-row {
@@ -320,6 +328,14 @@ class ReplApp(
         from Textual's `Markdown.await_update` lock when the app is torn down mid-stream). Being a
         plain bool touched only from the event-loop thread, its check-and-set is atomic against
         other message handlers."""
+        self._session_naming_pending: bool = True
+        """Whether the first-turn session-naming classifier (`klorb.session_naming`) still
+        needs to run for the currently active `self._session`. Set back to `True` here and
+        wherever `self._session` is later replaced with a fresh `Session`
+        (`clear_session()`, `_maybe_restore_last_session()`), and to `False` by
+        `_run_session_naming` once it has attempted naming (success or fallback) for the
+        current `Session` instance -- so naming runs exactly once per `Session` object,
+        regardless of how many prompts are submitted to it."""
         self._interaction_lock = asyncio.Lock()
         """Serializes the mount/await/dismiss lifecycle of every interaction panel (permission
         ask, ask-user-questions, escalate-privileges) so at most one is ever mounted into
@@ -372,6 +388,7 @@ class ReplApp(
         yield Vertical(id=INTERACTION_PANEL_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
+        yield Static(NEW_SESSION_LABEL, id=SESSION_NAME_ID)
         with Horizontal(id="status-row"):
             yield PaletteHint(id=PALETTE_HINT_ID)
             yield Footer(show_command_palette=False)
