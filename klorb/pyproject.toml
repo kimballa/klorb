@@ -79,7 +79,9 @@
   # importlib.resources -- one directory per skill, each holding at minimum a SKILL.md plus any
   # supporting files that skill's own instructions reference. See docs/specs/skills.md.
   "klorb.resources" = [
-    "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", "default-config.json", "template-config.json",
+    "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", 
+    "default-config.json",
+    "template-config.json",
     "tiktoken-cache/*/*", "models/*.json", "greetings.json",
     "skills/*/SKILL.md", "skills/*/**/*",
   ]

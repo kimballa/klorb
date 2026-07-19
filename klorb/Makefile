@@ -12,6 +12,7 @@ COMMANDS=help lint typecheck clean distclean sync_deps \
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
+ISORT=venv/bin/isort
 MYPY=venv/bin/mypy
 DMYPY=venv/bin/dmypy
 PIP=venv/bin/pip
@@ -63,6 +64,7 @@ help:
 
 
 lint:
+	$(LOAD_VENV); "${ISORT}" --jobs -1 --gitignore src/ tests/ evals/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" src/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" tests/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" evals/
