@@ -83,11 +83,8 @@ class ReadSkillFileTool(Tool):
             raise ValueError(f"path must be a string, got {path!r}")
         logger.debug("ReadSkillFile %s/%s %s", namespace, name, path)
 
-        workspace = self.context.session_config.workspace
         registry = get_skill_catalog_registry()
-        registry.ensure(
-            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=self.context.process_config.compatibility_claude_skills)
+        registry.ensure_from_context(self.context)
         resolved = resolve_and_gate_skill(
             catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)

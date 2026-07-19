@@ -66,7 +66,7 @@ class SkillLocation(Protocol):
     """Structural type shared by `ResolvedSkill` and `klorb.tools.skill.model.Skill`: anything
     with a resolved `(namespace, name)` identity and a `root` `Traversable` to read files from.
     Lets `read_skill_md`/`skill_file_manifest`/`resolve_skill_file` serve both a fresh
-    `resolve_skill()` result and a catalog-held `Skill` without duplicating the file-reading
+    `resolve_all_skills()` entry and a catalog-held `Skill` without duplicating the file-reading
     logic. Declared with read-only `@property` members (rather than plain attributes) because
     both implementers are frozen -- a frozen dataclass's/pydantic model's fields are read-only
     from mypy's perspective, and a plain-attribute Protocol member requires a settable one."""
@@ -79,17 +79,6 @@ class SkillLocation(Protocol):
 
     @property
     def root(self) -> Traversable: ...
-
-
-@dataclass(frozen=True)
-class DiscoveredSkill:
-    """One entry in the available-skills list / a `SearchSkills` hit: a skill's `(namespace,
-    name)` identity and its one-line `description` (empty when `SKILL.md` has no parseable
-    `description` frontmatter)."""
-
-    namespace: Namespace
-    name: str
-    description: str
 
 
 def validate_namespace(namespace: object) -> Namespace:
@@ -147,15 +136,6 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     return data
-
-
-def parse_frontmatter_description(text: str) -> str:
-    """Return a `SKILL.md`'s `description` frontmatter field, or `""` if it has none or the
-    field isn't a string. A thin projection of `parse_frontmatter`."""
-    description = parse_frontmatter(text).get("description")
-    if not isinstance(description, str):
-        return ""
-    return description.strip()
 
 
 def _namespace_source_dirs(
@@ -223,7 +203,8 @@ def resolve_all_skills(
 ) -> list[ResolvedSkill]:
     """Every discoverable skill, precedence-resolved and sorted by `name`. When the same `name`
     exists in more than one source, the most specific one wins and the rest are dropped. Not
-    filtered by `skillRules` -- see `discover_skills` for that."""
+    filtered by `skillRules` -- see `klorb.tools.skill.catalog.SkillCatalog.discoverable` for
+    that."""
     resolved: dict[str, ResolvedSkill] = {}
     for namespace, source in _tier_source_dirs(
             workspace_root, workspace_trusted, claude_skills_compat):
@@ -235,52 +216,9 @@ def resolve_all_skills(
     return [resolved[name] for name in sorted(resolved)]
 
 
-def discover_skills(
-    *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
-    skill_rules: SkillRules,
-) -> list[DiscoveredSkill]:
-    """Every discoverable, non-`deny`-verdicted skill as a `DiscoveredSkill` (identity plus
-    one-line description), sorted by `name` -- what the available-skills interjection lists and
-    `SearchSkills` narrows."""
-    out: list[DiscoveredSkill] = []
-    for resolved in resolve_all_skills(
-            workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-            claude_skills_compat=claude_skills_compat):
-        if evaluate_skill(skill_rules, (resolved.namespace, resolved.name)) == "deny":
-            continue
-        out.append(DiscoveredSkill(
-            namespace=resolved.namespace, name=resolved.name,
-            description=read_skill_description(resolved)))
-    return out
-
-
-def resolve_skill(
-    *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
-    namespace: Namespace, name: str,
-) -> ResolvedSkill | None:
-    """Resolve an exact `(namespace, name)` pair to its `ResolvedSkill`, or `None` if that
-    namespace's source dir(s) have no such skill (an untrusted workspace resolves to `None` for
-    `workspace`). `name` must already be validated by the caller."""
-    for source in _namespace_source_dirs(
-            namespace, workspace_root, workspace_trusted, claude_skills_compat):
-        candidate = source.joinpath(name)
-        if _is_dir(candidate) and candidate.joinpath(SKILL_FILE_NAME).is_file():
-            return ResolvedSkill(namespace=namespace, name=name, root=candidate)
-    return None
-
-
 def read_skill_md(resolved: SkillLocation) -> str:
     """Return `resolved`'s full `SKILL.md` content."""
     return resolved.root.joinpath(SKILL_FILE_NAME).read_text(encoding="utf-8")
-
-
-def read_skill_description(resolved: SkillLocation) -> str:
-    """Return `resolved`'s one-line `description` frontmatter, or `""` on any read/parse problem."""
-    try:
-        text = read_skill_md(resolved)
-    except (OSError, UnicodeDecodeError):
-        return ""
-    return parse_frontmatter_description(text)
 
 
 def _iter_relative_files(node: Traversable, prefix: str, root_real: Path | None) -> list[str]:

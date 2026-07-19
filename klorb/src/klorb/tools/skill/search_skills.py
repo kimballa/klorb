@@ -63,11 +63,8 @@ class SearchSkillsTool(Tool):
         logger.debug("SearchSkills %r", queries)
 
         compiled = compile_queries(queries, case_insensitive=True)
-        workspace = self.context.session_config.workspace
         registry = get_skill_catalog_registry()
-        registry.ensure(
-            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=self.context.process_config.compatibility_claude_skills)
+        registry.ensure_from_context(self.context)
 
         results: list[dict[str, str]] = []
         for skill in registry.canonical().discoverable(self.context.session_config.skill_rules):
