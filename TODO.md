@@ -26,6 +26,10 @@
 
 ## Feature backlog
 
+* Tools should be accessed by the agent from a ToolCatalog. This is an object member on the Session. This sets up for subagents having access to a restricted subset of Tools.
+  * Each Tool should have a category like "FILES" or "MEMORY", and we can use those to filter what tools a subagent gets rather than explicitly listing each one.
+  * Tools also need an is_read_only flag so we can distinguish ro vs rw tools.
+
 * When adding skills list `<SystemInterjection>` we should notify the TUI or log file how many tokens
 
 * Add a structured wrapper around all tool call responses.
@@ -87,6 +91,7 @@
   * WebFetchTool
 
 * Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
+  * the user and agent SkillCatalogs are currently global / singleton objects but eventually should get moved into Session. This will set up a clean mechanism for restricting skill availability for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
   * Add skill for code review
   * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
