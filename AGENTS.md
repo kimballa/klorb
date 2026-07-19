@@ -68,6 +68,17 @@ The Klorb project is organized as a collection of subprojects:
   argument and method return type must be declared.
   * In python, methods that return nothing should explicitly `-> None`.
   * Typescript methods without any return value should explicitly `: void`.
+* Encapsulate related state and behavior in a class, even when there's only ever one instance
+  (a singleton). Avoid module-level mutable globals paired with free functions that read/write
+  them (`global` statements outside a class); wrap them in a class instead, with private
+  (`_`-prefixed) attributes and public methods, and reach the one shared instance through a
+  single accessor function rather than importing the module global directly. Avoid returning a
+  bare tuple of unrelated/loosely-related values (dicts, primitives, other tuples) from a
+  function when those values are conceptually one thing — give it a small class (a pydantic
+  `BaseModel` or a `@dataclass`) with named fields instead of positional tuple unpacking. See
+  `.claude/skills/encapsulate-in-classes/SKILL.md` for the checklist and worked examples this
+  rule expands into. `klorb.models.registry.ModelRegistry`/`klorb.tools.registry.ToolRegistry`
+  are existing examples of the class-based shape to follow for a stateful registry.
 * When revising or refactoring, make the smallest code change necessary to effect the change.
 * Do not make unrelated changes while revising or refactoring a file.
 * Do not try to be an auto-formatter or lint tool. Use deterministic formatting and linting

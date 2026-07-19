@@ -25,7 +25,7 @@ from klorb.process_config import ProcessConfig, persist_session_default, persist
 from klorb.session import Session, ThinkingEffort
 from klorb.session_statistics import SessionStatistics
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.skill.catalog import reload_skill_catalog
+from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import InitCommandProvider
 from klorb.tui.commands.model_commands import ModelCommandProvider
@@ -456,10 +456,10 @@ class ReplApp(
         scan against the active session's workspace, and report the resulting skill count in the
         history scroll -- see `klorb.tui.commands.skill_commands.SkillCommandProvider`."""
         workspace = self._session.config.workspace
-        _, canonical = reload_skill_catalog(
+        catalogs = get_skill_catalog_registry().reload(
             workspace_root=workspace.path, workspace_trusted=workspace.trusted,
             claude_skills_compat=self._process_config.compatibility_claude_skills)
-        count = len(canonical)
+        count = len(catalogs.canonical)
         self.show_notice(f"Reloaded skill catalog: {count} skill{'s' if count != 1 else ''} found.")
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:

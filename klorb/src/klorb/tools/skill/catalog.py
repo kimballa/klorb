@@ -3,19 +3,24 @@
 every tier, and reused by every subsequent skill lookup instead of re-walking the filesystem per
 call. See docs/specs/skills.md.
 
-`canonical_catalog()` is keyed by every discovered skill's true `(namespace, name)` identity --
-its directory basename. This is the only catalog `ActivateSkill`/`ReadSkillFile` may resolve
-against, and the only identity `skillRules` rules and approval decisions are ever keyed on.
+`SkillCatalogRegistry.canonical()` is keyed by every discovered skill's true `(namespace, name)`
+identity -- its directory basename. This is the only catalog `ActivateSkill`/`ReadSkillFile` may
+resolve against, and the only identity `skillRules` rules and approval decisions are ever keyed
+on.
 
-`typed_catalog()` additionally carries an alias entry `(namespace, <frontmatter name>)` for a
-skill whose `SKILL.md` frontmatter names it something other than its directory basename. This is
-the catalog a user's typed `/<name>` or `/<namespace>:<name>` reference is checked against, via
-`SkillCatalog.resolve_reference()`, before the harness treats it as a real skill mention.
+`SkillCatalogRegistry.typed()` additionally carries an alias entry `(namespace, <frontmatter
+name>)` for a skill whose `SKILL.md` frontmatter names it something other than its directory
+basename. This is the catalog a user's typed `/<name>` or `/<namespace>:<name>` reference is
+checked against, via `SkillCatalog.resolve_reference()`, before the harness treats it as a real
+skill mention.
 
-Both catalogs are built once, lazily, on first use (`ensure_skill_catalog()`);
-`reload_skill_catalog()` forces a fresh disk scan -- the ">Reload skills" command palette action's
-implementation (see `klorb.tui.commands.skill_commands`). A skill added, removed, or edited on
-disk between then and now is invisible until the catalog is rebuilt.
+Exactly one `SkillCatalogRegistry` exists per process, reached via `get_skill_catalog_registry()`
+-- every catalog lookup goes through a method call on that instance rather than a scattered set of
+module-level globals and free functions (see AGENTS.md's "encapsulate singleton state in a class"
+principle). Both catalogs are built once, lazily, on first use (`SkillCatalogRegistry.ensure()`);
+`SkillCatalogRegistry.reload()` forces a fresh disk scan -- the ">Reload skills" command palette
+action's implementation (see `klorb.tui.commands.skill_commands`). A skill added, removed, or
+edited on disk between then and now is invisible until the catalog is rebuilt.
 """
 
 import logging
@@ -43,8 +48,9 @@ logger = logging.getLogger(__name__)
 class SkillCatalog(BaseModel):
     """One `(namespace, name) -> Skill` dict, plus the read-only views/lookups over it. Two
     instances exist process-wide -- see module docstring -- with the same shape but different
-    contents: `canonical_catalog()`'s `skills` holds only true identities, `typed_catalog()`'s
-    also holds frontmatter-alias identities pointing at the same `Skill` objects.
+    contents: `SkillCatalogRegistry.canonical()`'s `skills` holds only true identities,
+    `SkillCatalogRegistry.typed()`'s also holds frontmatter-alias identities pointing at the same
+    `Skill` objects.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -100,10 +106,21 @@ class SkillCatalog(BaseModel):
         return None
 
 
+class SkillCatalogs(BaseModel):
+    """The `(typed, canonical)` catalog pair `build_catalogs()` produces together from one disk
+    scan -- a small named bundle rather than a positional tuple, since the two are always built
+    and consumed as a pair (see `SkillCatalogRegistry.reload()`)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    typed: SkillCatalog
+    canonical: SkillCatalog
+
+
 @dataclass(frozen=True)
 class SkillCatalogParams:
     """The disk-scan parameters the currently-loaded catalog was last built from, kept only so
-    `ensure_skill_catalog()` can log what it's about to (not) rebuild."""
+    `SkillCatalogRegistry` can log what it's about to (not) rebuild."""
 
     workspace_root: Path
     workspace_trusted: bool
@@ -112,10 +129,10 @@ class SkillCatalogParams:
 
 def build_catalogs(
     *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
-) -> tuple[SkillCatalog, SkillCatalog]:
-    """Scan every tier once and return `(typed, canonical)` `SkillCatalog`s. Pure -- touches no
-    module state, so it's independently testable and is what both `ensure_skill_catalog()`/
-    `reload_skill_catalog()` call to actually populate the process-wide catalogs.
+) -> SkillCatalogs:
+    """Scan every tier once and return the `(typed, canonical)` `SkillCatalog`s. Pure -- touches
+    no shared state, so it's independently testable and is what `SkillCatalogRegistry.reload()`
+    calls to actually populate the process-wide catalogs.
 
     A skill whose frontmatter `name` disagrees with its directory basename logs a warning (it's
     still discoverable under its canonical basename; the frontmatter name is only ever added to
@@ -170,7 +187,7 @@ def build_catalogs(
                 continue
             typed[alias_id] = skill
 
-    return SkillCatalog(skills=typed), SkillCatalog(skills=canonical)
+    return SkillCatalogs(typed=SkillCatalog(skills=typed), canonical=SkillCatalog(skills=canonical))
 
 
 def resolve_and_gate_skill(
@@ -178,8 +195,8 @@ def resolve_and_gate_skill(
     override: PermissionOverride | None, namespace: object, name: object,
 ) -> Skill:
     """Validate `namespace`/`name`, resolve the pair against the process-wide canonical skill
-    `catalog` (see `canonical_catalog()`), and enforce its `skillRules` verdict -- the shared
-    front half of `ActivateSkill` and `ReadSkillFile`. Raises `ValueError` for a malformed
+    `catalog` (see `SkillCatalogRegistry.canonical()`), and enforce its `skillRules` verdict --
+    the shared front half of `ActivateSkill` and `ReadSkillFile`. Raises `ValueError` for a malformed
     argument or an unknown pair, and `PermissionError`/`PermissionAskRequired` per
     `raise_if_skill_not_allowed`.
 
@@ -198,65 +215,76 @@ def resolve_and_gate_skill(
     return skill
 
 
-_typed_catalog: SkillCatalog | None = None
-_canonical_catalog: SkillCatalog | None = None
-_catalog_params: SkillCatalogParams | None = None
+class SkillCatalogRegistry:
+    """Holds the two process-wide skill catalogs and the logic to (re)build them. Exactly one
+    instance exists per process (`get_skill_catalog_registry()`); nothing outside this class
+    reads or writes its state directly.
+    """
+
+    def __init__(self) -> None:
+        self._typed: SkillCatalog | None = None
+        self._canonical: SkillCatalog | None = None
+        self._params: SkillCatalogParams | None = None
+
+    def ensure(
+        self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
+    ) -> None:
+        """Build both catalogs if they haven't been built yet in this process. A no-op on every
+        call after the first -- the tiers are scanned exactly once; reflecting a change to disk
+        (or to workspace trust) requires an explicit `reload()` call."""
+        if self._typed is not None:
+            return
+        self.reload(
+            workspace_root=workspace_root, workspace_trusted=workspace_trusted,
+            claude_skills_compat=claude_skills_compat)
+
+    def reload(
+        self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
+    ) -> SkillCatalogs:
+        """Rebuild both catalogs from a fresh disk scan, replacing whatever was held -- the
+        ">Reload skills" command's implementation. Returns the new catalog pair."""
+        params = SkillCatalogParams(
+            workspace_root=workspace_root, workspace_trusted=workspace_trusted,
+            claude_skills_compat=claude_skills_compat)
+        logger.debug("Reloading skill catalog: %r", params)
+        catalogs = build_catalogs(
+            workspace_root=workspace_root, workspace_trusted=workspace_trusted,
+            claude_skills_compat=claude_skills_compat)
+        self._typed, self._canonical, self._params = catalogs.typed, catalogs.canonical, params
+        logger.info(
+            "Skill catalog reloaded: %d skill(s), %d typed reference(s)",
+            len(catalogs.canonical), len(catalogs.typed))
+        return catalogs
+
+    def typed(self) -> SkillCatalog:
+        """The catalog a user's typed `/<name>` or `/<namespace>:<name>` reference is checked
+        against -- includes frontmatter-alias identities. Raises `RuntimeError` if the catalog
+        hasn't been built yet in this process (call `ensure()` first)."""
+        if self._typed is None:
+            raise RuntimeError("skill catalog not yet initialized -- call ensure() first")
+        return self._typed
+
+    def canonical(self) -> SkillCatalog:
+        """The catalog `ActivateSkill`/`ReadSkillFile` resolve against -- canonical identities
+        only, no aliases. Raises `RuntimeError` if the catalog hasn't been built yet."""
+        if self._canonical is None:
+            raise RuntimeError("skill catalog not yet initialized -- call ensure() first")
+        return self._canonical
+
+    def reset_for_tests(self) -> None:
+        """Clear both catalogs so the next `ensure()` call rebuilds them from scratch. Test-only
+        seam: production code has no legitimate reason to un-build the catalog short of
+        `reload()`, which replaces it directly."""
+        self._typed = None
+        self._canonical = None
+        self._params = None
 
 
-def ensure_skill_catalog(
-    *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
-) -> None:
-    """Build the process-wide catalog if it hasn't been built yet in this process. A no-op on
-    every call after the first -- the tiers are scanned exactly once; reflecting a change to disk
-    (or to workspace trust) requires an explicit `reload_skill_catalog()` call."""
-    if _typed_catalog is not None:
-        return
-    reload_skill_catalog(
-        workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-        claude_skills_compat=claude_skills_compat)
+_registry = SkillCatalogRegistry()
+"""The process-wide singleton instance -- reach it only through `get_skill_catalog_registry()`,
+never by importing this name directly."""
 
 
-def reload_skill_catalog(
-    *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
-) -> tuple[SkillCatalog, SkillCatalog]:
-    """Rebuild the process-wide catalog from a fresh disk scan, replacing whatever was there --
-    the ">Reload skills" command's implementation. Returns the new `(typed, canonical)` catalogs."""
-    global _typed_catalog, _canonical_catalog, _catalog_params
-    params = SkillCatalogParams(
-        workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-        claude_skills_compat=claude_skills_compat)
-    logger.debug("Reloading skill catalog: %r", params)
-    typed, canonical = build_catalogs(
-        workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-        claude_skills_compat=claude_skills_compat)
-    _typed_catalog, _canonical_catalog, _catalog_params = typed, canonical, params
-    logger.info(
-        "Skill catalog reloaded: %d skill(s), %d typed reference(s)", len(canonical), len(typed))
-    return typed, canonical
-
-
-def typed_catalog() -> SkillCatalog:
-    """The catalog a user's typed `/<name>` or `/<namespace>:<name>` reference is checked against
-    -- includes frontmatter-alias identities. Raises `RuntimeError` if the catalog hasn't been
-    built yet in this process (call `ensure_skill_catalog()` first)."""
-    if _typed_catalog is None:
-        raise RuntimeError("skill catalog not yet initialized -- call ensure_skill_catalog() first")
-    return _typed_catalog
-
-
-def canonical_catalog() -> SkillCatalog:
-    """The catalog `ActivateSkill`/`ReadSkillFile` resolve against -- canonical identities only,
-    no aliases. Raises `RuntimeError` if the catalog hasn't been built yet in this process."""
-    if _canonical_catalog is None:
-        raise RuntimeError("skill catalog not yet initialized -- call ensure_skill_catalog() first")
-    return _canonical_catalog
-
-
-def reset_skill_catalog_for_tests() -> None:
-    """Clear the process-wide catalog so the next `ensure_skill_catalog()` call rebuilds it from
-    scratch. Test-only seam: production code has no legitimate reason to un-build the catalog
-    short of `reload_skill_catalog()`, which replaces it directly."""
-    global _typed_catalog, _canonical_catalog, _catalog_params
-    _typed_catalog = None
-    _canonical_catalog = None
-    _catalog_params = None
+def get_skill_catalog_registry() -> SkillCatalogRegistry:
+    """Return the process-wide `SkillCatalogRegistry` singleton."""
+    return _registry

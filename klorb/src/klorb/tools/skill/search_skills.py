@@ -5,7 +5,7 @@ case-insensitive substring against a skill's name and its full SKILL.md body."""
 import logging
 from typing import Any
 
-from klorb.tools.skill.catalog import canonical_catalog, ensure_skill_catalog
+from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tools.skill.common import read_skill_md
 from klorb.tools.tool import Tool
 from klorb.tools.util import compile_queries, validate_queries
@@ -64,12 +64,13 @@ class SearchSkillsTool(Tool):
 
         compiled = compile_queries(queries, case_insensitive=True)
         workspace = self.context.session_config.workspace
-        ensure_skill_catalog(
+        registry = get_skill_catalog_registry()
+        registry.ensure(
             workspace_root=workspace.path, workspace_trusted=workspace.trusted,
             claude_skills_compat=self.context.process_config.compatibility_claude_skills)
 
         results: list[dict[str, str]] = []
-        for skill in canonical_catalog().discoverable(self.context.session_config.skill_rules):
+        for skill in registry.canonical().discoverable(self.context.session_config.skill_rules):
             try:
                 body = read_skill_md(skill)
             except (OSError, UnicodeDecodeError):

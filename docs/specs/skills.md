@@ -125,15 +125,17 @@ seam so tests can redirect it.
 ## The process-wide skill catalog
 
 Nothing that resolves a skill at runtime — `SearchSkills`, `ActivateSkill`, `ReadSkillFile`, or any
-`Session` interjection — walks the filesystem itself. Instead, `klorb.tools.skill.catalog` builds
-two `SkillCatalog`s (each just a `{(namespace, name): Skill}` dict plus lookup/derived-view
-methods) from a **single** disk scan, and every subsequent lookup reads them in memory:
+`Session` interjection — walks the filesystem itself. Instead, a single process-wide
+`klorb.tools.skill.catalog.SkillCatalogRegistry` instance (reached via `get_skill_catalog_registry()`
+— never by importing its backing module global directly) holds two `SkillCatalog`s (each just a
+`{(namespace, name): Skill}` dict plus lookup/derived-view methods), built from a **single** disk
+scan, and every subsequent lookup reads them in memory through a method call on that instance:
 
-* **`canonical_catalog()`** is keyed by every discovered skill's true `(namespace, name)` identity
+* **`registry.canonical()`** is keyed by every discovered skill's true `(namespace, name)` identity
   — its directory basename. This is the *only* catalog `ActivateSkill`/`ReadSkillFile` may resolve
   against (`resolve_and_gate_skill`), and the only identity `skillRules` rules and approval
   decisions are ever keyed on.
-* **`typed_catalog()`** additionally carries an alias entry `(namespace, <frontmatter name>)` for a
+* **`registry.typed()`** additionally carries an alias entry `(namespace, <frontmatter name>)` for a
   skill whose frontmatter `name` disagrees with its directory basename (see above) — pointing at
   the *same* `Skill` object as its canonical entry. This is the catalog a user's typed reference is
   checked against (`SkillCatalog.resolve_reference()`, see "Explicit skill mentions" below). An
@@ -142,18 +144,24 @@ methods) from a **single** disk scan, and every subsequent lookup reads them in 
   wins.
 
 Both catalogs are built once, lazily, the first time either is needed in the process (via
-`ensure_skill_catalog()` — a cheap no-op once built), and stay in memory for the rest of the
-process's life, **independent of any one `Session`**: a `/clear` that replaces the live `Session`
-does *not* rebuild the catalog, since the catalog is keyed off the workspace/trust/compat
-parameters the *first* caller supplied, not off whichever `Session` happens to be asking. A skill
-added, removed, or edited on disk after that point is invisible until an explicit
-`reload_skill_catalog()` call — the **"Reload skills"** command-palette action (reachable via
+`registry.ensure()` — a cheap no-op once built), and stay in memory for the rest of the process's
+life, **independent of any one `Session`**: a `/clear` that replaces the live `Session` does *not*
+rebuild the catalog, since the registry is a process-wide singleton keyed off the
+workspace/trust/compat parameters the *first* caller supplied, not off whichever `Session` happens
+to be asking. A skill added, removed, or edited on disk after that point is invisible until an
+explicit `registry.reload()` call — the **"Reload skills"** command-palette action (reachable via
 `ctrl+p` or by typing `>reload skills` in the prompt, `klorb.tui.commands.skill_commands.
 SkillCommandProvider`) rebuilds both catalogs from a fresh scan against the current session's
 workspace, and reports the resulting skill count.
 
+`SkillCatalogRegistry` itself holds no free-standing module-level mutable state: its `_typed`/
+`_canonical` fields are private instance attributes, reset only through its own methods
+(`ensure()`, `reload()`, and the test-only `reset_for_tests()`), and `build_catalogs()` — the pure,
+stateless disk-scan function `reload()` calls — returns a `SkillCatalogs` bundle (`.typed`/
+`.canonical` fields) rather than a positional tuple.
+
 `SkillCatalog.precedence_deduped()` computes the "one winning `Skill` per bare name" view described
-above, entirely from the already-built `canonical_catalog()` — no disk access.
+above, entirely from the already-built `SkillCatalogRegistry.canonical()` — no disk access.
 `SkillCatalog.discoverable(skill_rules)` further filters that to non-`"deny"`-verdicted skills; it
 is what the available-skills interjection lists and `SearchSkills` narrows (see below).
 
@@ -168,8 +176,8 @@ Every catalog entry is a `Skill`, a pydantic `BaseModel`:
   (see `parse_frontmatter` above).
 * **`aliases`** — a `set[str]` containing the directory basename plus the frontmatter `name`, when
   present, valid, and different from the basename. This is exactly the set of strings a user
-  typing `/<name>` may use to mean this skill (via `typed_catalog()`); klorb's own resolution
-  (`canonical_catalog()`) never consults it.
+  typing `/<name>` may use to mean this skill (via `SkillCatalogRegistry.typed()`); klorb's own resolution
+  (`SkillCatalogRegistry.canonical()`) never consults it.
 * **`root`** — the skill directory's `Traversable` (a real `Path` for the `workspace`/`user`
   tiers, or an `importlib.resources` `Traversable` for a zip-installed `internal` tier), used to
   read `SKILL.md`/supporting files on demand. Bodies are *not* cached on the `Skill` object itself
@@ -223,7 +231,7 @@ recency/frequency-based top-*k* cutoff is anticipated (see "Out of scope").
 ## Explicit skill mentions
 
 When a turn's own user prompt text contains `/<token>` (a bare name, or a colon-qualified
-`/<namespace>:<name>`) for a token that resolves against `typed_catalog()` (see "Fully-qualified
+`/<namespace>:<name>`) for a token that resolves against `SkillCatalogRegistry.typed()` (see "Fully-qualified
 skill names") to a skill whose verdict isn't `"deny"`, `Session.send_turn()` prepends a
 `<SystemInterjection subject="SkillReference">` block for that turn only, reminding the model of
 the skill's canonical `description` and that `ActivateSkill` is how to load it — always by
@@ -276,14 +284,14 @@ against both a skill's `name` and its full `SKILL.md` body (frontmatter included
 construction `SearchMemories` uses. Its result is a flat list of `{namespace, name, description}`
 for every skill with a hit, no matched-line detail: since a skill's `name`/`description` are
 already exposed by the available-skills interjection, `SearchSkills` exists to *narrow*, not to
-reveal. It searches `canonical_catalog().discoverable(skill_rules)` — the same precedence-deduped,
+reveal. It searches `SkillCatalogRegistry.canonical().discoverable(skill_rules)` — the same precedence-deduped,
 non-`"deny"` set the available-skills interjection lists — reading each candidate's `SKILL.md` body
 fresh (the catalog doesn't cache skill bodies, only frontmatter) to match against the body text.
 
 ## Activating a skill
 
 `ActivateSkill(namespace: str, name: str)` resolves the exact `(namespace, name)` pair against
-`canonical_catalog()` and, if found, returns both the resolved skill's full `SKILL.md` content and
+`SkillCatalogRegistry.canonical()` and, if found, returns both the resolved skill's full `SKILL.md` content and
 a recursively-enumerated, sorted `files` manifest of every regular file's path relative to the
 skill directory (a `find -type f`-style list, `SKILL.md` included) — the model then follows those
 instructions and reaches each supporting file through `ReadSkillFile` using exactly those relative
@@ -341,7 +349,7 @@ PermissionsTable`:
 ## Supporting files: `ReadSkillFile`
 
 `ReadSkillFile(namespace: str, name: str, path: str)` resolves the skill against
-`canonical_catalog()` the same way `ActivateSkill` does, then resolves `path` as a safe relative
+`SkillCatalogRegistry.canonical()` the same way `ActivateSkill` does, then resolves `path` as a safe relative
 path confined to that skill's directory: it must be relative (no leading `/` or `~`) and contain
 no `..` component, and — for a real-filesystem tier — its symlink-resolved result must still be
 within the skill directory (the same canonicalize-then-containment defense `memories` applies). It

@@ -312,9 +312,8 @@ def test_override_never_bypasses_deny() -> None:
 
 
 def _catalog(tmp_path: Path, ws: Path, *, claude_skills_compat: bool = False) -> SkillCatalog:
-    _, canonical = build_catalogs(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=claude_skills_compat)
-    return canonical
+    return build_catalogs(
+        workspace_root=ws, workspace_trusted=True, claude_skills_compat=claude_skills_compat).canonical
 
 
 def test_resolve_and_gate_unknown_skill_raises_value_error(tmp_path: Path) -> None:

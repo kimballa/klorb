@@ -38,7 +38,7 @@ from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.scratchpad.common import Scratchpad
-from klorb.tools.skill.catalog import canonical_catalog, ensure_skill_catalog, typed_catalog
+from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tools.skill.common import skill_activation_payload
 from klorb.tools.skill.model import Skill
 from klorb.tools.tool import describe_tool_arg_json_error
@@ -518,6 +518,20 @@ class TurnEventHandlers(BaseModel):
     ) = None
     on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
+
+
+class UserSkillActivation(BaseModel):
+    """The result of resolving a prompt's leading `/<token>` mention to an unconditional skill
+    activation -- see `Session._build_user_skill_activation_interjection`. `body` and `skill_id`
+    always travel together (there is no "interjection text without a skill identity" state to
+    accidentally produce): `body` is the text `send_turn()` wraps in a `UserSkillActivation`
+    `<SystemInterjection>`; `skill_id` is the skill's canonical `(namespace, name)`, for
+    `_build_skill_reference_interjection` to exclude it from the turn's ordinary reminder."""
+
+    model_config = ConfigDict(frozen=True)
+
+    body: str
+    skill_id: tuple[str, str]
 
 
 class Session:
@@ -1007,8 +1021,8 @@ class Session:
 
     def _ensure_skill_catalog(self) -> None:
         """Build the process-wide skill catalog if this process hasn't built one yet -- a no-op
-        after the first call. See `klorb.tools.skill.catalog.ensure_skill_catalog`."""
-        ensure_skill_catalog(
+        after the first call. See `klorb.tools.skill.catalog.SkillCatalogRegistry.ensure`."""
+        get_skill_catalog_registry().ensure(
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
             claude_skills_compat=self._compatibility_claude_skills,
@@ -1019,7 +1033,7 @@ class Session:
         process-wide catalog and this session's live `skill_rules`. No disk access -- see
         `klorb.tools.skill.catalog.SkillCatalog.discoverable` and docs/specs/skills.md."""
         self._ensure_skill_catalog()
-        return canonical_catalog().discoverable(self.config.skill_rules)
+        return get_skill_catalog_registry().canonical().discoverable(self.config.skill_rules)
 
     @staticmethod
     def _format_skill_list(skills: list[Skill]) -> str:
@@ -1066,7 +1080,7 @@ class Session:
         if not tokens:
             return None
         self._ensure_skill_catalog()
-        catalog = typed_catalog()
+        catalog = get_skill_catalog_registry().typed()
         mentioned: list[Skill] = []
         seen: set[tuple[str, str]] = set()
         for token in tokens:
@@ -1088,39 +1102,35 @@ class Session:
             + self._format_skill_list(mentioned)
         )
 
-    def _build_user_skill_activation_interjection(
-        self, token: str,
-    ) -> tuple[str | None, tuple[str, str] | None]:
+    def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
         """When `token` (the prompt's leading `/<token>` slug, from `_leading_skill_token()`)
-        resolves to a discoverable, `"allow"`-verdicted skill, return `(body, skill_id)`: `body`
-        is what `send_turn()` wraps in a `UserSkillActivation` `<SystemInterjection>`, carrying
-        the exact same `{namespace, name, content, files, tokens}` JSON payload `ActivateSkill`
-        would return (built by the same `skill_activation_payload()` both paths share), so the
-        model can apply the skill immediately with no `ActivateSkill` round trip; `skill_id` is
-        the skill's canonical `(namespace, name)`, for `_build_skill_reference_interjection` to
-        exclude from this turn's more casual `SkillReference` reminder.
+        resolves to a discoverable, `"allow"`-verdicted skill, return a `UserSkillActivation`
+        whose `body` carries the exact same `{namespace, name, content, files, tokens}` JSON
+        payload `ActivateSkill` would return (built by the same `skill_activation_payload()` both
+        paths share), so the model can apply the skill immediately with no `ActivateSkill` round
+        trip.
 
-        Returns `(None, None)` when `token` doesn't resolve to a skill, or when it resolves but
-        isn't `"allow"`-verdicted -- a `"deny"` skill gets no special treatment at all (as if the
-        user's message didn't start with a skill reference), and an `"ask"`-verdicted skill falls
-        back to the ordinary `SkillReference` reminder instead, so the model still has to call
+        Returns `None` when `token` doesn't resolve to a skill, or when it resolves but isn't
+        `"allow"`-verdicted -- a `"deny"` skill gets no special treatment at all (as if the user's
+        message didn't start with a skill reference), and an `"ask"`-verdicted skill falls back to
+        the ordinary `SkillReference` reminder instead, so the model still has to call
         `ActivateSkill` and go through the normal approval flow -- a prompt-leading `/name` never
         bypasses `skillRules` approval. See docs/specs/skills.md.
         """
         self._ensure_skill_catalog()
-        skill = typed_catalog().resolve_reference(token)
+        skill = get_skill_catalog_registry().typed().resolve_reference(token)
         if skill is None:
-            return None, None
+            return None
         skill_id = (skill.namespace, skill.name)
         if evaluate_skill(self.config.skill_rules, skill_id) != "allow":
-            return None, None
+            return None
         payload = skill_activation_payload(skill)
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
             "the user's prompt, then apply this skill:\n"
             + json.dumps(payload)
         )
-        return body, skill_id
+        return UserSkillActivation(body=body, skill_id=skill_id)
 
     def _confirm_limit_increase(
         self,
@@ -1978,12 +1988,10 @@ class Session:
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
         leading_token = _leading_skill_token(original_prompt)
         if leading_token is not None:
-            activation_body, activated_skill_id = self._build_user_skill_activation_interjection(
-                leading_token)
-            if activation_body is not None:
-                prompt = f"{_wrap_system_interjection('UserSkillActivation', activation_body)}\n{prompt}"
-                assert activated_skill_id is not None
-                excluded_skill_ids = frozenset({activated_skill_id})
+            activation = self._build_user_skill_activation_interjection(leading_token)
+            if activation is not None:
+                prompt = f"{_wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
+                excluded_skill_ids = frozenset({activation.skill_id})
         if self._pending_permission_framework_interjection is not None:
             interjection = _wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)

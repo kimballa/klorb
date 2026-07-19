@@ -8,14 +8,16 @@
   disk scan started happening several times per turn. Should discovery stay per-call, move to
   per-`Session` (rebuilt whenever a fresh `Session` replaces the live one, e.g. on `/clear`), or
   become a single process-wide structure built once and reused everywhere?
-* Answer: Process-wide, built once. `klorb.tools.skill.catalog` holds two module-level
-  `SkillCatalog`s (`canonical_catalog()`/`typed_catalog()`), built by a single disk scan
-  (`build_catalogs()`) the first time either is needed (`ensure_skill_catalog()` — a cheap no-op
-  after the first call), and never touched again except by an explicit `reload_skill_catalog()` —
-  the ">Reload skills" command-palette action. Deliberately *not* tied to `Session`'s lifetime: a
-  `/clear` replacing the live `Session` does not rebuild the catalog, since the catalog is
-  independent process state, not session state — the same reasoning that keeps `ProcessConfig`
-  itself outside `SessionConfig`.
+* Answer: Process-wide, built once. `klorb.tools.skill.catalog.SkillCatalogRegistry` (a single
+  instance reached via `get_skill_catalog_registry()`) holds the two `SkillCatalog`s
+  (`registry.canonical()`/`registry.typed()`), built by a single disk scan (`build_catalogs()`)
+  the first time either is needed (`registry.ensure()` — a cheap no-op after the first call), and
+  never touched again except by an explicit `registry.reload()` — the ">Reload skills"
+  command-palette action. Deliberately *not* tied to `Session`'s lifetime: a `/clear` replacing
+  the live `Session` does not rebuild the catalog, since the catalog is independent process state,
+  not session state — the same reasoning that keeps `ProcessConfig` itself outside `SessionConfig`.
+  See AGENTS.md's "encapsulate singleton state in a class" principle for why this is a class
+  instance rather than bare module globals plus free functions.
 * Reasoning: A skill's `SKILL.md` frontmatter and the directory tree under it change rarely
   compared to how often a turn might mention or search for one — re-walking three tiers'
   filesystem trees (plus, for each hit, reading and YAML-parsing its frontmatter) on every

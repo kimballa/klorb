@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from klorb.token_estimate import estimate_tokens
-from klorb.tools.skill.catalog import canonical_catalog, ensure_skill_catalog, resolve_and_gate_skill
+from klorb.tools.skill.catalog import get_skill_catalog_registry, resolve_and_gate_skill
 from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, skill_activation_payload
 from klorb.tools.tool import Tool, truncate_lines
 
@@ -63,11 +63,12 @@ class ActivateSkillTool(Tool):
         logger.debug("ActivateSkill %s/%s", namespace, name)
 
         workspace = self.context.session_config.workspace
-        ensure_skill_catalog(
+        registry = get_skill_catalog_registry()
+        registry.ensure(
             workspace_root=workspace.path, workspace_trusted=workspace.trusted,
             claude_skills_compat=self.context.process_config.compatibility_claude_skills)
         resolved = resolve_and_gate_skill(
-            catalog=canonical_catalog(), skill_rules=self.context.session_config.skill_rules,
+            catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)
 
         payload = skill_activation_payload(resolved)

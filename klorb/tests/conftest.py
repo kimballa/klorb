@@ -64,7 +64,7 @@ def _reset_skill_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     skill discovery/catalog behavior restore the real internal tier and/or rebuild the catalog
     themselves (see test_skills_session.py, test_skill_common.py).
     """
-    skill_catalog.reset_skill_catalog_for_tests()
+    skill_catalog.get_skill_catalog_registry().reset_for_tests()
     monkeypatch.setattr(skill_common, "internal_skills_dir", lambda: tmp_path / "empty-internal-skills")
     monkeypatch.setattr(skill_common, "KLORB_DATA_DIR", tmp_path / "empty-user-skills-data")
 
