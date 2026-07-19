@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 LINE_HINT_ALIASES = ("line", "line_num", "line_no", "line_number")
-"""Alternate spellings for the line hint, accepted only alongside `old_text` (or a
-`start_text` the harness reinterprets as `old_text` -- see `EditFileCore._normalize_edit_args`).
-`start_line` is always the primary, schema-advertised spelling; these are a tolerance net for
-when a model reaches for a different name."""
+"""Alternate spellings for the line hint, accepted in every accepted argument form (classic,
+single-line shortcut, or `old_text`) -- see `EditFileCore._normalize_edit_args`. `start_line` is
+always the primary, schema-advertised spelling; these are a tolerance net for when a model
+reaches for a different name."""
 
 
 @dataclass(frozen=True)
@@ -279,10 +279,10 @@ class EditFileCore:
         five-field call; the single-line shortcut (`start_line == end_line`, `end_text`
         omitted/empty); and `old_text` (the whole replacement block verbatim, `end_line`
         inferred from its line count unless supplied and cross-checked), including its line-hint
-        aliases (`line`/`line_num`/`line_no`/`line_number`) and the implicit conversion of a
-        multi-line `start_text` with no `end_text` into `old_text`. Raises `ValueError` naming
-        the specific problem for every other combination -- see that spec's "Rejected forms"
-        table for the exact conditions.
+        aliases (`line`/`line_num`/`line_no`/`line_number`, accepted in every form) and the
+        implicit conversion of a multi-line `start_text` with no `end_text` into `old_text`.
+        Raises `ValueError` naming the specific problem for every other combination -- see that
+        spec's "The accepted argument matrix" section for the exact conditions.
         """
         try:
             new_text = args["new_text"]
@@ -335,20 +335,15 @@ class EditFileCore:
         hint_candidates: list[tuple[str, int]] = []
         if "start_line" in args:
             hint_candidates.append(("start_line", self._require_int("start_line", args["start_line"])))
-        if old_text_mode:
-            for alias in LINE_HINT_ALIASES:
-                if alias in args:
-                    hint_candidates.append((alias, self._require_int(alias, args[alias])))
+        for alias in LINE_HINT_ALIASES:
+            if alias in args:
+                hint_candidates.append((alias, self._require_int(alias, args[alias])))
 
         if not hint_candidates:
-            if old_text_mode:
-                raise ValueError(
-                    "Missing required argument: provide 'start_line' (or, with old_text, one "
-                    "of 'line'/'line_num'/'line_no'/'line_number') naming the 1-based line "
-                    "where the edit begins.")
             raise ValueError(
-                "Missing required argument: 'start_line'. Provide the 1-based line number "
-                "where the edit begins.")
+                "Missing required argument: provide 'start_line' (or one of "
+                "'line'/'line_num'/'line_no'/'line_number') naming the 1-based line where "
+                "the edit begins.")
         first_name, first_value = hint_candidates[0]
         conflict = next(((name, value) for name, value in hint_candidates[1:] if value != first_value), None)
         if conflict is not None:
@@ -382,10 +377,16 @@ class EditFileCore:
             block_lines = None
             if not has_start_text:
                 raise ValueError("No anchor: provide start_text (+end_text) or old_text.")
-            assert isinstance(start_text, str)
+            if not isinstance(start_text, str):
+                raise ValueError(
+                    f"start_text must be a string, got {start_text!r} "
+                    f"({type(start_text).__name__})")
             end_text_meaningful = has_end_text and end_text not in (None, "")
             if end_text_meaningful:
-                assert isinstance(end_text, str)
+                if not isinstance(end_text, str):
+                    raise ValueError(
+                        f"end_text must be a string, got {end_text!r} "
+                        f"({type(end_text).__name__})")
                 if "end_line" not in args:
                     raise ValueError(
                         "Missing required argument: 'end_line'. Provide the 1-based line "
@@ -399,10 +400,15 @@ class EditFileCore:
                         "alternatively use old_text to let end_line be inferred.")
                 end_line = self._require_int("end_line", args["end_line"])
                 # Carve-out for the legacy empty-subject insert convention (start_line=1,
-                # end_line=0, start_text="", end_text=""): that pair is deliberately not a
-                # single line (end_line < start_line), so it's exempt from the equality check
-                # below -- `_resolve_line_range_edit`'s own empty-subject branch validates it.
-                is_legacy_empty_insert = start_text == "" and has_end_text and end_text == ""
+                # end_line=0, start_text=""): that exact pair is deliberately not a single line
+                # (end_line < start_line), so it's exempt from the equality check below --
+                # `_resolve_line_range_edit`'s own empty-subject branch validates it. Keyed on
+                # the exact start_line/end_line pair (not merely on start_text/end_text being
+                # empty) so an unrelated multi-line call with blank anchors at its endpoints
+                # can't slip through this carve-out too -- and end_text need not be present at
+                # all (as opposed to explicitly ""), since it's schema-optional like every other
+                # single-line-shortcut call.
+                is_legacy_empty_insert = start_line == 1 and end_line == 0 and start_text == ""
                 if end_line != start_line and not is_legacy_empty_insert:
                     raise ValueError(
                         "Omit-end_text is only for single-line edits (start_line == "

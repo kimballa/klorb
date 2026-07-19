@@ -27,6 +27,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from klorb.json_error_display import format_json_error_context
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_KEY = "schema"
@@ -98,34 +100,11 @@ class _ConfigJSONEncoder(json.JSONEncoder):
             lambda match: self._compact_blobs[int(match.group(1))], indented)
 
 
-JSON_ERROR_CONTEXT_LINES = 2
-"""Number of source lines shown before and after the offending line in the snippet
-`_format_json_error_context` builds for a `json.JSONDecodeError` — enough to orient a user
-skimming a hand-edited config file without dumping the whole thing."""
-
-
 class SchemaInfo(BaseModel):
     """Identifies a persisted JSON file's type (`name`) and format (`version`)."""
 
     name: str
     version: str
-
-
-def _format_json_error_context(text: str, exc: json.JSONDecodeError) -> str:
-    """Render a small excerpt of `text` around `exc.lineno` (1-indexed, per the `json` module),
-    with a `^` caret under `exc.colno`, for a human reading the parse error rather than staring
-    at a bare byte offset. Used to build both the log line (`parse_versioned_json`) and the
-    user-visible history notice (see `klorb.process_config.ProcessConfig.config_warnings`).
-    """
-    lines = text.splitlines()
-    first = max(exc.lineno - 1 - JSON_ERROR_CONTEXT_LINES, 0)
-    last = min(exc.lineno + JSON_ERROR_CONTEXT_LINES, len(lines))
-    excerpt_lines: list[str] = []
-    for lineno in range(first + 1, last + 1):
-        excerpt_lines.append(f"{lineno:>5} | {lines[lineno - 1]}")
-        if lineno == exc.lineno:
-            excerpt_lines.append(f"      | {' ' * (exc.colno - 1)}^")
-    return "\n".join(excerpt_lines)
 
 
 def parse_versioned_json(
@@ -141,7 +120,7 @@ def parse_versioned_json(
 
     Text that isn't valid JSON at all (a hand-edited config file with a typo, a torn write from
     a crashed process, etc.) is treated the same as a schema-name mismatch: an error is logged
-    naming `source`, the parse exception, and a `_format_json_error_context` excerpt of the
+    naming `source`, the parse exception, and a `format_json_error_context` excerpt of the
     surrounding lines, and `{}` is returned rather than letting `json.JSONDecodeError`
     propagate — one malformed layer must not take down the whole process, since every caller of
     this helper merges several independently-sourced layers (see
@@ -155,7 +134,7 @@ def parse_versioned_json(
     except json.JSONDecodeError as exc:
         message = (
             f"{source} is not valid JSON ({exc.msg} at line {exc.lineno}, column {exc.colno}); "
-            f"ignoring its contents.\n{_format_json_error_context(text, exc)}"
+            f"ignoring its contents.\n{format_json_error_context(text, exc)}"
         )
         logger.error(message)
         if warnings is not None:

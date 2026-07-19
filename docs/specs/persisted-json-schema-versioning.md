@@ -41,7 +41,9 @@ this exists.
       wrong place.
     * If the file's contents aren't valid JSON at all, the data is likewise discarded
       (returns `{}`) and an error is logged naming the file, the parse failure, and a small
-      excerpt of the lines around it (`_format_json_error_context`), rather than raising and
+      excerpt of the lines around it (`klorb.json_error_display.format_json_error_context`,
+      shared with `klorb.tools.tool.describe_tool_arg_json_error()`'s tool-call rendering),
+      rather than raising and
       taking down the caller. This matters most for `klorb-config.json`, which is hand-authored
       and layered — see [[process-and-session-config]] — so a typo in one layer must not
       prevent every other layer (and the process) from loading. Passing a `warnings: list[str]`

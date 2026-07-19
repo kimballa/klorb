@@ -191,9 +191,15 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   argument shapes, all resolved into the same concrete `start_line`/`end_line`/
   `start_text`/`end_text` tuple by a normalization step (`_normalize_edit_args()`) before any of
   the drift-search machinery above ever runs — that machinery stays almost unchanged regardless
-  of which form a call used. "Line hint" below means `start_line`, or (only in `old_text` mode)
-  one of its aliases. Every form still requires `new_text` and a line hint:
-  * *Classic* — `start_line`, `end_line`, `start_text`, `end_text` all required. Still the most
+  of which form a call used. "Line hint" below means `start_line`, or one of its aliases —
+  `line`, `line_num`, `line_no`, or `line_number` (bare, no-description schema properties — see
+  [the alias-schema ADR](../adrs/edit-file-hint-aliases-as-bare-schema-properties.md)) —
+  accepted in *every* form, not just `old_text`, since the schema advertises them
+  unconditionally; `start_line` and an alias with the *same* value is not a conflict, but
+  differing values raise `ValueError`. Because an alias can always stand in for `start_line`,
+  no edit tool's schema lists `start_line` itself as `required` either — see the required-list
+  bullet below. Every form still requires `new_text` and a line hint:
+  * *Classic* — `end_line`, `start_text`, `end_text` required (plus a line hint). Still the most
     token-efficient form for a long replacement span, since it never repeats the interior.
   * *Single-line shortcut* — when `start_line == end_line`, `end_text` may be omitted or empty;
     `start_text` alone anchors the one line being replaced. `end_line` must still be present and
@@ -202,12 +208,8 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   * *`old_text`* — instead of `start_text`/`end_text`, the caller supplies `old_text`: the
     entire contiguous replacement block, verbatim, as one multi-line string. `end_line` is
     optional, inferred by counting `old_text`'s lines; if supplied, it must agree with that
-    count or `_normalize_edit_args()` raises, naming both counts. In this mode the line hint may
-    also be spelled `line`, `line_num`, `line_no`, or `line_number` (bare, no-description schema
-    properties — see
-    [the alias-schema ADR](../adrs/edit-file-hint-aliases-as-bare-schema-properties.md) — since
-    `start_line` and an alias with the *same* value is not a conflict, but differing values
-    raise `ValueError`). A 1-line `old_text` is a natural instance of this form and converges in
+    count or `_normalize_edit_args()` raises, naming both counts. A 1-line `old_text` is a
+    natural instance of this form and converges in
     effect (not argument shape) with the single-line shortcut. `old_text` is verified against
     the file *in full* — every line of the candidate span, not just its first and last — a
     strict superset of the classic form's endpoints-only check; see
@@ -223,19 +225,23 @@ once per `JSONDecodeError` regardless of which message variant was produced.
     `start_text` is truncated to its first line (with an advisory `feedback` note) and
     `end_text` anchors the end.
   * Every edit tool's `required` schema list is relaxed to just the fields every form needs
-    (`start_line`/`new_text`, plus `filename`/`namespace` where applicable) — the cross-field
-    rules distinguishing accepted from rejected combinations live entirely in
+    (`new_text`, plus `filename`/`namespace` where applicable) — `start_line` itself is never
+    `required` either, since an alias can always substitute for it. The cross-field rules
+    distinguishing accepted from rejected combinations live entirely in
     `_normalize_edit_args()`, not in the JSON schema (no `anyOf`/`oneOf`); see
     [the required-relaxed ADR](../adrs/edit-file-required-relaxed-not-anyof.md). A rejected
     combination (`old_text` alongside a meaningful `start_text`/`end_text`, neither `old_text`
     nor `start_text` present, no line hint in any spelling, etc.) raises a specific `ValueError`
     naming the problem.
-  * The legacy empty-subject insert form (`start_line=1, end_line=0, start_text="",
-    end_text=""`) is untouched and not re-expressed in `old_text` terms — there's no block to
-    anchor. Because `end_text=""` alone would otherwise route through the single-line-shortcut
+  * The legacy empty-subject insert form (`start_line=1, end_line=0, start_text=""`, `end_text`
+    either omitted or `""`) is untouched and not re-expressed in `old_text` terms — there's no
+    block to anchor. Because that pair would otherwise route through the single-line-shortcut
     path (which requires `end_line == start_line`), `_normalize_edit_args()` carries an explicit
-    carve-out: when `start_text == "" and end_text == ""`, the shortcut's equality check is
-    skipped so this legacy call still reaches `_resolve_line_range_edit()`'s own validation.
+    carve-out keyed on the exact `start_line=1, end_line=0` pair (not merely on `start_text`/
+    `end_text` being empty, which would let an unrelated multi-line call with blank anchors at
+    both endpoints skip anchor verification entirely): when `start_line == 1 and end_line == 0
+    and start_text == ""`, the shortcut's equality check is skipped so this legacy call still
+    reaches `_resolve_line_range_edit()`'s own validation.
   * `apply()`'s `feedback` list gains two advisory-only entries beyond the pre-existing
     multi-line-truncation note: one when the implicit `start_text` → `old_text` conversion fired
     (naming `old_text` as the more direct spelling for next time), and one when the line hint
