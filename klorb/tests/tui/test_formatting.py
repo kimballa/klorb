@@ -1,7 +1,13 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.formatting's pure helper functions."""
 
-from klorb.tui.formatting import _summarize_reasoning_details, crawl_animation_text, format_token_count
+from klorb.tui.formatting import (
+    _idle_ticks,
+    _summarize_reasoning_details,
+    _sweep_ticks,
+    crawl_animation_text,
+    format_token_count,
+)
 
 
 def test_format_token_count_examples() -> None:
@@ -50,7 +56,14 @@ def _styles(word: str, position: int) -> list[str]:
     return styles
 
 
-def test_crawl_animation_text_bright_leads_dim_by_two() -> None:
+def test_crawl_animation_text_starts_at_left_edge() -> None:
+    # Tick 0 of a sweep: bright cursor at the first character, dim cursor not yet on-screen.
+    styles = _styles("Running", 0)
+    assert styles[0] == "bright_white"
+    assert all(s == "" for s in styles[1:])
+
+
+def test_crawl_animation_text_bright_leads_dim_by_two_chars() -> None:
     # "Running": R-u-n-n-i-n-g, bright at index 3 ('n'), dim two positions behind at index 1 ('u').
     styles = _styles("Running", 3)
     assert styles[3] == "bright_white"
@@ -58,16 +71,26 @@ def test_crawl_animation_text_bright_leads_dim_by_two() -> None:
     assert all(s == "" for i, s in enumerate(styles) if i not in (1, 3))
 
 
-def test_crawl_animation_text_dim_wraps_around_start() -> None:
-    # Bright cursor at index 0 wraps the dim cursor to the end of the word.
-    styles = _styles("Running", 0)
-    assert styles[0] == "bright_white"
-    assert styles[5] == "dim"
-
-
-def test_crawl_animation_text_both_cursors_advance_together() -> None:
+def test_crawl_animation_text_sweep_advances_one_char_per_tick() -> None:
     word = "Running"
-    for position in range(len(word)):
-        styles = _styles(word, position)
-        assert styles.index("bright_white") == position % len(word)
-        assert styles.index("dim") == (position - 2) % len(word)
+    for tick in range(_sweep_ticks(word)):
+        styles = _styles(word, tick)
+        bright_indices = [i for i, s in enumerate(styles) if s == "bright_white"]
+        assert bright_indices in ([], [tick])
+
+
+def test_crawl_animation_text_idle_after_sweep_has_no_highlighting() -> None:
+    word = "Running"
+    sweep_ticks = _sweep_ticks(word)
+    idle_ticks = _idle_ticks()
+    assert idle_ticks > 0
+    for offset in range(idle_ticks):
+        styles = _styles(word, sweep_ticks + offset)
+        assert all(s == "" for s in styles)
+
+
+def test_crawl_animation_text_cycle_repeats() -> None:
+    word = "Running"
+    cycle_length = _sweep_ticks(word) + _idle_ticks()
+    for tick in range(cycle_length):
+        assert _styles(word, tick) == _styles(word, tick + cycle_length)

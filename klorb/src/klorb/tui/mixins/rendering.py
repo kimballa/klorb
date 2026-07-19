@@ -21,7 +21,12 @@ from klorb.tools.tool import (
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID
 from klorb.tui.formatting import _summarize_reasoning_details
-from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, RunningToolCallStatic, ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import (
+    GettingReadyStatic,
+    RunningToolCallStatic,
+    ToolCallStatic,
+    TurnWaitingStatic,
+)
 
 THINKING_LABEL = "<Thinking>"
 REASONING_DETAILS_LABEL = "<Reasoning>"
@@ -37,8 +42,11 @@ class RenderingMixin(ReplAppBase):
         the status bar's token tally (see `_update_status_bar`): a new placeholder `Message`
         with its own `num_tokens` was just appended to the session for this chunk (see
         `Session._send_and_receive.handle_chunk`), so the footer should reflect it immediately
-        rather than only once the whole turn finishes.
+        rather than only once the whole turn finishes. Clears the turn's `TurnWaitingStatic`
+        first (see `_clear_turn_waiting_widget`): visible response text is real content, so the
+        "still working" placeholder has nothing left to stand in for.
         """
+        self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget = Markdown(initial_text, classes="response")
@@ -72,8 +80,10 @@ class RenderingMixin(ReplAppBase):
         verbatim, not be parsed as Textual console markup (an unescaped `[` in it can
         otherwise be misread as the start of a markup tag and raise `MarkupError`). Also
         refreshes the status bar (see `_mount_response_widget`): a new `role="thinking"`
-        placeholder message with its own `num_tokens` was just appended to the session.
+        placeholder message with its own `num_tokens` was just appended to the session. Clears
+        the turn's `TurnWaitingStatic` first, same as `_mount_response_widget`.
         """
+        self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         label_widget = Static(THINKING_LABEL, classes="thinking-label")
@@ -210,8 +220,12 @@ class RenderingMixin(ReplAppBase):
         tool's pre-execution label with a crawling ``Running...`` animation. Stores the
         widget in `_running_tool_call_widgets` keyed by `call_id` so the eventual
         `handle_tool_call` completion callback can finalize it in place rather than mounting
-        a duplicate. Also tracks it in `_tool_call_widgets` for the Ctrl+O detail toggle.
+        a duplicate. Also tracks it in `_tool_call_widgets` for the Ctrl+O detail toggle. Clears
+        the turn's `TurnWaitingStatic` first, same as `_mount_response_widget`: this only mounts
+        once a call is far enough along to actually start running, not while its arguments are
+        still streaming in, so it's a meaningful "no longer just waiting" signal.
         """
+        self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
@@ -238,6 +252,35 @@ class RenderingMixin(ReplAppBase):
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
         return widget
+
+    def _mount_turn_waiting_widget(self) -> TurnWaitingStatic:
+        """Mount a `TurnWaitingStatic` into history, showing an animated "still working" notice
+        -- the per-turn analog of `_mount_getting_ready_widget`, but for every turn rather than
+        only the first, and cleared by `_clear_turn_waiting_widget` rather than removed directly
+        by its caller. Called by `_send_prompt` once it's actually about to start the turn (after
+        `_run_session_naming`, if that ran for this turn), not by `_submit_prompt` at echo time,
+        so it never overlaps the first turn's own `GettingReadyStatic`.
+        """
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        widget = TurnWaitingStatic()
+        history.mount(widget)
+        self._scroll_if_pinned(history, was_pinned)
+        return widget
+
+    def _clear_turn_waiting_widget(self) -> None:
+        """Remove `self._turn_waiting_widget` (if it's still mounted) and stop its timer. Called
+        from the first of `_mount_response_widget`/`_mount_thinking_widget`/
+        `_mount_running_tool_call_widget` to fire for the in-flight turn, and again
+        (idempotently -- a no-op once `_turn_waiting_widget` is already `None`) from
+        `_finish_turn` as a fallback for a turn that ends without ever reaching any of those
+        (e.g. an error before any content streamed).
+        """
+        if self._turn_waiting_widget is None:
+            return
+        widget = self._turn_waiting_widget
+        self._turn_waiting_widget = None
+        widget.remove_self()
 
     def _running_tool_call_anchor(self) -> Static | None:
         """The `<Tool use>` label widget mounted just above the tool call currently running,

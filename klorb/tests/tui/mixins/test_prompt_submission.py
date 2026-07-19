@@ -25,7 +25,7 @@ from klorb.session_naming import SessionName, rename_session_id, session_id_suff
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.widgets.prompt_input import PromptInput
-from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, ToolCallStatic, TurnWaitingStatic
 
 
 async def test_submitting_an_empty_prompt_does_nothing() -> None:
@@ -227,6 +227,73 @@ async def test_a_tool_call_mounts_a_running_spinner_before_it_runs() -> None:
             await pilot.pause()
 
     assert mounted == ["call_1"]
+
+
+async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it() -> None:
+    """`TurnWaitingStatic` is mounted before the worker thread streams anything back, and is
+    cleared as soon as the first real content (a response chunk here) arrives. `_send_prompt`
+    mounts it (via a blocking `call_from_thread`) before ever calling into the provider, so by
+    the time `fake_send_prompt` is entered the widget is already up -- no need to race the
+    worker thread to observe it.
+    """
+    mock_provider = MagicMock()
+    entered_send_prompt = threading.Event()
+    release_chunk = threading.Event()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+    ):
+        assert on_chunk is not None
+        entered_send_prompt.set()
+        release_chunk.wait(timeout=5)
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, entered_send_prompt.is_set)
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(TurnWaitingStatic)) == 1
+        assert app._turn_waiting_widget is not None
+
+        release_chunk.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(history.query(TurnWaitingStatic)) == 0
+        assert app._turn_waiting_widget is None
+
+
+async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chunk() -> None:
+    """A turn that goes straight into a tool call (no response/thinking text first) clears
+    `TurnWaitingStatic` once the tool call is far enough along to mount its own `Running…`
+    indicator -- not while its arguments are merely being classified/dispatched."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("done"),
+    ]
+    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(TurnWaitingStatic)) == 0
+        assert app._turn_waiting_widget is None
 
 
 async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
@@ -741,6 +808,43 @@ async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_aft
             await _wait_until(pilot, naming_started.is_set)
             history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
             assert len(history.query(GettingReadyStatic)) == 1
+
+            release_naming.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert len(history.query(GettingReadyStatic)) == 0
+
+
+async def test_turn_waiting_widget_does_not_appear_until_getting_ready_widget_is_gone() -> None:
+    """On a session's first submitted prompt, `TurnWaitingStatic` must not show up while
+    `_run_session_naming`'s own `GettingReadyStatic` is still up -- the two "still working"
+    notices should never be visible at the same time."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply("hi there")
+    app = ReplApp(session=_session(mock_provider))
+    naming_started = threading.Event()
+    release_naming = threading.Event()
+
+    def fake_generate_session_name(*args: Any, **kwargs: Any) -> SessionName:
+        naming_started.set()
+        release_naming.wait(timeout=5)
+        return SessionName(title="Fix auth bug", slug="fix-auth-bug")
+
+    with patch(
+        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        side_effect=fake_generate_session_name,
+    ):
+        async with app.run_test() as pilot:
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            prompt_input.text = "please fix the auth bug"
+            await pilot.press("enter")
+
+            await _wait_until(pilot, naming_started.is_set)
+            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            assert len(history.query(GettingReadyStatic)) == 1
+            assert len(history.query(TurnWaitingStatic)) == 0
+            assert app._turn_waiting_widget is None
 
             release_naming.set()
             await app.workers.wait_for_complete()

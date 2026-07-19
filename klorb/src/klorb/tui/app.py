@@ -54,7 +54,7 @@ from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
-from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic, TurnWaitingStatic
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager
 
@@ -375,6 +375,10 @@ class ReplApp(
         text, since there's no meaningful grid cell an `Input` submission corresponds to)."""
         self._tool_call_widgets: list[ToolCallStatic] = []
         self._running_tool_call_widgets: dict[str, RunningToolCallStatic] = {}
+        self._turn_waiting_widget: TurnWaitingStatic | None = None
+        """The `TurnWaitingStatic` mounted by `_submit_prompt` for the in-flight turn, if it
+        hasn't been cleared yet (`_clear_turn_waiting_widget`) -- `None` before the first turn
+        and in between turns."""
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
         if self._process_config.theme is not None and self._process_config.theme in self.available_themes:

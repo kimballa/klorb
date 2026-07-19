@@ -3,6 +3,7 @@
 summary statics, and the session-naming "Getting ready..." notice, all mounted into the REPL
 history."""
 
+import random
 from typing import Any
 
 from rich.text import Text
@@ -177,35 +178,73 @@ class RunningToolCallStatic(ToolCallStatic):
             self._apply_content()
 
 
-_GETTING_READY_TEXT = "Getting ready..."
-"""The literal text shown with a crawling bold-character animation (`crawl_animation_text`)
-while the first-turn session-naming classifier call (`klorb.session_naming`) is in flight."""
-
-
-class GettingReadyStatic(Static):
-    """Animated notice mounted into history while the first-turn session-naming classifier
-    call is in flight -- the naming-step analog of `RunningToolCallStatic`'s "Running..."
-    animation, via the same `crawl_animation_text`. Constructed with `markup=False` for
-    consistency with the other animated statics here, even though its text is a fixed literal
-    rather than arbitrary content. `remove_self()` stops the timer before unmounting,
-    mirroring `RunningToolCallStatic.finalize()`'s own timer teardown.
+class _CrawlAnimatedStatic(Static):
+    """Base for a `Static` that shows a fixed line of `text` under `crawl_animation_text`'s
+    pulse animation for as long as it stays mounted, advancing one tick every
+    `ANIMATION_TICK_SECONDS`. Constructed with `markup=False`: every subclass's text is a fixed
+    literal, but rendering it the same way as the other animated statics here keeps their
+    behavior consistent. A subclass is responsible for calling `remove_self()` once whatever
+    it's standing in for resolves.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, text: str) -> None:
         super().__init__("", markup=False)
+        self._text = text
         self._animation_pos = 0
         self._timer: Any = None
-        self.update(crawl_animation_text(_GETTING_READY_TEXT, 0))
+        self.update(crawl_animation_text(self._text, 0))
 
     def on_mount(self) -> None:
         self._timer = self.set_interval(ANIMATION_TICK_SECONDS, self._tick)
 
     def _tick(self) -> None:
         self._animation_pos += 1
-        self.update(crawl_animation_text(_GETTING_READY_TEXT, self._animation_pos))
+        self.update(crawl_animation_text(self._text, self._animation_pos))
 
     def remove_self(self) -> None:
         """Stop the crawl-animation timer, then unmount this widget from the history scroll."""
         if self._timer is not None:
             self._timer.stop()
         self.remove()
+
+
+_GETTING_READY_TEXT = "Getting ready..."
+"""The literal text shown with a crawling bold-character animation (`crawl_animation_text`)
+while the first-turn session-naming classifier call (`klorb.session_naming`) is in flight."""
+
+
+class GettingReadyStatic(_CrawlAnimatedStatic):
+    """Animated notice mounted into history while the first-turn session-naming classifier
+    call is in flight -- the naming-step analog of `RunningToolCallStatic`'s "Running..."
+    animation, via the same `crawl_animation_text`.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(_GETTING_READY_TEXT)
+
+
+_TURN_WAITING_TEXTS = (
+    "Working...",
+    "Klorbing...",
+    "Please hold...",
+    "Here we go...",
+    "Preparing for takeoff...",
+)
+"""Phrases `TurnWaitingStatic` picks randomly from -- purely decorative, no meaning attaches to
+which one shows for a given turn."""
+
+
+class TurnWaitingStatic(_CrawlAnimatedStatic):
+    """Animated notice mounted into history once a submitted turn is actually under way (right
+    after `_run_session_naming`, if the turn triggered one, has cleared its own
+    `GettingReadyStatic` -- see `PromptSubmissionMixin._send_prompt`), showing one of
+    `_TURN_WAITING_TEXTS` (chosen at random) under `crawl_animation_text`'s pulse animation
+    until the turn's own content starts arriving.
+    `PromptSubmissionMixin._clear_turn_waiting_widget` removes it as soon as the first
+    response/thinking chunk or the first actually-running tool call widget is mounted for the
+    turn, whichever comes first -- a tool call only counts once it's far enough along to mount
+    its own `<Tool use>` running indicator, not while its arguments are still streaming in.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(random.choice(_TURN_WAITING_TEXTS))

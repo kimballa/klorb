@@ -269,6 +269,11 @@ class PromptSubmissionMixin(ReplAppBase):
         the input's `disabled` flag alone can't prevent a second submit that was queued before the
         first one disabled the box, so this authoritative check-and-set is what actually keeps turns
         serial (see `_turn_in_flight`).
+
+        `_send_prompt` mounts a `TurnWaitingStatic` on its worker thread once it's actually
+        about to start the turn -- immediately, unless this is the session's first submitted
+        prompt, in which case it waits for `_run_session_naming`'s own `GettingReadyStatic` to
+        clear first, so the two "still working" notices never show at once.
         """
         if self._turn_in_flight:
             return
@@ -327,10 +332,13 @@ class PromptSubmissionMixin(ReplAppBase):
         Before any of that, if `_session_naming_pending` is still `True` for the active
         `Session`, this is its first submitted prompt: `_run_session_naming` runs (and
         completes, or falls back) on this same worker thread before `Session.send_turn()` is
-        called, so the first turn's own request never races the naming classifier's.
+        called, so the first turn's own request never races the naming classifier's. Either
+        way, `TurnWaitingStatic` is mounted right after -- as soon as naming (if any) has
+        cleared its own `GettingReadyStatic`, so the two notices never overlap.
         """
         if self._session_naming_pending:
             self._run_session_naming(prompt_text)
+        self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
         response_widget: Markdown | None = None
         accumulated = ""
@@ -569,7 +577,13 @@ class PromptSubmissionMixin(ReplAppBase):
         `_begin_exit`), the deferred `self.exit()` happens here — now that the worker thread has
         actually finished and can no longer be stranded by the event loop stopping out from under
         it. Runs last, after the turn is fully wound down.
+
+        Also clears the turn's `TurnWaitingStatic` (`_clear_turn_waiting_widget`) as a fallback:
+        normally already cleared by the first response/thinking/tool-call widget mounted for the
+        turn, but a turn can end without ever reaching one (e.g. `_show_error` before any content
+        streamed), and this is idempotent for the ordinary case where it's already `None`.
         """
+        self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)

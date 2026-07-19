@@ -39,9 +39,6 @@
   * tui should show the session name on a line between the message input and the footer: "Session:
     (title)". If we're just starting cold, it should say "New session..."
 
-* After a user turn is submitted and we are waiting for anything to come back from the server,
-  add a "Waiting..." spinner. Can also say other fun words: "Klorbing...", "Working...", etc.
-
 * When adding skills list <SystemInterjection> we should notify the TUI or log file how many tokens
 
 * Add a structured wrapper around all tool call responses.

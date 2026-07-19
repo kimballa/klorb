@@ -113,26 +113,51 @@ def _format_workspace_path(
     return ".../" + "/".join(path.parts[-2:])
 
 
-ANIMATION_TICK_SECONDS = 0.20
-"""Interval between "still working" crawl-animation frames (seconds) -- see
-`crawl_animation_text`. At 0.20s per frame and 9 characters in e.g. `"Running..."`, a full
-crawl cycle takes just under two seconds -- slow enough to feel calm without being distracting.
-Shared by `RunningToolCallStatic` and `GettingReadyStatic`, which each drive their own
-`Widget.set_interval` timer at this rate."""
+ANIMATION_TICK_SECONDS = 0.09
+"""Interval between "still working" pulse-animation frames (seconds) -- see
+`crawl_animation_text`. Shared by `RunningToolCallStatic` and `GettingReadyStatic`, which each
+drive their own `Widget.set_interval` timer at this rate."""
+
+_SWEEP_IDLE_SECONDS = 0.75
+"""How long `crawl_animation_text` holds at default (unhighlighted) style between one
+left-to-right sweep and the next."""
+
+
+def _sweep_ticks(word: str) -> int:
+    """Number of ticks one left-to-right sweep of `word` takes: enough for the bright cursor to
+    advance from the first character until its trailing `dim` cursor (two positions behind) has
+    also cleared the last character."""
+    return len(word) + 2
+
+
+def _idle_ticks() -> int:
+    """Number of ticks `crawl_animation_text` holds at default style between sweeps, i.e.
+    `_SWEEP_IDLE_SECONDS` converted to a tick count at `ANIMATION_TICK_SECONDS` per tick."""
+    return round(_SWEEP_IDLE_SECONDS / ANIMATION_TICK_SECONDS)
 
 
 def crawl_animation_text(word: str, position: int) -> Text:
-    """One frame of the "still working" crawl animation: `word` with the character at
-    `position % len(word)` in `bright_white`, the character two positions behind it (wrapping
-    around the start of `word`) in `dim`, and every other character in default style -- e.g.
-    `RunningToolCallStatic`'s "Running..." while a tool call executes, or
-    `GettingReadyStatic`'s "Getting ready..." while the first-turn session-naming classifier
-    call is in flight."""
+    """One frame of the "still working" pulse animation: a bright_white cursor (with a `dim`
+    cursor two positions behind it) sweeps left to right across `word` one character per tick,
+    starting at the first character and continuing until both cursors have swept past the last
+    character and off the right edge; `word` then sits at default style, unhighlighted, for
+    `_idle_ticks()` ticks before the sweep restarts. `position` is the caller's tick counter,
+    incremented once per `ANIMATION_TICK_SECONDS` interval -- e.g. `RunningToolCallStatic`'s
+    "Running..." while a tool call executes, or `GettingReadyStatic`'s "Getting ready..." while
+    the first-turn session-naming classifier call is in flight.
+    """
+    sweep_ticks = _sweep_ticks(word)
+    tick = position % (sweep_ticks + _idle_ticks())
+
     text = Text()
-    pos = position % len(word)
-    dim_pos = (pos - 2) % len(word)
+    if tick >= sweep_ticks:
+        text.append(word)
+        return text
+
+    bright_pos = tick
+    dim_pos = bright_pos - 2
     for i, ch in enumerate(word):
-        if i == pos:
+        if i == bright_pos:
             style = "bright_white"
         elif i == dim_pos:
             style = "dim"
