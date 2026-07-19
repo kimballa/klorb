@@ -12,11 +12,6 @@
     // column; enforcing a line-length cap would just produce noisy diffs.
     "MD013": false,
 
-    // AGENTS.md's `# klorb` / `# rules for development` split and TODO.md's
-    // `# Bugs:` / `# Feature backlog` split intentionally use more than one
-    // top-level heading per file to mark major sections.
-    "MD025": false,
-
     // CLAUDE.md opens with an `@AGENTS.md` import directive rather than a heading, and
     // the system-prompt bodies under klorb/src/klorb/resources/system_prompts.d/ are
     // LLM-facing prose, not developer documentation, so neither is expected to open

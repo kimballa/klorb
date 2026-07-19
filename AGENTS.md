@@ -55,9 +55,9 @@ The Klorb project is organized as a collection of subprojects:
   dependencies, but none of the agentic stuff should be directly intertwined in the CLI side.
 * `vscode-plugin` - Plugin for VSCode to use the Klorb harness. (Not yet implemented)
 
-# rules for development
+## rules for development
 
-## General Software Development Principles
+### General Software Development Principles
 
 * Start all new or blank files with a copyright header:
   * `# © Copyright <current year> Aaron Kimball` in python,
@@ -134,7 +134,7 @@ The Klorb project is organized as a collection of subprojects:
     straightforward once named well: prefer trusting the reader over pre-empting every question
     they might not even ask.
 
-## Important SDLC CI/CD commands
+### Important SDLC CI/CD commands
 
 *Always* run lint, typecheck, and test through the Makefile. Do not run pyflakes, mypy,
 or pytest directly!
@@ -146,7 +146,7 @@ Here are the officially-sanctioned CI commands:
 * use `make test` to invoke test suites.
 * These are run in the `klorb/` subdir, or from the root with `make -C klorb <target>`
 
-## Import Rules
+### Import Rules
 
 * Only use relative imports within the same feature or module.
 * Use absolute imports for other features or modules within the codebase.

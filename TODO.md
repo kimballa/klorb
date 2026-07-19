@@ -1,5 +1,7 @@
 
-# Bugs
+# TODO
+
+## Bugs
 
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
@@ -22,7 +24,7 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
-# Feature backlog
+## Feature backlog
 
 * When adding skills list `<SystemInterjection>` we should notify the TUI or log file how many tokens
 
