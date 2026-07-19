@@ -7,7 +7,7 @@
 SHELL:=/bin/bash
 APT_GET=sudo apt-get
 
-COMMANDS=help cloud_setup
+COMMANDS=help cloud_setup lint
 
 # Python executable to use when creating the venv. Can be overridden on the command line
 # (e.g. PYTHON=python3.12 make cloud_setup) or via the cloud session-start script.
@@ -24,6 +24,13 @@ cloud_setup:
 	$(APT_GET) -y --fix-missing install bubblewrap curl
 	./bin/install_rust.sh
 	source "$$HOME/.cargo/env" && cargo install chainlink-tracker
+	npm install -g markdownlint-cli2
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
+
+# Lint documentation Markdown (docs/ and the root-level agent-instruction files), then
+# delegate to klorb/'s own lint target (Python lint plus klorb.resources' Markdown).
+lint:
+	markdownlint-cli2 "docs/**/*.md" "*.md"
+	$(MAKE) -C klorb lint
 
 .PHONY: ${COMMANDS}

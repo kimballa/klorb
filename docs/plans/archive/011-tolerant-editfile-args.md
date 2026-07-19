@@ -90,7 +90,7 @@ The single source of truth for what's accepted. "Line hint" = `start_line`, or (
 ### Accepted forms
 
 | # | Form | Anchor | `end_line` | Result |
-|---|------|--------|-----------|--------|
+| --- | ------ | -------- | ----------- | -------- |
 | 1 | Classic | `start_line`, `end_line`, `start_text`, `end_text` | required | Existing behavior, unchanged. |
 | 2 | Single-line shortcut | `start_line == end_line`, `start_text`, `end_text` omitted/`""` | required (`== start_line`) | Replace the one line at the hint, anchored on `start_text`. |
 | 3 | `old_text`, explicit span | `old_text`, `start_line`, `end_line` | required, **must** equal `start_line + count(old_text) - 1` | Replace the block; verified against `old_text`. |
@@ -134,7 +134,7 @@ Notes:
 ### Rejected forms (must raise a precise `ValueError`)
 
 | Condition | Error intent |
-|-----------|--------------|
+| ----------- | -------------- |
 | `old_text` **and** (`start_text` **or** `end_text`) both present | "Provide `old_text`, or `start_text`/`end_text`, not both." |
 | `old_text` present, `end_line` present, `count(old_text) != end_line - start_line + 1` | Name both counts; suggest dropping `end_line` to let it be inferred. |
 | Neither `old_text` nor `start_text` present | "No anchor: provide `start_text` (+`end_text`) or `old_text`." |
@@ -392,18 +392,18 @@ model — that's what evals are for). Group them:
 
 **Rejected forms — each asserts a `ValueError` whose message names the specific problem:**
 
-13. `old_text` + `start_text` both present.
-14. `old_text` + `end_text` both present.
-15. `old_text` + `end_line` present but line count disagrees.
-16. Neither `old_text` nor `start_text`.
-17. No line hint in any spelling.
-18. `start_line` + alias with conflicting values.
-19. Single-line `start_text`, `end_text` omitted, `end_line != start_line`.
-20. `old_text = ""`.
-21. Multi-line `start_text` *with* non-empty `end_text` → still truncates + advisory (assert
+ 1. `old_text` + `start_text` both present.
+ 2. `old_text` + `end_text` both present.
+ 3. `old_text` + `end_line` present but line count disagrees.
+ 4. Neither `old_text` nor `start_text`.
+ 5. No line hint in any spelling.
+ 6. `start_line` + alias with conflicting values.
+ 7. Single-line `start_text`, `end_text` omitted, `end_line != start_line`.
+ 8. `old_text = ""`.
+ 9. Multi-line `start_text` *with* non-empty `end_text` → still truncates + advisory (assert
     `feedback` present and edit lands on first-line anchor), i.e. form-6 does **not** trigger.
-22. `new_text` missing (regression).
-23. Out-of-range / `end_line < start_line` (regression).
+10. `new_text` missing (regression).
+11. Out-of-range / `end_line < start_line` (regression).
 
 Parametrize where the bodies are identical across spellings (e.g. #8's four aliases). Mirror a
 representative subset for `EditScratchpad`/`EditMemory` via their existing test modules to prove

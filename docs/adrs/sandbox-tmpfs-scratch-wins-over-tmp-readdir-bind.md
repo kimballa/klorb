@@ -51,7 +51,7 @@ bind of a subdirectory under `/tmp` lands on top of the tmpfs.
 ### Relationship to the `1777` change
 
 `docs/adrs/sandbox-tmp-is-1777-so-any-uid-can-write.md` (mounting the scratch `/tmp` world-writable
-+ sticky) is retained as defense-in-depth: it guarantees the tmpfs is writable regardless of the
+and sticky) is retained as defense-in-depth: it guarantees the tmpfs is writable regardless of the
 userns uid mapping. It was **not** the trigger for the observed repo pollution — the read-only
 host-`/tmp` bind was — and on its own does not fix it, since a bind stacked on top of the tmpfs
 overrides the tmpfs's permissions entirely. The two changes are complementary: this one keeps the

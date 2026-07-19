@@ -27,18 +27,18 @@ It has the following format:
 }
 ```
 
-You assign the uuid for a project using a random uuid4 or uuid7. 
+You assign the uuid for a project using a random uuid4 or uuid7.
 We may later store project-specific system config in `${KLORB_DATA_DIR}/projects/<uuid>`,
 but not right now.
 
-## When you first open a project....
+## When you first open a project
 
 * when you start klorb it attempts to identify the workspace root.
   * Read the list of known project roots from the projects.json.
   * If we are in a dir identified as a project root therein, that's our project.
-    * That tells us whether or not we trust the local project. 
+    * That tells us whether or not we trust the local project.
     * Keep the `trusted` boolean on the ProcessConfig. Under no circumstances can this be loaded from a config file.
-    * If we do not trust the current project, do _not_ load the project's `.klorb/klorb-config.json`.
+    * If we do not trust the current project, do *not* load the project's `.klorb/klorb-config.json`.
   * If the cwd is not listed in the projects list, then see if any ancestor dir is the project root
     for a mentioned project. If so, use it.
   * If none of the ancestor dirs of the cwd are listed in the `projects` json, then scan the cwd
@@ -50,23 +50,23 @@ but not right now.
   * If the projects.json has an entry for it, read the `Workspace` object out of it
     and attach it to the process config.
     * If the project is not trusted (Workspace.trusted is false) then put a msg in the history for
-      the user: "The workspace at <path> is not trusted. Run `>Trust workspace` to change this."
-    * Otherwise say "Working in project: <path>" in the history.
+      the user: "The workspace at `<path>` is not trusted. Run `>Trust workspace` to change this."
+    * Otherwise say "Working in project: `<path>`" in the history.
   * If no json entry, then pop up a choice for the user: "You are working in `<project root path>`. Open as a project?"
     * Text underneath it explains "Projects have persistent settings files and permissions."
     * Yes/No modal
     * If yes, then we are going to write a config file and create a record in `projects.json`.
     * If no, then everythign is just going to be in-memory in the ProcessConfig.
     * Define a new `Workspace` obj and store at `ProcessConfig.workspace`.
-    * The is-it-a-project bool is then stored in `ProcessConfig.workspace.is_project` boolean; don't let 
+    * The is-it-a-project bool is then stored in `ProcessConfig.workspace.is_project` boolean; don't let
       PC.workspace or its children be loaded from a config file.
     * Next, pop up a choice for the user: "Do you trust the workspace at `<project root path>`?"
-        * The user must select Yes or No. 
-        * If is_project_workspace, Create a new `project` record in projects.json with a new uuid and store
+      * The user must select Yes or No.
+      * If is_project_workspace, Create a new `project` record in projects.json with a new uuid and store
         the `trusted` flag there, as well as in `ProcessConfig.workspace.trusted`.
-        * If not, just store the trusted flag in the ProcessConfig.workspace.
+      * If not, just store the trusted flag in the ProcessConfig.workspace.
 
-Note that all of the above refers to activities taken directly by the harness code. 
+Note that all of the above refers to activities taken directly by the harness code.
 
 The user should see TUI prompts from the app that leads to the flags being set.
 
@@ -112,13 +112,12 @@ If the workspace is *not* trusted:
   * Allow reads inside the project root
   * Ask regarding writes inside the project root. (ok to leave setting effectively empty; ask is default.)
 
-
 #### trusted defaults
 
 If the workspace *is* trusted:
 
 * Config files and system prompts MAY be read from projRoot/.klorb/.
-  * Try to load them. The previous 'Config file initialization' step should have added one, if 
+  * Try to load them. The previous 'Config file initialization' step should have added one, if
     we were allowed to do so.
 * If there is no project-level config file, we will set up default dir permissions in memory:
   * We allow reads inside the project root
@@ -127,14 +126,14 @@ If the workspace *is* trusted:
 ## Changing their mind
 
 If the user does not trust the current workspace, then a palette command `Trust workspace` should be
-available on the palette. When run it pops up an "are you sure" yes/no modal. If no, take no action. 
-If yes, change `PC.workspace.trusted` to true, and rewrite it into the projects.json file. 
+available on the palette. When run it pops up an "are you sure" yes/no modal. If no, take no action.
+If yes, change `PC.workspace.trusted` to true, and rewrite it into the projects.json file.
 
 Then reload the config now that we are allowed to load config files from the project.
 
-Put a msg in the history saying "Trusted workspace <path>."
+Put a msg in the history saying "Trusted workspace `<path>`."
 
-If there is no .klorb/k-config and this is a project (Workspace.is_project) and it is now trusted, 
+If there is no .klorb/k-config and this is a project (Workspace.is_project) and it is now trusted,
 then ask yes/no prompt modal whether to init the project config. If yes, then write the current
 PC.sessionDefaults into the project's .klorb settings file, which may include some allow/ask/deny
 prompts that the user built up over the course of the session before deciding to trust the project.

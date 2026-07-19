@@ -42,10 +42,10 @@
   both — the reply's standalone count *and* its share of the next round's delta — bills it
   twice. Concretely, for a two-round turn (round 1: `prompt_tokens=10`, `completion_tokens=3`;
   round 2: `prompt_tokens=20`, `completion_tokens=4`), summing every message's `num_tokens`
-  gives `0 (system) + 0 (tool_defs) + 20 (user, delta) + 3 (round‑1 reply) + 0 (tool_response)
-  + 4 (round‑2 reply) = 27`, but the conversation's real current size — what actually
-  matters against `max_context_window`, since that's a per-request cap, not a cumulative
-  spend counter — is just round 2's own `prompt_tokens + completion_tokens = 24`. Tracking
+  gives `0 (system) + 0 (tool_defs) + 20 (user, delta) + 3 (round‑1 reply) + 0 (tool_response) +
+  4 (round‑2 reply) = 27`, but the conversation's real current size — what actually matters
+  against `max_context_window`, since that's a per-request cap, not a cumulative spend counter —
+  is just round 2's own `prompt_tokens + completion_tokens = 24`. Tracking
   `_last_known_real_tokens` as a single scalar, refreshed from the latest round's own
   `prompt_tokens + completion_tokens`, sidesteps the double-count entirely instead of trying
   to patch it message-by-message; the existing per-message `num_tokens` delta convention

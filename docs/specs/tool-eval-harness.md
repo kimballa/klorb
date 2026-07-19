@@ -99,7 +99,7 @@ offline against mocks. They run under their own `make evals` target instead — 
   three-way status string (green `PASS`, yellow `CONDITIONAL PASS` — either over budget on tool
   calls or `soft_failure_reason` set, red `FAIL`) — shared with `run_evals.py`'s live per-case
   progress printer so both agree on the same status for the same result. `render_case_detail(result,
-  color=...)` renders one case's tool-call transcript (`  -> Tool(args)` / `  <- response`, red
+  color=...)` renders one case's tool-call transcript (`-> Tool(args)` / `<- response`, red
   when the response starts with `"Error:"`) plus its tool-call counts, `generated_tokens`,
   optional soft-check reason, and status line — the same block `render_report()`'s per-case
   section and `run_evals.py`'s live progress printer both show, factored out so `run_evals.py`
@@ -123,7 +123,7 @@ offline against mocks. They run under their own `make evals` target instead — 
   at a specific model under investigation.
   * It passes `run_evaluation()` an `on_case_start` callback (prints `"<name>..."` as each case
     begins) and an `on_case_complete` callback (prints `tool_call_log`'s raw request/response
-    transcript — `  -> Tool(args)` / `  <- response`, color-coded red when the response starts
+    transcript — `-> Tool(args)` / `<- response`, color-coded red when the response starts
     with `"Error:"` — followed by a `[PASS]`/`[FAIL]` line), so a long `make evals` run shows
     what's actually happening case by case instead of going silent until the final report.
     `use_color()` (checked once, against `sys.stdout`) decides whether any of that output — the

@@ -1,9 +1,8 @@
 
-
-# Bugs:
+# Bugs
 
 * LLM output is being added to the history in an markdown-aware way and if the LLM
-  itself emits <xml>-like tags, it starts syntax-highlighting its own output in weird
+  itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
   like `</Think>` in the middle of its output.
 
@@ -21,19 +20,15 @@
 
 * Have an agent do a pass over all/most source (or do it in sections) to remove existing
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
-  function _doesn't_ do, is overly-specific specific and brittle, etc.
-
-* Find a markdown linter and wire it into `make lint` for all the `.md` files under
-  `klorb.resources` (packaged skills, system prompts, etc.), so malformed frontmatter or broken
-  formatting in a packaged `SKILL.md`/prompt file gets caught in CI instead of at read time.
+  function *doesn't* do, is overly-specific specific and brittle, etc.
 
 # Feature backlog
 
-* When adding skills list <SystemInterjection> we should notify the TUI or log file how many tokens
+* When adding skills list `<SystemInterjection>` we should notify the TUI or log file how many tokens
 
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.
-  See https://claudecertificationguide.com/learn/2-tool-design-mcp/2-2-structured-error-responses
+  See <https://claudecertificationguide.com/learn/2-tool-design-mcp/2-2-structured-error-responses>
 
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
@@ -78,28 +73,28 @@
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
 * Need a ProviderFactory
-    * Produces ApiProviders from a string
-    * Currently only openrouter api provider is supported from "openrouter" string.
-    * model names now can be fully-qualified model name (fqmn): e.g.: "openrouter:gpt-4o-mini"
-    * Session can get the current Provider from the ProviderFactory.
-    * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
+  * Produces ApiProviders from a string
+  * Currently only openrouter api provider is supported from "openrouter" string.
+  * model names now can be fully-qualified model name (fqmn): e.g.: "openrouter:gpt-4o-mini"
+  * Session can get the current Provider from the ProviderFactory.
+  * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
 * More tools:
-    * Add Evals for GrepTool and FindFileTool.
+  * Add Evals for GrepTool and FindFileTool.
 
-    * WebSearchTool -- use Brave Search: https://api-dashboard.search.brave.com/app/plans
-    * WebFetchTool
+  * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
+  * WebFetchTool
 
-* Skills in <built-in-skills-dir>, ~/.klorb/skills, projRoot/.klorb/skills/
-    * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
-    * Add skill for code review
-    * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
+* Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
+  * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
+  * Add skill for code review
+  * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
       privileged directory requiring `EscalatePrivileges(scope="workspace")` the same as
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
       into a directory klorb itself trusts and auto-discovers deserves the same escalation
       klorb's own skills directory gets.
 * Integrate with chainlink for todo tracking
-    * TodoList tool
-    * TodoWrite tool
+  * TodoList tool
+  * TodoWrite tool
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
     compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
@@ -109,7 +104,6 @@
 * Eventually when we have a lot of skills, the skill list that is auto-advertised in the
   initial SystemInterjection should be pruned and only display some top most-relevant
   skills or most-frequently-used skills. Let the agent discover others via SearchSkills.
-
 
 * Subagent spawning
   * When an agent spawns a subagent for a different role, the subagent gets a new child

@@ -18,7 +18,7 @@
   about) on every context it constructs. `Session` still never calls the classifier, imports
   `klorb.permissions.risk_classifier`, or knows `tools.bash.riskClassifier.*` exists — it only
   threads data it already has. `ReplApp` doesn't classify anything itself either: it calls
-  `klorb.permissions.risk_classifier.resolve_item_risk_assessment(ask_ctx, session=..., 
+  `klorb.permissions.risk_classifier.resolve_item_risk_assessment(ask_ctx, session=...,
   process_config=...)`, which owns the gating, batching (once per distinct `command_text`), and
   caching (each `ItemRiskAssessment` in `session.tool_state["BashRiskClassifier"]` keyed by
   `item_command_text`) — every subsequent item in the same batch (and a byte-identical retried

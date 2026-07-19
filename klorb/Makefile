@@ -68,6 +68,7 @@ lint:
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" src/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" tests/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" evals/
+	markdownlint-cli2 --config ../.markdownlint-cli2.jsonc "src/klorb/resources/**/*.md"
 
 typecheck:
 	#PYTHONPATH="$(PYTHONPATH)" "$(MYPY)" --check-untyped-defs src tests
