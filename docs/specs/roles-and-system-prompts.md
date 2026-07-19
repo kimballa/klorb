@@ -43,7 +43,7 @@ system_prompts.d/
   `[tool.setuptools.package-data]` in `klorb/pyproject.toml` and read at runtime via
   `importlib.resources.files("klorb.resources")` — so it's present for a pip-installed
   user, not just a source checkout. It ships `default_sys.md` and
-  `roles/coordinator/default.md` today.
+  `roles/operator/default.md` today.
 * `klorb.system_prompts.resolve_prompt_file(relative_path) -> str | None`
   (`klorb/src/klorb/system_prompts.py`) is the single primitive every lookup goes through:
   it returns the file's contents from the user tier if present there, else from the
@@ -55,7 +55,7 @@ system_prompts.d/
   (`poolside__laguna-m.1__free.md`), exposed per-model as `Model.mangled_name()`. Model
   identifiers are already vendor-qualified, so this alone keeps stems collision-free with
   no per-provider directory. Role names are used as directory names directly and are
-  expected to be filesystem-safe slugs (`coordinator`).
+  expected to be filesystem-safe slugs (`operator`).
 
 There is deliberately no *provider* axis anywhere in the tree: a model is the same model
 regardless of which API gateway serves it, so a prompt tuned for it applies either way — a
@@ -72,20 +72,20 @@ model-specific override like any other.
   file exists in either tier. `repertoire() -> list[str]` (concrete, always empty today) is
   the placeholder hook for the specialist subagents and role-specific tools a role will
   eventually be able to employ.
-* `CoordinatorRole` is the default top-level role: the lead agent that owns a coding task
+* `OperatorRole` is the default top-level role: the lead agent that owns a coding task
   end to end, with full latitude to research, decide, plan, write docs/code/tests, run and
   debug, and review work (its own or another agent's), biased toward an iterative
   research/think/decide/plan/execute/verify/analyze loop and toward decomposing large
   problems into ordered fine-grained tasks. Those behavioral instructions live in
-  `resources/system_prompts.d/roles/coordinator/default.md`, not in code — the class itself
+  `resources/system_prompts.d/roles/operator/default.md`, not in code — the class itself
   only supplies the name.
 * `NamedRole` covers any `role_name` with no dedicated subclass: it carries the string
   as-is and triangulates behavior purely from the prompt-file naming convention (whatever
   `roles/<name>/` files exist, layered onto the model and default tiers per the resolution
   below — or, if none exist, no `<AgentRole>` addendum at all).
 * `get_role(role_name: str) -> Role` is the factory: dedicated subclass when one exists
-  (today only `"coordinator"` → `CoordinatorRole`), else `NamedRole(role_name)`.
-* `SessionConfig.role_name` (default `COORDINATOR_ROLE_NAME`) is the only way a role enters
+  (today only `"operator"` → `OperatorRole`), else `NamedRole(role_name)`.
+* `SessionConfig.role_name` (default `OPERATOR_ROLE_NAME`) is the only way a role enters
   a session: `Session.__init__` calls `get_role(config.role_name)` itself and exposes the
   result as the `Session.role` property, so a caller can never construct a session whose
   `Role` disagrees with its `config.role_name`. `role_name` is set by code — the default,
@@ -133,10 +133,10 @@ after the system prompt resolved here, since the system prompt is sent as its ow
 ahead of the conversation's messages.
 
 Because `default_sys.md` is now unconditionally part of every session's prompt,
-`roles/coordinator/default.md` no longer needs to restate `default_sys.md`'s general
+`roles/operator/default.md` no longer needs to restate `default_sys.md`'s general
 engineering discipline (grounding, minimal diffs, verification, honest reporting) to ensure
-a coordinator session sees it — both apply together. `roles/coordinator/default.md` is
-expected to hold only the coordinator's own process-leadership instructions layered on top
+an operator session sees it — both apply together. `roles/operator/default.md` is
+expected to hold only the operator's own process-leadership instructions layered on top
 (task ownership, the research/think/decide/plan/execute/verify/analyze loop, problem
 decomposition), not a copy of the default prompt's material.
 

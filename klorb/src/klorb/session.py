@@ -29,7 +29,7 @@ from klorb.permissions.table import (
     PermissionAskRequired,
     PermissionOverride,
 )
-from klorb.role import COORDINATOR_ROLE_NAME, Role, get_role
+from klorb.role import OPERATOR_ROLE_NAME, Role, get_role
 from klorb.session_statistics import SessionStatistics, ToolCallStats
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import estimate_tokens
@@ -183,7 +183,7 @@ class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
 
     model: str = DEFAULT_MODEL
-    role_name: str = COORDINATOR_ROLE_NAME
+    role_name: str = OPERATOR_ROLE_NAME
     """The operating role this session's agent performs — see `klorb.role`. `Session`
     builds its `Role` object from this name itself, via `klorb.role.get_role()`, so a
     session's `Role` can never disagree with this field. Set by code (this default, or a

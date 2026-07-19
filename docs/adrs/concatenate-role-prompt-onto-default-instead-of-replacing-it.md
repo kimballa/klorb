@@ -3,10 +3,10 @@
 * Date: 2026-07-11 00:00
 * Question: [[resolve-system-prompts-role-first-then-model-then-default]] made role the
   primary resolution axis by picking the first non-`None` prompt across role, then model,
-  then `default_sys.md` — so a role that resolves any prompt file (today, every coordinator
-  session) never sees `default_sys.md` at all, and `roles/coordinator/default.md` has to
+  then `default_sys.md` — so a role that resolves any prompt file (today, every operator
+  session) never sees `default_sys.md` at all, and `roles/operator/default.md` has to
   hand-repeat `default_sys.md`'s general engineering discipline (grounding, minimal diffs,
-  verification, honest reporting) to keep the coordinator seeing it. As more roles
+  verification, honest reporting) to keep the operator seeing it. As more roles
   (`ExploreRole`, `AuditorRole`, ...) get their own prompt files, should each keep repeating
   that same material, or should the resolver guarantee every session sees it?
 * Answer: `Session._resolve_system_prompt()` runs two independent resolver walks instead of

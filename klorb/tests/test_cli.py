@@ -537,7 +537,7 @@ def test_main_does_not_treat_system_prompt_as_a_subcommand_unless_it_is_argv1() 
     mock_run.assert_not_called()
 
 
-def test_run_system_prompt_cli_defaults_role_to_coordinator(
+def test_run_system_prompt_cli_defaults_role_to_operator(
     stub_process_config: MagicMock,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -550,7 +550,7 @@ def test_run_system_prompt_cli_defaults_role_to_coordinator(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "## System Prompt (default_sys.md)" in out
-    assert "## Role-Specific Prompt (role: coordinator)" in out
+    assert "## Role-Specific Prompt (role: operator)" in out
     assert "## Tool Definitions" in out
     assert "## Token Count Summary" in out
     assert "default_sys.md:" in out

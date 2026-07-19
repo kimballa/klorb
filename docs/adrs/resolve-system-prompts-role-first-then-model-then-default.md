@@ -16,7 +16,7 @@
   across lookups, specificity beats tier (a packaged role-specific prompt outranks a user's
   global `default_sys.md` override). All the intermediate methods return `str | None`, with
   `None` meaning "fall through". Roles are represented by `klorb.role.Role` — abstract, with
-  `CoordinatorRole` (the default top-level role) and `NamedRole` (any name without a
+  `OperatorRole` (the default top-level role) and `NamedRole` (any name without a
   dedicated subclass) — built from the new code-settable-only `SessionConfig.role_name`
   field by `Session.__init__` itself via the `get_role()` factory; callers never pass a
   `Role` object in. `Model.system_prompt()` became a concrete base-class method (it was
@@ -31,7 +31,7 @@
   `Session` constructing its own `Role` from `config.role_name` (rather than accepting a
   `Role` argument) removes the possibility of a session whose `Role` object and
   `role_name` string disagree. `role_name` is deliberately not a `klorb-config.json` key:
-  the role is an operational property set by code (the coordinator default today, a
+  the role is an operational property set by code (the operator default today, a
   subagent-spawning call site later), and a project's config file must not be able to
   change what kind of agent the user is talking to. The `str | None` chain keeps test
   fixtures trivial — a fixture model or role overrides one method to return a literal

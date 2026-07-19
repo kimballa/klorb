@@ -184,7 +184,7 @@ inferred from CLI flags (`-m`/`--interactive`/`--no-interactive`), never config-
 default depends on the CLI-resolved `interactive` value (`"ask"` interactively, `"deny"`
 headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md and
 [[default-permission-framework-to-deny-headlessly]]. `role_name` is likewise deliberately
-absent: the operating role is set by code (defaulting to the coordinator role), never by a
+absent: the operating role is set by code (defaulting to the operator role), never by a
 config file — see docs/specs/roles-and-system-prompts.md.
 `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`shareEnv`/`setEnv`
 are also deliberately absent — `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/

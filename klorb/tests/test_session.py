@@ -28,7 +28,7 @@ from klorb.permissions.table import (
     PermissionOverride,
 )
 from klorb.process_config import ProcessConfig
-from klorb.role import CoordinatorRole
+from klorb.role import OperatorRole
 from klorb.session import (
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
     MAX_TOOL_CALL_ROUNDS,
@@ -50,16 +50,16 @@ from klorb.workspace import Workspace
 
 SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-[a-z]+-[a-z]+$")
 
-# What Session._resolve_system_prompt() produces for the default (coordinator) role, and for a
+# What Session._resolve_system_prompt() produces for the default (operator) role, and for a
 # role with no prompt files on an unregistered model. Computed via the same resolve_prompt_file()
 # the session uses, so these stay correct even if a developer's own user-tier override files exist.
-COORDINATOR_PROMPT = resolve_prompt_file("roles/coordinator/default.md")
+OPERATOR_PROMPT = resolve_prompt_file("roles/operator/default.md")
 DEFAULT_PROMPT = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
-# What a coordinator-role session's resolved system prompt looks like when its "default walk"
+# What an operator-role session's resolved system prompt looks like when its "default walk"
 # lands on default_sys.md (e.g. an unregistered model): the default prompt, then the role's own
 # prompt layered on afterward inside an <AgentRole> tag — see Session._resolve_system_prompt().
-COMPOSED_COORDINATOR_PROMPT = f"{DEFAULT_PROMPT}\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>"
+COMPOSED_OPERATOR_PROMPT = f"{DEFAULT_PROMPT}\n\n<AgentRole>\n{OPERATOR_PROMPT}\n</AgentRole>"
 
 
 def _with_metadata(
@@ -136,10 +136,10 @@ def test_session_saves_config() -> None:
     assert session.config is config
 
 
-def test_session_role_defaults_to_coordinator() -> None:
+def test_session_role_defaults_to_operator() -> None:
     session = Session(SessionConfig(), provider=MagicMock())
 
-    assert isinstance(session.role, CoordinatorRole)
+    assert isinstance(session.role, OperatorRole)
 
 
 def test_session_builds_role_from_config_role_name() -> None:
@@ -376,13 +376,13 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=_with_metadata(COMPOSED_COORDINATOR_PROMPT,
+        session.messages[:-1], system_prompt=_with_metadata(COMPOSED_OPERATOR_PROMPT,
                                "some/model"), model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
         cache_mgmt_style="AUTOMATIC", cancel_event=None)
     user_msgs_content = [m.content for m in session.messages]
-    system_msg = _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/model")
+    system_msg = _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/model")
     assert user_msgs_content[0] == system_msg
     assert user_msgs_content[1].endswith("hi")
     assert '<SystemInterjection subject="metadata">' in user_msgs_content[1]
@@ -399,7 +399,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
 
     assert response == "model reply"
     mock_provider.send_prompt.assert_called_once_with(
-        session.messages[:-1], system_prompt=_with_metadata(COMPOSED_COORDINATOR_PROMPT,
+        session.messages[:-1], system_prompt=_with_metadata(COMPOSED_OPERATOR_PROMPT,
                                "some/model"), model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
@@ -423,7 +423,7 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
 def test_role_prompt_layers_onto_registered_model_prompt() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha")  # role_name defaults to "coordinator"
+    config = SessionConfig(model="alpha")  # role_name defaults to "operator"
     registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -431,7 +431,7 @@ def test_role_prompt_layers_onto_registered_model_prompt() -> None:
 
     _, kwargs = mock_provider.send_prompt.call_args
     assert kwargs["system_prompt"] == _with_metadata(
-        f"You are Alpha.\n\n<AgentRole>\n{COORDINATOR_PROMPT}\n</AgentRole>",
+        f"You are Alpha.\n\n<AgentRole>\n{OPERATOR_PROMPT}\n</AgentRole>",
         "alpha", knowledge_cutoff="2024-01-01")
 
 
@@ -484,7 +484,7 @@ def test_system_message_holds_role_prompt_when_model_unregistered() -> None:
 
     assert session.messages[0].role == "system"
     assert session.messages[0].content == _with_metadata(
-        COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
+        COMPOSED_OPERATOR_PROMPT, "some/unregistered-model")
 
 
 def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
@@ -704,7 +704,7 @@ def test_send_turn_sends_full_history_to_provider() -> None:
 
     second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
     assert second_call_messages[0].content == _with_metadata(
-        COMPOSED_COORDINATOR_PROMPT, "some/model")
+        COMPOSED_OPERATOR_PROMPT, "some/model")
     assert second_call_messages[1].content.endswith("first")
     assert second_call_messages[2].content == "r1"
     assert second_call_messages[3].content == "second"
@@ -720,7 +720,7 @@ def test_user_message_num_tokens_is_its_own_client_side_estimate() -> None:
 
     system_message, user1, assistant1, user2, assistant2 = session.messages
     assert system_message.num_tokens == estimate_tokens(
-        _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/model"))
+        _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/model"))
     assert user1.num_tokens == estimate_tokens(user1.content)
     assert user2.num_tokens == estimate_tokens(user2.content)
 

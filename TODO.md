@@ -29,8 +29,6 @@
 
 # Feature backlog
 
-* Change "Coordinator" agent role name to "Operator".
-
 * operator system prompt with how-to-work loop should explicitly encourage it to consider available
   skills when choosing how to perform a user's request when processing a user turn.
 
@@ -47,8 +45,6 @@
   and reminding it about SearchSkills.
 
 * When adding skills list <SystemInterjection> we should notify the TUI or log file how many tokens
-
-* Yes/No or Yes/No/Cancel modals should accept 'y' and 'n' hotkeys.
 
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.

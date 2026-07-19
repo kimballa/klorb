@@ -59,7 +59,7 @@ discovered — see COMMANDS below.
   (`default_sys.md`), the role-specific addendum (inside an `<AgentRole>`
   tag), and the pretty-printed tool-definition JSON the model receives.
   `--role` concretizes the system prompt for a specific operating role
-  (defaults to `coordinator`, the same role a default session runs as).
+  (defaults to `operator`, the same role a default session runs as).
   `--model` resolves model-specific prompt tiers (defaults to the model
   configured via the `klorb-config.json` file stack). `--config` layers an
   additional config file on top of the usual `/etc`, per-user, and
@@ -244,7 +244,7 @@ environment:
 klorb --no-log-tool-calls -m "List the files in this directory."
 ```
 Dump the resolved system prompt and tool definitions for the default
-coordinator role:
+operator role:
 
 ```
 klorb system-prompt

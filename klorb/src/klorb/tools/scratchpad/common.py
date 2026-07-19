@@ -29,8 +29,8 @@ class Scratchpad:
 
     Constructed with the same `scratchpad_path: str | None` a `Session` is constructed with
     (see `klorb.session.Session.__init__`): given a path, it's reused as-is (as a `Path`), on
-    the assumption the file already exists — the multi-session/shared-scratchpad case, e.g. a
-    coordinator and its subagents coordinating through one shared file, once agent-team dispatch
+    the assumption the file already exists — the multi-session/shared-scratchpad case, e.g. an
+    operator and its subagents coordinating through one shared file, once agent-team dispatch
     exists (see docs/specs/scratchpad.md). Given `None`, a fresh `SCRATCHPAD_FILENAME` file is
     created inside a brand new `tempfile.mkdtemp()` directory, touched into existence
     immediately so `EditScratchpad`'s first call has a real, zero-length file to edit rather

@@ -13,7 +13,7 @@ harness-managed session state, not a model-nameable path.
 
 By default each `Session` gets its own scratchpad, created fresh in a new temporary directory.
 A `Session` can instead be constructed with an existing scratchpad file to reuse — the mechanism
-that lets several `Session`s (e.g. a coordinator and its subagents, once agent-team dispatch
+that lets several `Session`s (e.g. an operator and its subagents, once agent-team dispatch
 exists — see `klorb.role.Role.repertoire` and docs/specs/roles-and-system-prompts.md's "Out of
 scope") coordinate through one shared file rather than each keeping a private one.
 

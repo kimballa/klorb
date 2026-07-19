@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from klorb.models.configured_model import ConfiguredModel
-from klorb.role import COORDINATOR_ROLE_NAME, CoordinatorRole, NamedRole, get_role
+from klorb.role import OPERATOR_ROLE_NAME, NamedRole, OperatorRole, get_role
 from klorb.system_prompt import SYSTEM_PROMPTS_SUBDIR
 
 
@@ -24,11 +24,11 @@ def user_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_get_role_returns_coordinator_for_coordinator_name() -> None:
-    role = get_role(COORDINATOR_ROLE_NAME)
+def test_get_role_returns_operator_for_operator_name() -> None:
+    role = get_role(OPERATOR_ROLE_NAME)
 
-    assert isinstance(role, CoordinatorRole)
-    assert role.name() == "coordinator"
+    assert isinstance(role, OperatorRole)
+    assert role.name() == "operator"
 
 
 def test_get_role_returns_named_role_for_unrecognized_name() -> None:
@@ -38,11 +38,11 @@ def test_get_role_returns_named_role_for_unrecognized_name() -> None:
     assert role.name() == "auditor"
 
 
-def test_coordinator_system_prompt_resolves_packaged_default(user_config_dir: Path) -> None:
-    prompt = CoordinatorRole().system_prompt(None)
+def test_operator_system_prompt_resolves_packaged_default(user_config_dir: Path) -> None:
+    prompt = OperatorRole().system_prompt(None)
 
     assert prompt is not None
-    assert "Coordinator" in prompt
+    assert "Operator" in prompt
 
 
 def test_role_system_prompt_returns_none_when_no_files_exist(user_config_dir: Path) -> None:
@@ -70,5 +70,5 @@ def test_role_falls_back_to_role_default_when_no_model_specific_file(user_config
 
 
 def test_repertoire_is_empty_for_every_role() -> None:
-    assert CoordinatorRole().repertoire() == []
+    assert OperatorRole().repertoire() == []
     assert NamedRole("auditor").repertoire() == []

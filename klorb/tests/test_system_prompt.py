@@ -8,7 +8,7 @@ import pytest
 import yaml
 from fixtures.sample_models import sample_model_registry
 
-from klorb.role import COORDINATOR_ROLE_NAME, get_role
+from klorb.role import OPERATOR_ROLE_NAME, get_role
 from klorb.system_prompt import (
     DEFAULT_SYS_FILENAME,
     SYSTEM_PROMPTS_SUBDIR,
@@ -35,12 +35,12 @@ def user_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 # user-tier override files exist.
 DEFAULT_PROMPT = resolve_prompt_file(DEFAULT_SYS_FILENAME)
 
-# What a coordinator-role session's role walk resolves to.
-COORDINATOR_PROMPT = resolve_prompt_file("roles/coordinator/default.md")
+# What an operator-role session's role walk resolves to.
+OPERATOR_PROMPT = resolve_prompt_file("roles/operator/default.md")
 
-# A composed coordinator prompt: default + <AgentRole>-wrapped role addendum.
-COMPOSED_COORDINATOR_PROMPT = (
-    f"{DEFAULT_PROMPT}\n\n{wrap_agent_role(COORDINATOR_PROMPT)}")  # type: ignore[arg-type]
+# A composed operator prompt: default + <AgentRole>-wrapped role addendum.
+COMPOSED_OPERATOR_PROMPT = (
+    f"{DEFAULT_PROMPT}\n\n{wrap_agent_role(OPERATOR_PROMPT)}")  # type: ignore[arg-type]
 
 
 def _with_metadata(
@@ -64,7 +64,7 @@ def _with_metadata(
 
 def _system_prompt(
     model: str,
-    role_name: str = COORDINATOR_ROLE_NAME,
+    role_name: str = OPERATOR_ROLE_NAME,
     process_config: "ProcessConfig | None" = None,
 ) -> SystemPrompt:
     """Build a `SystemPrompt` for `model`/`role_name` against the sample-models registry,
@@ -90,9 +90,9 @@ def test_default_prompt_uses_registered_model_prompt(user_config_dir: Path) -> N
     assert sp.default_prompt() == "You are Alpha."
 
 
-def test_role_prompt_resolves_coordinator_default(user_config_dir: Path) -> None:
+def test_role_prompt_resolves_operator_default(user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model")
-    assert sp.role_prompt() == COORDINATOR_PROMPT
+    assert sp.role_prompt() == OPERATOR_PROMPT
 
 
 def test_role_prompt_returns_none_for_unknown_role(user_config_dir: Path) -> None:
@@ -110,9 +110,9 @@ def test_role_prompt_uses_model_specific_role_file(user_config_dir: Path) -> Non
     assert sp.role_prompt() == "explorer on alpha"
 
 
-def test_resolve_combines_default_and_role_for_coordinator(user_config_dir: Path) -> None:
+def test_resolve_combines_default_and_role_for_operator(user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model")
-    assert sp.resolve() == _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
+    assert sp.resolve() == _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/unregistered-model")
 
 
 def test_resolve_returns_default_when_role_walk_is_none(user_config_dir: Path) -> None:
@@ -122,17 +122,17 @@ def test_resolve_returns_default_when_role_walk_is_none(user_config_dir: Path) -
 
 def test_resolve_uses_registered_model_prompt_as_default(user_config_dir: Path) -> None:
     sp = _system_prompt("alpha")
-    expected = f"You are Alpha.\n\n{wrap_agent_role(COORDINATOR_PROMPT)}"  # type: ignore[arg-type]
+    expected = f"You are Alpha.\n\n{wrap_agent_role(OPERATOR_PROMPT)}"  # type: ignore[arg-type]
     assert sp.resolve() == _with_metadata(expected, "alpha", knowledge_cutoff="2024-01-01")
 
 
 def test_resolve_reflects_mid_session_model_change(user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model")
-    assert sp.resolve() == _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
+    assert sp.resolve() == _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/unregistered-model")
 
     # Simulate a mid-session model change.
     sp._config.model = "alpha"
-    expected = f"You are Alpha.\n\n{wrap_agent_role(COORDINATOR_PROMPT)}"  # type: ignore[arg-type]
+    expected = f"You are Alpha.\n\n{wrap_agent_role(OPERATOR_PROMPT)}"  # type: ignore[arg-type]
     assert sp.resolve() == _with_metadata(expected, "alpha", knowledge_cutoff="2024-01-01")
 
 
@@ -141,14 +141,14 @@ def test_metadata_reports_compatibility_flags_from_process_config(user_config_di
     process_config = ProcessConfig(compatibility_claude_markdown=True, compatibility_claude_skills=True)
     sp = _system_prompt("some/unregistered-model", process_config=process_config)
     assert sp.resolve() == _with_metadata(
-        COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model",
+        COMPOSED_OPERATOR_PROMPT, "some/unregistered-model",
         claude_markdown=True, claude_skills=True)
 
 
 def test_metadata_defaults_compatibility_flags_false_without_process_config(
         user_config_dir: Path) -> None:
     sp = _system_prompt("some/unregistered-model")
-    assert sp.resolve() == _with_metadata(COMPOSED_COORDINATOR_PROMPT, "some/unregistered-model")
+    assert sp.resolve() == _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/unregistered-model")
 
 
 def test_mangle_model_name_replaces_slashes_and_colons() -> None:
@@ -191,11 +191,11 @@ def test_default_sys_prompt_documents_bash_tool(user_config_dir: Path) -> None:
     assert "exit" in content
 
 
-def test_resolve_prompt_file_reads_packaged_coordinator_role_prompt(user_config_dir: Path) -> None:
-    content = resolve_prompt_file("roles/coordinator/default.md")
+def test_resolve_prompt_file_reads_packaged_operator_role_prompt(user_config_dir: Path) -> None:
+    content = resolve_prompt_file("roles/operator/default.md")
 
     assert content is not None
-    assert "Coordinator" in content
+    assert "Operator" in content
 
 
 def test_resolve_prompt_file_user_override_beats_packaged(user_config_dir: Path) -> None:

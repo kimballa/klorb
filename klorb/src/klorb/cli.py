@@ -21,7 +21,7 @@ from klorb.models.openrouter_pricing import (
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
-from klorb.role import COORDINATOR_ROLE_NAME, get_role
+from klorb.role import OPERATOR_ROLE_NAME, get_role
 from klorb.session import Session, SessionConfig
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens
@@ -195,10 +195,10 @@ def build_system_prompt_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--role", default=COORDINATOR_ROLE_NAME,
+        "--role", default=OPERATOR_ROLE_NAME,
         help=(
-            "Operating role to concretize the system prompt for (e.g. 'coordinator'). "
-            "Defaults to 'coordinator', the same role a default session runs as."
+            "Operating role to concretize the system prompt for (e.g. 'operator'). "
+            "Defaults to 'operator', the same role a default session runs as."
         ),
     )
     parser.add_argument(

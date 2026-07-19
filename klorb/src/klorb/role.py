@@ -2,7 +2,7 @@
 """Operating roles: the job a session's agent is performing, independent of which model
 runs it.
 
-A `Role` names what the agent is *for* this session — coordinating a coding task end to
+A `Role` names what the agent is *for* this session — operating a coding task end to
 end, exploring a codebase, auditing a change — and resolves the role-specific tiers of the
 session's system prompt. `Session` constructs its `Role` itself, from
 `SessionConfig.role_name`, via `get_role()`; callers never hand a `Role` object in, so a
@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from klorb.models.model import Model
 from klorb.system_prompt import ROLES_SUBDIR, resolve_prompt_file
 
-COORDINATOR_ROLE_NAME = "coordinator"
+OPERATOR_ROLE_NAME = "operator"
 """`SessionConfig.role_name`'s default: the top-level operating role a klorb session runs
 as unless a caller (e.g. a future subagent-spawning code path) says otherwise."""
 
@@ -76,22 +76,22 @@ class NamedRole(Role):
         return self._role_name
 
 
-class CoordinatorRole(Role):
+class OperatorRole(Role):
     """The default top-level operating role: the lead agent that owns a coding task end to
     end, with full latitude to research, decide, plan, write docs/code/tests, run and debug,
     and review work (its own or another agent's), biased toward an iterative
     research/think/decide/plan/execute/verify/analyze loop and toward decomposing large
     problems into ordered, fine-grained tasks. The behavioral instructions themselves live
-    in `system_prompts.d/roles/coordinator/default.md`, not in code.
+    in `system_prompts.d/roles/operator/default.md`, not in code.
     """
 
     def name(self) -> str:
-        return COORDINATOR_ROLE_NAME
+        return OPERATOR_ROLE_NAME
 
 
 def get_role(role_name: str) -> Role:
     """Return the `Role` implementation for `role_name`: its dedicated subclass when one
-    exists (today only `CoordinatorRole`), else a `NamedRole` carrying the name as-is."""
-    if role_name == COORDINATOR_ROLE_NAME:
-        return CoordinatorRole()
+    exists (today only `OperatorRole`), else a `NamedRole` carrying the name as-is."""
+    if role_name == OPERATOR_ROLE_NAME:
+        return OperatorRole()
     return NamedRole(role_name)
