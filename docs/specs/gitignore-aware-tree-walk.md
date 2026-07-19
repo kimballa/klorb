@@ -91,11 +91,22 @@ dependency (declared in `pyproject.toml`; it was already present transitively vi
 
 ### Scope limits
 
-* The literal `.git/` directory is **not** special-cased — only actual `.gitignore` patterns are
-  honored. This keeps `gitignored_hidden` meaningful; special-casing `.git/` would make the flag
-  true on essentially every call in a git repo. (`.git/` is already pruned in practice on a
-  trusted workspace via the same permission machinery that prunes `${workspace_root}/.klorb/` —
-  unrelated to this feature.)
 * Only `.gitignore` files are read. `.git/info/exclude` and the user's global excludes
   (`core.excludesFile`) are not consulted, since the feature is defined in terms of `.gitignore`
   files a project checks in, not a particular user's git configuration.
+
+## `.git/` is skipped unconditionally, outside this mechanism
+
+Any directory literally named `.git` that the walk encounters below its root is pruned by
+`walk_readable_tree` itself, hard-coded and independent of `use_gitignore`, `readDirs`
+permissions, or any project `.gitignore` file: it is never listed in a `subdir_names`, never
+descended into, and never contributes to `gitignored_file_names` or a `gitignored_hidden` note.
+This keeps `gitignored_hidden` meaningful (per the flag's contract above) while still keeping
+`FindFile`/`Grep` out of repository internals by default — a `.git/` skip is a structural
+decision about what a directory walk is for, not a gitignore-style filtering choice a tool
+surfaces or an agent can opt out of.
+
+Only the walk's own root is exempt: a caller that explicitly passes a `.git` directory (or a path
+inside one) as `dirname`/`path` searches it normally, the same "explicit target is user intent"
+principle already used for permission checks and single-file `Grep`. See
+`docs/adrs/hard-code-skip-dot-git-dirs-in-tree-walk.md`.
