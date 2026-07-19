@@ -22,9 +22,7 @@ cloud_setup:
 	# Install system dependencies
 	$(APT_GET) update -qq || true
 	$(APT_GET) -y --fix-missing install bubblewrap curl
-	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > /tmp/rustup-init
-	chmod a+x /tmp/rustup-init
-	/tmp/rustup-init -y --profile minimal
+	./bin/install_rust.sh
 	source "$$HOME/.cargo/env" && cargo install chainlink-tracker
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
 
