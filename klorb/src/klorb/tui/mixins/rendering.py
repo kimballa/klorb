@@ -20,7 +20,7 @@ from klorb.tools.tool import (
 )
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID
-from klorb.tui.formatting import _summarize_reasoning_details
+from klorb.tui.formatting import summarize_reasoning_details
 from klorb.tui.widgets.tool_call_widgets import (
     GettingReadyStatic,
     RunningToolCallStatic,
@@ -109,7 +109,7 @@ class RenderingMixin(ReplAppBase):
 
     def _mount_reasoning_details_widget(self, text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Reasoning>` label followed by an italicized `Static`
-        widget showing `text` (see `_summarize_reasoning_details`), mirroring
+        widget showing `text` (see `summarize_reasoning_details`), mirroring
         `_mount_thinking_widget`'s label/body split and `markup=False` rationale, and return
         `(body_widget, label_widget)`. Also refreshes the status bar: a new `role="thinking"`
         placeholder message's `reasoning_details` was just set on the session (see
@@ -127,7 +127,7 @@ class RenderingMixin(ReplAppBase):
 
     def _update_reasoning_details_widget(self, widget: Static, text: str) -> None:
         """Update a `<Reasoning>` `Static` widget with the latest `text` (see
-        `_summarize_reasoning_details`), mirroring `_update_thinking_widget`."""
+        `summarize_reasoning_details`), mirroring `_update_thinking_widget`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
@@ -325,7 +325,7 @@ class RenderingMixin(ReplAppBase):
         the same `_mount_response_widget`/`_mount_thinking_widget`/`_mount_tool_call_widget`
         helpers a live turn uses. A `"thinking"` message's `reasoning_details`, if it carries
         one, is rendered right after it via `_mount_reasoning_details_widget`, subject to the
-        same `_summarize_reasoning_details()` suppression a live turn applies.
+        same `summarize_reasoning_details()` suppression a live turn applies.
         `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching how they're
         never rendered live either (see `Session._ensure_system_message`/
         `_ensure_tool_defs_message`). A `role="tool_response"` message is rendered together
@@ -351,7 +351,7 @@ class RenderingMixin(ReplAppBase):
                     text = f"{text}\n\n(interrupted)"
                 self._mount_thinking_widget(text)
                 if message.reasoning_details:
-                    reasoning_details_text = _summarize_reasoning_details(message.reasoning_details)
+                    reasoning_details_text = summarize_reasoning_details(message.reasoning_details)
                     if reasoning_details_text is not None:
                         self._mount_reasoning_details_widget(reasoning_details_text)
             elif message.role == "tool_use":

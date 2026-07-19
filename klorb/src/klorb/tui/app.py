@@ -47,7 +47,7 @@ from klorb.tui.constants import (
     SESSION_NAME_ID,
     STATUS_BAR_ID,
 )
-from klorb.tui.formatting import _format_workspace_path
+from klorb.tui.formatting import format_workspace_path
 from klorb.tui.mixins.interactions import InteractionsMixin
 from klorb.tui.mixins.key_actions import KeyActionsMixin
 from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin
@@ -500,7 +500,7 @@ class ReplApp(
 
     def format_title(self, title: str, sub_title: str) -> Content:
         """Compose the `Header`'s displayed title from the current workspace path (shortened
-        per `_format_workspace_path` if it's too long to comfortably fit) plus an `"(Untrusted)"`
+        per `format_workspace_path` if it's too long to comfortably fit) plus an `"(Untrusted)"`
         marker when the workspace isn't trusted, followed by `sub_title` (the active model,
         kept in sync with it by `select_model`) and, if thinking is enabled, its effort level in
         parentheses — e.g. `".../path/to/somewhere (Untrusted) - gpt-4o (High)"`. Overrides
@@ -509,7 +509,7 @@ class ReplApp(
         tied to a specific workspace directory.
         """
         workspace = self._session.config.workspace
-        workspace_display = _format_workspace_path(workspace.path)
+        workspace_display = format_workspace_path(workspace.path)
         if not workspace.trusted:
             workspace_display += " (Untrusted)"
         model_display = sub_title

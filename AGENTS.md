@@ -79,6 +79,8 @@ The Klorb project is organized as a collection of subprojects:
   `.claude/skills/encapsulate-in-classes/SKILL.md` for the checklist and worked examples this
   rule expands into. `klorb.models.registry.ModelRegistry`/`klorb.tools.registry.ToolRegistry`
   are existing examples of the class-based shape to follow for a stateful registry.
+* Do not import protected methods from other modules, except for testing. If you see a line
+  like `from foo import _bar`, that's a sign that `_bar` should be explictly made public as `bar`.
 * When revising or refactoring, make the smallest code change necessary to effect the change.
 * Do not make unrelated changes while revising or refactoring a file.
 * Do not try to be an auto-formatter or lint tool. Use deterministic formatting and linting

@@ -54,7 +54,8 @@
         ["which", "**"],
         ["head", "*", "*"],
         ["cat"],
-        ["pip", "list"]
+        ["pip", "list"],
+        ["sleep", "30"]
       ]
     },
     "shareEnv": [

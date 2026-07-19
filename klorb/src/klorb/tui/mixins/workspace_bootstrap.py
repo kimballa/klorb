@@ -13,7 +13,7 @@ from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
-from klorb.tui.formatting import _concat_dir_rules
+from klorb.tui.formatting import concat_dir_rules
 from klorb.tui.panels.confirm_screen import ConfirmScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -151,7 +151,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         same objects, not copies — see `klorb.tools.registry.ToolRegistry`).
 
         `read_dirs`/`write_dirs` are concatenated onto the live session's own via
-        `_concat_dir_rules` (never replaced), so an "Allow (this session)" grant made before
+        `concat_dir_rules` (never replaced), so an "Allow (this session)" grant made before
         the user decided to trust the workspace isn't discarded. Every process-only
         (`ProcessConfig`) field is overwritten from the reload outright; `session`'s other
         scalar fields (model, thinking, tool-call limits) are deliberately left alone here,
@@ -190,13 +190,13 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         self._session.config.workspace = workspace
         self._process_config.session.workspace = workspace
 
-        self._session.config.read_dirs = _concat_dir_rules(
+        self._session.config.read_dirs = concat_dir_rules(
             self._session.config.read_dirs, reloaded.session.read_dirs)
-        self._session.config.write_dirs = _concat_dir_rules(
+        self._session.config.write_dirs = concat_dir_rules(
             self._session.config.write_dirs, reloaded.session.write_dirs)
-        self._process_config.session.read_dirs = _concat_dir_rules(
+        self._process_config.session.read_dirs = concat_dir_rules(
             self._process_config.session.read_dirs, reloaded.session.read_dirs)
-        self._process_config.session.write_dirs = _concat_dir_rules(
+        self._process_config.session.write_dirs = concat_dir_rules(
             self._process_config.session.write_dirs, reloaded.session.write_dirs)
 
         get_skill_catalog_registry().reload(

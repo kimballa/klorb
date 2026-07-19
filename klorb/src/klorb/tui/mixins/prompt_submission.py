@@ -24,7 +24,7 @@ from klorb.session_naming import (
 from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
-from klorb.tui.formatting import _summarize_reasoning_details
+from klorb.tui.formatting import summarize_reasoning_details
 from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShellCommand
 from klorb.tui.widgets.prompt_input import PromptInput
 
@@ -303,7 +303,7 @@ class PromptSubmissionMixin(ReplAppBase):
         apply across blank-line-separated blocks, whereas Rich's `[italic]...[/italic]`
         console markup styles every line regardless). A structured `reasoning_details`
         payload, if the provider sends one, is rendered below the `<Thinking>` block as a
-        one-line `<Reasoning>` indicator (see `_summarize_reasoning_details`) -- but only when
+        one-line `<Reasoning>` indicator (see `summarize_reasoning_details`) -- but only when
         it carries information the `<Thinking>` block can't show (e.g. an opaque/encrypted
         entry); a payload made entirely of plain-text entries is suppressed as redundant.
 
@@ -381,7 +381,7 @@ class PromptSubmissionMixin(ReplAppBase):
             if reasoning_details_round != round_index:
                 reasoning_details_widget = None
                 reasoning_details_round = round_index
-            text = _summarize_reasoning_details(entries)
+            text = summarize_reasoning_details(entries)
             if text is None:
                 return
             if reasoning_details_widget is None:

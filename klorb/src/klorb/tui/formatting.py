@@ -15,7 +15,7 @@ from textual.containers import VerticalScroll
 from klorb.permissions.directory_access import DirRules
 
 
-def _concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
+def concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
     """Concatenate `addition`'s deny/ask/allow entries onto `base`'s own, per category —
     never replacing what's already there. Used by `ReplApp._apply_workspace_config` to fold a
     freshly-(re)loaded `Workspace`'s config-file grants into a live `SessionConfig` without
@@ -30,7 +30,7 @@ def _concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
     )
 
 
-def _random_greeting() -> str:
+def random_greeting() -> str:
     """Pick a random greeting from the packaged greetings.json resource."""
     try:
         text = importlib.resources.files("klorb.resources").joinpath("greetings.json")\
@@ -78,7 +78,7 @@ def format_token_count(count: int) -> str:
     return f"{value}{suffix}"
 
 
-def _summarize_reasoning_details(entries: list[dict[str, Any]]) -> str | None:
+def summarize_reasoning_details(entries: list[dict[str, Any]]) -> str | None:
     """Return a compact indicator string for a turn's `reasoning_details` payload (see
     `klorb.message.Message.reasoning_details`), or `None` if every entry carries its own
     human-readable `text`/`summary` string -- content the `<Thinking>` block already shows in
@@ -101,7 +101,7 @@ def _summarize_reasoning_details(entries: list[dict[str, Any]]) -> str | None:
 _WORKSPACE_PATH_DISPLAY_MAX_CHARS = 40
 
 
-def _format_workspace_path(
+def format_workspace_path(
     path: Path, max_chars: int = _WORKSPACE_PATH_DISPLAY_MAX_CHARS,
 ) -> str:
     """Render `path` for the header: the full path if it's at most `max_chars` characters long,
@@ -125,9 +125,8 @@ left-to-right sweep and the next."""
 
 def _sweep_ticks(word: str) -> int:
     """Number of ticks one left-to-right sweep of `word` takes: enough for the bright cursor to
-    advance from the first character until its trailing `dim` cursor (two positions behind) has
-    also cleared the last character."""
-    return len(word) + 2
+    advance from the first character until it has cleared the last character."""
+    return len(word)
 
 
 def _idle_ticks() -> int:
@@ -137,14 +136,14 @@ def _idle_ticks() -> int:
 
 
 def crawl_animation_text(word: str, position: int) -> Text:
-    """One frame of the "still working" pulse animation: a bright_white cursor (with a `dim`
-    cursor two positions behind it) sweeps left to right across `word` one character per tick,
-    starting at the first character and continuing until both cursors have swept past the last
-    character and off the right edge; `word` then sits at default style, unhighlighted, for
-    `_idle_ticks()` ticks before the sweep restarts. `position` is the caller's tick counter,
-    incremented once per `ANIMATION_TICK_SECONDS` interval -- e.g. `RunningToolCallStatic`'s
-    "Running..." while a tool call executes, or `GettingReadyStatic`'s "Getting ready..." while
-    the first-turn session-naming classifier call is in flight.
+    """One frame of the "still working" pulse animation: a bright_white cursor sweeps left
+    to right across `word` one character per tick, starting at the first character and
+    continuing until it has swept past the last character and off the
+    right edge; `word` then sits at default style, unhighlighted, for `_idle_ticks()` ticks
+    before the sweep restarts. `position` is the caller's tick counter, incremented once per
+    `ANIMATION_TICK_SECONDS` interval -- e.g. `RunningToolCallStatic`'s "Running..." while a
+    tool call executes, or `GettingReadyStatic`'s "Getting ready..." while the first-turn
+    session-naming classifier call is in flight.
     """
     sweep_ticks = _sweep_ticks(word)
     tick = position % (sweep_ticks + _idle_ticks())
@@ -155,19 +154,16 @@ def crawl_animation_text(word: str, position: int) -> Text:
         return text
 
     bright_pos = tick
-    dim_pos = bright_pos - 2
     for i, ch in enumerate(word):
         if i == bright_pos:
             style = "bright_white"
-        elif i == dim_pos:
-            style = "dim"
         else:
             style = ""
         text.append(ch, style=style)
     return text
 
 
-def _pinned_to_bottom(history: VerticalScroll) -> bool:
+def pinned_to_bottom(history: VerticalScroll) -> bool:
     """Whether `history`'s viewport is currently showing its bottom edge, i.e. whether the
     user hasn't scrolled away from the latest content.
 

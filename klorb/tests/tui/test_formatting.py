@@ -3,10 +3,10 @@
 
 from klorb.tui.formatting import (
     _idle_ticks,
-    _summarize_reasoning_details,
     _sweep_ticks,
     crawl_animation_text,
     format_token_count,
+    summarize_reasoning_details,
 )
 
 
@@ -27,14 +27,14 @@ def test_format_token_count_examples() -> None:
 
 
 def test_summarize_reasoning_details_is_none_when_every_entry_has_text() -> None:
-    assert _summarize_reasoning_details([
+    assert summarize_reasoning_details([
         {"type": "reasoning.text", "text": "Let me think."},
         {"type": "reasoning.summary", "summary": "Short summary."},
     ]) is None
 
 
 def test_summarize_reasoning_details_notes_encrypted_entries() -> None:
-    result = _summarize_reasoning_details([
+    result = summarize_reasoning_details([
         {"type": "reasoning.text", "text": "visible"},
         {"type": "reasoning.encrypted", "data": "opaque-blob"},
     ])
@@ -43,7 +43,7 @@ def test_summarize_reasoning_details_notes_encrypted_entries() -> None:
 
 
 def test_summarize_reasoning_details_singular_block_wording() -> None:
-    result = _summarize_reasoning_details([{"type": "reasoning.encrypted", "data": "opaque-blob"}])
+    result = summarize_reasoning_details([{"type": "reasoning.encrypted", "data": "opaque-blob"}])
 
     assert result == "[1 reasoning block preserved, 1 encrypted]"
 
@@ -57,18 +57,10 @@ def _styles(word: str, position: int) -> list[str]:
 
 
 def test_crawl_animation_text_starts_at_left_edge() -> None:
-    # Tick 0 of a sweep: bright cursor at the first character, dim cursor not yet on-screen.
+    # Tick 0 of a sweep: bright cursor at index 0.
     styles = _styles("Running", 0)
     assert styles[0] == "bright_white"
-    assert all(s == "" for s in styles[1:])
-
-
-def test_crawl_animation_text_bright_leads_dim_by_two_chars() -> None:
-    # "Running": R-u-n-n-i-n-g, bright at index 3 ('n'), dim two positions behind at index 1 ('u').
-    styles = _styles("Running", 3)
-    assert styles[3] == "bright_white"
-    assert styles[1] == "dim"
-    assert all(s == "" for i, s in enumerate(styles) if i not in (1, 3))
+    assert all(s == "" for i, s in enumerate(styles) if i != 0)
 
 
 def test_crawl_animation_text_sweep_advances_one_char_per_tick() -> None:

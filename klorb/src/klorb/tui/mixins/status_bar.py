@@ -16,7 +16,7 @@ from klorb.tui.constants import (
     SESSION_NAME_ID,
     STATUS_BAR_ID,
 )
-from klorb.tui.formatting import _pinned_to_bottom, format_token_count
+from klorb.tui.formatting import format_token_count, pinned_to_bottom
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
@@ -63,7 +63,7 @@ class StatusBarMixin(ReplAppBase):
         `max_scroll_y` is necessarily consistent with the `scroll_y` that triggered it.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        self._history_pinned_to_bottom = _pinned_to_bottom(history)
+        self._history_pinned_to_bottom = pinned_to_bottom(history)
 
     def _update_status_bar(self) -> None:
         """Refresh both footer token tallies: context usage vs. the model's context window, and

@@ -16,7 +16,7 @@ from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
-from klorb.tui.formatting import _random_greeting
+from klorb.tui.formatting import random_greeting
 from klorb.tui.panels.confirm_screen import SaveOnQuitScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -36,7 +36,7 @@ MASCOT_ART = """\
 ███████████
 ▟█▙     ▟█▙"""
 
-MASCOT_GREETING = _random_greeting()
+MASCOT_GREETING = random_greeting()
 
 _INTERRUPTING_MESSAGE = "Interrupting… (Ctrl+C again to quit)"
 """Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the
