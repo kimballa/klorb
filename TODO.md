@@ -29,6 +29,8 @@
 
 # Feature backlog
 
+* Hard-exclude any dir named `.git` from Grep tool.
+
 * Get session name from a nano LLM, based on the first user prompt. Return both a "title" for the
   user and a kebab-case slug of up to 4 words.
   * use that for session id instead of "exuberant-turkey" or whatever.

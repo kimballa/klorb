@@ -123,14 +123,22 @@ Shared by `RunningToolCallStatic` and `GettingReadyStatic`, which each drive the
 
 def crawl_animation_text(word: str, position: int) -> Text:
     """One frame of the "still working" crawl animation: `word` with the character at
-    `position % len(word)` in `bright_white` and every other character in default style --
-    e.g. `RunningToolCallStatic`'s "Running..." while a tool call executes, or
+    `position % len(word)` in `bright_white`, the character two positions behind it (wrapping
+    around the start of `word`) in `dim`, and every other character in default style -- e.g.
+    `RunningToolCallStatic`'s "Running..." while a tool call executes, or
     `GettingReadyStatic`'s "Getting ready..." while the first-turn session-naming classifier
     call is in flight."""
     text = Text()
     pos = position % len(word)
+    dim_pos = (pos - 2) % len(word)
     for i, ch in enumerate(word):
-        text.append(ch, style="bright_white" if i == pos else "")
+        if i == pos:
+            style = "bright_white"
+        elif i == dim_pos:
+            style = "dim"
+        else:
+            style = ""
+        text.append(ch, style=style)
     return text
 
 

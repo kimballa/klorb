@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.formatting's pure helper functions."""
 
-from klorb.tui.formatting import _summarize_reasoning_details, format_token_count
+from klorb.tui.formatting import _summarize_reasoning_details, crawl_animation_text, format_token_count
 
 
 def test_format_token_count_examples() -> None:
@@ -40,3 +40,34 @@ def test_summarize_reasoning_details_singular_block_wording() -> None:
     result = _summarize_reasoning_details([{"type": "reasoning.encrypted", "data": "opaque-blob"}])
 
     assert result == "[1 reasoning block preserved, 1 encrypted]"
+
+
+def _styles(word: str, position: int) -> list[str]:
+    text = crawl_animation_text(word, position)
+    styles = [""] * len(word)
+    for span in text.spans:
+        styles[span.start] = str(span.style)
+    return styles
+
+
+def test_crawl_animation_text_bright_leads_dim_by_two() -> None:
+    # "Running": R-u-n-n-i-n-g, bright at index 3 ('n'), dim two positions behind at index 1 ('u').
+    styles = _styles("Running", 3)
+    assert styles[3] == "bright_white"
+    assert styles[1] == "dim"
+    assert all(s == "" for i, s in enumerate(styles) if i not in (1, 3))
+
+
+def test_crawl_animation_text_dim_wraps_around_start() -> None:
+    # Bright cursor at index 0 wraps the dim cursor to the end of the word.
+    styles = _styles("Running", 0)
+    assert styles[0] == "bright_white"
+    assert styles[5] == "dim"
+
+
+def test_crawl_animation_text_both_cursors_advance_together() -> None:
+    word = "Running"
+    for position in range(len(word)):
+        styles = _styles(word, position)
+        assert styles.index("bright_white") == position % len(word)
+        assert styles.index("dim") == (position - 2) % len(word)
