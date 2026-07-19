@@ -93,6 +93,7 @@
 
 * Skills in <built-in-skills-dir>, ~/.klorb/skills, projRoot/.klorb/skills/
     * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
+    * Add skill for code review
     * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
       privileged directory requiring `EscalatePrivileges(scope="workspace")` the same as
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
