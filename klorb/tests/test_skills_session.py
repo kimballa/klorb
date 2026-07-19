@@ -323,7 +323,7 @@ def test_activate_skill_ask_flow_grants_and_activates(tmp_path: Path) -> None:
     ]
     session = _session(tmp_path, provider=provider)
     _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="the steps")
-    session._tool_registry = ToolRegistry(ProcessConfig(), session.config)
+    session._tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session.config)
     session._tool_registry.session = session
 
     asked: list[PermissionAskContext] = []
@@ -352,7 +352,7 @@ def test_activate_skill_ask_denied(tmp_path: Path) -> None:
     ]
     session = _session(tmp_path, provider=provider)
     _write_skill(_workspace_skills(session), "do-thing", "does the thing")
-    session._tool_registry = ToolRegistry(ProcessConfig(), session.config)
+    session._tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session.config)
     session._tool_registry.session = session
 
     def on_ask(ctx: PermissionAskContext) -> PermissionDecision:

@@ -119,7 +119,17 @@ class SkillCatalogs(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     typed: SkillCatalog
+    """
+    Catalog mapping /skill-names that are  _typed_ by the user in a msg to skills. May include
+    aliases if frontmatter name disagrees with canonical (`/dir` basename) name for the skill.
+    """
+
     canonical: SkillCatalog
+    """
+    Catalog mapping canonical (`dir/` basename) /skill-names to Skills. Klorb agent is restricted
+    to invoking skills as-identified in this list. Permission grants are reconciled only against the
+    names in this catalog set.
+    """
 
 
 def build_catalogs(

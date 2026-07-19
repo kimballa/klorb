@@ -173,7 +173,7 @@ def run_case(
             workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
             read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]),
             skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
-        tool_registry = ToolRegistry(ProcessConfig(), session_config, package=tools_package)
+        tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session_config, package=tools_package)
         session = Session(session_config, provider=provider, tool_registry=tool_registry)
 
         start = time.monotonic()
@@ -265,7 +265,7 @@ def tool_token_counts(*, model: str) -> dict[str, int]:
     rather than per case. `SessionConfig`'s default `workspace` (cwd) is never touched —
     `name()`/`description()`/`parameters()` do no I/O — so no real workspace is needed here.
     """
-    tool_registry = ToolRegistry(ProcessConfig(), SessionConfig(), package=tools_package)
+    tool_registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig(), package=tools_package)
     encoding = _encoding_for_model(model)
     return {
         definition["function"]["name"]: len(encoding.encode(json.dumps(definition)))

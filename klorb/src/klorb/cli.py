@@ -266,7 +266,7 @@ def run_system_prompt_cli(argv: list[str]) -> int:
 
     default_prompt = system_prompt.default_prompt()
     role_prompt = system_prompt.role_prompt()
-    tool_registry = ToolRegistry(process_config, session_config)
+    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
     tool_definitions = tool_registry.tool_definitions()
     tools_json = json.dumps(tool_definitions, indent=2, default=str)
 
@@ -550,7 +550,7 @@ def main() -> None:
     session_config = process_config.session.model_copy()
     if args.model is not None:
         session_config.model = args.model
-    tool_registry = ToolRegistry(process_config, session_config)
+    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
     session = Session(
         session_config,
         provider=provider,

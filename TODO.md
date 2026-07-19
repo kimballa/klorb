@@ -26,9 +26,22 @@
 
 ## Feature backlog
 
-* Tools should be accessed by the agent from a ToolCatalog. This is an object member on the Session. This sets up for subagents having access to a restricted subset of Tools.
-  * Each Tool should have a category like "FILES" or "MEMORY", and we can use those to filter what tools a subagent gets rather than explicitly listing each one.
-  * Tools also need an is_read_only flag so we can distinguish ro vs rw tools.
+* Tools should be accessed by the agent from a ToolCatalog. This is an object member on the Session.
+  This sets up evenutally for subagents having access to a restricted subset of Tools. The "root"
+  session created for Operator gets a fully-populated ToolCatalog that has everything the Tool
+  discovery mechanism finds that isn't in a hard `deny` list.
+  * Each Tool should have a category like "FILES" or "MEMORY", revealed by `Tool#category()` and
+    we can use those to filter what tools a subagent gets rather than explicitly listing each one.
+  * Tools also need a `Tool#is_read_only()` flag method so we can distinguish ro vs rw tools.
+
+* session.py needs to get split up with mixins or something, it's > 2k lines.
+
+* (Successful) File create/edit operations should show a short preview of the applied diff, and ^o details
+  mode should show the full diff applied. Also true for memories, scratchpad, etc.
+
+* When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
+  near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
+  to type after ruling out any matches.
 
 * When adding skills list `<SystemInterjection>` we should notify the TUI or log file how many tokens
 
@@ -52,7 +65,10 @@
 * CLI subcommand: `klorb show-config` should show the merged config from all the json files it loads.
 
 * Each per-project subdir in `.local/share/klorb/...` should include a `logs` subdir with symlinks
-  to all the log files in `.local/state/ associated w/ the project. Really the other way around: put the true logs in the per project folders and symlink from a common place. Then the log roll reaper could start from the common symlink side when picking things to remove and also clean up dead symlinks.
+  to all the log files in `.local/state/ associated w/ the project. Really the other way around: put
+  the true logs in the per project folders and symlink from a common place. Then the log roll reaper
+  could start from the common symlink side when picking things to remove and also clean up dead
+  symlinks.
 
 * Risk classifier (risk_classifier.py) "Command comments to review must not be trusted" instructions
   should be put in an eval that judges how well the model resists malicious prompt input.
@@ -91,7 +107,9 @@
   * WebFetchTool
 
 * Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
-  * the user and agent SkillCatalogs are currently global / singleton objects but eventually should get moved into Session. This will set up a clean mechanism for restricting skill availability for narrow sub-agents.
+  * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
+    get moved into Session. This will set up a clean mechanism for restricting skill availability
+    for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
   * Add skill for code review
   * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a

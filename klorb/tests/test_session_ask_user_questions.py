@@ -52,7 +52,7 @@ def _tool_call_reply(calls: list[tuple[str, str, str]]) -> ProviderResponse:
 
 def _session(mock_provider: MagicMock) -> Session:
     config = SessionConfig(model="some/model")
-    tool_registry = ToolRegistry(ProcessConfig(), config)
+    tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
     return Session(config, provider=mock_provider, tool_registry=tool_registry)
 
 

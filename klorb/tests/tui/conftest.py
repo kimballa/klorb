@@ -40,7 +40,8 @@ def _session(provider: MagicMock, model: str = "some/model") -> Session:
 def _session_with_tools(
     provider: MagicMock, config: SessionConfig, process_config: ProcessConfig | None = None,
 ) -> Session:
-    tool_registry = ToolRegistry(process_config or ProcessConfig(), config, package=sample_tools_package)
+    tool_registry = ToolRegistry.discover_tools(
+        process_config or ProcessConfig(), config, package=sample_tools_package)
     return Session(
         config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry,
         process_config=process_config)

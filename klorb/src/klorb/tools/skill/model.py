@@ -26,9 +26,13 @@ class Skill(BaseModel):
 
     namespace: Namespace
     name: str
+    "Canonical name for the skill, based on the dirname it lives in."
     description: str
+    "Description from SKILL.md frontmatter."
     raw: dict[str, Any]
+    "All SKILL.md frontmatter dict items"
     aliases: set[str]
+    "Other names for the skill; e.g. if frontmatter name disagrees with the dirname."
     root: Any
     """The skill directory's `Traversable` root -- a real `Path` for the `workspace`/`user`
     tiers, or an `importlib.resources` `Traversable` for a zip-installed `internal` tier. `Any`

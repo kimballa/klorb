@@ -65,7 +65,7 @@ def _escalate_call(id_: str, scope: str = "workspace") -> tuple[str, str, str]:
 
 def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> tuple[Session, ProcessConfig]:
     process_config = ProcessConfig()
-    tool_registry = ToolRegistry(process_config, config)
+    tool_registry = ToolRegistry.discover_tools(process_config, config)
     session = Session(config, provider=provider, tool_registry=tool_registry, process_config=process_config)
     return session, process_config
 

@@ -100,7 +100,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             model_registry=self._session.model_registry, process_config=self._process_config,
             session_id=state.session_id,
             session_name=state.session_name,
-            tool_registry=ToolRegistry(self._process_config, restored_config))
+            tool_registry=ToolRegistry.discover_tools(self._process_config, restored_config))
         self._session.load_messages(state.messages)
         if state.statistics is not None:
             self._session.load_statistics(state.statistics)

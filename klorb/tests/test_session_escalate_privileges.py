@@ -60,7 +60,7 @@ def _session(mock_provider: MagicMock, *, process_config: ProcessConfig | None =
         model="some/model",
         workspace=Workspace(path=workspace_path or Path("/tmp/fake-workspace")),
     )
-    tool_registry = ToolRegistry(pc, config)
+    tool_registry = ToolRegistry.discover_tools(pc, config)
     return Session(config, provider=mock_provider, tool_registry=tool_registry, process_config=pc)
 
 
@@ -184,7 +184,7 @@ def test_escalation_succeeds_without_process_config(tmp_path: Path) -> None:
         _reply(),
     ]
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
-    tool_registry = ToolRegistry(ProcessConfig(), config)
+    tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))
 

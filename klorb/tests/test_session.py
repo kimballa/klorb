@@ -118,7 +118,7 @@ def _tool_call_reply(
 
 
 def _sample_tool_registry(config: SessionConfig) -> ToolRegistry:
-    return ToolRegistry(ProcessConfig(), config, package=sample_tools_package)
+    return ToolRegistry.discover_tools(ProcessConfig(), config, package=sample_tools_package)
 
 
 def test_session_config_defaults() -> None:
@@ -1607,7 +1607,8 @@ def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tupl
 def _session_with_ask_tool(
     config: SessionConfig, mock_provider: MagicMock, process_config: ProcessConfig | None = None,
 ) -> Session:
-    tool_registry = ToolRegistry(process_config or ProcessConfig(), config, package=sample_tools_package)
+    tool_registry = ToolRegistry.discover_tools(
+        process_config or ProcessConfig(), config, package=sample_tools_package)
     return Session(
         config, provider=mock_provider, tool_registry=tool_registry, process_config=process_config)
 

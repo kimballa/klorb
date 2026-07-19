@@ -278,7 +278,7 @@ class ReplApp(
             session = Session(
                 new_config,
                 process_config=self._process_config,
-                tool_registry=ToolRegistry(self._process_config, new_config),
+                tool_registry=ToolRegistry.discover_tools(self._process_config, new_config),
             )
         self._session = session
         self._initial_message = initial_message

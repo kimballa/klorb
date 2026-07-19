@@ -70,17 +70,27 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   that fallback path. See
   [the raw-callback-data ADR](../adrs/render-tool-calls-via-raw-callback-data.md) for how a
   `Session`-reported tool call actually reaches these methods.
-* `klorb.tools.registry.ToolRegistry` (`klorb/src/klorb/tools/registry.py`) is constructed
-  with `(process_config: ProcessConfig, session_config: SessionConfig, package: ModuleType =
-  klorb.tools)` — held by reference, not copied, so later changes to either (e.g. a TUI
+* `klorb.tools.registry.ToolRegistry` (`klorb/src/klorb/tools/registry.py`) holds a
+  name-keyed set of `Tool` subclasses and is the factory for them. `process_config`/
+  `session_config` are held by reference, not copied, so later changes to either (e.g. a TUI
   command palette mutating `session_config` in place) are picked up by tools instantiated
-  afterward. It discovers `Tool` subclasses by walking `package`'s modules with
-  `pkgutil.iter_modules`, importing each, and collecting concrete (non-abstract) `Tool`
-  subclasses defined directly in that module — exactly once, in `__init__`; it never
-  re-scans. By default it scans the `klorb.tools` package itself, so dropping a new module
-  containing a `Tool` subclass into `klorb/src/klorb/tools/` is enough to register it — no
-  manual registration step is required. A different package can be passed to the
-  constructor (used by tests to scan a fixture package instead).
+  afterward. A registry is built in one of two ways:
+  * `ToolRegistry.discover_tools(process_config, session_config, package=klorb.tools)` —
+    the bootstrap classmethod that walks `package`'s modules once with
+    `pkgutil.walk_packages`, imports each, and collects every concrete (non-abstract)
+    `Tool` subclass defined directly in that module, returning a registry holding them all.
+    By default it scans the `klorb.tools` package itself, so dropping a new module
+    containing a `Tool` subclass into `klorb/src/klorb/tools/` is enough to register it —
+    no manual registration step is required. A different package can be passed (used by
+    tests to scan a fixture package, and by evals to scan an eval-tools package). The
+    package scan runs only here, not in `__init__`, so the import/scan work isn't repeated
+    when a session-scoped registry is built from an already-discovered class dict.
+  * `ToolRegistry(process_config, session_config, tool_classes: dict[str, type[Tool]])` —
+    constructs a registry directly from an already-discovered class dict, which it clones
+    (not held by reference), so a session-scoped registry can be built from a subset of a
+    bootstrap registry's classes without re-scanning any package. This is the construction
+    path a restricted-tool subagent will use; the harness's own sessions today use
+    `discover_tools` to get the full set.
   * `instantiate_tool(name: str) -> Tool` — the factory method: builds a fresh
     `ToolSetupContext` from the registry's current `process_config`/`session_config` and
     constructs a brand new instance of the named tool's class, raising `KeyError` if no tool

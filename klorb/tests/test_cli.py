@@ -140,12 +140,12 @@ def test_main_passes_a_tool_registry_built_from_process_and_session_config(
     mock_session.run_one_shot.return_value = "reply"
     sentinel_registry = MagicMock()
     with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
-        with patch("klorb.cli.ToolRegistry", return_value=sentinel_registry) as mock_registry_cls:
+        with patch("klorb.cli.ToolRegistry.discover_tools", return_value=sentinel_registry) as mock_discover:
             with patch("sys.argv", ["klorb", "-m", "hi"]):
                 cli.main()
 
     session_config = mock_session_cls.call_args.args[0]
-    mock_registry_cls.assert_called_once_with(stub_process_config.return_value, session_config)
+    mock_discover.assert_called_once_with(stub_process_config.return_value, session_config)
     assert mock_session_cls.call_args.kwargs["tool_registry"] is sentinel_registry
 
 

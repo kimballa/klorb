@@ -62,7 +62,7 @@ def _ask_call(id_: str, questions: list[dict]) -> tuple[str, str, str]:
 
 
 def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> Session:
-    tool_registry = ToolRegistry(ProcessConfig(), config)
+    tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
     return Session(config, provider=provider, tool_registry=tool_registry)
 
 

@@ -121,7 +121,7 @@ def _run_self_review(*, model: str, provider: OpenRouterApiProvider, log_path: P
     logger.debug("Copying eval log %s to scratch tempdir as %s for self-review", log_path, copied_log)
     shutil.copy(log_path, copied_log)
 
-    tool_registry = ToolRegistry(ProcessConfig(), session_config, package=tools_package)
+    tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session_config, package=tools_package)
     session = Session(session_config, provider=provider, tool_registry=tool_registry)
     logger.debug("Spawning self-review session on model %r", model)
     return session.send_turn(_SELF_REVIEW_PROMPT_TEMPLATE.format(log_path=copied_log))

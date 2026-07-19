@@ -236,7 +236,7 @@ class PromptSubmissionMixin(ReplAppBase):
             provider=old_session.provider,
             model_registry=old_session.model_registry,
             process_config=self._process_config,
-            tool_registry=ToolRegistry(self._process_config, new_session_config),
+            tool_registry=ToolRegistry.discover_tools(self._process_config, new_session_config),
         )
 
         if self._session_log_enabled:
