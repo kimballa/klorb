@@ -22,6 +22,7 @@ from klorb.message import Message, ToolCallRequest
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, project_config_path
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import Session, SessionConfig
+from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui.app import ReplApp
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
@@ -54,6 +55,32 @@ async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -
         app._apply_workspace_config(
             session.config.workspace.model_copy(update={"trusted": True}))
         assert "(Untrusted)" not in app.format_title(app.title, app.sub_title).plain
+
+
+async def test_trusting_a_workspace_reloads_the_skill_catalog(tmp_path: Path) -> None:
+    """A workspace-tier skill invisible to the process-wide catalog while untrusted becomes
+    resolvable immediately after `_apply_workspace_config()` applies a newly-trusted workspace,
+    rather than staying invisible until an explicit `>Reload skills`."""
+    skill_dir = tmp_path / ".klorb" / "skills" / "my-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\ndescription: d\n---\n")
+
+    mock_provider = MagicMock()
+    config = SessionConfig(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        app.set_thinking_enabled(False)
+        # Simulate a turn that built the catalog before the workspace was trusted, exactly like
+        # a real skill Tool's `registry.ensure_from_context()` would on an early turn.
+        get_skill_catalog_registry().ensure(
+            workspace_root=tmp_path, workspace_trusted=False, claude_skills_compat=False)
+        assert get_skill_catalog_registry().canonical().get(("workspace", "my-skill")) is None
+
+        app._apply_workspace_config(
+            session.config.workspace.model_copy(update={"trusted": True}))
+        assert get_skill_catalog_registry().canonical().get(("workspace", "my-skill")) is not None
 
 
 async def test_registered_trusted_workspace_announces_and_shows_no_modal(tmp_path: Path) -> None:

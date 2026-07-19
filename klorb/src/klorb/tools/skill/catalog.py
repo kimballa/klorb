@@ -24,8 +24,8 @@ edited on disk between then and now is invisible until the catalog is rebuilt.
 """
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
@@ -41,6 +41,11 @@ from klorb.tools.skill.common import (
     validate_skill_name,
 )
 from klorb.tools.skill.model import Skill
+
+if TYPE_CHECKING:
+    # Deferred: `klorb.tools.setup_context` imports `klorb.session`, which imports this module
+    # (`Session._ensure_skill_catalog`) -- a runtime import here would cycle back.
+    from klorb.tools.setup_context import ToolSetupContext
 
 logger = logging.getLogger(__name__)
 
@@ -117,16 +122,6 @@ class SkillCatalogs(BaseModel):
     canonical: SkillCatalog
 
 
-@dataclass(frozen=True)
-class SkillCatalogParams:
-    """The disk-scan parameters the currently-loaded catalog was last built from, kept only so
-    `SkillCatalogRegistry` can log what it's about to (not) rebuild."""
-
-    workspace_root: Path
-    workspace_trusted: bool
-    claude_skills_compat: bool
-
-
 def build_catalogs(
     *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
 ) -> SkillCatalogs:
@@ -174,16 +169,21 @@ def build_catalogs(
         typed[skill_id] = skill
 
     # Second pass: add alias entries, only once every skill's canonical identity is known, so an
-    # alias can never shadow another skill's real (namespace, name) identity.
-    for (namespace, canonical_name), skill in canonical.items():
-        for alias in skill.aliases:
+    # alias can never shadow another skill's real (namespace, name) identity. Processed in
+    # alphabetical (namespace, name) order, and checked against `typed` (not just `canonical`),
+    # so two skills whose frontmatter names collide with each other -- not with any canonical
+    # name -- resolve deterministically to the alphabetically-first skill, rather than to
+    # whichever the filesystem happened to yield last.
+    for namespace, canonical_name in sorted(canonical):
+        skill = canonical[(namespace, canonical_name)]
+        for alias in sorted(skill.aliases):
             if alias == canonical_name:
                 continue
             alias_id: SkillId = (namespace, alias)
-            if alias_id in canonical:
+            if alias_id in typed:
                 logger.warning(
                     "Skill %s:%s frontmatter alias %r collides with another skill's canonical "
-                    "name; the alias is dropped.", namespace, canonical_name, alias)
+                    "name or alias; the alias is dropped.", namespace, canonical_name, alias)
                 continue
             typed[alias_id] = skill
 
@@ -224,7 +224,6 @@ class SkillCatalogRegistry:
     def __init__(self) -> None:
         self._typed: SkillCatalog | None = None
         self._canonical: SkillCatalog | None = None
-        self._params: SkillCatalogParams | None = None
 
     def ensure(
         self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
@@ -238,19 +237,27 @@ class SkillCatalogRegistry:
             workspace_root=workspace_root, workspace_trusted=workspace_trusted,
             claude_skills_compat=claude_skills_compat)
 
+    def ensure_from_context(self, context: "ToolSetupContext") -> None:
+        """`ensure()`, extracting `workspace_root`/`workspace_trusted`/`claude_skills_compat` from
+        a `Tool`'s `ToolSetupContext` -- the common case every skill `Tool.apply()` needs before
+        touching the catalog."""
+        workspace = context.session_config.workspace
+        self.ensure(
+            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
+            claude_skills_compat=context.process_config.compatibility_claude_skills)
+
     def reload(
         self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
     ) -> SkillCatalogs:
         """Rebuild both catalogs from a fresh disk scan, replacing whatever was held -- the
         ">Reload skills" command's implementation. Returns the new catalog pair."""
-        params = SkillCatalogParams(
-            workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-            claude_skills_compat=claude_skills_compat)
-        logger.debug("Reloading skill catalog: %r", params)
+        logger.debug(
+            "Reloading skill catalog: workspace_root=%r workspace_trusted=%r "
+            "claude_skills_compat=%r", workspace_root, workspace_trusted, claude_skills_compat)
         catalogs = build_catalogs(
             workspace_root=workspace_root, workspace_trusted=workspace_trusted,
             claude_skills_compat=claude_skills_compat)
-        self._typed, self._canonical, self._params = catalogs.typed, catalogs.canonical, params
+        self._typed, self._canonical = catalogs.typed, catalogs.canonical
         logger.info(
             "Skill catalog reloaded: %d skill(s), %d typed reference(s)",
             len(catalogs.canonical), len(catalogs.typed))
@@ -277,7 +284,6 @@ class SkillCatalogRegistry:
         `reload()`, which replaces it directly."""
         self._typed = None
         self._canonical = None
-        self._params = None
 
 
 _registry = SkillCatalogRegistry()

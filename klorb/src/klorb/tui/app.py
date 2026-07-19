@@ -20,6 +20,7 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Static
 
+from klorb.logging_config import TuiHistoryNotice
 from klorb.models.model import Model
 from klorb.process_config import ProcessConfig, persist_session_default, persist_theme, user_config_path
 from klorb.session import Session, ThinkingEffort
@@ -450,6 +451,11 @@ class ReplApp(
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(message, classes="error" if error else "notice", markup=False))
         history.scroll_end(animate=False)
+
+    def on_tui_history_notice(self, message: TuiHistoryNotice) -> None:
+        """Handles a `TuiHistoryLogHandler`-posted `WARNING`+ log record by mounting it into the
+        conversation history via `show_notice()` -- see `klorb.logging_config`."""
+        self.show_notice(message.text, error=message.error)
 
     def reload_skills(self) -> None:
         """Rebuild the process-wide skill catalog (`klorb.tools.skill.catalog`) from a fresh disk
