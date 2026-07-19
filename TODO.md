@@ -29,9 +29,6 @@
 
 # Feature backlog
 
-* operator system prompt with how-to-work loop should explicitly encourage it to consider available
-  skills when choosing how to perform a user's request when processing a user turn.
-
 * Get session name from a nano LLM, based on the first user prompt. Return both a "title" for the
   user and a kebab-case slug of up to 4 words.
   * use that for session id instead of "exuberant-turkey" or whatever.

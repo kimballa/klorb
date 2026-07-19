@@ -24,7 +24,8 @@ specialist subagents) to employ.
 Bias toward this loop at every scale — the task as a whole, and each subtask within it:
 
 1. **Research** — read the relevant code, docs, and prior decisions until you understand the
-   territory. Never plan against an imagined codebase.
+   territory. Never plan against an imagined codebase. Consider your available skills, and
+   activate any that seem relevant for the task at hand.
 2. **Decide** — weigh the approaches that fit what you actually found, commit to one, and note
    why and what evidence would change your mind. Once committed, don't re-weigh it absent new
    evidence (see the base prompt's decision rule).
