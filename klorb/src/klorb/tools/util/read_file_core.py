@@ -60,9 +60,11 @@ class ReadFileCore:
 
     def apply(self, path: Traversable, args: dict[str, Any]) -> dict[str, Any]:
         """Read `path` per `args`' `start_line`/`end_line`, returning `start_line`, `end_line`,
-        `total_lines`, `truncated`, and `content` (the caller adds `filename`/`name` if it has
-        one). `args`' `start_line`/`end_line` are validated (raising `ValueError`) before `path` is
-        opened via `open_resource()`.
+        `total_lines`, `truncated`, `content` (the caller adds `filename`/`name` if it has one),
+        and, when `truncated` is true, `next_start_line` -- the `start_line` to pass on the next
+        call to continue reading where this one left off, so a caller paging through a large
+        file doesn't have to compute `end_line + 1` itself. `args`' `start_line`/`end_line` are
+        validated (raising `ValueError`) before `path` is opened via `open_resource()`.
         """
         start_line = args.get("start_line")
         end_line = args.get("end_line")
@@ -96,10 +98,14 @@ class ReadFileCore:
         returned_end = effective_start + len(selected_lines) - \
             1 if selected_lines else effective_start - 1
 
-        return {
+        truncated = returned_end < total_lines
+        result: dict[str, Any] = {
             "start_line": effective_start,
             "end_line": returned_end,
             "total_lines": total_lines,
-            "truncated": returned_end < total_lines,
+            "truncated": truncated,
             "content": content,
         }
+        if truncated:
+            result["next_start_line"] = returned_end + 1
+        return result

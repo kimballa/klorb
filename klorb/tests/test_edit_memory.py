@@ -131,13 +131,55 @@ def test_edit_leaving_a_non_blank_first_line_succeeds(
 def test_nonexistent_filename_raises_clear_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A shape other than the empty-subject insert can't auto-create a memory (see
+    test_edit_memory_auto_creates_nonexistent_memory_via_empty_insert_shape); it fails and
+    names CreateMemory as the tool to use instead."""
     context = _context(tmp_path, monkeypatch)
 
-    with pytest.raises(FileNotFoundError, match="no such global memory"):
+    with pytest.raises(FileNotFoundError, match="does not exist; use CreateMemory"):
         EditMemoryTool(context).apply({
             "namespace": "global", "filename": "missing.md",
             "start_line": 1, "end_line": 1, "start_text": "a", "end_text": "a", "new_text": "b",
         })
+
+
+def test_edit_memory_auto_creates_nonexistent_memory_via_empty_insert_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A namespace/filename pair with nothing on disk (not even the namespace directory) is
+    treated exactly like an existing-but-empty memory for the empty-subject insert shape -- no
+    prior CreateMemory call needed."""
+    context = _context(tmp_path, monkeypatch)
+    path = memory_namespace_dir(context, "global") / "notes.md"
+    assert not path.exists()
+
+    result = EditMemoryTool(context).apply({
+        "namespace": "global", "filename": "notes.md",
+        "start_line": 1, "end_line": 0, "start_text": "", "end_text": "",
+        "new_text": "Topic\nBody",
+    })
+
+    assert path.read_text() == "Topic\nBody\n"
+    assert result["created"] is True
+
+
+def test_edit_memory_auto_create_rolled_back_when_first_line_would_be_blank(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A freshly auto-created memory that would end up with a blank first line has no pre-edit
+    content to restore -- the just-created file is deleted instead, so no topic-less memory is
+    left on disk even transiently."""
+    context = _context(tmp_path, monkeypatch)
+    path = memory_namespace_dir(context, "global") / "notes.md"
+
+    with pytest.raises(ValueError, match="first line is its topic and must not be blank"):
+        EditMemoryTool(context).apply({
+            "namespace": "global", "filename": "notes.md",
+            "start_line": 1, "end_line": 0, "start_text": "", "end_text": "",
+            "new_text": "   ",
+        })
+
+    assert not path.exists()
 
 
 def test_workspace_memory_in_untrusted_workspace_is_denied(
@@ -208,6 +250,24 @@ def test_old_text_form_is_wired_through(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert path.read_text() == "Topic\nB\nC\nd\n"
     assert result["requested_end_line"] == 3
+
+
+def test_old_text_with_no_line_hint_is_wired_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Smoke test that old_text's whole-subject search (no line hint at all) reaches
+    EditMemory via the shared EditFileCore -- the full matrix is exercised against EditFile
+    in test_edit_file.py."""
+    context = _context(tmp_path, monkeypatch)
+    path = _write(context, "global", "notes.md", "Topic\nb\nc\nd\n")
+
+    result = EditMemoryTool(context).apply({
+        "namespace": "global", "filename": "notes.md",
+        "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert path.read_text() == "Topic\nB\nC\nd\n"
+    assert result["requested_start_line"] == 1
 
 
 def test_summary_reports_a_line_diff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

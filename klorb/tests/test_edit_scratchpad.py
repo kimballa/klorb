@@ -38,7 +38,7 @@ def test_replaces_a_line_range(tmp_path: Path) -> None:
 
     assert scratchpad.read_text() == "a\nB\nC\nd\n"
     assert result["new_total_lines"] == 4
-    assert result["content"] == "2|B\n3|C"
+    assert result["post_edit_content"] == "2|B\n3|C"
 
 
 def test_insert_via_single_line_replace(tmp_path: Path) -> None:
@@ -142,7 +142,7 @@ def test_multiline_start_text_truncates_to_first_line(tmp_path: Path) -> None:
 
     assert scratchpad.read_text() == "x\nc\n"
     assert result["new_total_lines"] == 2
-    assert result["content"] == "1|x"
+    assert result["post_edit_content"] == "1|x"
 
 
 def test_multiline_end_text_truncates_to_first_line(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ def test_multiline_end_text_truncates_to_first_line(tmp_path: Path) -> None:
 
     assert scratchpad.read_text() == "x\nc\n"
     assert result["new_total_lines"] == 2
-    assert result["content"] == "1|x"
+    assert result["post_edit_content"] == "1|x"
 
 
 def test_requires_active_session() -> None:
@@ -192,6 +192,20 @@ def test_old_text_form_is_wired_through(tmp_path: Path) -> None:
     assert result["requested_end_line"] == 3
 
 
+def test_old_text_with_no_line_hint_is_wired_through(tmp_path: Path) -> None:
+    """Smoke test that old_text's whole-subject search (no line hint at all) reaches
+    EditScratchpad via the shared EditFileCore -- the full matrix is exercised against
+    EditFile in test_edit_file.py."""
+    scratchpad = _write(tmp_path, "a\nb\nc\nd\n")
+
+    result = EditScratchpadTool(_context(str(scratchpad))).apply({
+        "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert scratchpad.read_text() == "a\nB\nC\nd\n"
+    assert result["requested_start_line"] == 1
+
+
 def test_summary_reports_a_line_diff(tmp_path: Path) -> None:
     scratchpad = _write(tmp_path, "a\nb\nc\nd\n")
     tool = EditScratchpadTool(_context(str(scratchpad)))
@@ -218,7 +232,7 @@ def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path
     result = tool.apply(args)
     detail = json.loads(tool.detail_view(args, result))
 
-    assert detail["result"]["content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."
+    assert detail["result"]["post_edit_content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."
 
 
 def test_fuzzy_whitespace_match_on_start_text(tmp_path: Path) -> None:
@@ -229,7 +243,7 @@ def test_fuzzy_whitespace_match_on_start_text(tmp_path: Path) -> None:
     })
 
     assert scratchpad.read_text() == "X\nY\nZ\n"
-    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["fuzzy_whitespace_match"] is True
     assert result["whitespace"] == (
         "start_text was matched to its anchor by ignoring leading/trailing whitespace; "
         "for most accurate matching, be precise with leading and trailing whitespace.")
@@ -244,7 +258,7 @@ def test_fuzzy_whitespace_match_on_end_text(tmp_path: Path) -> None:
     })
 
     assert scratchpad.read_text() == "X\nY\nZ\n"
-    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["fuzzy_whitespace_match"] is True
     assert result["whitespace"] == (
         "end_text was matched to its anchor by ignoring leading/trailing whitespace; "
         "for most accurate matching, be precise with leading and trailing whitespace.")
@@ -258,7 +272,7 @@ def test_fuzzy_whitespace_match_on_both_anchors(tmp_path: Path) -> None:
     })
 
     assert scratchpad.read_text() == "X\nY\nZ\n"
-    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["fuzzy_whitespace_match"] is True
     assert result["whitespace"] == (
         "start_text and end_text were matched to their anchors by ignoring leading/trailing "
         "whitespace; for most accurate matching, be precise with leading and trailing whitespace.")
@@ -274,7 +288,7 @@ def test_exact_match_takes_precedence_over_fuzzy(tmp_path: Path) -> None:
     })
 
     assert scratchpad.read_text() == "X\nY\nZ\n"
-    assert "fuzzyWhitespaceMatch" not in result
+    assert "fuzzy_whitespace_match" not in result
     assert "whitespace" not in result
 
 
@@ -291,7 +305,7 @@ def test_fuzzy_match_relocates_with_drift(tmp_path: Path) -> None:
 
     assert scratchpad.read_text() == "A\np\nq\n"
     assert result["start_line"] == 1
-    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["fuzzy_whitespace_match"] is True
 
 
 def test_fuzzy_match_falls_through_when_still_ambiguous(tmp_path: Path) -> None:

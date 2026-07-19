@@ -21,7 +21,8 @@ class ListDirTool(Tool):
     confined to `SessionConfig.workspace.path` unless `SessionConfig.workspace.trusted`,
     exactly like `ReadFileTool`. A relative `dirname` is resolved against the workspace root,
     not the process's current working directory. An empty string means the workspace root
-    itself.
+    itself. The result's `child_count` is `len(subdirs) + len(files)`, so a model doesn't have
+    to count either list itself just to know how many entries a directory has.
     """
 
     def name(self) -> str:
@@ -32,9 +33,10 @@ class ListDirTool(Tool):
             "Lists the immediate subdirectories and files of a directory, so you can orient "
             "yourself in the local filesystem. Returns the canonical path actually listed "
             "plus a 'subdirs' list and a 'files' list, each containing bare names "
-            "(not full paths) sorted alphabetically. A relative dirname is resolved against "
+            "(not full paths) sorted alphabetically, and 'child_count' (their combined size). "
+            "A relative dirname is resolved against "
             "the project root, not any other current directory. Pass an empty string to list "
-            "the project root itself."
+            "the project root itself. (NOTE: To locate a specific file, use `FindFile` instead!) "
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -87,6 +89,7 @@ class ListDirTool(Tool):
             "cwd": str(path),
             "subdirs": subdirs,
             "files": files,
+            "child_count": len(subdirs) + len(files),
         }
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:

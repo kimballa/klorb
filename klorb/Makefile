@@ -55,7 +55,7 @@ MYPYPATH=./types/
 TESTARGS ?=--stepwise --lfnf=all --show-capture=log
 
 # Extra args forwarded to `evals/run_evals.py`, e.g. `EVALARGS='--model openai/gpt-4o' make evals`.
-EVALARGS ?=
+EVALARGS ?=--model xiaomi/mimo-v2.5 --self-review
 
 help:
 	@echo "Available commands:"
@@ -117,7 +117,7 @@ install_dev_deps: venv
 	@echo "Installed runtime and development dependencies."
 
 # Bootstrap a klorb-config.json, a klorb executable symlink, and the bundled tiktoken cache
-# for this venv's own klorb (see docs/specs/klorb-init.md). 
+# for this venv's own klorb (see docs/specs/klorb-init.md).
 init: venv
 	$(LOAD_VENV); "$(KLORB_BIN)" init || true
 

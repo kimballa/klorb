@@ -180,7 +180,7 @@ def test_describe_tool_arg_json_error_flags_edit_tool_args_when_present() -> Non
 
     message = describe_tool_arg_json_error("EditFile", raw, exc)
 
-    assert "edit-tool call" in message
+    assert "edit tool call" in message
 
 
 def test_describe_tool_arg_json_error_omits_edit_hint_when_no_edit_args_present() -> None:

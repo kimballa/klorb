@@ -653,7 +653,9 @@ class BashTool(InterruptibleTool):
             "user alongside the command itself when it needs approval or appears in history. "
             "For example: 'list all files in foobar directory.' "
             "State it accurately -- a command that does something other than what its own "
-            "intent describes is scored as more risky."
+            "intent describes is scored as more risky. "
+            "Many shell commands require explicit user permission and fail in autonomous mode. "
+            "Built-in ListDir, Grep, FindFile, and ReadFile tools often work *better*."
         )
 
     def parameters(self) -> dict[str, Any]:

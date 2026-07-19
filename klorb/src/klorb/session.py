@@ -1231,7 +1231,9 @@ class Session:
         """
         if self.config.permission_framework == "deny":
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
-            return None, str(multi_ask_exc)
+            logger.warning("User configured us to auto-reject approval request.")
+            return None, (str(multi_ask_exc) +
+                "\nThis kind of request is automatically denied. Do not repeat it.")
         if self.config.permission_framework == "auto":
             logger.info(
                 "Auto-approving permission ask under permissionFramework=auto: %s", multi_ask_exc)
@@ -1241,7 +1243,9 @@ class Session:
                 call, args, multi_ask_exc.items, auto_decisions)
         if callbacks.on_permission_ask is None:
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
-            return None, str(multi_ask_exc)
+            logger.warning("User unavailable to respond to approval request.")
+            return None, (str(multi_ask_exc) +
+                "\nThe user is unavailable to approve this kind of request. Do not repeat it.")
 
         decisions: list[PermissionDecision] = []
         for item in multi_ask_exc.items:

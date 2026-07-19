@@ -136,15 +136,25 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   regardless of the requested range, so an agent pages through larger files with successive
   calls. The result is a dict: `filename`, the
   actual `start_line`/`end_line` returned, the file's `total_lines`, a `truncated` flag (true
-  when more content exists past `end_line`), and `content` — a single string with one
-  `"N|line text"` entry per line, newline-separated. `summary()` names the file and the
-  returned line range; `detail_view()` caps `content` to 8 lines via `truncate_lines()`, since
-  a full result can be up to `read_file_max_lines` (200 by default) lines.
+  when more content exists past `end_line`), `content` — a single string with one
+  `"N|line text"` entry per line, newline-separated — and, only when `truncated` is true,
+  `next_start_line` (`end_line + 1`): the `start_line` to pass on the next call to keep paging
+  through the file, so a caller doesn't have to compute it itself. `summary()` names the file
+  and the returned line range; `detail_view()` caps `content` to 8 lines via `truncate_lines()`,
+  since a full result can be up to `read_file_max_lines` (200 by default) lines.
 * `klorb.tools.edit_file.EditFileTool` (`klorb/src/klorb/tools/edit_file.py`), name
   `EditFile`. Replaces the inclusive 1-indexed line range `start_line`..`end_line` of an
   existing text file with `new_text`, after locating an anchor (`start_text`/`end_text`, or the
-  whole-block `old_text` form described below) at or near those lines. `start_line`/`end_line`
-  are a location hint, not a hard requirement: if the anchor doesn't match exactly, `apply()`
+  whole-block `old_text` form described below) at or near those lines. When a real line hint is
+  given (not `old_text`'s hint-less `unbounded` search mode — see below) and the anchor already
+  matches exactly at that hint, with no `context_before`/`context_after` supplied, the edit
+  applies immediately — no scan for other nearby candidates at all, even if the same content
+  also occurs elsewhere within the drift radius; a caller who names a specific, correct location
+  doesn't need it cross-checked against lookalikes. See
+  [the exact-hint-match ADR](../adrs/edit-file-exact-hint-match-skips-ambiguity-scan.md) for why,
+  and for the deliberate tradeoff this makes against the drift-tolerance ADR's original
+  "never silently edit the wrong location" guarantee. Otherwise, `start_line`/`end_line` are a
+  location hint, not a hard requirement: if the anchor doesn't match exactly, `apply()`
   searches within `context.process_config.edit_file_drift_search_radius` lines (default
   `process_config.DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS`, 20 — the sole canonical source of
   this default) for a unique nearby location where it still matches at the same relative span,
@@ -161,8 +171,17 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   means rather than reconstruct it from a separate `ReadFile` call. Omitting
   `context_before`/`context_after` means "don't check this side"; passing the empty string `""`
   instead is a distinct, checked assertion that there's genuinely nothing on that side (the
-  target is the file's actual first/last line). An out-of-bounds hint (`end_line` past the
-  file's end, etc.) raises immediately with no search attempted. See
+  target is the file's actual first/last line) — but a model reliably fumbles sending a
+  genuinely empty string (often as bare, unquoted whitespace in the tool-call JSON, producing a
+  parse error rather than the intended call), so `context_before_start`/`context_after_end`
+  (booleans) are offered as an easier-to-send equivalent: `context_before_start=true` with no
+  `context_before` behaves exactly like `context_before=""`, and likewise for
+  `context_after_end`/`context_after`. `_normalize_edit_args()` only consults the boolean when
+  the corresponding string argument is entirely absent — an explicit `context_before`/
+  `context_after` (even `""`) always wins. Both mechanisms produce the identical downstream
+  assertion; the boolean form exists purely because it's easier for a model to get right, not
+  because it means something different. An out-of-bounds hint (`end_line` past the file's end,
+  etc.) raises immediately with no search attempted. See
   [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
   There is no separate insert or delete tool: insert without deleting by setting
   `start_line == end_line` and folding that line's original text into `new_text`; delete by
@@ -170,6 +189,17 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   has no anchor line to replace — the only valid call there is `start_line=1, end_line=0,
   start_text="", end_text=""`. See
   [the insert/delete ADR](../adrs/edit-file-covers-insert-and-delete-via-replace-range.md).
+  That same empty-subject shape also covers a `filename` that doesn't exist yet at all: a
+  missing file is treated exactly like an existing-but-empty one, `EditFileCore.apply()`
+  creates it (and any missing parent directories, mirroring `CreateFileTool`) instead of
+  raising, and the result gains `created: true`. Any other shape against a nonexistent file
+  raises `FileNotFoundError` naming `CreateFile` (or `CreateMemory`, for `EditMemory`) as the
+  tool to create it with first, rather than the bare OS `[Errno 2]` text — this mechanic can
+  only ever create a *whole new* file, never edit a specific line range of one that isn't there
+  yet. `EditMemoryTool` supports the same auto-create (see docs/specs/memories.md);
+  `EditScratchpadTool` never hits this path, since the scratchpad file is harness-managed and
+  always exists. See
+  [the auto-create ADR](../adrs/edit-file-auto-creates-via-empty-subject-insert-shape.md).
   Trailing-newline handling: an edit that doesn't touch the file's last line preserves whatever
   trailing-newline state the file already had; an edit whose `end_line` reaches the end of the
   file (including the empty-file case) always terminates the file with a single trailing `\n`
@@ -203,8 +233,11 @@ once per `JSONDecodeError` regardless of which message variant was produced.
     token-efficient form for a long replacement span, since it never repeats the interior.
   * *Single-line shortcut* — when `start_line == end_line`, `end_text` may be omitted or empty;
     `start_text` alone anchors the one line being replaced. `end_line` must still be present and
-    equal to `start_line`; omitting it entirely is an error in this mode (only `old_text` mode
-    lets `end_line` be inferred).
+    equal to `start_line` *unless it's omitted entirely too*: when both `end_text` and `end_line`
+    are absent, `_normalize_edit_args()` imputes `end_line = start_line` and `end_text =
+    start_text` — `start_text` unambiguously names the single line being replaced regardless of
+    how many lines `new_text` spans, so a multi-line `new_text` in this shape is an ordinary
+    insert (the one line growing into several), not an error.
   * *`old_text`* — instead of `start_text`/`end_text`, the caller supplies `old_text`: the
     entire contiguous replacement block, verbatim, as one multi-line string. `end_line` is
     optional, inferred by counting `old_text`'s lines; if supplied, it must agree with that
@@ -215,7 +248,14 @@ once per `JSONDecodeError` regardless of which message variant was produced.
     strict superset of the classic form's endpoints-only check; see
     [the full-block-verification ADR](../adrs/edit-file-old-text-verifies-full-block.md). A
     zero-candidate match names the first interior line that actually differs, not just
-    "start/end didn't match."
+    "start/end didn't match." The line hint itself is optional in this form too: when `old_text`
+    is given with no `start_line` and no alias, the drift search scans the *entire* subject for a
+    unique match instead of a window within `edit_file_drift_search_radius` lines of a hint —
+    `requested_start_line`/`requested_end_line` then echo the `1`/`len(old_text)`-derived seed
+    the search used rather than a real caller-supplied hint, and `line_hint_matched` is always
+    `False` in this mode (there was no hint to match). Supplying `end_line` with no line hint is
+    an error (`end_line` needs something to be relative to); omit both to search unbounded, or
+    supply `start_line` (or an alias) to bound the search as usual.
   * *Implicit `start_text` → `old_text` conversion* — a multi-line `start_text` with `end_text`
     omitted or empty is reinterpreted as `old_text` (so pasting the whole block into
     `start_text` still produces a useful edit instead of the classic form's lossy
@@ -231,8 +271,8 @@ once per `JSONDecodeError` regardless of which message variant was produced.
     `_normalize_edit_args()`, not in the JSON schema (no `anyOf`/`oneOf`); see
     [the required-relaxed ADR](../adrs/edit-file-required-relaxed-not-anyof.md). A rejected
     combination (`old_text` alongside a meaningful `start_text`/`end_text`, neither `old_text`
-    nor `start_text` present, no line hint in any spelling, etc.) raises a specific `ValueError`
-    naming the problem.
+    nor `start_text` present, no line hint in any spelling outside `old_text` mode, `end_line`
+    given with no line hint, etc.) raises a specific `ValueError` naming the problem.
   * The legacy empty-subject insert form (`start_line=1, end_line=0, start_text=""`, `end_text`
     either omitted or `""`) is untouched and not re-expressed in `old_text` terms — there's no
     block to anchor. Because that pair would otherwise route through the single-line-shortcut

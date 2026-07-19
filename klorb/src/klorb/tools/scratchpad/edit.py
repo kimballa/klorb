@@ -52,7 +52,8 @@ class EditScratchpadTool(Tool):
                      args.get("start_line"), args.get("end_line"))
         path = scratchpad_path(self.context)
         result = self.edit_file_core.apply(
-            path, args, subject="the scratchpad", reread_hint="re-ReadScratchpad your scratchpad")
+            path, args, subject="the scratchpad", reread_hint="re-ReadScratchpad your scratchpad",
+            create_hint="(unexpected -- the scratchpad is harness-managed and should always exist)")
         logger.debug(
             "EditScratchpad replaced lines %d-%d (now %d-%d) of what is now a %d-line "
             "scratchpad", result["requested_start_line"], result["requested_end_line"],
@@ -82,12 +83,12 @@ class EditScratchpadTool(Tool):
         return base if error is None else f"{base} failed: {error}"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["content"]` (the edited
+        """Same as the default pretty-JSON rendering, but with `result["post_edit_content"]` (the edited
         region) capped to 8 lines — a full-scratchpad rewrite via one large `new_text` could
         otherwise dump hundreds of lines here.
         """
-        if error is not None or not isinstance(result, dict) or "content" not in result:
+        if error is not None or not isinstance(result, dict) or "post_edit_content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
-        capped_result["content"] = truncate_lines(result["content"], 8)
+        capped_result["post_edit_content"] = truncate_lines(result["post_edit_content"], 8)
         return super().detail_view(args, capped_result, error)

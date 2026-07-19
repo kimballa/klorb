@@ -85,41 +85,76 @@ Use the Bash tool to verify, build, inspect, and explore your environment.
   and trailing `; echo $?`; just run the command and read what comes back.
 * Declare the intent behind each command in the mandatory `intent` field.
 * Prefer the dedicated `ReadFile` tool over `sed`/`cat`, and `EditFile` over `cat` + heredoc.
+  When a `ReadFile`/`ReadScratchpad` response has `"truncated": true`, it also carries
+  `next_start_line` — pass that straight through as the next call's `start_line` to keep paging
+  rather than computing `end_line + 1` yourself.
 
 ## Editing files (EditFile / EditScratchpad / EditMemory)
 
-**The rule:** `start_text` and `end_text` are each exactly ONE line of the *current* content
+**To replace exactly one line** set `start_line` to the line number, `start_text` to the
+existing text to match, `new_text` to the new replacement. You can omit `end_line` and `end_text`.
+
+**For short edits** (2—5 lines), set `old_text` to the text to match and `new_text` to the
+text to replace it with. You can omit `start_text`, `end_text`, or any line numbers. It's
+simple and compact.Both `old_text` and `new_text` may be multiple lines.
+
+**For longer edits:** `start_text` and `end_text` are each exactly ONE line of the *current* content
 — verbatim, with no trailing newline, and never including the `'N|'` line-number prefix that
-`ReadFile`/`ReadScratchpad` prepend for display. Everything else — every other old line, and
-all new content — goes in `new_text`, the only field that may be multi-line.
+`ReadFile`/`ReadScratchpad` prepend for display. Everything else — every other old line to
+preserve, and all new content — goes in `new_text`, which may be multi-line. This method is
+more token-efficient than re-printing long multi-line `old_text` to replace.
 
-**Decision rule:** for a long multi-line replacement, `start_line`/`end_line` + one-line
-`start_text`/`end_text` is the most token-efficient anchor (you never repeat the interior). For
-a short block (~1–5 lines), `old_text` (the whole block, verbatim) is easier and often more
-compact — `end_line` is inferred for you. Never send both `old_text` and `start_text`/`end_text`
-in the same call.
-
+`start_text` and `end_text` must be paired with `start_line` and `end_line` line numbers.
 These tools replace the inclusive line range `[start_line, end_line]` with `new_text`, verified
-against `start_text`/`end_text` (or against `old_text`, when you use that form instead).
+against `start_text`/`end_text`.
+
+Never send both `old_text` and `start_text`/`end_text` in the same call. Pick one method.
 
 * `start_line`/`end_line` are a location hint, not exact coordinates: modest drift (e.g. from
   an earlier edit in the same turn shifting later lines) is tolerated automatically when the
   anchor still matches nearby — the response reports the corrected location and
   `line_hint_matched=false`. Re-read only when no matching location is found nearby. `old_text`
   gets the same drift tolerance.
-* An "Ambiguous match" error means more than one nearby location matches. Retry with
+* If `start_line`'s anchor matches exactly, the edit applies immediately at that line — it's
+  never rejected as "ambiguous" just because the same content also appears elsewhere in the
+  file. This means an exact `start_line` is trusted at face value, so double-check your line
+  count when content repeats: a miscounted `start_line` that happens to land on another
+  identical line edits that line instead, with no warning. If you're not fully sure which
+  occurrence you mean, supply `context_before`/`context_after` (or the empty-file
+  boolean sentinels below) — that still triggers the full disambiguation check described next,
+  even when `start_line` matches exactly.
+* An "Ambiguous match" error means more than one nearby location matches (only reachable via
+  drift correction, `old_text`'s hint-less search, or when you explicitly supply
+  `context_before`/`context_after`). Retry with
   `context_before`/`context_after` (raw content immediately before/after the target), using
-  the exact values the error names; `""` there asserts "nothing is on that side," which
-  differs from omitting the argument entirely.
-* Anchoring to non-empty start/end lines works better than blank ones, which have many
-  possible matches in a given range.
-* **Replacing exactly one line?** Set `start_line == end_line` and omit `end_text`; `start_text`
-  alone anchors it.
+  the exact values the error names. If the target is genuinely at the start/end of the
+  file, don't try to send an empty string for `context_before`/`context_after` — use the
+  boolean `context_before_start=true` / `context_after_end=true` instead, exactly as the
+  error message suggests.
+* Anchoring to non-empty start/end lines works better than blank ones.
+* **Replacing (or inserting after) exactly one line?** Just send `start_line`, `start_text`, and
+  `new_text` — omit `end_text`/`end_line` entirely. `start_text` alone unambiguously anchors the
+  one line being replaced, no matter how many lines `new_text` itself spans.
+* **Don't know (or don't want to look up) the line number?** With `old_text`, `start_line` (and
+  its aliases) is optional! Omit it entirely and the whole file/scratchpad is searched for a
+  unique match, no `ReadFile` round-trip needed first. Only use this when `old_text` is
+  distinctive enough to be unambiguous — an "Ambiguous match" error still means more than one
+  location matched.
 * To insert without deleting, set `start_line == end_line` to an existing line and fold that
   line's original text into `new_text` (see the worked example below). To delete, pass an empty
-  `new_text`. To insert into a completely empty file/scratchpad, the only valid call is
-  `start_line=1, end_line=0, start_text="", end_text=""`. Apply multiple edits to the same
-  target bottom-to-top (greatest line numbers first) to avoid drift.
+  `new_text`. To insert into a completely empty file/scratchpad, the only valid call is:
+  `{ "start_line": 1, "end_line": 0, "start_text": "", "end_text": "": new_text: "<new-content>" }`
+  Apply multiple edits to the same target bottom-to-top (greatest line numbers first) to avoid drift.
+* **File/memory doesn't exist yet?** That exact same empty-insert shape (`start_line=1,
+  end_line=0, start_text="", end_text=""`) creates it directly with `new_text` as its content —
+  `EditFile`/`EditMemory` don't need a prior `CreateFile`/`CreateMemory` call, and missing
+  parent directories are created too. Any *other* shape against a nonexistent file/memory fails
+  and names `CreateFile`/`CreateMemory` as the tool to use first — this shortcut only ever
+  creates a whole new file, never edits a specific line range of one that doesn't exist yet.
+  (The scratchpad always exists already, so this never applies to `EditScratchpad`.)
+
+Do not issue a follow-up ReadFile after EditFile or ReplaceAll; the result is already in
+the `content` field of the response when `edit_success` is true.
 
 ### Worked Example: start_text/end_text, for a long span
 
@@ -156,7 +191,9 @@ To change one existing line within a python `if` statement and insert a new line
 }
 ```
 
-### Worked Example: old_text, for a short block
+### Worked Example: `old_text` instead of start_text/end_text, for a short block
+
+**Short block? Use `old_text`!**
 
 Same file as above; replacing lines 2–4 (a 3-line block) is more compact as `old_text` than as
 `start_text`/`end_text` — `end_line` is inferred from the block's own line count, so it's
@@ -174,13 +211,13 @@ omitted here:
 ### Worked Example: single-line shortcut, to insert after a line
 
 To add a line right after line 12 (`    return result`) without touching anything else, "replace"
-that line with itself plus the new line — `end_text` is omitted since `start_line == end_line`:
+that line with itself plus the new line — `end_text`/`end_line` are both omitted, since
+`start_text` alone already names the one line being replaced:
 
 ```json
 {
   "filename": "/path/to/foo.py",
   "start_line": 12,
-  "end_line": 12,
   "start_text": "    return result",
   "new_text": "    return result\n    # end of helper"
 }

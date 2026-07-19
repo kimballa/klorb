@@ -28,7 +28,8 @@
       "Read(//tmp/**)",
       "Skill(code-review)",
       "Skill(code-review:*)",
-      "Bash(venv/bin/pip show *)"
+      "Bash(venv/bin/pip show *)",
+      "Bash(venv/bin/flake8 --config .flake8 evals/cases.py)"
     ]
   },
   "hooks": {

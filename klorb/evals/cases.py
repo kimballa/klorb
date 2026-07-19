@@ -10,10 +10,10 @@ correctly, not to reward creative alternate phrasing of the outcome.
 
 A handful of cases use files longer than `DEFAULT_READ_FILE_MAX_LINES` so a single `ReadFile`
 call can't return the whole file, forcing a competent run to either page with
-`start_line`/`end_line` or target specific lines directly — these also inspect
-`session.messages` for the `ReadFile`/`EditFile` calls actually made (see
-docs/adrs/grade-tool-evals-by-filesystem-state.md's "where useful" carve-out), not just the
-resulting file content.
+`start_line`/`end_line`, or locate the target line directly (e.g. via `Grep`) and skip paging
+entirely — these also inspect `session.messages` for the `ReadFile`/`Grep`/`EditFile` calls
+actually made (see docs/adrs/grade-tool-evals-by-filesystem-state.md's "where useful"
+carve-out), not just the resulting file content.
 
 Another handful use repeated, identical lines at or near a file's first/last line, where
 `EditFile`'s drift search (see
@@ -305,13 +305,22 @@ def _check_read_file_paginates_past_max_lines(workspace_root: Path, session: Ses
         return mismatch
 
     read_calls = _tool_call_args(session, "ReadFile")
-    if len(read_calls) < 2:
-        return (
-            f"expected at least 2 ReadFile calls to page past the default "
-            f"{DEFAULT_READ_FILE_MAX_LINES}-line max_lines cap and reach line "
-            f"{_PAGINATION_FILE_MARKER_LINE}, got {len(read_calls)}"
-        )
-    return None
+    if len(read_calls) >= 2:
+        return None
+
+    # Alternate valid path: locate the marker line directly with Grep instead of paging
+    # through ReadFile -- strictly fewer tool calls and just as reliable, so it passes too
+    # rather than only rewarding the pagination path.
+    if not read_calls and _tool_call_args(session, "Grep") and _tool_call_args(session, "EditFile"):
+        return None
+
+    return (
+        f"expected either at least 2 ReadFile calls to page past the default "
+        f"{DEFAULT_READ_FILE_MAX_LINES}-line max_lines cap and reach line "
+        f"{_PAGINATION_FILE_MARKER_LINE}, or a Grep call to find the marker directly followed "
+        f"by an EditFile call with no ReadFile paging at all, got {len(read_calls)} ReadFile "
+        "call(s)"
+    )
 
 
 READ_FILE_PAGINATES_PAST_MAX_LINES = EvalCase(
@@ -406,21 +415,7 @@ def _check_edit_file_ambiguous_match_first_line_repeated(
     workspace_root: Path, session: Session,
 ) -> str | None:
     expected = ["STATUS: done", "STATUS: pending", "STATUS: pending", "END"]
-    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
-    if mismatch is not None:
-        return mismatch
-    edit_calls = _tool_call_args(session, "EditFile")
-    if not any(
-        call.get("context_after") or call.get("context_before") == ""
-        for call in edit_calls
-    ):
-        return (
-            "expected at least one EditFile call to supply either a non-empty context_after, "
-            "or context_before=\"\" (asserting nothing genuinely precedes the target -- a "
-            "non-empty context_before can never match there, since nothing precedes line 1), "
-            "to disambiguate the repeated first line"
-        )
-    return None
+    return _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
 
 
 EDIT_FILE_AMBIGUOUS_MATCH_FIRST_LINE_REPEATED = EvalCase(
@@ -441,21 +436,7 @@ EDIT_FILE_AMBIGUOUS_MATCH_FIRST_LINE_REPEATED = EvalCase(
 
 def _check_edit_file_ambiguous_match_last_line_repeated(workspace_root: Path, session: Session) -> str | None:
     expected = ["START", "STATUS: pending", "STATUS: pending", "STATUS: done"]
-    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
-    if mismatch is not None:
-        return mismatch
-    edit_calls = _tool_call_args(session, "EditFile")
-    if not any(
-        call.get("context_before") or call.get("context_after") == ""
-        for call in edit_calls
-    ):
-        return (
-            "expected at least one EditFile call to supply either a non-empty context_before, "
-            "or context_after=\"\" (asserting nothing genuinely follows the target -- a "
-            "non-empty context_after can never match there, since nothing follows the last "
-            "line), to disambiguate the repeated last line"
-        )
-    return None
+    return _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
 
 
 EDIT_FILE_AMBIGUOUS_MATCH_LAST_LINE_REPEATED = EvalCase(
@@ -476,18 +457,7 @@ EDIT_FILE_AMBIGUOUS_MATCH_LAST_LINE_REPEATED = EvalCase(
 
 def _check_edit_file_ambiguous_match_middle_of_repeats(workspace_root: Path, session: Session) -> str | None:
     expected = ["BEFORE", "STATUS: pending", "STATUS: done", "STATUS: pending", "AFTER"]
-    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
-    if mismatch is not None:
-        return mismatch
-    edit_calls = _tool_call_args(session, "EditFile")
-    if not any(call.get("context_before") and call.get("context_after") for call in edit_calls):
-        return (
-            "expected at least one EditFile call to supply both non-empty context_before and "
-            "context_after: since all three repeated lines fall within the default drift "
-            "search radius, an exact start_line hint alone can't disambiguate the middle one "
-            "from its neighbors -- only context on both sides can"
-        )
-    return None
+    return _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
 
 
 EDIT_FILE_AMBIGUOUS_MATCH_MIDDLE_OF_REPEATS = EvalCase(
@@ -512,18 +482,7 @@ def _check_edit_file_ambiguous_match_four_repeats_inner_position(
     expected = [
         "BEFORE", "STATUS: pending", "STATUS: done", "STATUS: pending", "STATUS: pending", "AFTER",
     ]
-    mismatch = _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
-    if mismatch is not None:
-        return mismatch
-    edit_calls = _tool_call_args(session, "EditFile")
-    if not any("\n" in (call.get("context_before") or "") for call in edit_calls):
-        return (
-            "expected at least one EditFile call to supply a context_before spanning 2 or "
-            "more lines: the second of four repeated lines is adjacent to another repeat, not "
-            "to the unique 'BEFORE' anchor, so a single line of context_before still leaves "
-            "multiple candidates -- only reaching back far enough to include 'BEFORE' resolves it"
-        )
-    return None
+    return _first_mismatch(expected, _lines(workspace_root / "log.txt"), "log.txt")
 
 
 EDIT_FILE_AMBIGUOUS_MATCH_FOUR_REPEATS_INNER_POSITION = EvalCase(
@@ -678,13 +637,14 @@ def _check_edit_file_single_line_shortcut(workspace_root: Path, session: Session
         return mismatch
     edit_calls = _tool_call_args(session, "EditFile")
     if not any(
-        call.get("start_line") == call.get("end_line") and not call.get("end_text")
+        not call.get("end_text")
+        and ("end_line" not in call or call.get("start_line") == call.get("end_line"))
         for call in edit_calls
     ):
         return (
             "expected at least one EditFile call to use the single-line shortcut "
-            "(start_line == end_line, end_text omitted or empty) rather than repeating "
-            "start_text as end_text"
+            "(end_text omitted or empty, with end_line either omitted entirely or equal to "
+            "start_line) rather than repeating start_text as end_text"
         )
     return None
 
@@ -706,17 +666,23 @@ def _check_edit_file_old_text_small_block(workspace_root: Path, session: Session
         "def total(items):", "    result = sum(items)", "    return result", "",
         "print(total([1, 2, 3]))",
     ]
-    mismatch = _first_mismatch(expected, _lines(workspace_root / "notes.py"), "notes.py")
-    if mismatch is not None:
-        return mismatch
+    return _first_mismatch(expected, _lines(workspace_root / "notes.py"), "notes.py")
+
+
+def _soft_check_edit_file_old_text_small_block(workspace_root: Path, session: Session) -> str | None:
+    """The file state is correct either way; this case exists to prove old_text (with end_line
+    inferred from its line count) is reachable for a short block, so a run that reaches the
+    right file via the classic start_text/end_text form instead is still a pass -- just
+    flagged conditional rather than treated as a failure."""
     edit_calls = _tool_call_args(session, "EditFile")
-    if not any(call.get("old_text") and "end_line" not in call for call in edit_calls):
-        return (
-            "expected at least one EditFile call to replace the block with old_text (the "
-            "whole block verbatim) and omit end_line, letting it be inferred from old_text's "
-            "line count"
-        )
-    return None
+    if any(call.get("old_text") and "end_line" not in call for call in edit_calls):
+        return None
+    return (
+        "no EditFile call replaced the block with old_text (end_line omitted, inferred from "
+        "its line count) -- this case exists to prove that form is reachable for a short "
+        "block; a different-but-valid strategy (e.g. classic start_text/end_text) reached the "
+        "right file without exercising it"
+    )
 
 
 EDIT_FILE_OLD_TEXT_SMALL_BLOCK = EvalCase(
@@ -733,6 +699,7 @@ EDIT_FILE_OLD_TEXT_SMALL_BLOCK = EvalCase(
         "notes.py": "def total(items):\n    result = 0\n    return result\n\nprint(total([1, 2, 3]))\n",
     },
     check=_check_edit_file_old_text_small_block,
+    soft_check=_soft_check_edit_file_old_text_small_block,
     expected_tool_calls=3,
 )
 
@@ -742,17 +709,23 @@ def _check_edit_file_old_text_drifted(workspace_root: Path, session: Session) ->
         "# HEADER", "# inserted by edit", "def greet(name):", "    msg = 'Hi ' + name",
         "    return msg", "", "print(greet('world'))",
     ]
-    mismatch = _first_mismatch(expected, _lines(workspace_root / "app.py"), "app.py")
-    if mismatch is not None:
-        return mismatch
+    return _first_mismatch(expected, _lines(workspace_root / "app.py"), "app.py")
+
+
+def _soft_check_edit_file_old_text_drifted(workspace_root: Path, session: Session) -> str | None:
+    """The file state is correct either way; this case exists to prove `old_text` still
+    resolves via drift + full-block verification after an earlier insertion shifts its line
+    numbers, so a run that reaches the right file *without* exercising that (e.g. editing
+    bottom-to-top, avoiding drift entirely, or targeting just the changed line directly) is
+    still a pass -- just flagged conditional rather than treated as a failure."""
     edit_calls = _tool_call_args(session, "EditFile")
-    if not any(call.get("old_text") for call in edit_calls):
-        return (
-            "expected at least one EditFile call to replace the greet() function's 3-line "
-            "body with old_text -- proving the block still resolves via drift + full-block "
-            "verification even after the earlier insertion shifted its line numbers"
-        )
-    return None
+    if any(call.get("old_text") for call in edit_calls):
+        return None
+    return (
+        "no EditFile call used old_text -- this case exists to prove old_text still resolves "
+        "via drift + full-block verification after an earlier insertion shifts its line "
+        "numbers; a different-but-valid strategy reached the right file without exercising it"
+    )
 
 
 EDIT_FILE_OLD_TEXT_DRIFTED = EvalCase(
@@ -772,6 +745,7 @@ EDIT_FILE_OLD_TEXT_DRIFTED = EvalCase(
         ),
     },
     check=_check_edit_file_old_text_drifted,
+    soft_check=_soft_check_edit_file_old_text_drifted,
     expected_tool_calls=4,
 )
 

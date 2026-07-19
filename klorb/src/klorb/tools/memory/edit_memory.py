@@ -30,9 +30,15 @@ class EditMemoryTool(Tool):
     never end up blank. Since `EditFileCore.apply()` resolves `start_line`/`end_line` drift and
     writes the file in one step, there's no way to predict the resulting first line without
     either duplicating its drift-resolution algorithm or checking after the fact -- this
-    delegates as normal, then re-reads the file's first line and, if it's now blank, rewrites
-    the file's pre-edit content back and raises `ValueError`, rather than leaving a memory with
-    no topic on disk.
+    delegates as normal, then re-reads the file's first line and, if it's now blank, either
+    rewrites the file's pre-edit content back (an existing memory) or deletes it (one this call
+    itself just auto-created, per the next paragraph -- there's no pre-edit content to restore),
+    and raises `ValueError`, rather than leaving a memory with no topic on disk.
+
+    A nonexistent memory doesn't need a separate `CreateMemory` call first: the empty-subject
+    insert shape (`start_line=1, end_line=0, start_text="", end_text=""`) auto-creates it, same
+    as `EditFileTool` -- see `EditFileCore.apply()`. Any other shape against a nonexistent
+    memory raises `FileNotFoundError` naming `CreateMemory` as the tool to use instead.
 
     `namespace`/`filename` are validated (see `klorb.tools.memory.common.
     validate_memory_filename`) and checked against the untrusted-workspace gate and
@@ -92,17 +98,27 @@ class EditMemoryTool(Tool):
 
         namespace_dir = memory_namespace_dir(self.context, namespace)
         path = validate_memory_filename(filename, namespace_dir)
-        if not path.is_file():
-            raise FileNotFoundError(f"no such {namespace} memory: {filename}")
 
         subject = f"{namespace} memory {filename}"
-        original_content = path.read_text(encoding="utf-8")
+        # A missing memory is only recoverable via EditFileCore's own empty-subject insert
+        # shape (start_line=1, end_line=0, ...) -- otherwise apply() raises FileNotFoundError
+        # naming CreateMemory as the tool to create it with first. original_content stays None
+        # in that create case, so the blank-first-line recovery below deletes the freshly
+        # created file instead of trying to restore content that never existed.
+        original_content = path.read_text(encoding="utf-8") if path.is_file() else None
         result = self.edit_file_core.apply(
-            path, args, subject=subject, reread_hint=f"re-ReadMemory {namespace}/{filename}")
+            path, args, subject=subject, reread_hint=f"re-ReadMemory {namespace}/{filename}",
+            create_hint="CreateMemory")
 
         new_first_line = path.read_text(encoding="utf-8").splitlines()[:1]
         if not new_first_line or not new_first_line[0].strip():
-            path.write_text(original_content, encoding="utf-8")
+            if original_content is not None:
+                path.write_text(original_content, encoding="utf-8")
+            else:
+                logger.debug(
+                    "EditMemory %s/%s undoing auto-create: first line would be blank",
+                    namespace, filename)
+                path.unlink(missing_ok=True)
             raise ValueError(
                 f"{subject}'s first line is its topic and must not be blank; this edit would "
                 "have left it blank, so it was not applied")
@@ -138,8 +154,8 @@ class EditMemoryTool(Tool):
         return base if error is None else f"{base} failed: {error}"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        if error is not None or not isinstance(result, dict) or "content" not in result:
+        if error is not None or not isinstance(result, dict) or "post_edit_content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
-        capped_result["content"] = truncate_lines(result["content"], 8)
+        capped_result["post_edit_content"] = truncate_lines(result["post_edit_content"], 8)
         return super().detail_view(args, capped_result, error)

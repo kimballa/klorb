@@ -66,16 +66,24 @@ _COMMON_JSON_MISTAKES = (
     "- Comma problems: a trailing comma before `}`/`]`, or a missing comma between members: "
     "`{\"a\": 1 \"b\": 2}` -> `{\"a\": 1, \"b\": 2}`.\n"
     "- Mismatched quotes: a string opened with `\"` and never closed, or single quotes used "
-    "for a JSON string: `'x'` -> `\"x\"`."
+    "for a JSON string: `'x'` -> `\"x\"`.\n"
+    "- Failing to record an empty string value: "
+    "`{\"requires_empty\": }` -> `{\"requires_empty\": \"\"}` "
+    "(common for EditFile `context_before` arg at start of file / `context_after` at end of file)\n"
 )
 
 _XML_JSON_EXAMPLE = '{ "filename": "foo.py", "start_line": 12, "new_text": "..." }'
 
 _EDIT_ARG_ESCAPE_HINT = (
-    "This looks like an edit-tool call (it mentions start_text/end_text/old_text/new_text) "
-    "carrying file content -- exactly where embedded double quotes and backslashes break JSON "
+    "Common EditFile mistakes:\n"
+    "This looks like an edit tool call (it mentions start_text/end_text/old_text/new_text) "
+    "carrying file content.\n"
+    "- Embedded double quotes and backslashes break JSON "
     "when they aren't escaped. Double-check the quoting/escaping of those argument values "
-    "specifically."
+    "specifically.\n"
+    "- Instead of sending empty string context_before / context_after, we recommend the "
+    "following JSON, which agents typically find easier to correctly generate: "
+    "`{ \"context_before_start\": true, ... }` or `{ \"context_after_end\": true, ... }`"
 )
 
 
@@ -106,9 +114,10 @@ def describe_tool_arg_json_error(name: str, raw_arguments: str, json_exc: json.J
             f"single JSON object, e.g.:\n{_XML_JSON_EXAMPLE}")
         return "\n\n".join([header, offset, fragment, xml_body])
 
-    parts = [header, offset, fragment, _COMMON_JSON_MISTAKES]
+    parts = [header, offset, fragment, ]
     if any(arg_name in raw_arguments for arg_name in _EDIT_ARG_NAMES):
         parts.append(_EDIT_ARG_ESCAPE_HINT)
+    parts.append(_COMMON_JSON_MISTAKES)
     return "\n\n".join(parts)
 
 

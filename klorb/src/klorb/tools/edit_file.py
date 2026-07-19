@@ -24,6 +24,12 @@ class EditFileTool(Tool):
     `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
     `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
     `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
+
+    A nonexistent `filename` doesn't need a separate `CreateFile` call first: the empty-subject
+    insert shape (`start_line=1, end_line=0, start_text="", end_text=""`) creates it directly,
+    including any missing parent directories -- see `EditFileCore.apply()`. Any other shape
+    against a nonexistent file raises `FileNotFoundError` naming `CreateFile` as the tool to use
+    instead, since this mechanic can't create a file at an arbitrary line range.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -36,10 +42,17 @@ class EditFileTool(Tool):
     def description(self) -> str:
         return (
             "Replaces the inclusive 1-indexed line range [start_line, end_line] of a text "
-            "file with new_text. See your system prompt's guidance on EditFile "
+            "file with new_text.\n"
+            "See your system prompt's guidance on EditFile "
             "for how start_text/end_text/context_before/context_after work, drift "
             "tolerance and 'Ambiguous match' errors, and the empty-file/insert/delete "
-            "conventions."
+            "conventions. \n"
+            "To assert nothing precedes/follows the target line, send "
+            "`\"context_before_start\": true` / `\"context_after_end\": true`. Use the boolean "
+            "arguments instead of passing empty string to context_before/context_after.\n"
+            "The response includes a `post_edit_content` field showing the edited region "
+            "with line numbers, and a total line count in `new_total_lines` "
+            "— no follow-up ReadFile is needed to verify."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -70,7 +83,8 @@ class EditFileTool(Tool):
             verdict, resource_description=f"write to {path}", path=path, is_write=True)
 
         result = self.edit_file_core.apply(
-            path, args, subject=filename, reread_hint=f"Use ReadFile on filename={filename}")
+            path, args, subject=filename, reread_hint=f"Use ReadFile on filename={filename}",
+            create_hint="CreateFile")
         result["filename"] = filename
 
         logger.debug(
@@ -104,12 +118,12 @@ class EditFileTool(Tool):
         return base if error is None else f"{base} failed: {error}"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["content"]` (the edited
+        """Same as the default pretty-JSON rendering, but with `result["post_edit_content"]` (the edited
         region) capped to 8 lines — a full-file rewrite via one large `new_text` could otherwise
         dump hundreds of lines here.
         """
-        if error is not None or not isinstance(result, dict) or "content" not in result:
+        if error is not None or not isinstance(result, dict) or "post_edit_content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
-        capped_result["content"] = truncate_lines(result["content"], 8)
+        capped_result["post_edit_content"] = truncate_lines(result["post_edit_content"], 8)
         return super().detail_view(args, capped_result, error)

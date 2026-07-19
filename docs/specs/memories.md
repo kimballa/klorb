@@ -71,8 +71,17 @@ either namespace.
   resulting first line without either duplicating its drift-resolution algorithm or checking
   after the fact — `EditMemoryTool` delegates as normal, then re-reads the file's first line
   and, if it's now blank (whether the edit targeted line 1 directly, or deleted it and promoted
-  a blank line 2), rewrites the file's pre-edit content back and raises `ValueError` rather than
-  leaving a topic-less memory on disk.
+  a blank line 2), either rewrites the file's pre-edit content back or, if this same call just
+  auto-created the memory (see below), deletes it — there's no pre-edit content to restore in
+  that case — and raises `ValueError` rather than leaving a topic-less memory on disk.
+* `EditMemoryTool` no longer requires a memory to already exist: a `namespace`/`filename` pair
+  with nothing on disk is treated exactly like `EditFileTool`'s nonexistent-file case — the
+  empty-subject insert shape (`start_line=1, end_line=0, start_text="", end_text=""`)
+  auto-creates it via the same `EditFileCore.apply()` path (see docs/specs/tool-framework.md and
+  docs/adrs/edit-file-auto-creates-via-empty-subject-insert-shape.md), so a model that already
+  knows the target namespace/filename combo doesn't need a separate `CreateMemory` call first.
+  Any other shape against a nonexistent memory raises `FileNotFoundError` naming `CreateMemory`
+  as the tool to use instead of the bare OS error.
 * `ListMemoriesTool` (no arguments) returns `{"global": [...], "workspace": [...]}`, each entry
   `{"filename": ..., "topic": ...}` (`topic` is `""` for an empty file or a blank/whitespace-only
   first line). It excludes non-`.md` files and dotfiles, and does not recurse into

@@ -27,10 +27,11 @@ class ReplaceAllTool(Tool):
 
     def description(self) -> str:
         return (
-            "Replaces every occurrence of search in filename with new_text. By default "
-            "search is matched as a literal substring; set is_regex to treat it as a Python "
-            "regular expression, in which case new_text may use \\1-style backreferences. "
-            "case_insensitive ignores case when matching. multiline makes ^ and $ match the "
+            "Replaces every occurrence of search in filename with new_text. "
+            "To match 'foo', 'Foo', and 'FOO' all at once, set case_insensitive=true. "
+            "By default search is matched as a literal substring; set is_regex to treat it as "
+            "a Python regular expression, in which case new_text may use \\1-style backreferences. "
+            "multiline makes ^ and $ match the "
             "start/end of each line rather than only the start/end of the whole file "
             "(only meaningful with is_regex). Returns replacements_made so you can sanity-check "
             "an unexpectedly large or zero match count."

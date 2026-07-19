@@ -37,12 +37,19 @@ class ReadFileTool(Tool):
             "'3|some text'), purely so you can tell which line goes where — that 'N|' prefix "
             "is not part of the file's actual content. When quoting a line's content back to "
             "another tool (e.g. EditFile), use the text after the '|' only, never the line "
-            "number or the '|' itself. Use start_line and end_line to page through files "
-            "larger than the per-call limit. There is no way to address a line relative to "
+            "number or the '|' itself.\n"
+            "Use start_line and end_line to page through files "
+            "larger than the per-call limit. "
+            "When the response contains `\"truncated\": true`, the included `next_start_line` "
+            "tells you the value of `start_line` to use for a repeat call to page "
+            "through the file.\n"
+            "Use repeated ReadFile calls to fully absorb a large number of lines of text. "
+            "To search for a specific word or phrase, use the Grep tool instead.\n"
+            "There is no way to address a line relative to "
             "the end of the file (e.g. -1 does not mean 'last line'). To find or read the "
             "last line of a file whose length you don't already know, call with no "
             "start_line/end_line (or start_line=1): the result's total_lines tells you the "
-            "last line's number, which you can then target directly if needed."
+            "last line's number, which you can then target directly if needed. "
         )
 
     def parameters(self) -> dict[str, Any]:

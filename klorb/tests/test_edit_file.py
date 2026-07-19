@@ -50,7 +50,7 @@ def test_replaces_a_line_range(tmp_path: Path) -> None:
 
     assert file_path.read_text() == "a\nB\nC\nd\n"
     assert result["new_total_lines"] == 4
-    assert result["content"] == "2|B\n3|C"
+    assert result["post_edit_content"] == "2|B\n3|C"
 
 
 def test_replaces_starting_at_line_one(tmp_path: Path) -> None:
@@ -132,6 +132,62 @@ def test_insert_into_empty_file_with_end_text_omitted(tmp_path: Path) -> None:
 
     assert file_path.read_text() == "hello\nworld\n"
     assert result["new_total_lines"] == 2
+
+
+def test_insert_into_existing_empty_file_does_not_report_created(tmp_path: Path) -> None:
+    """created is only set when EditFile itself brought the file into existence -- an
+    already-existing (but empty) file being filled in is not a creation."""
+    file_path = _write(tmp_path, "sample.txt", "")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1, "end_line": 0,
+        "start_text": "", "end_text": "", "new_text": "hello",
+    })
+
+    assert "created" not in result
+
+
+def test_edit_file_auto_creates_nonexistent_file_via_empty_insert_shape(tmp_path: Path) -> None:
+    """A filename with nothing on disk at all is treated exactly like an existing-but-empty
+    file for the empty-subject insert shape -- no prior CreateFile call needed."""
+    file_path = tmp_path / "new.txt"
+    assert not file_path.exists()
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1, "end_line": 0,
+        "start_text": "", "end_text": "", "new_text": "hello\nworld",
+    })
+
+    assert file_path.read_text() == "hello\nworld\n"
+    assert result["created"] is True
+    assert result["new_total_lines"] == 2
+
+
+def test_edit_file_auto_create_creates_missing_parent_directories(tmp_path: Path) -> None:
+    file_path = tmp_path / "sub" / "dir" / "new.txt"
+    assert not file_path.parent.exists()
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1, "end_line": 0,
+        "start_text": "", "end_text": "", "new_text": "hello",
+    })
+
+    assert file_path.read_text() == "hello\n"
+    assert result["created"] is True
+
+
+def test_edit_file_nonexistent_file_other_shape_raises_with_create_hint(tmp_path: Path) -> None:
+    """Only the empty-subject insert shape can create a file -- any other shape against a
+    nonexistent file fails closed, naming CreateFile rather than the bare OS errno text."""
+    file_path = tmp_path / "missing.txt"
+
+    with pytest.raises(FileNotFoundError, match="does not exist; use CreateFile"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 1,
+            "start_text": "a", "end_text": "a", "new_text": "b",
+        })
+
+    assert not file_path.exists()
 
 
 def test_empty_anchors_do_not_bypass_anchor_verification_on_a_non_empty_file(tmp_path: Path) -> None:
@@ -291,8 +347,43 @@ def test_ambiguous_match_raises_when_multiple_candidates_in_radius(tmp_path: Pat
         })
 
     message = str(excinfo.value)
-    assert "line 2 (context_before='a', context_after='b')" in message
-    assert "line 4 (context_before='b', context_after='c')" in message
+    assert 'For line 2: use `{ "start_line": 2, context_before="a", context_after="b" }`.' in message
+    assert 'For line 4: use `{ "start_line": 4, context_before="b", context_after="c" }`.' in message
+    assert file_path.read_text() == "a\nDUP\nb\nDUP\nc\n"  # untouched
+
+
+def test_exact_start_line_match_skips_ambiguity_scan(tmp_path: Path) -> None:
+    """A start_line hint whose anchor already matches exactly there is accepted immediately,
+    with no scan for other nearby candidates at all -- even though the same content also
+    occurs at line 4, the caller pointed at line 2 specifically and it's correct there.
+    Contrast with test_ambiguous_match_raises_when_multiple_candidates_in_radius, which uses
+    the same fixture but a start_line (3) that does NOT match, forcing drift-correction search."""
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\nDUP\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+    })
+
+    assert file_path.read_text() == "a\nREPLACED\nb\nDUP\nc\n"
+    assert result["start_line"] == 2
+    assert result["line_hint_matched"] is True
+
+
+def test_exact_start_line_match_skipped_when_context_supplied(tmp_path: Path) -> None:
+    """The fast path only fires when context_before/context_after are both omitted -- an
+    explicit context argument, even alongside a start_line that already matches exactly,
+    signals the caller wants it checked, so the full scan still runs and can still raise
+    (here, a context_before that doesn't actually match the hinted line)."""
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\nDUP\nc\n")
+
+    with pytest.raises(ValueError, match="context_before/context_after does not match"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 2,
+            "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_before": "WRONG",
+        })
+
     assert file_path.read_text() == "a\nDUP\nb\nDUP\nc\n"  # untouched
 
 
@@ -343,24 +434,126 @@ def test_empty_context_before_asserts_genuine_start_of_file(tmp_path: Path) -> N
     assert file_path.read_text() == "a\nDUP\nb\n"  # untouched
 
 
+# --- context_before_start/context_after_end: boolean sentinels for the empty-string assertion,
+# since models reliably fumble sending a genuinely empty context_before/context_after ---
+
+
+def test_context_before_start_true_behaves_like_empty_context_before(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "DUP\nDUP\nDUP\nX\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 1, "end_line": 1,
+        "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+        "context_before_start": True,
+    })
+
+    assert file_path.read_text() == "REPLACED\nDUP\nDUP\nX\n"
+    assert result["start_line"] == 1
+
+
+def test_context_after_end_true_behaves_like_empty_context_after(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "X\nDUP\nDUP\nDUP\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 4, "end_line": 4,
+        "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+        "context_after_end": True,
+    })
+
+    assert file_path.read_text() == "X\nDUP\nDUP\nREPLACED\n"
+    assert result["start_line"] == 4
+
+
+def test_context_before_start_rejects_a_candidate_that_is_not_truly_first(tmp_path: Path) -> None:
+    """Same assertion strength as context_before="" (see
+    test_empty_context_before_asserts_genuine_start_of_file): a candidate that merely looks
+    fine otherwise but isn't truly the file's first line is rejected."""
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\n")
+
+    with pytest.raises(ValueError, match="context_before/context_after does not match"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 2,
+            "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_before_start": True,
+        })
+
+    assert file_path.read_text() == "a\nDUP\nb\n"  # untouched
+
+
+def test_context_before_start_ignored_when_context_before_also_given(tmp_path: Path) -> None:
+    """An explicit context_before always wins over the boolean sentinel, even a conflicting
+    one -- the boolean is only consulted when context_before is entirely absent."""
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\n")
+
+    EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+        "context_before": "a", "context_before_start": True,
+    })
+
+    assert file_path.read_text() == "a\nREPLACED\nb\n"
+
+
+def test_context_before_start_false_is_a_noop(tmp_path: Path) -> None:
+    """context_before_start=false does not assert anything -- an omitted context_before still
+    means "don't check this side", so an otherwise-unique candidate still resolves."""
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\n")
+
+    EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+        "context_before_start": False,
+    })
+
+    assert file_path.read_text() == "a\nREPLACED\nb\n"
+
+
+def test_context_before_start_non_boolean_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\n")
+
+    with pytest.raises(ValueError, match="context_before_start must be a boolean"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 2,
+            "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_before_start": "true",
+        })
+
+
+def test_context_after_end_non_boolean_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\n")
+
+    with pytest.raises(ValueError, match="context_after_end must be a boolean"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "start_line": 2, "end_line": 2,
+            "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_after_end": "true",
+        })
+
+
 # --- Boundary cases: repeated lines at the very start/end of a file (see
 # docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md) ---
 
 
 def test_ambiguous_match_at_first_line_resolved_via_context_after(tmp_path: Path) -> None:
-    """Three identical leading lines make the first one ambiguous on its own; context_after
-    (a lever usable at any position, unlike context_before at the very first line) pins it
-    down, given enough lines to reach past the other two repeats."""
+    """Three identical leading lines don't make the first one ambiguous *on its own* -- an
+    exact start_line=1 match with no context is accepted immediately (see
+    test_exact_start_line_match_skips_ambiguity_scan). Supplying context_after at all, even
+    though start_line's own anchor already matches exactly, is what forces the full scan
+    here: one line of context_after alone still leaves lines 1 and 2 both matching; only
+    reaching past both repeats (2 lines) pins down line 1."""
     file_path = _write(tmp_path, "sample.txt", "DUP\nDUP\nDUP\nX\n")
 
-    with pytest.raises(ValueError, match=r"Ambiguous match.*\[1, 2, 3\]") as excinfo:
+    with pytest.raises(ValueError, match=r"Ambiguous match.*\[1, 2\]") as excinfo:
         EditFileTool(_context(tmp_path)).apply({
             "filename": str(file_path), "start_line": 1, "end_line": 1,
             "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_after": "DUP",
         })
 
     message = str(excinfo.value)
-    assert "line 1 (context_before='' (nothing precedes -- start of file), context_after='DUP')" in message
+    assert (
+        'For line 1: use `{ "start_line": 1, context_before_start=true, '
+        'context_after="DUP" }`.') in message
 
     result = EditFileTool(_context(tmp_path)).apply({
         "filename": str(file_path), "start_line": 1, "end_line": 1,
@@ -439,19 +632,25 @@ def test_replace_middle_of_three_identical_leading_lines_via_both_contexts(tmp_p
 
 
 def test_ambiguous_match_at_last_line_resolved_via_context_before(tmp_path: Path) -> None:
-    """Mirror of the first-line case: three identical trailing lines make the last one
-    ambiguous; context_before (a lever usable at any position, unlike context_after at the
-    very last line) pins it down, given enough lines to reach past the other two repeats."""
+    """Mirror of the first-line case: three identical trailing lines don't make the last one
+    ambiguous *on its own* -- an exact start_line=4 match with no context is accepted
+    immediately. Supplying context_before at all, even though start_line's own anchor already
+    matches exactly, is what forces the full scan here: one line of context_before alone
+    still leaves lines 3 and 4 both matching; only reaching past both repeats (2 lines) pins
+    down line 4."""
     file_path = _write(tmp_path, "sample.txt", "X\nDUP\nDUP\nDUP\n")
 
-    with pytest.raises(ValueError, match=r"Ambiguous match.*\[2, 3, 4\]") as excinfo:
+    with pytest.raises(ValueError, match=r"Ambiguous match.*\[3, 4\]") as excinfo:
         EditFileTool(_context(tmp_path)).apply({
             "filename": str(file_path), "start_line": 4, "end_line": 4,
             "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_before": "DUP",
         })
 
     message = str(excinfo.value)
-    assert "line 4 (context_before='DUP', context_after='' (nothing follows -- end of file))" in message
+    assert (
+        'For line 4: use `{ "start_line": 4, context_before="DUP", '
+        'context_after_end=true }`.') in message
 
     result = EditFileTool(_context(tmp_path)).apply({
         "filename": str(file_path), "start_line": 4, "end_line": 4,
@@ -609,17 +808,22 @@ def test_five_identical_lines_true_middle_needs_both_contexts_two_lines_each(tmp
     side alone reaches far enough to disambiguate it (unlike a run of three or four, where
     every position is within reach of some single side) -- this is exactly the case a fixed,
     non-adaptive preview length could permanently fail to resolve; the adaptive algorithm
-    (_minimal_disambiguating_window) instead grows the window on both sides until it does."""
+    (_minimal_disambiguating_window) instead grows the window on both sides until it does.
+    Supplying context_before/context_after at all (even one line each, still insufficient) is
+    what forces the scan here -- start_line's own anchor already matches exactly."""
     file_path = _write(tmp_path, "sample.txt", "BEFORE\nDUP\nDUP\nDUP\nDUP\nDUP\nAFTER\n")
 
-    with pytest.raises(ValueError, match=r"Ambiguous match.*\[2, 3, 4, 5, 6\]") as excinfo:
+    with pytest.raises(ValueError, match=r"Ambiguous match.*\[3, 4, 5\]") as excinfo:
         EditFileTool(_context(tmp_path)).apply({
             "filename": str(file_path), "start_line": 4, "end_line": 4,
             "start_text": "DUP", "end_text": "DUP", "new_text": "REPLACED",
+            "context_before": "DUP", "context_after": "DUP",
         })
 
     message = str(excinfo.value)
-    assert "line 4 (context_before='DUP\\nDUP', context_after='DUP\\nDUP')" in message
+    assert (
+        'For line 4: use `{ "start_line": 4, context_before="DUP\\nDUP", '
+        'context_after="DUP\\nDUP" }`.') in message
 
     result = EditFileTool(_context(tmp_path)).apply({
         "filename": str(file_path), "start_line": 4, "end_line": 4,
@@ -729,7 +933,7 @@ def test_multiline_start_text_truncates_to_first_line(tmp_path: Path) -> None:
 
     assert file_path.read_text() == "x\nc\n"
     assert result["new_total_lines"] == 2
-    assert result["content"] == "1|x"
+    assert result["post_edit_content"] == "1|x"
 
 
 def test_multiline_end_text_truncates_to_first_line(tmp_path: Path) -> None:
@@ -742,7 +946,7 @@ def test_multiline_end_text_truncates_to_first_line(tmp_path: Path) -> None:
 
     assert file_path.read_text() == "x\nc\n"
     assert result["new_total_lines"] == 2
-    assert result["content"] == "1|x"
+    assert result["post_edit_content"] == "1|x"
 
 
 # --- Widened argument matrix: old_text, the single-line shortcut, and hint aliases (see
@@ -770,6 +974,36 @@ def test_single_line_shortcut_with_end_text_empty_string(tmp_path: Path) -> None
     })
 
     assert file_path.read_text() == "a\nB\nc\n"
+    assert "feedback" not in result
+
+
+def test_single_line_shortcut_end_text_and_end_line_both_omitted(tmp_path: Path) -> None:
+    """When start_text is a single line, omitting end_text AND end_line is imputed as the
+    single-line shortcut (start_line == end_line, end_text == start_text) -- start_text alone
+    unambiguously names the one line being replaced."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "start_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert result["requested_end_line"] == 2
+    assert "feedback" not in result
+
+
+def test_single_line_shortcut_end_line_omitted_multiline_new_text_still_imputes(tmp_path: Path) -> None:
+    """The imputation does not require new_text to be single-line too -- start_text alone
+    already names the one line being replaced, so a multi-line new_text here is an ordinary
+    insert (the one line growing into several), not an error."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "start_text": "b", "new_text": "B\nC",
+    })
+
+    assert file_path.read_text() == "a\nB\nC\nc\n"
+    assert result["requested_end_line"] == 2
     assert "feedback" not in result
 
 
@@ -809,6 +1043,77 @@ def test_old_text_one_line_end_line_omitted(tmp_path: Path) -> None:
     assert file_path.read_text() == "a\nB\nc\n"
     assert result["requested_end_line"] == 2
     assert "feedback" not in result
+
+
+def test_old_text_with_no_line_hint_searches_whole_file(tmp_path: Path) -> None:
+    """old_text may omit the line hint entirely; the drift search then scans the whole file
+    for a unique match instead of a window around a hint that was never given."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "old_text": "b\nc", "new_text": "B\nC",
+    })
+
+    assert file_path.read_text() == "a\nB\nC\nd\n"
+    assert result["requested_start_line"] == 1
+    assert result["requested_end_line"] == 2
+    assert result["start_line"] == 2
+    assert result["line_hint_matched"] is False
+
+
+def test_old_text_with_no_line_hint_ignores_drift_search_radius(tmp_path: Path) -> None:
+    """The whole-file search is not bounded by edit_file_drift_search_radius -- a match far
+    beyond a tiny configured radius still resolves, proving the search really is unbounded and
+    not just relying on a generous default radius."""
+    lines = [f"L{i}" for i in range(1, 51)]
+    lines[29] = "TARGET"
+    file_path = _write(tmp_path, "sample.txt", "\n".join(lines) + "\n")
+    context = _context(tmp_path, process_config=ProcessConfig(edit_file_drift_search_radius=1))
+
+    result = EditFileTool(context).apply({
+        "filename": str(file_path), "old_text": "TARGET", "new_text": "REPLACED",
+    })
+
+    assert "REPLACED" in file_path.read_text()
+    assert result["start_line"] == 30
+
+
+def test_old_text_with_no_line_hint_and_end_line_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    with pytest.raises(ValueError, match="end_line requires a line hint"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "end_line": 3, "old_text": "b\nc", "new_text": "B\nC",
+        })
+
+
+def test_old_text_with_no_line_hint_no_match_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\nd\n")
+
+    with pytest.raises(ValueError, match=r"old_text does not match any location in the 4-line"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "old_text": "NOPE", "new_text": "X",
+        })
+
+    assert file_path.read_text() == "a\nb\nc\nd\n"
+
+
+def test_old_text_with_no_line_hint_ambiguous_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nDUP\nb\nDUP\nc\n")
+
+    with pytest.raises(ValueError, match=r"Ambiguous match: old_text matches at 2 locations in the file"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "old_text": "DUP", "new_text": "X",
+        })
+
+
+def test_old_text_with_no_line_hint_longer_than_file_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\n")
+
+    with pytest.raises(ValueError, match=r"old_text has 3 line\(s\), longer than the 2-line"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "old_text": "a\nb\nc", "new_text": "X",
+        })
 
 
 def test_multiline_start_text_with_no_end_text_is_treated_as_old_text(tmp_path: Path) -> None:
@@ -920,7 +1225,7 @@ def test_old_text_fuzzy_whitespace_interior_line_resolves(tmp_path: Path) -> Non
     })
 
     assert file_path.read_text() == "a\nB\nC\nd\n"
-    assert result["fuzzyWhitespaceMatch"] is True
+    assert result["fuzzy_whitespace_match"] is True
 
 
 def test_old_text_and_start_text_both_present_raises(tmp_path: Path) -> None:
@@ -1240,4 +1545,4 @@ def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path
     result = tool.apply(args)
     detail = json.loads(tool.detail_view(args, result))
 
-    assert detail["result"]["content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."
+    assert detail["result"]["post_edit_content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."

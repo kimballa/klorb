@@ -90,6 +90,27 @@ def test_request_within_max_lines_returns_exact_count(tmp_path: Path) -> None:
 
     assert len(result["content"].splitlines()) == 12
     assert result["truncated"] is True  # file has more lines beyond what was returned
+    assert result["next_start_line"] == 13
+
+
+def test_truncated_response_includes_next_start_line(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 1000)
+
+    result = ReadFileTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "start_line": 1, "end_line": 500})
+
+    assert result["truncated"] is True
+    assert result["next_start_line"] == result["end_line"] + 1
+    assert result["next_start_line"] == DEFAULT_READ_FILE_MAX_LINES + 1
+
+
+def test_untruncated_response_omits_next_start_line(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+
+    result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
+
+    assert result["truncated"] is False
+    assert "next_start_line" not in result
 
 
 def test_negative_start_line_raises(tmp_path: Path) -> None:

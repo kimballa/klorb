@@ -46,6 +46,7 @@ def test_empty_dirname_lists_project_root(tmp_path: Path) -> None:
     assert result["cwd"] == str(tmp_path.resolve())
     assert result["subdirs"] == ["sub_a", "sub_b"]
     assert result["files"] == ["a.txt", "b.txt"]
+    assert result["child_count"] == 4
 
 
 def test_relative_dirname_resolves_against_workspace_root(tmp_path: Path) -> None:
@@ -56,6 +57,7 @@ def test_relative_dirname_resolves_against_workspace_root(tmp_path: Path) -> Non
     assert result["cwd"] == str((tmp_path / "sub_a").resolve())
     assert result["subdirs"] == []
     assert result["files"] == []
+    assert result["child_count"] == 0
 
 
 def test_absolute_dirname_inside_workspace(tmp_path: Path) -> None:
