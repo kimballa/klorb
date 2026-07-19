@@ -3,6 +3,7 @@
 more than one mixin."""
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +23,7 @@ from tui.conftest import (
     _tool_call_reply,
 )
 
+from klorb import logging_config
 from klorb import process_config as process_config_module
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
@@ -230,6 +232,62 @@ async def test_select_theme_announces_change_in_history_scroll() -> None:
         app.select_theme("nord")
         await pilot.pause()
         assert "Changed current theme to `nord`." in _notice_texts(app)
+
+
+async def test_reload_skills_rebuilds_catalog_and_announces_count(tmp_path: Path) -> None:
+    workspace = Workspace(path=tmp_path, trusted=True)
+    app = _repl_app_for_workspace(workspace, trust_manager=None)
+
+    async with app.run_test() as pilot:
+        skill_dir = tmp_path / ".klorb" / "skills" / "do-thing"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\ndescription: does the thing\n---\n\nsteps\n")
+
+        app.reload_skills()
+        await pilot.pause()
+
+        assert "Reloaded skill catalog: 1 skill found." in _notice_texts(app)
+
+
+async def test_warning_log_record_mounted_as_a_history_notice() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        logging_config.configure_logging(repl_mode=True, log_path=None)
+        try:
+            logging.getLogger("klorb.test_tui_app").warning("careful now")
+            await pilot.pause()
+            assert any("careful now" in notice for notice in _notice_texts(app))
+        finally:
+            logging_config.configure_logging(repl_mode=False, log_path=None)
+
+
+async def test_error_log_record_mounted_as_a_history_error_notice() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        logging_config.configure_logging(repl_mode=True, log_path=None)
+        try:
+            logging.getLogger("klorb.test_tui_app").error("something broke")
+            await pilot.pause()
+            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            error_notices = [str(w.content) for w in history.query(".error") if isinstance(w, Static)]
+            assert any("something broke" in notice for notice in error_notices)
+        finally:
+            logging_config.configure_logging(repl_mode=False, log_path=None)
+
+
+async def test_info_log_record_not_mounted_as_a_history_notice() -> None:
+    app = ReplApp(session=_session(MagicMock()))
+
+    async with app.run_test() as pilot:
+        logging_config.configure_logging(repl_mode=True, log_path=None)
+        try:
+            logging.getLogger("klorb.test_tui_app").info("just fyi")
+            await pilot.pause()
+            assert not any("just fyi" in notice for notice in _notice_texts(app))
+        finally:
+            logging_config.configure_logging(repl_mode=False, log_path=None)
 
 
 async def test_get_system_commands_excludes_builtin_theme_command() -> None:

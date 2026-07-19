@@ -1,4 +1,5 @@
 ---
+name: create-edit-skill
 description: >
   How to author or edit a klorb skill: pick the right tier directory, escalate privileges for
   it if needed, then create or edit SKILL.md (and any supporting files) with the ordinary file
@@ -39,16 +40,17 @@ start using klorb's own convention going forward. If `.claude/skills/` does not 
 `.klorb/skills/` without asking. When *editing* an existing skill, use whichever directory it
 already lives in — there's nothing to ask.
 
-The directory basename **is** the skill's `name`; there is no `name` field in the frontmatter to
-keep in sync with it. Use a lower-kebab-case slug with no path separators.
+The directory basename **is** the skill's canonical `name` — the identity every `skillRules`
+approval decision is keyed on. Use a lower-kebab-case slug with no path separators or `:`.
 
 ## 2. `SKILL.md` shape
 
-`SKILL.md` opens with YAML frontmatter carrying a single field, `description`, then a markdown
-body of the actual instructions:
+`SKILL.md` opens with YAML frontmatter carrying `name` and `description`, then a markdown body of
+the actual instructions:
 
 ```markdown
 ---
+name: my-skill-name
 description: >
   A sentence or two saying what this skill does and when to use it. This exact text is what
   gets listed for the model, so keep it short and specific.
@@ -57,10 +59,13 @@ description: >
 <the skill's actual instructions>
 ```
 
-`description` is the only frontmatter field klorb reads. Keep it to a sentence or two — it's what
-the available-skills list shows. Supporting files (reference material, templates, scripts) go
-alongside `SKILL.md` in the same directory; the model reaches them with `ReadSkillFile` once your
-instructions point it at them.
+The frontmatter `name` should match the directory basename exactly — klorb logs a warning if they
+disagree, and the directory basename always wins as the canonical name (the frontmatter `name`
+still works as an alias a user can type, but klorb itself never resolves through it). `description`
+is the other frontmatter field klorb reads; keep it to a sentence or two — it's what the
+available-skills list shows. Supporting files (reference material, templates, scripts) go alongside
+`SKILL.md` in the same directory; the model reaches them with `ReadSkillFile` once your instructions
+point it at them.
 
 ## 3. Escalate privileges for the tier
 

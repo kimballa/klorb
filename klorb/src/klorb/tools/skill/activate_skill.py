@@ -6,12 +6,8 @@ import logging
 from typing import Any
 
 from klorb.token_estimate import estimate_tokens
-from klorb.tools.skill.common import (
-    NAMESPACE_SCHEMA_PROPERTY,
-    read_skill_md,
-    resolve_and_gate_skill,
-    skill_file_manifest,
-)
+from klorb.tools.skill.catalog import get_skill_catalog_registry, resolve_and_gate_skill
+from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, skill_activation_payload
 from klorb.tools.tool import Tool, truncate_lines
 
 logger = logging.getLogger(__name__)
@@ -66,26 +62,17 @@ class ActivateSkillTool(Tool):
             raise ValueError("Missing required argument: 'name'. Provide the skill's name.")
         logger.debug("ActivateSkill %s/%s", namespace, name)
 
-        workspace = self.context.session_config.workspace
+        registry = get_skill_catalog_registry()
+        registry.ensure_from_context(self.context)
         resolved = resolve_and_gate_skill(
-            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=self.context.process_config.compatibility_claude_skills,
-            skill_rules=self.context.session_config.skill_rules,
-            override=self.context.permission_override,
-            namespace=namespace, name=name)
+            catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
+            override=self.context.permission_override, namespace=namespace, name=name)
 
-        content = read_skill_md(resolved)
-        files = skill_file_manifest(resolved)
+        payload = skill_activation_payload(resolved)
         logger.info(
             "ActivateSkill %s/%s loaded (%d supporting file(s))",
-            resolved.namespace, resolved.name, len(files))
-        return {
-            "namespace": resolved.namespace,
-            "name": resolved.name,
-            "content": content,
-            "files": files,
-            "tokens": estimate_tokens(content) if content else 0,
-        }
+            resolved.namespace, resolved.name, len(payload["files"]))
+        return payload
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         namespace = args.get("namespace", "?")

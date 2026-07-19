@@ -9,14 +9,12 @@ import pytest
 from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import PermissionAskRequired, PermissionOverride
 from klorb.tools.skill import common as skill_common
+from klorb.tools.skill.catalog import SkillCatalog, build_catalogs, resolve_and_gate_skill
 from klorb.tools.skill.common import (
-    discover_skills,
     is_valid_skill_name,
-    parse_frontmatter_description,
+    parse_frontmatter,
     raise_if_skill_not_allowed,
     resolve_all_skills,
-    resolve_and_gate_skill,
-    resolve_skill,
     resolve_skill_file,
     skill_file_manifest,
     validate_namespace,
@@ -62,7 +60,7 @@ def test_validate_namespace() -> None:
 
 def test_validate_skill_name_rejects_separators_and_traversal() -> None:
     assert validate_skill_name("add-cli-flag") == "add-cli-flag"
-    for bad in ["", "..", ".", "a/b", "a\\b", "../x"]:
+    for bad in ["", "..", ".", "a/b", "a\\b", "../x", "internal:foo"]:
         with pytest.raises(ValueError, match="skill name"):
             validate_skill_name(bad)
 
@@ -72,29 +70,70 @@ def test_is_valid_skill_name() -> None:
     assert not is_valid_skill_name("")
     assert not is_valid_skill_name("..")
     assert not is_valid_skill_name("a/b")
+    assert not is_valid_skill_name("a:b")
 
 
 # --- frontmatter parsing ---
 
 
-def test_parse_frontmatter_description_folded_scalar() -> None:
+def _write_raw_skill(base: Path, name: str, text: str) -> None:
+    """Create a skill directory `base/<name>/SKILL.md` with `text` verbatim, for exercising
+    frontmatter parsing edge cases the `_write_skill` helper's `description` shortcut can't."""
+    skill_dir = base / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(text)
+
+
+def test_skill_description_folded_scalar(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
     text = "---\ndescription: >\n  line one\n  line two\n---\n\nbody"
-    assert parse_frontmatter_description(text) == "line one line two"
+    _write_raw_skill(ws / ".klorb" / "skills", "s", text)
+    catalog = _catalog(tmp_path, ws)
+    skill = catalog.get(("workspace", "s"))
+    assert skill is not None
+    assert skill.description == "line one line two"
 
 
-def test_parse_frontmatter_description_missing_or_malformed_yields_empty() -> None:
-    assert parse_frontmatter_description("no frontmatter here") == ""
-    assert parse_frontmatter_description("---\nnot closed\n") == ""
-    assert parse_frontmatter_description("---\n: : bad yaml :\n---\n") == ""
-    assert parse_frontmatter_description("---\nother: 1\n---\n") == ""
-    # Non-string description (a list) is treated as empty.
-    assert parse_frontmatter_description("---\ndescription: [a, b]\n---\n") == ""
+def test_skill_description_missing_or_malformed_yields_empty(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    cases = {
+        "no-frontmatter": "no frontmatter here",
+        "unclosed": "---\nnot closed\n",
+        "bad-yaml": "---\n: : bad yaml :\n---\n",
+        "no-description": "---\nother: 1\n---\n",
+        # Non-string description (a list) is treated as empty.
+        "list-description": "---\ndescription: [a, b]\n---\n",
+    }
+    for name, text in cases.items():
+        _write_raw_skill(ws / ".klorb" / "skills", name, text)
+    catalog = _catalog(tmp_path, ws)
+    for name in cases:
+        skill = catalog.get(("workspace", name))
+        assert skill is not None
+        assert skill.description == ""
 
 
 def test_safe_load_refuses_python_object_tags(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
     # A hostile !!python/object tag must not construct anything; it parses to empty description.
     text = "---\ndescription: !!python/object/apply:os.system ['echo hi']\n---\n"
-    assert parse_frontmatter_description(text) == ""
+    _write_raw_skill(ws / ".klorb" / "skills", "s", text)
+    catalog = _catalog(tmp_path, ws)
+    skill = catalog.get(("workspace", "s"))
+    assert skill is not None
+    assert skill.description == ""
+
+
+def test_parse_frontmatter_returns_raw_dict() -> None:
+    text = "---\nname: my-skill\ndescription: does the thing\n---\n\nbody"
+    assert parse_frontmatter(text) == {"name": "my-skill", "description": "does the thing"}
+
+
+def test_parse_frontmatter_missing_or_malformed_yields_empty_dict() -> None:
+    assert parse_frontmatter("no frontmatter here") == {}
+    assert parse_frontmatter("---\nnot closed\n") == {}
+    assert parse_frontmatter("---\n: : bad yaml :\n---\n") == {}
+    assert parse_frontmatter("---\n- a\n- b\n---\n") == {}
 
 
 # --- discovery / precedence ---
@@ -104,9 +143,7 @@ def test_discover_lists_non_denied_skills_sorted(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "zebra", "z skill")
     _write_skill(ws / ".klorb" / "skills", "alpha", "a skill")
-    found = discover_skills(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        skill_rules=SkillRules())
+    found = _catalog(tmp_path, ws).discoverable(SkillRules())
     assert [(s.name, s.namespace, s.description) for s in found] == [
         ("alpha", "workspace", "a skill"),
         ("zebra", "workspace", "z skill"),
@@ -117,22 +154,16 @@ def test_discovery_skips_dir_without_skill_md(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     (ws / ".klorb" / "skills" / "no-md").mkdir(parents=True)
     _write_skill(ws / ".klorb" / "skills", "has-md")
-    found = discover_skills(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        skill_rules=SkillRules())
+    found = _catalog(tmp_path, ws).discoverable(SkillRules())
     assert [s.name for s in found] == ["has-md"]
 
 
 def test_untrusted_workspace_contributes_no_skills(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "secret", "should not appear")
-    found = discover_skills(
-        workspace_root=ws, workspace_trusted=False, claude_skills_compat=False,
-        skill_rules=SkillRules())
-    assert found == []
-    assert resolve_skill(
-        workspace_root=ws, workspace_trusted=False, claude_skills_compat=False,
-        namespace="workspace", name="secret") is None
+    catalog = _catalog(tmp_path, ws, workspace_trusted=False)
+    assert catalog.discoverable(SkillRules()) == []
+    assert catalog.get(("workspace", "secret")) is None
 
 
 def test_denied_skill_excluded_from_discovery(tmp_path: Path) -> None:
@@ -140,12 +171,13 @@ def test_denied_skill_excluded_from_discovery(tmp_path: Path) -> None:
     _write_skill(ws / ".klorb" / "skills", "shown")
     _write_skill(ws / ".klorb" / "skills", "hidden")
     rules = SkillRules(deny=[("workspace", "hidden")])
-    found = discover_skills(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False, skill_rules=rules)
+    found = _catalog(tmp_path, ws).discoverable(rules)
     assert [s.name for s in found] == ["shown"]
 
 
-def test_workspace_shadows_user_and_internal(tmp_path: Path) -> None:
+def test_user_shadows_workspace_and_internal(tmp_path: Path) -> None:
+    # Precedence order is user (homedir), then workspace (project), then internal (packaged) --
+    # a homedir skill overrides a same-named project skill.
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "dup", "workspace copy")
     _write_skill(tmp_path / "data" / "skills", "dup", "user copy")
@@ -153,21 +185,17 @@ def test_workspace_shadows_user_and_internal(tmp_path: Path) -> None:
         workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
     dup = [r for r in resolved if r.name == "dup"]
     assert len(dup) == 1
-    assert dup[0].namespace == "workspace"
+    assert dup[0].namespace == "user"
 
 
 def test_claude_skills_compat_adds_workspace_source(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(ws / ".claude" / "skills", "claude-only", "from .claude")
     # Disabled: not discovered.
-    off = discover_skills(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        skill_rules=SkillRules())
+    off = _catalog(tmp_path, ws, claude_skills_compat=False).discoverable(SkillRules())
     assert [s.name for s in off] == []
     # Enabled: discovered as a workspace-namespace skill.
-    on = discover_skills(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=True,
-        skill_rules=SkillRules())
+    on = _catalog(tmp_path, ws, claude_skills_compat=True).discoverable(SkillRules())
     assert [(s.name, s.namespace) for s in on] == [("claude-only", "workspace")]
 
 
@@ -175,9 +203,7 @@ def test_klorb_skills_wins_over_claude_skills_on_collision(tmp_path: Path) -> No
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "dup", "klorb copy")
     _write_skill(ws / ".claude" / "skills", "dup", "claude copy")
-    found = discover_skills(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=True,
-        skill_rules=SkillRules())
+    found = _catalog(tmp_path, ws, claude_skills_compat=True).discoverable(SkillRules())
     assert [(s.name, s.description) for s in found] == [("dup", "klorb copy")]
 
 
@@ -187,15 +213,12 @@ def test_klorb_skills_wins_over_claude_skills_on_collision(tmp_path: Path) -> No
 def test_resolve_skill_exact_namespace(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(tmp_path / "data" / "skills", "u", "user skill")
-    resolved = resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="user", name="u")
+    catalog = _catalog(tmp_path, ws)
+    resolved = catalog.get(("user", "u"))
     assert resolved is not None
     assert resolved.namespace == "user"
     # Asking for it under the wrong namespace finds nothing.
-    assert resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="workspace", name="u") is None
+    assert catalog.get(("workspace", "u")) is None
 
 
 def test_manifest_is_sorted_relative_paths(tmp_path: Path) -> None:
@@ -204,9 +227,7 @@ def test_manifest_is_sorted_relative_paths(tmp_path: Path) -> None:
     (skill_dir / "reference").mkdir()
     (skill_dir / "reference" / "b.md").write_text("b")
     (skill_dir / "a.txt").write_text("a")
-    resolved = resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="workspace", name="s")
+    resolved = _catalog(tmp_path, ws).get(("workspace", "s"))
     assert resolved is not None
     assert skill_file_manifest(resolved) == ["SKILL.md", "a.txt", "reference/b.md"]
 
@@ -217,9 +238,7 @@ def test_manifest_excludes_symlink_escape(tmp_path: Path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("secret")
     (skill_dir / "link.txt").symlink_to(outside)
-    resolved = resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="workspace", name="s")
+    resolved = _catalog(tmp_path, ws).get(("workspace", "s"))
     assert resolved is not None
     assert skill_file_manifest(resolved) == ["SKILL.md"]
 
@@ -228,9 +247,7 @@ def test_resolve_skill_file_reads_supporting_file(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     skill_dir = _write_skill(ws / ".klorb" / "skills", "s")
     (skill_dir / "ref.md").write_text("hello")
-    resolved = resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="workspace", name="s")
+    resolved = _catalog(tmp_path, ws).get(("workspace", "s"))
     assert resolved is not None
     path = resolve_skill_file(resolved, "ref.md")
     assert path.read_text() == "hello"
@@ -240,9 +257,7 @@ def test_resolve_skill_file_rejects_escapes(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "s")
     (tmp_path / "secret.txt").write_text("secret")
-    resolved = resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="workspace", name="s")
+    resolved = _catalog(tmp_path, ws).get(("workspace", "s"))
     assert resolved is not None
     for bad in ["../secret.txt", "/etc/passwd", "~/secret", "a/../../secret.txt"]:
         with pytest.raises(ValueError, match="path must"):
@@ -257,9 +272,7 @@ def test_resolve_skill_file_symlink_escape_blocked(tmp_path: Path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("secret")
     (skill_dir / "link.txt").symlink_to(outside)
-    resolved = resolve_skill(
-        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-        namespace="workspace", name="s")
+    resolved = _catalog(tmp_path, ws).get(("workspace", "s"))
     assert resolved is not None
     with pytest.raises(ValueError, match="escapes the skill directory"):
         resolve_skill_file(resolved, "link.txt")
@@ -295,9 +308,28 @@ def test_override_never_bypasses_deny() -> None:
             SkillRules(deny=[("internal", "s")]), override, "internal", "s", description="d")
 
 
+def _catalog(
+    tmp_path: Path, ws: Path, *, workspace_trusted: bool = True, claude_skills_compat: bool = False,
+) -> SkillCatalog:
+    return build_catalogs(
+        workspace_root=ws, workspace_trusted=workspace_trusted,
+        claude_skills_compat=claude_skills_compat).canonical
+
+
 def test_resolve_and_gate_unknown_skill_raises_value_error(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     with pytest.raises(ValueError, match="no such skill"):
         resolve_and_gate_skill(
-            workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
-            skill_rules=SkillRules(), override=None, namespace="workspace", name="ghost")
+            catalog=_catalog(tmp_path, ws), skill_rules=SkillRules(), override=None,
+            namespace="workspace", name="ghost")
+
+
+def test_resolve_and_gate_finds_catalog_skill(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_skill(ws / ".klorb" / "skills", "s", "does the thing")
+    skill = resolve_and_gate_skill(
+        catalog=_catalog(tmp_path, ws), skill_rules=SkillRules(allow=[("workspace", "s")]),
+        override=None, namespace="workspace", name="s")
+    assert skill.namespace == "workspace"
+    assert skill.name == "s"
+    assert skill.description == "does the thing"

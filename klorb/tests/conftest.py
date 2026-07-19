@@ -11,6 +11,8 @@ import pytest
 from klorb import logging_config
 from klorb import process_config as process_config_module
 from klorb.token_estimate import configure_tiktoken_cache_env
+from klorb.tools.skill import catalog as skill_catalog
+from klorb.tools.skill import common as skill_common
 
 
 @pytest.fixture(autouse=True)
@@ -51,16 +53,20 @@ def _isolate_user_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 
 @pytest.fixture(autouse=True)
-def _neutralize_packaged_skills(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make `Session`'s available-skills interjection see no skills by default, so no test
-    anywhere in the suite accidentally gets an `<AvailableSkills>` `<SystemInterjection>` prepended
-    onto its first turn from the always-present packaged `internal` skills (e.g. create-edit-skill,
-    which is discoverable regardless of workspace trust). Mirrors `_isolate_config_layers`'s
-    blanking of the packaged config layer. Tests that specifically cover skill discovery /
-    interjections (see test_skills_session.py) restore the real `discover_skills` themselves via
-    their own `monkeypatch.setattr("klorb.session.discover_skills", ...)`.
+def _reset_skill_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point the internal (packaged) skill tier at an empty temp dir and reset the process-wide
+    skill catalog (`klorb.tools.skill.catalog`) before each test, so no test anywhere in the suite
+    accidentally discovers klorb's packaged skills (e.g. create-edit-skill, which is discoverable
+    regardless of workspace trust) or reuses a catalog an earlier test's workspace already built
+    -- the catalog is process-wide and normally built exactly once, so without this reset every
+    test after the first in a given process would see the first test's workspace's skills. Mirrors
+    `_isolate_config_layers`'s blanking of the packaged config layer. Tests that specifically cover
+    skill discovery/catalog behavior restore the real internal tier and/or rebuild the catalog
+    themselves (see test_skills_session.py, test_skill_common.py).
     """
-    monkeypatch.setattr("klorb.session.discover_skills", lambda **kwargs: [])
+    skill_catalog.get_skill_catalog_registry().reset_for_tests()
+    monkeypatch.setattr(skill_common, "internal_skills_dir", lambda: tmp_path / "empty-internal-skills")
+    monkeypatch.setattr(skill_common, "KLORB_DATA_DIR", tmp_path / "empty-user-skills-data")
 
 
 @pytest.fixture(scope="session", autouse=True)

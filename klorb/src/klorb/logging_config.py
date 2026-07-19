@@ -1,5 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Configures klorb's stdlib logging: a TextualHandler plus a per-session log file."""
+"""Configures klorb's stdlib logging: a TextualHandler plus a per-session log file, plus (in the
+REPL) a handler that surfaces WARNING+ records in the live conversation history.
+"""
 
 import io
 import logging
@@ -10,7 +12,9 @@ from pathlib import Path
 from types import TracebackType
 from typing import TextIO
 
+from textual._context import active_app
 from textual.logging import TextualHandler
+from textual.message import Message
 
 from klorb.paths import SESSION_LOGS_DIR
 
@@ -91,6 +95,41 @@ def prune_session_logs(
             logger.warning("Could not remove old session log %s", path, exc_info=True)
 
 
+class TuiHistoryNotice(Message):
+    """Posted to the active Textual `App` by `TuiHistoryLogHandler` for one `WARNING`+ log
+    record. `ReplApp.on_tui_history_notice()` handles it by mounting the record into the
+    conversation history via `show_notice()`. A `Message` rather than a direct widget mount from
+    `emit()`, because a logging call (and so `Handler.emit()`) can run on any thread while
+    Textual widgets are not thread-safe -- `App.post_message()` is Textual's documented
+    thread-safe hand-off into the app's own event loop, regardless of which thread posts it.
+    """
+
+    def __init__(self, text: str, *, error: bool) -> None:
+        self.text = text
+        self.error = error
+        super().__init__()
+
+
+class TuiHistoryLogHandler(logging.Handler):
+    """Logging handler that posts a `TuiHistoryNotice` for each record it's given to whichever
+    Textual `App` is currently running, so an interactive user sees a `WARNING`+ record in-band
+    in the conversation history, not only in the session log file / `TextualHandler` console.
+
+    A no-op when no Textual `App` is currently running (e.g. before `App.run()` during startup,
+    or a one-shot headless prompt) -- `configure_logging()` installs this as a second handler,
+    alongside the primary one, only in `repl_mode`, and callers are expected to `setLevel()` it
+    to `WARNING` so ordinary INFO/DEBUG traffic never reaches the history.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            app = active_app.get()
+        except LookupError:
+            return
+        app.post_message(
+            TuiHistoryNotice(self.format(record), error=record.levelno >= logging.ERROR))
+
+
 def configure_logging(
     *,
     repl_mode: bool,
@@ -101,12 +140,18 @@ def configure_logging(
     """Configure the root logger.
 
     In the REPL (`repl_mode=True`), logs go to a `TextualHandler` (the active Textual
-    app's console, or stderr when none is running). Otherwise, for a one-shot prompt,
-    logs go directly to stderr. When `log_path` is given, log records are also written to
+    app's console, or stderr when none is running), plus a `TuiHistoryLogHandler` that mounts
+    any `WARNING`+ record into the running app's conversation history. Otherwise, for a one-shot
+    prompt, logs go directly to stderr. When `log_path` is given, log records are also written to
     that file, and the session-logs directory is first pruned (via `prune_session_logs()`,
     bounded by `max_log_files`/`max_log_bytes`) so old logs don't accumulate without limit.
     """
     handlers: list[logging.Handler] = [TextualHandler()] if repl_mode else [logging.StreamHandler()]
+
+    if repl_mode:
+        tui_history_handler = TuiHistoryLogHandler()
+        tui_history_handler.setLevel(logging.WARNING)
+        handlers.append(tui_history_handler)
 
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)

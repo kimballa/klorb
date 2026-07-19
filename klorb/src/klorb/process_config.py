@@ -619,9 +619,9 @@ def load_process_config(
         layer_skill_rules = session_layer.pop("skillRules", None) or {}
         for category in ("deny", "ask", "allow"):
             for entry in layer_skill_rules.get(category, []):
-                # Each on-disk entry is a "<namespace>/<name>" string; a malformed entry (not a
+                # Each on-disk entry is a "<namespace>:<name>" string; a malformed entry (not a
                 # string, or missing the separator) is skipped rather than crashing config load.
-                if isinstance(entry, str) and "/" in entry:
+                if isinstance(entry, str) and ":" in entry:
                     concatenated_skill_rules[category].append(parse_fqsn(entry))
         concatenated_share_env.extend(session_layer.pop("shareEnv", None) or [])
         merged_set_env.update(session_layer.pop("setEnv", None) or {})

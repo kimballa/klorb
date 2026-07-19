@@ -9,6 +9,7 @@ from textual.widgets import Static
 from klorb.process_config import ProcessConfig, load_process_config, project_config_path
 from klorb.session import Session
 from klorb.tools.registry import ToolRegistry
+from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
@@ -166,6 +167,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         saw — the project config layer is only read once `workspace.trusted` is `True`, which
         for a brand-new workspace is only resolved here — so any warning not already shown is
         posted to the history via `show_notice()` below.
+
+        Also forces a fresh `SkillCatalogRegistry` scan (`klorb.tools.skill.catalog`): a newly
+        trusted workspace's `.klorb/skills/` tier is invisible to the process-wide catalog until
+        rebuilt, since `SkillCatalogRegistry.ensure()` is a no-op once a catalog already exists.
         """
         reloaded = load_process_config(
             config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
@@ -193,6 +198,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             self._process_config.session.read_dirs, reloaded.session.read_dirs)
         self._process_config.session.write_dirs = _concat_dir_rules(
             self._process_config.session.write_dirs, reloaded.session.write_dirs)
+
+        get_skill_catalog_registry().reload(
+            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
+            claude_skills_compat=self._process_config.compatibility_claude_skills)
 
         for warning in new_warnings:
             self.show_notice(warning, error=True)

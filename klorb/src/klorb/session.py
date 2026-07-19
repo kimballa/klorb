@@ -22,7 +22,7 @@ from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.skill_access import SkillRules
+from klorb.permissions.skill_access import SkillRules, evaluate_skill
 from klorb.permissions.table import (
     MultiPermissionAskRequired,
     PermissionAskItem,
@@ -38,7 +38,9 @@ from klorb.tools.ask.common import AskUserQuestionsRequired, QuestionOption
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.scratchpad.common import Scratchpad
-from klorb.tools.skill.common import DiscoveredSkill, discover_skills
+from klorb.tools.skill.catalog import get_skill_catalog_registry
+from klorb.tools.skill.common import skill_activation_payload
+from klorb.tools.skill.model import Skill
 from klorb.tools.tool import describe_tool_arg_json_error
 from klorb.workspace import Workspace
 
@@ -161,7 +163,17 @@ def _wrap_system_interjection(subject: str, message: str) -> str:
     return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
 
 
-_SKILL_MENTION_RE = re.compile(r"(?:^|\s)/([A-Za-z0-9][A-Za-z0-9._-]*)")
+_SKILL_MENTION_RE = re.compile(r"(?:^|\s)/([A-Za-z0-9][A-Za-z0-9._:-]*)")
+"""Matches a `/<token>` slug, where `token` may itself be a colon-qualified fully-qualified skill
+name (`<namespace>:<name>`, see `klorb.permissions.skill_access.format_fqsn`) -- a skill name can
+never contain a colon (`klorb.tools.skill.common.is_valid_skill_name`), so a colon inside the
+captured token is unambiguously the fqsn separator, not part of the name."""
+
+_LEADING_SKILL_RE = re.compile(r"^\s*/([A-Za-z0-9][A-Za-z0-9._:-]*)")
+"""Matches a `/<token>` (see `_SKILL_MENTION_RE`) at the very start of a prompt, ignoring leading
+whitespace -- used to detect a message that *starts* with a skill reference, which
+`Session.send_turn()` treats as an unconditional activation rather than a casual mention (see
+`_build_user_skill_activation_interjection` and docs/specs/skills.md)."""
 
 
 def _skill_mention_tokens(prompt: str) -> list[str]:
@@ -176,6 +188,13 @@ def _skill_mention_tokens(prompt: str) -> list[str]:
             seen.add(token)
             tokens.append(token)
     return tokens
+
+
+def _leading_skill_token(prompt: str) -> str | None:
+    """The `/<token>` slug at the very start of `prompt` (ignoring leading whitespace), or `None`
+    if the prompt doesn't start with one."""
+    match = _LEADING_SKILL_RE.match(prompt)
+    return match.group(1) if match else None
 
 
 _SKILL_WORD_RE = re.compile(r"(?<![a-zA-Z0-9])skills?\b|/skills?\b", re.IGNORECASE)
@@ -499,6 +518,20 @@ class TurnEventHandlers(BaseModel):
     ) = None
     on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
+
+
+class UserSkillActivation(BaseModel):
+    """The result of resolving a prompt's leading `/<token>` mention to an unconditional skill
+    activation -- see `Session._build_user_skill_activation_interjection`. `body` and `skill_id`
+    always travel together (there is no "interjection text without a skill identity" state to
+    accidentally produce): `body` is the text `send_turn()` wraps in a `UserSkillActivation`
+    `<SystemInterjection>`; `skill_id` is the skill's canonical `(namespace, name)`, for
+    `_build_skill_reference_interjection` to exclude it from the turn's ordinary reminder."""
+
+    model_config = ConfigDict(frozen=True)
+
+    body: str
+    skill_id: tuple[str, str]
 
 
 class Session:
@@ -986,20 +1019,27 @@ class Session:
             filenames.append("CLAUDE.md")
         return filenames
 
-    def _discover_skills(self) -> list[DiscoveredSkill]:
-        """Discover every currently-discoverable, non-`deny`-verdicted skill from this session's
-        live `config`. See `klorb.tools.skill.common.discover_skills` and docs/specs/skills.md."""
-        return discover_skills(
+    def _ensure_skill_catalog(self) -> None:
+        """Build the process-wide skill catalog if this process hasn't built one yet -- a no-op
+        after the first call. See `klorb.tools.skill.catalog.SkillCatalogRegistry.ensure`."""
+        get_skill_catalog_registry().ensure(
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
             claude_skills_compat=self._compatibility_claude_skills,
-            skill_rules=self.config.skill_rules,
         )
 
+    def _discover_skills(self) -> list[Skill]:
+        """Every currently non-`deny`-verdicted skill, precedence-deduped by name, from the
+        process-wide catalog and this session's live `skill_rules`. No disk access -- see
+        `klorb.tools.skill.catalog.SkillCatalog.discoverable` and docs/specs/skills.md."""
+        self._ensure_skill_catalog()
+        return get_skill_catalog_registry().canonical().discoverable(self.config.skill_rules)
+
     @staticmethod
-    def _format_skill_list(skills: list[DiscoveredSkill]) -> str:
+    def _format_skill_list(skills: list[Skill]) -> str:
         """Render `skills` as the newline-joined `- <name> (<namespace>): <description>` bullet
-        list shared by both skill interjections. A skill with an empty description contributes
+        list shared by both skill interjections, always by canonical name (a skill's directory
+        basename), never a frontmatter-name alias. A skill with an empty description contributes
         just `- <name> (<namespace>)`."""
         lines = [
             f"- {skill.name} ({skill.namespace}): {skill.description}" if skill.description
@@ -1008,7 +1048,7 @@ class Session:
         ]
         return "\n".join(lines)
 
-    def _build_available_skills_interjection(self, skills: list[DiscoveredSkill]) -> str | None:
+    def _build_available_skills_interjection(self, skills: list[Skill]) -> str | None:
         """Return the body `send_turn()` wraps in an `AvailableSkills` `<SystemInterjection>` and
         prepends onto the first turn's prompt, or `None` if no skill is discoverable. Lists every
         discoverable, non-`deny`-verdicted skill. Built once and locked for the session — see
@@ -1025,23 +1065,35 @@ class Session:
         )
 
     def _build_skill_reference_interjection(
-        self, tokens: list[str], skills: list[DiscoveredSkill] | None,
+        self, tokens: list[str], *, exclude: frozenset[tuple[str, str]] = frozenset(),
     ) -> str | None:
         """Return the body `send_turn()` wraps in a `SkillReference` `<SystemInterjection>` for
         this turn only, or `None` if `tokens` names no discoverable skill. `tokens` is every
         `/<name>` slug `send_turn()` already found in the turn's prompt via
-        `_skill_mention_tokens()`; `skills` is the discovery scan it ran for those tokens (`None`
-        when there was nothing to look up, since no scan was attempted in that case). Reminds the
-        model to load a mentioned skill via `ActivateSkill`. See docs/specs/skills.md."""
-        if not tokens or not skills:
+        `_skill_mention_tokens()` -- each resolved against the typed catalog (bare name via tier
+        precedence, or an exact `<namespace>:<name>` fqsn) and skipped if its canonical
+        `(namespace, name)` evaluates to `"deny"` or is in `exclude` (the skill a leading-mention
+        unconditional activation already fully handled -- see
+        `_build_user_skill_activation_interjection`). Always lists a mentioned skill by its
+        canonical name, never the alias the user may have typed. Reminds the model to load it via
+        `ActivateSkill`. See docs/specs/skills.md."""
+        if not tokens:
             return None
-        by_name = {skill.name: skill for skill in skills}
-        mentioned: list[DiscoveredSkill] = []
-        seen: set[str] = set()
+        self._ensure_skill_catalog()
+        catalog = get_skill_catalog_registry().typed()
+        mentioned: list[Skill] = []
+        seen: set[tuple[str, str]] = set()
         for token in tokens:
-            if token in by_name and token not in seen:
-                seen.add(token)
-                mentioned.append(by_name[token])
+            skill = catalog.resolve_reference(token)
+            if skill is None:
+                continue
+            skill_id = (skill.namespace, skill.name)
+            if skill_id in exclude or skill_id in seen:
+                continue
+            if evaluate_skill(self.config.skill_rules, skill_id) == "deny":
+                continue
+            seen.add(skill_id)
+            mentioned.append(skill)
         if not mentioned:
             return None
         return (
@@ -1049,6 +1101,36 @@ class Session:
             "with ActivateSkill(namespace=\"<namespace>\", name=\"<name>\") before acting on it.\n"
             + self._format_skill_list(mentioned)
         )
+
+    def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
+        """When `token` (the prompt's leading `/<token>` slug, from `_leading_skill_token()`)
+        resolves to a discoverable, `"allow"`-verdicted skill, return a `UserSkillActivation`
+        whose `body` carries the exact same `{namespace, name, content, files, tokens}` JSON
+        payload `ActivateSkill` would return (built by the same `skill_activation_payload()` both
+        paths share), so the model can apply the skill immediately with no `ActivateSkill` round
+        trip.
+
+        Returns `None` when `token` doesn't resolve to a skill, or when it resolves but isn't
+        `"allow"`-verdicted -- a `"deny"` skill gets no special treatment at all (as if the user's
+        message didn't start with a skill reference), and an `"ask"`-verdicted skill falls back to
+        the ordinary `SkillReference` reminder instead, so the model still has to call
+        `ActivateSkill` and go through the normal approval flow -- a prompt-leading `/name` never
+        bypasses `skillRules` approval. See docs/specs/skills.md.
+        """
+        self._ensure_skill_catalog()
+        skill = get_skill_catalog_registry().typed().resolve_reference(token)
+        if skill is None:
+            return None
+        skill_id = (skill.namespace, skill.name)
+        if evaluate_skill(self.config.skill_rules, skill_id) != "allow":
+            return None
+        payload = skill_activation_payload(skill)
+        body = (
+            f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
+            "the user's prompt, then apply this skill:\n"
+            + json.dumps(payload)
+        )
+        return UserSkillActivation(body=body, skill_id=skill_id)
 
     def _confirm_limit_increase(
         self,
@@ -1877,9 +1959,15 @@ class Session:
         cleared: a standing interjection keeps appearing on every subsequent turn for as long as
         its provider keeps returning a message.
 
-        A `SkillReference` interjection is prepended for this turn when the user's own `prompt`
-        mentions a discoverable skill by `/<name>`, and — on the first turn only — the one-shot
-        `AvailableSkills` catalog is prepended (see `_build_skill_reference_interjection`/
+        When the user's own `prompt` *starts* with a skill reference (ignoring leading
+        whitespace) that resolves to an `"allow"`-verdicted skill, a `UserSkillActivation`
+        interjection carrying that skill's full `ActivateSkill`-equivalent JSON payload is
+        prepended immediately ahead of the original prompt text -- an unconditional activation,
+        not a mere reminder (see `_build_user_skill_activation_interjection`). A `SkillReference`
+        interjection is separately prepended for this turn when the prompt mentions any other
+        discoverable skill by `/<name>` (or `/<namespace>:<name>`), excluding whichever skill the
+        leading-mention activation already fully handled. On the first turn only, the one-shot
+        `AvailableSkills` catalog is also prepended (see `_build_skill_reference_interjection`/
         `_build_available_skills_interjection` and docs/specs/skills.md).
 
         Finally, the very first time `send_turn()` is ever called on this `Session`
@@ -1896,6 +1984,14 @@ class Session:
         start time and workspace root name is also prepended (see `self._metadata_seeded`).
         """
         original_prompt = prompt
+        self._ensure_skill_catalog()
+        excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
+        leading_token = _leading_skill_token(original_prompt)
+        if leading_token is not None:
+            activation = self._build_user_skill_activation_interjection(leading_token)
+            if activation is not None:
+                prompt = f"{_wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
+                excluded_skill_ids = frozenset({activation.skill_id})
         if self._pending_permission_framework_interjection is not None:
             interjection = _wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)
@@ -1906,14 +2002,8 @@ class Session:
             if message is not None:
                 prompt = f"{_wrap_system_interjection(subject, message)}\n{prompt}"
         skill_mention_tokens = _skill_mention_tokens(original_prompt)
-        discovered_skills: list[DiscoveredSkill] | None = None
-        if skill_mention_tokens or not self._skills_seeded:
-            # A single scan feeds both interjections below, so turn 1 (which needs both) doesn't
-            # pay for two independent discovery scans, and a later turn with no `/name` mention
-            # at all (the common case) doesn't pay for one either.
-            discovered_skills = self._discover_skills()
         skill_reference = self._build_skill_reference_interjection(
-            skill_mention_tokens, discovered_skills)
+            skill_mention_tokens, exclude=excluded_skill_ids)
         if skill_reference is not None:
             prompt = f"{_wrap_system_interjection('SkillReference', skill_reference)}\n{prompt}"
         if _prompt_mentions_skill(original_prompt):
@@ -1925,7 +2015,7 @@ class Session:
             prompt = f"{_wrap_system_interjection('SkillReminder', skill_reminder)}\n{prompt}"
         if not self._skills_seeded:
             self._skills_seeded = True
-            available_skills = self._build_available_skills_interjection(discovered_skills or [])
+            available_skills = self._build_available_skills_interjection(self._discover_skills())
             if available_skills is not None:
                 prompt = f"{_wrap_system_interjection('AvailableSkills', available_skills)}\n{prompt}"
         if not self._context_files_seeded:

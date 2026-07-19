@@ -35,6 +35,18 @@ paths or calling `logging.basicConfig` itself.
     * Attaches a `TextualHandler` (the active Textual app's console, or stderr when none is
       running) when `repl_mode` is True; otherwise attaches a plain `logging.StreamHandler`
       (stderr) for a one-shot prompt.
+    * Also attaches a `TuiHistoryLogHandler`, level-filtered to `WARNING`+, when `repl_mode` is
+      True. Its `emit()` posts a `TuiHistoryNotice` message to whichever Textual `App` is
+      currently running (found via `textual._context.active_app`, the same lookup
+      `TextualHandler` itself uses) rather than mounting a widget directly, since a log call —
+      and so `Handler.emit()` — can happen on any thread while Textual widgets are not
+      thread-safe; `App.post_message()` is Textual's thread-safe hand-off into the app's own
+      event loop. `ReplApp.on_tui_history_notice()` handles the message by mounting the record
+      into the conversation history via `show_notice()`, the same `.notice`/`.error` `Static`
+      widget any other in-band status report uses. A no-op — the record is still written to the
+      console/file handlers, just not mounted in-history — whenever no `App` is currently
+      running (e.g. before `App.run()` during startup, or a one-shot headless prompt where
+      `repl_mode` is False and this handler is never attached at all).
     * When `log_path` is not `None`, also creates its parent directory (if it doesn't
       already exist), prunes old logs from that directory via `prune_session_logs()` (see
       below), and attaches a `FileHandler` for it. When `log_path` is `None`, no file is
