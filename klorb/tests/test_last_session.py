@@ -148,3 +148,39 @@ def test_tool_call_messages_round_trip(tmp_path: Path) -> None:
     assert state.messages[0].tool_calls is not None
     assert state.messages[0].tool_calls[0].name == "ReadFile"
     assert state.messages[1].tool_call_id == "call-1"
+
+
+def test_write_last_session_round_trips_session_id_and_name(tmp_path: Path) -> None:
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_last_session(
+        workspace, SessionConfig(), [], session_id="2026-07-19-01-50-fix-auth",
+        session_name="Fix auth token refresh bug")
+
+    state = read_last_session(workspace)
+    assert state is not None
+    assert state.session_id == "2026-07-19-01-50-fix-auth"
+    assert state.session_name == "Fix auth token refresh bug"
+
+
+def test_write_last_session_omits_none_session_id_and_name(tmp_path: Path) -> None:
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_last_session(workspace, SessionConfig(), [])
+
+    state = read_last_session(workspace)
+    assert state is not None
+    assert state.session_id is None
+    assert state.session_name is None
+
+
+def test_read_last_session_with_missing_session_id_or_name(tmp_path: Path) -> None:
+    """Old files written before session_id/session_name existed still parse correctly."""
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_versioned_json(
+        last_session_path(workspace),
+        {"config": {}, "messages": [], "statistics": None},
+        schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
+
+    state = read_last_session(workspace)
+    assert state is not None
+    assert state.session_id is None
+    assert state.session_name is None

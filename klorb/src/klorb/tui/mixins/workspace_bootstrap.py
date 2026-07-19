@@ -97,15 +97,23 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         self._session = Session(
             restored_config, provider=self._session.provider,
             model_registry=self._session.model_registry, process_config=self._process_config,
+            session_id=state.session_id,
+            session_name=state.session_name,
             tool_registry=ToolRegistry(self._process_config, restored_config))
         self._session.load_messages(state.messages)
         if state.statistics is not None:
             self._session.load_statistics(state.statistics)
         self.sub_title = restored_config.model
         self._update_status_bar()
-        self._session_naming_pending = True
-        session_name = self.query_one(f"#{SESSION_NAME_ID}", Static)
-        session_name.update(NEW_SESSION_LABEL)
+        session_name_widget = self.query_one(f"#{SESSION_NAME_ID}", Static)
+        if state.session_name is not None:
+            # A previously-named session was restored; the classifier already ran, so
+            # don't re-trigger it on the next prompt.
+            self._session_naming_pending = False
+            session_name_widget.update(f"Session: {state.session_name}")
+        else:
+            self._session_naming_pending = True
+            session_name_widget.update(NEW_SESSION_LABEL)
         self._mount_restored_history(state.messages)
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:

@@ -24,7 +24,7 @@ from klorb.schema_envelope import read_versioned_json
 from klorb.session import Session, SessionConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
-from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
+from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.panels.confirm_screen import (
     CONFIRM_NO_ID,
     CONFIRM_YES_ID,
@@ -495,6 +495,54 @@ async def test_restores_tool_call_history_as_a_tool_call_widget(
         await pilot.pause()
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         assert len(list(history.query(ToolCallStatic))) == 1
+
+
+async def test_restore_restores_session_id_and_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    write_last_session(
+        workspace,
+        SessionConfig(model="restored/model", workspace=workspace),
+        [_sample_message("earlier prompt", "user")],
+        session_id="2026-07-19-01-50-fix-auth",
+        session_name="Fix auth token refresh bug")
+
+    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert app._session.id == "2026-07-19-01-50-fix-auth"
+        assert app._session.name == "Fix auth token refresh bug"
+        assert not app._session_naming_pending
+
+        session_name_widget = app.query_one(f"#{SESSION_NAME_ID}", Static)
+        assert "Fix auth token refresh bug" in str(session_name_widget.content)
+
+
+async def test_restore_without_name_keeps_naming_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    # Write a session without session_name (simulates older save format)
+    write_last_session(
+        workspace,
+        SessionConfig(model="restored/model", workspace=workspace),
+        [_sample_message("earlier prompt", "user")])
+
+    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert app._session.name is None
+        assert app._session_naming_pending
+
+        session_name_widget = app.query_one(f"#{SESSION_NAME_ID}", Static)
+        assert str(session_name_widget.content) == NEW_SESSION_LABEL
 
 
 # --- session persistence: saved on crash exit (run_repl -> _handle_repl_crash) ---

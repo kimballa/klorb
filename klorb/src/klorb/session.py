@@ -515,12 +515,14 @@ class Session:
         provider: ApiProvider | None = None,
         model_registry: ModelRegistry | None = None,
         session_id: str | None = None,
+        session_name: str | None = None,
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
+        self._session_name: str | None = session_name
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
         self._model_registry = model_registry or ModelRegistry()
@@ -674,6 +676,16 @@ class Session:
     def messages(self) -> list[Message]:
         """Return the session's conversation history so far."""
         return list(self._messages)
+
+    @property
+    def name(self) -> str | None:
+        """The human-readable title assigned by the session-naming classifier, or `None`
+        if no name has been assigned yet (e.g. fresh session, or naming failed)."""
+        return self._session_name
+
+    @name.setter
+    def name(self, value: str | None) -> None:
+        self._session_name = value
 
     def load_messages(self, messages: list[Message]) -> None:
         """Replace this session's conversation history with `messages` — e.g. restoring a

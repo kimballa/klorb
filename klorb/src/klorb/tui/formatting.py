@@ -113,10 +113,10 @@ def _format_workspace_path(
     return ".../" + "/".join(path.parts[-2:])
 
 
-ANIMATION_TICK_SECONDS = 0.24
+ANIMATION_TICK_SECONDS = 0.20
 """Interval between "still working" crawl-animation frames (seconds) -- see
-`crawl_animation_text`. At 0.24s per frame and 9 characters in e.g. `"Running..."`, a full
-crawl cycle takes just over two seconds -- slow enough to feel calm without being distracting.
+`crawl_animation_text`. At 0.20s per frame and 9 characters in e.g. `"Running..."`, a full
+crawl cycle takes just under two seconds -- slow enough to feel calm without being distracting.
 Shared by `RunningToolCallStatic` and `GettingReadyStatic`, which each drive their own
 `Widget.set_interval` timer at this rate."""
 

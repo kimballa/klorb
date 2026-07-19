@@ -41,7 +41,8 @@ semantics" section for why a repeated idle Ctrl+C force-exits directly instead.
 * Otherwise, asks "Save session state before quitting?" via `klorb.tui.panels.confirm_screen.
   SaveOnQuitScreen`, which has three outcomes rather than a plain yes/no: "Yes" writes the file
   (`klorb.workspace.last_session.write_last_session(workspace, session.config,
-  session.messages)`, schema-enveloped per docs/specs/persisted-json-schema-versioning.md as
+  session.messages)`, plus `session_id` and `session_name` from the live `Session` object,
+  schema-enveloped per docs/specs/persisted-json-schema-versioning.md as
   `{"name": "klorb-session", "version": "1.0.0"}`, overwriting any previously-saved state for
   this workspace outright — there is only ever one "last" session per workspace, not a history
   of them), "No" quits without saving, and "Cancel" (or Escape) aborts the quit entirely —
@@ -99,7 +100,15 @@ missing one, instead of crashing `ReplApp` at startup. Otherwise:
    docs/specs/process-and-session-config.md).
 2. The live `Session` is torn down (`Session.close()`) and replaced with a new one built from
    the restored config, reusing the outgoing session's `provider`/`model_registry` — the same
-   pattern `ReplApp.clear_session()` uses.
+   pattern `ReplApp.clear_session()` uses. The new `Session` is also constructed with the saved
+   `session_id`/`session_name` (`state.session_id`, `state.session_name`), so a restored
+   session keeps the same `Session.id` and `Session.name` the saved one had rather than minting
+   a fresh random one. If `state.session_name` is set (the saved session had already been named
+   — see "Session naming" in docs/specs/session-and-turns.md), `_session_naming_pending` is left
+   `False` and the `SESSION_NAME_ID` status line shows `"Session: <title>"` immediately, so the
+   next prompt doesn't re-trigger the naming classifier; otherwise (an older save file, or one
+   whose naming attempt never completed) `_session_naming_pending` stays `True` and the status
+   line shows the same `"New session..."` placeholder a brand-new session does.
 3. `Session.load_messages(messages)` replaces the new session's (empty) history outright with
    the saved messages. Safe to call immediately after construction, before any `send_turn()`:
    a `role="system"`/`"tool_defs"` bookkeeping message already present is left as-is rather

@@ -261,7 +261,9 @@ class KeyActionsMixin(ReplAppBase):
         if save:
             write_last_session(
                 self._session.config.workspace, self._session.config, self._session.messages,
-                statistics=self._session.statistics)
+                statistics=self._session.statistics,
+                session_id=self._session.id,
+                session_name=self._session.name)
         else:
             clear_last_session(self._session.config.workspace)
             self._session.close()
@@ -429,7 +431,9 @@ class KeyActionsMixin(ReplAppBase):
             if self._trust_manager is not None and workspace.trusted and self._session.messages:
                 write_last_session(
                     workspace, self._session.config, self._session.messages,
-                    statistics=self._session.statistics)
+                    statistics=self._session.statistics,
+                    session_id=self._session.id,
+                    session_name=self._session.name)
         except Exception:
             pass
 

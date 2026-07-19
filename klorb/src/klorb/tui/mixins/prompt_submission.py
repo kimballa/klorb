@@ -484,6 +484,7 @@ class PromptSubmissionMixin(ReplAppBase):
                 old_log_path.rename(new_log_path)
             configure_logging(repl_mode=True, log_path=new_log_path)
         self._session.id = new_id
+        self._session.name = result.title
         self.call_from_thread(self._update_session_name_line, result.title)
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:

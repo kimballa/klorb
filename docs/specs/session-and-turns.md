@@ -259,11 +259,15 @@ config) has one place to live.
   (`session_id_suffix(session.id)`) as its "title" — so the line always reflects the actual
   session id rather than getting stuck on a generic placeholder.
 * Naming is attempted at most once per `Session` instance, tracked by `ReplApp.
-  _session_naming_pending` (`True` from construction, `/clear`, and restoring the last saved
-  session; set `False` the moment `_run_session_naming` runs, before it even knows whether
-  naming will succeed) — so a failed/timed-out attempt is never retried on a later prompt
-  within the same session, and the status line resets to `"New session..."` whenever a fresh
-  `Session` replaces the active one.
+  _session_naming_pending` (`True` from construction and `/clear`; set `False` the moment
+  `_run_session_naming` runs, before it even knows whether naming will succeed) — so a
+  failed/timed-out attempt is never retried on a later prompt within the same session, and the
+  status line resets to `"New session..."` whenever a fresh, as-yet-unnamed `Session` replaces
+  the active one. Restoring the last saved session (see [[session-persistence]]) carries the
+  saved `Session.name` forward instead of re-triggering the classifier: `_session_naming_pending`
+  is left `False` and the status line shows `"Session: <title>"` when the save file has one,
+  or set `True` with the status line reset to `"New session..."` when it doesn't (an older save
+  file predating `Session.name`, or a session whose first-prompt naming never completed).
 * `classifier.model` / `classifier.timeout` / `classifier.e2eTimeout` (`PROCESS_KEY_MAP`, top
   level — see [[process-and-session-config]]) configure
   `ProcessConfig.session_classifier_model`/`_timeout_seconds`/`_e2e_timeout_seconds`, defaulting

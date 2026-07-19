@@ -33,14 +33,20 @@ LAST_SESSION_SCHEMA_VERSION = "1.0.0"
 
 class LastSessionState(BaseModel):
     """The persisted shape of `last-session.json`'s data (alongside its `schema` envelope):
-    the `SessionConfig` and full message history of the session that was saved, as of the
-    moment it was saved."""
+    the `SessionConfig`, `Session.id`, `Session.name`, and full message history of the
+    session that was saved, as of the moment it was saved."""
 
     config: SessionConfig
     messages: list[Message]
     statistics: SessionStatistics | None = None
     """Running statistics accumulated during the session, if saved.  Absent (``None``) in
     files written by older klorb versions that predate session statistics tracking."""
+    session_id: str | None = None
+    """The session's `Session.id`, persisted so it can be restored on reload."""
+    session_name: str | None = None
+    """The human-readable session title assigned by the session-naming classifier, persisted
+    so the TUI's status bar can show `Session: <title>` on restore instead of
+    `NEW_SESSION_LABEL`."""
 
 
 def last_session_path(workspace: Workspace) -> Path:
@@ -54,12 +60,17 @@ def write_last_session(
     config: SessionConfig,
     messages: list[Message],
     statistics: SessionStatistics | None = None,
+    session_id: str | None = None,
+    session_name: str | None = None,
 ) -> None:
     """Save `config` and `messages` to `workspace`'s `last-session.json`, schema-enveloped per
     docs/specs/persisted-json-schema-versioning.md. Overwrites any previously-saved state for
     this workspace outright — there is only ever one "last" session per workspace.
-    Optionally includes `statistics` (session run-time counters) when provided."""
-    state = LastSessionState(config=config, messages=messages, statistics=statistics)
+    Optionally includes `statistics` (session run-time counters), `session_id`, and
+    `session_name` when provided."""
+    state = LastSessionState(
+        config=config, messages=messages, statistics=statistics,
+        session_id=session_id, session_name=session_name)
     write_versioned_json(
         last_session_path(workspace), state.model_dump(mode="json"),
         schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
