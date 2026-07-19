@@ -17,6 +17,8 @@ from klorb.tools.util.gitignore import GitignoreFilter
 
 logger = logging.getLogger(__name__)
 
+GIT_DIR_NAME = ".git"
+
 
 def _is_descendable(context: ToolSetupContext, subdir: Path) -> bool:
     """Whether `subdir` (an already-listed child directory) may be recursed into: its own
@@ -73,6 +75,14 @@ def walk_readable_tree(
     descended into, regardless of its permission verdict — mirroring `os.walk`'s
     `followlinks=False` default — so a symlink cycle can't recurse forever. See
     docs/adrs/recursive-tree-walk-does-not-follow-symlinked-dirs.md.
+
+    Every subdirectory named `.git` encountered anywhere below the walk's root is skipped
+    unconditionally: it is never listed in `subdir_names`, never yielded, and never counted
+    toward `gitignored_file_names` or a "hidden matches" note, regardless of `use_gitignore` or
+    `readDirs` permissions. This is a hard-coded exclusion, not a filtering decision either tool
+    surfaces to the agent. Only the walk's own root is exempt — a caller that explicitly names a
+    `.git` directory (or a path beneath one) as `dirname` searches it normally. See
+    docs/adrs/hard-code-skip-dot-git-dirs-in-tree-walk.md.
     """
     root_path, verdict = resolve_and_evaluate_read(context, dirname)
     raise_if_not_allowed(
@@ -112,6 +122,11 @@ def _walk(
                 files.append(entry.name)
             continue
         if entry.is_dir():
+            if entry.name == GIT_DIR_NAME:
+                # Hard-coded, unconditional: a nested .git dir is never listed, descended, or
+                # counted as a gitignore-hidden entry. Only the walk's own root (handled in
+                # `walk_readable_tree`, never reaching this loop) is exempt.
+                continue
             subdirs.append(entry)
         else:
             files.append(entry.name)

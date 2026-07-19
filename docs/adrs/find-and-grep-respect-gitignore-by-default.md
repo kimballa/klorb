@@ -1,5 +1,9 @@
 # `FindFile`/`Grep` respect `.gitignore` by default, opting out with `use_gitignore=false`
 
+* Partially superseded by: [[hard-code-skip-dot-git-dirs-in-tree-walk]] — the "two deliberate
+  scope limits" paragraph below says the literal `.git/` directory is not special-cased. That is
+  no longer true: `walk_readable_tree` now hard-codes a `.git/` skip outside the gitignore
+  mechanism entirely. Everything else in this ADR still holds.
 * Date: 2026-07-16 01:38
 * Question: The recursive search tools (`FindFileTool`, `GrepTool`) walk a whole directory tree
   via `klorb.tools.util.dir_walk.walk_readable_tree`. On a real project that tree is full of

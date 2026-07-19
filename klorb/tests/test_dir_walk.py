@@ -212,6 +212,63 @@ def test_ancestor_gitignore_applies_to_subdir_search(tmp_path: Path) -> None:
     assert visited["sub_a"][2] == ["a.txt"]
 
 
+def test_dot_git_subdir_is_skipped_unconditionally(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("[core]\n")
+    (git_dir / "objects").mkdir()
+    (git_dir / "objects" / "pack").write_text("binary\n")
+
+    results = list(walk_readable_tree(_context(tmp_path), ""))
+
+    visited = _visited(results, tmp_path)
+    assert ".git" not in visited["."][0]
+    assert ".git" not in visited
+    assert ".git/objects" not in visited
+
+
+def test_dot_git_subdir_is_skipped_even_with_gitignore_disabled(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("[core]\n")
+
+    results = list(walk_readable_tree(_context(tmp_path), "", use_gitignore=False))
+
+    visited = _visited(results, tmp_path)
+    assert ".git" not in visited["."][0]
+    assert ".git" not in visited
+    # Skipping .git never counts as a gitignored file, even with gitignore filtering off.
+    assert all(ignored == [] for _subdirs, _files, ignored in visited.values())
+
+
+def test_dot_git_skip_never_sets_gitignored_files(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("[core]\n")
+
+    results = list(walk_readable_tree(_context(tmp_path), ""))
+
+    visited = _visited(results, tmp_path)
+    assert visited["."][2] == []
+
+
+def test_explicit_dot_git_root_is_searched_normally(tmp_path: Path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("[core]\n")
+    (git_dir / "objects").mkdir()
+    (git_dir / "objects" / "pack").write_text("binary\n")
+
+    results = list(walk_readable_tree(_context(tmp_path), ".git"))
+
+    visited = _visited(results, git_dir)
+    assert visited["."] == (["objects"], ["config"], [])
+    assert visited["objects"] == ([], ["pack"], [])
+
+
 def test_symlinked_file_is_still_listed(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
