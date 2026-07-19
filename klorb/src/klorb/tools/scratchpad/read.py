@@ -28,6 +28,12 @@ class ReadScratchpadTool(Tool):
     def name(self) -> str:
         return "ReadScratchpad"
 
+    def category(self) -> str:
+        return "SCRATCHPAD"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Reads a range of lines from your scratchpad: a plain-text scratch file for "

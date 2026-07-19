@@ -50,6 +50,12 @@ class SearchMemoriesTool(Tool):
     def name(self) -> str:
         return "SearchMemories"
 
+    def category(self) -> str:
+        return "MEMORY"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Searches every memory file (both the global and workspace namespaces) for lines "

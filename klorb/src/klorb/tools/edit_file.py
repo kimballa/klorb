@@ -39,6 +39,12 @@ class EditFileTool(Tool):
     def name(self) -> str:
         return "EditFile"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Replaces the inclusive 1-indexed line range [start_line, end_line] of a text "

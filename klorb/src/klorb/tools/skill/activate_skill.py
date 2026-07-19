@@ -26,6 +26,12 @@ class ActivateSkillTool(Tool):
     def name(self) -> str:
         return "ActivateSkill"
 
+    def category(self) -> str:
+        return "SKILL"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Loads a skill's full instructions into your context so you can follow them. Give the "

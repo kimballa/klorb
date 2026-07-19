@@ -629,6 +629,12 @@ class BashTool(InterruptibleTool):
     def name(self) -> str:
         return "Bash"
 
+    def category(self) -> str:
+        return "SHELL"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Runs a shell command via bash. The command is parsed and every simple command/"

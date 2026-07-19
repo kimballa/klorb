@@ -30,6 +30,12 @@ class ForgetMemoryTool(Tool):
     def name(self) -> str:
         return "ForgetMemory"
 
+    def category(self) -> str:
+        return "MEMORY"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Deletes an existing memory file. Fails if no memory with that namespace/filename "

@@ -166,6 +166,20 @@ class Tool(ABC):
     def apply(self, args: dict[str, Any]) -> Any:
         """Execute the tool with the given arguments and return its result."""
 
+    def category(self) -> str:
+        """Return this tool's category (e.g. `"FILES"`, `"MEMORY"`), used to filter which
+        tools a subagent is offered. Not yet overridden by any tool; raises until a
+        subclass implements it.
+        """
+        raise NotImplementedError
+
+    def is_read_only(self) -> bool:
+        """Return whether this tool only reads (never mutates) its subject, used to filter
+        which tools a subagent is offered. Not yet overridden by any tool; raises until a
+        subclass implements it.
+        """
+        raise NotImplementedError
+
     def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
         """Return whether one call to this tool succeeded, given the parsed `args`, the raw
         `result` returned by `apply()`, and the `error` string (or `None`). The default

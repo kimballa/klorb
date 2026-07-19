@@ -25,6 +25,12 @@ class ReplaceAllTool(Tool):
     def name(self) -> str:
         return "ReplaceAll"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Replaces every occurrence of search in filename with new_text. "

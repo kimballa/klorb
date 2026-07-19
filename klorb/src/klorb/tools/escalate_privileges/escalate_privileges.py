@@ -41,6 +41,12 @@ class EscalatePrivilegesTool(Tool):
     def name(self) -> str:
         return "EscalatePrivileges"
 
+    def category(self) -> str:
+        return "PRIVILEGES"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Request elevated privileges for workspace access (read/write to ${workspaceRoot}/.klorb/ "

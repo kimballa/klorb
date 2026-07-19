@@ -32,6 +32,12 @@ class FindFileTool(InterruptibleTool):
     def name(self) -> str:
         return "FindFile"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Recursively finds files in a directory tree whose bare name (not full path) "

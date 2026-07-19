@@ -33,6 +33,12 @@ class CreateFileTool(Tool):
     def name(self) -> str:
         return "CreateFile"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Creates a new text file with the given content. Fails if the file already "

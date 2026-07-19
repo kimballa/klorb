@@ -32,6 +32,12 @@ class ReadSkillFileTool(Tool):
     def name(self) -> str:
         return "ReadSkillFile"
 
+    def category(self) -> str:
+        return "SKILL"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Reads a supporting file bundled with a skill (one of the relative paths in "

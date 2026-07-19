@@ -30,6 +30,12 @@ class ReadFileTool(Tool):
     def name(self) -> str:
         return "ReadFile"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             f"Reads a text file and returns up to {self.read_file_core.max_lines} of its "

@@ -30,6 +30,12 @@ class ListMemoriesTool(Tool):
     def name(self) -> str:
         return "ListMemories"
 
+    def category(self) -> str:
+        return "MEMORY"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Lists every memory file in the global namespace (applies across all workspaces) "

@@ -58,6 +58,12 @@ class GrepTool(InterruptibleTool):
     def name(self) -> str:
         return "Grep"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Recursively searches a directory tree for lines matching any of the given "

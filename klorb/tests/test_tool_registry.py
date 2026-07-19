@@ -9,6 +9,23 @@ from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.registry import ToolRegistry
 
 
+def test_every_production_tool_overrides_category_and_is_read_only() -> None:
+    """Every concrete `Tool` the default package discovers must override `category()` and
+    `is_read_only()` (the base class raises `NotImplementedError`) -- the foundation for
+    filtering a subagent's tool set by category and read-only-ness."""
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    failures: list[str] = []
+    for tool in registry.tools():
+        for method_name in ("category", "is_read_only"):
+            try:
+                getattr(tool, method_name)()
+            except NotImplementedError:
+                failures.append(f"{tool.name()}.{method_name}()")
+
+    assert not failures, f"tools missing overrides: {failures}"
+
+
 def _registry(package=sample_tools_package) -> ToolRegistry:
     return ToolRegistry.discover_tools(ProcessConfig(), SessionConfig(), package=package)
 

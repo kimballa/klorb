@@ -28,6 +28,12 @@ class ListDirTool(Tool):
     def name(self) -> str:
         return "ListDir"
 
+    def category(self) -> str:
+        return "FILES"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Lists the immediate subdirectories and files of a directory, so you can orient "

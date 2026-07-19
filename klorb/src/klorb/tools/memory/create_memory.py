@@ -43,6 +43,12 @@ class CreateMemoryTool(Tool):
     def name(self) -> str:
         return "CreateMemory"
 
+    def category(self) -> str:
+        return "MEMORY"
+
+    def is_read_only(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Creates a new memory file with the given content. Fails if a memory with that "

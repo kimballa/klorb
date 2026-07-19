@@ -33,6 +33,12 @@ class AskUserQuestionsTool(Tool):
     def name(self) -> str:
         return "AskUserQuestions"
 
+    def category(self) -> str:
+        return "INTERACTION"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Ask the user one or more direct questions instead of guessing, assuming, or "

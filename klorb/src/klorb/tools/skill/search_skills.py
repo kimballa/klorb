@@ -25,6 +25,12 @@ class SearchSkillsTool(Tool):
     def name(self) -> str:
         return "SearchSkills"
 
+    def category(self) -> str:
+        return "SKILL"
+
+    def is_read_only(self) -> bool:
+        return True
+
     def description(self) -> str:
         return (
             "Narrows the list of available skills by keyword. Searches every discoverable skill "
