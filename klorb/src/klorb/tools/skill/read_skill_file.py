@@ -8,8 +8,14 @@ from typing import Any
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.skill.catalog import get_skill_catalog_registry, resolve_and_gate_skill
 from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, resolve_skill_file
-from klorb.tools.tool import Tool, truncate_lines
-from klorb.tools.util import ReadFileCore
+from klorb.tools.tool import ReadPreview, Tool, truncate_lines
+from klorb.tools.util import (
+    READ_PREVIEW_MAX_LINES,
+    FullFileView,
+    ReadFileCore,
+    parse_numbered_content,
+    read_full_file_lines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,3 +133,33 @@ class ReadSkillFileTool(Tool):
         capped_result = dict(result)
         capped_result["content"] = truncate_lines(result["content"], 8)
         return super().detail_view(args, capped_result, error)
+
+    def read_preview(
+        self, args: dict[str, Any], result: Any = None, error: str | None = None,
+    ) -> ReadPreview | None:
+        if error is not None or not isinstance(result, dict) or "content" not in result:
+            return None
+        namespace = args.get("namespace", "?")
+        name = args.get("name", "?")
+        path = args.get("path", "?")
+        lines = parse_numbered_content(result["content"])
+        return ReadPreview(
+            label=self.summary(args, result, error), preview_lines=lines[:READ_PREVIEW_MAX_LINES],
+            truncated=len(lines) > READ_PREVIEW_MAX_LINES or bool(result.get("truncated")),
+            open_full=lambda: self._open_full_view(namespace, name, path, result.get("start_line", 1)))
+
+    def _open_full_view(
+        self, namespace: str, name: str, path: str, scroll_to_line: int,
+    ) -> FullFileView:
+        """Re-read the skill file in full for the click-to-expand overlay -- via the same
+        `resolve_and_gate_skill`/`resolve_skill_file` `apply()` uses (unlike the other `Read*`
+        tools' `_open_full_view`, this re-consults `skillRules` rather than skipping the gate,
+        since that check is idempotent against an already-granted permission and there's no
+        ungated resolution path to call instead)."""
+        registry = get_skill_catalog_registry()
+        registry.ensure_from_context(self.context)
+        resolved = resolve_and_gate_skill(
+            catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
+            override=self.context.permission_override, namespace=namespace, name=name)
+        target = resolve_skill_file(resolved, path)
+        return read_full_file_lines(lambda: self.read_file_core.open_resource(target), scroll_to_line)

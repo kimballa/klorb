@@ -13,8 +13,8 @@ from klorb.tools.memory.common import (
     validate_memory_filename,
 )
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool
-from klorb.tools.util import CreateFileCore
+from klorb.tools.tool import DiffPreview, Tool
+from klorb.tools.util import CreateFileCore, DiffHunk
 
 logger = logging.getLogger(__name__)
 
@@ -122,3 +122,11 @@ class CreateMemoryTool(Tool):
             f"Create memory: {result.get('namespace', namespace)}/{result.get('filename', filename)} "
             f"({result.get('total_lines')} lines)"
         )
+
+    def diff_preview(
+        self, args: dict[str, Any], result: Any = None, error: str | None = None,
+    ) -> DiffPreview | None:
+        if error is not None or not isinstance(result, dict) or "diff" not in result:
+            return None
+        hunks = [DiffHunk.model_validate(hunk) for hunk in result["diff"]]
+        return DiffPreview(label=self.summary(args, result, error), hunks=hunks)

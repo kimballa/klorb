@@ -3,7 +3,8 @@
 
 import json
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import BaseModel
 
@@ -14,6 +15,13 @@ if TYPE_CHECKING:
     # klorb.session -> klorb.tools.tool (for describe_tool_arg_json_error). ToolSetupContext is
     # only ever used here as a type annotation, never instantiated, so this is safe.
     from klorb.tools.setup_context import ToolSetupContext
+    # Deferred for the same reason, one hop shorter: klorb.tools.util's __init__ imports
+    # dir_walk.py, which imports klorb.tools.setup_context -- so even importing a leaf submodule
+    # like diff_lines.py/read_file_core.py here (rather than that submodule's own contents)
+    # would trigger the same cycle. DiffHunk/FullFileView are only ever used here as type
+    # annotations (quoted below), never constructed, so this is safe.
+    from klorb.tools.util.diff_lines import DiffHunk
+    from klorb.tools.util.read_file_core import FullFileView
 
 
 def default_tool_call_summary(name: str, args: dict[str, Any], error: str | None) -> str:
@@ -121,6 +129,36 @@ def describe_tool_arg_json_error(name: str, raw_arguments: str, json_exc: json.J
     return "\n\n".join(parts)
 
 
+@dataclass
+class DiffPreview:
+    """What `Tool.diff_preview()` returns for a finished edit/create call, for a UI to render as
+    a colored, line-numbered diff instead of plain summary/detail text -- see
+    docs/specs/terminal-repl.md's tool-call preview section. `hunks` is parsed back from the
+    call's own `result["diff"]` (see `klorb.tools.util.diff_lines.build_diff_hunks()`), so no
+    diffing happens at render time, live or restored alike.
+    """
+
+    label: str
+    hunks: "list[DiffHunk]"
+
+
+@dataclass
+class ReadPreview:
+    """What `Tool.read_preview()` returns for a finished read call, for a UI to render a short
+    numbered content preview instead of plain summary/detail text. `preview_lines` is already
+    capped to the UI's inline-preview length by the `Tool` override that builds this (not by any
+    UI-layer code); `truncated` is set whenever the read range held more lines than that, so the
+    UI knows to show a trailing `"..."` marker. `open_full` is a zero-argument closure that
+    performs a fresh, passive read of the same subject -- called only when the user actually
+    clicks to expand the preview, never eagerly at render time.
+    """
+
+    label: str
+    preview_lines: list[tuple[int, str]]
+    truncated: bool
+    open_full: "Callable[[], FullFileView]"
+
+
 def truncate_lines(text: str, max_lines: int) -> str:
     """Return `text` unchanged if it has at most `max_lines` lines, otherwise its first
     `max_lines` lines followed by a trailing `"..."` line — used by a `detail_view()` override
@@ -214,3 +252,26 @@ class Tool(ABC):
         fit, e.g. to truncate a long field instead of dumping it in full.
         """
         return default_tool_call_detail(self.name(), args, result, error)
+
+    def diff_preview(
+        self, args: dict[str, Any], result: Any = None, error: str | None = None,
+    ) -> DiffPreview | None:
+        """Return a `DiffPreview` for a finished call whose `result` carries a `diff` field
+        (see `klorb.tools.util.diff_lines.build_diff_hunks()`), so a UI can render a colored,
+        line-numbered diff in place of `summary()`/`detail_view()`'s plain text. `None` by
+        default -- every tool except the `EditFile`/`CreateFile` family and their memory/
+        scratchpad counterparts has nothing to preview this way, and keeps rendering exactly as
+        `summary()`/`detail_view()` describe. Same `error`-is-the-success-discriminant contract
+        as `summary()`: an override should return `None` whenever `error is not None`.
+        """
+        return None
+
+    def read_preview(
+        self, args: dict[str, Any], result: Any = None, error: str | None = None,
+    ) -> ReadPreview | None:
+        """Return a `ReadPreview` for a finished read call, so a UI can render a short numbered
+        content preview in place of `summary()`. `None` by default -- only the `Read*` tools
+        override this. Same `error`-is-the-success-discriminant contract as `summary()`: an
+        override should return `None` whenever `error is not None`.
+        """
+        return None

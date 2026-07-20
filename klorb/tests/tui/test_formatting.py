@@ -1,11 +1,13 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.formatting's pure helper functions."""
 
+from klorb.tools.util import build_diff_hunks
 from klorb.tui.formatting import (
     _idle_ticks,
     _sweep_ticks,
     crawl_animation_text,
     format_token_count,
+    render_diff_content,
     summarize_reasoning_details,
 )
 
@@ -86,3 +88,53 @@ def test_crawl_animation_text_cycle_repeats() -> None:
     cycle_length = _sweep_ticks(word) + _idle_ticks()
     for tick in range(cycle_length):
         assert _styles(word, tick) == _styles(word, tick + cycle_length)
+
+
+def test_render_diff_content_full_view_shows_the_whole_leading_context() -> None:
+    old_lines = [str(i) for i in range(1, 31)]
+    new_lines = list(old_lines)
+    new_lines[14] = "X"  # 0-indexed -- changes line 15
+    hunks = build_diff_hunks(old_lines, new_lines)
+
+    full = str(render_diff_content(hunks, max_lines=None))
+
+    # 1 context/del/add line per source line: 8 lines of context before (7-14), the del/add
+    # pair for line 15, and 8 lines of context after (16-23) -- no truncation.
+    assert full.count("\n") + 1 == 18
+    assert "..." not in full
+
+
+def test_render_diff_content_compact_view_starts_two_lines_before_the_change() -> None:
+    """A change with a full (8-line) leading context ahead of it must not have its `max_lines=8`
+    compact preview spent entirely on that context: it should start close to the change instead,
+    so the change itself is always visible in the compact preview -- see
+    docs/specs/terminal-repl.md's "Diff and read previews" section."""
+    old_lines = [str(i) for i in range(1, 31)]
+    new_lines = list(old_lines)
+    new_lines[14] = "X"
+    hunks = build_diff_hunks(old_lines, new_lines)
+
+    compact = str(render_diff_content(hunks, max_lines=8))
+
+    # 2 lines of context before (13, 14), the del/add pair for line 15, and as much trailing
+    # context as fits in the remaining budget (16-19) -- 8 lines total, then truncated.
+    assert compact.count("\n") + 1 == 9
+    assert "- 15" in compact
+    assert "+ X" in compact
+    assert compact.rstrip().endswith("...")
+    # None of the far-out (untouched) context lines this hunk's full view would show leak in.
+    assert " 7  7   7" not in compact
+
+
+def test_render_diff_content_compact_view_clamps_at_the_start_of_the_hunk() -> None:
+    """A change with less than 2 lines of leading context (here, none -- line 1 itself changes)
+    must not go negative when backing up; it should simply start at the hunk's own beginning."""
+    old_lines = ["a", "b", "c"]
+    new_lines = ["A", "b", "c"]
+    hunks = build_diff_hunks(old_lines, new_lines, context=8)
+
+    compact = str(render_diff_content(hunks, max_lines=8))
+
+    assert "- a" in compact
+    assert "+ A" in compact
+    assert "..." not in compact

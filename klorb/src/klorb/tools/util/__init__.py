@@ -32,12 +32,23 @@ finding the matching line indices, and rendering matches (with optional context)
 compact dense line format those tools share. Like the `*Core` helpers it takes no
 `ToolSetupContext` — each function operates on plain lists of lines its caller already read — so
 re-exporting it here is cycle-free for the same reason.
+
+`diff_lines.py` (`build_diff_hunks`, `DiffHunk`, `DiffLine`) is the structured diff mechanic
+`EditFileCore`/`CreateFileCore` use to populate a result's `diff` field -- also cycle-free, since
+it depends on nothing but the stdlib `difflib` and Pydantic.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
+from klorb.tools.util.diff_lines import DIFF_CONTEXT_LINES, DiffHunk, DiffLine, build_diff_hunks
 from klorb.tools.util.dir_walk import walk_readable_tree
 from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit
-from klorb.tools.util.read_file_core import ReadFileCore
+from klorb.tools.util.read_file_core import (
+    READ_PREVIEW_MAX_LINES,
+    FullFileView,
+    ReadFileCore,
+    parse_numbered_content,
+    read_full_file_lines,
+)
 from klorb.tools.util.search_core import (
     VALID_OUTPUT_STYLES,
     compile_queries,
@@ -51,15 +62,23 @@ from klorb.tools.util.search_core import (
 
 __all__ = [
     "CreateFileCore",
+    "DIFF_CONTEXT_LINES",
+    "DiffHunk",
+    "DiffLine",
     "EditFileCore",
+    "FullFileView",
     "LineRangeEdit",
+    "READ_PREVIEW_MAX_LINES",
     "ReadFileCore",
     "VALID_OUTPUT_STYLES",
+    "build_diff_hunks",
     "compile_queries",
     "context_lines_for_matches",
     "format_match_line",
     "match_line_indices",
     "matches_only",
+    "parse_numbered_content",
+    "read_full_file_lines",
     "validate_output_style",
     "validate_queries",
     "walk_readable_tree",

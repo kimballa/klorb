@@ -120,3 +120,21 @@ def test_detail_view_truncates_long_content_to_eight_lines(tmp_path: Path) -> No
 
     assert detail["result"]["content"] == "\n".join(f"{i}|line {i}" for i in range(1, 9)) + "\n..."
     assert detail["result"]["total_lines"] == 50
+
+
+def test_read_preview_open_full_rereads_the_whole_scratchpad(tmp_path: Path) -> None:
+    scratchpad = _write_lines(tmp_path, 10)
+    tool = ReadScratchpadTool(_context(str(scratchpad)))
+    args: dict[str, object] = {}
+
+    result = tool.apply(args)
+    preview = tool.read_preview(args, result)
+
+    assert preview is not None
+    assert preview.preview_lines == [(1, "line 1"), (2, "line 2"), (3, "line 3"), (4, "line 4")]
+    assert preview.truncated is True
+
+    full_view = preview.open_full()
+    assert full_view.error is None
+    assert full_view.lines is not None
+    assert len(full_view.lines) == 10

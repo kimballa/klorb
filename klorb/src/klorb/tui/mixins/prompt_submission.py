@@ -398,14 +398,13 @@ class PromptSubmissionMixin(ReplAppBase):
 
         def handle_tool_call(event: ToolCallEvent) -> None:
             nonlocal round_index
-            summary_text, detail_text = self._render_tool_call(event)
+            rendered = self._render_tool_call(event)
             running_widget = self._running_tool_call_widgets.pop(event.call_id, None)
             if running_widget is not None:
                 self.call_from_thread(
-                    self._finalize_running_tool_call_widget,
-                    running_widget, summary_text, detail_text)
+                    self._finalize_running_tool_call_widget, running_widget, rendered)
             else:
-                self.call_from_thread(self._mount_tool_call_widget, summary_text, detail_text)
+                self.call_from_thread(self._mount_tool_call_widget, rendered)
             round_index += 1
 
         # The outer try/finally guarantees `_turn_in_flight` is cleared however this worker

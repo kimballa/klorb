@@ -26,18 +26,8 @@
 
 ## Feature backlog
 
-* Tools should be accessed by the agent from a ToolCatalog. This is an object member on the Session.
-  This sets up evenutally for subagents having access to a restricted subset of Tools. The "root"
-  session created for Operator gets a fully-populated ToolCatalog that has everything the Tool
-  discovery mechanism finds that isn't in a hard `deny` list.
-  * Each Tool should have a category like "FILES" or "MEMORY", revealed by `Tool#category()` and
-    we can use those to filter what tools a subagent gets rather than explicitly listing each one.
-  * Tools also need a `Tool#is_read_only()` flag method so we can distinguish ro vs rw tools.
-
 * session.py needs to get split up with mixins or something, it's > 2k lines.
 
-* (Successful) File create/edit operations should show a short preview of the applied diff, and ^o details
-  mode should show the full diff applied. Also true for memories, scratchpad, etc.
 
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing

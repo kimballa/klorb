@@ -39,6 +39,7 @@ from klorb.session import (
 )
 from klorb.tui.widgets.tool_call_widgets import (
     GettingReadyStatic,
+    RenderedToolCall,
     RunningToolCallStatic,
     ToolCallStatic,
     TurnWaitingStatic,
@@ -136,12 +137,10 @@ class ReplAppBase(App[None]):
 
     def _update_reasoning_details_widget(self, widget: Static, text: str) -> None: ...
 
-    def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
+    def _render_tool_call(self, event: ToolCallEvent) -> RenderedToolCall:
         raise NotImplementedError
 
-    def _mount_tool_call_widget(
-        self, summary_text: str, detail_text: str,
-    ) -> tuple[ToolCallStatic, Static]:
+    def _mount_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
         raise NotImplementedError
 
     def _render_tool_call_summary(self, name: str, args: dict[str, Any]) -> str:
@@ -155,7 +154,7 @@ class ReplAppBase(App[None]):
     def _running_tool_call_anchor(self) -> Static | None: ...
 
     def _finalize_running_tool_call_widget(
-        self, widget: RunningToolCallStatic, summary_text: str, detail_text: str,
+        self, widget: RunningToolCallStatic, rendered: RenderedToolCall,
     ) -> None: ...
 
     def _on_tool_call_limit_reached(self, message: str) -> bool:

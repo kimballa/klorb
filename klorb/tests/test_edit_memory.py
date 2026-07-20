@@ -294,3 +294,23 @@ def test_summary_on_failure_includes_the_error(
     }
 
     assert tool.summary(args, error="not found") == "Edit memory: global/notes.md (+1/-1) failed: not found"
+
+
+def test_diff_preview_reflects_the_applied_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nb\nc\n")
+    tool = EditMemoryTool(context)
+    args = {
+        "namespace": "global", "filename": "notes.md", "start_line": 2, "end_line": 2,
+        "start_text": "b", "end_text": "b", "new_text": "B",
+    }
+
+    result = tool.apply(args)
+    preview = tool.diff_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
+    assert kinds == ["context", "del", "add", "context"]

@@ -343,3 +343,17 @@ def test_end_text_match_failure_error_names_line_number_and_contents(tmp_path: P
     message = str(excinfo.value)
     assert "line #2" in message
     assert 'Line #2\'s contents are "b"' in message
+
+
+def test_diff_preview_reflects_the_applied_change(tmp_path: Path) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nc\n")
+    tool = EditScratchpadTool(_context(str(scratchpad)))
+    args = {"start_line": 2, "end_line": 2, "start_text": "b", "end_text": "b", "new_text": "B"}
+
+    result = tool.apply(args)
+    preview = tool.diff_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
+    assert kinds == ["context", "del", "add", "context"]

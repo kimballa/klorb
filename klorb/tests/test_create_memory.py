@@ -158,3 +158,16 @@ def test_summary_on_failure_includes_the_error(
 
     assert tool.summary(args, error="already exists") == (
         "Create memory: global/notes.md failed: already exists")
+
+
+def test_diff_preview_is_an_all_add_hunk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tool = CreateMemoryTool(_context(tmp_path, monkeypatch))
+    args = {"namespace": "global", "filename": "notes.md", "content": "Topic\nbody\n"}
+
+    result = tool.apply(args)
+    preview = tool.diff_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
+    assert kinds == ["add", "add"]

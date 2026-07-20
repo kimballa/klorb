@@ -3,9 +3,62 @@
 `klorb.tools.util`'s package docstring for how the two tools each hold one of these as a member
 and delegate to it."""
 
+from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, Callable
+
+READ_PREVIEW_MAX_LINES = 4
+"""How many numbered lines a `Tool.read_preview()` override keeps in `ReadPreview.preview_lines`
+for the inline compact preview -- shared by every `Read*` tool's override so the cap lives in one
+place rather than being repeated as a magic number in each."""
+
+
+@dataclass
+class FullFileView:
+    """The whole subject a `Tool`'s `read_preview()` shows in its click-to-expand overlay --
+    built by `read_full_file_lines()` only when the user actually clicks, never eagerly at
+    render time. `lines` is `None` when `error` is set (e.g. the file was deleted or moved since
+    it was read); `scroll_to_line` is the 1-indexed line the overlay should position at the top
+    of its viewport, matching the range originally read.
+    """
+
+    lines: list[tuple[int, str]] | None
+    error: str | None
+    scroll_to_line: int
+
+
+def parse_numbered_content(content: str) -> list[tuple[int, str]]:
+    """Parse `ReadFileCore.apply()`'s `content` field (lines of the form `"N|text"`, one per
+    line) back into `(line_number, text)` pairs -- shared by every `Tool.read_preview()`
+    override so each one doesn't re-derive this from the same string format. Splits on the
+    first `"|"` only, since `text` itself may legitimately contain `"|"` characters. An empty
+    `content` (a zero-line read) yields an empty list rather than one spurious empty pair.
+    """
+    if not content:
+        return []
+    pairs: list[tuple[int, str]] = []
+    for line in content.split("\n"):
+        lineno_text, _, text = line.partition("|")
+        pairs.append((int(lineno_text), text))
+    return pairs
+
+
+def read_full_file_lines(open_resource: Callable[[], IO[str]], scroll_to_line: int) -> FullFileView:
+    """Read every line out of `open_resource()` (a zero-argument callable returning an open text
+    handle, e.g. `lambda: core.open_resource(path)`), numbering them from 1, for a `Tool`'s
+    `read_preview()` click-to-expand overlay. Catches `OSError` (a deleted/moved/unreadable
+    subject) and returns a `FullFileView` carrying `error` instead of raising -- this runs at
+    click time, well after the read it's redisplaying already succeeded, so a failure here is an
+    ordinary "it changed since then" outcome, not a bug to propagate as an exception.
+    """
+    try:
+        with open_resource() as file:
+            lines = file.read().splitlines()
+    except OSError as exc:
+        return FullFileView(lines=None, error=str(exc), scroll_to_line=scroll_to_line)
+    return FullFileView(
+        lines=list(enumerate(lines, start=1)), error=None, scroll_to_line=scroll_to_line)
 
 
 class ReadFileCore:

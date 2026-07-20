@@ -63,6 +63,20 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     a poor fit, e.g. to truncate a long field via the `truncate_lines()` helper instead of
     dumping it in full.
 
+  Two more are concrete and default to `None`, for a UI to render richer than plain text when a
+  call has something more specific to show (see [[terminal-repl]]'s "Diff and read previews"):
+  * `diff_preview(args, result=None, error=None) -> DiffPreview | None` — a `label` plus the
+    `DiffHunk`s parsed back from `result["diff"]` (see
+    `klorb.tools.util.diff_lines.build_diff_hunks()`), for a call whose result carries a
+    structured diff. Overridden by `EditFile`/`CreateFile` and their `EditMemory`/
+    `CreateMemory`/`EditScratchpad` counterparts; `None` on failure, same discriminant as
+    `summary()`.
+  * `read_preview(args, result=None, error=None) -> ReadPreview | None` — a `label`, up to 4
+    numbered `preview_lines` from the read's own captured content, a `truncated` flag, and a
+    lazy `open_full()` closure performing a fresh, passive re-read of the whole subject (no
+    permission re-ask) only when a UI actually invokes it. Overridden by `ReadFile`/
+    `ReadMemory`/`ReadScratchpad`/`ReadSkillFile`; `None` on failure.
+
   `default_tool_call_summary()`/`default_tool_call_detail()` (both in `klorb/src/klorb/tools/
   tool.py`) are also what a consumer falls back to for a tool call whose name isn't recognized
   by a `ToolRegistry` (so there's no `Tool` instance to call `.summary()`/`.detail_view()` on)

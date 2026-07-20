@@ -6,8 +6,14 @@ from typing import Any
 
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool, truncate_lines
-from klorb.tools.util import ReadFileCore
+from klorb.tools.tool import ReadPreview, Tool, truncate_lines
+from klorb.tools.util import (
+    READ_PREVIEW_MAX_LINES,
+    FullFileView,
+    ReadFileCore,
+    parse_numbered_content,
+    read_full_file_lines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +89,20 @@ class ReadScratchpadTool(Tool):
         capped_result = dict(result)
         capped_result["content"] = truncate_lines(result["content"], 8)
         return super().detail_view(args, capped_result, error)
+
+    def read_preview(
+        self, args: dict[str, Any], result: Any = None, error: str | None = None,
+    ) -> ReadPreview | None:
+        if error is not None or not isinstance(result, dict) or "content" not in result:
+            return None
+        lines = parse_numbered_content(result["content"])
+        return ReadPreview(
+            label=self.summary(args, result, error), preview_lines=lines[:READ_PREVIEW_MAX_LINES],
+            truncated=len(lines) > READ_PREVIEW_MAX_LINES or bool(result.get("truncated")),
+            open_full=lambda: self._open_full_view(result.get("start_line", 1)))
+
+    def _open_full_view(self, scroll_to_line: int) -> FullFileView:
+        """Passively re-read the scratchpad in full for the click-to-expand overlay -- no
+        permission check to redo, since the scratchpad has none in the first place."""
+        path = scratchpad_path(self.context)
+        return read_full_file_lines(lambda: self.read_file_core.open_resource(path), scroll_to_line)

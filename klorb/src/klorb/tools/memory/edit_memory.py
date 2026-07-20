@@ -12,8 +12,8 @@ from klorb.tools.memory.common import (
     validate_memory_filename,
 )
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import Tool, truncate_lines
-from klorb.tools.util import EditFileCore
+from klorb.tools.tool import DiffPreview, Tool, truncate_lines
+from klorb.tools.util import DiffHunk, EditFileCore
 
 logger = logging.getLogger(__name__)
 
@@ -165,3 +165,11 @@ class EditMemoryTool(Tool):
         capped_result = dict(result)
         capped_result["post_edit_content"] = truncate_lines(result["post_edit_content"], 8)
         return super().detail_view(args, capped_result, error)
+
+    def diff_preview(
+        self, args: dict[str, Any], result: Any = None, error: str | None = None,
+    ) -> DiffPreview | None:
+        if error is not None or not isinstance(result, dict) or "diff" not in result:
+            return None
+        hunks = [DiffHunk.model_validate(hunk) for hunk in result["diff"]]
+        return DiffPreview(label=self.summary(args, result, error), hunks=hunks)

@@ -202,3 +202,23 @@ def test_summary_on_failure_includes_the_error() -> None:
 
     assert tool.summary({"filename": "existing.txt"}, error="already exists") == (
         "Create file: existing.txt failed: already exists")
+
+
+def test_diff_preview_is_an_all_add_hunk(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+    tool = CreateFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "content": "a\nb\n"}
+
+    result = tool.apply(args)
+    preview = tool.diff_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
+    assert kinds == ["add", "add"]
+
+
+def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
+    tool = CreateFileTool(_context(tmp_path))
+
+    assert tool.diff_preview({"filename": "existing.txt"}, None, "already exists") is None

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from klorb.tools.util.diff_lines import build_diff_hunks
+
 logger = logging.getLogger(__name__)
 
 LINE_HINT_ALIASES = ("line", "line_num", "line_no", "line_number")
@@ -177,8 +179,10 @@ class EditFileCore:
     ) -> dict[str, Any]:
         """Apply one row-extent substitution to `path` per `args`, returning
         `requested_start_line`, `requested_end_line`, `start_line`, `end_line`,
-        `line_hint_matched`, `new_total_lines`, and `content` (the caller adds `filename` if it
-        has one).
+        `line_hint_matched`, `new_total_lines`, `content`, and `diff` -- a jsonable rendering of
+        `klorb.tools.util.diff_lines.build_diff_hunks()`'s full before/after diff, for a `Tool`'s
+        `diff_preview()` to parse back into `DiffHunk`s (the caller adds `filename` if it has
+        one).
 
         `args` may take any of the forms `_normalize_edit_args()` accepts: the classic
         `start_line`/`end_line`/`start_text`/`end_text` call; the single-line shortcut
@@ -284,6 +288,7 @@ class EditFileCore:
         snippet_end = resolved_start_line + inserted_line_count - 1
         snippet = "\n".join(
             f"{resolved_start_line + i}|{line}" for i, line in enumerate(new_text.splitlines()))
+        diff_hunks = build_diff_hunks(all_lines, new_lines)
 
         out: dict[str, Any] = {
             "requested_start_line": start_line,
@@ -294,6 +299,7 @@ class EditFileCore:
             "new_total_lines": new_total_lines,
             "post_edit_content": snippet,
             "edit_success": True,
+            "diff": [hunk.model_dump() for hunk in diff_hunks],
         }
         if not file_existed:
             out["created"] = True

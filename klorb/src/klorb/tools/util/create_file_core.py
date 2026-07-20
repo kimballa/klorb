@@ -6,6 +6,8 @@ delegates to it."""
 from pathlib import Path
 from typing import Any
 
+from klorb.tools.util.diff_lines import build_diff_hunks
+
 
 class CreateFileCore:
     """Creates a new text file at `path` with the given content, raising `FileExistsError` if
@@ -25,8 +27,10 @@ class CreateFileCore:
         }
 
     def apply(self, path: Path, args: dict[str, Any], *, subject: str, edit_hint: str) -> dict[str, Any]:
-        """Create `path` with `args["content"]`, returning `total_lines` and `created` (the
-        caller adds `filename` if it has one).
+        """Create `path` with `args["content"]`, returning `total_lines`, `created`, and `diff` --
+        a jsonable rendering of `klorb.tools.util.diff_lines.build_diff_hunks()`'s all-insert
+        diff against an empty old subject, for a `Tool`'s `diff_preview()` to parse back into
+        `DiffHunk`s (the caller adds `filename` if it has one).
 
         `subject` names the thing being created, for the "already exists" error message (e.g.
         a filename, or a memory's namespace/filename pair); `edit_hint` names the tool to use
@@ -39,7 +43,10 @@ class CreateFileCore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
+        new_lines = content.splitlines()
+        diff_hunks = build_diff_hunks([], new_lines)
         return {
-            "total_lines": len(content.splitlines()),
+            "total_lines": len(new_lines),
             "created": True,
+            "diff": [hunk.model_dump() for hunk in diff_hunks],
         }

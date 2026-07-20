@@ -2,18 +2,36 @@
 """Tests for klorb.tui.mixins.rendering.RenderingMixin."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
-from tui.conftest import _reply, _session, _session_with_tools, _tool_call_reply, _wait_until
+from tui.conftest import TEST_SESSION_ID, _reply, _session, _session_with_tools, _tool_call_reply, _wait_until
 
-from klorb.session import SessionConfig
+from klorb.permissions.directory_access import DirRules
+from klorb.process_config import ProcessConfig
+from klorb.session import Session, SessionConfig
+from klorb.tools.registry import ToolRegistry
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
 from klorb.tui.mixins.rendering import REASONING_DETAILS_LABEL, THINKING_LABEL, TOOL_USE_LABEL
+from klorb.tui.panels.preview_screens import DiffDetailScreen, ReadDetailScreen
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import ToolCallStatic
+from klorb.workspace import Workspace
+
+
+def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> Session:
+    """Like `tui.conftest._session_with_tools`, but discovers the real production tool package
+    (`klorb.tools`, `ToolRegistry.discover_tools`'s default) instead of the test-fixture
+    `sample_tools` package -- needed for these tests, which exercise real `EditFile`/`ReadFile`
+    diff/read previews rather than `sample_tools.echo_tool`'s plain-string rendering."""
+    process_config = ProcessConfig()
+    tool_registry = ToolRegistry.discover_tools(process_config, config)
+    return Session(
+        config, provider=provider, session_id=TEST_SESSION_ID, tool_registry=tool_registry,
+        process_config=process_config)
 
 
 async def test_tool_call_renders_as_a_one_line_summary_by_default() -> None:
@@ -338,3 +356,217 @@ async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
         thinking_widgets = list(history.query(".thinking-body").results(Static))
 
         assert thinking_widgets[0].content == "check [status]"
+
+
+async def test_edit_file_call_renders_a_colored_diff_preview_clickable_to_full_overlay(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("a\nb\nc\n")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "EditFile", json.dumps({
+            "filename": str(file_path), "start_line": 2, "end_line": 2,
+            "start_text": "b", "end_text": "b", "new_text": "B",
+        }))]),
+        _reply("edited"),
+    ]
+    session_config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path),
+        read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    session = _session_with_real_tools(mock_provider, session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "edit the file"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        tool_call_widgets = list(history.query(ToolCallStatic))
+        assert len(tool_call_widgets) == 1
+        widget = tool_call_widgets[0]
+        rendered = str(widget.render())
+        assert rendered.startswith(f"Edit file: {file_path}")
+        assert "- b" in rendered
+        assert "+ B" in rendered
+        # Unchanged context lines from the edit still show, unstyled.
+        assert "a" in rendered
+        assert "c" in rendered
+
+        await pilot.click(widget)
+        await pilot.pause()
+        assert isinstance(app.screen, DiffDetailScreen)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, DiffDetailScreen)
+
+
+async def test_ctrl_o_shows_the_full_diff_for_an_edit_file_call(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("\n".join(str(i) for i in range(1, 31)) + "\n")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "EditFile", json.dumps({
+            "filename": str(file_path), "start_line": 15, "end_line": 15,
+            "start_text": "15", "end_text": "15", "new_text": "X",
+        }))]),
+        _reply("edited"),
+    ]
+    session_config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path),
+        read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    session = _session_with_real_tools(mock_provider, session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "edit the file"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        widget = history.query_one(ToolCallStatic)
+        compact_rendered = str(widget.render())
+        # The change itself must still be visible in the capped compact view: with a full
+        # 8-line leading context ahead of it (line 15 has 8+ lines of untouched context on both
+        # sides in this 30-line file), an 8-line cap that started at the hunk's own beginning
+        # would show nothing but that context and never reach the change at all -- it should
+        # instead start only 2 lines before the change (context lines 13-14), fill the rest of
+        # its 8-line budget with the change and as much trailing context as fits, and truncate.
+        # 1 header + (context 13, 14; del 15; add 15; context 16-19) + "..." = 10 lines.
+        assert compact_rendered.count("\n") + 1 == 10
+        assert "- 15" in compact_rendered
+        assert "+ X" in compact_rendered
+        assert compact_rendered.rstrip().endswith("...")
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        full_rendered = str(widget.render())
+        # The full view reaches all the way back to the hunk's true leading context: 1 header +
+        # (context 7-14; del 15; add 15; context 16-23), no truncation marker.
+        assert full_rendered.count("\n") + 1 == 19
+        assert "- 15" in full_rendered
+        assert "+ X" in full_rendered
+        assert "..." not in full_rendered
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert str(widget.render()) == compact_rendered  # back to compact, unchanged
+
+
+async def test_read_file_call_renders_a_numbered_preview_clickable_to_full_file_overlay(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("\n".join(f"line {i}" for i in range(1, 11)) + "\n")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "ReadFile", json.dumps({"filename": str(file_path)}))]),
+        _reply("read"),
+    ]
+    session_config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path),
+        read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    session = _session_with_real_tools(mock_provider, session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "read the file"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        widget = history.query_one(ToolCallStatic)
+        rendered = str(widget.render())
+        assert rendered.startswith(f"Read file: {file_path}")
+        assert "line 1" in rendered
+        assert "line 4" in rendered
+        assert "line 5" not in rendered  # only the first 4 lines preview inline
+        assert rendered.rstrip().endswith("...")
+
+        await pilot.click(widget)
+        await pilot.pause()
+        assert isinstance(app.screen, ReadDetailScreen)
+        overlay_text = str(app.screen.query_one("#preview-detail-label", Static).render())
+        assert "Read file:" in overlay_text
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ReadDetailScreen)
+
+
+async def test_read_file_call_overlay_reports_an_error_if_the_file_is_gone(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("line 1\nline 2\n")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "ReadFile", json.dumps({"filename": str(file_path)}))]),
+        _reply("read"),
+    ]
+    session_config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path),
+        read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    session = _session_with_real_tools(mock_provider, session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "read the file"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        widget = history.query_one(ToolCallStatic)
+        file_path.unlink()
+
+        await pilot.click(widget)
+        await pilot.pause()
+        assert isinstance(app.screen, ReadDetailScreen)
+        content_text = str(app.screen.query_one("#preview-detail-content", Static).render())
+        assert "Could not reopen" in content_text
+
+
+async def test_detail_screen_header_label_stays_pinned_while_content_scrolls(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("\n".join(f"line {i}" for i in range(1, 201)) + "\n")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "ReadFile", json.dumps({"filename": str(file_path)}))]),
+        _reply("read"),
+    ]
+    session_config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path),
+        read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    session = _session_with_real_tools(mock_provider, session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "read the file"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        widget = history.query_one(ToolCallStatic)
+        await pilot.click(widget)
+        await pilot.pause()
+        assert isinstance(app.screen, ReadDetailScreen)
+
+        label = app.screen.query_one("#preview-detail-label", Static)
+        scroll = app.screen.query_one("#preview-detail-scroll", VerticalScroll)
+        label_y_before = label.region.y
+
+        scroll.scroll_to(y=50, animate=False)
+        await pilot.pause()
+
+        assert scroll.scroll_y > 0
+        assert label.region.y == label_y_before

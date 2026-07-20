@@ -295,3 +295,70 @@ def test_detail_view_leaves_short_content_untouched(tmp_path: Path) -> None:
     detail = json.loads(tool.detail_view({"filename": str(file_path)}, result))
 
     assert detail["result"]["content"] == result["content"]
+
+
+# --- read_preview() (see docs/specs/terminal-repl.md) ---
+
+
+def test_read_preview_caps_to_four_lines_and_flags_truncation(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 10)
+    tool = ReadFileTool(_context(tmp_path))
+    args = {"filename": str(file_path)}
+    result = tool.apply(args)
+
+    preview = tool.read_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    assert preview.preview_lines == [(1, "line 1"), (2, "line 2"), (3, "line 3"), (4, "line 4")]
+    assert preview.truncated is True
+
+
+def test_read_preview_not_truncated_when_range_fits(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+    tool = ReadFileTool(_context(tmp_path))
+    args = {"filename": str(file_path)}
+    result = tool.apply(args)
+
+    preview = tool.read_preview(args, result)
+
+    assert preview is not None
+    assert preview.truncated is False
+
+
+def test_read_preview_is_none_on_failure(tmp_path: Path) -> None:
+    tool = ReadFileTool(_context(tmp_path))
+
+    assert tool.read_preview({"filename": "missing.txt"}, None, "no such file") is None
+
+
+def test_read_preview_open_full_rereads_the_whole_file(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 10)
+    tool = ReadFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "start_line": 3, "end_line": 4}
+    result = tool.apply(args)
+
+    preview = tool.read_preview(args, result)
+    assert preview is not None
+    full_view = preview.open_full()
+
+    assert full_view.error is None
+    assert full_view.scroll_to_line == 3
+    assert full_view.lines is not None
+    assert len(full_view.lines) == 10
+    assert full_view.lines[0] == (1, "line 1")
+
+
+def test_read_preview_open_full_reports_an_error_if_the_file_is_gone(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+    tool = ReadFileTool(_context(tmp_path))
+    args = {"filename": str(file_path)}
+    result = tool.apply(args)
+    preview = tool.read_preview(args, result)
+    assert preview is not None
+
+    file_path.unlink()
+    full_view = preview.open_full()
+
+    assert full_view.lines is None
+    assert full_view.error is not None

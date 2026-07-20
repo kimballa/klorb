@@ -4,16 +4,36 @@ summary statics, and the session-naming "Getting ready..." notice, all mounted i
 history."""
 
 import random
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.visual import VisualType
 from textual.widgets import Button, Static
 
 from klorb.tui.formatting import ANIMATION_TICK_SECONDS, crawl_animation_text
+
+
+@dataclass
+class RenderedToolCall:
+    """One finished tool call, fully rendered for the history scroll: `summary_content`/
+    `detail_content` are whatever `ToolCallStatic`/`RunningToolCallStatic` should show for
+    Ctrl+O's summary/detail toggle -- a plain `str` for the common case (unchanged from before
+    this existed), or a colored/numbered `textual.content.Content` for a diff/read preview (see
+    `klorb.tui.mixins.rendering.RenderingMixin._render_tool_result`). `on_click`, when set,
+    pushes the call's click-to-expand overlay (`klorb.tui.panels.preview_screens`). Lives here,
+    alongside `ToolCallStatic` (rather than in `rendering.py`, where it's built), since
+    `klorb.tui._base.ReplAppBase` needs the type too and importing it from `rendering.py` there
+    would cycle back through this module.
+    """
+
+    summary_content: VisualType
+    detail_content: VisualType
+    on_click: Callable[[], None] | None = None
 
 
 class ToolCallLimitScreen(ModalScreen[bool]):
@@ -89,20 +109,39 @@ class ToolCallLimitScreen(ModalScreen[bool]):
 class ToolCallStatic(Static):
     """One finished tool call in the history, shown as either its one-line summary or its
     fuller detail view — toggled globally, across every `ToolCallStatic` at once, by Ctrl+O
-    (see `ReplApp.action_toggle_tool_call_detail`). Constructed with `markup=False`: summary
-    and detail text are arbitrary tool output (JSON, file paths, shell output, ...) that must
-    render verbatim, not be parsed as Textual console markup — an unescaped `[` in that text
-    can otherwise be misread as the start of a markup tag and raise `MarkupError`.
+    (see `ReplApp.action_toggle_tool_call_detail`). Constructed with `markup=False`: a plain-`str`
+    summary/detail (the common case -- arbitrary tool output: JSON, file paths, shell output,
+    ...) must render verbatim, not be parsed as Textual console markup — an unescaped `[` in that
+    text can otherwise be misread as the start of a markup tag and raise `MarkupError`. A
+    `klorb.tools.tool.DiffPreview`/`ReadPreview`-backed call instead passes a pre-built
+    `textual.content.Content` (styled via explicit spans, never markup) for `summary_content`/
+    `detail_content` — see `RenderingMixin._render_tool_result`.
+
+    `on_click`, when given, makes this widget's whole rendered area clickable — e.g. to push a
+    `DiffDetailScreen`/`ReadDetailScreen` overlay (`klorb.tui.panels.preview_screens`) showing
+    the call's full diff or full file. `None` (the default, and always the case for a plain
+    string-only call) leaves clicking a no-op.
     """
 
-    def __init__(self, summary_text: str, detail_text: str) -> None:
-        super().__init__(summary_text, classes="tool-call", markup=False)
-        self._summary_text = summary_text
-        self._detail_text = detail_text
+    def __init__(
+        self, summary_content: VisualType, detail_content: VisualType,
+        on_click: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(summary_content, classes="tool-call", markup=False)
+        self._summary_content = summary_content
+        self._detail_content = detail_content
+        # Named `_expand_callback`, not `_on_click`: `Widget` already defines a private
+        # `_on_click(self, event: events.Click)` of its own for internal message dispatch, and
+        # assigning over that name would both break it and mismatch its signature.
+        self._expand_callback = on_click
 
     def set_detail_shown(self, show_detail: bool) -> None:
         """Update the rendered content to the detail view if `show_detail`, else the summary."""
-        self.update(self._detail_text if show_detail else self._summary_text)
+        self.update(self._detail_content if show_detail else self._summary_content)
+
+    def on_click(self) -> None:
+        if self._expand_callback is not None:
+            self._expand_callback()
 
 
 _ANIMATED_RUNNING_TEXT = "Running..."
@@ -153,20 +192,24 @@ class RunningToolCallStatic(ToolCallStatic):
         self._animation_pos += 1
         self.update(self._make_running_text())
 
-    def finalize(self, summary_text: str, detail_text: str) -> None:
-        """Stop the animation and replace the content with the final summary/detail text.
+    def finalize(
+        self, summary_content: VisualType, detail_content: VisualType,
+        on_click: Callable[[], None] | None = None,
+    ) -> None:
+        """Stop the animation and replace the content with the final summary/detail content.
         After this call, the widget behaves identically to a `ToolCallStatic` for the
-        Ctrl+O detail toggle."""
+        Ctrl+O detail toggle and, if `on_click` is given, for clicking to expand a preview."""
         self._finalized = True
         if self._timer is not None:
             self._timer.stop()
-        self._summary_text = summary_text
-        self._detail_text = detail_text
+        self._summary_content = summary_content
+        self._detail_content = detail_content
+        self._expand_callback = on_click
         self._apply_content()
 
     def _apply_content(self) -> None:
-        """Set the widget's rendered content to either the detail or summary text."""
-        content = self._detail_text if self._detail_shown else self._summary_text
+        """Set the widget's rendered content to either the detail or summary content."""
+        content = self._detail_content if self._detail_shown else self._summary_content
         self.update(content)
 
     def set_detail_shown(self, show_detail: bool) -> None:

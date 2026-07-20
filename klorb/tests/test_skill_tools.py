@@ -175,3 +175,21 @@ def test_read_skill_file_rejects_escape(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="path must"):
         ReadSkillFileTool(context).apply(
             {"namespace": "workspace", "name": "s", "path": "../../secret"})
+
+
+def test_read_skill_file_preview_open_full_rereads_the_whole_file(tmp_path: Path) -> None:
+    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "s")]))
+    skill_dir = _write_skill(_workspace_skills_dir(context), "s", "d")
+    (skill_dir / "ref.md").write_text("line1\nline2\nline3\n")
+    tool = ReadSkillFileTool(context)
+    args = {"namespace": "workspace", "name": "s", "path": "ref.md"}
+
+    result = tool.apply(args)
+    preview = tool.read_preview(args, result)
+
+    assert preview is not None
+    assert preview.preview_lines == [(1, "line1"), (2, "line2"), (3, "line3")]
+
+    full_view = preview.open_full()
+    assert full_view.error is None
+    assert full_view.lines == [(1, "line1"), (2, "line2"), (3, "line3")]

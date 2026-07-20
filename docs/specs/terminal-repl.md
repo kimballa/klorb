@@ -207,19 +207,21 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   from `Session._run_tool_calls`. `ReplApp._render_tool_call` turns the callback's
   `ToolCallEvent` (raw `name`/`args`/`result`/`error`, not pre-rendered text — see
   [the raw-callback-data ADR](../adrs/render-tool-calls-via-raw-callback-data.md)) into a
-  `(summary_text, detail_text)` pair by instantiating the named tool a second time and calling
-  its `summary()`/`detail_view()` (falling back to `default_tool_call_summary()`/
-  `default_tool_call_detail()` if the name isn't a registered tool). `_mount_tool_call_widget`
-  mounts a left-justified `<Tool use>` label (`TOOL_USE_LABEL`, styled via the
-  `.tool-call-label` CSS class — the same label/body split `_mount_thinking_widget` uses for
-  `<Thinking>`) followed by a `ToolCallStatic` (styled via the `.tool-call` CSS class) showing
-  `summary_text`. `Ctrl+O` (`action_toggle_tool_call_detail`) globally toggles every
-  `ToolCallStatic` currently in the history — from any turn, not just the latest — to
-  `detail_text` and back, via an app-lifetime `_tool_call_detail_shown` flag rather than
-  per-turn state, so the toggle persists across turns and clearing the session. A newly-mounted tool-call
-  widget picks up whichever mode is currently active, rather than always starting as a
-  summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted before an
-  abort stay in the history and the toggle-tracking list exactly like any other turn's,
+  `RenderedToolCall` (`summary_content`, `detail_content`, `on_click`) by instantiating the
+  named tool a second time and calling its `summary()`/`detail_view()` (falling back to
+  `default_tool_call_summary()`/`default_tool_call_detail()` if the name isn't a registered
+  tool) — or, for a tool whose `diff_preview()`/`read_preview()` returns non-`None`, a colored/
+  numbered `textual.content.Content` and a click-to-expand callback instead; see "Diff and read
+  previews" below. `_mount_tool_call_widget` mounts a left-justified `<Tool use>` label
+  (`TOOL_USE_LABEL`, styled via the `.tool-call-label` CSS class — the same label/body split
+  `_mount_thinking_widget` uses for `<Thinking>`) followed by a `ToolCallStatic` (styled via the
+  `.tool-call` CSS class) showing `summary_content`. `Ctrl+O` (`action_toggle_tool_call_detail`)
+  globally toggles every `ToolCallStatic` currently in the history — from any turn, not just the
+  latest — to `detail_content` and back, via an app-lifetime `_tool_call_detail_shown` flag
+  rather than per-turn state, so the toggle persists across turns and clearing the session. A
+  newly-mounted tool-call widget picks up whichever mode is currently active, rather than always
+  starting as a summary. Tool-call widgets (both the label and the `ToolCallStatic`) mounted
+  before an abort stay in the history and the toggle-tracking list exactly like any other turn's,
   since the tool calls they represent already ran to completion. The footer's own label for this binding
   flips with it — `"Detail"` while summaries are shown, `"Hide"` once detail is shown — by
   replacing the `"ctrl+o"` entry in `self._bindings.key_to_bindings` (this `ReplApp`
@@ -232,11 +234,43 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   [[show-tool-calls-before-completion-with-running-indicator]]). The animation uses
   `Rich.text.Text` spans at 120ms per frame so the user knows the system hasn't frozen.
   When the tool completes, `finalize()` replaces the animated content with the final
-  summary/detail text and stops the timer. The widget remains a `RunningToolCallStatic`
-  instance in the DOM, so `history.query(ToolCallStatic)` and `Ctrl+O` both work unchanged.
-  `_running_tool_call_widgets` (a `call_id`-keyed dict on `ReplApp`) links the "started"
-  mount to the "completed" finalize; a tool call that was never started (e.g. malformed
-  JSON arguments) falls back to the original `_mount_tool_call_widget` path.
+  summary/detail content (and click callback) and stops the timer. The widget remains a
+  `RunningToolCallStatic` instance in the DOM, so `history.query(ToolCallStatic)` and `Ctrl+O`
+  both work unchanged. `_running_tool_call_widgets` (a `call_id`-keyed dict on `ReplApp`) links
+  the "started" mount to the "completed" finalize; a tool call that was never started (e.g.
+  malformed JSON arguments) falls back to the original `_mount_tool_call_widget` path.
+* **Diff and read previews**: `EditFile`/`CreateFile` (and their `EditMemory`/`CreateMemory`/
+  `EditScratchpad` counterparts) and `ReadFile`/`ReadMemory`/`ReadScratchpad`/`ReadSkillFile`
+  render richer than plain text. `EditFileCore`/`CreateFileCore` (`klorb.tools.util`) compute a
+  structured diff at apply time via `klorb.tools.util.diff_lines.build_diff_hunks()` —
+  `DIFF_CONTEXT_LINES` (8) lines of unchanged context on either side of each change, nearby
+  changes merged into one hunk — and store it as jsonable `DiffHunk`s in `result["diff"]`, so it
+  survives session persistence and restore (`json.dumps`/`json.loads`) without ever re-diffing
+  against a file that may have changed since. Each edit/create tool's `diff_preview()` override
+  parses that back into a `klorb.tools.tool.DiffPreview`; each read tool's `read_preview()`
+  override instead returns a `ReadPreview` — up to 4 numbered lines from the read's own captured
+  content, plus a lazy `open_full()` closure that performs a fresh, passive re-read (no
+  permission re-ask) only when the user actually clicks to expand, since the read range alone
+  doesn't carry the whole file. `RenderingMixin._render_tool_result` turns a `DiffPreview` into a
+  compact (`max_lines=8`, `render_diff_content`) `summary_content` and an uncapped
+  `detail_content` for Ctrl+O — green `add`/red `del`/unstyled `context` lines with a
+  right-aligned old/new line-number gutter, a trailing gutter-less `"..."` when the compact view
+  is truncated. The compact view does *not* simply take the diff's first 8 lines: since a hunk's
+  own leading context can itself run up to `DIFF_CONTEXT_LINES` lines, that would show nothing but
+  context and never reach the change at all. Instead it starts only
+  `_COMPACT_CONTEXT_BEFORE_LINES` (2) lines before the first changed line, so the compact preview
+  always includes the change itself — the full leading context is still there in the uncapped
+  Ctrl+O/overlay view. A `ReadPreview` renders into a plain numbered `summary_content`
+  (`render_read_preview_content`), leaving `detail_content` as the tool's existing (unchanged)
+  capped-at-8-lines `detail_view()` string. Clicking either
+  widget (`ToolCallStatic.on_click`) pushes a `klorb.tui.panels.preview_screens` overlay —
+  `DiffDetailScreen` reusing the already-built full `detail_content`, or `ReadDetailScreen`
+  running `open_full()` at click time and scrolling to the read's `start_line` (an in-overlay
+  "Could not reopen: ..." message if that fails, e.g. the file was since deleted). Both overlays
+  are `ModalScreen`s dismissed with Escape, modeled on `ExpandedCommandScreen` (see the bash-tool
+  spec) — a screen-stack push, not a blocking call, so the agent keeps running underneath and any
+  `PermissionAskPanel` that needs to appear still mounts in its usual place and simply waits until
+  the overlay is dismissed.
 * A turn with tool calls is really a sequence of rounds under the hood (see
   [[session-and-turns]]'s `Session._dispatch_turn`): each round streams its own
   thinking/response text, then, if it ends in a tool-call request, `Session` dispatches those

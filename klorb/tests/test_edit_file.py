@@ -1546,3 +1546,31 @@ def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path
     detail = json.loads(tool.detail_view(args, result))
 
     assert detail["result"]["post_edit_content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."
+
+
+# --- diff_preview() (see docs/specs/terminal-repl.md) ---
+
+
+def test_diff_preview_reflects_the_applied_change(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "b", "end_text": "b", "new_text": "B",
+    }
+
+    result = tool.apply(args)
+    preview = tool.diff_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
+    assert kinds == ["context", "del", "add", "context"]
+
+
+def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
+    tool = EditFileTool(_context(tmp_path))
+    args = {"filename": str(tmp_path / "missing.txt"), "start_line": 1, "end_line": 1,
+            "start_text": "x", "end_text": "x", "new_text": "y"}
+
+    assert tool.diff_preview(args, None, "does not exist") is None

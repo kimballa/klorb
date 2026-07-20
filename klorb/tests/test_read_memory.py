@@ -144,3 +144,24 @@ def test_summary_on_failure_includes_the_error(
     args = {"namespace": "global", "filename": "notes.md"}
 
     assert tool.summary(args, error="boom") == "Read memory: global/notes.md failed: boom"
+
+
+def test_read_preview_open_full_rereads_the_whole_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nline2\nline3\n")
+    tool = ReadMemoryTool(context)
+    args = {"namespace": "global", "filename": "notes.md"}
+
+    result = tool.apply(args)
+    preview = tool.read_preview(args, result)
+
+    assert preview is not None
+    assert preview.label == tool.summary(args, result)
+    assert preview.preview_lines == [(1, "Topic"), (2, "line2"), (3, "line3")]
+    assert preview.truncated is False
+
+    full_view = preview.open_full()
+    assert full_view.error is None
+    assert full_view.lines == [(1, "Topic"), (2, "line2"), (3, "line3")]

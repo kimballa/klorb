@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from textual.containers import VerticalScroll
+from textual.content import Content
 from textual.widgets import Markdown, Static
 
 from klorb.message import Message as ChatMessage
@@ -13,16 +14,26 @@ from klorb.message import ToolCallRequest
 from klorb.session import ToolCallEvent
 from klorb.tools.registry import NoSuchToolException
 from klorb.tools.tool import (
+    ReadPreview,
     default_invalid_tool_call_detail,
     default_invalid_tool_call_summary,
     default_tool_call_detail,
     default_tool_call_summary,
 )
+from klorb.tools.util import FullFileView
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID
-from klorb.tui.formatting import summarize_reasoning_details
+from klorb.tui.formatting import (
+    prefix_with_header,
+    render_diff_content,
+    render_full_file_content,
+    render_read_preview_content,
+    summarize_reasoning_details,
+)
+from klorb.tui.panels.preview_screens import DiffDetailScreen, ReadDetailScreen
 from klorb.tui.widgets.tool_call_widgets import (
     GettingReadyStatic,
+    RenderedToolCall,
     RunningToolCallStatic,
     ToolCallStatic,
     TurnWaitingStatic,
@@ -31,6 +42,11 @@ from klorb.tui.widgets.tool_call_widgets import (
 THINKING_LABEL = "<Thinking>"
 REASONING_DETAILS_LABEL = "<Reasoning>"
 TOOL_USE_LABEL = "<Tool use>"
+
+_DIFF_PREVIEW_MAX_LINES = 8
+"""How many diff lines `RenderedToolCall.summary_content` shows inline for an edit/create call
+before truncating with a trailing `"..."` -- see `render_diff_content`. Ctrl+O's detail view and
+the click-to-expand overlay both show the full (untruncated) diff instead."""
 
 
 class RenderingMixin(ReplAppBase):
@@ -134,11 +150,11 @@ class RenderingMixin(ReplAppBase):
         self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
 
-    def _render_tool_call(self, event: ToolCallEvent) -> tuple[str, str]:
-        """Render `event` as `(summary_text, detail_text)` — see `_render_tool_result`, which
-        does the actual work from `event`'s individual fields. Split out so
-        `_render_restored_tool_call` (reconstructing a finished call from persisted `Message`s
-        rather than a live `ToolCallEvent`) can share the same rendering logic.
+    def _render_tool_call(self, event: ToolCallEvent) -> RenderedToolCall:
+        """Render `event` as a `RenderedToolCall` — see `_render_tool_result`, which does the
+        actual work from `event`'s individual fields. Split out so `_render_restored_tool_call`
+        (reconstructing a finished call from persisted `Message`s rather than a live
+        `ToolCallEvent`) can share the same rendering logic.
         """
         return self._render_tool_result(
             event.name, event.args, event.result, event.error, event.raw_arguments)
@@ -146,9 +162,9 @@ class RenderingMixin(ReplAppBase):
     def _render_tool_result(
         self, name: str, args: dict[str, Any], result: Any, error: str | None,
         raw_arguments: str | None,
-    ) -> tuple[str, str]:
-        """Render one finished tool call as `(summary_text, detail_text)` via its tool's
-        `summary()`/`detail_view()` — instantiating a fresh `Tool` purely to call these pure
+    ) -> RenderedToolCall:
+        """Render one finished tool call as a `RenderedToolCall` — instantiating a fresh `Tool`
+        purely to call its pure `summary()`/`detail_view()`/`diff_preview()`/`read_preview()`
         methods (`ToolRegistry.instantiate_tool()` is already a cheap, no-shared-state
         operation; see docs/adrs/tool-registry-instantiates-a-fresh-tool-per-call.md) — or via
         the shared default formatters if `name` isn't a registered tool (e.g. a hallucinated
@@ -158,22 +174,80 @@ class RenderingMixin(ReplAppBase):
         JSON before any tool ever ran (see `ToolCallEvent.raw_arguments`); that's rendered via
         `default_invalid_tool_call_summary()`/`default_invalid_tool_call_detail()` instead,
         showing the raw malformed text rather than the always-empty `args`.
+
+        A tool whose `diff_preview()`/`read_preview()` returns non-`None` (only the `EditFile`/
+        `CreateFile`/`Read*` families and their memory/scratchpad/skill counterparts) gets a
+        colored diff or numbered-content `Content` instead of `summary()`/`detail_view()`'s
+        plain text, plus an `on_click` that pushes the matching overlay
+        (`klorb.tui.panels.preview_screens`) -- see those two methods' docstrings on `Tool` for
+        the full contract. Every other tool renders exactly as before.
         """
         if raw_arguments is not None:
             assert error is not None
-            return (default_invalid_tool_call_summary(name, error),
-                    default_invalid_tool_call_detail(name, raw_arguments, error))
+            return RenderedToolCall(
+                summary_content=default_invalid_tool_call_summary(name, error),
+                detail_content=default_invalid_tool_call_detail(name, raw_arguments, error))
         registry = self._session.tool_registry
         try:
             if registry is None:
                 raise KeyError(name)
             tool = registry.instantiate_tool(name)
         except (KeyError, NoSuchToolException):
-            return (default_tool_call_summary(name, args, error),
-                    default_tool_call_detail(name, args, result, error))
-        return (tool.summary(args, result, error), tool.detail_view(args, result, error))
+            return RenderedToolCall(
+                summary_content=default_tool_call_summary(name, args, error),
+                detail_content=default_tool_call_detail(name, args, result, error))
 
-    def _mount_tool_call_widget(self, summary_text: str, detail_text: str) -> tuple[ToolCallStatic, Static]:
+        diff_preview = tool.diff_preview(args, result, error)
+        if diff_preview is not None:
+            # `full_diff_content` is reused bare (no header) for the overlay's body, since
+            # DiffDetailScreen already shows `diff_preview.label` as its own separate header
+            # Static -- prefixing it in here too would show it twice there.
+            full_diff_content = render_diff_content(diff_preview.hunks, max_lines=None)
+            compact_diff_content = render_diff_content(
+                diff_preview.hunks, max_lines=_DIFF_PREVIEW_MAX_LINES)
+            return RenderedToolCall(
+                summary_content=prefix_with_header(diff_preview.label, compact_diff_content),
+                detail_content=prefix_with_header(diff_preview.label, full_diff_content),
+                on_click=lambda: self._open_diff_detail_screen(diff_preview.label, full_diff_content))
+
+        read_preview = tool.read_preview(args, result, error)
+        if read_preview is not None:
+            compact_read_content = render_read_preview_content(
+                read_preview.preview_lines, read_preview.truncated)
+            return RenderedToolCall(
+                summary_content=prefix_with_header(read_preview.label, compact_read_content),
+                detail_content=tool.detail_view(args, result, error),
+                on_click=lambda: self._open_read_detail_screen(read_preview))
+
+        return RenderedToolCall(
+            summary_content=tool.summary(args, result, error),
+            detail_content=tool.detail_view(args, result, error))
+
+    def _open_diff_detail_screen(self, label: str, content: Content) -> None:
+        """Push `DiffDetailScreen` showing `content` (the same already-built full-diff `Content`
+        Ctrl+O's detail view shows) -- factored out of `_render_tool_result` purely so the
+        `on_click` closure it builds has a plain `() -> None` callable to hold, matching
+        `RenderedToolCall.on_click`'s type (`Screen.push_screen()` itself returns an awaitable,
+        not `None`)."""
+        self.push_screen(DiffDetailScreen(label, content))
+
+    def _open_read_detail_screen(self, preview: ReadPreview) -> None:
+        """Perform `preview`'s lazy full-subject read only now, at click time (see
+        `klorb.tools.tool.ReadPreview.open_full`), and push `ReadDetailScreen` with the result --
+        an in-overlay message instead if the read failed (e.g. the subject was deleted, moved, or
+        became unreadable since it was originally read)."""
+        try:
+            full_view = preview.open_full()
+        except Exception as exc:
+            full_view = FullFileView(lines=None, error=str(exc), scroll_to_line=1)
+        if full_view.lines is None:
+            content: Content = Content(f"Could not reopen: {full_view.error}")
+        else:
+            content = render_full_file_content(full_view.lines)
+        self.push_screen(
+            ReadDetailScreen(preview.label, content, scroll_to_line=full_view.scroll_to_line))
+
+    def _mount_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
         """Mount a left-justified `<Tool use>` label (styled via the `.tool-call-label` CSS
         class, matching `<Thinking>`'s label/body split in `_mount_thinking_widget`) followed
         by a `ToolCallStatic` for one finished tool call, and return `(widget, label_widget)`.
@@ -188,7 +262,7 @@ class RenderingMixin(ReplAppBase):
         was_pinned = self._history_pinned_to_bottom
         label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
         history.mount(label_widget)
-        widget = ToolCallStatic(summary_text, detail_text)
+        widget = ToolCallStatic(rendered.summary_content, rendered.detail_content, rendered.on_click)
         widget.set_detail_shown(self._tool_call_detail_shown)
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
@@ -306,14 +380,14 @@ class RenderingMixin(ReplAppBase):
         return widget
 
     def _finalize_running_tool_call_widget(
-        self, widget: RunningToolCallStatic, summary_text: str, detail_text: str,
+        self, widget: RunningToolCallStatic, rendered: RenderedToolCall,
     ) -> None:
         """Stop the running indicator animation and replace it with the final
-        summary/detail text. Called from `handle_tool_call` via `call_from_thread` when a
+        summary/detail content. Called from `handle_tool_call` via `call_from_thread` when a
         tool call completes -- the widget was mounted earlier by
         `_mount_running_tool_call_widget` and is already in the history scroll and the
         Ctrl+O tracking list."""
-        widget.finalize(summary_text, detail_text)
+        widget.finalize(rendered.summary_content, rendered.detail_content, rendered.on_click)
         widget.set_detail_shown(self._tool_call_detail_shown)
         self._update_status_bar()
 
@@ -356,17 +430,17 @@ class RenderingMixin(ReplAppBase):
                         self._mount_reasoning_details_widget(reasoning_details_text)
             elif message.role == "tool_use":
                 for call in message.tool_calls or []:
-                    summary_text, detail_text = self._render_restored_tool_call(
+                    rendered = self._render_restored_tool_call(
                         call, responses_by_call_id.get(call.id))
-                    self._mount_tool_call_widget(summary_text, detail_text)
+                    self._mount_tool_call_widget(rendered)
         history.mount(Static(f"Restored previous session ({len(messages)} messages).", classes="notice"))
         history.scroll_end(animate=False)
 
     def _render_restored_tool_call(
         self, call: ToolCallRequest, response: ChatMessage | None,
-    ) -> tuple[str, str]:
-        """Reconstruct a finished tool call's `(summary_text, detail_text)` for
-        `_mount_restored_history` from persisted `Message`s alone — `call.arguments` (the
+    ) -> RenderedToolCall:
+        """Reconstruct a finished tool call's `RenderedToolCall` for `_mount_restored_history`
+        from persisted `Message`s alone — `call.arguments` (the
         model's raw JSON-encoded arguments) and `response.content` (see
         `_format_tool_response_content` in `klorb.session`, the encoding
         `Session._run_tool_calls` used to fold a live call's `(result, error)` into one string,

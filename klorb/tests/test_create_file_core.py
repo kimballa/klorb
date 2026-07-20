@@ -1,11 +1,12 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.util.create_file_core."""
 
+import json
 from pathlib import Path
 
 import pytest
 
-from klorb.tools.util import CreateFileCore
+from klorb.tools.util import CreateFileCore, DiffHunk
 
 
 def test_creates_a_new_file(tmp_path: Path) -> None:
@@ -17,6 +18,19 @@ def test_creates_a_new_file(tmp_path: Path) -> None:
     assert file_path.read_text() == "a\nb\nc\n"
     assert result["created"] is True
     assert result["total_lines"] == 3
+
+
+def test_diff_is_an_all_add_hunk_matching_the_new_content(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+
+    result = CreateFileCore().apply(
+        file_path, {"content": "a\nb\nc\n"}, subject=str(file_path), edit_hint="EditFile")
+
+    # Round-trips through JSON exactly like a persisted session's tool_response would.
+    hunks = [DiffHunk.model_validate(hunk) for hunk in json.loads(json.dumps(result))["diff"]]
+    assert len(hunks) == 1
+    assert [line.kind for line in hunks[0].lines] == ["add", "add", "add"]
+    assert [line.text for line in hunks[0].lines] == ["a", "b", "c"]
 
 
 def test_creates_an_empty_file(tmp_path: Path) -> None:
