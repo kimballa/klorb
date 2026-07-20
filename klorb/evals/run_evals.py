@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Entry point for `make evals`: runs klorb.evals.cases.CASES against a real model and prints a
-markdown report. See docs/specs/tool-eval-harness.md.
+"""Entry point for `make evals`: runs one or all of klorb.evals.cases.ALL_SUITES against a real
+model and prints a markdown report. See docs/specs/tool-eval-harness.md.
 """
 
 import argparse
@@ -20,15 +20,18 @@ from klorb.session import Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 
-from .cases import CASES
+from .cases import ALL_SUITES
 from .colors import colorize, use_color
-from .harness import CaseResult, run_evaluation, tool_token_counts
+from .harness import CaseResult, EvalCase, run_evaluation, tool_token_counts
 from .report import render_case_detail, render_report, render_summary
 
 logger = logging.getLogger(__name__)
 
 EVAL_MODEL_ENV_VAR = "KLORB_EVAL_MODEL"
 EVAL_LOG_PATH = Path("evals.log")
+ALL_SUITES_ARG = "all"
+"""`--suite` value that runs every `EvalSuite` in `klorb.evals.cases.ALL_SUITES`, rather than
+just one."""
 
 _SELF_REVIEW_PROMPT_TEMPLATE = """\
 A klorb tool-efficacy eval suite just finished a run. Its detailed results are saved at \
@@ -64,7 +67,28 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "After the run, feed the eval log back to a fresh session on the model under test "
             "and ask it to diagnose which tools caused failures/retries and propose "
             "improvements. Costs a second model round-trip; off by default."))
+    parser.add_argument(
+        "--suite", default=ALL_SUITES_ARG,
+        help=(
+            f'Name of the eval suite to run, or "{ALL_SUITES_ARG}" to run every suite '
+            "(default). See --list-suites for the available names."))
+    parser.add_argument(
+        "--list-suites", action="store_true",
+        help="Print the name of every known eval suite and exit, without running anything.")
     return parser.parse_args(argv)
+
+
+def _resolve_cases(suite_name: str) -> list[EvalCase] | None:
+    """The `EvalCase`s `--suite=suite_name` selects: every case from every suite in `ALL_SUITES`
+    if `suite_name` is `ALL_SUITES_ARG`, one suite's cases if `suite_name` matches an
+    `EvalSuite.name`, or `None` if it matches neither.
+    """
+    if suite_name == ALL_SUITES_ARG:
+        return [case for suite in ALL_SUITES for case in suite.cases]
+    for suite in ALL_SUITES:
+        if suite.name == suite_name:
+            return suite.cases
+    return None
 
 
 def _print_case_start(name: str, *, color: bool) -> None:
@@ -132,11 +156,15 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns the process exit code: `0` if every case passed (or no `OPENROUTER_API_KEY` is
     configured, in which case evals are skipped entirely — see
-    docs/adrs/tool-evals-skip-without-api-key.md), `1` if any case failed. A case that passed
+    docs/adrs/tool-evals-skip-without-api-key.md), `1` if any case failed, or if `--suite` names
+    something other than `ALL_SUITES_ARG` or a known `EvalSuite.name`. A case that passed
     but used more tool calls than its `EvalCase.expected_tool_calls` (`CaseResult.conditional`,
     printed as `[CONDITIONAL PASS]`) still counts as passed for this exit code — it's a
     yellow-flag efficiency signal, not a correctness failure. See
     docs/adrs/eval-conditional-pass-on-excess-tool-calls.md.
+
+    `--list-suites` prints every known suite name and returns `0` without running anything or
+    requiring `OPENROUTER_API_KEY`.
 
     Also writes `EVAL_LOG_PATH` (`evals.log` in the current directory) via `_write_eval_log()`.
     With `--self-review`, that log is fed back to a fresh review session on the same model (see
@@ -145,6 +173,17 @@ def main(argv: list[str] | None = None) -> int:
     """
     load_dotenv()
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+
+    if args.list_suites:
+        for suite in ALL_SUITES:
+            print(suite.name)
+        return 0
+
+    cases = _resolve_cases(args.suite)
+    if cases is None:
+        print(f"Unknown eval suite {args.suite!r}. Run with --list-suites to see available suites.")
+        return 1
+
     model = args.model or os.environ.get(EVAL_MODEL_ENV_VAR) or DEFAULT_MODEL
 
     provider = OpenRouterApiProvider(model=model)
@@ -156,9 +195,11 @@ def main(argv: list[str] | None = None) -> int:
 
     color = use_color()
     print()
-    print(f'Running eval cases on model: {colorize(model, 'green', enabled=color)}...')
+    print(
+        f'Running eval suite: {colorize(args.suite, "green", enabled=color)} on model: '
+        f'{colorize(model, "green", enabled=color)}...')
     results = run_evaluation(
-        CASES, model=model, provider=provider,
+        cases, model=model, provider=provider,
         on_case_start=lambda name: _print_case_start(name, color=color),
         on_case_complete=lambda result: _print_case_result(result, color=color))
     print()

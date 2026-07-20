@@ -41,7 +41,7 @@ In `klorb/evals/cases.py`, follow the existing shape for every case:
    returns `None` on success, or a human-readable failure string (include both expected and
    actual values in the message — this is what shows up in the eval report and `evals.log`).
 2. An `EvalCase(...)` constant in `UPPER_SNAKE_CASE` matching `_name`, with:
-   * `name`: short snake_case identifier, unique across `CASES`.
+   * `name`: short snake_case identifier, unique across `FILE_TOOLS_CASES`.
    * `prompt`: the exact user message sent to the model. State the task precisely enough that a
      competent model has one obvious correct interpretation — ambiguity in the prompt is not the
      thing this harness is trying to measure.
@@ -56,8 +56,10 @@ In `klorb/evals/cases.py`, follow the existing shape for every case:
      exceeds it is flagged `CONDITIONAL PASS` (yellow), a signal the tool's schema/description
      likely confused the model into retries even though it eventually recovered. Leave it `None`
      only if there's genuinely no meaningful budget to check against.
-3. Append the new constant to the `CASES` list at the bottom of the file, in the same relative
-   position as the tool it covers (keep tool-specific cases grouped together).
+3. Append the new constant to the `FILE_TOOLS_CASES` list at the bottom of the file, in the same
+   relative position as the tool it covers (keep tool-specific cases grouped together). That list
+   backs the `"file-tools"` `EvalSuite` (`klorb.evals.harness.EvalSuite`) -- only start a new
+   suite in `ALL_SUITES` for a scenario group that genuinely doesn't belong under `file-tools`.
 4. If this is the first case for a tool not yet mentioned there, update `cases.py`'s module
    docstring and `docs/specs/tool-eval-harness.md`'s "Out of scope" bullet to list it.
 
@@ -89,9 +91,9 @@ errors, type errors, and unused-import/naming issues in `cases.py`. Read back th
 step 1 — that property can't be caught by any automated check.
 
 If the user has an `OPENROUTER_API_KEY` configured and wants real confirmation, `make evals`
-(from `klorb/`) runs the full `CASES` list against a real model and prints a report; a single new
-case can also be exercised directly via `klorb.evals.harness.run_case()` in a scratch script if
-faster iteration is needed.
+(from `klorb/`) runs every known suite against a real model and prints a report (`EVALARGS=
+'--suite file-tools' make evals` to run just this one); a single new case can also be exercised
+directly via `klorb.evals.harness.run_case()` in a scratch script if faster iteration is needed.
 
 ## Worked example
 
