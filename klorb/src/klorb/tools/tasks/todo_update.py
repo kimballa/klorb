@@ -4,10 +4,33 @@
 import logging
 from typing import Any
 
-from klorb.tools.tasks.common import ChainlinkClient
+from klorb.tools.tasks.common import ChainlinkClient, validate_priority
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
+
+
+def _changed_fields(args: dict[str, Any]) -> list[str]:
+    """Which of `args`'s optional fields are actually set, in application order -- used both for
+    `apply()`'s debug log and `summary()`'s rendering, so the two never drift apart."""
+    fields = []
+    if args.get("new_title") is not None:
+        fields.append("title")
+    if args.get("new_description") is not None:
+        fields.append("description")
+    if args.get("new_priority") is not None:
+        fields.append("priority")
+    if args.get("depends_on"):
+        fields.append("depends_on")
+    if args.get("drop_dependency"):
+        fields.append("drop_dependency")
+    if args.get("add_comment"):
+        fields.append("comment")
+    if args.get("close"):
+        fields.append("closed")
+    if args.get("reopen"):
+        fields.append("reopened")
+    return fields
 
 
 class TodoUpdateTool(Tool):
@@ -69,14 +92,14 @@ class TodoUpdateTool(Tool):
             issue_id = args["id"]
         except KeyError:
             raise ValueError("Missing required argument: 'id'. Provide the task id to update.")
+        new_priority = args.get("new_priority")
+        if new_priority is not None:
+            validate_priority(new_priority)
         client = ChainlinkClient(self.context)
 
         client.update_issue(
-            issue_id,
-            title=args.get("new_title"),
-            description=args.get("new_description"),
-            priority=args.get("new_priority"),
-        )
+            issue_id, title=args.get("new_title"), description=args.get("new_description"),
+            priority=new_priority)
         for blocker_id in args.get("depends_on") or []:
             client.block(issue_id, blocker_id)
         for blocker_id in args.get("drop_dependency") or []:
@@ -88,13 +111,17 @@ class TodoUpdateTool(Tool):
         if args.get("reopen"):
             client.reopen_issue(issue_id)
 
-        logger.debug("TodoUpdate applied to issue #%d", issue_id)
+        fields = _changed_fields(args)
+        logger.debug(
+            "TodoUpdate applied to issue #%d: %s", issue_id, ", ".join(fields) or "no changes")
         return client.show_issue(issue_id)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         issue_id = args.get("id", "?")
+        fields = ", ".join(_changed_fields(args))
+        suffix = f" ({fields})" if fields else ""
         if error is not None:
             return f"Update todo #{issue_id} failed: {error}"
         if not isinstance(result, dict):
-            return f"Update todo #{issue_id}"
-        return f"Update todo #{result.get('id', issue_id)} {result.get('title', '')}"
+            return f"Update todo #{issue_id}{suffix}"
+        return f"Update todo #{result.get('id', issue_id)} {result.get('title', '')}{suffix}"

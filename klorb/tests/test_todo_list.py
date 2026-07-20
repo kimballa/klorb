@@ -148,3 +148,25 @@ def test_summary(tmp_path: Path) -> None:
 
     assert tool.summary({}, result) == "List todos (0)"
     assert tool.summary({}, error="boom") == "List todos failed: boom"
+
+
+@requires_chainlink
+def test_summary_special_cases_a_single_issue_with_title_and_description(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    TodoCreateTool(context).apply({"title": "Only task", "description": "the full detail"})
+    tool = TodoListTool(context)
+
+    result = tool.apply({"include_closed": True})
+
+    assert tool.summary({}, result) == "List todos: #1 Only task — the full detail"
+
+
+@requires_chainlink
+def test_summary_single_issue_without_description_omits_the_dash(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    TodoCreateTool(context).apply({"title": "Only task"})
+    tool = TodoListTool(context)
+
+    result = tool.apply({"include_closed": True})
+
+    assert tool.summary({}, result) == "List todos: #1 Only task"

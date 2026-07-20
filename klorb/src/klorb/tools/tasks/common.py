@@ -12,8 +12,11 @@ import random
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from pathspec import GitIgnoreSpec
 
 if TYPE_CHECKING:
     from klorb.tools.setup_context import ToolSetupContext
@@ -29,8 +32,8 @@ CommentKind = Literal[
 
 PRIORITY_ORDER: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 """Sort weight for `TodoList`/`TodoNext`'s "priority, descending" ordering -- lower sorts
-first, so `critical` (weight 0) comes before `low` (weight 3). An unrecognized priority string
-falls back to `medium`'s weight (see `issue_sort_key`)."""
+first, so `critical` (weight 0) comes before `low` (weight 3). Also the canonical set of valid
+priority strings, checked by `validate_priority`."""
 
 _CHAINLINK_DB_RELPATH = Path(".chainlink") / "issues.db"
 _GITIGNORE_ENTRY = ".chainlink/"
@@ -59,21 +62,30 @@ _LOCK_RETRY_JITTER_SECONDS = 0.025
 
 def _discover_binary() -> Path | None:
     """Return the `chainlink` binary's path: `PATH` first (`shutil.which`), then
-    `$VIRTUAL_ENV/bin/chainlink` if a Python virtualenv is active (klorb's own dev venv, e.g.,
-    may have it installed alongside `venv/bin/klorb` itself rather than on the ambient `PATH`),
-    then `$HOME/.cargo/bin/chainlink` as a last resort for an environment where `cargo install`
-    put it somewhere not on `PATH` -- `make cloud_setup` installs it exactly that way (see
-    `klorb/Makefile`'s `install_chainlink` target). `None` if none of these resolve."""
+    `$VIRTUAL_ENV/bin/chainlink` if a Python virtualenv is active, then `$HOME/.cargo/bin/
+    chainlink` as a last resort -- `cargo install` puts a binary there whether or not
+    `~/.cargo/bin` is itself on `PATH`, and `make cloud_setup` installs chainlink exactly that
+    way (see `klorb/Makefile`'s `install_chainlink` target). `None` if none of these resolve."""
     on_path = shutil.which("chainlink")
     if on_path is not None:
+        logger.debug("Found chainlink on PATH: %s", on_path)
         return Path(on_path)
+    logger.debug("chainlink not found on PATH.")
+
     virtual_env = os.environ.get("VIRTUAL_ENV")
     if virtual_env:
         venv_candidate = Path(virtual_env) / "bin" / "chainlink"
         if venv_candidate.is_file():
+            logger.debug("Found chainlink in the active virtualenv: %s", venv_candidate)
             return venv_candidate
+        logger.debug("chainlink not found in the active virtualenv at %s.", venv_candidate)
+
     cargo_candidate = Path.home() / ".cargo" / "bin" / "chainlink"
-    return cargo_candidate if cargo_candidate.is_file() else None
+    if cargo_candidate.is_file():
+        logger.debug("Found chainlink at the cargo-install fallback path: %s", cargo_candidate)
+        return cargo_candidate
+    logger.debug("chainlink not found at the cargo-install fallback path %s either.", cargo_candidate)
+    return None
 
 
 def chainlink_available() -> bool:
@@ -86,7 +98,9 @@ def chainlink_available() -> bool:
 
 class ChainlinkError(RuntimeError):
     """Raised when a `chainlink` subprocess call fails: a non-zero exit (after exhausting the
-    lock-contention retry, if that's what triggered it) or the binary can't be found at all."""
+    lock-contention retry, if that's what triggered it) or the binary can't be found at all.
+    Carries the full command line, working directory, and exit code alongside `chainlink`'s own
+    error output, so a caller sees enough to reproduce the failure by hand."""
 
 
 def _subprocess_env() -> dict[str, str]:
@@ -107,6 +121,14 @@ def _first_nonblank_line(text: str) -> str:
     return "chainlink exited with an error and produced no output."
 
 
+def validate_priority(priority: str) -> None:
+    """Raise `ValueError` if `priority` isn't one of `PRIORITY_ORDER`'s keys -- the JSON schema
+    each `Tool.parameters()` declares already restricts a well-behaved model to a valid value,
+    but `create_issue`/`update_issue` validate again here rather than trusting that up front."""
+    if priority not in PRIORITY_ORDER:
+        raise ValueError(f"priority must be one of {sorted(PRIORITY_ORDER)}, got {priority!r}")
+
+
 def open_blocker_count(issue: dict[str, Any], open_ids: set[int]) -> int:
     """How many of `issue`'s `blocked_by` ids are currently open, per `open_ids` -- chainlink's
     own `blocked_by` list is never pruned as a blocker closes (a closed blocker still appears in
@@ -115,33 +137,37 @@ def open_blocker_count(issue: dict[str, Any], open_ids: set[int]) -> int:
     directly. `open_ids` is expected to be the id set of every issue `fetch_and_sort_issues()`
     already fetched for the same session label; a blocker belonging to a different label (an
     unusual cross-session dependency) is treated as not-open, since it was never fetched."""
-    return len([blocker for blocker in issue.get("blocked_by", []) if blocker in open_ids])
+    return len(list(filter(lambda blocker: blocker in open_ids, issue.get("blocked_by", []))))
 
 
-def issue_sort_key(issue: dict[str, Any], open_ids: set[int]) -> tuple[int, int, int, int]:
-    """`TodoList`/`TodoNext`'s shared sort order: open issues before closed, fewest open
-    blockers first (0-blocker "ready" issues at the top), highest priority first, then lowest
-    (oldest) id first."""
-    return (
-        0 if issue.get("status") == "open" else 1,
-        open_blocker_count(issue, open_ids),
-        PRIORITY_ORDER.get(issue.get("priority", "medium"), PRIORITY_ORDER["medium"]),
-        issue.get("id", 0),
-    )
+def issue_sort_key(open_ids: set[int]) -> Callable[[dict[str, Any]], tuple[int, int, int, int]]:
+    """Curried: return the sort-key function for `TodoList`/`TodoNext`'s shared sort order --
+    open issues before closed, fewest open blockers first (0-blocker "ready" issues at the top),
+    highest priority first, then lowest (oldest) id first -- closed over `open_ids` so a caller
+    can pass the result straight to `list.sort(key=...)` without a wrapping lambda."""
+
+    def key(issue: dict[str, Any]) -> tuple[int, int, int, int]:
+        return (
+            0 if issue.get("status") == "open" else 1,
+            open_blocker_count(issue, open_ids),
+            PRIORITY_ORDER.get(issue.get("priority", "medium"), PRIORITY_ORDER["medium"]),
+            issue.get("id", 0),
+        )
+
+    return key
 
 
 class ChainlinkClient:
-    """Thin wrapper around the `chainlink` CLI: binary discovery, `--json`/`--quiet` handling,
-    lock-contention retry, and the handful of typed operations `TodoList`/`TodoNext`/
-    `TodoCreate`/`TodoUpdate` need. Constructed fresh by each tool's `apply()` from its own
-    `ToolSetupContext` (mirroring how a `Tool` itself is constructed fresh per call -- see
-    `ToolRegistry.instantiate_tool`), never shared or cached across calls, so every one of the
-    four `Tool`s shells out through this one class instead of each reimplementing the protocol.
+    """Thin wrapper around the `chainlink` CLI: binary discovery, the `--json`/`--quiet`
+    subprocess protocol, and lock-contention retry, so `TodoList`/`TodoNext`/`TodoCreate`/
+    `TodoUpdate` each construct one from their own `ToolSetupContext` rather than shelling out
+    independently. Never shared or cached across calls -- built fresh, cheaply, on every
+    `Tool.apply()`.
 
-    Every operation is scoped to one master session's issues via `label`, always
-    `context.session.id` (see docs/specs/chainlink-task-tracking.md) -- constructing a
-    `ChainlinkClient` without a real `Session` on `context` raises `ValueError`, the same
-    contract `BashTool._execute_persistent` enforces for `session`-dependent functionality.
+    Every operation is scoped to one root session's issues via `label`
+    (`Session.get_chainlink_label()`; see docs/specs/chainlink-task-tracking.md). Constructing a
+    `ChainlinkClient` without a real `Session` on `context` raises `ValueError`: there is no
+    label to scope issues by without one.
 
     `__init__` also performs one-time workspace setup (`_ensure_setup`, a cheap no-op after the
     first call) and registers this session's close-time cleanup callback
@@ -153,24 +179,25 @@ class ChainlinkClient:
         binary = _discover_binary()
         if binary is None:
             raise ChainlinkError(
-                "chainlink binary not found on PATH or at ~/.cargo/bin/chainlink")
+                "chainlink binary not found on PATH, in the active virtualenv, or at "
+                "~/.cargo/bin/chainlink")
         self._binary = binary
         self._workspace_root = context.session_config.workspace.path
         session = context.session
         if session is None:
             raise ValueError(
                 "ChainlinkClient requires a Session on ToolSetupContext, to scope issues by "
-                "session label.")
-        self._label = session.id
+                "a chainlink label.")
+        self._session = session
+        self._label = session.get_chainlink_label()
         self._ensure_setup()
         session.register_teardown("ChainlinkClient", self._close_all_on_teardown)
 
     def _ensure_setup(self) -> None:
-        """Run `chainlink --json init` and ensure `.chainlink/` is gitignored, but only the
-        first time this workspace has no `.chainlink/issues.db` yet -- a cheap `Path.exists()`
-        check on every other call. See docs/specs/chainlink-task-tracking.md's "Setup" section
-        for why `init`'s own side effects beyond the issue database itself are pruned right
-        afterward."""
+        """Run `chainlink init` and ensure `.chainlink/` is gitignored, but only the first time
+        this workspace has no `.chainlink/issues.db` yet -- a cheap `Path.exists()` check on
+        every other call. See docs/specs/chainlink-task-tracking.md's "Setup" section for why
+        `init`'s own side effects beyond the issue database itself are pruned right afterward."""
         if (self._workspace_root / _CHAINLINK_DB_RELPATH).exists():
             return
         logger.debug(
@@ -178,15 +205,11 @@ class ChainlinkClient:
             self._workspace_root)
         claude_dir = self._workspace_root / ".claude"
         claude_dir_preexisted = claude_dir.is_dir()
-        preexisting = {
-            managed for managed in _INIT_MANAGED_PATHS
-            if (self._workspace_root / managed).exists()
-        }
-        result = subprocess.run(
-            [str(self._binary), "--json", "init"], cwd=self._workspace_root,
-            capture_output=True, text=True, env=_subprocess_env())
-        if result.returncode != 0:
-            raise ChainlinkError(f"chainlink init failed: {_first_nonblank_line(result.stderr)}")
+        preexisting = set(filter(
+            lambda managed: (self._workspace_root / managed).exists(), _INIT_MANAGED_PATHS))
+
+        self._run(["init"])
+
         self._prune_unrelated_init_scaffold(preexisting, claude_dir, claude_dir_preexisted)
         self._ensure_gitignore_entry()
 
@@ -209,13 +232,20 @@ class ChainlinkClient:
             else:
                 planted.unlink()
         if not claude_dir_preexisted and claude_dir.is_dir() and not any(claude_dir.iterdir()):
+            logger.debug(
+                "Removing now-empty %s (created by chainlink init, nothing else populated it).",
+                claude_dir)
             claude_dir.rmdir()
 
     def _ensure_gitignore_entry(self) -> None:
         """Add `.chainlink/` to the workspace's top-level `.gitignore`, creating the file if it
-        doesn't exist, unless a line already covers it. `issues.db` has no merge-conflict
-        resolution story (chainlink assigns ids sequentially with no reconciliation across
-        branches), so it must never be committed -- see docs/specs/chainlink-task-tracking.md."""
+        doesn't exist, unless the existing rules already cover it (checked via `pathspec.
+        GitIgnoreSpec`, the same gitignore-matching library `klorb.tools.util.gitignore` uses,
+        rather than a hand-rolled line comparison -- so a broader existing rule, e.g. a wildcard
+        dotdir pattern, is correctly recognized as already covering it). `issues.db` has no
+        merge-conflict resolution story (chainlink assigns ids sequentially with no
+        reconciliation across branches), so it must never be committed -- see
+        docs/specs/chainlink-task-tracking.md."""
         gitignore_path = self._workspace_root / ".gitignore"
         try:
             existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
@@ -224,12 +254,7 @@ class ChainlinkClient:
                 "Could not read %s to ensure it covers %r; leaving it as-is.",
                 gitignore_path, _GITIGNORE_ENTRY)
             return
-        covered = any(
-            line.strip().rstrip("/") == _GITIGNORE_ENTRY.rstrip("/")
-            for line in existing.splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        )
-        if covered:
+        if GitIgnoreSpec.from_lines(existing.splitlines()).match_file(_GITIGNORE_ENTRY):
             return
         logger.debug(
             "Adding %r to %s so the chainlink issue database is never committed.",
@@ -238,15 +263,22 @@ class ChainlinkClient:
         with open(gitignore_path, "a", encoding="utf-8") as handle:
             handle.write(f"{prefix}{_GITIGNORE_ENTRY}\n")
 
-    def _run(self, args: list[str]) -> "subprocess.CompletedProcess[str]":
-        """Run `chainlink <args>` in the workspace root, retrying up to `_LOCK_RETRY_ATTEMPTS`
+    def _run(self, args: list[str], *, quiet: bool = False) -> "subprocess.CompletedProcess[str]":
+        """Run `chainlink --json [--quiet] <args>` in the workspace root -- every call goes
+        through here, the one place that builds the command line, retries, and raises, so no
+        other method in this class shells out on its own. Retries up to `_LOCK_RETRY_ATTEMPTS`
         times with exponential backoff (`_LOCK_RETRY_BASE_DELAY_SECONDS`, doubling each retry)
         plus uniform jitter in `[-_LOCK_RETRY_JITTER_SECONDS, +_LOCK_RETRY_JITTER_SECONDS]` when
-        chainlink's shared SQLite file is locked by a concurrent session. Raises `ChainlinkError`
-        (`stderr`'s first non-blank line -- `RUST_BACKTRACE=0` keeps that line free of a Rust
-        backtrace) once every attempt fails, or immediately for any non-lock-contention failure.
+        chainlink's shared SQLite file is locked by a concurrent session; this relies on every
+        `Tool.apply()` call already running off klorb's main thread (the TUI dispatches a whole
+        turn, tool calls included, via a `@work(thread=True)` worker -- see `klorb.tui.mixins.
+        prompt_submission`), so blocking here with `time.sleep` never freezes the UI. Raises
+        `ChainlinkError` once every attempt fails, or immediately for any non-lock-contention
+        failure.
         """
-        command = [str(self._binary), *args]
+        flags = ["--json", *(["--quiet"] if quiet else [])]
+        command = [str(self._binary), *flags, *args]
+        logger.debug("Running chainlink command: %s (cwd=%s)", command, self._workspace_root)
         last_result: subprocess.CompletedProcess[str] | None = None
         for attempt in range(_LOCK_RETRY_ATTEMPTS):
             result = subprocess.run(
@@ -267,30 +299,34 @@ class ChainlinkClient:
             time.sleep(delay)
         assert last_result is not None
         raise ChainlinkError(
-            f"chainlink {' '.join(args)} failed: {_first_nonblank_line(last_result.stderr)}")
+            f"chainlink command failed: {command} (cwd={self._workspace_root}, "
+            f"exit code {last_result.returncode}): {_first_nonblank_line(last_result.stderr)}")
 
     def list_issues(self, *, status: str = "open") -> list[dict[str, Any]]:
         """Return every issue under this client's label, in chainlink's own `list --json`
         shape (no `blocked_by`/`comments`/etc. -- see `fetch_and_sort_issues` for the enriched,
         sorted view `TodoList`/`TodoNext` actually return)."""
-        result = self._run(["--json", "issue", "list", "--label", self._label, "--status", status])
+        result = self._run(["issue", "list", "--label", self._label, "--status", status])
         parsed: list[dict[str, Any]] = json.loads(result.stdout)
         return parsed
 
     def show_issue(self, issue_id: int) -> dict[str, Any]:
         """Return one issue's full detail (labels, comments, blocked_by/blocking, etc.)."""
-        result = self._run(["--json", "issue", "show", str(issue_id)])
+        result = self._run(["issue", "show", str(issue_id)])
         parsed: dict[str, Any] = json.loads(result.stdout)
         return parsed
 
     def create_issue(
         self, title: str, *, description: str | None = None, priority: Priority = "medium",
     ) -> int:
-        """Create a new issue under this client's label and return its new id."""
-        args = ["--quiet", "issue", "create", title, "--priority", priority, "--label", self._label]
+        """Create a new issue under this client's label and return its new id. `chainlink issue
+        create` doesn't emit JSON regardless of `--json` (verified against the installed
+        binary), so the new id is parsed from `--quiet`'s bare-value stdout instead."""
+        validate_priority(priority)
+        args = ["issue", "create", title, "--priority", priority, "--label", self._label]
         if description is not None:
             args.extend(["--description", description])
-        result = self._run(args)
+        result = self._run(args, quiet=True)
         return int(result.stdout.strip())
 
     def update_issue(
@@ -300,48 +336,50 @@ class ChainlinkClient:
         """Update `issue_id`'s title/description/priority; a no-op if all three are `None`."""
         if title is None and description is None and priority is None:
             return
-        args = ["--quiet", "issue", "update", str(issue_id)]
+        if priority is not None:
+            validate_priority(priority)
+        args = ["issue", "update", str(issue_id)]
         if title is not None:
             args.extend(["--title", title])
         if description is not None:
             args.extend(["--description", description])
         if priority is not None:
             args.extend(["--priority", priority])
-        self._run(args)
+        self._run(args, quiet=True)
 
     def close_issue(self, issue_id: int) -> None:
         """Close `issue_id`. Always passes `--no-changelog`: chainlink's default close behavior
         writes an entry to a `CHANGELOG.md` at the workspace root, which has nothing to do with
         klorb's ephemeral, session-scoped task tracking and would otherwise silently mutate a
         real source file outside klorb's own permission-gated write tools."""
-        self._run(["--quiet", "issue", "close", str(issue_id), "--no-changelog"])
+        self._run(["issue", "close", str(issue_id), "--no-changelog"], quiet=True)
 
     def reopen_issue(self, issue_id: int) -> None:
-        self._run(["--quiet", "issue", "reopen", str(issue_id)])
+        self._run(["issue", "reopen", str(issue_id)], quiet=True)
 
     def block(self, issue_id: int, blocker_id: int) -> None:
         """Record that `issue_id` is blocked by `blocker_id`."""
-        self._run(["--quiet", "issue", "block", str(issue_id), str(blocker_id)])
+        self._run(["issue", "block", str(issue_id), str(blocker_id)], quiet=True)
 
     def unblock(self, issue_id: int, blocker_id: int) -> None:
         """Remove the record that `issue_id` is blocked by `blocker_id`."""
-        self._run(["--quiet", "issue", "unblock", str(issue_id), str(blocker_id)])
+        self._run(["issue", "unblock", str(issue_id), str(blocker_id)], quiet=True)
 
     def comment(self, issue_id: int, text: str, *, kind: CommentKind = "note") -> None:
-        self._run(["--quiet", "issue", "comment", str(issue_id), text, "--kind", kind])
+        self._run(["issue", "comment", str(issue_id), text, "--kind", kind], quiet=True)
 
     def close_all(self) -> None:
         """Close every open issue under this client's label -- see `_close_all_on_teardown`,
         the only caller. Also always `--no-changelog`, for the same reason `close_issue` is."""
-        self._run(["--quiet", "issue", "close-all", "--label", self._label, "--no-changelog"])
+        self._run(["issue", "close-all", "--label", self._label, "--no-changelog"], quiet=True)
 
     def _close_all_on_teardown(self) -> None:
         """`Session.register_teardown` callback: close every remaining open issue under this
         label when the session ends (see docs/adrs/chainlink-issues-not-chainlink-sessions-
-        for-continuity.md -- klorb uses chainlink ephemerally, one label per master session,
-        with no "resume a prior session's leftover work" capability yet). Logged and swallowed
-        rather than raised: `Session.close()` runs every registered teardown unconditionally and
-        must not be interrupted by one of them failing."""
+        for-continuity.md -- klorb uses chainlink ephemerally, one label per root session, with
+        no "resume a prior session's leftover work" capability yet). Logged and swallowed rather
+        than raised: `Session.close()` runs every registered teardown unconditionally and must
+        not be interrupted by one of them failing."""
         try:
             self.close_all()
         except ChainlinkError:
@@ -356,7 +394,7 @@ def fetch_and_sort_issues(client: ChainlinkClient, *, include_closed: bool) -> l
     which `list` alone doesn't return), and sort per `issue_sort_key`. Shared by `TodoList` and
     `TodoNext` so both use the exact same fetch-enrich-sort pipeline."""
     base = client.list_issues(status="all" if include_closed else "open")
-    issues = [client.show_issue(issue["id"]) for issue in base]
+    issues = list(map(lambda entry: client.show_issue(entry["id"]), base))
     open_ids = {issue["id"] for issue in issues if issue.get("status") == "open"}
-    issues.sort(key=lambda issue: issue_sort_key(issue, open_ids))
+    issues.sort(key=issue_sort_key(open_ids))
     return issues

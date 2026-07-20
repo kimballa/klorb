@@ -10,6 +10,7 @@ from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import ChainlinkClient, chainlink_available
 from klorb.tools.tasks.todo_create import TodoCreateTool
+from klorb.tools.tasks.todo_list import TodoListTool
 from klorb.tools.tasks.todo_next import TodoNextTool
 from klorb.workspace import Workspace
 
@@ -79,6 +80,34 @@ def test_blocks_current_issue_requires_a_current_task(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="no current tracked task"):
         TodoCreateTool(context).apply({"title": "New task", "blocks_current_issue": True})
+
+    # Validated up front, before creating anything -- no orphaned issue left behind.
+    assert TodoListTool(context).apply({"include_closed": True})["issues"] == []
+
+
+@requires_chainlink
+def test_invalid_priority_rejected_before_creating_anything(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(ValueError, match="priority must be one of"):
+        TodoCreateTool(context).apply({"title": "New task", "priority": "urgent"})
+
+    assert TodoListTool(context).apply({"include_closed": True})["issues"] == []
+
+
+@requires_chainlink
+def test_failed_dependency_recording_closes_the_new_issue_with_an_explanatory_comment(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(Exception, match="not found"):
+        TodoCreateTool(context).apply({"title": "New task", "blocked_by": [999999]})
+
+    issues = TodoListTool(context).apply({"include_closed": True})["issues"]
+    assert len(issues) == 1
+    assert issues[0]["status"] == "closed"
+    assert "Created in error" in issues[0]["comments"][-1]["content"]
 
 
 @requires_chainlink

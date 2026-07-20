@@ -129,3 +129,25 @@ def test_summary_on_success_and_failure(tmp_path: Path) -> None:
 
     assert tool.summary(args, result) == f"Update todo #{created['id']} Task"
     assert tool.summary(args, error="boom") == f"Update todo #{created['id']} failed: boom"
+
+
+@requires_chainlink
+def test_summary_mentions_which_fields_were_updated(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    created = TodoCreateTool(context).apply({"title": "Task"})
+    tool = TodoUpdateTool(context)
+    args = {"id": created["id"], "new_priority": "high", "close": True}
+
+    result = tool.apply(args)
+
+    assert tool.summary(args, result) == (
+        f"Update todo #{created['id']} Task (priority, closed)")
+
+
+@requires_chainlink
+def test_invalid_new_priority_is_rejected(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    created = TodoCreateTool(context).apply({"title": "Task"})
+
+    with pytest.raises(ValueError, match="priority must be one of"):
+        TodoUpdateTool(context).apply({"id": created["id"], "new_priority": "urgent"})

@@ -9,6 +9,8 @@ from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
 
+_SUMMARY_DESCRIPTION_MAX_CHARS = 100
+
 
 class TodoListTool(Tool):
     """Lists the todo items chainlink is tracking under this session's label (see
@@ -45,14 +47,14 @@ class TodoListTool(Tool):
                 "ids": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "Limit the result to these issue ids. Omit to list every issue.",
+                    "description": (
+                        "Limit the result to these issue ids. A single id returns that issue's "
+                        "full detail, comments included. Omit to list every issue."
+                    ),
                 },
                 "include_closed": {
                     "type": "boolean",
-                    "description": (
-                        "Also include closed issues (still sorted after all open ones). "
-                        "Default false."
-                    ),
+                    "description": "Also include closed issues. Default false.",
                 },
             },
             "required": [],
@@ -70,7 +72,7 @@ class TodoListTool(Tool):
             issues = fetch_and_sort_issues(client, include_closed=include_closed)
             if ids:
                 wanted = set(ids)
-                issues = [issue for issue in issues if issue["id"] in wanted]
+                issues = list(filter(lambda issue: issue["id"] in wanted, issues))
 
         logger.debug("TodoList returning %d issue(s)", len(issues))
         return {"issues": issues}
@@ -80,4 +82,16 @@ class TodoListTool(Tool):
             return f"List todos failed: {error}"
         if not isinstance(result, dict):
             return "List todos"
-        return f"List todos ({len(result.get('issues', []))})"
+        issues = result.get("issues", [])
+        if len(issues) == 1:
+            return f"List todos: {self._single_issue_label(issues[0])}"
+        return f"List todos ({len(issues)})"
+
+    def _single_issue_label(self, issue: dict[str, Any]) -> str:
+        label = f"#{issue.get('id')} {issue.get('title', '')}"
+        description = issue.get("description")
+        if not description:
+            return label
+        if len(description) > _SUMMARY_DESCRIPTION_MAX_CHARS:
+            description = description[:_SUMMARY_DESCRIPTION_MAX_CHARS] + "..."
+        return f"{label} — {description}"

@@ -12,6 +12,7 @@ from klorb.tools.tasks import todo_next as todo_next_module
 from klorb.tools.tasks.common import chainlink_available
 from klorb.tools.tasks.todo_create import TodoCreateTool
 from klorb.tools.tasks.todo_next import TodoNextTool
+from klorb.tools.tasks.todo_update import TodoUpdateTool
 from klorb.workspace import Workspace
 
 requires_chainlink = pytest.mark.skipif(
@@ -97,9 +98,40 @@ def test_standing_interjection_disappears_once_no_task_is_tracked(tmp_path: Path
     provider = context.session._standing_interjection_providers["ChainlinkCurrentTask"]
     assert provider() is not None
 
-    context.session.cur_chainlink_task_id = None
+    context.session.set_chainlink_task(None)
 
     assert provider() is None
+
+
+@requires_chainlink
+def test_returns_the_same_current_task_again_if_still_open(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    first = TodoCreateTool(context).apply({"title": "First task"})
+    TodoCreateTool(context).apply({"title": "Second task"})
+    first_result = TodoNextTool(context).apply({})
+    assert first_result["task"]["id"] == first["id"]
+
+    second_result = TodoNextTool(context).apply({})
+
+    assert second_result["task"]["id"] == first["id"]
+    assert "message" in second_result
+    assert f"#{first['id']}" in second_result["message"]
+    assert context.session is not None
+    assert context.session.cur_chainlink_task_id == first["id"]
+
+
+@requires_chainlink
+def test_advances_to_the_next_task_once_the_current_one_is_closed(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    first = TodoCreateTool(context).apply({"title": "First task"})
+    second = TodoCreateTool(context).apply({"title": "Second task"})
+    TodoNextTool(context).apply({})
+    TodoUpdateTool(context).apply({"id": first["id"], "close": True})
+
+    result = TodoNextTool(context).apply({})
+
+    assert result["task"]["id"] == second["id"]
+    assert "message" not in result
 
 
 @requires_chainlink

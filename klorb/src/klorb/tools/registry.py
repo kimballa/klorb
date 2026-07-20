@@ -82,11 +82,6 @@ class ToolRegistry:
         `dict[str, type[Tool]]` (e.g. a filtered subset of this registry's classes) without
         re-scanning the package. `package` defaults to `klorb.tools` itself; pass a different
         package to discover tools defined elsewhere (e.g. a test fixture package).
-
-        A discovered tool whose `category()` is `"TASKS"` (the `klorb.tools.tasks` subpackage)
-        is silently dropped from the result unless the `chainlink` binary can be found (see
-        `klorb.tools.tasks.common.chainlink_available`) -- there is no point offering
-        `Todo*` tools a session can never successfully call.
         """
         logger.debug("Discovering tools in package %s", package.__name__)
         tool_classes: dict[str, type[Tool]] = {}
@@ -112,9 +107,7 @@ class ToolRegistry:
                 if category == _TASKS_CATEGORY and not chainlink_available():
                     # No Todo* tool call can ever be attempted in this session -- see
                     # docs/specs/chainlink-task-tracking.md's "Setup" section.
-                    logger.debug(
-                        "Skipping %r: chainlink binary not found on PATH or ~/.cargo/bin.",
-                        tool.name())
+                    logger.debug("Skipping %r: chainlink binary not found.", tool.name())
                     continue
                 logger.debug("Registered tool %r from %s", tool.name(), module.__name__)
                 tool_classes[tool.name()] = candidate

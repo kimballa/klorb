@@ -263,6 +263,7 @@ class KeyActionsMixin(ReplAppBase):
                 self._session.config.workspace, self._session.config, self._session.messages,
                 statistics=self._session.statistics,
                 session_id=self._session.id,
+                root_id=self._session.root_id,
                 session_name=self._session.name,
                 cur_chainlink_task_id=self._session.cur_chainlink_task_id)
         else:
@@ -434,6 +435,7 @@ class KeyActionsMixin(ReplAppBase):
                     workspace, self._session.config, self._session.messages,
                     statistics=self._session.statistics,
                     session_id=self._session.id,
+                    root_id=self._session.root_id,
                     session_name=self._session.name,
                     cur_chainlink_task_id=self._session.cur_chainlink_task_id)
         except Exception:

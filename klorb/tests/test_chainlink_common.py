@@ -114,7 +114,7 @@ def test_run_retries_on_lock_contention_then_succeeds(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(tasks_common.time, "sleep", lambda seconds: None)
 
-    result = client._run(["--json", "issue", "list"])
+    result = client._run(["issue", "list"])
 
     assert result.stdout == "ok"
     assert len(calls) == 3
@@ -135,7 +135,7 @@ def test_run_raises_chainlink_error_after_exhausting_retries(
     monkeypatch.setattr(tasks_common.time, "sleep", lambda seconds: None)
 
     with pytest.raises(ChainlinkError, match="database is locked"):
-        client._run(["--json", "issue", "list"])
+        client._run(["issue", "list"])
 
 
 @requires_chainlink
@@ -155,7 +155,7 @@ def test_run_does_not_retry_a_non_lock_failure(
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     with pytest.raises(ChainlinkError, match="not a chainlink repository"):
-        client._run(["--json", "issue", "list"])
+        client._run(["issue", "list"])
     assert len(calls) == 1
 
 
@@ -312,3 +312,97 @@ def test_close_all_on_teardown_closes_this_labels_open_issues(tmp_path: Path) ->
     session.close()
 
     assert client.show_issue(issue_id)["status"] == "closed"
+
+
+@requires_chainlink
+def test_client_scopes_issues_by_root_id_not_by_session_id(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+
+    session = Session(config=config, session_id="child-id", root_id="shared-root")
+    context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
+    client = ChainlinkClient(context)
+    client.create_issue("Issue under the shared root")
+
+    titles = {issue["title"] for issue in client.list_issues()}
+    assert titles == {"Issue under the shared root"}
+
+
+def test_validate_priority_accepts_every_known_priority() -> None:
+    for priority in ("low", "medium", "high", "critical"):
+        tasks_common.validate_priority(priority)  # no raise
+
+
+def test_validate_priority_rejects_unknown_priority() -> None:
+    with pytest.raises(ValueError, match="priority must be one of"):
+        tasks_common.validate_priority("urgent")
+
+
+@requires_chainlink
+def test_create_issue_rejects_invalid_priority_before_shelling_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called for an invalid priority")
+
+    monkeypatch.setattr(subprocess, "run", fail_if_called)
+
+    with pytest.raises(ValueError, match="priority must be one of"):
+        client.create_issue("Task", priority="urgent")  # type: ignore[arg-type]
+
+
+@requires_chainlink
+def test_update_issue_rejects_invalid_priority(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Task")
+
+    with pytest.raises(ValueError, match="priority must be one of"):
+        client.update_issue(issue_id, priority="urgent")  # type: ignore[arg-type]
+
+
+@requires_chainlink
+def test_run_always_passes_json_and_respects_quiet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+
+    captured: list[list[str]] = []
+
+    def fake_run(command, cwd, capture_output, text, env):
+        captured.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    client._run(["issue", "list"])
+    assert "--json" in captured[-1]
+    assert "--quiet" not in captured[-1]
+
+    client._run(["issue", "close", "1"], quiet=True)
+    assert "--json" in captured[-1]
+    assert "--quiet" in captured[-1]
+
+
+@requires_chainlink
+def test_chainlink_error_message_includes_argv_cwd_and_exit_code(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+
+    with pytest.raises(ChainlinkError) as excinfo:
+        client.show_issue(999999)
+
+    message = str(excinfo.value)
+    assert "issue" in message
+    assert "show" in message
+    assert "999999" in message
+    assert str(context.session_config.workspace.path) in message

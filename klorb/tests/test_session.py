@@ -170,6 +170,54 @@ def test_session_uses_explicitly_given_id() -> None:
     assert session.id == "my-custom-id"
 
 
+def test_session_root_id_defaults_to_its_own_id() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="my-custom-id")
+
+    assert session.root_id == "my-custom-id"
+
+
+def test_session_uses_explicitly_given_root_id() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
+
+    assert session.id == "child-id"
+    assert session.root_id == "root-id"
+
+
+def test_get_chainlink_label_returns_root_id_not_id() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
+
+    assert session.get_chainlink_label() == "root-id"
+
+
+def test_set_chainlink_task_defaults_to_none() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock())
+
+    assert session.cur_chainlink_task_id is None
+
+
+def test_set_chainlink_task_sets_the_given_id() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock())
+
+    session.set_chainlink_task(42)
+
+    assert session.cur_chainlink_task_id == 42
+
+
+def test_set_chainlink_task_clears_a_previously_set_id() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock())
+    session.set_chainlink_task(42)
+
+    session.set_chainlink_task(None)
+
+    assert session.cur_chainlink_task_id is None
+
+
 def test_total_tokens_used_sums_every_messages_client_side_num_tokens() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("model reply")
