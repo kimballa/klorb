@@ -43,10 +43,13 @@ _INIT_MANAGED_PATHS: tuple[Path, ...] = (
 )
 """Paths `chainlink --json init` plants alongside the `.chainlink/` task database itself: a
 Claude-Code-specific hooks/MCP scaffold that has nothing to do with klorb's own use of chainlink
-as a task-tracking backend (see docs/specs/chainlink-task-tracking.md's "Setup" section).
-`_ensure_setup()` snapshots which of these already exist before running `init`, and afterward
-removes only the ones `init` itself created -- never a path that was already there -- so a
-workspace that already has its own Claude Code configuration is left untouched."""
+as a task-tracking backend (see docs/specs/chainlink-task-tracking.md's "Setup" section). Each
+path here is relative to `self._workspace_root` -- `chainlink init` (and so `_ensure_setup`)
+always runs with `cwd` set there (see `_run`), so this is always where `.claude/`/`.mcp.json`
+land, never some other directory. `_ensure_setup()` snapshots which of these already exist
+before running `init`, and afterward removes only the ones `init` itself created -- never a
+path that was already there -- so a workspace that already has its own Claude Code
+configuration is left untouched."""
 
 _LOCK_ERROR_MARKER = "database is locked"
 _LOCK_RETRY_ATTEMPTS = 4
@@ -56,14 +59,21 @@ _LOCK_RETRY_JITTER_SECONDS = 0.025
 
 def _discover_binary() -> Path | None:
     """Return the `chainlink` binary's path: `PATH` first (`shutil.which`), then
-    `$HOME/.cargo/bin/chainlink` as a fallback for an environment where `cargo install` put it
-    somewhere not on `PATH` -- `make cloud_setup` installs it exactly that way (see
-    `klorb/Makefile`'s `install_chainlink` target). `None` if neither resolves."""
+    `$VIRTUAL_ENV/bin/chainlink` if a Python virtualenv is active (klorb's own dev venv, e.g.,
+    may have it installed alongside `venv/bin/klorb` itself rather than on the ambient `PATH`),
+    then `$HOME/.cargo/bin/chainlink` as a last resort for an environment where `cargo install`
+    put it somewhere not on `PATH` -- `make cloud_setup` installs it exactly that way (see
+    `klorb/Makefile`'s `install_chainlink` target). `None` if none of these resolve."""
     on_path = shutil.which("chainlink")
     if on_path is not None:
         return Path(on_path)
-    fallback = Path.home() / ".cargo" / "bin" / "chainlink"
-    return fallback if fallback.is_file() else None
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    if virtual_env:
+        venv_candidate = Path(virtual_env) / "bin" / "chainlink"
+        if venv_candidate.is_file():
+            return venv_candidate
+    cargo_candidate = Path.home() / ".cargo" / "bin" / "chainlink"
+    return cargo_candidate if cargo_candidate.is_file() else None
 
 
 def chainlink_available() -> bool:

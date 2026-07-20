@@ -21,8 +21,9 @@ prerequisites weren't met — there is no config flag to turn it off separately.
 per workspace (`.chainlink/issues.db`), installed via `cargo install chainlink-tracker` by
 `klorb/Makefile`'s `install_chainlink` target (wired into `install_deps`/`install_dev_deps`, and
 so into `make cloud_setup`). `klorb.tools.tasks.common._discover_binary()` looks it up via
-`shutil.which("chainlink")` (`PATH`) first, then falls back to `$HOME/.cargo/bin/chainlink` — a
-`cargo install` binary lands there whether or not `~/.cargo/bin` is on `PATH`.
+`shutil.which("chainlink")` (`PATH`) first, then `$VIRTUAL_ENV/bin/chainlink` if a Python
+virtualenv is active, then falls back to `$HOME/.cargo/bin/chainlink` — a `cargo install` binary
+lands there whether or not `~/.cargo/bin` is on `PATH`.
 
 Every `chainlink` invocation runs with `cwd` set to the workspace root and
 `RUST_BACKTRACE=0` in its environment — `RUST_BACKTRACE=1` (as many shells default to) makes

@@ -269,6 +269,10 @@ backed by a real issue tracker scoped to this session, so state survives context
 * `TodoUpdate` to add a comment whenever you make meaningful progress, learn something new, or
   make a decision worth remembering — and to close an item once it's done and verified, or reopen
   one that wasn't actually finished.
+* `TodoNext` only surfaces comments on the item it returns; seeing another item's comments takes
+  a `TodoList` call naming that id specifically. If you learn something another (not-current)
+  item's future work should know — e.g. a constraint that affects something depending on what
+  you're doing now — record it there with `TodoUpdate`'s `add_comment`, not just on your own item.
 * An empty, all-closed list is a good signal your work is done.
 
 ## Continuing system context

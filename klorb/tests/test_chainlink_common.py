@@ -47,10 +47,28 @@ def test_binary_discovery_prefers_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert tasks_common._discover_binary() == Path("/usr/bin/chainlink")
 
 
+def test_binary_discovery_prefers_virtual_env_over_cargo_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
+    venv_dir = tmp_path / "venv"
+    (venv_dir / "bin").mkdir(parents=True)
+    venv_chainlink = venv_dir / "bin" / "chainlink"
+    venv_chainlink.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv_dir))
+    fake_home = tmp_path / "home"
+    (fake_home / ".cargo" / "bin").mkdir(parents=True)
+    (fake_home / ".cargo" / "bin" / "chainlink").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(tasks_common.Path, "home", lambda: fake_home)
+
+    assert tasks_common._discover_binary() == venv_chainlink
+
+
 def test_binary_discovery_falls_back_to_cargo_bin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     fake_home = tmp_path / "home"
     (fake_home / ".cargo" / "bin").mkdir(parents=True)
     fallback = fake_home / ".cargo" / "bin" / "chainlink"
@@ -64,6 +82,7 @@ def test_binary_discovery_returns_none_when_not_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.setattr(tasks_common.Path, "home", lambda: tmp_path / "empty-home")
 
     assert tasks_common._discover_binary() is None

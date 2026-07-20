@@ -158,3 +158,11 @@
 
 * Vector database indexing of skills and memories for fuzzier search of both.
   * ... and then do vectordb indexing of the codebase, too.
+
+* Ask (or send a patch) upstream for a `chainlink init --db-only` flag that skips writing the
+  Claude-Code-hooks/MCP scaffold (`.claude/settings.json`, `.claude/hooks/`, `.claude/mcp/`,
+  `.mcp.json`) and just sets up `.chainlink/`. klorb's `ChainlinkClient._ensure_setup()` prunes
+  that scaffold itself today (see docs/specs/chainlink-task-tracking.md); a flag would remove
+  the need for the workaround.
+
+* Add a LICENSE file to this repo.
