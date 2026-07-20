@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Synthesized EvalCase tasks covering ReadFile, CreateFile, EditFile, ReplaceAll, ListDir, and
-the skill tools (ActivateSkill/ReadSkillFile).
+the skill tools (ActivateSkill/ReadSkillFile), grouped into the "file-tools" EvalSuite.
 
 Each case's `check` inspects the resulting workspace file state only, never `final_response`
 text — see docs/adrs/grade-tool-evals-by-filesystem-state.md. Content comparisons tolerate
@@ -37,7 +37,7 @@ from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.session import Session
 
-from .harness import EvalCase
+from .harness import EvalCase, EvalSuite
 
 
 def _read(path: Path) -> str:
@@ -796,7 +796,7 @@ EDIT_FILE_OLD_TEXT_REPEATED_BLOCK = EvalCase(
 )
 
 
-CASES: list[EvalCase] = [
+FILE_TOOLS_CASES: list[EvalCase] = [
     CREATE_FILE_BASIC,
     CREATE_FILE_NESTED_DIRECTORY,
     READ_THEN_EDIT_SINGLE_LINE,
@@ -824,3 +824,11 @@ CASES: list[EvalCase] = [
     EDIT_FILE_OLD_TEXT_DRIFTED,
     EDIT_FILE_OLD_TEXT_REPEATED_BLOCK,
 ]
+
+FILE_TOOLS = EvalSuite(name="file-tools", cases=FILE_TOOLS_CASES)
+
+ALL_SUITES: list[EvalSuite] = [FILE_TOOLS]
+"""Every known `EvalSuite`, keyed by `EvalSuite.name` for `run_evals.py`'s `--suite`/
+`--list-suites` flags -- append a new suite here as one more `EvalSuite` entry when a
+scenario group doesn't belong under `file-tools` (e.g. a future suite covering non-file
+tools)."""

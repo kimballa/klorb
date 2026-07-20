@@ -51,6 +51,9 @@ offline against mocks. They run under their own `make evals` target instead — 
     cost without real token accounting), and the `conditional` property — true when `passed` is
     true but either `num_tool_calls > expected_tool_calls` or `soft_failure_reason` is set — see
     [[eval-conditional-pass-on-excess-tool-calls]].
+  * `EvalSuite` — a frozen dataclass grouping related `EvalCase`s under a `name` (e.g.
+    `"file-tools"`) so `run_evals.py`'s `--suite` flag can select just that group instead of
+    every known case.
   * `run_case(case, *, model, provider) -> CaseResult` — the per-case runner. For each case it:
     1. Creates a fresh temp directory and writes `setup_files` into it.
     2. Builds a `SessionConfig(model=model, interactive=False, thinking_enabled=False,
@@ -86,9 +89,13 @@ offline against mocks. They run under their own `make evals` target instead — 
     `tiktoken` can't map directly — an approximation in that case, not that model's real
     tokenizer). This is the fixed per-turn prompt cost of offering a tool, as distinct from
     `CaseResult`'s per-case tool-call metrics.
-* `klorb/evals/cases.py` holds the synthesized `EvalCase` list covering `ReadFile`, `CreateFile`,
+* `klorb/evals/cases.py` holds the synthesized `EvalCase`s covering `ReadFile`, `CreateFile`,
   `EditFile`, `ReplaceAll`, `ListDir`, and the skill tools (`ActivateSkill`/`ReadSkillFile`) — see
-  its module docstring for the full list of scenarios.
+  its module docstring for the full list of scenarios. They're grouped into `FILE_TOOLS = EvalSuite(
+  name="file-tools", cases=FILE_TOOLS_CASES)`, and every known suite is listed in
+  `ALL_SUITES: list[EvalSuite]` — the registry `run_evals.py`'s `--suite`/`--list-suites` flags
+  read from. A new suite for a different scenario group is added the same way: a new
+  `EvalSuite(name=..., cases=[...])` constant, appended to `ALL_SUITES`.
 * `klorb/evals/report.py` renders a `list[CaseResult]` (plus an optional `tool_token_counts`) as
   a markdown report: `render_summary()`'s block (pass count, conditional-pass count, total
   duration, total/average tool calls), an optional "Tool definitions" section (each tool's name
@@ -111,16 +118,28 @@ offline against mocks. They run under their own `make evals` target instead — 
 * `klorb/evals/run_evals.py` is the entry point `make evals` invokes: calls `load_dotenv()`
   first (no path argument, so `python-dotenv` walks up from the current working directory —
   `klorb/`, since that's where `make evals` runs — and finds the repo-root `.env` one level up
-  if present, same as [[openrouter-prompt-client]]'s one-shot CLI), then checks for
-  `OPENROUTER_API_KEY` (skip-not-fail if still absent after that — see
-  [[tool-evals-skip-without-api-key]]), builds an `OpenRouterApiProvider`, runs every case from
-  `klorb.evals.cases.CASES`, prints the rendered report — passing `render_report()` the result
-  of `tool_token_counts(model=model)` so the report's "Tool definitions" section reflects the
-  model actually under test — and exits `1` if any case failed (`0` otherwise) so `make evals`
-  fails CI-visibly when it *does* run with a key configured.
+  if present, same as [[openrouter-prompt-client]]'s one-shot CLI), resolves `--suite` and
+  `--list-suites` (see below), then checks for `OPENROUTER_API_KEY` (skip-not-fail if still
+  absent after that — see [[tool-evals-skip-without-api-key]]), builds an
+  `OpenRouterApiProvider`, runs every case the selected suite(s) resolved to, prints the
+  rendered report — passing `render_report()` the result of `tool_token_counts(model=model)` so
+  the report's "Tool definitions" section reflects the model actually under test — and exits `1`
+  if any case failed (`0` otherwise) so `make evals` fails CI-visibly when it *does* run with a
+  key configured.
   The model defaults to `klorb.openrouter.DEFAULT_MODEL`, overridable with `--model` or the
   `KLORB_EVAL_MODEL` environment variable, so eval runs stay cheap by default but can be pointed
   at a specific model under investigation.
+  * `--suite <name>` selects one `EvalSuite` from `klorb.evals.cases.ALL_SUITES` by `name`
+    (default: the special value `"all"`, `ALL_SUITES_ARG`, which concatenates every suite's
+    cases and runs them all — the same set the old flat `CASES` list ran before suites existed).
+    `_resolve_cases(suite_name)` returns `None` when `suite_name` matches neither `"all"` nor a
+    known suite's `name`; `main()` then prints `Unknown eval suite '<name>'. Run with
+    --list-suites to see available suites.` and returns exit code `1` without ever checking
+    `OPENROUTER_API_KEY` or constructing a provider — an unknown suite name is a usage error,
+    not something to skip quietly.
+  * `--list-suites` prints every `EvalSuite.name` in `ALL_SUITES`, one per line, and returns `0`
+    immediately — before the `OPENROUTER_API_KEY` check, since listing suite names needs no
+    model access.
   * It passes `run_evaluation()` an `on_case_start` callback (prints `"<name>..."` as each case
     begins) and an `on_case_complete` callback (prints `tool_call_log`'s raw request/response
     transcript — `-> Tool(args)` / `<- response`, color-coded red when the response starts
@@ -154,7 +173,8 @@ offline against mocks. They run under their own `make evals` target instead — 
 
 ## Adding a new eval case
 
-Append an `EvalCase` to `klorb/evals/cases.py`'s `CASES` list. `check` should assert on the
+Append an `EvalCase` to `klorb/evals/cases.py`'s `FILE_TOOLS_CASES` list (or a different suite's
+cases list, if the scenario belongs elsewhere). `check` should assert on the
 resulting workspace file state (read the file back with `pathlib.Path.read_text()`) rather than
 on `final_response` text — see [[grade-tool-evals-by-filesystem-state]]. Keep `setup_files`
 minimal: only what the case's prompt actually depends on. Set `expected_tool_calls` to the
@@ -172,8 +192,10 @@ outright.
 ## Out of scope
 
 * The file tools (`ReadFile`, `CreateFile`, `EditFile`, `ReplaceAll`), `ListDir`, and the skill
-  tools (`ActivateSkill`/`ReadSkillFile`) are covered today; the harness itself is tool-agnostic
-  (any `klorb.tools` package works) and can grow to cover future tools by adding more `EvalCase`s.
+  tools (`ActivateSkill`/`ReadSkillFile`) are covered today, all under the single `"file-tools"`
+  `EvalSuite`; the harness itself is tool-agnostic (any `klorb.tools` package works) and can grow
+  to cover future tools by adding more `EvalCase`s to that suite, or a new `EvalSuite` entirely
+  for a scenario group that doesn't belong under `file-tools`.
   An `EvalCase` may set `workspace_trusted`/`skill_rules` for a scenario (e.g. a skill case) that
   needs a trusted workspace or a pre-`allow`ed skill.
 * No LLM-as-judge grading, and no fuzzy/semantic matching of `final_response` — see

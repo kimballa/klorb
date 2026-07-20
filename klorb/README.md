@@ -37,16 +37,21 @@ See [`usage.md`](usage.md) for the full command reference, including the
 ## Evals
 
 ```
-make evals                                    # run every case in klorb/evals/cases.py
+make evals                                        # run every suite in klorb/evals/cases.py
+EVALARGS='--suite file-tools' make evals          # run just one suite
+EVALARGS='--list-suites' make evals               # print known suite names and exit
 EVALARGS='--model openai/gpt-5-nano' make evals   # against a specific model
 ```
 
-`make evals` runs `klorb/evals/`'s tool-efficacy suite: unlike `make test` (fully offline), it
+`make evals` runs `klorb/evals/`'s tool-efficacy suites: unlike `make test` (fully offline), it
 hits an external API — real prompts sent to a real hosted model via OpenRouter, offering it the
 real file tools, graded by inspecting the resulting file state (not the model's closing text).
 This answers a different question than `make test`: whether a tool's
 `name()`/`description()`/`parameters()` are actually clear enough for a model to drive
-correctly, not whether its `apply()` logic is correct. The default model
+correctly, not whether its `apply()` logic is correct. Cases are grouped into named `EvalSuite`s
+(today, just `"file-tools"`); `--suite <name>` runs one, `--suite all` (the default) runs every
+known suite, and `--list-suites` prints the known suite names without running anything — an
+unknown `--suite` name prints a reminder to use `--list-suites` and exits `1`. The default model
 (`klorb.openrouter.DEFAULT_MODEL`) is free to use; `--model`/`EVALARGS` can point at a different
 (possibly paid) model instead, but that's not required just to run the suite. It needs
 `OPENROUTER_API_KEY` set (in the environment, or in a `.env` file anywhere from `klorb/` up to
@@ -55,7 +60,7 @@ one-line notice and exits `0` (doesn't fail the build — see
 `docs/adrs/tool-evals-skip-without-api-key.md`). Each case's report line is `[PASS]`,
 `[CONDITIONAL PASS]` (passed, but took more tool calls than expected — worth a look even though
 it's not a hard failure), or `[FAIL]`. See `docs/specs/tool-eval-harness.md` for the full design
-and how to add a new case.
+and how to add a new case or suite.
 
 Use `EVAL_ARGS='--self-review'` to feed the output of the eval process back to the model to
 generate a list of recommendations for improvement from the perpsective of the model

@@ -65,6 +65,17 @@ class EvalCase:
 
 
 @dataclass(frozen=True)
+class EvalSuite:
+    """A named group of `EvalCase`s run together as one unit, e.g. `"file-tools"` for the
+    `ReadFile`/`CreateFile`/`EditFile`/`ReplaceAll`/`ListDir` cases in `klorb/evals/cases.py`.
+    `run_evals.py`'s `--suite` flag selects one suite by `name` (or the special value `"all"`,
+    which runs every suite in `klorb.evals.cases.ALL_SUITES`)."""
+
+    name: str
+    cases: list[EvalCase]
+
+
+@dataclass(frozen=True)
 class ToolCallLogEntry:
     """One tool call the model made during a case's turn, and the raw result it got back —
     the same `arguments`/response `content` strings that actually crossed the wire, kept
