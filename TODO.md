@@ -26,9 +26,6 @@
 
 ## Feature backlog
 
-* session.py needs to get split up with mixins or something, it's > 2k lines.
-
-
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.

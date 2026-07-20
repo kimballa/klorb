@@ -27,7 +27,9 @@ from klorb.tui.widgets.prompt_input import PromptInput
 @pytest.fixture(autouse=True)
 def _stub_estimate_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     """Avoid tiktoken's network fetch by returning a constant token estimate for any text."""
-    monkeypatch.setattr("klorb.session.estimate_tokens", lambda _text: 1)
+    monkeypatch.setattr("klorb.session.mixins.prompt_setup.estimate_tokens", lambda _text: 1)
+    monkeypatch.setattr("klorb.session.mixins.tool_execution.estimate_tokens", lambda _text: 1)
+    monkeypatch.setattr("klorb.session.mixins.turns.estimate_tokens", lambda _text: 1)
 
 
 async def _wait_until(pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 2.0) -> None:
