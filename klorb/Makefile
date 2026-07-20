@@ -106,7 +106,11 @@ sync_deps: venv
 	@echo "Use 'make install_deps' to install runtime dependencies."
 	@echo "Use 'make install_dev_deps' to install runtime and dev dependencies."
 
-install_deps: venv
+install_chainlink:
+	# Install chainlink for task tracking
+	source "$$HOME/.cargo/env" && cargo install chainlink-tracker
+
+install_deps: venv install_chainlink
 	# Only install release requirements.
 	@echo "Installing runtime dependencies..."
 	$(LOAD_VENV); "$(UV)" pip install -r "$(RELEASE_REQUIREMENTS)"
@@ -114,7 +118,7 @@ install_deps: venv
 	@echo "Runtime dependencies installed."
 	@echo "For development, run: make install_dev_deps"
 
-install_dev_deps: venv
+install_dev_deps: venv install_chainlink
 	$(LOAD_VENV); "$(UV)" pip install -r "$(LOCAL_REQUIREMENTS)"
 	@echo ""
 	@echo "Installed runtime and development dependencies."

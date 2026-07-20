@@ -21,3 +21,4 @@ tsconfig.tsbuildinfo
 .mypy_worker.*
 evals.log
 /tool-calls.log
+/.chainlink

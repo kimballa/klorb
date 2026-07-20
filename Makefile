@@ -23,7 +23,6 @@ cloud_setup:
 	$(APT_GET) update -qq || true
 	$(APT_GET) -y --fix-missing install bubblewrap curl
 	./bin/install_rust.sh
-	source "$$HOME/.cargo/env" && cargo install chainlink-tracker
 	npm install -g markdownlint-cli2
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
 

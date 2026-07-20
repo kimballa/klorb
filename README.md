@@ -22,8 +22,8 @@ own provisioning steps. For the Python harness and CLI, see
 
 The top-level `make cloud_setup` target performs the installation steps described there
 (`make venv` and `make install_dev_deps` in `klorb/`) in one step along with a few other
-setup activities. It's used to provision ephemeral cloud development environments; see
-`bin/claude-session-start.sh`.
+setup activities. It's used to provision ephemeral cloud development environments (see
+`bin/claude-session-start.sh`) but also sets up a local dev environment just as well.
 
 Create a top-level `.env` file (see `env.template` for a starter) and populate your
 OpenRouter API key.

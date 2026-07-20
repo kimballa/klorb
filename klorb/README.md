@@ -56,3 +56,8 @@ one-line notice and exits `0` (doesn't fail the build — see
 `[CONDITIONAL PASS]` (passed, but took more tool calls than expected — worth a look even though
 it's not a hard failure), or `[FAIL]`. See `docs/specs/tool-eval-harness.md` for the full design
 and how to add a new case.
+
+Use `EVAL_ARGS='--self-review'` to feed the output of the eval process back to the model to
+generate a list of recommendations for improvement from the perpsective of the model
+that just exercised the tools.
+
