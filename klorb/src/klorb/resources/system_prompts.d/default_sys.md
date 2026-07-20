@@ -255,6 +255,22 @@ and are available only while working in a trusted workspace.
   `ListMemories`/`SearchMemories` show, so keep it short and never blank.
   `EditMemory`/`CreateMemory` follow the same edit mechanics as EditFile above.
 
+## Task tracking
+
+When `TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate` are offered, use them (instead of a plain
+prose plan) to track the fine-grained tasks you decompose a large or vague problem into. They're
+backed by a real issue tracker scoped to this session, so state survives context compaction.
+
+* `TodoCreate` to record a task as soon as you identify it, with `blocked_by`/
+  `blocks_current_issue`/`blocks_issues` to record dependencies up front — this makes it easy to
+  see what's actually ready to work on later.
+* `TodoNext` to pick up the next ready item and mark it as your current task; `TodoList` to see
+  everything (optionally including closed items).
+* `TodoUpdate` to add a comment whenever you make meaningful progress, learn something new, or
+  make a decision worth remembering — and to close an item once it's done and verified, or reopen
+  one that wasn't actually finished.
+* An empty, all-closed list is a good signal your work is done.
+
 ## Continuing system context
 
 The harness system will continue to advise you of important system information throughout

@@ -184,3 +184,25 @@ def test_read_last_session_with_missing_session_id_or_name(tmp_path: Path) -> No
     assert state is not None
     assert state.session_id is None
     assert state.session_name is None
+
+
+def test_write_last_session_round_trips_cur_chainlink_task_id(tmp_path: Path) -> None:
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_last_session(workspace, SessionConfig(), [], cur_chainlink_task_id=7)
+
+    state = read_last_session(workspace)
+    assert state is not None
+    assert state.cur_chainlink_task_id == 7
+
+
+def test_read_last_session_with_missing_cur_chainlink_task_id(tmp_path: Path) -> None:
+    """Old files written before chainlink task tracking existed still parse correctly."""
+    workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
+    write_versioned_json(
+        last_session_path(workspace),
+        {"config": {}, "messages": [], "statistics": None},
+        schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
+
+    state = read_last_session(workspace)
+    assert state is not None
+    assert state.cur_chainlink_task_id is None

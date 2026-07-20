@@ -44,7 +44,8 @@ def _handle_repl_crash(app: ReplApp, crash_tee: CrashLogTee) -> None:
             live_session.config.workspace, live_session.config, live_session.messages,
             statistics=live_session.statistics,
             session_id=live_session.id,
-            session_name=live_session.name)
+            session_name=live_session.name,
+            cur_chainlink_task_id=live_session.cur_chainlink_task_id)
     except OSError:
         logger.warning("Could not save session state on crash.", exc_info=True)
         print("klorb crashed; could not save session state.", file=sys.stderr)

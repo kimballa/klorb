@@ -86,6 +86,15 @@ class SessionCoreMixin(SessionBase):
         self._tool_registry = tool_registry
         if tool_registry is not None:
             tool_registry.session = cast("Session", self)
+        self.cur_chainlink_task_id: int | None = None
+        """The chainlink issue id `TodoNext` most recently selected as this session's current
+        task, or `None` if none is set (no `TodoNext` call yet, or the last one found nothing
+        ready/open). Read by `klorb.tools.tasks.todo_next`'s standing interjection provider on
+        every turn, and by `TodoCreate`'s `blocks_current_issue` argument. Round-trips through
+        `last-session.json` (`klorb.workspace.last_session.LastSessionState.
+        cur_chainlink_task_id`) like `session_id`/`session_name`, but — unlike `tool_state` — is
+        set directly by `Session` on construction and by a `Tool` through this public attribute,
+        not looked up per-tool-name. See docs/specs/chainlink-task-tracking.md."""
         self.tool_state: dict[str, Any] = {}
         """Per-session runtime state a `Tool` implementation wants to keep across calls within
         this one session (e.g. `BashTool`'s one-time sandbox-fallback notice), keyed by tool

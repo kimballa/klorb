@@ -89,6 +89,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         Only called for a trusted `workspace` (see caller): an untrusted or unresolved
         workspace has no saved state of its own to restore, by the same reasoning
         `_quit_after_maybe_saving` uses to decide whether to write one.
+
+        `state.cur_chainlink_task_id` is set directly on the reconstructed `Session` (no
+        matching constructor argument, unlike `session_id`/`session_name`) so a restored session
+        remembers its current chainlink task — see docs/specs/chainlink-task-tracking.md.
         """
         state = read_last_session(workspace)
         if state is None:
@@ -101,6 +105,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             session_id=state.session_id,
             session_name=state.session_name,
             tool_registry=ToolRegistry.discover_tools(self._process_config, restored_config))
+        self._session.cur_chainlink_task_id = state.cur_chainlink_task_id
         self._session.load_messages(state.messages)
         if state.statistics is not None:
             self._session.load_statistics(state.statistics)

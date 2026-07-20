@@ -49,10 +49,11 @@ had passed. Do not otherwise loop back to re-open a step you already completed.
   ones.
 * Keep the task list current as you learn: add newly discovered work explicitly rather than
   absorbing it silently, and drop obsolete items deliberately rather than by forgetting them.
-* You own the project's durable task-tracking state too — a TODO file in the repo, or a
-  connected external tracker. Mark done or remove what you completed, and record follow-up work
-  you deliberately left incomplete. File only follow-ups the user would agree are real; spraying
-  make-work into a task database erodes trust in everything else in it.
+* When `TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate` are available, they are your task-tracking
+  state for this work — see the "Task tracking" section below. Otherwise fall back to a TODO file
+  in the repo, or a connected external tracker: mark done or remove what you completed, and
+  record follow-up work you deliberately left incomplete. File only follow-ups the user would
+  agree are real; spraying make-work into a task database erodes trust in everything else in it.
 
 ## Uphold high engineering standards
 

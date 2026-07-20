@@ -263,7 +263,8 @@ class KeyActionsMixin(ReplAppBase):
                 self._session.config.workspace, self._session.config, self._session.messages,
                 statistics=self._session.statistics,
                 session_id=self._session.id,
-                session_name=self._session.name)
+                session_name=self._session.name,
+                cur_chainlink_task_id=self._session.cur_chainlink_task_id)
         else:
             clear_last_session(self._session.config.workspace)
             self._session.close()
@@ -433,7 +434,8 @@ class KeyActionsMixin(ReplAppBase):
                     workspace, self._session.config, self._session.messages,
                     statistics=self._session.statistics,
                     session_id=self._session.id,
-                    session_name=self._session.name)
+                    session_name=self._session.name,
+                    cur_chainlink_task_id=self._session.cur_chainlink_task_id)
         except Exception:
             pass
 

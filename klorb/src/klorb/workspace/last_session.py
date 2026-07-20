@@ -47,6 +47,10 @@ class LastSessionState(BaseModel):
     """The human-readable session title assigned by the session-naming classifier, persisted
     so the TUI's status bar can show `Session: <title>` on restore instead of
     `NEW_SESSION_LABEL`."""
+    cur_chainlink_task_id: int | None = None
+    """The saved session's `Session.cur_chainlink_task_id`, if any (see
+    docs/specs/chainlink-task-tracking.md). Absent (`None`) in files written by older klorb
+    versions that predate chainlink task tracking."""
 
 
 def last_session_path(workspace: Workspace) -> Path:
@@ -62,15 +66,17 @@ def write_last_session(
     statistics: SessionStatistics | None = None,
     session_id: str | None = None,
     session_name: str | None = None,
+    cur_chainlink_task_id: int | None = None,
 ) -> None:
     """Save `config` and `messages` to `workspace`'s `last-session.json`, schema-enveloped per
     docs/specs/persisted-json-schema-versioning.md. Overwrites any previously-saved state for
     this workspace outright — there is only ever one "last" session per workspace.
-    Optionally includes `statistics` (session run-time counters), `session_id`, and
-    `session_name` when provided."""
+    Optionally includes `statistics` (session run-time counters), `session_id`, `session_name`,
+    and `cur_chainlink_task_id` when provided."""
     state = LastSessionState(
         config=config, messages=messages, statistics=statistics,
-        session_id=session_id, session_name=session_name)
+        session_id=session_id, session_name=session_name,
+        cur_chainlink_task_id=cur_chainlink_task_id)
     write_versioned_json(
         last_session_path(workspace), state.model_dump(mode="json"),
         schema_name=LAST_SESSION_SCHEMA_NAME, schema_version=LAST_SESSION_SCHEMA_VERSION)
