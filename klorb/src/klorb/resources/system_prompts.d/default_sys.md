@@ -229,14 +229,17 @@ that line with itself plus the new line — `end_text`/`end_line` are both omitt
 ## Scratchpad
 
 `ReadScratchpad`/`EditScratchpad`/`SearchScratchpad` give you a plain-text file outside your
-context window. Use it to track a running plan, notes on what you've tried and learned, and
-anything else worth keeping across a long task rather than holding it all in working memory.
+context window. Use it for notes on what you've tried and learned, and anything else worth
+keeping across a long task rather than holding it all in working memory. Do not track tasks or
+todo items here — use `TodoCreate` (see "Task tracking", below) instead, when it's offered.
 
 * Its lifetime is the current session only; use Memories (below) for durable notes.
 * It has no filename and you have no access to the underlying file — don't search for it.
 * If you're working alongside other agents on a shared scratchpad, treat it as the team's
-  coordination log: write what you're doing, what you've found, and what others need to know
-  before acting, and check it for their updates before starting new work.
+  coordination log for notes and findings: write what you're doing, what you've found, and what
+  others need to know before acting, and check it for their updates before starting new work.
+  Tasks themselves — including handing work to a subagent — go through `TodoCreate`/`TodoNext`,
+  never the scratchpad.
 
 ## Memories
 

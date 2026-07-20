@@ -3,8 +3,10 @@
 ## Summary
 
 Every `Session` owns a scratchpad: a single plain-text file, outside the model's own context
-window, for recording a running plan, notes on what's been tried, and anything else worth
-keeping track of across a long task. `ReadScratchpad`, `EditScratchpad`, and `SearchScratchpad`
+window, for notes on what's been tried and anything else worth keeping track of across a long
+task -- explicitly not for tasks or todo items themselves, which are `TodoCreate`/`TodoNext`'s
+job when chainlink task tracking is available (see docs/specs/chainlink-task-tracking.md).
+`ReadScratchpad`, `EditScratchpad`, and `SearchScratchpad`
 are the tools a model uses to read from, edit, and search it — named to match `ReadFile`/
 `EditFile`'s verb-first convention. Unlike `ReadFile`/`EditFile`/`Grep`, none of the three take a
 `filename`/`dirname` argument — each is pinned to the one file `Session.scratchpad.path` names,
@@ -120,10 +122,11 @@ scope") coordinate through one shared file rather than each keeping a private on
   (see the ADR `grep-search-tools-share-dense-line-core.md`). `detail_view()` caps the rendered
   `lines` list to 60 entries (`lines_omitted` reports how many more exist).
 * The default system prompt (`klorb/src/klorb/resources/system_prompts.d/default_sys.md`)
-  carries two sections relevant here: "Editing with EditFile/EditScratchpad" (the row-extent
-  substitution mechanic, moved out of both tools' own `description()`s — see above) and "Use
-  your scratchpad" (using the scratchpad for running notes, and treating a shared scratchpad as
-  a team coordination log when several agents share one).
+  carries two sections relevant here: "Editing files (EditFile / EditScratchpad / EditMemory)"
+  (the row-extent substitution mechanic, moved out of both tools' own `description()`s — see
+  above) and "Scratchpad" (using the scratchpad for running notes — explicitly not tasks, which
+  it points to `TodoCreate` for instead — and treating a shared scratchpad as a team coordination
+  log for notes and findings, never for assigning tasks, when several agents share one).
 
 ## Configuration
 
