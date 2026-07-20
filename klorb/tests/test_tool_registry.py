@@ -2,11 +2,15 @@
 """Tests for klorb.tools.registry."""
 
 import fixtures.sample_tools as sample_tools_package
+import pytest
 
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools import registry as registry_module
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.registry import ToolRegistry
+
+_TASKS_TOOL_NAMES = {"TodoList", "TodoNext", "TodoCreate", "TodoUpdate"}
 
 
 def test_every_production_tool_overrides_category_and_is_read_only() -> None:
@@ -84,6 +88,24 @@ def test_default_registry_discovers_production_tools() -> None:
         "ListMemories", "SearchMemories", "ReadMemory", "EditMemory", "CreateMemory",
         "ForgetMemory",
     } <= names
+
+
+def test_tasks_category_is_registered_when_chainlink_is_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry_module, "chainlink_available", lambda: True)
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    names = {tool.name() for tool in registry.tools()}
+
+    assert _TASKS_TOOL_NAMES <= names
+
+
+def test_tasks_category_is_absent_when_chainlink_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry_module, "chainlink_available", lambda: False)
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    names = {tool.name() for tool in registry.tools()}
+
+    assert not (_TASKS_TOOL_NAMES & names)
 
 
 def test_registry_has_no_session_before_one_is_constructed() -> None:

@@ -17,7 +17,10 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.tasks.common import chainlink_available
 from klorb.tools.tool import Tool
+
+_TASKS_CATEGORY = "TASKS"
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +96,19 @@ class ToolRegistry:
                 if inspect.isabstract(candidate) or candidate.__module__ != module.__name__:
                     continue
                 tool = candidate(context)
+                try:
+                    category = tool.category()
+                except NotImplementedError:
+                    # Tools in a non-production package (e.g. a test fixture package) aren't
+                    # held to the "every tool overrides category()" contract production tools
+                    # are -- see test_tool_registry.py's
+                    # test_every_production_tool_overrides_category_and_is_read_only.
+                    category = None
+                if category == _TASKS_CATEGORY and not chainlink_available():
+                    # No Todo* tool call can ever be attempted in this session -- see
+                    # docs/specs/chainlink-task-tracking.md's "Setup" section.
+                    logger.debug("Skipping %r: chainlink binary not found.", tool.name())
+                    continue
                 logger.debug("Registered tool %r from %s", tool.name(), module.__name__)
                 tool_classes[tool.name()] = candidate
         logger.info("Discovered %d tool(s) in %s", len(tool_classes), package.__name__)

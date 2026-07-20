@@ -62,12 +62,21 @@ class SessionCoreMixin(SessionBase):
         model_registry: ModelRegistry | None = None,
         session_id: str | None = None,
         session_name: str | None = None,
+        root_id: str | None = None,
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
+        self.root_id = root_id or self.id
+        """The `id` of the root (top-level) session this one descends from -- itself, for every
+        session today, since klorb has no subagent-spawning mechanism yet (see `klorb.role.Role.
+        repertoire`). A future subagent's `Session` would pass its parent's `root_id` through
+        here so both share one identity for anything scoped to "the whole task tree" rather than
+        this one `Session` specifically -- see `get_chainlink_label()`. Round-trips through
+        `last-session.json` (`klorb.workspace.last_session.LastSessionState.root_id`) like `id`/
+        `session_name`."""
         self._session_name: str | None = session_name
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
@@ -86,6 +95,14 @@ class SessionCoreMixin(SessionBase):
         self._tool_registry = tool_registry
         if tool_registry is not None:
             tool_registry.session = cast("Session", self)
+        self.cur_chainlink_task_id: int | None = None
+        """The chainlink issue id `TodoNext` most recently selected as this session's current
+        task, or `None` if none is set (no `TodoNext` call yet, or the last one found nothing
+        ready/open). Read by `klorb.tools.tasks.todo_next`'s standing interjection provider on
+        every turn, and by `TodoCreate`'s `blocks_current_issue` argument. Round-trips through
+        `last-session.json` (`klorb.workspace.last_session.LastSessionState.
+        cur_chainlink_task_id`) like `id`/`session_name`. Written only via `set_chainlink_task()`,
+        never assigned directly by a `Tool`. See docs/specs/chainlink-task-tracking.md."""
         self.tool_state: dict[str, Any] = {}
         """Per-session runtime state a `Tool` implementation wants to keep across calls within
         this one session (e.g. `BashTool`'s one-time sandbox-fallback notice), keyed by tool
@@ -232,6 +249,19 @@ class SessionCoreMixin(SessionBase):
     @name.setter
     def name(self, value: str | None) -> None:
         self._session_name = value
+
+    def get_chainlink_label(self) -> str:
+        """Return the `chainlink` label every `klorb.tools.tasks.common.ChainlinkClient`
+        operation for this session is scoped to: `root_id`, not `id` -- a future subagent's
+        `Session` shares its root's `id` here, so a subagent's issues stay associated with the
+        same task tree its root session tracks rather than being scoped to the subagent's own,
+        narrower `id`. See docs/specs/chainlink-task-tracking.md."""
+        return self.root_id
+
+    def set_chainlink_task(self, task_id: int | None) -> None:
+        """Set `cur_chainlink_task_id` -- the only way a caller (`klorb.tools.tasks.todo_next.
+        TodoNextTool`) should change it, rather than assigning the attribute directly."""
+        self.cur_chainlink_task_id = task_id
 
     def load_messages(self, messages: list[Message]) -> None:
         """Replace this session's conversation history with `messages` — e.g. restoring a

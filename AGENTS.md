@@ -146,6 +146,19 @@ The Klorb project is organized as a collection of subprojects:
   * This applies double to code review responses and to docstrings on methods that are
     straightforward once named well: prefer trusting the reader over pre-empting every question
     they might not even ask.
+  * State your own invariants; don't cite another class's behavior as evidence for them. `"raises
+    ValueError if session is None, the same contract BashTool._execute_persistent enforces"` is
+    dumping "how klorb works" research into a comment — the reader doesn't need or want a pointer
+    to an unrelated tool's implementation to understand *this* one's precondition. Only reference
+    another symbol when it names the actual call/construction flow that leads to *this* code
+    running (e.g. "constructed fresh by each tool's `apply()`, mirroring how `ToolRegistry.
+    instantiate_tool()` builds a `Tool`" is fine — it's describing this object's own lifecycle,
+    not borrowing a justification from elsewhere).
+  * Prefer `map()`/`filter()` (wrapped in `list()`/`set()` as needed) over bracket-notation
+    comprehensions for a plain transform-only or filter-only list/set build — e.g.
+    `list(filter(lambda x: x.is_open, items))` over `[x for x in items if x.is_open]`. A
+    comprehension that combines a transform *and* a filter (or builds a dict) is fine as-is;
+    forcing that into nested `map(filter(...))` calls is less readable, not more.
 
 ### Important SDLC CI/CD commands
 
