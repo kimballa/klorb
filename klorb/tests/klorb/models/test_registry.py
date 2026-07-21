@@ -4,12 +4,13 @@
 import json
 from pathlib import Path
 
+import fixtures.sample_models as sample_models_package
 from fixtures.sample_models import NO_SUCH_DIR
 
 from klorb.models.configured_model import ConfiguredModel
 from klorb.models.registry import ModelRegistry
 
-SAMPLE_MODELS_DIR = Path(__file__).parent / "fixtures" / "sample_models"
+SAMPLE_MODELS_DIR = Path(sample_models_package.__file__).parent
 
 
 def test_discovers_models_in_packaged_directory() -> None:
