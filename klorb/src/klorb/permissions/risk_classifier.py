@@ -40,6 +40,7 @@ from klorb.process_config import (
     ProcessConfig,
 )
 from klorb.session import PermissionAskContext, PermissionDecision, Session
+from klorb.xml_util import cdata
 
 logger = logging.getLogger(__name__)
 
@@ -278,12 +279,6 @@ def _item_kind(item: PermissionAskItem) -> str:
     return "structural"
 
 
-def _cdata(text: str) -> str:
-    """Wrap `text` in an XML `CDATA` section, splitting around any embedded literal `]]>` (which
-    would otherwise prematurely close the section) into consecutive `CDATA` sections instead."""
-    return "<![CDATA[" + text.replace("]]>", "]]]]><![CDATA[>") + "]]>"
-
-
 def _build_system_prompt(items: list[PermissionAskItem]) -> str:
     """`_SYSTEM_PROMPT` plus one extra instruction per structural (`ForcedAskReason`-carrying)
     item in `items`, naming its own reason text and asking the model to score conservatively
@@ -312,8 +307,8 @@ def _build_history_block(history: list[HistoryEntry]) -> list[str]:
     lines = ["<PriorDecisionsHistory>"]
     for entry in history:
         lines.append("  <Entry>")
-        lines.append(f"    <Command>{_cdata(entry.command_text)}</Command>")
-        lines.append(f"    <Decision>{_cdata(entry.decision)}</Decision>")
+        lines.append(f"    <Command>{cdata(entry.command_text)}</Command>")
+        lines.append(f"    <Decision>{cdata(entry.decision)}</Decision>")
         lines.append("  </Entry>")
     lines.append("</PriorDecisionsHistory>")
     return lines
@@ -325,13 +320,13 @@ def _build_user_message(
 ) -> str:
     lines = _build_history_block(history or [])
     lines.append("<CommandUnderReview>")
-    lines.append(f"  <FullCommandText>{_cdata(command_text)}</FullCommandText>")
+    lines.append(f"  <FullCommandText>{cdata(command_text)}</FullCommandText>")
     if intent:
-        lines.append(f"  <StatedIntent>{_cdata(intent)}</StatedIntent>")
+        lines.append(f"  <StatedIntent>{cdata(intent)}</StatedIntent>")
     for index, item in enumerate(items):
         text = item.item_command_text or item.resource_description
         lines.append(f'  <AskItem id="item-{index}" kind="{_item_kind(item)}">')
-        lines.append(f"    <Text>{_cdata(text)}</Text>")
+        lines.append(f"    <Text>{cdata(text)}</Text>")
         lines.append("  </AskItem>")
     lines.append("</CommandUnderReview>")
     return "\n".join(lines)
