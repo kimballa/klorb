@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import SkillRules
-from klorb.permissions.table import PermissionAskRequired, PermissionOverride
+from klorb.permissions.table import PermissionAskRequired
 from klorb.tools.skill import common as skill_common
 from klorb.tools.skill.catalog import SkillCatalog, build_catalogs, resolve_and_gate_skill
 from klorb.tools.skill.common import (

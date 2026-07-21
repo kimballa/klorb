@@ -21,12 +21,8 @@ from klorb.message import Message, ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.table import (
-    MultiPermissionAskRequired,
-    PermissionAskItem,
-    PermissionAskRequired,
-    PermissionOverride,
-)
+from klorb.permissions.resource import PathResource, PermissionOverride, SkillResource
+from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.role import OperatorRole
 from klorb.session import (
@@ -1958,8 +1954,9 @@ def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path
     assert _tool_response_content(session) == f"granted:{target}"
     on_permission_ask.assert_called_once()
     (ask_ctx,), _ = on_permission_ask.call_args
-    assert ask_ctx.path == target
-    assert ask_ctx.is_write is True
+    assert isinstance(ask_ctx.resource, PathResource)
+    assert ask_ctx.resource.path == target
+    assert ask_ctx.resource.is_write is True
     # "once" must not have touched the session's tables.
     assert config.read_dirs == DirRules()
     assert config.write_dirs == DirRules()
@@ -2182,7 +2179,9 @@ def test_multi_ask_asks_about_every_item_in_order_and_retries_once_all_approved(
     assert _tool_response_content(session) == "granted:" + ",".join(str(p) for p in targets)
     # Every item was asked about individually, in order -- not collapsed into one prompt.
     assert on_permission_ask.call_count == 3
-    asked_paths = [call.args[0].path for call in on_permission_ask.call_args_list]
+    asked_resources = [call.args[0].resource for call in on_permission_ask.call_args_list]
+    assert all(isinstance(resource, PathResource) for resource in asked_resources)
+    asked_paths = [resource.path for resource in asked_resources if isinstance(resource, PathResource)]
     assert asked_paths == targets
 
 
@@ -2253,7 +2252,7 @@ def test_multi_ask_resolve_threads_skill_field_into_ask_context(tmp_path: Path) 
     a skill)."""
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = Session(config, provider=MagicMock(), tool_registry=MagicMock())
-    item = PermissionAskItem("activate skill internal/s", skill=("internal", "s"))
+    item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
     multi_ask_exc = MultiPermissionAskRequired("ask", items=[item])
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
@@ -2262,9 +2261,8 @@ def test_multi_ask_resolve_threads_skill_field_into_ask_context(tmp_path: Path) 
         call, {}, multi_ask_exc, TurnEventHandlers(on_permission_ask=on_permission_ask))
 
     (ctx,), _ = on_permission_ask.call_args
-    assert ctx.skill == ("internal", "s")
-    assert ctx.path is None
-    assert ctx.command is None
+    assert isinstance(ctx.resource, SkillResource)
+    assert ctx.resource.skill_id == ("internal", "s")
 
 
 def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None:
@@ -2278,7 +2276,7 @@ def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None
     mock_registry = MagicMock()
     mock_registry.instantiate_tool.return_value = mock_tool
     session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
-    item = PermissionAskItem("activate skill internal/s", skill=("internal", "s"))
+    item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
 
     result, error = session._retry_after_multi_permission_decisions(
@@ -2302,7 +2300,7 @@ def test_multi_ask_persistent_scope_applies_skill_grant(tmp_path: Path) -> None:
     mock_registry = MagicMock()
     mock_registry.instantiate_tool.return_value = mock_tool
     session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
-    item = PermissionAskItem("activate skill internal/s", skill=("internal", "s"))
+    item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
 
     result, error = session._retry_after_multi_permission_decisions(

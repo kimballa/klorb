@@ -17,7 +17,8 @@ from klorb import sandbox
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.table import MultiPermissionAskRequired
+from klorb.permissions.resource import BashCommandContext, StructuralResource
+from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.bash import BashTool, build_bash_env
@@ -25,6 +26,12 @@ from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
 _live_sessions: list[Session] = []
+
+
+def _bash_context(item: PermissionAskItem) -> BashCommandContext:
+    assert item.bash_context is not None
+    return item.bash_context
+
 
 requires_bwrap = pytest.mark.skipif(
     not sandbox.bwrap_available(),
@@ -139,9 +146,9 @@ def test_non_literal_argument_ask_item_names_the_actual_command(tmp_path: Path) 
         _apply(tool, "echo $HOME")
 
     structural_items = [
-        item for item in exc_info.value.items if item.path is None and item.command is None]
+        item for item in exc_info.value.items if isinstance(item.resource, StructuralResource)]
     assert structural_items
-    assert all(item.command_text == "echo $HOME" for item in structural_items)
+    assert all(_bash_context(item).command_text == "echo $HOME" for item in structural_items)
     assert any("non-literal argument" in item.resource_description for item in structural_items)
 
 
@@ -151,7 +158,7 @@ def test_single_command_ask_item_is_not_compound(tmp_path: Path) -> None:
     with pytest.raises(MultiPermissionAskRequired) as exc_info:
         _apply(tool, "echo hello")
 
-    assert all(item.is_compound is False for item in exc_info.value.items)
+    assert all(_bash_context(item).is_compound is False for item in exc_info.value.items)
 
 
 def test_compound_command_ask_items_are_marked_compound(tmp_path: Path) -> None:
@@ -164,8 +171,10 @@ def test_compound_command_ask_items_are_marked_compound(tmp_path: Path) -> None:
         _apply(tool, "echo hello && echo goodbye")
 
     assert len(exc_info.value.items) == 2
-    assert all(item.is_compound is True for item in exc_info.value.items)
-    assert all(item.command_text == "echo hello && echo goodbye" for item in exc_info.value.items)
+    assert all(_bash_context(item).is_compound is True for item in exc_info.value.items)
+    assert all(
+        _bash_context(item).command_text == "echo hello && echo goodbye"
+        for item in exc_info.value.items)
 
 
 def test_for_loop_body_with_non_literal_arguments_is_marked_compound(tmp_path: Path) -> None:
@@ -179,7 +188,7 @@ def test_for_loop_body_with_non_literal_arguments_is_marked_compound(tmp_path: P
         _apply(tool, 'for f in *.txt; do echo "$f"; rm "$f"; done')
 
     assert len(exc_info.value.items) == 2
-    assert all(item.is_compound is True for item in exc_info.value.items)
+    assert all(_bash_context(item).is_compound is True for item in exc_info.value.items)
 
 
 def test_compound_command_ask_items_each_carry_their_own_item_command_text(tmp_path: Path) -> None:
@@ -194,9 +203,11 @@ def test_compound_command_ask_items_each_carry_their_own_item_command_text(tmp_p
         _apply(tool, "echo $SHELL; echo $HOME")
 
     assert len(exc_info.value.items) == 2
-    assert [item.item_command_text for item in exc_info.value.items] == [
+    assert [_bash_context(item).item_command_text for item in exc_info.value.items] == [
         "echo $SHELL", "echo $HOME"]
-    assert all(item.command_text == "echo $SHELL; echo $HOME" for item in exc_info.value.items)
+    assert all(
+        _bash_context(item).command_text == "echo $SHELL; echo $HOME"
+        for item in exc_info.value.items)
 
 
 def test_ask_items_all_carry_the_calls_intent(tmp_path: Path) -> None:
@@ -209,7 +220,7 @@ def test_ask_items_all_carry_the_calls_intent(tmp_path: Path) -> None:
         _apply(tool, "echo hello && echo goodbye", intent="Greet twice")
 
     assert len(exc_info.value.items) == 2
-    assert all(item.intent == "Greet twice" for item in exc_info.value.items)
+    assert all(_bash_context(item).intent == "Greet twice" for item in exc_info.value.items)
 
 
 def test_redirect_ask_item_command_text_is_the_whole_statement(tmp_path: Path) -> None:
@@ -224,7 +235,7 @@ def test_redirect_ask_item_command_text_is_the_whole_statement(tmp_path: Path) -
         _apply(tool, f"echo hi > {out_file}")
 
     assert len(exc_info.value.items) == 1
-    assert exc_info.value.items[0].item_command_text == f"echo hi > {out_file}"
+    assert _bash_context(exc_info.value.items[0]).item_command_text == f"echo hi > {out_file}"
 
 
 def test_write_redirect_checked_against_write_dirs(tmp_path: Path) -> None:

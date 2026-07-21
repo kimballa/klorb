@@ -15,6 +15,13 @@ from fixtures.sample_models import sample_model_registry
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message
+from klorb.permissions.resource import (
+    BashCommandContext,
+    CommandResource,
+    PathResource,
+    PermissionResource,
+    StructuralResource,
+)
 from klorb.permissions.risk_classifier import (
     CommandRiskReport,
     HistoryEntry,
@@ -57,8 +64,9 @@ def _valid_report_json(item_ids: list[str]) -> str:
 
 def _command_item(argv: list[str], source_text: str | None = None) -> PermissionAskItem:
     return PermissionAskItem(
-        f"run command: {' '.join(argv)}", command=argv, command_text=" ".join(argv),
-        item_command_text=source_text or " ".join(argv))
+        f"run command: {' '.join(argv)}", resource=CommandResource(argv=tuple(argv)),
+        bash_context=BashCommandContext(
+            command_text=" ".join(argv), item_command_text=source_text or " ".join(argv)))
 
 
 # --- classify_command_risk: success/failure/retry ---
@@ -188,7 +196,9 @@ def test_classify_command_risk_leaves_a_structural_items_pattern_untouched() -> 
     """A structural (non-`command`) item has no argv to validate against, so even a non-empty
     pattern the model returned for it is left as-is -- it's meaningless downstream regardless (the
     consumer only reads `suggested_pattern` for an item whose own `command` is set)."""
-    items = [PermissionAskItem("a non-literal argument", item_command_text='cat "$f"')]
+    items = [PermissionAskItem(
+        "a non-literal argument", resource=StructuralResource(reason="a non-literal argument"),
+        bash_context=BashCommandContext(command_text='cat "$f"', item_command_text='cat "$f"'))]
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(json.dumps({
         "overall_risk_score": 4, "overall_rationale": "opaque",
@@ -375,7 +385,9 @@ def test_classify_command_risk_forwards_intent_into_the_user_message() -> None:
 def test_user_message_includes_full_command_and_each_item_verbatim_via_cdata() -> None:
     items = [
         _command_item(["grep", "-rn", "TODO"], source_text="grep -rn TODO"),
-        PermissionAskItem("some forced-ask reason", item_command_text="eval \"$X\""),
+        PermissionAskItem(
+            "some forced-ask reason", resource=StructuralResource(reason="some forced-ask reason"),
+            bash_context=BashCommandContext(command_text="eval \"$X\"", item_command_text="eval \"$X\"")),
     ]
     message = _build_user_message("grep -rn TODO && eval \"$X\"", items)
 
@@ -398,7 +410,9 @@ def test_user_message_preserves_adversarial_heredoc_content_verbatim_inside_cdat
         "EOF"
     )
     item = PermissionAskItem(
-        "a heredoc feeds stdin content into python3", item_command_text=payload)
+        "a heredoc feeds stdin content into python3",
+        resource=StructuralResource(reason="a heredoc feeds stdin content into python3"),
+        bash_context=BashCommandContext(command_text=payload, item_command_text=payload))
 
     message = _build_user_message(payload, [item])
     system_prompt = _build_system_prompt([item])
@@ -464,9 +478,12 @@ def test_classify_command_risk_forwards_history_into_the_user_message() -> None:
 
 def test_redirect_and_structural_items_get_their_own_kind() -> None:
     redirect_item = PermissionAskItem(
-        "write to /tmp/out.txt", path=Path("/tmp/out.txt"), is_write=True,
-        item_command_text="echo hi > /tmp/out.txt")
-    structural_item = PermissionAskItem("a non-literal argument", item_command_text="cat \"$f\"")
+        "write to /tmp/out.txt", resource=PathResource(path=Path("/tmp/out.txt"), is_write=True),
+        bash_context=BashCommandContext(
+            command_text="echo hi > /tmp/out.txt", item_command_text="echo hi > /tmp/out.txt"))
+    structural_item = PermissionAskItem(
+        "a non-literal argument", resource=StructuralResource(reason="a non-literal argument"),
+        bash_context=BashCommandContext(command_text="cat \"$f\"", item_command_text="cat \"$f\""))
 
     message = _build_user_message("echo hi > /tmp/out.txt", [redirect_item, structural_item])
 
@@ -485,11 +502,12 @@ def test_system_prompt_instructs_comparing_command_against_stated_intent() -> No
 
 def test_system_prompt_adds_conservative_bias_instruction_for_structural_items() -> None:
     plain_items = [_command_item(["git", "status"])]
+    reason = "command has a non-literal argument (variable/command substitution/glob expansion)"
     structural_items = [
         _command_item(["git", "status"]),
         PermissionAskItem(
-            "command has a non-literal argument (variable/command substitution/glob expansion)",
-            item_command_text='cat "$f"'),
+            reason, resource=StructuralResource(reason=reason),
+            bash_context=BashCommandContext(command_text='cat "$f"', item_command_text='cat "$f"')),
     ]
 
     plain_prompt = _build_system_prompt(plain_items)
@@ -568,9 +586,20 @@ def _ask_ctx(
     path: Path | None = None,
     intent: str | None = None,
 ) -> PermissionAskContext:
+    if path is not None:
+        return PermissionAskContext(
+            resource=PathResource(path=path), resource_description="run command",
+            sibling_items=sibling_items)
+    resource: PermissionResource = (
+        CommandResource(argv=tuple(command)) if command is not None
+        else StructuralResource(reason="run command"))
+    bash_context = None
+    if command_text is not None:
+        bash_context = BashCommandContext(
+            command_text=command_text, item_command_text=command_text, intent=intent)
     return PermissionAskContext(
-        path=path, command_text=command_text, item_command_text=command_text, command=command,
-        resource_description="run command", sibling_items=sibling_items, intent=intent)
+        resource=resource, bash_context=bash_context, resource_description="run command",
+        sibling_items=sibling_items)
 
 
 def test_resolve_item_risk_assessment_returns_none_when_disabled() -> None:
@@ -656,18 +685,24 @@ def test_resolve_item_risk_assessment_classifies_sibling_items_in_one_request() 
     process_config = ProcessConfig()
     siblings = [
         PermissionAskItem(
-            "run command: grep foo", command=["grep", "foo"], command_text="grep foo && grep bar",
-            is_compound=True, item_command_text="grep foo"),
+            "run command: grep foo", resource=CommandResource(argv=("grep", "foo")),
+            bash_context=BashCommandContext(
+                command_text="grep foo && grep bar", is_compound=True, item_command_text="grep foo")),
         PermissionAskItem(
-            "run command: grep bar", command=["grep", "bar"], command_text="grep foo && grep bar",
-            is_compound=True, item_command_text="grep bar"),
+            "run command: grep bar", resource=CommandResource(argv=("grep", "bar")),
+            bash_context=BashCommandContext(
+                command_text="grep foo && grep bar", is_compound=True, item_command_text="grep bar")),
     ]
     first_ctx = PermissionAskContext(
-        command_text="grep foo && grep bar", item_command_text="grep foo", command=["grep", "foo"],
-        is_compound=True, resource_description="run command: grep foo", sibling_items=siblings)
+        resource=CommandResource(argv=("grep", "foo")),
+        bash_context=BashCommandContext(
+            command_text="grep foo && grep bar", item_command_text="grep foo", is_compound=True),
+        resource_description="run command: grep foo", sibling_items=siblings)
     second_ctx = PermissionAskContext(
-        command_text="grep foo && grep bar", item_command_text="grep bar", command=["grep", "bar"],
-        is_compound=True, resource_description="run command: grep bar", sibling_items=siblings)
+        resource=CommandResource(argv=("grep", "bar")),
+        bash_context=BashCommandContext(
+            command_text="grep foo && grep bar", item_command_text="grep bar", is_compound=True),
+        resource_description="run command: grep bar", sibling_items=siblings)
 
     first = resolve_item_risk_assessment(first_ctx, session=session, process_config=process_config)
     second = resolve_item_risk_assessment(second_ctx, session=session, process_config=process_config)

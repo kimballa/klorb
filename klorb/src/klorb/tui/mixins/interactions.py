@@ -9,8 +9,7 @@ from typing import TypeVar
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
-from klorb.permissions.command_grant import compute_command_grant_patterns
-from klorb.permissions.grant import compute_grant_paths
+from klorb.permissions.resource import CommandResource, GrantPreview
 from klorb.permissions.risk_classifier import record_decision_history, resolve_item_risk_assessment
 from klorb.session import (
     AskUserQuestionsAnswer,
@@ -166,13 +165,15 @@ class InteractionsMixin(ReplAppBase):
 
         Must be run on the app's own event loop, since it awaits the panel's dismissal —
         `_on_permission_ask` is what the worker thread actually calls, via `call_from_thread`,
-        to get here. `compute_grant_paths()`/`compute_command_grant_patterns()` are recomputed
-        here (rather than threaded in from wherever `ask_ctx` was built) purely so the panel can
-        show the directory/command pattern a persistent grant would actually cover; both are
-        pure and read-only, so calling them again inside `_on_permission_ask`/
-        `apply_permission_grant`/`apply_command_permission_grant` afterwards is safe and cheap. A
-        skill ask needs no such recomputation: its persistent grant always covers exactly
-        `ask_ctx.skill`, so that pair is passed straight through as `granted_skill`.
+        to get here. `ask_ctx.resource.grant_preview()` is recomputed here (rather than threaded
+        in from wherever `ask_ctx` was built) purely so the panel can show the directory/command
+        pattern a persistent grant would actually cover; it's pure and read-only, so calling it
+        again inside `PermissionResource.apply_grant()` afterwards (via `Session.
+        _retry_after_multi_permission_decisions`) is safe and cheap. A `CommandResource` ask is
+        the one exception: when the risk classifier offers its own `suggested_pattern`, that's
+        shown (and threaded through as `grant_patterns`, so the eventual persist step uses this
+        exact pattern rather than recomputing) in place of `grant_preview()`'s own deterministic
+        result.
         Seeds the panel's grid cursor from `_last_permission_action`/`_last_permission_scope`
         and updates both from the returned decision, so a run of several asks for one compound
         tool call starts each next prompt where the previous one left off — unless
@@ -198,23 +199,14 @@ class InteractionsMixin(ReplAppBase):
             resolve_item_risk_assessment,
             ask_ctx, session=self._session, process_config=self._process_config)
 
-        granted_paths = None
-        granted_command_patterns = None
-        granted_skill = None
-        if ask_ctx.path is not None:
-            granted_paths = compute_grant_paths(
-                self._session.config.read_dirs, self._session.config.write_dirs,
-                self._session.config.workspace.path, ask_ctx.path, ask_ctx.is_write)
-        elif ask_ctx.command is not None:
-            if risk_assessment is not None and risk_assessment.suggested_pattern:
-                granted_command_patterns = [risk_assessment.suggested_pattern]
-            else:
-                granted_command_patterns = compute_command_grant_patterns(
-                    self._session.config.command_rules, ask_ctx.command)
-        elif ask_ctx.skill is not None:
-            # A skill grant always covers exactly the pair being asked about -- no widening
-            # computation needed the way a path/command grant has.
-            granted_skill = ask_ctx.skill
+        grant_patterns: list[list[str]] | None = None
+        if isinstance(ask_ctx.resource, CommandResource) and risk_assessment is not None and (
+                risk_assessment.suggested_pattern):
+            granted_preview: GrantPreview | None = GrantPreview(
+                resource_text=" ".join(risk_assessment.suggested_pattern))
+            grant_patterns = [risk_assessment.suggested_pattern]
+        else:
+            granted_preview = ask_ctx.resource.grant_preview(self._session.config)
 
         decision_future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         preview_wrap_width = max(
@@ -227,8 +219,7 @@ class InteractionsMixin(ReplAppBase):
         ):
             initial_action, initial_scope = "deny", "once"
         panel = PermissionAskPanel(
-            ask_ctx, granted_paths=granted_paths, granted_command_patterns=granted_command_patterns,
-            granted_skill=granted_skill,
+            ask_ctx, granted_preview=granted_preview, grant_patterns=grant_patterns,
             initial_action=initial_action, initial_scope=initial_scope,
             risk_score=risk_assessment.risk_score if risk_assessment is not None else None,
             risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,

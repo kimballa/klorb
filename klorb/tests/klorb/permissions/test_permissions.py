@@ -21,7 +21,8 @@ from klorb.permissions.directory_access import (
     privileged_dirs,
 )
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.table import PermissionAskRequired, PermissionOverride, raise_if_not_allowed
+from klorb.permissions.resource import PermissionOverride
+from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
 from klorb.permissions.workspace import (
     canonicalize_candidate,
     evaluate_write,

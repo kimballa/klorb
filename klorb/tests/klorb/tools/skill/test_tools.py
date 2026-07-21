@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import SkillRules
-from klorb.permissions.table import PermissionAskRequired, PermissionOverride
+from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.setup_context import ToolSetupContext

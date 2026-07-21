@@ -6,17 +6,12 @@ whether to raise a tool-call safety limit that was just reached."""
 
 import logging
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from klorb.message import ToolCallRequest
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
-from klorb.permissions.table import (
-    MultiPermissionAskRequired,
-    PermissionAskItem,
-    PermissionAskRequired,
-    PermissionOverride,
-)
+from klorb.permissions.resource import PermissionOverride
+from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, PermissionAskRequired
 from klorb.session.events import (
     AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
@@ -89,9 +84,9 @@ class SessionPermissionsMixin(SessionBase):
         """Resolve a `PermissionAskRequired` into a `(result, error)` pair (see
         `_format_tool_response_content` for how a caller turns this into `tool_response`
         content): for a persistent `scope`, first applies the grant `decision` implies via
-        `klorb.permissions.grant.apply_permission_grant` — passing `self.config` and
-        `self._process_config` (possibly `None`; that function skips the process-wide ripple,
-        but still persists to disk, in that case) — then retries the call exactly once, same as
+        `ask_exc.resource.apply_grant()` — passing `self.config` and `self._process_config`
+        (possibly `None`; `apply_grant()` skips the process-wide ripple, but still persists to
+        disk, in that case) — then retries the call exactly once, same as
         `scope="once"` (which instead retries via a one-shot `ToolSetupContext.
         permission_override`, persisting nothing — only meaningful for `action="allow"`; a
         `"once"` deny needs no override at all). Reports a denial for `action="deny"` (any
@@ -99,13 +94,11 @@ class SessionPermissionsMixin(SessionBase):
         second `PermissionAskRequired`) is reported the same generic way an ordinary tool
         failure is — never a second ask.
 
-        Handles both a directory-access ask (`ask_exc.path` set), a skill-activation ask
-        (`ask_exc.skill` set), and a domain-access ask (`ask_exc.url` set): the
-        persistent-scope grant is dispatched by `_apply_ask_grant`, and a `scope="once"`
-        retry carries the resource on the matching `PermissionOverride` field (`paths` vs.
-        `skills` vs. `domains`).
+        Handles every resource kind `ask_exc.resource` might be: the persistent-scope grant is
+        dispatched by `_apply_ask_grant`, and a `scope="once"` retry carries the resource on the
+        matching `PermissionOverride` field, via `ask_exc.resource.added_to_override()`.
         """
-        assert ask_exc.path is not None or ask_exc.skill is not None or ask_exc.url is not None
+        assert ask_exc.resource.is_persistable
         if decision.other_text is not None:
             return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
         if decision.action == "deny":
@@ -117,14 +110,7 @@ class SessionPermissionsMixin(SessionBase):
         assert self._tool_registry is not None
         try:
             if decision.scope == "once":
-                if ask_exc.skill is not None:
-                    override = PermissionOverride(skills=frozenset({ask_exc.skill}))
-                elif ask_exc.url is not None:
-                    from klorb.permissions.domain_access import parse_domain
-                    override = PermissionOverride(domains=frozenset({parse_domain(ask_exc.url)}))
-                else:
-                    assert ask_exc.path is not None
-                    override = PermissionOverride(paths=frozenset({ask_exc.path}))
+                override = ask_exc.resource.added_to_override(PermissionOverride())
                 tool = self._tool_registry.instantiate_tool(call.name, permission_override=override)
             else:
                 tool = self._tool_registry.instantiate_tool(call.name)
@@ -139,27 +125,9 @@ class SessionPermissionsMixin(SessionBase):
         scope: "GrantScope",
         ask_exc: PermissionAskRequired,
     ) -> None:
-        """Persist a single-item permission grant for `ask_exc` at `scope`, dispatching to
-        `apply_skill_permission_grant` for a skill ask (`ask_exc.skill` set),
-        `apply_domain_permission_grant` for a domain ask (`ask_exc.url` set), and
-        `apply_permission_grant` for a directory ask (`ask_exc.path` set). The imports are
-        local to avoid a circular import back into this module.
-        """
-        if ask_exc.skill is not None:
-            from klorb.permissions.skill_grant import apply_skill_permission_grant
-            apply_skill_permission_grant(
-                action, scope, self.config, self._process_config, ask_exc.skill)
-            return
-        if ask_exc.url is not None:
-            from klorb.permissions.domain_access import parse_domain
-            from klorb.permissions.domain_grant import apply_domain_permission_grant
-            apply_domain_permission_grant(
-                action, scope, self.config, self._process_config, parse_domain(ask_exc.url))
-            return
-        assert ask_exc.path is not None
-        from klorb.permissions.grant import apply_permission_grant
-        apply_permission_grant(
-            action, scope, self.config, self._process_config, ask_exc.path, ask_exc.is_write)
+        """Persist a single-item permission grant for `ask_exc` at `scope`, via
+        `ask_exc.resource.apply_grant()`."""
+        ask_exc.resource.apply_grant(action, scope, self.config, self._process_config)
 
     def _retry_after_multi_permission_decisions(
         self,
@@ -171,18 +139,15 @@ class SessionPermissionsMixin(SessionBase):
         """Resolve a `MultiPermissionAskRequired`'s items into a `(result, error)` pair, given
         one `PermissionDecision` already collected per item (`_run_tool_calls` stops collecting
         — and calls this with a shorter `decisions` list than `items` — at the first `"deny"`
-        answer; see that method). Applies every persistent-scope `"allow"` decision's grant
-        (via `klorb.permissions.grant.apply_permission_grant` for a `path` item,
-        `klorb.permissions.command_grant.apply_command_permission_grant` for a `command` item,
-        `klorb.permissions.skill_grant.apply_skill_permission_grant` for a `skill` item — a
-        structural item with none of the three has no rule to persist, so any `decision` for it
-        other than `action="deny"` is a no-op grant-wise). Every `scope="once"` decision instead
-        contributes its item to a single `PermissionOverride` (see `ToolSetupContext.
-        permission_override`) covering all of them at once, since retrying happens exactly once
-        for the whole call — never once per item, as re-parsing/re-evaluating after each
-        individual grant would be wasted work. If `decisions` is shorter than `items` (an item
-        was denied), or any collected decision is itself a denial, reports that denial with no
-        retry at all.
+        answer; see that method). Applies every persistent-scope `"allow"`/`"deny"` decision's
+        grant via that item's own `resource.apply_grant()` (a no-op for a structural item, which
+        has no rule to persist). Every `scope="once"` decision instead contributes its item to a
+        single `PermissionOverride` (see `ToolSetupContext.permission_override`), via
+        `resource.added_to_override()`, covering all of them at once, since retrying happens
+        exactly once for the whole call — never once per item, as re-parsing/re-evaluating after
+        each individual grant would be wasted work. If `decisions` is shorter than `items` (an
+        item was denied), or any collected decision is itself a denial, reports that denial with
+        no retry at all.
         """
         for item, decision in zip(items, decisions):
             if decision.action == "deny" or decision.other_text is not None:
@@ -195,44 +160,14 @@ class SessionPermissionsMixin(SessionBase):
             denied_item = items[len(decisions)]
             return None, f"Permission denied: {denied_item.resource_description}"
 
-        # Local imports: both modules import `SessionConfig` from `klorb.session.config`, so
-        # importing them at module scope here would be circular.
-        from klorb.permissions.command_grant import apply_command_permission_grant
-        from klorb.permissions.grant import apply_permission_grant
-        from klorb.permissions.skill_grant import apply_skill_permission_grant
-
-        once_paths: set[Path] = set()
-        once_commands: set[tuple[str, ...]] = set()
-        once_reasons: set[str] = set()
-        once_skills: set[tuple[str, str]] = set()
+        override: PermissionOverride | None = None
         for item, decision in zip(items, decisions):
             if decision.scope == "once":
-                if item.path is not None:
-                    once_paths.add(item.path)
-                elif item.command is not None:
-                    once_commands.add(tuple(item.command))
-                elif item.skill is not None:
-                    once_skills.add(item.skill)
-                else:
-                    once_reasons.add(item.resource_description)
+                override = item.resource.added_to_override(override or PermissionOverride())
                 continue
-            if item.path is not None:
-                apply_permission_grant(
-                    decision.action, decision.scope, self.config, self._process_config,
-                    item.path, item.is_write)
-            elif item.command is not None:
-                apply_command_permission_grant(
-                    decision.action, decision.scope, self.config, self._process_config,
-                    item.command, decision.grant_patterns)
-            elif item.skill is not None:
-                apply_skill_permission_grant(
-                    decision.action, decision.scope, self.config, self._process_config, item.skill)
-
-        override = None
-        if once_paths or once_commands or once_reasons or once_skills:
-            override = PermissionOverride(
-                paths=frozenset(once_paths), commands=frozenset(once_commands),
-                reasons=frozenset(once_reasons), skills=frozenset(once_skills))
+            item.resource.apply_grant(
+                decision.action, decision.scope, self.config, self._process_config,
+                grant_patterns=decision.grant_patterns)
 
         assert self._tool_registry is not None
         try:
@@ -251,9 +186,9 @@ class SessionPermissionsMixin(SessionBase):
     ) -> tuple[Any, str | None]:
         """Resolve a `MultiPermissionAskRequired` into a `(result, error)` pair, branching on
         `config.permission_framework` exactly like the single-item `PermissionAskRequired` path
-        does — except an item with no `path` is never automatically failed closed here (see
-        `MultiPermissionAskRequired`'s own docstring for why). `"ask"` asks about every item in
-        order via `callbacks.on_permission_ask`, stopping at the first `action="deny"` (or
+        does — except a non-persistable (structural) item is never automatically failed closed
+        here (see `MultiPermissionAskRequired`'s own docstring for why). `"ask"` asks about every
+        item in order via `callbacks.on_permission_ask`, stopping at the first `action="deny"` (or
         `other_text`-bearing) answer — the remaining items are never asked about, and
         `_retry_after_multi_permission_decisions` reports that denial without retrying.
         """
@@ -278,11 +213,8 @@ class SessionPermissionsMixin(SessionBase):
         decisions: list[PermissionDecision] = []
         for item in multi_ask_exc.items:
             decision = callbacks.on_permission_ask(PermissionAskContext(
-                path=item.path, is_write=item.is_write, command=item.command,
-                command_text=item.command_text, is_compound=item.is_compound,
-                item_command_text=item.item_command_text, intent=item.intent,
-                skill=item.skill, resource_description=item.resource_description,
-                sibling_items=multi_ask_exc.items))
+                resource=item.resource, bash_context=item.bash_context,
+                resource_description=item.resource_description, sibling_items=multi_ask_exc.items))
             decisions.append(decision)
             if decision.action == "deny" or decision.other_text is not None:
                 break

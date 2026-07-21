@@ -8,6 +8,7 @@ permission_ask`'s serial multi-item ask handling without needing a real `BashToo
 from pathlib import Path
 from typing import Any
 
+from klorb.permissions.resource import PathResource
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem
 from klorb.permissions.workspace import evaluate_write
 from klorb.tools.tool import Tool
@@ -46,7 +47,8 @@ class AskMultiPermissionTool(Tool):
             if verdict == "deny":
                 raise PermissionError(f"Permission denied: write to {path}")
             if verdict == "ask":
-                ask_items.append(PermissionAskItem(f"write to {path}", path=path, is_write=True))
+                ask_items.append(PermissionAskItem(
+                    f"write to {path}", resource=PathResource(path=path, is_write=True)))
         if ask_items:
             raise MultiPermissionAskRequired(
                 "Permission requires confirmation for multiple resources", items=ask_items)

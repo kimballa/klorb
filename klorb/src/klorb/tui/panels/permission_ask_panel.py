@@ -4,7 +4,6 @@
 docs/specs/permissions.md's "Interactive ask confirmation" section)."""
 
 import textwrap
-from pathlib import Path
 from typing import Callable, Literal
 
 from textual.app import ComposeResult
@@ -15,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
+from klorb.permissions.resource import GrantPreview
 from klorb.session import PermissionAskContext, PermissionDecision
 
 _Action = Literal["allow", "deny"]
@@ -56,8 +56,8 @@ _TOTAL_ROWS = len(_SCOPES) + 1
 _MAX_COMMAND_PREVIEW_LINES = 6
 """How many lines of a long `command_text` `PermissionAskPanel` shows inline before truncating
 to a `[more...]` indicator (`PERMISSION_ASK_MORE_ID`) — see `_command_preview`. A command short
-enough to display in full still gets the same `[more...]` indicator if `ask_ctx.is_compound` is
-set — see `PermissionAskPanel.compose`."""
+enough to display in full still gets the same `[more...]` indicator if `bash_context.is_compound`
+is set — see `PermissionAskPanel.compose`."""
 
 _MAX_SECONDARY_TEXT_LINES = 4
 """Belt-and-suspenders height cap, in terminal rows, applied to every variable-content body
@@ -106,32 +106,23 @@ def _cell_id(column: int, row: int) -> str:
 
 
 def format_ask_context_body(ask_ctx: PermissionAskContext) -> str:
-    """Render `ask_ctx`'s intent (if any), command/path/skill preview, and its own
+    """Render `ask_ctx`'s intent (if any), command/path/skill/domain preview, and its own
     `resource_description` detail as a flat block of text, for the history-scroll record
     `ReplApp` leaves behind once a `PermissionAskPanel` is dismissed (see
     `ReplApp._record_interaction_history`) — the same pieces of information
     `PermissionAskPanel.compose()` shows as separate `Static` widgets, here joined by a newline
     instead."""
     lines: list[str] = []
-    if ask_ctx.intent:
-        lines.append(f"Intent: {ask_ctx.intent}")
-    if ask_ctx.command_text is not None:
-        lines.append(ask_ctx.item_command_text or ask_ctx.command_text)
-    elif ask_ctx.path is not None:
-        lines.append(str(ask_ctx.path))
-    elif ask_ctx.skill is not None:
-        lines.append(_skill_preview_text(ask_ctx.skill))
+    if ask_ctx.bash_context is not None:
+        if ask_ctx.bash_context.intent:
+            lines.append(f"Intent: {ask_ctx.bash_context.intent}")
+        lines.append(ask_ctx.bash_context.item_command_text or ask_ctx.bash_context.command_text)
+    else:
+        preview = ask_ctx.resource.preview_text()
+        if preview is not None:
+            lines.append(preview)
     lines.append(ask_ctx.resource_description)
     return "\n".join(lines)
-
-
-def _skill_preview_text(skill: tuple[str, str]) -> str:
-    """The `/<name> (<namespace>)` preview line a skill-activation ask shows in place of the
-    command/path preview a `BashTool`/directory ask shows -- `namespace` is the skill's
-    discovery tier (`workspace`/`user`/`internal`), so the user can tell which one is being
-    asked about before deciding how broadly to grant it."""
-    namespace, name = skill
-    return f"/{name} ({namespace})"
 
 
 def format_permission_decision(decision: PermissionDecision) -> str:
@@ -251,25 +242,26 @@ class PermissionAskPanel(Vertical):
     `asyncio.Future` with it), and `ReplApp` is responsible for unmounting it and recording a
     permanent record of the exchange into the history scroll afterward.
 
-    Above the grid: a styled header naming the kind of access being requested ("Run command" if
-    `ask_ctx.command_text` is set, else "Read file"/"Write file" if `ask_ctx.path` is set, else
-    "Activate skill" if `ask_ctx.skill` is set — see `header_text`), then, when `ask_ctx.intent`
-    is set (every `BashTool` ask item carries one —
-    see `klorb.permissions.table.PermissionAskItem.intent`), an "Intent: ..." line showing the
-    model's own short statement of what the command is trying to accomplish, then a command
-    preview (long commands truncated to
+    Above the grid: a styled header naming the kind of access being requested
+    ("Run command" whenever `ask_ctx.bash_context` is set, regardless of the specific resource
+    within it -- a redirect or forced-ask item from `BashTool` is still fundamentally "run this
+    shell command," just with a specific sub-resource named in the detail below; otherwise
+    `ask_ctx.resource.header_kind()` — see `header_text`), then, when `ask_ctx.bash_context` is
+    set (every `BashTool` ask item carries one), an "Intent: ..." line showing the model's own
+    short statement of what the command is trying to accomplish
+    (`bash_context.intent`), then a command preview (long commands truncated to
     `_MAX_COMMAND_PREVIEW_LINES` with a `[more...]` indicator — see `_command_preview`,
     `ExpandedCommandScreen`), then `ask_ctx.resource_description`'s own per-item detail (the
-    specific argv/path/reason this one ask is about). The preview shows `ask_ctx.
+    specific argv/path/reason this one ask is about). The preview shows `bash_context.
     item_command_text` — this one item's own statement, e.g. `"echo $SHELL"` out of a bigger
-    `"echo $SHELL; echo $HOME"` — falling back to the full `ask_ctx.command_text` only when
-    `item_command_text` is unset (a non-`BashTool` ask item never sets `command_text` at all, so
-    this branch is never reached for those). `[more...]` is always shown, regardless of whether
-    the preview itself needed truncation, whenever `ask_ctx.is_compound` is set: expanding it
-    (`action_expand_command`) pushes `ExpandedCommandScreen` with `command_text` — the *whole*
-    raw command, not just this item's own piece — so the user always has an explicit path to see
-    everything else this compound command also runs, beyond just the one statement its own
-    preview and `resource_description` describe.
+    `"echo $SHELL; echo $HOME"` — falling back to `ask_ctx.resource.preview_text()` (a path, a
+    "/<name> (<namespace>)" skill reference, or a URL) for an ask with no `bash_context` at all.
+    `[more...]` is always shown, regardless of whether the preview itself needed truncation,
+    whenever `bash_context.is_compound` is set: expanding it (`action_expand_command`) pushes
+    `ExpandedCommandScreen` with `bash_context.command_text` — the *whole* raw command, not just
+    this item's own piece — so the user always has an explicit path to see everything else this
+    compound command also runs, beyond just the one statement its own preview and
+    `resource_description` describe.
 
     The grid's last row (`_OTHER_ROW`) is a single cell spanning both columns
     (`PERMISSION_ASK_OTHER_CELL_ID`), reachable the same way as any other row (pressing Down
@@ -279,24 +271,23 @@ class PermissionAskPanel(Vertical):
     grid's fixed cells can't express; submitting it (Enter) dismisses with
     `PermissionDecision(action="deny", scope="once", other_text=...)`.
 
-    `granted_paths`/`granted_command_patterns` are `klorb.permissions.grant.compute_grant_paths()`/
-    `klorb.permissions.command_grant.compute_command_grant_patterns()`'s pre-computed results (or,
-    for `granted_command_patterns`, `klorb.permissions.risk_classifier.
-    ItemRiskAssessment.suggested_pattern` instead, when the caller has one — see `klorb.tui.
-    ReplApp._confirm_permission_ask`) — the directory (or directories)/command pattern(s) a
-    persistent Allow would actually be recorded at — so the panel's copy can name the real scope
-    of the grant up front: per the design decision behind this feature, an unmentioned path is
-    always granted at its *containing directory* (never the single file the model happens to be
-    touching right now), and an unmentioned command is granted at its exact argv.
-    `action_confirm` threads `granted_command_patterns` straight through onto the returned
-    `PermissionDecision.grant_patterns`, so whichever pattern this copy names is exactly what
-    `Session._retry_after_multi_permission_decisions` persists — never a value independently
+    `granted_preview` is `ask_ctx.resource.grant_preview(session_config)` — or, for a
+    `CommandResource` ask, `klorb.permissions.risk_classifier.ItemRiskAssessment.
+    suggested_pattern` rendered the same way instead, when the caller has one (see `klorb.tui.
+    ReplApp._confirm_permission_ask`) — the directory list, command pattern, skill, or domain a
+    persistent Allow would actually be recorded at, so the panel's copy can name the real scope of
+    the grant up front (see `PermissionResource.grant_preview`'s own docstring for the
+    per-kind computation, e.g. an unmentioned path always being granted at its *containing
+    directory* rather than the single file the model happens to be touching right now).
+    `grant_patterns`, when the ask is a `CommandResource` whose displayed pattern came from a risk
+    classifier suggestion rather than `grant_preview()`'s own deterministic computation, is that
+    same structured pattern list; `action_confirm` threads it straight through onto the returned
+    `PermissionDecision.grant_patterns`, so whichever pattern `granted_preview` names is exactly
+    what `Session._retry_after_multi_permission_decisions` persists — never a value independently
     recomputed afterward from the item's raw argv, which could diverge from what was shown.
-    `granted_skill` is simpler: a skill grant always covers exactly the `(namespace, name)` pair
-    being asked about, no widening computation needed, so it's just `ask_ctx.skill` passed
-    straight through. At most one of the three is set, mirroring `PermissionAskContext`'s own
-    `path`/`command`/`skill` mutual exclusivity; none is set for a structural item, which has no
-    persistable rule at any scope but `"once"`.
+    `None` for every other ask, letting the persist step recompute deterministically on its own.
+    `granted_preview` itself is `None` for a structural item, which has no persistable rule at any
+    scope but `"once"`.
 
     `initial_action`/`initial_scope` seed the starting cursor position — `klorb.tui.ReplApp`
     threads through the previous prompt's final selection here (see
@@ -436,9 +427,8 @@ class PermissionAskPanel(Vertical):
 
     def __init__(
         self, ask_ctx: PermissionAskContext, *,
-        granted_paths: list[Path] | None = None,
-        granted_command_patterns: list[list[str]] | None = None,
-        granted_skill: tuple[str, str] | None = None,
+        granted_preview: GrantPreview | None = None,
+        grant_patterns: list[list[str]] | None = None,
         initial_action: _Action = "allow",
         initial_scope: _Scope = "once",
         risk_score: int | None = None,
@@ -448,9 +438,8 @@ class PermissionAskPanel(Vertical):
     ) -> None:
         super().__init__()
         self._ask_ctx = ask_ctx
-        self._granted_paths = granted_paths
-        self._granted_command_patterns = granted_command_patterns
-        self._granted_skill = granted_skill
+        self._granted_preview = granted_preview
+        self._grant_patterns = grant_patterns
         self._column = _ACTIONS.index(initial_action)
         self._row = _SCOPES.index(initial_scope)
         self._risk_score = risk_score
@@ -472,31 +461,30 @@ class PermissionAskPanel(Vertical):
             widgets.append(Static(
                 f"Risk: {self._risk_score}/10", id=PERMISSION_ASK_RISK_BADGE_ID,
                 classes=badge_classes))
-        if self._ask_ctx.intent:
+        bash_context = self._ask_ctx.bash_context
+        if bash_context is not None and bash_context.intent:
             # `markup=False`: the agent's own free-text intent statement must render verbatim.
             widgets.append(Static(
-                f"Intent: {self._ask_ctx.intent}", id=PERMISSION_ASK_INTENT_ID, markup=False))
+                f"Intent: {bash_context.intent}", id=PERMISSION_ASK_INTENT_ID, markup=False))
 
         preview_section: list[Widget] = []
-        command_text = self._ask_ctx.command_text
         show_more = False
-        if command_text is not None:
-            preview_source = self._ask_ctx.item_command_text or command_text
+        if bash_context is not None:
+            preview_source = bash_context.item_command_text or bash_context.command_text
             preview, truncated = _command_preview(preview_source, wrap_width=self._preview_wrap_width)
-            show_more = truncated or self._ask_ctx.is_compound
+            show_more = truncated or bash_context.is_compound
             # `markup=False`: `preview` is arbitrary command text and must render verbatim -- a
             # literal `[` in an argv (e.g. a Python list comprehension) is not content markup, and
             # would otherwise raise MarkupError when the compositor reflows this widget.
             preview_section.append(Static(preview, id=PERMISSION_ASK_COMMAND_ID, markup=False))
             if show_more:
                 preview_section.append(_MoreIndicator(on_activate=self.action_expand_command))
-        elif self._ask_ctx.path is not None:
-            # `markup=False`: a filesystem path can contain `[` and must render verbatim.
-            preview_section.append(Static(
-                str(self._ask_ctx.path), id=PERMISSION_ASK_COMMAND_ID, markup=False))
-        elif self._ask_ctx.skill is not None:
-            preview_section.append(Static(
-                _skill_preview_text(self._ask_ctx.skill), id=PERMISSION_ASK_COMMAND_ID))
+        else:
+            preview_text = self._ask_ctx.resource.preview_text()
+            if preview_text is not None:
+                # `markup=False`: a path/URL can contain `[` and must render verbatim.
+                preview_section.append(Static(
+                    preview_text, id=PERMISSION_ASK_COMMAND_ID, markup=False))
         if self._risk_rationale is not None:
             # `markup=False`: the rationale is model-generated free text and must render verbatim.
             preview_section.append(Static(
@@ -557,14 +545,9 @@ class PermissionAskPanel(Vertical):
                 widget.styles.overflow_y = "hidden"
 
     def header_text(self) -> str:
-        if self._ask_ctx.command_text is not None:
-            kind = "Run command"
-        elif self._ask_ctx.path is not None:
-            kind = "Write file" if self._ask_ctx.is_write else "Read file"
-        elif self._ask_ctx.skill is not None:
-            kind = "Activate skill"
-        else:
-            kind = "Confirm"
+        kind = (
+            "Run command" if self._ask_ctx.bash_context is not None
+            else self._ask_ctx.resource.header_kind())
         return f"Permission requested: {kind}"
 
     def _granted_text(self) -> Content | None:
@@ -580,21 +563,12 @@ class PermissionAskPanel(Vertical):
         through escaping and is silently dropped from the rendered line -- which, for a line whose
         whole job is to state exactly what a persistent Allow grants, would misreport the grant.
         See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
-        if self._granted_paths:
-            directories = ", ".join(str(path) for path in self._granted_paths)
-            return Content.assemble(
-                "Any persistent Allow choice below grants access to the whole directory:\n",
-                (directories, "$text-accent bold"))
-        if self._granted_command_patterns:
-            patterns = ", ".join(" ".join(pattern) for pattern in self._granted_command_patterns)
-            return Content.assemble(
-                "Any persistent Allow choice below grants: ",
-                (patterns, "$text-accent bold"))
-        if self._granted_skill is not None:
-            return Content.assemble(
-                "Any persistent Allow choice below grants: ",
-                (_skill_preview_text(self._granted_skill), "$text-accent bold"))
-        return None
+        if self._granted_preview is None:
+            return None
+        prefix = (
+            "Any persistent Allow choice below grants access to the whole directory:\n"
+            if self._granted_preview.block else "Any persistent Allow choice below grants: ")
+        return Content.assemble(prefix, (self._granted_preview.resource_text, "$text-accent bold"))
 
     def _refresh_selection(self) -> None:
         grid = self.query_one(f"#{PERMISSION_ASK_GRID_ID}", Grid)
@@ -619,7 +593,7 @@ class PermissionAskPanel(Vertical):
             return
         self.dismiss(PermissionDecision(
             action=_ACTIONS[self._column], scope=_SCOPES[self._row],
-            grant_patterns=self._granted_command_patterns))
+            grant_patterns=self._grant_patterns))
 
     def action_decline(self) -> None:
         self.dismiss(PermissionDecision(action="deny", scope="once"))
@@ -628,8 +602,8 @@ class PermissionAskPanel(Vertical):
         self._reveal_other_input()
 
     def action_expand_command(self) -> None:
-        if self._ask_ctx.command_text is not None:
-            self.app.push_screen(ExpandedCommandScreen(self._ask_ctx.command_text))
+        if self._ask_ctx.bash_context is not None:
+            self.app.push_screen(ExpandedCommandScreen(self._ask_ctx.bash_context.command_text))
 
     def _reveal_other_input(self) -> None:
         self.query_one(f"#{PERMISSION_ASK_GRID_ID}", Grid).remove()

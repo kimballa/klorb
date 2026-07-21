@@ -12,6 +12,7 @@ import pytest
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message, ToolCallRequest
+from klorb.permissions.resource import SkillResource
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
 from klorb.session import PermissionAskContext, PermissionDecision, Session, SessionConfig, TurnEventHandlers
@@ -336,7 +337,8 @@ def test_activate_skill_ask_flow_grants_and_activates(tmp_path: Path) -> None:
 
     # The ask carried the skill identity...
     assert len(asked) == 1
-    assert asked[0].skill == ("workspace", "do-thing")
+    assert isinstance(asked[0].resource, SkillResource)
+    assert asked[0].resource.skill_id == ("workspace", "do-thing")
     # ...the session-scope grant was recorded...
     assert ("workspace", "do-thing") in session.config.skill_rules.allow
     # ...and the retried activation returned the skill content as a tool_response.

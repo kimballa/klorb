@@ -6,11 +6,11 @@ itself and `UserSkillActivation`."""
 
 import threading
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from klorb.permissions.resource import BashCommandContext, PermissionResource
 from klorb.permissions.table import PermissionAskItem
 from klorb.tools.ask.common import QuestionOption
 
@@ -22,22 +22,17 @@ class PermissionAskContext(BaseModel):
     resource and a human-readable description of the access, for a UI to build its prompt from
     without re-parsing the raised exception's message string.
 
-    Exactly one of `path`/`command` is set, or neither, mirroring
-    `klorb.permissions.table.PermissionAskItem`: `path` (plus `is_write`) for a directory-access
-    item; `command` (an argv pattern) for a bash-command-rule item with no filesystem resource;
-    neither for a structural item with no persistable rule at all (only `"once"`/deny make sense
-    for that last case — see `PermissionDecision`). `command_text`, when set (any `BashTool`-
-    originated item, regardless of which of `path`/`command`/neither it also carries), is the
-    full raw command string the item's own `resource_description` detail belongs to — see
-    `PermissionAskItem.command_text`. `is_compound` mirrors `PermissionAskItem.is_compound`
-    alongside it: `True` when `command_text` is a compound command (more than one simple
-    command) that this one item is only a part of. `item_command_text` mirrors
-    `PermissionAskItem.item_command_text`: the exact source text of just the one statement this
-    item is actually about, distinct from `command_text`'s whole raw command — a UI should
-    prefer showing this as the prominent per-item preview (see `PermissionAskItem.
-    item_command_text` for why `command_text` alone isn't enough for a compound command).
-    `intent` mirrors `PermissionAskItem.intent`: the model's own short statement of what
-    `command_text` is trying to accomplish, `None` for a non-`BashTool` ask item.
+    `resource` is the `klorb.permissions.resource.PermissionResource` this ask is about, mirroring
+    `klorb.permissions.table.PermissionAskItem.resource` — see that module for the polymorphic
+    methods a UI/session consumer calls on it instead of branching on its concrete kind.
+
+    `bash_context`, when set, mirrors `PermissionAskItem.bash_context`: the
+    `klorb.permissions.resource.BashCommandContext` a `BashTool`-originated ask carries, regardless
+    of `resource`'s own kind — its `command_text` is the full raw command string the item's own
+    `resource_description` detail belongs to, and `item_command_text` is the exact source text of
+    just the one statement this item is actually about, which a UI should prefer for its prominent
+    per-item preview (see `BashCommandContext`'s own docstring for the full field-by-field
+    rationale). `None` for a non-`BashTool` ask.
 
     `sibling_items`, set by `Session._resolve_multi_permission_ask` to the full
     `MultiPermissionAskRequired.items` list (including the item this context is itself about, in
@@ -46,27 +41,15 @@ class PermissionAskContext(BaseModel):
     `klorb.tui.ReplApp._confirm_permission_ask` uses it to send `klorb.permissions.
     risk_classifier.classify_command_risk()` every item in one request the first time any of
     them is seen, rather than once per item. `None` for a plain single-item
-    `PermissionAskRequired` ask (that path never has `command_text` set at all, so there is
+    `PermissionAskRequired` ask (that path never has `bash_context` set at all, so there is
     nothing for a command-risk classifier to batch there in the first place). `Session` itself
     never reads this field back — it only threads data it already has for whichever callback
     consumes it."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    path: Path | None = None
-    is_write: bool = False
-    command: list[str] | None = None
-    command_text: str | None = None
-    is_compound: bool = False
-    item_command_text: str | None = None
-    intent: str | None = None
-    skill: tuple[str, str] | None = None
-    """The `(namespace, name)` identity of a skill whose `skillRules` verdict is `"ask"` — the
-    skill-resource analogue of `path`. `None` for every non-skill ask. See docs/specs/skills.md."""
-    url: str | None = None
-    """The URL a `WebFetch` tool is trying to retrieve, so the interactive ask panel can display
-    the target URL and domain alongside the permission prompt. `None` for every non-WebFetch
-    ask. See docs/specs/web-fetch-tool.md."""
+    resource: PermissionResource
+    bash_context: BashCommandContext | None = None
     resource_description: str
     sibling_items: list[PermissionAskItem] | None = None
 
@@ -75,36 +58,36 @@ class PermissionDecision(BaseModel):
     """The user's answer to one `PermissionAskContext` prompt, returned by `on_permission_ask`.
 
     `action` and `scope` are independent axes: `"allow"`/`"deny"` cross with `"once"` (retries
-    without persisting anything, via a one-shot `ToolSetupContext.permission_override` covering
-    whichever of `path`/`command`/`resource_description` the item carries — see
-    `klorb.permissions.table.PermissionOverride`) and `"session"`/`"workspace"`/`"homedir"`
-    (persistent for a `path` or `command` item — `Session._retry_after_permission_decision`/
-    `_retry_after_multi_permission_decisions` apply the grant itself, via `klorb.permissions.
-    grant.apply_permission_grant`/`klorb.permissions.command_grant.apply_command_permission_grant`,
-    before retrying; a structural item has no rule to persist at any scope other than `"once"`,
-    since it identifies no filesystem path or command pattern — `on_permission_ask` only needs
-    to ask the user and report their choice back, never apply or persist anything itself).
+    without persisting anything, via a one-shot `ToolSetupContext.permission_override` the ask
+    item's own `PermissionResource.added_to_override()` builds — see
+    `klorb.permissions.resource.PermissionOverride`) and `"session"`/`"workspace"`/`"homedir"`
+    (persistent for a resource whose `is_persistable` is `True` — `Session.
+    _retry_after_permission_decision`/`_retry_after_multi_permission_decisions` apply the grant
+    itself via the resource's own `apply_grant()`, before retrying; a `StructuralResource` item's
+    `is_persistable` is `False`, since it identifies no filesystem path, command pattern, skill,
+    or domain — `on_permission_ask` only needs to ask the user and report their choice back, never
+    apply or persist anything itself).
     `other_text`, if set, means the user typed free-text instead of picking a grid cell —
     equivalent to `action="deny", scope="once"` but with the explanation surfaced to the model
     alongside the denial, so it can act on the redirection without a second round trip.
 
     `grant_patterns`, when set, is the exact wildcard-pattern rule(s) a persistent grant for this
     item must be recorded at, in place of recomputing one from the item's own raw resource after
-    the fact — today only meaningful for a `command` item's `commandRules` pattern (the same list
-    a UI showed the user as "grants: ..." at ask time —
-    `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`'s own `granted_command_patterns`,
-    which is `klorb.permissions.risk_classifier.ItemRiskAssessment.suggested_pattern` when the
-    risk classifier offered one, else `klorb.permissions.command_grant.
-    compute_command_grant_patterns()`'s result), but named generically rather than
-    `command_patterns` since any future pattern/wildcard-based grant kind (not just
-    `commandRules`) would reuse this same field rather than growing its own. Threading it through
+    the fact — today only meaningful for a `CommandResource` item's `commandRules` pattern (the
+    same list a UI showed the user as "grants: ..." at ask time — `klorb.tui.mixins.interactions.
+    ReplApp._confirm_permission_ask` builds it from `klorb.permissions.risk_classifier.
+    ItemRiskAssessment.suggested_pattern` when the risk classifier offered one, else from
+    `CommandResource.grant_preview()`), but named generically rather than `command_patterns` since
+    any future pattern/wildcard-based grant kind (not just `commandRules`) would reuse this same
+    field rather than growing its own. Threading it through
     here — rather than having `apply_command_permission_grant` recompute a pattern from the raw
     resource after the fact — is what keeps the persisted grant identical to what was displayed:
     recomputing from argv alone has no way to know about a risk-classifier-suggested wildcard,
     since that pattern doesn't correspond to any existing `ask`-category rule the recomputation
-    could find. `None` for every item with no pattern-based grant of its own (every non-`command`
-    item today), and for a `command` item whenever the caller has no precomputed patterns to
-    offer (in which case `apply_command_permission_grant` falls back to computing them itself)."""
+    could find. `None` for every item with no pattern-based grant of its own (every
+    non-`CommandResource` item today), and for a `CommandResource` item whenever the caller has no
+    precomputed patterns to offer (in which case `apply_command_permission_grant` falls back to
+    computing them itself)."""
 
     action: Literal["allow", "deny"]
     scope: Literal["once", "session", "workspace", "homedir"] = "once"
