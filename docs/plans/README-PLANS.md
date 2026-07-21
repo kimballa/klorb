@@ -30,6 +30,10 @@ will, with your help.
     to execute on the lowest-numbered plan in the `ready/` folder.
 * As a plan is implemented, the relevant and durable aspects of the plan can be moved
   into a spec. The plan file itself should be moved to the `archive/` subdir with `git mv`.
+* If the plan has a "Future work" section (or similar) describing follow-up ideas that are
+  out of scope for the current implementation, log each of those items in `TODO.md`,
+  referencing the plan by number (e.g. "plan 013") so a reader can trace the item back to
+  its source plan.
 
 ## How to Implement
 
