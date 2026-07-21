@@ -406,6 +406,7 @@ class PromptSubmissionMixin(ReplAppBase):
             else:
                 self.call_from_thread(self._mount_tool_call_widget, rendered)
             round_index += 1
+            self.call_from_thread(self._maybe_refresh_task_sidebar_after_tool_call, event)
 
         # The outer try/finally guarantees `_turn_in_flight` is cleared however this worker
         # unwinds -- including a BaseException (e.g. asyncio.CancelledError / worker cancellation)

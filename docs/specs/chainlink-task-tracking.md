@@ -215,6 +215,12 @@ only stores the id, not the title) and returns `None` — ending the interjectio
 the model to comment on meaningful progress and to close the issue (then call `TodoNext` again)
 once it's done and verified.
 
+## TUI sidebar
+
+`Ctrl+T` toggles a right-hand panel in the interactive REPL listing this session's issues
+(open and closed, current task starred) — see docs/specs/terminal-repl.md's "Task sidebar"
+bullet and `klorb.tui.widgets.task_sidebar.TaskSidebar`.
+
 ## Configuration
 
 No new `klorb-config.json` keys. Whether `TASKS` tools are offered at all is determined purely
