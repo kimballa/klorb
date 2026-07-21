@@ -3,6 +3,13 @@
 
 ## Bugs
 
+* The permission screen for bash commands will say something like "A permanent
+  allow for this command will allow `pip show *`" but then it actually writes
+  only the explicit command run, like `pip show httpx`, into the klorb-config.json.
+
+* The summary of a Bash tool call has a `(exit 1, 0.30s)` appended when it's
+  done running. This should be on its own line, not the end of the command line.
+
 * why is the chainlink session_id a madeup-animal-slug instead of a "real" slug,
   even in sessions when the session classifier gave us a useful session name?
 
@@ -35,7 +42,8 @@
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
 
-* When adding skills list `<SystemInterjection>` we should notify the TUI or log file how many tokens
+* When adding skills list `<SystemInterjection>` we should notify the TUI or log file how
+  many tokens are occupied by the skill list.
 
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.
