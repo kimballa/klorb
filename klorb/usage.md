@@ -17,6 +17,8 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb models` [`--json`] [`--brief`] [`--costs`]
 
+`klorb show-config` [`--config` *FILE*]
+
 ## DESCRIPTION
 
 klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
@@ -32,7 +34,10 @@ Invoked as `klorb system-prompt` (only recognized when `system-prompt` is the
 very first argument), it dumps the resolved system prompt and tool definitions
 to stdout — see COMMANDS below. Invoked as `klorb models` (only recognized
 when `models` is the very first argument), it lists every model klorb has
-discovered — see COMMANDS below.
+discovered — see COMMANDS below. Invoked as `klorb show-config` (only
+recognized when `show-config` is the very first argument), it prints the
+merged config from all config files to stdout as pretty-printed JSON — see
+COMMANDS below.
 
 ## COMMANDS
 
@@ -80,6 +85,14 @@ discovered — see COMMANDS below.
   per second, and folds it into the table (as an `IN $/MTOK`/`OUT $/MTOK`
   column pair) or the `--json` output (as a `costs` key); it's ignored with
   `--brief`. Exit status is always `0`.
+* `show-config` [`--config` *FILE*]
+
+  Prints the merged config from all config files (built-in defaults, `/etc`,
+  per-user, per-project, and `--config`) to stdout as pretty-printed JSON.
+  The workspace is resolved non-interactively via `TrustManager`: if the
+  current directory is a trusted workspace, the per-project config layer is
+  included; otherwise it's skipped. `--config` layers an additional config
+  file on top of the usual stack. Exit status is `0` on success.
 ## OPTIONS
 
 * `-m` *PROMPT*, `--message` *PROMPT*
@@ -272,6 +285,18 @@ List every model as JSON, with live per-token pricing:
 
 ```
 klorb models --json --costs
+```
+
+Show the merged config from all config files:
+
+```
+klorb show-config
+```
+
+Show the merged config with an extra config file layered on top:
+
+```
+klorb show-config --config ./ci-defaults.json
 ```
 
 ## SEE ALSO

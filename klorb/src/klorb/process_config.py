@@ -529,6 +529,89 @@ def _route_keys(data: dict[str, Any], key_map: dict[str, str]) -> dict[str, Any]
     return routed
 
 
+def _reverse_key_map(key_map: dict[str, str]) -> dict[str, str]:
+    """Reverse a key map: from `{on_disk_key: attr_name}` to `{attr_name: on_disk_key}`."""
+    return {attr: key for key, attr in key_map.items()}
+
+
+# Pre-computed reverse maps for `process_config_to_disk_dict`.
+_PROCESS_ATTR_TO_KEY: dict[str, str] = _reverse_key_map(PROCESS_KEY_MAP)
+_SESSION_ATTR_TO_KEY: dict[str, str] = _reverse_key_map(SESSION_KEY_MAP)
+
+
+def process_config_to_disk_dict(process_config: ProcessConfig) -> dict[str, Any]:
+    """Convert a `ProcessConfig` back to the on-disk config dict format.
+
+    Only includes keys that are readable from config files -- the keys in
+    `SESSION_KEY_MAP`, `PROCESS_KEY_MAP`, and the permission-rule keys
+    (`readDirs`, `writeDirs`, `readFiles`, `writeFiles`, `commandRules`,
+    `skillRules`, `shareEnv`, `setEnv`). Output keys use dotted camelCase
+    names matching the on-disk `klorb-config.json` format.
+
+    Permission-rule lists are serialized using the same format the grant
+    machinery uses when writing back to config files.
+    """
+    from klorb.permissions.skill_access import format_fqsn
+
+    result: dict[str, Any] = {}
+
+    # Top-level process config keys.
+    for attr_name, on_disk_key in _PROCESS_ATTR_TO_KEY.items():
+        value = getattr(process_config, attr_name, None)
+        result[on_disk_key] = value
+
+    # Session defaults.
+    session: dict[str, Any] = {}
+    for attr_name, on_disk_key in _SESSION_ATTR_TO_KEY.items():
+        value = getattr(process_config.session, attr_name, None)
+        session[on_disk_key] = value
+
+    # Permission rules -- serialized back to on-disk format.
+    read_dirs = process_config.session.read_dirs
+    session["readDirs"] = {
+        "deny": [str(p) for p in read_dirs.deny],
+        "ask": [str(p) for p in read_dirs.ask],
+        "allow": [str(p) for p in read_dirs.allow],
+    }
+    write_dirs = process_config.session.write_dirs
+    session["writeDirs"] = {
+        "deny": [str(p) for p in write_dirs.deny],
+        "ask": [str(p) for p in write_dirs.ask],
+        "allow": [str(p) for p in write_dirs.allow],
+    }
+    read_files = process_config.session.read_files
+    session["readFiles"] = {
+        "deny": [str(p) for p in read_files.deny],
+        "ask": [str(p) for p in read_files.ask],
+        "allow": [str(p) for p in read_files.allow],
+    }
+    write_files = process_config.session.write_files
+    session["writeFiles"] = {
+        "deny": [str(p) for p in write_files.deny],
+        "ask": [str(p) for p in write_files.ask],
+        "allow": [str(p) for p in write_files.allow],
+    }
+    command_rules = process_config.session.command_rules
+    session["commandRules"] = {
+        "deny": [list(p) for p in command_rules.deny],
+        "ask": [list(p) for p in command_rules.ask],
+        "allow": [list(p) for p in command_rules.allow],
+    }
+    skill_rules = process_config.session.skill_rules
+    session["skillRules"] = {
+        "deny": [format_fqsn(pair) for pair in skill_rules.deny],
+        "ask": [format_fqsn(pair) for pair in skill_rules.ask],
+        "allow": [format_fqsn(pair) for pair in skill_rules.allow],
+    }
+    session["shareEnv"] = process_config.session.share_env
+    session["setEnv"] = process_config.session.set_env
+
+    if session:
+        result["sessionDefaults"] = session
+
+    return result
+
+
 def load_process_config(
     *, config_flag_path: Path | None = None, cwd: Path | None = None, workspace: Workspace | None = None,
 ) -> ProcessConfig:

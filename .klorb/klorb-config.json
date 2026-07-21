@@ -55,7 +55,10 @@
         ["head", "*", "*"],
         ["cat"],
         ["pip", "list"],
-        ["sleep", "30"]
+        ["sleep", "30"],
+        ["grep", "-A", "5", "\"commandRules\""],
+        ["grep", "-A", "20", "\"allow\""],
+        ["venv/bin/python3", "-m", "pytest", "tests/test_cli.py", "-v"]
       ]
     },
     "shareEnv": [

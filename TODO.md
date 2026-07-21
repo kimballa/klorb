@@ -49,8 +49,6 @@
     instructions; you can reference the associated SystemInterjection xml tag
     and subject attribute.
 
-* CLI subcommand: `klorb show-config` should show the merged config from all the json files it loads.
-
 * Each per-project subdir in `.local/share/klorb/...` should include a `logs` subdir with symlinks
   to all the log files in `.local/state/ associated w/ the project. Really the other way around: put
   the true logs in the per project folders and symlink from a common place. Then the log roll reaper
@@ -104,9 +102,6 @@
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
       into a directory klorb itself trusts and auto-discovers deserves the same escalation
       klorb's own skills directory gets.
-* Integrate with chainlink for todo tracking
-  * TodoList tool
-  * TodoWrite tool
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
     compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.

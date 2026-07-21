@@ -801,3 +801,161 @@ def test_run_models_cli_costs_passes_all_model_names(capsys: pytest.CaptureFixtu
             cli.run_models_cli(["--costs"])
 
     mock_fetch.assert_called_once_with(["a/model-one", "b/model-two"])
+
+
+# --- show-config subcommand ---
+
+
+def test_main_dispatches_to_show_config_subcommand_when_argv1_is_show_config() -> None:
+    with patch("klorb.cli.run_show_config_cli", return_value=0) as mock_run:
+        with patch("sys.argv", ["klorb", "show-config"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    mock_run.assert_called_once_with([])
+    assert exc_info.value.code == 0
+
+
+def test_main_propagates_show_config_subcommand_failure_exit_code() -> None:
+    with patch("klorb.cli.run_show_config_cli", return_value=1):
+        with patch("sys.argv", ["klorb", "show-config"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    assert exc_info.value.code == 1
+
+
+def test_main_does_not_treat_show_config_as_a_subcommand_unless_it_is_argv1() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_show_config_cli") as mock_run:
+            with patch("sys.argv", ["klorb", "-m", "show-config"]):
+                cli.main()
+
+    mock_run.assert_not_called()
+
+
+def test_run_show_config_cli_returns_valid_json(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            exit_code = cli.run_show_config_cli([])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert isinstance(payload, dict)
+    assert "sessionDefaults" in payload
+
+
+def test_run_show_config_cli_uses_dotted_camel_case_keys(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_show_config_cli([])
+
+    payload = json.loads(capsys.readouterr().out)
+    # Top-level keys should use dotted camelCase, not Python attribute names.
+    assert "tools.bash.command" in payload
+    assert "bash_command" not in payload
+    # Session defaults should use dotted camelCase.
+    session = payload["sessionDefaults"]
+    assert "model" in session
+    assert "tools.maxCallsPerTurn" in session
+    assert "max_tool_calls_per_turn" not in session
+
+
+def test_run_show_config_cli_includes_permission_rules(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_show_config_cli([])
+
+    payload = json.loads(capsys.readouterr().out)
+    session = payload["sessionDefaults"]
+    assert "readDirs" in session
+    assert "writeDirs" in session
+    assert "commandRules" in session
+    assert "skillRules" in session
+    # Each should have deny/ask/allow structure.
+    for key in ("readDirs", "writeDirs", "commandRules", "skillRules"):
+        assert set(session[key].keys()) == {"deny", "ask", "allow"}
+
+
+def test_run_show_config_cli_does_not_include_runtime_only_keys(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_show_config_cli([])
+
+    payload = json.loads(capsys.readouterr().out)
+    # These are not config-file-readable keys.
+    assert "config_warnings" not in payload
+    assert "argv" not in payload
+    assert "session_cli_flags" not in payload
+    session = payload["sessionDefaults"]
+    assert "approved_scopes" not in session
+    assert "permission_framework" not in session
+    assert "workspace" not in session
+
+
+def test_run_show_config_cli_passes_config_flag_path(
+    stub_process_config: MagicMock,
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_show_config_cli(["--config", "/some/extra-config.json"])
+
+    stub_process_config.assert_called_once_with(
+        config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)
+
+
+def test_run_show_config_cli_passes_no_config_flag_path_by_default(
+    stub_process_config: MagicMock,
+) -> None:
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_show_config_cli([])
+
+    stub_process_config.assert_called_once_with(
+        config_flag_path=None, cwd=mock.ANY, workspace=mock.ANY)
+
+
+def test_run_show_config_cli_includes_session_config(
+    stub_process_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    process_config = ProcessConfig(
+        session=SessionConfig(model="some/model", max_tool_calls_per_turn=10))
+    stub_process_config.return_value = process_config
+    with patch("klorb.cli.load_dotenv"):
+        with patch("klorb.cli.TrustManager") as mock_tm_cls:
+            mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+                path=Path.cwd(), trusted=False)
+            cli.run_show_config_cli([])
+
+    payload = json.loads(capsys.readouterr().out)
+    session = payload["sessionDefaults"]
+    assert session["model"] == "some/model"
+    assert session["tools.maxCallsPerTurn"] == 10
