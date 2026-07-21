@@ -56,7 +56,11 @@ class TaskSidebar(VerticalScroll, can_focus=False):
     """
 
     def compose(self) -> ComposeResult:
-        yield Static(self._render_body(_HEADER_TEXT, _EMPTY_MESSAGE), id=_BODY_ID)
+        # `markup=False`: an issue title is arbitrary text (chainlink imposes no character
+        # restrictions), so a literal `[` in one must render verbatim rather than be parsed as
+        # Textual console markup -- fixed at construction time and inherited by every later
+        # `update()` call on this same widget (see `Widget.__init__`'s `_render_markup`).
+        yield Static(self._render_body(_HEADER_TEXT, _EMPTY_MESSAGE), id=_BODY_ID, markup=False)
 
     def show_tasks(self, issues: list[dict[str, Any]], cur_task_id: int | None) -> None:
         """Replace the displayed rows with `issues` (expected already sorted, per
