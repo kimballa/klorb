@@ -101,20 +101,7 @@
   * Add Evals for GrepTool and FindFileTool.
 
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
-    (plan 013)
-
-* WebFetch follow-ups (plan 013):
-  * Third-party malware blocklisting: query external threat lists and auto-deny requests to
-    domains on blocklist(s) maintained by trusted third parties, not just the user's own
-    `deny` list.
-  * Cookie handling: a session-scoped `httpx.Client` (held in
-    `session.tool_state["WebFetch"]["client"]`) to enable cookie persistence across calls,
-    instead of the fresh per-call client used today.
-  * POST/PATCH/PUT with a request body (JSON, form data, or raw bytes), now that the
-    read-only GET path is solid.
-  * `Tool.is_read_only()` needs a conditional form `is_read_only(args)` once WebFetch
-    supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
-    otherwise.
+    (see "Plan 013: WebFetch" section below)
 
 * Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
   * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
@@ -193,3 +180,18 @@
   pruned as a blocker closes, so klorb's own `open_blocker_count()` (`klorb.tools.tasks.common`)
   has to recompute "still in the way" itself by intersecting against a separately-fetched open-id
   set, rather than trusting chainlink's own data.
+
+### Plan 013: WebFetch
+
+* Third-party malware blocklisting: query external threat lists and auto-deny requests to
+  domains on blocklist(s) maintained by trusted third parties, not just the user's own
+  `deny` list.
+* Cookie handling: a session-scoped `httpx.Client` (held in
+  `session.tool_state["WebFetch"]["client"]`) to enable cookie persistence across calls,
+  instead of the fresh per-call client used today.
+* POST/PATCH/PUT with a request body (JSON, form data, or raw bytes), now that the
+  read-only GET path is solid.
+* `Tool.is_read_only()` needs a conditional form `is_read_only(args)` once WebFetch
+  supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
+  otherwise.
+* Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
