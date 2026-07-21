@@ -82,6 +82,7 @@ class ReplAppBase(App[None]):
     _history_pinned_to_bottom: bool
     _session_naming_pending: bool
     _turn_waiting_widget: TurnWaitingStatic | None
+    _task_sidebar_shown: bool
 
     def _update_status_bar(self) -> None: ...
 
@@ -172,3 +173,8 @@ class ReplAppBase(App[None]):
         self, escalate_ctx: EscalatePrivilegesContext,
     ) -> EscalatePrivilegesDecision:
         raise NotImplementedError
+
+    def _maybe_refresh_task_sidebar_after_tool_call(self, event: ToolCallEvent) -> None: ...
+
+    @work(thread=True)
+    def _refresh_task_sidebar(self) -> None: ...

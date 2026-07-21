@@ -46,6 +46,7 @@ from klorb.tui.constants import (
     PROMPT_INPUT_ID,
     SESSION_NAME_ID,
     STATUS_BAR_ID,
+    TASK_SIDEBAR_ID,
 )
 from klorb.tui.formatting import format_workspace_path
 from klorb.tui.mixins.interactions import InteractionsMixin
@@ -53,10 +54,12 @@ from klorb.tui.mixins.key_actions import KeyActionsMixin
 from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin
 from klorb.tui.mixins.rendering import RenderingMixin
 from klorb.tui.mixins.status_bar import StatusBarMixin
+from klorb.tui.mixins.task_sidebar import TaskSidebarMixin
 from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
+from klorb.tui.widgets.task_sidebar import TaskSidebar
 from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic, TurnWaitingStatic
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager
@@ -110,6 +113,7 @@ class ReplApp(
     PromptSubmissionMixin,
     RenderingMixin,
     InteractionsMixin,
+    TaskSidebarMixin,
     ReplAppBase,
 ):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
@@ -255,6 +259,7 @@ class ReplApp(
         ("ctrl+q", "quit", "Quit"),
         ("escape", "abort_response", "Abort"),
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
+        ("ctrl+t", "toggle_task_sidebar", "Tasks"),
         Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
     ]
     COMMANDS = App.COMMANDS | {
@@ -384,6 +389,9 @@ class ReplApp(
         and in between turns."""
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
+        self._task_sidebar_shown: bool = False
+        """Whether the `TaskSidebar` panel (Ctrl+T) is currently visible -- see
+        `TaskSidebarMixin.action_toggle_task_sidebar`."""
         if self._process_config.theme is not None and self._process_config.theme in self.available_themes:
             self.theme = self._process_config.theme
         self.title = "klorb"
@@ -391,6 +399,7 @@ class ReplApp(
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield TaskSidebar(id=TASK_SIDEBAR_ID)
         yield VerticalScroll(id=HISTORY_ID)
         yield Vertical(id=INTERACTION_PANEL_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)

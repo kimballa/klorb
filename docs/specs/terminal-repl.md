@@ -60,6 +60,23 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   showed, and `"Decision: ..."` — so scrolling back through the session later shows not just
   that an approval or a question happened, but what was asked and what was decided, in context
   with the rest of the conversation.
+* **Task sidebar.** `Ctrl+T` (`TaskSidebarMixin.action_toggle_task_sidebar`, in
+  `klorb.tui.mixins.task_sidebar`) shows or hides `klorb.tui.widgets.task_sidebar.TaskSidebar`
+  (id `task-sidebar`), a `dock: right`, fixed-width panel listing this session's chainlink todo
+  items — see [[chainlink-task-tracking]]. Hidden (`display: none`) until first toggled on, at
+  which point it refreshes immediately: `fetch_and_sort_issues(client, include_closed=True)`
+  runs on a `@work(thread=True)` worker (`TaskSidebarMixin._refresh_task_sidebar`), since
+  `ChainlinkClient` shells out to the `chainlink` binary synchronously, and the result reaches
+  the widget via `call_from_thread`. Every finished tool call in a turn
+  (`PromptSubmissionMixin.handle_tool_call`) also calls
+  `_maybe_refresh_task_sidebar_after_tool_call`, which re-fetches only while the panel is
+  visible and only for `ToolCallEvent.name` values that can change the list or the current
+  tracked task (`TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate`). Each row reads `#id title`; a
+  closed issue renders dim and struck-through (Rich style `"dim strike"` on that row's own
+  `rich.text.Text`); whichever issue's `id` matches `Session.cur_chainlink_task_id` gets a
+  leading `★` in place of the usual two-space indent. If the `chainlink` binary can't be found,
+  or the refresh otherwise fails (`ChainlinkError`/`ValueError`), the panel shows "Task tracking
+  is not available in this workspace." instead of a list.
 * `PermissionBadge` (`klorb.tui.widgets.status_widgets`) shows the session's current
   `Session.config.permission_framework` value bracketed and right-justified (`[ask]`,
   `[auto]`, or `[deny]`) within a fixed-width cell (`PERMISSION_BADGE_WIDTH` — the longest

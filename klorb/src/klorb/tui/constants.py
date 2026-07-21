@@ -13,6 +13,7 @@ STATUS_BAR_ID = "status-bar"
 OUTPUT_TOKENS_ID = "output-tokens"
 PERMISSION_BADGE_ID = "permission-badge"
 SESSION_NAME_ID = "session-name"
+TASK_SIDEBAR_ID = "task-sidebar"
 
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
 """The order Shift+Tab cycles `Session.config.permission_framework` through -- see
