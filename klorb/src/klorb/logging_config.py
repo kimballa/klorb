@@ -4,6 +4,7 @@ REPL) a handler that surfaces WARNING+ records in the live conversation history.
 """
 
 import io
+import json
 import logging
 import tempfile
 from collections.abc import Iterable, Iterator
@@ -130,6 +131,30 @@ class TuiHistoryLogHandler(logging.Handler):
             TuiHistoryNotice(self.format(record), error=record.levelno >= logging.ERROR))
 
 
+class JsonLogFormatter(logging.Formatter):
+    """Formats each `LogRecord` as one JSON object (`ts`/`level`/`log`/`msg`) via `json.dumps()`,
+    so a `msg` containing quotes, newlines, or other control characters is escaped per the JSON
+    spec instead of corrupting the surrounding structure the way a `%`-style format string would.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+        if record.exc_text:
+            message = f"{message}\n{record.exc_text}"
+        if record.stack_info:
+            message = f"{message}\n{self.formatStack(record.stack_info)}"
+        payload = {
+            "ts": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "log": record.name,
+            "msg": message,
+        }
+        return json.dumps(payload)
+
+
 def configure_logging(
     *,
     repl_mode: bool,
@@ -145,12 +170,20 @@ def configure_logging(
     prompt, logs go directly to stderr. When `log_path` is given, log records are also written to
     that file, and the session-logs directory is first pruned (via `prune_session_logs()`,
     bounded by `max_log_files`/`max_log_bytes`) so old logs don't accumulate without limit.
+
+    The `TuiHistoryLogHandler` (when present) is given a plain human-readable formatter, since
+    its output is mounted directly into the conversation history for a person to read. Every
+    other handler gets `JsonLogFormatter`, so the console/session-log output stays valid JSON
+    regardless of what a logged message contains.
     """
     handlers: list[logging.Handler] = [TextualHandler()] if repl_mode else [logging.StreamHandler()]
 
     if repl_mode:
         tui_history_handler = TuiHistoryLogHandler()
         tui_history_handler.setLevel(logging.WARNING)
+        tui_history_handler.setFormatter(logging.Formatter(
+            fmt="%(asctime)s - %(levelname)s:%(name)s:%(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"))
         handlers.append(tui_history_handler)
 
     if log_path is not None:
@@ -158,6 +191,11 @@ def configure_logging(
         prune_session_logs(
             log_path.parent, keep_path=log_path, max_files=max_log_files, max_bytes=max_log_bytes)
         handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+
+    json_formatter = JsonLogFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+    for handler in handlers:
+        if handler.formatter is None:
+            handler.setFormatter(json_formatter)
 
     logging.basicConfig(level="NOTSET", handlers=handlers, force=True)
 

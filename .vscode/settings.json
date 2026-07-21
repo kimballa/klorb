@@ -33,5 +33,6 @@
   ],
   "[python]": {
     "editor.defaultFormatter": "ms-python.autopep8"
-  }
+  },
+  "makefile.makefilePath": "klorb/Makefile"
 }

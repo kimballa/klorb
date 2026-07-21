@@ -5,6 +5,7 @@
         "anthropic.claude-code",
         "ms-vscode.makefile-tools",
         "ms-python.vscode-pylance",
-        "davidanson.vscode-markdownlint"
+        "davidanson.vscode-markdownlint",
+        "hojabri.slog-viewer"
     ]
 }
