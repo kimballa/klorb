@@ -239,6 +239,15 @@ above `tools.bash.riskClassifier.tooRiskyThreshold` pre-selects `Deny, once` as 
 starting cursor cell — a nudge, never a block: every grid cell stays reachable and confirmable
 regardless of score.
 
+The same pattern the panel's "grants: ..." copy names is what actually gets persisted: confirming
+the panel (`PermissionAskPanel.action_confirm`) carries its own `granted_command_patterns` value
+straight onto the returned `klorb.session.events.PermissionDecision.grant_patterns`, and
+`Session._retry_after_multi_permission_decisions` passes that through to
+`apply_command_permission_grant` instead of letting it recompute a pattern from the item's raw
+argv on its own — recomputing independently at grant time has no way to know about a
+classifier-suggested wildcard, since that pattern doesn't correspond to any existing
+`ask`-category rule a fresh `compute_command_grant_patterns()` call could find.
+
 Because `MultiPermissionAskRequired`'s several items are asked about serially, one panel at a
 time (see "Multi-item asks" in docs/specs/permissions.md), `Session._resolve_multi_permission_ask`
 threads the full sibling-item list onto every `PermissionAskContext` it builds
