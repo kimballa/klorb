@@ -3,10 +3,6 @@
 
 ## Bugs
 
-* The permission screen for bash commands will say something like "A permanent
-  allow for this command will allow `pip show *`" but then it actually writes
-  only the explicit command run, like `pip show httpx`, into the klorb-config.json.
-
 * The summary of a Bash tool call has a `(exit 1, 0.30s)` appended when it's
   done running. This should be on its own line, not the end of the command line.
 
@@ -105,6 +101,20 @@
   * Add Evals for GrepTool and FindFileTool.
 
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
+    (plan 013)
+
+* WebFetch follow-ups (plan 013):
+  * Third-party malware blocklisting: query external threat lists and auto-deny requests to
+    domains on blocklist(s) maintained by trusted third parties, not just the user's own
+    `deny` list.
+  * Cookie handling: a session-scoped `httpx.Client` (held in
+    `session.tool_state["WebFetch"]["client"]`) to enable cookie persistence across calls,
+    instead of the fresh per-call client used today.
+  * POST/PATCH/PUT with a request body (JSON, form data, or raw bytes), now that the
+    read-only GET path is solid.
+  * `Tool.is_read_only()` needs a conditional form `is_read_only(args)` once WebFetch
+    supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
+    otherwise.
 
 * Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
   * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
