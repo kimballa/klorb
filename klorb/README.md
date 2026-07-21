@@ -7,7 +7,7 @@ klorb is your friendly neighborhood agent.
 
 From this directory (`klorb/`):
 
-```
+```bash
 make venv
 make install_dev_deps
 ```
@@ -25,7 +25,7 @@ make install_dev_deps
 
 ## Usage
 
-```
+```bash
 klorb                                       # starts the interactive REPL
 klorb -m "What is the capital of France?"   # single-shot prompt/response, no REPL
 klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
@@ -36,7 +36,7 @@ See [`usage.md`](usage.md) for the full command reference, including the
 
 ## Evals
 
-```
+```bash
 make evals                                        # run every suite in klorb/evals/cases.py
 EVALARGS='--suite file-tools' make evals          # run just one suite
 EVALARGS='--list-suites' make evals               # print known suite names and exit
@@ -51,12 +51,11 @@ This answers a different question than `make test`: whether a tool's
 correctly, not whether its `apply()` logic is correct. Cases are grouped into named `EvalSuite`s
 (today, just `"file-tools"`); `--suite <name>` runs one, `--suite all` (the default) runs every
 known suite, and `--list-suites` prints the known suite names without running anything — an
-unknown `--suite` name prints a reminder to use `--list-suites` and exits `1`. The default model
-(`klorb.openrouter.DEFAULT_MODEL`) is free to use; `--model`/`EVALARGS` can point at a different
-(possibly paid) model instead, but that's not required just to run the suite. It needs
-`OPENROUTER_API_KEY` set (in the environment, or in a `.env` file anywhere from `klorb/` up to
-the repo root — `python-dotenv` finds it automatically); without one, `make evals` prints a
-one-line notice and exits `0` (doesn't fail the build — see
+unknown `--suite` name prints a reminder to use `--list-suites` and exits `1`. By default evals
+run against `klorb.openrouter.DEFAULT_MODEL`; `--model`/`EVALARGS` can point at a different
+model instead. It needs `OPENROUTER_API_KEY` set (in the environment, or in a `.env` file anywhere
+from `klorb/` up to the repo root — `python-dotenv` finds it automatically); without one, `make
+evals` prints a one-line notice and exits `0` (doesn't fail the build — see
 `docs/adrs/tool-evals-skip-without-api-key.md`). Each case's report line is `[PASS]`,
 `[CONDITIONAL PASS]` (passed, but took more tool calls than expected — worth a look even though
 it's not a hard failure), or `[FAIL]`. See `docs/specs/tool-eval-harness.md` for the full design

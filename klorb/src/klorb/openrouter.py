@@ -20,7 +20,7 @@ LOG_CONVERSATION_EVERY_TURN = False
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
-DEFAULT_MODEL = "openai/gpt-5-nano"
+DEFAULT_MODEL = "xiaomi/mimo-v2.5"
 
 _REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS = ("text", "summary", "data")
 """`reasoning_details` entry fields that stream incrementally, fragment by fragment, and so
