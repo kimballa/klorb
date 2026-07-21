@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from klorb.permissions.skill_access import VALID_NAMESPACES, SkillId, SkillRules, evaluate_skill, format_fqsn
 from klorb.permissions.resource import PermissionOverride
+from klorb.permissions.skill_access import VALID_NAMESPACES, SkillId, SkillRules, evaluate_skill, format_fqsn
 from klorb.tools.skill.common import (
     is_valid_skill_name,
     parse_frontmatter,

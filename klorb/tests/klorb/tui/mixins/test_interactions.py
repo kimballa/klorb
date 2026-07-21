@@ -26,6 +26,13 @@ from tui.conftest import (
 )
 
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.resource import (
+    BashCommandContext,
+    CommandResource,
+    GrantPreview,
+    PathResource,
+    StructuralResource,
+)
 from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import ProcessConfig
 from klorb.session import (
@@ -239,7 +246,8 @@ def _ask_permission_call(id_: str, path: Path, *, is_write: bool = True) -> tupl
 
 def _ask_ctx(tmp_path: Path, is_write: bool = True) -> PermissionAskContext:
     target = tmp_path / "f.txt"
-    return PermissionAskContext(path=target, is_write=is_write, resource_description=f"write to {target}")
+    return PermissionAskContext(
+        resource=PathResource(path=target, is_write=is_write), resource_description=f"write to {target}")
 
 
 def _find_child(container: object, widget_id: str) -> object:
@@ -249,7 +257,8 @@ def _find_child(container: object, widget_id: str) -> object:
 
 
 def test_permission_ask_screen_names_the_granted_directory(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(
+        _ask_ctx(tmp_path), granted_preview=GrantPreview(resource_text=str(tmp_path), block=True))
 
     container = next(iter(screen.compose()))
     granted = _find_child(container, PERMISSION_ASK_GRANTED_ID)
@@ -267,7 +276,7 @@ def test_granted_line_keeps_a_bracketed_pattern_verbatim_as_a_styled_span() -> N
     what a persistent Allow would grant. See
     docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
     screen = PermissionAskPanel(
-        _command_ask_ctx("echo [$HOME]"), granted_command_patterns=[["echo", "[$HOME]"]])
+        _command_ask_ctx("echo [$HOME]"), granted_preview=GrantPreview(resource_text="echo [$HOME]"))
 
     container = next(iter(screen.compose()))
     granted = _find_child(container, PERMISSION_ASK_GRANTED_ID)
@@ -286,7 +295,7 @@ def test_granted_line_keeps_a_bracketed_pattern_verbatim_as_a_styled_span() -> N
 def test_permission_ask_screen_grid_has_eight_cells_plus_a_trailing_other_cell(
     tmp_path: Path,
 ) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
 
     container = next(iter(screen.compose()))
     grid = _find_child(container, PERMISSION_ASK_GRID_ID)
@@ -515,7 +524,8 @@ async def test_a_path_with_brackets_mounts_without_a_markup_error(tmp_path: Path
     path containing `[` must render verbatim rather than be parsed as content markup."""
     bracketed_path = tmp_path / "weird[dir]" / "f.txt"
     ctx = PermissionAskContext(
-        path=bracketed_path, is_write=True, resource_description=f"write to {bracketed_path}")
+        resource=PathResource(path=bracketed_path, is_write=True),
+        resource_description=f"write to {bracketed_path}")
     app = _PermissionAskTestApp(ctx)
 
     async with app.run_test():
@@ -567,9 +577,11 @@ async def test_every_body_static_is_height_capped_so_a_long_line_cannot_push_the
     docs/adrs/cap-every-permission-ask-body-static-height.md."""
     huge = "x" * 4000
     ctx = PermissionAskContext(
-        command_text="python3 -c " + huge, is_compound=True,
-        item_command_text="python3 -c " + huge,
-        intent="run an inline one-liner that does a whole lot of things " * 40,
+        resource=StructuralResource(reason="run command: python3 -c " + huge),
+        bash_context=BashCommandContext(
+            command_text="python3 -c " + huge, is_compound=True,
+            item_command_text="python3 -c " + huge,
+            intent="run an inline one-liner that does a whole lot of things " * 40),
         resource_description="run command: python3 -c " + huge)
 
     class _Harness(App[None]):
@@ -580,7 +592,7 @@ async def test_every_body_static_is_height_capped_so_a_long_line_cannot_push_the
             await self.query_one(Vertical).mount(PermissionAskPanel(
                 ctx, risk_score=8,
                 risk_rationale="this rewrites files in place and is hard to undo " * 40,
-                granted_command_patterns=[["python3", huge]]))
+                granted_preview=GrantPreview(resource_text="python3 " + huge)))
 
     app = _Harness()
     async with app.run_test(size=(100, 60)) as pilot:
@@ -606,7 +618,7 @@ def test_action_confirm_dismisses_with_the_selected_grid_cell(
     expected_action: Literal["allow", "deny"],
     expected_scope: Literal["once", "session", "workspace", "homedir"],
 ) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._column = column
     screen._row = row
@@ -618,7 +630,7 @@ def test_action_confirm_dismisses_with_the_selected_grid_cell(
 
 
 def test_action_move_column_wraps_around(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
     screen.action_move_column(-1)
@@ -627,7 +639,7 @@ def test_action_move_column_wraps_around(tmp_path: Path) -> None:
 
 
 def test_action_move_row_wraps_around(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
     screen.action_move_row(-1)
@@ -636,7 +648,7 @@ def test_action_move_row_wraps_around(tmp_path: Path) -> None:
 
 
 def test_action_move_row_down_four_times_from_once_reaches_the_other_row(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen._refresh_selection = MagicMock()  # type: ignore[method-assign]
 
     for _ in range(4):
@@ -646,7 +658,7 @@ def test_action_move_row_down_four_times_from_once_reaches_the_other_row(tmp_pat
 
 
 def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
 
@@ -657,7 +669,7 @@ def test_action_other_reveals_input_instead_of_dismissing(tmp_path: Path) -> Non
 
 
 def test_action_confirm_on_other_row_reveals_input_instead_of_dismissing(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     screen._reveal_other_input = MagicMock()  # type: ignore[method-assign]
     screen._row = 4
@@ -669,7 +681,7 @@ def test_action_confirm_on_other_row_reveals_input_instead_of_dismissing(tmp_pat
 
 
 def test_on_input_submitted_dismisses_with_a_once_scoped_denial_and_the_text(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
     event = MagicMock(value="use /tmp instead")
 
@@ -680,7 +692,7 @@ def test_on_input_submitted_dismisses_with_a_once_scoped_denial_and_the_text(tmp
 
 
 def test_action_decline_dismisses_with_a_once_scoped_denial(tmp_path: Path) -> None:
-    screen = PermissionAskPanel(_ask_ctx(tmp_path), granted_paths=[tmp_path])
+    screen = PermissionAskPanel(_ask_ctx(tmp_path))
     screen.dismiss = MagicMock()  # type: ignore[method-assign]
 
     screen.action_decline()
@@ -906,7 +918,10 @@ async def test_confirm_permission_ask_truncates_a_long_single_line_command_to_fi
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
     long_line = " ".join(f"word{i}" for i in range(200))
-    ctx = PermissionAskContext(command_text=long_line, resource_description="run a long command")
+    ctx = PermissionAskContext(
+        resource=StructuralResource(reason="run a long command"),
+        bash_context=BashCommandContext(command_text=long_line, item_command_text=long_line),
+        resource_description="run a long command")
 
     async with app.run_test(size=(60, 24)) as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
@@ -930,9 +945,14 @@ def _command_ctx(
     command_text: str, *, command: list[str] | None = None,
     sibling_items: list[PermissionAskItem] | None = None,
 ) -> PermissionAskContext:
+    resource_description = f"run command: {command_text}"
+    resource = (
+        CommandResource(argv=tuple(command)) if command is not None
+        else StructuralResource(reason=resource_description))
     return PermissionAskContext(
-        command_text=command_text, item_command_text=command_text, command=command,
-        resource_description=f"run command: {command_text}", sibling_items=sibling_items)
+        resource=resource, bash_context=BashCommandContext(
+            command_text=command_text, item_command_text=command_text),
+        resource_description=resource_description, sibling_items=sibling_items)
 
 
 async def test_confirm_permission_ask_shows_risk_badge_and_rationale_when_classifier_succeeds() -> None:
@@ -982,7 +1002,9 @@ async def test_confirm_permission_ask_skips_classifier_for_a_path_only_ask(tmp_p
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply([("item-0", 7, "risky", [])])
     app = ReplApp(session=_session(mock_provider))
-    ctx = PermissionAskContext(path=tmp_path / "f.txt", is_write=True, resource_description="write to f.txt")
+    ctx = PermissionAskContext(
+        resource=PathResource(path=tmp_path / "f.txt", is_write=True),
+        resource_description="write to f.txt")
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
@@ -1071,16 +1093,20 @@ async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_on
     app = ReplApp(session=_session(mock_provider))
     siblings = [
         PermissionAskItem(
-            "run command: grep foo", command=["grep", "foo"], command_text="grep foo && grep bar",
-            is_compound=True, item_command_text="grep foo"),
+            "run command: grep foo", resource=CommandResource(argv=("grep", "foo")),
+            bash_context=BashCommandContext(
+                command_text="grep foo && grep bar", is_compound=True, item_command_text="grep foo")),
         PermissionAskItem(
-            "run command: grep bar", command=["grep", "bar"], command_text="grep foo && grep bar",
-            is_compound=True, item_command_text="grep bar"),
+            "run command: grep bar", resource=CommandResource(argv=("grep", "bar")),
+            bash_context=BashCommandContext(
+                command_text="grep foo && grep bar", is_compound=True, item_command_text="grep bar")),
     ]
     first_ctx = _command_ctx("grep foo && grep bar", command=["grep", "foo"], sibling_items=siblings)
     second_ctx = PermissionAskContext(
-        command_text="grep foo && grep bar", item_command_text="grep bar", command=["grep", "bar"],
-        is_compound=True, resource_description="run command: grep bar", sibling_items=siblings)
+        resource=CommandResource(argv=("grep", "bar")),
+        bash_context=BashCommandContext(
+            command_text="grep foo && grep bar", item_command_text="grep bar", is_compound=True),
+        resource_description="run command: grep bar", sibling_items=siblings)
 
     async with app.run_test() as pilot:
         first_task = asyncio.ensure_future(app._confirm_permission_ask(first_ctx))

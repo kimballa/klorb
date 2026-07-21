@@ -19,6 +19,7 @@ from textual.widgets import Static
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message, MessageRole, ToolCallRequest
+from klorb.permissions.resource import BashCommandContext, StructuralResource
 from klorb.process_config import ProcessConfig
 from klorb.session import PermissionAskContext, PermissionDecision, Session, SessionConfig
 from klorb.tools.registry import ToolRegistry
@@ -187,12 +188,14 @@ def _command_ask_ctx(
     command_text: str, *, reason: str = "some reason", is_compound: bool = False,
     item_command_text: str | None = None, intent: str | None = None,
 ) -> PermissionAskContext:
-    """A bash-command-ask context (no `path`, matching a structural item's shape), for testing
-    the "Run command" header/command-preview path -- see `_ask_ctx` for the file-tool ("Read
-    file"/"Write file" header) counterpart."""
+    """A bash-command-ask context (a `StructuralResource`, matching a structural item's shape),
+    for testing the "Run command" header/command-preview path -- see `_ask_ctx` for the file-tool
+    ("Read file"/"Write file" header) counterpart."""
     return PermissionAskContext(
-        command_text=command_text, resource_description=reason, is_compound=is_compound,
-        item_command_text=item_command_text, intent=intent)
+        resource=StructuralResource(reason=reason), resource_description=reason,
+        bash_context=BashCommandContext(
+            command_text=command_text, is_compound=is_compound,
+            item_command_text=item_command_text, intent=intent))
 
 
 class _PermissionAskTestApp(App[None]):
