@@ -112,8 +112,8 @@ class SessionSkillsMixin(SessionBase):
         return (
             "The following skills are available. A skill is a set of instructions for one "
             "bounded, reusable task. When one is relevant to what you're doing, load its full "
-            "instructions with ActivateSkill(namespace=\"<namespace>\", name=\"<name>\") and "
-            "follow them. Use SearchSkills to narrow this list by keyword.\n"
+            "instructions with `ActivateSkill(namespace=\"<namespace>\", name=\"<name>\")` and "
+            "follow them. Use `SearchSkills()` to narrow this list by keyword.\n"
             + self._format_skill_list(skills)
         )
 
