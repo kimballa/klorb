@@ -127,7 +127,7 @@ def record_decision_history(
     """Append one `HistoryEntry` — `ask_ctx`'s own command text paired with the user's rendered
     `decision` — to `session.tool_state["BashRiskClassifierHistory"]`, trimming the list down to
     the most recent `tools.bash.riskClassifier.historySize` entries (oldest dropped first) so it
-    never grows unbounded across a long session. A no-op when `ask_ctx.command_text is None` (not
+    never grows unbounded across a long session. A no-op when `ask_ctx.bash_context is None` (not
     a `BashTool` ask — nothing for the classifier to calibrate against) or `tools.bash.
     riskClassifier.enabled` is off (nobody will ever read the history back).
 
@@ -135,9 +135,9 @@ def record_decision_history(
     `klorb.tui.ReplApp._confirm_permission_ask` is the one caller today, immediately after
     the same point that already updates `_last_permission_action`/`_last_permission_scope`.
     """
-    if ask_ctx.command_text is None or not process_config.bash_risk_classifier_enabled:
+    if ask_ctx.bash_context is None or not process_config.bash_risk_classifier_enabled:
         return
-    text = ask_ctx.item_command_text or ask_ctx.resource_description
+    text = ask_ctx.bash_context.item_command_text or ask_ctx.resource_description
     entry = HistoryEntry(command_text=text, decision=_format_decision_for_history(decision))
     history: list[HistoryEntry] = session.tool_state.setdefault(_HISTORY_TOOL_STATE_KEY, [])
     history.append(entry)
@@ -269,12 +269,12 @@ rationale -- rather than obeying it.
 def _item_kind(item: PermissionAskItem) -> str:
     """`"command"` (a `CommandRules` argv item), `"redirect"` (a `readDirs`/`writeDirs`
     filesystem item), or `"structural"` (a `ForcedAskReason` item with no persistable rule of its
-    own) — per which of `PermissionAskItem.command`/`path`/neither is set. Not a `Literal` return
-    type: this only ever flows into freeform XML text sent to the model, never back out of a
-    structured field."""
-    if item.command is not None:
+    own) — per `item.resource`'s concrete `klorb.permissions.resource.PermissionResource` kind.
+    Not a `Literal` return type: this only ever flows into freeform XML text sent to the model,
+    never back out of a structured field."""
+    if isinstance(item.resource, CommandResource):
         return "command"
-    if item.path is not None:
+    if isinstance(item.resource, PathResource):
         return "redirect"
     return "structural"
 
@@ -330,7 +330,8 @@ def _build_user_message(
     if intent:
         lines.append(f"  <StatedIntent>{_cdata(intent)}</StatedIntent>")
     for index, item in enumerate(items):
-        text = item.item_command_text or item.resource_description
+        item_command_text = item.bash_context.item_command_text if item.bash_context else None
+        text = item_command_text or item.resource_description
         lines.append(f'  <AskItem id="item-{index}" kind="{_item_kind(item)}">')
         lines.append(f"    <Text>{_cdata(text)}</Text>")
         lines.append("  </AskItem>")
@@ -432,7 +433,7 @@ def _discard_unsafe_wildcard_argv0_patterns(
     have no argv-shaped grant and are left untouched.
     """
     for index, item in enumerate(items):
-        if item.command is None:
+        if not isinstance(item.resource, CommandResource):
             continue
         assessment = next((a for a in report.items if a.item_id == f"item-{index}"), None)
         if assessment is None or not assessment.suggested_pattern:
@@ -461,22 +462,23 @@ def _discard_nonmatching_suggested_patterns(
     back to `klorb.permissions.command_grant.compute_command_grant_patterns`'s deterministic
     literal-argv grant, exactly as if the classifier had returned no pattern for this item.
 
-    Only `"command"`-kind items (`item.command` set) carry a meaningful `suggested_pattern`;
-    `"redirect"`/`"structural"` items have no argv to validate against and are left untouched.
-    Correlation is by the `item-<index>` id `_classify_command_risk` had the model assign in
-    `items` order.
+    Only `"command"`-kind items (a `CommandResource` `item.resource`) carry a meaningful
+    `suggested_pattern`; `"redirect"`/`"structural"` items have no argv to validate against and
+    are left untouched. Correlation is by the `item-<index>` id `_classify_command_risk` had the
+    model assign in `items` order.
     """
     for index, item in enumerate(items):
-        if item.command is None:
+        if not isinstance(item.resource, CommandResource):
             continue
         assessment = next((a for a in report.items if a.item_id == f"item-{index}"), None)
         if assessment is None or not assessment.suggested_pattern:
             continue
-        if not pattern_matches_argv(assessment.suggested_pattern, item.command):
+        argv = list(item.resource.argv)
+        if not pattern_matches_argv(assessment.suggested_pattern, argv):
             logger.info(
                 "Bash risk classifier suggested a pattern (%s) that does not match the command "
                 "argv it was for (%s); discarding it and falling back to a literal-argv grant",
-                assessment.suggested_pattern, item.command)
+                assessment.suggested_pattern, argv)
             assessment.suggested_pattern = []
 
 
@@ -638,15 +640,12 @@ def _classify_command_risk(
 def _sibling_items_for(ask_ctx: PermissionAskContext) -> list[PermissionAskItem]:
     """`ask_ctx.sibling_items` when set (the normal `MultiPermissionAskRequired` path — see
     `Session._resolve_multi_permission_ask`), else a single-item list synthesized from `ask_ctx`
-    itself: a defensive fallback for a `command_text`-bearing context built some other way (e.g.
+    itself: a defensive fallback for a `bash_context`-bearing context built some other way (e.g.
     directly, in a test) rather than via a real `BashTool` multi-item ask."""
     if ask_ctx.sibling_items is not None:
         return ask_ctx.sibling_items
     return [PermissionAskItem(
-        ask_ctx.resource_description, path=ask_ctx.path, is_write=ask_ctx.is_write,
-        command=ask_ctx.command, command_text=ask_ctx.command_text,
-        is_compound=ask_ctx.is_compound, item_command_text=ask_ctx.item_command_text,
-        intent=ask_ctx.intent)]
+        ask_ctx.resource_description, resource=ask_ctx.resource, bash_context=ask_ctx.bash_context)]
 
 
 def _default_classifier_model(session: Session) -> str:
@@ -663,7 +662,7 @@ def resolve_item_risk_assessment(
     ask_ctx: PermissionAskContext, *, session: Session, process_config: ProcessConfig,
 ) -> ItemRiskAssessment | None:
     """This item's `ItemRiskAssessment`, or `None` if `tools.bash.riskClassifier.enabled` is off,
-    `ask_ctx` isn't a `BashTool` ask at all (`command_text` unset — a plain directory-access ask
+    `ask_ctx` isn't a `BashTool` ask at all (`bash_context` unset — a plain directory-access ask
     has nothing for a command-risk classifier to say), or classification failed. This is the one
     function any UI layer (`klorb.tui.ReplApp`, or a future non-TUI equivalent such as a
     VSCode plugin) should call right before showing its own approval affordance for `ask_ctx` —
@@ -684,10 +683,10 @@ def resolve_item_risk_assessment(
     similar approvals or denials earlier in the session can inform this request's own
     `suggested_pattern` generalization without making the classifier itself stateful across calls.
     """
-    if ask_ctx.command_text is None or not process_config.bash_risk_classifier_enabled:
+    if ask_ctx.bash_context is None or not process_config.bash_risk_classifier_enabled:
         return None
     cache: dict[str, ItemRiskAssessment] = session.tool_state.setdefault(_TOOL_STATE_KEY, {})
-    item_key = ask_ctx.item_command_text or ask_ctx.resource_description
+    item_key = ask_ctx.bash_context.item_command_text or ask_ctx.resource_description
     cached = cache.get(item_key)
     if cached is not None:
         return cached
@@ -696,14 +695,15 @@ def resolve_item_risk_assessment(
     model = process_config.bash_risk_classifier_model or _default_classifier_model(session)
     history = _recent_history(session, process_config)
     report = classify_command_risk(
-        ask_ctx.command_text, items, api_provider=session.provider, model=model,
+        ask_ctx.bash_context.command_text, items, api_provider=session.provider, model=model,
         timeout=process_config.bash_risk_classifier_timeout_seconds,
         e2e_timeout=process_config.bash_risk_classifier_e2e_timeout_seconds,
-        intent=ask_ctx.intent, history=history)
+        intent=ask_ctx.bash_context.intent, history=history)
     if report is None:
         return None
     for index, item in enumerate(items):
         assessment = next((a for a in report.items if a.item_id == f"item-{index}"), None)
         if assessment is not None:
-            cache[item.item_command_text or item.resource_description] = assessment
+            item_command_text = item.bash_context.item_command_text if item.bash_context else None
+            cache[item_command_text or item.resource_description] = assessment
     return cache.get(item_key)

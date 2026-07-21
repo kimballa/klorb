@@ -20,8 +20,9 @@ import yaml
 
 from klorb.paths import KLORB_DATA_DIR
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, canonicalize_dir
+from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import VALID_NAMESPACES, Namespace, SkillId, SkillRules, evaluate_skill
-from klorb.permissions.table import PermissionOverride, raise_if_not_allowed
+from klorb.permissions.table import raise_if_not_allowed
 from klorb.token_estimate import estimate_tokens
 
 logger = logging.getLogger(__name__)

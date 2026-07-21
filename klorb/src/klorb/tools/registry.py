@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import BaseModel
 
 import klorb.tools as default_tools_package
-from klorb.permissions.table import PermissionOverride
+from klorb.permissions.resource import PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import NoSuchToolException

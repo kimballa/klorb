@@ -3,7 +3,7 @@
 
 from pydantic import BaseModel, ConfigDict
 
-from klorb.permissions.table import PermissionOverride
+from klorb.permissions.resource import PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 
