@@ -10,7 +10,7 @@ from tui.conftest import _session
 from klorb.session import ToolCallEvent
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import TASK_SIDEBAR_ID
-from klorb.tui.widgets.task_sidebar import TaskSidebar
+from klorb.tui.widgets.task_sidebar import _BODY_ID, TaskSidebar
 
 
 def _issue(issue_id: int, title: str, status: str = "open") -> dict[str, Any]:
@@ -19,7 +19,7 @@ def _issue(issue_id: int, title: str, status: str = "open") -> dict[str, Any]:
 
 def _sidebar_body_text(app: ReplApp) -> str:
     sidebar = app.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
-    return str(sidebar.query_one(Static).render())
+    return str(sidebar.query_one(f"#{_BODY_ID}", Static).render())
 
 
 async def test_ctrl_t_shows_then_hides_the_sidebar() -> None:

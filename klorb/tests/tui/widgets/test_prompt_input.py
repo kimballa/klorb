@@ -258,17 +258,17 @@ async def test_clear_resets_input_history() -> None:
 
         await _invoke_clear_session(pilot)
 
-        # Clearing the session drops "first" from the input history, but the
-        # ">Clear session" selection that triggered it is recorded afterward (see
-        # `ReplApp._run_palette_command`), so it's the sole entry left to recall — not
-        # "first", and no entry further back than it either.
+        # Clearing the session resets the recall position but preserves the in-memory
+        # history entries. The ">Clear session" selection that triggered it is recorded
+        # afterward (see `ReplApp._run_palette_command`), so it's the most recent entry.
+        # The prior "first" entry is still recallable further back.
         assert prompt_input.text == ""
         await pilot.press("up")
         await pilot.pause()
         assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
         await pilot.press("up")
         await pilot.pause()
-        assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
+        assert prompt_input.text == "first"
 
 
 # --- file-backed input history (persistence across sessions) ---

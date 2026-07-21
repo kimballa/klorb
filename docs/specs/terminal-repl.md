@@ -443,9 +443,9 @@ user recall them into the box for editing and resending via the arrow keys:
   rather than through `_on_key`, so `_on_key` recognizes them to set the detach flag
   before the binding runs.
 * **Reset on clear.** `ReplApp.clear_session()` calls `PromptInput.clear_input_history()`,
-  which drops the recorded history, resets the recall position, and clears the stashed
-  draft, so a fresh session starts with an empty input history to match its empty
-  conversation history. A leading `>` in the recalled text is handled separately — see
+  which resets the recall position, the stashed draft, and palette/isearch state, while
+  preserving the in-memory history entries so up/down-arrow recall still works after a
+  session clear. A leading `>` in the recalled text is handled separately — see
   [[command-palette-from-prompt]]'s "History browsing" section.
 
 ### File-backed persistence
@@ -477,11 +477,10 @@ named `history`.
   `self._history` from the on-disk file so up/down-arrow recall reaches prompts submitted in
   earlier sessions. A `ReplApp` constructed without a `TrustManager` (e.g. every test) never
   sets a store, so it keeps purely in-memory recall and never touches a real `$KLORB_DATA_DIR`.
-  `clear_session` deliberately does *not* re-seed: a cleared session's input history is reset
-  to empty in memory to match its empty conversation history, and re-seeding would re-introduce
-  every prior prompt and break that "fresh session starts empty" contract. The on-disk file is
-  not touched by a clear — it's an append-only shared log that may have other instances writing
-  to it.
+  `clear_session` does not re-seed because `clear_input_history` preserves the in-memory
+  history; entries loaded at startup remain available through a session clear. The on-disk file
+  is not touched by a clear — it's an append-only shared log that may have other instances
+  writing to it.
 
 ### Reverse incremental search (Ctrl+R)
 

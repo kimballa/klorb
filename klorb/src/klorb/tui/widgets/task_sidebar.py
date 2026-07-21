@@ -15,6 +15,7 @@ TASK_SIDEBAR_WIDTH = 36
 """Fixed cell width (border-box) for the docked sidebar -- wide enough for a short task title
 alongside its `#id` and star marker without eating too much of the history column."""
 
+_HEADER_ID = "task-sidebar-header"
 _BODY_ID = "task-sidebar-body"
 
 _HEADER_TEXT = "Tasks"
@@ -46,21 +47,27 @@ class TaskSidebar(VerticalScroll, can_focus=False):
         dock: right;
         width: {TASK_SIDEBAR_WIDTH};
         border-left: solid $accent;
-        background: $panel;
         display: none;
     }}
-    TaskSidebar Static {{
+    #{_HEADER_ID} {{
+        background: $panel;
+        color: $foreground;
+        width: 1fr;
+        padding: 0 1;
+    }}
+    #{_BODY_ID} {{
         width: 1fr;
         padding: 0 1;
     }}
     """
 
     def compose(self) -> ComposeResult:
+        yield Static(_HEADER_TEXT, id=_HEADER_ID, markup=False)
         # `markup=False`: an issue title is arbitrary text (chainlink imposes no character
         # restrictions), so a literal `[` in one must render verbatim rather than be parsed as
         # Textual console markup -- fixed at construction time and inherited by every later
         # `update()` call on this same widget (see `Widget.__init__`'s `_render_markup`).
-        yield Static(self._render_body(_HEADER_TEXT, _EMPTY_MESSAGE), id=_BODY_ID, markup=False)
+        yield Static(_EMPTY_MESSAGE, id=_BODY_ID, markup=False)
 
     def show_tasks(self, issues: list[dict[str, Any]], cur_task_id: int | None) -> None:
         """Replace the displayed rows with `issues` (expected already sorted, per
@@ -68,9 +75,9 @@ class TaskSidebar(VerticalScroll, can_focus=False):
         `cur_task_id`."""
         body = self.query_one(f"#{_BODY_ID}", Static)
         if not issues:
-            body.update(self._render_body(_HEADER_TEXT, _EMPTY_MESSAGE))
+            body.update(_EMPTY_MESSAGE)
             return
-        text = Text(_HEADER_TEXT + "\n", style="bold")
+        text = Text()
         for index, issue in enumerate(issues):
             if index:
                 text.append("\n")
@@ -81,13 +88,7 @@ class TaskSidebar(VerticalScroll, can_focus=False):
         """Show `_UNAVAILABLE_MESSAGE` in place of a task list -- no `chainlink` binary found,
         or the refresh otherwise failed (see `TaskSidebarMixin._refresh_task_sidebar`)."""
         body = self.query_one(f"#{_BODY_ID}", Static)
-        body.update(self._render_body(_HEADER_TEXT, _UNAVAILABLE_MESSAGE))
-
-    @staticmethod
-    def _render_body(header: str, message: str) -> Text:
-        text = Text(header + "\n", style="bold")
-        text.append(message, style="dim")
-        return text
+        body.update(Text(_UNAVAILABLE_MESSAGE, style="dim"))
 
     @staticmethod
     def _render_issue_line(issue: dict[str, Any], cur_task_id: int | None) -> Text:

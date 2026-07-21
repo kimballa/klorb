@@ -35,8 +35,8 @@ class PromptInput(TextArea):
     clearing the box. Any text-mutating action (typing, deleting, pasting) detaches the box from
     its current position in that history so the now-edited text is treated as a fresh draft
     rather than a rooted recall; pure cursor movement (arrow keys, home/end, selection) does not
-    detach. Clearing the session (see `ReplApp.clear_session()`) resets the history, the recall
-    position, and the stashed draft.
+    detach. Clearing the session (see `ReplApp.clear_session()`) resets the recall position
+    and the stashed draft while preserving the in-memory history entries.
 
     Whenever the text starts with `>` (see `klorb.tui.widgets.palette`), up/down/enter instead drive the
     inline `PromptPalette` popup mounted just above this widget rather than history recall or
@@ -121,11 +121,9 @@ class PromptInput(TextArea):
 
         Seeding happens here, exactly once at startup (from
         `ReplApp._resolve_workspace_trust`'s wake), rather than in `on_mount` because the
-        workspace isn't resolved yet at `on_mount` time. `clear_session` deliberately does
-        *not* re-seed: a cleared session's input history is reset to empty in memory (see
-        `clear_input_history`), and re-seeding would re-introduce every prior prompt and
-        break the "fresh session starts empty" contract (see
-        `test_clear_resets_input_history`).
+        workspace isn't resolved yet at `on_mount` time. `clear_session` does not re-seed
+        because `clear_input_history` preserves the in-memory history; the entries loaded
+        here remain available through a session clear.
         """
         self._history_path = path
         if path is not None:
@@ -133,17 +131,16 @@ class PromptInput(TextArea):
             self._history_index = None
 
     def clear_input_history(self) -> None:
-        """Drop the recorded prompt history and reset the recall position.
+        """Reset the recall position and navigation state while preserving the in-memory
+        prompt history.
 
-        Called by `ReplApp.clear_session()` so a fresh `Session` starts with an empty input
-        history to match its empty conversation history. The on-disk `history` file, if any,
-        is *not* touched here: it's an append-only shared log that multiple klorb instances
-        may be writing to concurrently (see `klorb.workspace.input_history`), so rewriting
-        or truncating it from one instance would clobber the others' history. A cleared
-        session simply stops seeing prior entries in memory until a fresh submission is
-        appended (which then also goes to the file, keeping it growing across sessions).
+        Called by `ReplApp.clear_session()` so the recall position, stashed draft, and
+        palette/isearch state are reset for a fresh session, while the history entries
+        loaded from the on-disk `history` file at startup remain available via up/down-arrow.
+        The on-disk `history` file itself is never touched here: it's an append-only shared
+        log that multiple klorb instances may be writing to concurrently (see
+        `klorb.workspace.input_history`).
         """
-        self._history.clear()
         self._history_index = None
         self._draft = ""
         self._palette_dismissed = False
