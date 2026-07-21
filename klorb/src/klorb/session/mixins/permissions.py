@@ -222,7 +222,8 @@ class SessionPermissionsMixin(SessionBase):
                     item.path, item.is_write)
             elif item.command is not None:
                 apply_command_permission_grant(
-                    decision.action, decision.scope, self.config, self._process_config, item.command)
+                    decision.action, decision.scope, self.config, self._process_config,
+                    item.command, decision.grant_patterns)
             elif item.skill is not None:
                 apply_skill_permission_grant(
                     decision.action, decision.scope, self.config, self._process_config, item.skill)

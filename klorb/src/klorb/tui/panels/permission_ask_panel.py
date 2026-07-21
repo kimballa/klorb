@@ -280,17 +280,23 @@ class PermissionAskPanel(Vertical):
     `PermissionDecision(action="deny", scope="once", other_text=...)`.
 
     `granted_paths`/`granted_command_patterns` are `klorb.permissions.grant.compute_grant_paths()`/
-    `klorb.permissions.command_grant.compute_command_grant_patterns()`'s pre-computed results —
-    the directory (or directories)/command pattern(s) a persistent Allow would actually be
-    recorded at — so the panel's copy can name the real scope of the grant up front: per the
-    design decision behind this feature, an unmentioned path is always granted at its
-    *containing directory* (never the single file the model happens to be touching right now),
-    and an unmentioned command is granted at its exact argv. `granted_skill` is simpler: a skill
-    grant always covers exactly the `(namespace, name)` pair being asked about, no widening
-    computation needed, so it's just `ask_ctx.skill` passed straight through. At most one of the
-    three is set, mirroring `PermissionAskContext`'s own `path`/`command`/`skill` mutual
-    exclusivity; none is set for a structural item, which has no persistable rule at any scope
-    but `"once"`.
+    `klorb.permissions.command_grant.compute_command_grant_patterns()`'s pre-computed results (or,
+    for `granted_command_patterns`, `klorb.permissions.risk_classifier.
+    ItemRiskAssessment.suggested_pattern` instead, when the caller has one — see `klorb.tui.
+    ReplApp._confirm_permission_ask`) — the directory (or directories)/command pattern(s) a
+    persistent Allow would actually be recorded at — so the panel's copy can name the real scope
+    of the grant up front: per the design decision behind this feature, an unmentioned path is
+    always granted at its *containing directory* (never the single file the model happens to be
+    touching right now), and an unmentioned command is granted at its exact argv.
+    `action_confirm` threads `granted_command_patterns` straight through onto the returned
+    `PermissionDecision.grant_patterns`, so whichever pattern this copy names is exactly what
+    `Session._retry_after_multi_permission_decisions` persists — never a value independently
+    recomputed afterward from the item's raw argv, which could diverge from what was shown.
+    `granted_skill` is simpler: a skill grant always covers exactly the `(namespace, name)` pair
+    being asked about, no widening computation needed, so it's just `ask_ctx.skill` passed
+    straight through. At most one of the three is set, mirroring `PermissionAskContext`'s own
+    `path`/`command`/`skill` mutual exclusivity; none is set for a structural item, which has no
+    persistable rule at any scope but `"once"`.
 
     `initial_action`/`initial_scope` seed the starting cursor position — `klorb.tui.ReplApp`
     threads through the previous prompt's final selection here (see
@@ -611,7 +617,9 @@ class PermissionAskPanel(Vertical):
         if self._row == _OTHER_ROW:
             self._reveal_other_input()
             return
-        self.dismiss(PermissionDecision(action=_ACTIONS[self._column], scope=_SCOPES[self._row]))
+        self.dismiss(PermissionDecision(
+            action=_ACTIONS[self._column], scope=_SCOPES[self._row],
+            grant_patterns=self._granted_command_patterns))
 
     def action_decline(self) -> None:
         self.dismiss(PermissionDecision(action="deny", scope="once"))

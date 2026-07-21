@@ -1,9 +1,34 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.panels.permission_ask_panel.PermissionAskPanel's skill-ask rendering: the
-"Activate skill" header, the `/<name> (<namespace>)` preview, and the granted-scope banner."""
+"Activate skill" header, the `/<name> (<namespace>)` preview, and the granted-scope banner --
+plus a regression test that `action_confirm` reports back the same command pattern the granted-
+scope banner names."""
 
-from klorb.session import PermissionAskContext
+from klorb.session import PermissionAskContext, PermissionDecision
 from klorb.tui.panels.permission_ask_panel import PermissionAskPanel, format_ask_context_body
+
+
+def _command_ask_ctx() -> PermissionAskContext:
+    return PermissionAskContext(
+        command=["grep", "-rn", "TODO", "src/foo.py"], command_text="grep -rn TODO src/foo.py",
+        resource_description="run command: grep -rn TODO src/foo.py")
+
+
+def test_action_confirm_reports_the_granted_command_pattern_on_the_decision() -> None:
+    """Regression test: a persistent Allow must carry the exact pattern the panel's own
+    "grants: ..." copy named -- e.g. a risk-classifier-suggested wildcard -- so
+    `Session._retry_after_multi_permission_decisions` persists that pattern instead of
+    recomputing a possibly-different one from the item's raw argv."""
+    decisions: list[PermissionDecision] = []
+    panel = PermissionAskPanel(
+        _command_ask_ctx(), granted_command_patterns=[["grep", "**"]],
+        on_dismiss=decisions.append)
+
+    panel.action_confirm()
+
+    assert len(decisions) == 1
+    assert decisions[0].action == "allow"
+    assert decisions[0].grant_patterns == [["grep", "**"]]
 
 
 def _skill_ask_ctx() -> PermissionAskContext:

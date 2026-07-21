@@ -1037,6 +1037,28 @@ async def test_confirm_permission_ask_uses_suggested_pattern_for_the_granted_com
         await task
 
 
+async def test_confirming_the_panel_returns_the_suggested_pattern_as_grant_patterns() -> None:
+    """Regression test: the pattern named in the panel's own "grants: ..." copy must be exactly
+    what a real user confirm (`action_confirm`, not a test dismissing with a hand-built
+    `PermissionDecision`) reports back, so `Session._retry_after_multi_permission_decisions`
+    persists the same pattern instead of recomputing a different one from the item's raw argv."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _risk_report_reply(
+        [("item-0", 1, "a read-only text search", ["grep", "**"])])
+    app = ReplApp(session=_session(mock_provider))
+    ctx = _command_ctx("grep -rn TODO src/foo.py", command=["grep", "-rn", "TODO", "src/foo.py"])
+
+    async with app.run_test() as pilot:
+        task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+
+        panel = app.query_one(PermissionAskPanel)
+        panel.action_confirm()
+        decision = await task
+
+    assert decision.grant_patterns == [["grep", "**"]]
+
+
 async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_one_request() -> None:
     """Two items from the same compound command, asked about one after another (mirroring
     `Session._resolve_multi_permission_ask`'s serial loop) -- the second must reuse the first's

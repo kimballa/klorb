@@ -70,6 +70,7 @@ def apply_command_permission_grant(
     session_config: SessionConfig,
     process_config: ProcessConfig | None,
     argv: list[str],
+    patterns: list[list[str]] | None = None,
 ) -> None:
     """Record a permanent Allow or Deny decision for `argv` at `scope` — the `commandRules`
     counterpart to `klorb.permissions.grant.apply_permission_grant`; see that function's
@@ -77,8 +78,18 @@ def apply_command_permission_grant(
     `SessionConfig`; `"workspace"`/`"homedir"` additionally ripple into `process_config.session`
     and persist to the scope's target file; `"homedir"` additionally best-effort-cleans a
     redundant workspace-file `ask` entry, never the reverse).
+
+    `patterns`, when given, is recorded as-is instead of being recomputed from `argv` — the
+    caller's own precomputed `compute_command_grant_patterns()` result, typically
+    `klorb.session.events.PermissionDecision.grant_patterns` threaded through from whatever a
+    UI already showed the user as the grant's scope (see that field's docstring for why this
+    matters: a risk-classifier-suggested wildcard pattern has no corresponding `ask`-category
+    rule for a fresh `compute_command_grant_patterns()` call to find, so recomputing here instead
+    of reusing what was displayed would silently narrow the grant to `argv` itself). `None` (the
+    default) recomputes from `argv`, for callers with no precomputed patterns of their own.
     """
-    granted_patterns = compute_command_grant_patterns(session_config.command_rules, argv)
+    granted_patterns = patterns if patterns is not None else compute_command_grant_patterns(
+        session_config.command_rules, argv)
 
     session_config.command_rules = _writer.apply_decision(
         session_config.command_rules, granted_patterns, action)

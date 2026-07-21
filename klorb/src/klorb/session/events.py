@@ -86,11 +86,30 @@ class PermissionDecision(BaseModel):
     to ask the user and report their choice back, never apply or persist anything itself).
     `other_text`, if set, means the user typed free-text instead of picking a grid cell —
     equivalent to `action="deny", scope="once"` but with the explanation surfaced to the model
-    alongside the denial, so it can act on the redirection without a second round trip."""
+    alongside the denial, so it can act on the redirection without a second round trip.
+
+    `grant_patterns`, when set, is the exact wildcard-pattern rule(s) a persistent grant for this
+    item must be recorded at, in place of recomputing one from the item's own raw resource after
+    the fact — today only meaningful for a `command` item's `commandRules` pattern (the same list
+    a UI showed the user as "grants: ..." at ask time —
+    `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`'s own `granted_command_patterns`,
+    which is `klorb.permissions.risk_classifier.ItemRiskAssessment.suggested_pattern` when the
+    risk classifier offered one, else `klorb.permissions.command_grant.
+    compute_command_grant_patterns()`'s result), but named generically rather than
+    `command_patterns` since any future pattern/wildcard-based grant kind (not just
+    `commandRules`) would reuse this same field rather than growing its own. Threading it through
+    here — rather than having `apply_command_permission_grant` recompute a pattern from the raw
+    resource after the fact — is what keeps the persisted grant identical to what was displayed:
+    recomputing from argv alone has no way to know about a risk-classifier-suggested wildcard,
+    since that pattern doesn't correspond to any existing `ask`-category rule the recomputation
+    could find. `None` for every item with no pattern-based grant of its own (every non-`command`
+    item today), and for a `command` item whenever the caller has no precomputed patterns to
+    offer (in which case `apply_command_permission_grant` falls back to computing them itself)."""
 
     action: Literal["allow", "deny"]
     scope: Literal["once", "session", "workspace", "homedir"] = "once"
     other_text: str | None = None
+    grant_patterns: list[list[str]] | None = None
 
 
 class AskUserQuestionsItemContext(BaseModel):
