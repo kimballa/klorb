@@ -22,6 +22,7 @@ from klorb.process_config import ABSOLUTE_MAX_BODY_BYTES
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.web.spill import get_or_create_tmpdir, grant_tmpdir_read_access, spill_file_path
+from klorb.xml_util import cdata
 
 logger = logging.getLogger(__name__)
 
@@ -299,7 +300,7 @@ class WebFetchTool(InterruptibleTool):
             "response": response_text,
             "mime_type": mime_type,
             "size": body_size,
-            "untrusted_content": body_text,
+            "untrusted_content": f"<UNTRUSTED_CONTENT>{cdata(body_text)}</UNTRUSTED_CONTENT>",
             "untrusted_content_file": None,
             "security_warning": _SECURITY_WARNING,
         }

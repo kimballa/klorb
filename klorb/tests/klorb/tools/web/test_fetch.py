@@ -140,7 +140,21 @@ def test_domain_allow_proceeds() -> None:
         mock_client_cls.return_value = mock_client
         result = tool.apply({"url": "https://example.com/"})
     assert result["response_code"] == 200
-    assert result["untrusted_content"] == "hello"
+    assert result["untrusted_content"] == "<UNTRUSTED_CONTENT><![CDATA[hello]]></UNTRUSTED_CONTENT>"
+
+
+def test_inline_content_escapes_embedded_cdata_close_sequence() -> None:
+    rules = DomainRules(allow=["example.com"])
+    tool = WebFetchTool(_context(domain_rules=rules))
+    mock_response = _make_response(content=b"a]]>b")
+    with patch("klorb.tools.web.fetch.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+        result = tool.apply({"url": "https://example.com/"})
+    assert result["untrusted_content"] == (
+        "<UNTRUSTED_CONTENT><![CDATA[a]]]]><![CDATA[>b]]></UNTRUSTED_CONTENT>"
+    )
 
 
 def test_under_spill_returns_inline() -> None:

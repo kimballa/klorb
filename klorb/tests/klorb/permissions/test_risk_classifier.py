@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
-from xml.etree import ElementTree
 
 import pytest
 from fixtures.sample_models import sample_model_registry
@@ -21,7 +20,6 @@ from klorb.permissions.risk_classifier import (
     HistoryEntry,
     _build_system_prompt,
     _build_user_message,
-    _cdata,
     _default_classifier_model,
     _has_unsafe_wildcard_argv0,
     _recent_history,
@@ -341,22 +339,6 @@ def test_classify_command_risk_never_raises_on_a_completely_unmocked_provider() 
 
 
 # --- prompt construction ---
-
-
-def test_cdata_wraps_text_verbatim() -> None:
-    assert _cdata("hello") == "<![CDATA[hello]]>"
-
-
-def test_cdata_escapes_embedded_close_sequence_and_round_trips_through_a_real_xml_parser() -> None:
-    """`]]>` embedded in the source text would otherwise prematurely close the CDATA section --
-    verify a real XML parser reconstructs the exact original text from the escaped output,
-    rather than just eyeballing the escaped string's shape."""
-    original = "a]]>b"
-    wrapped = _cdata(original)
-    assert wrapped == "<![CDATA[a]]]]><![CDATA[>b]]>"
-
-    root = ElementTree.fromstring(f"<root>{wrapped}</root>")
-    assert root.text == original
 
 
 def test_user_message_includes_stated_intent_when_given() -> None:
