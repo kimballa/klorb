@@ -3,6 +3,9 @@
 
 ## Bugs
 
+* why is the chainlink session_id a madeup-animal-slug instead of a "real" slug,
+  even in sessions when the session classifier gave us a useful session name?
+
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -25,6 +28,12 @@
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
 ## Feature backlog
+
+* moonshotai/kimi-k3 - Give Kimi k3 a spin
+
+* show tasks in a sidebar panel on the right-hand side (toggle viz. with ^t)
+  * indicate open vs closed with strikeout
+  * put a star or something next to the currently-focused task
 
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
