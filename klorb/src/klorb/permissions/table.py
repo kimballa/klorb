@@ -10,6 +10,15 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Generic, Literal, TypeVar
 
+from klorb.permissions.resource import (
+    BashCommandContext,
+    DomainResource,
+    PathResource,
+    PermissionResource,
+    SkillResource,
+    StructuralResource,
+)
+
 T = TypeVar("T")
 
 Verdict = Literal["deny", "ask", "allow"]
@@ -25,20 +34,16 @@ class PermissionAskRequired(Exception):
     a one-shot/headless run) fails closed: `Session._run_tool_calls` treats an uncaught instance
     of this the same as denial, just distinguishably.
 
-    `path` and `is_write` carry the resolved candidate path and whether this was a write
-    (rather than read) interrogation, so a caller with interactive plumbing (see
-    `Session.on_permission_ask`, `klorb.permissions.grant`) can act on the specific resource
-    without re-parsing `resource_description`. Both are optional and default to `None`/`False`
-    so existing callers that only care about the message string are unaffected.
-
-    `skill`, when set, is the `(namespace, name)` identity of a skill whose `skillRules` verdict
-    is `"ask"` (raised by `ActivateSkill`/`ReadSkillFile` -- see docs/specs/skills.md); it's the
-    skill-resource analogue of `path`, threaded onto `Session.PermissionAskContext` and persisted
-    via `klorb.permissions.skill_grant`. A skill ask never carries a `path`.
-
-    `url`, when set, is the URL a `WebFetch` tool is trying to retrieve, so the interactive ask
-    panel can display the target URL and domain alongside the permission prompt. A domain ask
-    never carries a `path` or `skill`.
+    `path`/`is_write`, `skill`, and `url` carry the resolved candidate a caller with interactive
+    plumbing (see `Session.on_permission_ask`) can act on directly, without re-parsing
+    `resource_description` -- `path`/`is_write` for a directory-access ask, `skill` (a
+    `(namespace, name)` pair) for a skill-activation ask (raised by
+    `ActivateSkill`/`ReadSkillFile` -- see docs/specs/skills.md), `url` for a `WebFetch` domain
+    ask. At most one is ever given; all three are optional so a caller that only cares about the
+    message string can omit them. `resource`, computed from whichever one was given (or a
+    `klorb.permissions.resource.StructuralResource` built from `message` if none was), is the
+    `klorb.permissions.resource.PermissionResource` a caller should actually use -- see that
+    module for the polymorphic methods it exposes in place of branching on `path`/`skill`/`url`.
     """
 
     def __init__(
@@ -50,6 +55,14 @@ class PermissionAskRequired(Exception):
         self.is_write = is_write
         self.skill = skill
         self.url = url
+        if path is not None:
+            self.resource: PermissionResource = PathResource(path=path, is_write=is_write)
+        elif skill is not None:
+            self.resource = SkillResource(skill_id=skill)
+        elif url is not None:
+            self.resource = DomainResource(url=url)
+        else:
+            self.resource = StructuralResource(reason=message)
 
 
 class PermissionAskItem:
@@ -57,117 +70,35 @@ class PermissionAskItem:
     decision — a single tool call can raise several of these at once (e.g. `BashTool`: several
     simple commands and/or redirection targets found within one parsed shell command).
 
-    Exactly one of `path`/`command`/`skill` is set, or none: `path` (plus `is_write`) for a
-    directory-access item, matching `PermissionAskRequired`'s own shape; `command` (an argv
-    pattern) for a bash-command-rule item with no filesystem resource; `skill` (a
-    `(namespace, name)` pair) for a skill-activation item (see docs/specs/skills.md); none for a
-    structural item (the walker couldn't classify something at all) that has no persistable rule
-    of its own — only "once"/"deny" make sense for that last case, never a
-    session/workspace/homedir grant.
+    `resource` is the `klorb.permissions.resource.PermissionResource` this item is about --
+    `klorb.permissions.resource.StructuralResource` for a structural item (the walker couldn't
+    classify something at all), which has no persistable rule of its own, so only "once"/"deny"
+    make sense for it, never a session/workspace/homedir grant.
 
-    `command_text`, when set, is the full, unparsed command string a `BashTool` call originated
-    from — set on every ask item that call produces, regardless of which of `path`/`command`/
-    neither it also carries, since a compound command can need several independent decisions
-    (one per simple command and/or redirect target) that all still belong to the same one command
-    the user actually typed or the model actually submitted. Purely a display aid for a
-    UI (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`) to show what's actually being run,
-    on top of `resource_description`'s per-item specific detail — never itself the resource a
-    grant is checked or persisted against, unlike `path`/`command`.
-
-    `is_compound`, set alongside `command_text` by `BashTool._classify` (`True` when the parsed
-    command contains more than one simple command — `foo && bar`, `foo; bar`, `foo | bar`, etc.),
-    tells a UI that `resource_description` names only one piece of a larger command line the user
-    still needs the full picture of, even when `command_text` itself is short enough to show
-    without truncation — see `PermissionAskPanel`'s command-preview logic.
-
-    `item_command_text`, also set alongside `command_text`, is the exact original source text of
-    just the one statement *this* item is actually about (a `klorb.permissions.shell_parse.
-    SimpleCommand`/`ForcedAskReason`/`RedirectTarget`'s own `source_text`) — distinct from
-    `command_text`, which is always the *whole* raw command every item from the same call shares
-    identically. A UI should show `item_command_text` as its prominent, per-item preview (falling
-    back to `command_text` if unset, e.g. for a non-`BashTool` ask item) and reserve
-    `command_text` for the `[more...]`-reachable full picture: for a compound command
-    (`echo $SHELL; echo $HOME`), showing `command_text` in the per-item preview would make every
-    item's approval request look identical, with no way to tell which one is actually about
-    which command.
-
-    `intent`, also set alongside `command_text` on every ask item a `BashTool` call produces, is
-    the model's own short, human-readable statement of what the whole command is trying to
-    accomplish (`BashTool`'s required `intent` argument — see docs/specs/bash-tool-and-command-
-    permissions.md's "Agent-stated intent" section) — shared identically across every item from
-    the same call, the same way `command_text` is. `None` for a non-`BashTool` ask item.
+    `bash_context`, when set, is the `klorb.permissions.resource.BashCommandContext` a `BashTool`
+    call originated from — set on every ask item that call produces, regardless of `resource`'s
+    own kind, since a compound command can need several independent decisions (one per simple
+    command and/or redirect target) that all still belong to the same one command the user
+    actually typed or the model actually submitted. Purely a display aid for a UI (`klorb.tui.
+    panels.permission_ask_panel.PermissionAskPanel`) to show what's actually being run, on top of
+    `resource_description`'s per-item specific detail — never itself the resource a grant is
+    checked or persisted against, unlike `resource`.
     """
 
     def __init__(
-        self, resource_description: str, *,
-        path: Path | None = None, is_write: bool = False, command: list[str] | None = None,
-        command_text: str | None = None, is_compound: bool = False,
-        item_command_text: str | None = None, intent: str | None = None,
-        skill: tuple[str, str] | None = None,
+        self, resource_description: str, *, resource: PermissionResource,
+        bash_context: BashCommandContext | None = None,
     ) -> None:
         self.resource_description = resource_description
-        self.path = path
-        self.is_write = is_write
-        self.command = command
-        self.command_text = command_text
-        self.is_compound = is_compound
-        self.item_command_text = item_command_text
-        self.intent = intent
-        self.skill = skill
-
-
-class PermissionOverride:
-    """A one-shot "Allow (once)" bypass for a single retried tool call — the runtime counterpart
-    to `Session.PermissionDecision(action="allow", scope="once")` — persisting no rule-table
-    entry, so the identical resource asks again the next time it's encountered.
-
-    A single tool call can carry several once-scoped resources at once (see
-    `MultiPermissionAskRequired`), so each field is a set rather than a single value: `paths`
-    mirrors `PermissionAskItem.path` (checked via membership, e.g.
-    `klorb.permissions.workspace.evaluate_write`), `commands` mirrors `PermissionAskItem.command`
-    (each entry the exact argv tuple that was asked about, not a pattern — checked via membership
-    in `klorb.tools.bash.BashTool._classify`), `reasons` mirrors a structural item's
-    `resource_description` (the deterministic forced-ask reason text `klorb.permissions.
-    shell_parse.parse_command` produces for the same command on every parse, since a structural
-    item has no other stable identifier to bypass by), and `skills` mirrors
-    `PermissionAskItem.skill` (each entry a `(namespace, name)` pair a once-scoped activation was
-    approved for — checked via membership in `klorb.tools.skill.common.raise_if_skill_not_allowed`).
-    """
-
-    def __init__(
-        self, *,
-        paths: frozenset[Path] = frozenset(),
-        commands: frozenset[tuple[str, ...]] = frozenset(),
-        reasons: frozenset[str] = frozenset(),
-        skills: frozenset[tuple[str, str]] = frozenset(),
-        domains: frozenset[str] = frozenset(),
-    ) -> None:
-        self.paths = paths
-        self.commands = commands
-        self.reasons = reasons
-        self.skills = skills
-        self.domains = domains
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, PermissionOverride):
-            return NotImplemented
-        return (
-            self.paths == other.paths
-            and self.commands == other.commands
-            and self.reasons == other.reasons
-            and self.skills == other.skills
-            and self.domains == other.domains)
-
-    def __repr__(self) -> str:
-        return (
-            f"PermissionOverride(paths={self.paths!r}, commands={self.commands!r}, "
-            f"reasons={self.reasons!r}, skills={self.skills!r}, domains={self.domains!r})")
+        self.resource = resource
+        self.bash_context = bash_context
 
 
 class MultiPermissionAskRequired(Exception):
     """Raised when a single tool call's verdict computation identifies multiple independent
-    resources needing ask confirmation. Unlike `PermissionAskRequired`, an item here with no
-    `path` (a bare command-pattern or structural ask) is *not* automatically failed closed —
+    resources needing ask confirmation. Unlike `PermissionAskRequired`, an item here whose
+    `resource.is_persistable` is `False` (a structural ask, see
+    `klorb.permissions.resource.StructuralResource`) is *not* automatically failed closed —
     `Session._run_tool_calls` asks about every item in `items`, in order, via the same
     `on_permission_ask` callback a single-resource ask uses, stopping at the first "deny" answer
     (short-circuit: the whole tool call is denied, no further items are asked about). A

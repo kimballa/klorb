@@ -26,6 +26,7 @@ from typing import IO, Any, Callable, Literal
 
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.resource import BashCommandContext, CommandResource, PathResource, StructuralResource
 from klorb.permissions.shell_parse import BashCommandAnalysis, RedirectTarget, parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, Verdict
 from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_and_evaluate_write
@@ -749,27 +750,25 @@ class BashTool(InterruptibleTool):
         with several independent concerns into one opaque prompt. `"allow"` (no deny, no ask
         items at all) means the whole command is permitted to run as-is.
 
-        `command` (the model's original, unparsed command string) is set as every collected
-        item's `command_text` — `analysis` alone has no notion of the raw command text, and a UI
-        (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`) needs it to show what's actually
-        being run, on top of each item's own specific `resource_description` detail (see
-        `PermissionAskItem.command_text`). Every collected item also gets the same
-        `is_compound` (`analysis.command_count > 1` — every executable node the walker visited,
-        counted regardless of whether its own argv was fully literal, so a `for`/`if`/`case` body
-        command with a non-literal argument still counts even though it never reaches
-        `analysis.simple_commands`; see `BashCommandAnalysis.command_count`), so a UI can tell a
+        Every collected item shares one `BashCommandContext` (see that class's own docstring for
+        the full field-by-field rationale): `command` (the model's original, unparsed command
+        string) becomes `command_text` — `analysis` alone has no notion of the raw command text,
+        and a UI (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`) needs it to show
+        what's actually being run, on top of each item's own specific `resource_description`
+        detail. `is_compound` (`analysis.command_count > 1` — every executable node the walker
+        visited, counted regardless of whether its own argv was fully literal, so a `for`/`if`/
+        `case` body command with a non-literal argument still counts even though it never reaches
+        `analysis.simple_commands`; see `BashCommandAnalysis.command_count`) lets a UI tell a
         decision about one simple command (`resource_description`) apart from the full command
         line it belongs to, even when that full line is short enough to display without
-        truncation (see `PermissionAskItem.is_compound`). Each item also gets its own
-        `item_command_text` — `analysis`'s `SimpleCommand`/`ForcedAskReason`/`RedirectTarget`
-        each carry their own `source_text`, the exact original source of the one statement this
-        particular item is actually about, distinct from `command_text`'s full raw command — so
-        a UI can show *this item's own command* as the prominent preview, not the whole compound
-        line every other item in the same batch would show identically (see
-        `PermissionAskItem.item_command_text`). `intent` (the model's own required argument
-        describing what the whole command is trying to accomplish) is set identically on every
-        collected item too, the same way `command_text` is, so a UI and the risk classifier can
-        both see it (see `PermissionAskItem.intent`).
+        truncation. Each item gets its own `item_command_text` within that shared context —
+        `analysis`'s `SimpleCommand`/`ForcedAskReason`/`RedirectTarget` each carry their own
+        `source_text`, the exact original source of the one statement this particular item is
+        actually about, distinct from `command_text`'s full raw command — so a UI can show *this
+        item's own command* as the prominent preview, not the whole compound line every other item
+        in the same batch would show identically. `intent` (the model's own required argument
+        describing what the whole command is trying to accomplish) is shared identically across
+        every item too, so a UI and the risk classifier can both see it.
 
         `context.permission_override`, when set, lets a previously-approved-once resource skip
         straight past its check on this one retried call (see `PermissionOverride`): a simple
@@ -796,16 +795,19 @@ class BashTool(InterruptibleTool):
                 denied = True
             elif verdict is None or verdict == "ask":
                 ask_items.append(PermissionAskItem(
-                    f"run command: {' '.join(argv)}", command=argv, command_text=command,
-                    is_compound=is_compound, item_command_text=simple_command.source_text,
-                    intent=intent))
+                    f"run command: {' '.join(argv)}", resource=CommandResource(argv=tuple(argv)),
+                    bash_context=BashCommandContext(
+                        command_text=command, is_compound=is_compound,
+                        item_command_text=simple_command.source_text, intent=intent)))
 
         for forced_reason in analysis.forced_ask_reasons:
             if override is not None and forced_reason.reason in override.reasons:
                 continue
             ask_items.append(PermissionAskItem(
-                forced_reason.reason, command_text=command, is_compound=is_compound,
-                item_command_text=forced_reason.source_text, intent=intent))
+                forced_reason.reason, resource=StructuralResource(reason=forced_reason.reason),
+                bash_context=BashCommandContext(
+                    command_text=command, is_compound=is_compound,
+                    item_command_text=forced_reason.source_text, intent=intent)))
 
         for redirect in analysis.redirects:
             redirect_verdict, path, is_write = self._evaluate_redirect(redirect)
@@ -814,9 +816,10 @@ class BashTool(InterruptibleTool):
             elif redirect_verdict == "ask":
                 action = "write to" if is_write else "read"
                 ask_items.append(PermissionAskItem(
-                    f"{action} {path}", path=path, is_write=is_write, command_text=command,
-                    is_compound=is_compound, item_command_text=redirect.source_text,
-                    intent=intent))
+                    f"{action} {path}", resource=PathResource(path=path, is_write=is_write),
+                    bash_context=BashCommandContext(
+                        command_text=command, is_compound=is_compound,
+                        item_command_text=redirect.source_text, intent=intent)))
 
         if denied:
             logger.info("Bash command denied outright: %s", analysis)

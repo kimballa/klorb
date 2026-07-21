@@ -186,12 +186,7 @@ class SessionToolExecutionMixin(SessionBase):
                 except EscalatePrivilegesRequired as escalate_exc:
                     result, error = self._resolve_escalate_privileges(call, escalate_exc, callbacks)
                 except PermissionAskRequired as ask_exc:
-                    has_resource = (
-                        ask_exc.path is not None
-                        or ask_exc.skill is not None
-                        or ask_exc.url is not None
-                    )
-                    if not has_resource or self.config.permission_framework == "deny":
+                    if not ask_exc.resource.is_persistable or self.config.permission_framework == "deny":
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                         error = str(ask_exc)
                     elif self.config.permission_framework == "auto":
@@ -204,8 +199,7 @@ class SessionToolExecutionMixin(SessionBase):
                         error = str(ask_exc)
                     else:
                         decision = callbacks.on_permission_ask(PermissionAskContext(
-                            path=ask_exc.path, is_write=ask_exc.is_write, skill=ask_exc.skill,
-                            url=ask_exc.url, resource_description=str(ask_exc)))
+                            resource=ask_exc.resource, resource_description=str(ask_exc)))
                         result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
                 except NoSuchToolException:
                     logger.warning("Tool call %s: tool not found", call.name)

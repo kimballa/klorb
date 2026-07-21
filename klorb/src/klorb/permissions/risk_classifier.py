@@ -33,6 +33,7 @@ from pydantic import BaseModel, ValidationError
 from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
 from klorb.permissions.command_access import pattern_matches_argv
+from klorb.permissions.resource import CommandResource, PathResource
 from klorb.permissions.table import PermissionAskItem
 from klorb.process_config import (
     DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS,
