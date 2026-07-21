@@ -55,7 +55,7 @@ transitive dependency from `openai`.
 ### `WebFetch` tool parameters
 
 | Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
+| ----------- | ------ | ---------- | ------------- |
 | `url` | `string` | **yes** | The URL to fetch. |
 | `headers` | `dict[str, str]` | no | Additional headers appended to the request. |
 | `method` | `enum` | no | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"HEAD"`, `"DELETE"`, `"PATCH"`, `"OPTIONS"`, `"CONNECT"`, `"TRACE"`. Default: `"GET"`. |
@@ -140,11 +140,11 @@ When the verdict is `"ask"`, `raise_if_not_allowed` raises `PermissionAskRequire
 `PermissionAskRequired` (alongside the existing `path`, `skill`). The interactive ask
 panel shows:
 
-> "The agent wants to retrieve <url>. Permanent allow will allow all results from
-> <domain>. Allow once, Allow this session..."
+> "The agent wants to retrieve `<url>`. Permanent allow will allow all results from
+> `<domain>`. Allow once, Allow this session..."
 
 Session-scoped `allow` entries (the `PermissionDecision` with `scope="session"`) are
-appended to `session_config.domains_rules.allow` for the rest of the session — identical
+appended to `session_config.domain_rules.allow` for the rest of the session — identical
 to how `readDirs`/`writeDirs` session-scoped grants work.
 
 **Config on disk:**
@@ -270,7 +270,7 @@ and `incomplete_reason: "timeout"`.
 ### New modules
 
 | Module | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `klorb/permissions/domain_access.py` | `DomainRules`, `DomainAccessTable(PermissionsTable[str])`, `evaluate_domain()`, `normalize_domain_verdict()` — mirrors `skill_access.py` |
 | `klorb/tools/web/fetch.py` | `WebFetchTool(InterruptibleTool)` — the tool itself |
 | `klorb/tools/web/spill.py` | Session-scoped tmpdir management, `atexit` registration, `ReadFile`-able spill |
@@ -278,12 +278,12 @@ and `incomplete_reason: "timeout"`.
 ### Modifications to existing modules
 
 | Module | Change |
-|--------|--------|
-| `klorb/session/config.py` | Add `domains_rules: DomainRules = Field(default_factory=DomainRules)` to `SessionConfig` |
+| -------- | -------- |
+| `klorb/session/config.py` | Add `domain_rules: DomainRules = Field(default_factory=DomainRules)` to `SessionConfig` |
 | `klorb/process_config.py` | Add `DEFAULT_WEB_FETCH_SPILL_BYTES = 32768`, `DEFAULT_WEB_FETCH_MAX_BODY_BYTES = 10 * 1024 * 1024`, `DEFAULT_WEB_FETCH_TIMEOUT_SECONDS = 120.0`, `ABSOLUTE_MAX_BODY_BYTES = 256 * 1024 * 1024`, plus corresponding fields on `ProcessConfig` and entries in `PROCESS_KEY_MAP` |
 | `klorb/resources/default-config.json` | Add `"tools.webFetch.spillBytes": 32768`, `"tools.webFetch.maxBodyBytes": 10485760`, `"tools.webFetch.timeout": 120.0`, and empty `"domains": {"deny":[],"ask":[],"allow":[]}` to `sessionDefaults` |
 | `klorb/process_config.py` (`load_process_config`) | Merge `domains` across config layers via list concatenation, same as `readDirs`/`writeDirs`/`commandRules`/`skillRules` |
-| `klorb/permissions/table.py` | No changes to `PermissionAskRequired` — we add an optional `url: str | None = None` field for WebFetch-specific ask context, same pattern as `skill` |
+| `klorb/permissions/table.py` | No changes to `PermissionAskRequired` — we add an optional `url: str \| None = None` field for WebFetch-specific ask context, same pattern as `skill` |
 
 ### Tool registration
 
@@ -291,7 +291,7 @@ and `incomplete_reason: "timeout"`.
 packages — no registration code needed. It will appear as `"WebFetch"` in the tool
 definitions sent to the model.
 
-### `SessionConfig.domains_rules` merging
+### `SessionConfig.domain_rules` merging
 
 `domains` is merged across config layers by concatenating each category list
 (`deny`, `ask`, `allow`) independently, in layer order (default → etc → user → project →
@@ -303,7 +303,7 @@ any merge-time filtering.
 ## Dependencies to add
 
 | Package | Purpose | Dev/runtime |
-|---------|---------|-------------|
+| --------- | --------- | ------------- |
 | `beautifulsoup4` | HTML parsing and element stripping | runtime |
 | `markitdown` | HTML-to-markdown conversion | runtime |
 | `httpx` | HTTP client (already transitive via `openai`, but listed as direct) | runtime |
@@ -321,17 +321,17 @@ by similar agent tooling.
   IPv4 addresses are OK and can match literally or with wildcard suffix; IPv6 addresses only literal-match).
   evaluation order, no-match normalization.
 * **Unit tests for `WebFetchTool.apply()`:** Mock `httpx.Client.request` to test:
-  - Under-spill: returns `content` inline.
-  - Over-spill: writes to tmpdir, returns `content_file`.
-  - Clean mode on `text/html`: strips elements, extracts main, converts to markdown.
-  - Clean mode on non-HTML: falls back to raw.
-  - Raw mode: passes body through literally.
-  - Redirect following: `response.url` is the final URL.
-  - Domain deny: raises `PermissionError`.
-  - Domain ask: raises `PermissionAskRequired`.
-  - Domain allow: proceeds without prompting.
-  - Cancel event: returns partial result.
-  - http method other than GET returns an error.
+  * Under-spill: returns `content` inline.
+  * Over-spill: writes to tmpdir, returns `content_file`.
+  * Clean mode on `text/html`: strips elements, extracts main, converts to markdown.
+  * Clean mode on non-HTML: falls back to raw.
+  * Raw mode: passes body through literally.
+  * Redirect following: `response.url` is the final URL.
+  * Domain deny: raises `PermissionError`.
+  * Domain ask: raises `PermissionAskRequired`.
+  * Domain allow: proceeds without prompting.
+  * Cancel event: returns partial result.
+  * http method other than GET returns an error.
 * **Integration tests:** Verify `domains` merging across config layers (same shape as
   existing `readDirs` merge tests).
 * **Verify:** `make lint`, `make typecheck`, `make test` all pass.

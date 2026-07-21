@@ -63,6 +63,10 @@ class PermissionAskContext(BaseModel):
     skill: tuple[str, str] | None = None
     """The `(namespace, name)` identity of a skill whose `skillRules` verdict is `"ask"` — the
     skill-resource analogue of `path`. `None` for every non-skill ask. See docs/specs/skills.md."""
+    url: str | None = None
+    """The URL a `WebFetch` tool is trying to retrieve, so the interactive ask panel can display
+    the target URL and domain alongside the permission prompt. `None` for every non-WebFetch
+    ask. See docs/specs/web-fetch-tool.md."""
     resource_description: str
     sibling_items: list[PermissionAskItem] | None = None
 

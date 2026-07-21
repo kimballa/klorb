@@ -4,7 +4,7 @@
     "version": "1.0.0"
   },
   "sessionDefaults": {
-    "model": "openai/gpt-5-nano",
+    "model": "xiaomi/mimo-v2.5",
     "thinking.enabled": true,
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 50,
@@ -116,6 +116,20 @@
     ],
     "setEnv": {
       "EDITOR": "false"
+    },
+    "domains": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "10.*",
+        "192.168.*",
+        "172.16.*",
+        "developer.mozilla.org",
+        "docs.python.org"
+      ]
     }
   },
   "thinking.tokenBudgets": {
@@ -134,6 +148,10 @@
   "tools.bash.riskClassifier.e2eTimeout": 10.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
   "tools.bash.riskClassifier.historySize": 20,
+  "tools.webFetch.timeout": 120.0,
+  "tools.webFetch.connectTimeout": 5.0,
+  "tools.webFetch.spillBytes": 32768,
+  "tools.webFetch.maxBodyBytes": 10485760,
   "classifier.model": null,
   "classifier.timeout": 5.0,
   "classifier.e2eTimeout": 10.0,

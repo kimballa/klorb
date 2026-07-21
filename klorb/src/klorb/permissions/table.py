@@ -35,16 +35,21 @@ class PermissionAskRequired(Exception):
     is `"ask"` (raised by `ActivateSkill`/`ReadSkillFile` -- see docs/specs/skills.md); it's the
     skill-resource analogue of `path`, threaded onto `Session.PermissionAskContext` and persisted
     via `klorb.permissions.skill_grant`. A skill ask never carries a `path`.
+
+    `url`, when set, is the URL a `WebFetch` tool is trying to retrieve, so the interactive ask
+    panel can display the target URL and domain alongside the permission prompt. A domain ask
+    never carries a `path` or `skill`.
     """
 
     def __init__(
         self, message: str, *, path: Path | None = None, is_write: bool = False,
-        skill: tuple[str, str] | None = None,
+        skill: tuple[str, str] | None = None, url: str | None = None,
     ) -> None:
         super().__init__(message)
         self.path = path
         self.is_write = is_write
         self.skill = skill
+        self.url = url
 
 
 class PermissionAskItem:
@@ -135,11 +140,13 @@ class PermissionOverride:
         commands: frozenset[tuple[str, ...]] = frozenset(),
         reasons: frozenset[str] = frozenset(),
         skills: frozenset[tuple[str, str]] = frozenset(),
+        domains: frozenset[str] = frozenset(),
     ) -> None:
         self.paths = paths
         self.commands = commands
         self.reasons = reasons
         self.skills = skills
+        self.domains = domains
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, PermissionOverride):
@@ -148,12 +155,13 @@ class PermissionOverride:
             self.paths == other.paths
             and self.commands == other.commands
             and self.reasons == other.reasons
-            and self.skills == other.skills)
+            and self.skills == other.skills
+            and self.domains == other.domains)
 
     def __repr__(self) -> str:
         return (
             f"PermissionOverride(paths={self.paths!r}, commands={self.commands!r}, "
-            f"reasons={self.reasons!r}, skills={self.skills!r})")
+            f"reasons={self.reasons!r}, skills={self.skills!r}, domains={self.domains!r})")
 
 
 class MultiPermissionAskRequired(Exception):
@@ -228,20 +236,21 @@ def stricter_verdict(a: Verdict, b: Verdict) -> Verdict:
 def raise_if_not_allowed(
     verdict: Verdict, *, resource_description: str,
     path: Path | None = None, is_write: bool = False, skill: tuple[str, str] | None = None,
+    url: str | None = None,
 ) -> None:
     """Enforce `verdict`: raise `PermissionError` for `"deny"`, `PermissionAskRequired` for
     `"ask"` (failing closed — see `PermissionAskRequired`), or return normally for `"allow"`.
 
     This is the single seam where "ask fails closed as deny-but-distinctly-typed" is
     implemented, so swapping it for real interactive confirmation later is a one-function
-    change rather than a change at every tool call site. `path`/`is_write`/`skill` are forwarded
-    onto `PermissionAskRequired` so interactive callers (see `Session.on_permission_ask`) can act
-    on the specific resource; all are optional, so callers that don't have them handy (or don't
-    need them) can omit them.
+    change rather than a change at every tool call site. `path`/`is_write`/`skill`/`url` are
+    forwarded onto `PermissionAskRequired` so interactive callers (see
+    `Session.on_permission_ask`) can act on the specific resource; all are optional, so callers
+    that don't have them handy (or don't need them) can omit them.
     """
     if verdict == "deny":
         raise PermissionError(f"Permission denied: {resource_description}")
     if verdict == "ask":
         raise PermissionAskRequired(
             f"Permission requires confirmation: {resource_description}",
-            path=path, is_write=is_write, skill=skill)
+            path=path, is_write=is_write, skill=skill, url=url)

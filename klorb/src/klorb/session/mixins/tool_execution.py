@@ -71,15 +71,16 @@ class SessionToolExecutionMixin(SessionBase):
         `ToolCallLimitExceeded` without executing this call (or any later call in
         `tool_use_message.tool_calls`).
 
-        If a call raises `PermissionAskRequired` with a `path`, how it's resolved depends on
-        `config.permission_framework` (see `SessionConfig.permission_framework`): `"deny"` fails
-        closed without invoking any callback; `"auto"` auto-approves via a synthesized
-        `PermissionDecision(action="allow", scope="session")`, also without invoking any
-        callback; `"ask"` asks `callbacks.on_permission_ask`, if given, for a `PermissionDecision`
-        and retries or denies accordingly (see `_retry_after_permission_decision`) — with no
-        callback (e.g. a headless one-shot run left at the `"ask"` default), it fails closed the
-        same as `"deny"`. An exception with no `path` (a call site that didn't supply one)
-        always fails closed, regardless of `permission_framework`.
+        If a call raises `PermissionAskRequired` with a `path` or `url`, how it's resolved
+        depends on `config.permission_framework` (see `SessionConfig.permission_framework`):
+        `"deny"` fails closed without invoking any callback; `"auto"` auto-approves via a
+        synthesized `PermissionDecision(action="allow", scope="session")`, also without
+        invoking any callback; `"ask"` asks `callbacks.on_permission_ask`, if given, for a
+        `PermissionDecision` and retries or denies accordingly (see
+        `_retry_after_permission_decision`) — with no callback (e.g. a headless one-shot run
+        left at the `"ask"` default), it fails closed the same as `"deny"`. An exception with
+        no `path`, `skill`, or `url` (a call site that didn't supply one) always fails closed,
+        regardless of `permission_framework`.
 
         A call that raises `MultiPermissionAskRequired` instead (today, only `BashTool`, whose
         one parsed command can independently touch several commands/redirection targets) is
@@ -185,7 +186,11 @@ class SessionToolExecutionMixin(SessionBase):
                 except EscalatePrivilegesRequired as escalate_exc:
                     result, error = self._resolve_escalate_privileges(call, escalate_exc, callbacks)
                 except PermissionAskRequired as ask_exc:
-                    has_resource = ask_exc.path is not None or ask_exc.skill is not None
+                    has_resource = (
+                        ask_exc.path is not None
+                        or ask_exc.skill is not None
+                        or ask_exc.url is not None
+                    )
                     if not has_resource or self.config.permission_framework == "deny":
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                         error = str(ask_exc)
@@ -200,7 +205,7 @@ class SessionToolExecutionMixin(SessionBase):
                     else:
                         decision = callbacks.on_permission_ask(PermissionAskContext(
                             path=ask_exc.path, is_write=ask_exc.is_write, skill=ask_exc.skill,
-                            resource_description=str(ask_exc)))
+                            url=ask_exc.url, resource_description=str(ask_exc)))
                         result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
                 except NoSuchToolException:
                     logger.warning("Tool call %s: tool not found", call.name)

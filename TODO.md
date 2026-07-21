@@ -36,6 +36,9 @@
 
 ## Feature backlog
 
+* Task List can be toggled with ^T; the open/closed state should be tracked in the user's homedir
+  config file as a process_config value, and restored the next time you open klorb.
+
 * moonshotai/kimi-k3 - Give Kimi k3 a spin
 
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
@@ -102,7 +105,6 @@
   * Add Evals for GrepTool and FindFileTool.
 
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
-  * WebFetchTool
 
 * Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
   * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
@@ -141,10 +143,11 @@
 * Need a Planning Tool or Planning Mode agent
 
 * Permissions
-  * what web sites can it access? (... what kind of prompt injection could happen here?)
   * BashTool / bubblewrap sandbox follow-ups: a `--seccomp` defense-in-depth
     filter (ptrace/mount/reboot/keyring), and network egress via a
     domain-allowlist proxy (today `--unshare-net` denies all network).
+    * Once domains are available in the bubblewrapped bash, add allow-list entries for
+      pypi, npm, maven-central.
   * TOCTOU: every permission check (klorb.permissions.workspace/directory_access) resolves a
     path string at check time; nothing holds an open OS-level directory handle across the gap
     between that check and the actual file I/O, so a rename/symlink swap in that window could

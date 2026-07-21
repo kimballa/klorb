@@ -6,6 +6,6 @@
         "ms-vscode.makefile-tools",
         "ms-python.vscode-pylance",
         "davidanson.vscode-markdownlint",
-        "hojabri.slog-viewer"
+        "caelrith.loglens-vscode"
     ]
 }

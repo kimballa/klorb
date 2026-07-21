@@ -64,7 +64,21 @@
     },
     "shareEnv": [
       "TIKTOKEN_CACHE_DIR"
-    ]
+    ],
+    "skillRules": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+        "workspace:implement-plan",
+        "workspace:add-python-dependency"
+      ]
+    },
+    "domains": {
+      "deny": [],
+      "ask": [],
+      "allow": [
+      ]
+    }
   },
   "tools.logCalls": true
 }

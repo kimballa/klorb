@@ -6,23 +6,38 @@ anyio==4.14.2
     # via
     #   httpx
     #   openai
+beautifulsoup4==4.15.0
+    # via
+    #   klorb (pyproject.toml)
+    #   markdownify
+    #   markitdown
 certifi==2026.6.17
     # via
     #   httpcore
     #   httpx
     #   requests
 charset-normalizer==3.4.9
-    # via requests
+    # via
+    #   markitdown
+    #   requests
+click==8.4.2
+    # via magika
 coolname==5.0.0
     # via klorb (pyproject.toml)
+defusedxml==0.7.1
+    # via markitdown
 distro==1.9.0
     # via openai
+flatbuffers==25.12.19
+    # via onnxruntime
 h11==0.16.0
     # via httpcore
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
-    # via openai
+    # via
+    #   klorb (pyproject.toml)
+    #   openai
 idna==3.18
     # via
     #   anyio
@@ -32,21 +47,37 @@ jiter==0.16.0
     # via openai
 linkify-it-py==2.1.0
     # via markdown-it-py
+magika==0.6.3
+    # via markitdown
 markdown-it-py==4.2.0
     # via
     #   mdit-py-plugins
     #   rich
     #   textual
+markdownify==1.2.3
+    # via markitdown
+markitdown==0.1.6
+    # via klorb (pyproject.toml)
 mdit-py-plugins==0.6.1
     # via textual
 mdurl==0.1.2
     # via markdown-it-py
+numpy==2.5.1
+    # via
+    #   magika
+    #   onnxruntime
+onnxruntime==1.27.0
+    # via magika
 openai==2.46.0
     # via klorb (pyproject.toml)
+packaging==26.2
+    # via onnxruntime
 pathspec==1.1.1
     # via klorb (pyproject.toml)
-platformdirs==4.10.0
+platformdirs==4.10.1
     # via textual
+protobuf==7.35.1
+    # via onnxruntime
 pydantic==2.13.4
     # via
     #   klorb (pyproject.toml)
@@ -58,28 +89,37 @@ pygments==2.20.0
     #   rich
     #   textual
 python-dotenv==1.2.2
-    # via klorb (pyproject.toml)
+    # via
+    #   klorb (pyproject.toml)
+    #   magika
 pyyaml==6.0.3
     # via klorb (pyproject.toml)
-regex==2026.7.10
+regex==2026.7.19
     # via tiktoken
 requests==2.34.2
-    # via tiktoken
+    # via
+    #   markitdown
+    #   tiktoken
 rich==15.0.0
     # via textual
 shfmt-py==4.0.0
     # via klorb (pyproject.toml)
+six==1.17.0
+    # via markdownify
 sniffio==1.3.1
     # via openai
+soupsieve==2.9
+    # via beautifulsoup4
 textual==8.2.8
     # via klorb (pyproject.toml)
 tiktoken==0.13.0
     # via klorb (pyproject.toml)
-tqdm==4.68.4
+tqdm==4.69.0
     # via openai
 typing-extensions==4.16.0
     # via
     #   anyio
+    #   beautifulsoup4
     #   openai
     #   pydantic
     #   pydantic-core

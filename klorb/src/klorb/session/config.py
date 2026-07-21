@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.file_access import FileRules
 from klorb.permissions.skill_access import SkillRules
 from klorb.role import OPERATOR_ROLE_NAME
@@ -87,6 +88,12 @@ class SessionConfig(BaseModel):
     matched by exact `(namespace, name)` identity — see `klorb.permissions.skill_access` and
     docs/specs/skills.md. Lives on `SessionConfig` like `command_rules`, so the interactive "ask"
     flow can approve a skill for the rest of the session."""
+    domain_rules: DomainRules = Field(default_factory=DomainRules)
+    """`domains`-config-driven allow/ask/deny rules `WebFetch` consults before any network call,
+    matched by exact domain, wildcard prefix (``*.example.com``), or wildcard suffix
+    (``172.16.*`` for IP addresses) — see `klorb.permissions.domain_access`. Lives on
+    `SessionConfig` like `command_rules`, so the interactive "ask" flow can approve a domain
+    for the rest of the session."""
     share_env: list[str] = Field(default_factory=list)
     """Names of environment variables `BashTool` passes through from the klorb process's own
     environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see

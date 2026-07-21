@@ -99,12 +99,13 @@ class SessionPermissionsMixin(SessionBase):
         second `PermissionAskRequired`) is reported the same generic way an ordinary tool
         failure is — never a second ask.
 
-        Handles both a directory-access ask (`ask_exc.path` set) and a skill-activation ask
-        (`ask_exc.skill` set): the persistent-scope grant is dispatched by `_apply_ask_grant`, and
-        a `scope="once"` retry carries the resource on the matching `PermissionOverride` field
-        (`paths` vs. `skills`).
+        Handles both a directory-access ask (`ask_exc.path` set), a skill-activation ask
+        (`ask_exc.skill` set), and a domain-access ask (`ask_exc.url` set): the
+        persistent-scope grant is dispatched by `_apply_ask_grant`, and a `scope="once"`
+        retry carries the resource on the matching `PermissionOverride` field (`paths` vs.
+        `skills` vs. `domains`).
         """
-        assert ask_exc.path is not None or ask_exc.skill is not None
+        assert ask_exc.path is not None or ask_exc.skill is not None or ask_exc.url is not None
         if decision.other_text is not None:
             return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
         if decision.action == "deny":
@@ -118,6 +119,9 @@ class SessionPermissionsMixin(SessionBase):
             if decision.scope == "once":
                 if ask_exc.skill is not None:
                     override = PermissionOverride(skills=frozenset({ask_exc.skill}))
+                elif ask_exc.url is not None:
+                    from klorb.permissions.domain_access import parse_domain
+                    override = PermissionOverride(domains=frozenset({parse_domain(ask_exc.url)}))
                 else:
                     assert ask_exc.path is not None
                     override = PermissionOverride(paths=frozenset({ask_exc.path}))
@@ -136,14 +140,21 @@ class SessionPermissionsMixin(SessionBase):
         ask_exc: PermissionAskRequired,
     ) -> None:
         """Persist a single-item permission grant for `ask_exc` at `scope`, dispatching to
-        `apply_skill_permission_grant` for a skill ask (`ask_exc.skill` set) and
-        `apply_permission_grant` for a directory ask (`ask_exc.path` set). The imports are local to
-        avoid a circular import back into this module.
+        `apply_skill_permission_grant` for a skill ask (`ask_exc.skill` set),
+        `apply_domain_permission_grant` for a domain ask (`ask_exc.url` set), and
+        `apply_permission_grant` for a directory ask (`ask_exc.path` set). The imports are
+        local to avoid a circular import back into this module.
         """
         if ask_exc.skill is not None:
             from klorb.permissions.skill_grant import apply_skill_permission_grant
             apply_skill_permission_grant(
                 action, scope, self.config, self._process_config, ask_exc.skill)
+            return
+        if ask_exc.url is not None:
+            from klorb.permissions.domain_access import parse_domain
+            from klorb.permissions.domain_grant import apply_domain_permission_grant
+            apply_domain_permission_grant(
+                action, scope, self.config, self._process_config, parse_domain(ask_exc.url))
             return
         assert ask_exc.path is not None
         from klorb.permissions.grant import apply_permission_grant
