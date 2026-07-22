@@ -26,15 +26,9 @@
 
 ## Feature backlog
 
-* Add a KLORB.md-awareness that would be put in ahead of AGENTS.md
-  * And ~/.config/klorb/KLORB.md above that.
-
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
-
-* When adding skills list `<SystemInterjection>` we should notify the TUI or log file how
-  many tokens are occupied by the skill list.
 
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.

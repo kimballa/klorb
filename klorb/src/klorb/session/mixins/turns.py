@@ -447,9 +447,15 @@ class SessionTurnsMixin(SessionBase):
             prompt = f"{_wrap_system_interjection('SkillReminder', skill_reminder)}\n{prompt}"
         if not self._skills_seeded:
             self._skills_seeded = True
-            available_skills = self._build_available_skills_interjection(self._discover_skills())
+            skills = self._discover_skills()
+            available_skills = self._build_available_skills_interjection(skills)
             if available_skills is not None:
                 prompt = f"{_wrap_system_interjection('AvailableSkills', available_skills)}\n{prompt}"
+                logger.info(
+                    "Interjecting with available skills: %d skills, %d tokens",
+                    len(skills),
+                    estimate_tokens(available_skills),
+                )
         if not self._context_files_seeded:
             self._context_files_seeded = True
             project_guidance = self._build_context_files_interjection()

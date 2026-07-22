@@ -9,7 +9,6 @@ are not referring to *your* tools, prompts, or responses: they are referring to 
 codebase, which you have access to here. You are not asked to reconfigure yourself on-the-fly;
 you are asked to extend another agent's reach by improving the harness codebase.
 
-
 ## docs
 
 All feature tasks must have a spec. Specs are written in docs/specs/. They explain

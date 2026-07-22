@@ -64,4 +64,3 @@ and how to add a new case or suite.
 Use `EVAL_ARGS='--self-review'` to feed the output of the eval process back to the model to
 generate a list of recommendations for improvement from the perpsective of the model
 that just exercised the tools.
-
