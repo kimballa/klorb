@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from klorb.permissions.resource import BashCommandContext, PermissionResource
 from klorb.permissions.table import PermissionAskItem
+from klorb.session_naming import SessionName
 from klorb.tools.ask.common import QuestionOption
 
 
@@ -202,12 +203,14 @@ class TurnEventHandlers(BaseModel):
     question), `on_escalate_privileges` (ask the user to approve a session-only
     `EscalatePrivileges` grant), `on_tool_call_started` (report a tool call about to run,
     for a running indicator), and `on_tool_call` (report one finished tool call, for
-    display). Replaces passing these as separate keyword arguments through
-    `send_turn()`/`retry_last_turn()`/`_dispatch_turn()` and everything they call — a
-    single object here means a future addition only touches this class, not every method's
-    signature along the chain. `frozen=True` since a `TurnEventHandlers` is built once per
-    turn and never mutated; `arbitrary_types_allowed=True` is needed for the
-    `threading.Event` field (`Callable` fields validate natively without it).
+    display). `on_session_name_changed` fires once, at most, on the first `send_turn()` call for
+    a `Session` -- with the derived `SessionName` if the naming classifier succeeded, or `None`
+    if it failed -- see `SessionCoreMixin._run_session_naming`. Replaces passing these as
+    separate keyword arguments through `send_turn()`/`retry_last_turn()`/`_dispatch_turn()` and
+    everything they call — a single object here means a future addition only touches this
+    class, not every method's signature along the chain. `frozen=True` since a
+    `TurnEventHandlers` is built once per turn and never mutated; `arbitrary_types_allowed=True`
+    is needed for the `threading.Event` field (`Callable` fields validate natively without it).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -226,6 +229,7 @@ class TurnEventHandlers(BaseModel):
     ) = None
     on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
+    on_session_name_changed: Callable[[SessionName | None], None] | None = None
 
 
 class UserSkillActivation(BaseModel):

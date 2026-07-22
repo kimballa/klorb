@@ -20,12 +20,12 @@ from klorb.session import Session, SessionConfig
 from klorb.session_naming import (
     MAX_SLUG_WORDS,
     SessionName,
-    _default_naming_model,
     _response_format,
-    _thinking_effort_for,
+    default_naming_model,
     generate_session_name,
     rename_session_id,
     session_id_suffix,
+    thinking_effort_for,
 )
 
 
@@ -230,37 +230,37 @@ def test_rename_session_id_and_session_id_suffix_round_trip() -> None:
     assert session_id_suffix(renamed) == "fix-auth-bug"
 
 
-# --- _default_naming_model ---
+# --- default_naming_model ---
 
 
 def test_default_naming_model_picks_the_capability_tagged_model() -> None:
     session = Session(SessionConfig(), provider=MagicMock())
 
-    assert _default_naming_model(session) == "openai/gpt-5-nano"
+    assert default_naming_model(session) == "openai/gpt-5-nano"
 
 
 def test_default_naming_model_falls_back_when_no_model_declares_the_capability() -> None:
     session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
 
-    assert _default_naming_model(session) == DEFAULT_SESSION_CLASSIFIER_MODEL
+    assert default_naming_model(session) == DEFAULT_SESSION_CLASSIFIER_MODEL
 
 
-# --- _thinking_effort_for ---
+# --- thinking_effort_for ---
 
 
 def test_thinking_effort_for_returns_low_effort_for_a_thinking_capable_model() -> None:
     session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
 
-    assert _thinking_effort_for(session, "beta") == {"effort": "low"}
+    assert thinking_effort_for(session, "beta") == {"effort": "low"}
 
 
 def test_thinking_effort_for_returns_none_for_a_non_thinking_model() -> None:
     session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
 
-    assert _thinking_effort_for(session, "alpha") is None
+    assert thinking_effort_for(session, "alpha") is None
 
 
 def test_thinking_effort_for_returns_none_for_an_unregistered_model_name() -> None:
     session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
 
-    assert _thinking_effort_for(session, "not/a-registered-model") is None
+    assert thinking_effort_for(session, "not/a-registered-model") is None

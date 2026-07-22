@@ -23,6 +23,13 @@ from klorb.session.constants import (
     generate_session_id,
 )
 from klorb.session.mixins._base import SessionBase
+from klorb.session_naming import (
+    SessionName,
+    default_naming_model,
+    generate_session_name,
+    rename_session_id,
+    thinking_effort_for,
+)
 from klorb.session_statistics import SessionStatistics
 from klorb.system_prompt import SystemPrompt
 from klorb.tool_call_log import tool_call_logging_enabled
@@ -163,6 +170,13 @@ class SessionCoreMixin(SessionBase):
         """Whether `send_turn()` has already prepended the one-shot `Metadata`
         `<SystemInterjection>` carrying the session start time and workspace root name onto
         the very first turn's prompt. Set unconditionally the first time it's checked."""
+        self._session_naming_pending = self._session_name is None
+        """Whether `send_turn()` still needs to run the one-shot session-naming classifier (see
+        `_run_session_naming`) on its first call. Seeded `False` when a `session_name` was
+        already supplied to this constructor (a restored session that was already named), `True`
+        otherwise (a fresh session, or a restored session that was never successfully named).
+        Set unconditionally the first time `send_turn()` checks it, regardless of the
+        classifier's outcome, so a failed/timed-out attempt is never retried."""
         self._session_started_at = datetime.now()
         """Timestamp recorded at session construction, used as the session's start time in the
         one-shot `Metadata` interjection prepended to the first user message."""
@@ -249,6 +263,66 @@ class SessionCoreMixin(SessionBase):
     @name.setter
     def name(self, value: str | None) -> None:
         self._session_name = value
+
+    @property
+    def session_naming_pending(self) -> bool:
+        """Whether `send_turn()` still needs to run the one-shot session-naming classifier on
+        its first call -- see `_run_session_naming`. A caller (e.g. the TUI) reads this before
+        calling `send_turn()` to know whether to expect `TurnEventHandlers.on_session_name_changed`
+        to fire for that call."""
+        return self._session_naming_pending
+
+    def set_id(self, new_id: str) -> None:
+        """The only sanctioned way to change `self.id`. If `id == root_id` (this session hasn't
+        diverged from its root -- true for every session today, since klorb has no
+        subagent-spawning mechanism yet), `root_id` is updated to `new_id` too, keeping both in
+        sync; otherwise only `id` changes. Callers must never assign `self.id`/`self.root_id`
+        directly -- see `get_chainlink_label()` for why `root_id` staying in sync with a renamed
+        `id` matters."""
+        if self.id == self.root_id:
+            self.root_id = new_id
+        self.id = new_id
+
+    def _run_session_naming(self, prompt_text: str) -> "SessionName | None":
+        """Derive a `SessionName` from `prompt_text` (this session's first submitted prompt) via
+        `klorb.session_naming.generate_session_name`, and on success rename this session's `id`
+        (via `set_id`, preserving its timestamp prefix and swapping in the derived slug) and set
+        `name` to the derived title. Returns the result (or `None` on failure) for the caller's
+        `TurnEventHandlers.on_session_name_changed` to react to; never raises, matching
+        `generate_session_name`'s own "never raises" contract. Falls back to
+        `DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS`/`_E2E_TIMEOUT_SECONDS` and
+        `default_naming_model(self)` when this session has no `ProcessConfig`
+        (`self._process_config is None`)."""
+        # Deferred: `klorb.process_config` imports from `klorb.session`, so a module-level
+        # import here would be circular.
+        from klorb.process_config import (
+            DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS,
+            DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS,
+        )
+
+        model = (
+            self._process_config.session_classifier_model
+            if self._process_config is not None and self._process_config.session_classifier_model
+            else default_naming_model(cast("Session", self))
+        )
+        timeout = (
+            self._process_config.session_classifier_timeout_seconds
+            if self._process_config is not None
+            else DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS
+        )
+        e2e_timeout = (
+            self._process_config.session_classifier_e2e_timeout_seconds
+            if self._process_config is not None
+            else DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS
+        )
+        reasoning = thinking_effort_for(cast("Session", self), model)
+        result = generate_session_name(
+            prompt_text, api_provider=self._provider, model=model, timeout=timeout,
+            e2e_timeout=e2e_timeout, reasoning=reasoning)
+        if result is not None:
+            self.set_id(rename_session_id(self.id, result.slug))
+            self.name = result.title
+        return result
 
     def get_chainlink_label(self) -> str:
         """Return the `chainlink` label every `klorb.tools.tasks.common.ChainlinkClient`

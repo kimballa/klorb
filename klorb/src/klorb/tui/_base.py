@@ -80,7 +80,6 @@ class ReplAppBase(App[None]):
     _running_tool_call_widgets: dict[str, RunningToolCallStatic]
     _tool_call_detail_shown: bool
     _history_pinned_to_bottom: bool
-    _session_naming_pending: bool
     _turn_waiting_widget: TurnWaitingStatic | None
     _task_sidebar_shown: bool
 

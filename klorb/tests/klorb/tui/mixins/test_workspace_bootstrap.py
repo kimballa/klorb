@@ -578,7 +578,7 @@ async def test_restore_restores_session_id_and_name(
 
         assert app._session.id == "2026-07-19-01-50-fix-auth"
         assert app._session.name == "Fix auth token refresh bug"
-        assert not app._session_naming_pending
+        assert not app._session.session_naming_pending
 
         session_name_widget = app.query_one(f"#{SESSION_NAME_ID}", Static)
         assert "Fix auth token refresh bug" in str(session_name_widget.content)
@@ -601,7 +601,7 @@ async def test_restore_without_name_keeps_naming_pending(
         await pilot.pause()
 
         assert app._session.name is None
-        assert app._session_naming_pending
+        assert app._session.session_naming_pending
 
         session_name_widget = app.query_one(f"#{SESSION_NAME_ID}", Static)
         assert str(session_name_widget.content) == NEW_SESSION_LABEL

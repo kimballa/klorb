@@ -95,6 +95,22 @@ def _fast_pilot_idle_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _skip_session_naming(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub out the session-naming classifier's network round trip for every `Session.send_turn()`
+    call in the suite, so a test's mocked `ApiProvider` isn't also asked to answer the naming
+    classifier's request on a session's first turn -- it would otherwise see extra
+    `send_prompt()` calls (and, on a generic mock, a bogus reply that fails to parse as
+    `SessionName` and retries once) it never expected, on top of whatever the test itself set up.
+    Returns `None`, as if naming always failed, which is exactly `generate_session_name`'s own
+    "never raises" contract for any failure. `Session` naming behavior itself is covered by
+    naming-specific tests (see test_session.py), which override this fixture's patch locally with
+    a real fake implementation.
+    """
+    monkeypatch.setattr(
+        "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_scratchpad_dirs() -> Iterator[None]:
     """Remove any `klorb-scratchpad-*` temp dirs created during a test.
 

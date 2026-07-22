@@ -39,6 +39,7 @@ from klorb.session import (
     TurnEventHandlers,
     generate_session_id,
 )
+from klorb.session_naming import SessionName
 from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
 from klorb.token_estimate import estimate_tokens
 from klorb.tools.registry import ToolRegistry
@@ -186,6 +187,27 @@ def test_get_chainlink_label_returns_root_id_not_id() -> None:
     session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
 
     assert session.get_chainlink_label() == "root-id"
+
+
+def test_set_id_updates_root_id_too_when_not_diverged() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="old-id")
+    assert session.root_id == "old-id"
+
+    session.set_id("new-id")
+
+    assert session.id == "new-id"
+    assert session.root_id == "new-id"
+
+
+def test_set_id_leaves_root_id_alone_once_diverged() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
+
+    session.set_id("renamed-child-id")
+
+    assert session.id == "renamed-child-id"
+    assert session.root_id == "root-id"
 
 
 def test_set_chainlink_task_defaults_to_none() -> None:
@@ -448,6 +470,97 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
         cache_mgmt_style="AUTOMATIC", cancel_event=None)
+
+
+# --- session naming: send_turn()'s first-call naming trigger ---
+
+
+def test_session_naming_pending_defaults_true_without_a_session_name() -> None:
+    session = Session(SessionConfig(), provider=MagicMock())
+
+    assert session.session_naming_pending is True
+
+
+def test_session_naming_pending_false_when_session_name_already_given() -> None:
+    session = Session(SessionConfig(), provider=MagicMock(), session_name="Already Named")
+
+    assert session.session_naming_pending is False
+
+
+def test_send_turn_runs_naming_classifier_on_first_call_and_renames_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    monkeypatch.setattr(
+        "klorb.session.mixins.core.generate_session_name",
+        lambda *args, **kwargs: SessionName(title="Fix auth bug", slug="fix-auth-bug"))
+
+    session.send_turn("please fix the auth bug")
+
+    assert session.id == "2026-07-21-18-10-fix-auth-bug"
+    assert session.root_id == "2026-07-21-18-10-fix-auth-bug"
+    assert session.name == "Fix auth bug"
+    assert session.session_naming_pending is False
+
+
+def test_send_turn_naming_failure_leaves_id_unchanged_and_clears_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    monkeypatch.setattr(
+        "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: None)
+
+    session.send_turn("hi")
+
+    assert session.id == "2026-07-21-18-10-old-nonce"
+    assert session.name is None
+    assert session.session_naming_pending is False
+
+
+def test_send_turn_does_not_retrigger_naming_on_second_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    naming_spy = MagicMock(return_value=None)
+    monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", naming_spy)
+
+    session.send_turn("first")
+    session.send_turn("second")
+
+    naming_spy.assert_called_once()
+
+
+def test_send_turn_skips_naming_when_session_name_already_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(
+        SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce",
+        session_name="Already Named")
+    naming_spy = MagicMock(return_value=None)
+    monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", naming_spy)
+
+    session.send_turn("hi")
+
+    naming_spy.assert_not_called()
+    assert session.id == "2026-07-21-18-10-old-nonce"
+
+
+def test_send_turn_invokes_on_session_name_changed_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    name = SessionName(title="Fix auth bug", slug="fix-auth-bug")
+    monkeypatch.setattr(
+        "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: name)
+    spy = MagicMock()
+
+    session.send_turn("please fix the auth bug", TurnEventHandlers(on_session_name_changed=spy))
+
+    spy.assert_called_once_with(name)
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:

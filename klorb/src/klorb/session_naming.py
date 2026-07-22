@@ -7,9 +7,9 @@ retry, "never raises" contract) for a second, unrelated small-model classificati
 
 `generate_session_name()` is pure with respect to `Session`: it never reads or writes
 `Session.id` or any other session state -- it only sends one request and returns a
-`SessionName | None`. `klorb.tui.mixins.prompt_submission.PromptSubmissionMixin._run_session_naming`
-owns deciding when to call it and what to do with the result (renaming `Session.id` and the
-session log file), same division of responsibility as `klorb.permissions.risk_classifier`'s
+`SessionName | None`. `klorb.session.mixins.core.SessionCoreMixin._run_session_naming` owns
+deciding when to call it and what to do with the result (renaming `Session.id`/`Session.root_id`
+via `Session.set_id()`), same division of responsibility as `klorb.permissions.risk_classifier`'s
 `resolve_item_risk_assessment` vs. `classify_command_risk`.
 """
 
@@ -19,14 +19,18 @@ import re
 import threading
 import time
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError, field_validator
 
 from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
-from klorb.process_config import DEFAULT_SESSION_CLASSIFIER_MODEL
-from klorb.session import Session
+
+if TYPE_CHECKING:
+    # `klorb.session` (via its mixins) is the caller of `default_naming_model`/
+    # `thinking_effort_for`, so importing it for real here would be circular -- these two
+    # functions only need `Session` for a type hint.
+    from klorb.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +167,7 @@ def generate_session_name(
     trickling bytes (never stalling a single read long enough to trip `timeout`) is still cut off.
 
     `reasoning`, when given, is passed straight through to `ApiProvider.send_prompt` -- see
-    `_thinking_effort_for`, which computes `{"effort": "low"}` for a thinking-capable `model` so
+    `thinking_effort_for`, which computes `{"effort": "low"}` for a thinking-capable `model` so
     this one-shot summarization task doesn't inherit a costlier provider-side reasoning default.
     """
     started = time.perf_counter()
@@ -243,16 +247,21 @@ def _generate_session_name(
     return name
 
 
-def _default_naming_model(session: Session) -> str:
+def default_naming_model(session: "Session") -> str:
     """The model name to derive a `SessionName` with when `ProcessConfig.session_classifier_model`
     is unset: the first model in `session.model_registry` that declares itself good at this
     (`Model.klorb_capabilities()[NANO_CLASSIFIER_CAPABILITY]`, via
     `ModelRegistry.find_by_capability`), or `DEFAULT_SESSION_CLASSIFIER_MODEL` if none does."""
+    # Deferred: `klorb.process_config` imports `SessionConfig`/`ThinkingEffort`/
+    # `THINKING_EFFORT_TOKEN_BUDGETS` from `klorb.session`, so a module-level import here would
+    # be circular whenever `klorb.process_config` is imported before `klorb.session_naming`.
+    from klorb.process_config import DEFAULT_SESSION_CLASSIFIER_MODEL
+
     model = session.model_registry.find_by_capability(NANO_CLASSIFIER_CAPABILITY)
     return model.name() if model is not None else DEFAULT_SESSION_CLASSIFIER_MODEL
 
 
-def _thinking_effort_for(session: Session, model_name: str) -> dict[str, Any] | None:
+def thinking_effort_for(session: "Session", model_name: str) -> dict[str, Any] | None:
     """`{"effort": "low"}` if `model_name` is a locally registered model whose
     `Model.capabilities()` reports `"thinking"`, else `None`. A `ProcessConfig.
     session_classifier_model` override that isn't a locally registered name (e.g. a raw

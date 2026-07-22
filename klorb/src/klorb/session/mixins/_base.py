@@ -29,6 +29,7 @@ from klorb.role import Role
 from klorb.session.config import SessionConfig
 from klorb.session.constants import ThinkingEffort
 from klorb.session.events import PermissionDecision, TurnEventHandlers, UserSkillActivation
+from klorb.session_naming import SessionName
 from klorb.session_statistics import SessionStatistics
 from klorb.system_prompt import SystemPrompt
 from klorb.tools.ask.common import AskUserQuestionsRequired
@@ -83,6 +84,7 @@ class SessionBase:
     _skills_seeded: bool
     _context_files_seeded: bool
     _metadata_seeded: bool
+    _session_naming_pending: bool
     _session_started_at: datetime
     _pending_permission_framework_interjection: str | None
     _standing_interjection_providers: dict[str, Callable[[], str | None]]
@@ -111,6 +113,9 @@ class SessionBase:
     def _ensure_system_message(self) -> None: ...
 
     def _ensure_tool_defs_message(self) -> None: ...
+
+    def _run_session_naming(self, prompt_text: str) -> "SessionName | None":
+        raise NotImplementedError
 
     def _ensure_skill_catalog(self) -> None: ...
 

@@ -406,6 +406,14 @@ class SessionTurnsMixin(SessionBase):
 
         On the first turn only, a one-shot `metadata` interjection carrying the session
         start time and workspace root name is also prepended (see `self._metadata_seeded`).
+
+        Also on the first turn only (`self._session_naming_pending`), the session-naming
+        classifier runs against `prompt` (before any interjection is prepended) via
+        `_run_session_naming`, which renames `id`/`root_id` (via `set_id`) and sets `name` on
+        success. This runs identically whether `send_turn()` is driven by the interactive TUI or
+        a headless one-shot call (see `run_one_shot`); `callbacks.on_session_name_changed`, if
+        given, is invoked once with the result (or `None` on failure) so a caller can react --
+        e.g. the TUI updates its status line and renames its session log file.
         """
         original_prompt = prompt
         self._ensure_skill_catalog()
@@ -456,6 +464,11 @@ class SessionTurnsMixin(SessionBase):
                 f"The workspace root is `{workspace_root}`."
             )
             prompt = f"{_wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
+        if self._session_naming_pending:
+            self._session_naming_pending = False
+            naming_result = self._run_session_naming(original_prompt)
+            if callbacks is not None and callbacks.on_session_name_changed is not None:
+                callbacks.on_session_name_changed(naming_result)
         user_message = Message(
             content=prompt,
             role="user",
@@ -511,7 +524,9 @@ class SessionTurnsMixin(SessionBase):
         is nobody to ask). `send_turn()` already
         loops through every tool-call round on its own until the model returns a final
         plain-text reply, so this call runs the whole task to completion, not just one
-        model round trip.
+        model round trip. No `on_session_name_changed` is passed, so this call's `Session` still
+        gets named (renaming `id`/`root_id`/`name`) on its first invocation like any other
+        `send_turn()` caller, just with nothing reacting to the result.
         """
         return self.send_turn(
             prompt, TurnEventHandlers(on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk))

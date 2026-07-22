@@ -229,55 +229,76 @@ config) has one place to live.
 ## Session naming
 
 * `klorb.session_naming` derives a short human title and a kebab-case id slug for a fresh
-  interactive session from its first submitted prompt, via a cheap/fast model — mirroring
+  session from its first submitted prompt, via a cheap/fast model — mirroring
   `klorb.permissions.risk_classifier`'s structured-output/`e2e_timeout`/one-retry pattern for
-  an unrelated small-model classification task. Triggered only from the interactive TUI
-  (`klorb.tui.mixins.prompt_submission.PromptSubmissionMixin._run_session_naming`, called from
-  `_send_prompt`'s worker thread right before `Session.send_turn()`), never for a one-shot
-  `-m`/`--message` invocation.
+  an unrelated small-model classification task. The classifier runs inside `Session.send_turn()`
+  itself (`SessionCoreMixin._run_session_naming`, in `klorb.session.mixins.core`), as one of the
+  one-shot blocks `send_turn()` runs on the first call to a given `Session` instance (alongside
+  the skills/context-files/metadata interjections) — so it fires identically whether that first
+  call comes from the interactive TUI or a headless one-shot `-m`/`--message` invocation
+  (`Session.run_one_shot`).
 * `generate_session_name(prompt_text, *, api_provider, model, timeout, e2e_timeout, reasoning=None)
   -> SessionName | None` sends one request asking for a `title` (a short plain-English summary)
   and a `slug` (kebab-case, at most 4 words, validated by a pydantic `field_validator`).
   Returns `None` on any failure — a request error, `timeout`/`e2e_timeout` exceeded, or a reply
-  that still fails to parse/validate after one retry — never raises. `_default_naming_model`
+  that still fails to parse/validate after one retry — never raises. `default_naming_model`
   picks a model the same way `klorb.permissions.risk_classifier._default_classifier_model`
   does: the first registered model whose `Model.klorb_capabilities()` reports `"NANO_CLASSIFIER"`
   (`ModelRegistry.find_by_capability`), falling back to `DEFAULT_SESSION_CLASSIFIER_MODEL`
   (`"openai/gpt-5-nano"`, which declares that capability in its packaged
-  `resources/models/gpt-5-nano.json`). `_thinking_effort_for` requests `{"effort": "low"}`
+  `resources/models/gpt-5-nano.json`). `thinking_effort_for` requests `{"effort": "low"}`
   when the resolved model is thinking-capable, so this one-shot summarization task doesn't
-  inherit a costlier provider-side reasoning default.
-* On success, `rename_session_id(old_id, slug)` replaces the random-nonce suffix of
-  `Session.id` (assigned at construction by `generate_session_id()`, see "Filesystem paths and
-  logging" below) with the derived `slug`, keeping the `yyyy-mm-dd-hh-mm` timestamp prefix —
-  e.g. `2026-07-19-14-30-happy-otter` becomes `2026-07-19-14-30-fix-auth-bug`.
-  `PromptSubmissionMixin._run_session_naming` also renames the session's already-open log file
-  to match (see [[paths-and-logging]]) and updates the TUI's `SESSION_NAME_ID` status line
-  (`"Session: <title>"`, between the prompt input and the footer) to the derived title.
-* On failure (or while `klorb.session_naming` is otherwise unavailable), `Session.id` keeps its
-  original random nonce, and the status line instead shows that same nonce
-  (`session_id_suffix(session.id)`) as its "title" — so the line always reflects the actual
-  session id rather than getting stuck on a generic placeholder.
-* Naming is attempted at most once per `Session` instance, tracked by `ReplApp.
-  _session_naming_pending` (`True` from construction and `/clear`; set `False` the moment
-  `_run_session_naming` runs, before it even knows whether naming will succeed) — so a
-  failed/timed-out attempt is never retried on a later prompt within the same session, and the
-  status line resets to `"New session..."` whenever a fresh, as-yet-unnamed `Session` replaces
-  the active one. Restoring the last saved session (see [[session-persistence]]) carries the
-  saved `Session.name` forward instead of re-triggering the classifier: `_session_naming_pending`
-  is left `False` and the status line shows `"Session: <title>"` when the save file has one,
-  or set `True` with the status line reset to `"New session..."` when it doesn't (an older save
-  file predating `Session.name`, or a session whose first-prompt naming never completed).
+  inherit a costlier provider-side reasoning default. When a `Session` has no `ProcessConfig`
+  (most unit tests), `_run_session_naming` falls back to `DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS`/
+  `_E2E_TIMEOUT_SECONDS` and `default_naming_model(self)` for the timeouts/model.
+* On success, `_run_session_naming` calls `rename_session_id(old_id, slug)` to replace the
+  random-nonce suffix of `Session.id` (assigned at construction by `generate_session_id()`, see
+  "Filesystem paths and logging" below) with the derived `slug`, keeping the `yyyy-mm-dd-hh-mm`
+  timestamp prefix — e.g. `2026-07-19-14-30-happy-otter` becomes `2026-07-19-14-30-fix-auth-bug`
+  — and applies it via `Session.set_id()`, which also renames `Session.root_id` to match
+  whenever `id`/`root_id` hadn't already diverged (see [[chainlink-task-tracking]] for why
+  `root_id`, not `id`, is what `get_chainlink_label()` returns — a renamed `id` with a
+  stale `root_id` would otherwise leave every chainlink issue created in the session labeled
+  with its original random nonce forever). `Session.name` is also set to the derived title.
+* `send_turn()` invokes `TurnEventHandlers.on_session_name_changed`, if given, exactly once —
+  with the derived `SessionName` on success, or `None` on failure — right after applying (or
+  failing to apply) the rename, so a caller can react. The TUI's reaction
+  (`PromptSubmissionMixin._handle_session_name_changed`) renames the session's already-open log
+  file to match on success, when session logging is enabled (see [[paths-and-logging]]), and
+  updates the `SESSION_NAME_ID` status line (`"Session: <title>"`, between the prompt input and
+  the footer) to the derived title; on failure it shows the session's own random nonce
+  (`session_id_suffix(session.id)`) as its "title" instead, so the line always reflects the
+  actual session id rather than getting stuck on a generic placeholder. A headless one-shot
+  invocation passes no `on_session_name_changed`, so its `Session` still gets renamed but
+  nothing reacts to it, and its session log file (if any) keeps its original name — log-file
+  management is TUI-only regardless of naming (see [[paths-and-logging]]).
+* Naming is attempted at most once per `Session` instance, tracked by `Session.
+  session_naming_pending` (a read-only view of `_session_naming_pending`, seeded `False` when a
+  `session_name` was already supplied to the constructor — a restored, already-named session —
+  and `True` otherwise; set `False` unconditionally the moment `send_turn()`'s naming block runs,
+  before it even knows whether naming will succeed) — so a failed/timed-out attempt is never
+  retried on a later turn within the same `Session`, and a fresh `Session` (a new session, or
+  `/clear`) always starts with naming pending again since it's constructed without a
+  `session_name`. Restoring the last saved session (see [[session-persistence]]) passes the
+  saved `Session.name` straight into the constructor, carrying it forward instead of
+  re-triggering the classifier; the TUI's status line is set to match right after construction:
+  `"Session: <title>"` when the save file has one, or `"New session..."` when it doesn't (an
+  older save file predating `Session.name`, or a session whose first-prompt naming never
+  completed) — in the latter case `session_naming_pending` is `True`, so the classifier still
+  runs on the next prompt submitted to the restored session.
 * `classifier.model` / `classifier.timeout` / `classifier.e2eTimeout` (`PROCESS_KEY_MAP`, top
   level — see [[process-and-session-config]]) configure
   `ProcessConfig.session_classifier_model`/`_timeout_seconds`/`_e2e_timeout_seconds`, defaulting
   to unset/`5.0`/`10.0`. Named generically (`classifier`, not `sessionNamer`) since this same
   small/cheap classifier model choice may be reused for other structured-output tasks beyond
   session naming.
-* While the classifier call is in flight, history shows an animated "Getting ready..." notice
-  (`klorb.tui.widgets.tool_call_widgets.GettingReadyStatic`) — the same crawling
+* While the classifier call is in flight, the TUI's history shows an animated "Getting ready..."
+  notice (`klorb.tui.widgets.tool_call_widgets.GettingReadyStatic`) — the same crawling
   bright-white-character animation `RunningToolCallStatic` uses for "Running...", via the
-  shared `klorb.tui.formatting.crawl_animation_text` helper.
+  shared `klorb.tui.formatting.crawl_animation_text` helper. `PromptSubmissionMixin._send_prompt`
+  mounts it before calling `Session.send_turn()` (only when `session_naming_pending` is still
+  `True`) and unmounts it from within the `on_session_name_changed` reaction, before mounting
+  `TurnWaitingStatic` for the turn itself — so the two "still working" notices never overlap.
 
 ## Usage
 

@@ -74,12 +74,18 @@ paths or calling `logging.basicConfig` itself.
     defaults ADR](
     ../adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md) for why
     one-shot prompts default to neither.
-  * If the interactive TUI's first-turn session-naming classifier renames `Session.id` (see
-    [[session-and-turns]]'s "Session naming" section), `PromptSubmissionMixin.
-    _run_session_naming` closes the current `FileHandler` (`configure_logging(repl_mode=True,
-    log_path=None)`), renames the log file on disk to `session_log_path()` of the new id, and
-    reopens `configure_logging` pointed at the renamed path — so the log file's own name always
-    tracks `session.id`, and no log content already written is lost across the rename.
+  * If the first-turn session-naming classifier renames `Session.id` (see [[session-and-turns]]'s
+    "Session naming" section) and session logging is enabled, the interactive TUI's
+    `PromptSubmissionMixin._handle_session_name_changed` (reacting to `Session.send_turn()`'s
+    `on_session_name_changed` callback) closes the current `FileHandler`
+    (`configure_logging(repl_mode=True, log_path=None)`), renames the log file on disk to
+    `session_log_path()` of the new id, and reopens `configure_logging` pointed at the renamed
+    path — so the log file's own name always tracks `session.id`, and no log content already
+    written is lost across the rename. This is TUI-only: a headless one-shot invocation's
+    `Session` still gets renamed (naming itself runs for every caller, see
+    [[session-and-turns]]), but nothing reacts to rename its log file, matching headless mode's
+    existing "no per-session log file by default" behavior (see [the one-shot logging
+    defaults ADR](../adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md)).
 * `klorb.logging_config` also exposes crash-log capture for the interactive REPL:
   * `crash_log_path(workspace_root: Path) -> Path` builds
     `<tempdir>/klorb-crash-<workspace basename>-<timestamp>.log` (the OS temp directory, not

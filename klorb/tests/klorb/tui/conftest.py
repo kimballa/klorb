@@ -80,20 +80,6 @@ def stub_force_exit() -> Iterator[MagicMock]:
         yield mock_force_exit
 
 
-@pytest.fixture(autouse=True)
-def stub_session_naming() -> Iterator[MagicMock]:
-    """Neutralize the first-turn session-naming classifier (`klorb.session_naming.
-    generate_session_name`) for the whole TUI suite: patched to return `None` (today's
-    "classifier unavailable" fallback) so submitting a prompt in an ordinary test doesn't send
-    an extra request through the test's `ApiProvider` mock and consume a queued response meant
-    for the turn itself. `tests/tui/mixins/test_prompt_submission.py`'s own naming-specific
-    tests re-patch this themselves, overriding this default."""
-    with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name", return_value=None,
-    ) as mock_generate_session_name:
-        yield mock_generate_session_name
-
-
 async def _invoke_clear_session(pilot: Pilot[None]) -> None:
     """Select "Clear session" from the inline palette (see
     docs/specs/command-palette-from-prompt.md), mirroring how a real user reaches it now that

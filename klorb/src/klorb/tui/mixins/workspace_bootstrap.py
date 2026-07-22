@@ -114,12 +114,11 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         self._update_status_bar()
         session_name_widget = self.query_one(f"#{SESSION_NAME_ID}", Static)
         if state.session_name is not None:
-            # A previously-named session was restored; the classifier already ran, so
-            # don't re-trigger it on the next prompt.
-            self._session_naming_pending = False
+            # A previously-named session was restored; `Session.__init__` seeds
+            # `session_naming_pending = False` from the `session_name` passed above, so the
+            # classifier won't re-trigger on the next prompt.
             session_name_widget.update(f"Session: {state.session_name}")
         else:
-            self._session_naming_pending = True
             session_name_widget.update(NEW_SESSION_LABEL)
         self._mount_restored_history(state.messages)
 

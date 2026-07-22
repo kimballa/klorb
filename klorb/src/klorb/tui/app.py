@@ -336,14 +336,6 @@ class ReplApp(
         from Textual's `Markdown.await_update` lock when the app is torn down mid-stream). Being a
         plain bool touched only from the event-loop thread, its check-and-set is atomic against
         other message handlers."""
-        self._session_naming_pending: bool = True
-        """Whether the first-turn session-naming classifier (`klorb.session_naming`) still
-        needs to run for the currently active `self._session`. Set back to `True` here and
-        wherever `self._session` is later replaced with a fresh `Session`
-        (`clear_session()`, `_maybe_restore_last_session()`), and to `False` by
-        `_run_session_naming` once it has attempted naming (success or fallback) for the
-        current `Session` instance -- so naming runs exactly once per `Session` object,
-        regardless of how many prompts are submitted to it."""
         self._interaction_lock = asyncio.Lock()
         """Serializes the mount/await/dismiss lifecycle of every interaction panel (permission
         ask, ask-user-questions, escalate-privileges) so at most one is ever mounted into

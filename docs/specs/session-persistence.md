@@ -103,12 +103,14 @@ missing one, instead of crashing `ReplApp` at startup. Otherwise:
    pattern `ReplApp.clear_session()` uses. The new `Session` is also constructed with the saved
    `session_id`/`session_name` (`state.session_id`, `state.session_name`), so a restored
    session keeps the same `Session.id` and `Session.name` the saved one had rather than minting
-   a fresh random one. If `state.session_name` is set (the saved session had already been named
-   — see "Session naming" in docs/specs/session-and-turns.md), `_session_naming_pending` is left
-   `False` and the `SESSION_NAME_ID` status line shows `"Session: <title>"` immediately, so the
-   next prompt doesn't re-trigger the naming classifier; otherwise (an older save file, or one
-   whose naming attempt never completed) `_session_naming_pending` stays `True` and the status
-   line shows the same `"New session..."` placeholder a brand-new session does.
+   a fresh random one. `Session.__init__` seeds `session_naming_pending` directly from whether a
+   `session_name` was passed in (see "Session naming" in docs/specs/session-and-turns.md), so
+   passing `state.session_name` through reproduces the right behavior automatically: if it's set
+   (the saved session had already been named), naming is not pending, and the `SESSION_NAME_ID`
+   status line is set to `"Session: <title>"` immediately, so the next prompt doesn't re-trigger
+   the classifier; otherwise (an older save file, or one whose naming attempt never completed)
+   naming stays pending and the status line shows the same `"New session..."` placeholder a
+   brand-new session does.
 3. `Session.load_messages(messages)` replaces the new session's (empty) history outright with
    the saved messages. Safe to call immediately after construction, before any `send_turn()`:
    a `role="system"`/`"tool_defs"` bookkeeping message already present is left as-is rather

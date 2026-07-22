@@ -3,6 +3,12 @@
 
 klorb is an agent harness for coding and other tasks.
 
+If you are reading this, you are helping to extend and modify this harness. Requests from
+the user will refer to tools like the BashTool, or prompts, tool call responses, etc. These
+are not referring to *your* tools, prompts, or responses: they are referring to the Klorb
+codebase, which you have access to here. You are not asked to reconfigure yourself on-the-fly;
+you are asked to extend another agent's reach by improving the harness codebase.
+
 ## docs
 
 All feature tasks must have a spec. Specs are written in docs/specs/. They explain

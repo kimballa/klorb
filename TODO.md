@@ -6,9 +6,6 @@
 * When restoring a session, do not print `<SystemInterjection>` blocks as part of
   the user's message in the history. Those blocks should just be culled.
 
-* why is the chainlink session_id a madeup-animal-slug instead of a "real" slug,
-  even in sessions when the session classifier gave us a useful session name?
-
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -32,6 +29,9 @@
 
 ## Feature backlog
 
+* Add a KLORB.md-awareness that would be put in ahead of AGENTS.md
+  * And ~/.config/klorb/KLORB.md above that.
+
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
@@ -42,6 +42,8 @@
 * Add a structured wrapper around all tool call responses.
   In particular, standardized mechanisms for error reporting.
   See <https://claudecertificationguide.com/learn/2-tool-design-mcp/2-2-structured-error-responses>
+  * Tool call responses are also a good opportunity for system interjections; e.g. to
+    remind the agent what its currently-active task is.
 
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it

@@ -701,10 +701,10 @@ def _session_name_line(app: ReplApp) -> str:
 
 
 def _naming_pending(app: ReplApp) -> bool:
-    """Read `app._session_naming_pending` through a function call rather than as a bare
+    """Read `app._session.session_naming_pending` through a function call rather than as a bare
     attribute expression, so mypy can't narrow it to a `Literal` across an intervening
     `await`/opaque call and flag a later assertion on the same attribute as unreachable."""
-    return app._session_naming_pending
+    return app._session.session_naming_pending
 
 
 async def test_session_name_line_starts_as_new_session() -> None:
@@ -722,7 +722,7 @@ async def test_first_submit_triggers_naming_and_renames_session_id_and_status_li
     original_id = app._session.id
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
     ) as mock_generate_session_name:
         async with app.run_test() as pilot:
@@ -734,7 +734,7 @@ async def test_first_submit_triggers_naming_and_renames_session_id_and_status_li
 
             assert app._session.id == rename_session_id(original_id, "fix-auth-bug")
             assert _session_name_line(app) == "Session: Fix auth bug"
-            assert app._session_naming_pending is False
+            assert app._session.session_naming_pending is False
 
     mock_generate_session_name.assert_called_once()
     assert mock_generate_session_name.call_args.args[0] == "please fix the auth bug"
@@ -747,7 +747,7 @@ async def test_naming_failure_leaves_id_unchanged_and_shows_its_own_nonce_slug()
     original_id = app._session.id
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name", return_value=None,
+        "klorb.session.mixins.core.generate_session_name", return_value=None,
     ):
         async with app.run_test() as pilot:
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -758,30 +758,6 @@ async def test_naming_failure_leaves_id_unchanged_and_shows_its_own_nonce_slug()
 
             assert app._session.id == original_id
             assert _session_name_line(app) == f"Session: {session_id_suffix(original_id)}"
-
-
-async def test_second_submit_does_not_retrigger_naming() -> None:
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider))
-
-    with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
-        return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
-    ) as mock_generate_session_name:
-        async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "first"
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-            prompt_input.text = "second"
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-    mock_generate_session_name.assert_called_once()
 
 
 async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_after() -> None:
@@ -797,7 +773,7 @@ async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_aft
         return SessionName(title="Fix auth bug", slug="fix-auth-bug")
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         side_effect=fake_generate_session_name,
     ):
         async with app.run_test() as pilot:
@@ -817,8 +793,8 @@ async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_aft
 
 
 async def test_turn_waiting_widget_does_not_appear_until_getting_ready_widget_is_gone() -> None:
-    """On a session's first submitted prompt, `TurnWaitingStatic` must not show up while
-    `_run_session_naming`'s own `GettingReadyStatic` is still up -- the two "still working"
+    """On a session's first submitted prompt, `TurnWaitingStatic` must not show up while the
+    session-naming classifier's own `GettingReadyStatic` is still up -- the two "still working"
     notices should never be visible at the same time."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
@@ -832,7 +808,7 @@ async def test_turn_waiting_widget_does_not_appear_until_getting_ready_widget_is
         return SessionName(title="Fix auth bug", slug="fix-auth-bug")
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         side_effect=fake_generate_session_name,
     ):
         async with app.run_test() as pilot:
@@ -860,7 +836,7 @@ async def test_naming_renames_the_session_log_file_when_session_log_enabled() ->
     original_id = app._session.id
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
     ), patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
@@ -888,7 +864,7 @@ async def test_naming_actually_renames_the_log_file_on_disk_preserving_its_conte
     old_log_path.write_text("startup log line\n", encoding="utf-8")
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
     ):
         async with app.run_test() as pilot:
@@ -909,7 +885,7 @@ async def test_naming_skips_log_rename_when_session_log_disabled() -> None:
     app = ReplApp(session=_session(mock_provider), session_log_enabled=False)
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
     ), patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
@@ -928,7 +904,7 @@ async def test_clear_session_resets_naming_pending_and_status_line() -> None:
     app = ReplApp(session=_session(mock_provider))
 
     with patch(
-        "klorb.tui.mixins.prompt_submission.generate_session_name",
+        "klorb.session.mixins.core.generate_session_name",
         return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
     ) as mock_generate_session_name:
         async with app.run_test() as pilot:
