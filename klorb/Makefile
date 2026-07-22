@@ -21,6 +21,7 @@ SHELL=/bin/bash
 DOCKER=docker
 UV=venv/bin/uv
 LOAD_VENV=export VIRTUAL_ENV="$(CURDIR)/venv"
+JSONLINT=jsonlint
 # Python executable to use when creating the venv. Can be overridden on the command line
 # (e.g. PYTHON=python3.12 make venv) or via the cloud session-start script.
 PYTHON ?= python3
@@ -68,6 +69,7 @@ lint:
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" src/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" tests/
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" evals/
+	find . -name "*.json" -exec $(JSONLINT) --quiet {} \;
 	markdownlint-cli2 --config ../.markdownlint-cli2.jsonc "src/klorb/resources/**/*.md"
 
 typecheck:

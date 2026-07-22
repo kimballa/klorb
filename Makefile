@@ -25,6 +25,7 @@ cloud_setup:
 	$(APT_GET) -y --fix-missing install bubblewrap curl
 	./bin/install_rust.sh
 	$(NPM) install -g markdownlint-cli2
+	$(NPM) install -g jsonlint
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
 
 # Lint documentation Markdown (docs/ and the root-level agent-instruction files), then
