@@ -11,6 +11,7 @@ subject to — and doesn't need to route through — the `.klorb/` self-tamperin
 `klorb.permissions.directory_access.privileged_dirs()`.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ from klorb.process_config import (
 )
 from klorb.schema_envelope import write_versioned_json
 from klorb.session import SessionConfig
+
+logger = logging.getLogger(__name__)
 
 _READ_DIRS_KEY = "readDirs"
 _WRITE_DIRS_KEY = "writeDirs"
@@ -75,6 +78,7 @@ def write_initial_project_config(workspace_root: Path, model_name: str, trusted:
             else {"deny": [], "ask": [], "allow": []}
         ),
     }
+    logger.info("Writing initial project config file at %s", project_config_path(workspace_root))
     write_versioned_json(
         project_config_path(workspace_root), {SESSION_DEFAULTS_KEY: session_defaults},
         schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)

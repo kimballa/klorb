@@ -137,9 +137,11 @@ from an active worker context — see
   then always pushes "Do you trust the workspace at `<path>`?", regardless of the first answer.
   If opened as a project, registers it (`TrustManager.register_project`) and writes its starter
   config (`write_initial_project_config`, burning in the *current* session's model) using the
-  trust answer; otherwise returns an unregistered `Workspace` carrying only the trust decision,
-  which lives in memory for the rest of this session's lifetime (never persisted, since there's
-  no project record to persist it to).
+  trust answer — unless the workspace already has a `.klorb/klorb-config.json` of its own
+  (e.g. a downloaded repository that ships one), which is kept as-is rather than overwritten
+  with the starter template; otherwise returns an unregistered `Workspace` carrying only the
+  trust decision, which lives in memory for the rest of this session's lifetime (never
+  persisted, since there's no project record to persist it to).
 * Either way, `_apply_workspace_config()` reconciles the live config against the (possibly new)
   `Workspace` (see below), then `_announce_workspace()` mounts one history notice: `"Working in
   project: <path>"` if trusted, or ``"The workspace at <path> is not trusted. Run `>Trust

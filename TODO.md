@@ -3,11 +3,11 @@
 
 ## Bugs
 
-* When you open a workspace and it asks you if you trust it or not, and you click 'yes',
-  it clobbers any existing .klorb/klorb-config.json with defaults.
-
 * The summary of a Bash tool call has a `(exit 1, 0.30s)` appended when it's
   done running. This should be on its own line, not the end of the command line.
+
+* When restoring a session, do not print `<SystemInterjection>` blocks as part of
+  the user's message in the history. Those blocks should just be culled.
 
 * why is the chainlink session_id a madeup-animal-slug instead of a "real" slug,
   even in sessions when the session classifier gave us a useful session name?

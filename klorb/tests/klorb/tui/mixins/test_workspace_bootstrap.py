@@ -40,6 +40,7 @@ from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import ToolCallStatic
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.last_session import read_last_session, write_last_session
+from klorb.workspace.workspace_init import write_initial_project_config
 
 
 async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -> None:
@@ -141,6 +142,40 @@ async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
     assert session_defaults["model"] == "burned/model"
     assert session_defaults["readDirs"]["allow"] == [str(project_root)]
     assert session_defaults["writeDirs"]["allow"] == [str(project_root)]
+
+
+async def test_bootstrap_keeps_an_existing_project_config_file(tmp_path: Path) -> None:
+    """A workspace that already ships its own `.klorb/klorb-config.json` (e.g. a downloaded
+    repository) must not have it clobbered with the starter template when the user opens it
+    as a project and trusts it."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    write_initial_project_config(project_root, "shipped/model", trusted=True)
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=project_root)
+    app = _repl_app_for_workspace(workspace, trust_manager, model="burned/model")
+
+    async with app.run_test() as pilot:
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # "Open as project?" -> Yes
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_YES_ID}")  # "Do you trust...?" -> Yes
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        assert f"Working in project: {project_root}" in _notice_texts(app)
+        assert app._session.config.workspace.trusted is True
+
+    resolved = trust_manager.resolve_workspace(project_root)
+    assert resolved.is_project is True
+    assert resolved.trusted is True
+
+    raw = read_versioned_json(project_config_path(project_root), expected_schema_name=CONFIG_SCHEMA_NAME)
+    assert raw[SESSION_DEFAULTS_KEY]["model"] == "shipped/model"
 
 
 async def test_confirm_screen_arrow_keys_move_focus_between_buttons(tmp_path: Path) -> None:

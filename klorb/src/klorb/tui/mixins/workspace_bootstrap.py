@@ -2,6 +2,8 @@
 """WorkspaceBootstrapMixin: workspace trust resolution, session restore, and the
 startup announcement flow for ReplApp."""
 
+import logging
+
 from textual import work
 from textual.containers import VerticalScroll
 from textual.widgets import Static
@@ -24,6 +26,8 @@ from klorb.workspace.workspace_init import (
     write_initial_project_config,
     write_session_defaults_to_project_config,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceBootstrapMixin(ReplAppBase):
@@ -125,8 +129,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         persistent record plus a starter `.klorb/klorb-config.json`), and whether to trust it.
         If opened as a project, registers it (`TrustManager.register_project`) and writes its
         starter config file (`write_initial_project_config`, burning in the session's
-        currently-active model); otherwise returns an unregistered `Workspace` carrying only
-        the trust decision, kept in memory for the rest of this session's lifetime (see
+        currently-active model) -- unless the workspace already ships its own
+        `.klorb/klorb-config.json` (e.g. a downloaded repository that ships one), which is
+        kept as-is; otherwise returns an unregistered `Workspace` carrying only the trust
+        decision, kept in memory for the rest of this session's lifetime (see
         `SessionConfig.workspace`).
         """
         assert self._trust_manager is not None
@@ -138,7 +144,13 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             ConfirmScreen(f"Do you trust the workspace at {workspace.path}?"))
         if open_as_project:
             new_workspace = self._trust_manager.register_project(workspace.path, trusted)
-            write_initial_project_config(workspace.path, self._process_config.session.model, trusted)
+            if project_config_path(workspace.path).is_file():
+                logger.debug(
+                    "Keeping existing project config at %s; skipping starter config write.",
+                    project_config_path(workspace.path))
+            else:
+                write_initial_project_config(
+                    workspace.path, self._process_config.session.model, trusted)
             return new_workspace
         return Workspace(path=workspace.path, is_project=False, trusted=trusted)
 
