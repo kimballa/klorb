@@ -10,6 +10,7 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 [`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
 [`-y` | `--auto-approve`] [`--log-tool-calls` | `--no-log-tool-calls`]
 [`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
+[`-V` | `--version`]
 
 `klorb init` [`--system` | `--user`] [`--force`]
 
@@ -157,6 +158,10 @@ COMMANDS below.
 
   Override the max tool calls allowed across the whole session before a turn
   fails. Defaults to the configured/process value.
+
+* `-V`, `--version`
+
+  Print the klorb version number and exit.
 
 ## ENVIRONMENT
 

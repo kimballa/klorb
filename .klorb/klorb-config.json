@@ -72,7 +72,8 @@
       "ask": [],
       "allow": [
         "workspace:implement-plan",
-        "workspace:add-python-dependency"
+        "workspace:add-python-dependency",
+        "workspace:add-cli-flag"
       ]
     },
     "domains": {

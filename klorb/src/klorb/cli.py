@@ -10,6 +10,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from klorb import __version__
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, session_log_path
 from klorb.models.model import Model
@@ -52,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
             "  show-config       Show the merged config from all config files.\n\n"
             "Run `klorb <subcommand> --help` to see subcommand-specific flags."
         ),
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "-m",

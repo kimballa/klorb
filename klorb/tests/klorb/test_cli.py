@@ -959,3 +959,27 @@ def test_run_show_config_cli_includes_session_config(
     session = payload["sessionDefaults"]
     assert session["model"] == "some/model"
     assert session["tools.maxCallsPerTurn"] == 10
+
+
+def test_version_flag_exits_with_version(capsys: pytest.CaptureFixture[str]) -> None:
+    from klorb import __version__
+
+    with patch("sys.argv", ["klorb", "--version"]):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_short_version_flag_exits_with_version(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from klorb import __version__
+
+    with patch("sys.argv", ["klorb", "-V"]):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    assert __version__ in capsys.readouterr().out

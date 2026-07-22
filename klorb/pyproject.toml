@@ -9,7 +9,7 @@
   description = "Your friendly neighborhood agent"
   readme = "README.md"
   license = "BSD-3-Clause"
-  version = "1.0.0" # Not really used by our system.
+  version = "0.1.0" # Not really used by our system.
   authors = [{ name = "Aaron Kimball", email = "akimball83@gmail.com" }]
   maintainers = [{ name = "Aaron Kimball", email = "akimball83@gmail.com" }]
   requires-python = ">= 3.12"
