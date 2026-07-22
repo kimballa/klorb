@@ -8,6 +8,7 @@ from klorb.tui.formatting import (
     crawl_animation_text,
     format_token_count,
     render_diff_content,
+    strip_system_interjections,
     summarize_reasoning_details,
 )
 
@@ -138,3 +139,85 @@ def test_render_diff_content_compact_view_clamps_at_the_start_of_the_hunk() -> N
     assert "- a" in compact
     assert "+ A" in compact
     assert "..." not in compact
+
+
+# --- strip_system_interjections ---
+
+
+def test_strip_system_interjections_removes_a_single_block() -> None:
+    text = (
+        '<SystemInterjection subject="AvailableSkills">\n'
+        "Here are the skills.\n"
+        "</SystemInterjection>\n"
+        "Hello, world!"
+    )
+    assert strip_system_interjections(text) == "Hello, world!"
+
+
+def test_strip_system_interjections_removes_multiple_blocks() -> None:
+    text = (
+        '<SystemInterjection subject="AvailableSkills">\n'
+        "Skills list.\n"
+        "</SystemInterjection>\n"
+        '<SystemInterjection subject="ProjectGuidance">\n'
+        "Context files.\n"
+        "</SystemInterjection>\n"
+        "What is 2 + 2?"
+    )
+    assert strip_system_interjections(text) == "What is 2 + 2?"
+
+
+def test_strip_system_interjections_preserves_user_text_with_angle_brackets() -> None:
+    """User text containing `<` that isn't a SystemInterjection must survive."""
+    text = "Use <div> tags in HTML."
+    assert strip_system_interjections(text) == "Use <div> tags in HTML."
+
+
+def test_strip_system_interjections_collapses_blank_lines() -> None:
+    """Removing blocks that leave double blank lines should collapse them."""
+    text = (
+        '<SystemInterjection subject="x">\n'
+        "body\n"
+        "</SystemInterjection>\n\n"
+        "user text"
+    )
+    assert strip_system_interjections(text) == "user text"
+
+
+def test_strip_system_interjections_returns_empty_string_for_interjection_only() -> None:
+    text = (
+        '<SystemInterjection subject="metadata">\n'
+        "Session started.\n"
+        "</SystemInterjection>"
+    )
+    assert strip_system_interjections(text) == ""
+
+
+def test_strip_system_interjections_handles_multiple_tags() -> None:
+    text = (
+        '<SystemInterjection subject="thing1">\n'
+        "First msg.\n"
+        "</SystemInterjection>\n"
+        "Actual user message\n"
+        '<SystemInterjection subject="thing2">\n'
+        "Second msg.\n"
+        "</SystemInterjection>\n"
+    )
+    assert strip_system_interjections(text) == "Actual user message"
+
+
+def test_strip_system_interjections_handles_multiline_body() -> None:
+    text = (
+        '<SystemInterjection subject="AvailableSkills">\n'
+        "Line one.\n"
+        "Line two.\n"
+        "Line three.\n"
+        "</SystemInterjection>\n"
+        "Actual user prompt."
+    )
+    assert strip_system_interjections(text) == "Actual user prompt."
+
+
+def test_strip_system_interjections_no_interjections_unchanged() -> None:
+    text = "Just a normal user message."
+    assert strip_system_interjections(text) == text

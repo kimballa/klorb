@@ -28,6 +28,7 @@ from klorb.tui.formatting import (
     render_diff_content,
     render_full_file_content,
     render_read_preview_content,
+    strip_system_interjections,
     summarize_reasoning_details,
 )
 from klorb.tui.panels.preview_screens import DiffDetailScreen, ReadDetailScreen
@@ -413,7 +414,8 @@ class RenderingMixin(ReplAppBase):
         }
         for message in messages:
             if message.role == "user":
-                history.mount(Static(message.content, classes="prompt", markup=False))
+                display_content = strip_system_interjections(message.content)
+                history.mount(Static(display_content, classes="prompt", markup=False))
             elif message.role == "assistant":
                 text = message.content
                 if message.processing_state == "aborted":

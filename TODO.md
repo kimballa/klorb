@@ -3,9 +3,6 @@
 
 ## Bugs
 
-* When restoring a session, do not print `<SystemInterjection>` blocks as part of
-  the user's message in the history. Those blocks should just be culled.
-
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML

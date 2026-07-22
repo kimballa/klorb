@@ -6,6 +6,7 @@ no `self`, just a value in and a value out.
 import importlib.resources
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -313,3 +314,26 @@ def _assemble_lines(lines: list[str | tuple[str, str]]) -> Content:
         parts.append("\n")
         parts.append(line)
     return Content.assemble(*parts)
+
+
+_SYSTEM_INTERJECTION_RE = re.compile(
+    r"<SystemInterjection\s+subject=\"[^\"]*\">\n.*?\n</SystemInterjection>\n?",
+    re.DOTALL,
+)
+"""Matches a `<SystemInterjection subject="...">` block (opening tag, any content,
+closing tag) including the trailing newline, so stripping leaves no orphan blank lines."""
+
+
+def strip_system_interjections(text: str) -> str:
+    """Remove every `<SystemInterjection>` block from `text`, collapsing any resulting
+    runs of blank lines down to at most one, and stripping leading/trailing whitespace.
+
+    Used by `_mount_restored_history` to cull harness-injected interjections from
+    persisted user messages before displaying them in the TUI history scroll — the
+    interjections belong in the agent's context but not in the human-facing conversation
+    view.
+    """
+    cleaned = _SYSTEM_INTERJECTION_RE.sub("", text)
+    # Collapse runs of blank lines (including the gaps left by removed blocks).
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
