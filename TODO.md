@@ -35,8 +35,6 @@
 
 ## Feature backlog
 
-* moonshotai/kimi-k3 - Give Kimi k3 a spin
-
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.

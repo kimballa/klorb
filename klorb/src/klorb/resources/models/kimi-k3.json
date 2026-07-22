@@ -1,0 +1,20 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "moonshotai/kimi-k3",
+  "family": "kimi",
+  "model_version": "3",
+  "knowledge_cutoff": null,
+  "settings": {},
+  "capabilities": {
+    "vision": true,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 1048576,
+    "function_calling": true,
+    "streaming": true
+  },
+  "cache_mgmt_style": "AUTOMATIC"
+}
