@@ -6,6 +6,7 @@
 
 SHELL:=/bin/bash
 APT_GET=sudo apt-get
+NPM=npm
 
 COMMANDS=help cloud_setup lint
 
@@ -23,7 +24,7 @@ cloud_setup:
 	$(APT_GET) update -qq || true
 	$(APT_GET) -y --fix-missing install bubblewrap curl
 	./bin/install_rust.sh
-	npm install -g markdownlint-cli2
+	$(NPM) install -g markdownlint-cli2
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
 
 # Lint documentation Markdown (docs/ and the root-level agent-instruction files), then
