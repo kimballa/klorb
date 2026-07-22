@@ -1,9 +1,8 @@
 ---
 name: create-edit-skill
-description: >
-  How to author or edit a klorb skill: pick the right tier directory, escalate privileges for
+description: "How to author or edit a klorb skill: pick the right tier directory, escalate privileges for
   it if needed, then create or edit SKILL.md (and any supporting files) with the ordinary file
-  tools. Use when the user asks to write, add, change, or fix a skill.
+  tools. Use when the user asks to write, add, change, or fix a skill."
 ---
 
 # Creating and editing a klorb skill
@@ -45,15 +44,13 @@ approval decision is keyed on. Use a lower-kebab-case slug with no path separato
 
 ## 2. `SKILL.md` shape
 
-`SKILL.md` opens with YAML frontmatter carrying `name` and `description`, then a markdown body of
+`SKILL.md` MUST open with YAML frontmatter carrying `name` and `description`, then a markdown body of
 the actual instructions:
 
 ```markdown
 ---
 name: my-skill-name
-description: >
-  A sentence or two saying what this skill does and when to use it. This exact text is what
-  gets listed for the model, so keep it short and specific.
+description: A sentence or two saying what this skill does and when to use it. This exact text is what gets listed for the model, so keep it short and specific.
 ---
 
 <the skill's actual instructions>

@@ -168,5 +168,6 @@
   "watchdog.timeout": 10.0,
   "compatibility.claudeMarkdown": false,
   "compatibility.claudeSkills": false,
+  "ui.taskSidebar.visible": false,
   "ui.theme": null
 }

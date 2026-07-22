@@ -310,7 +310,7 @@ def raise_if_skill_not_allowed(
         return
     detail = f": {description}" if description else ""
     raise_if_not_allowed(
-        verdict, resource_description=f"activate skill {namespace}/{name}{detail}", skill=skill_id)
+        verdict, resource_description=f"activate skill {namespace}:{name}{detail}", skill=skill_id)
 
 
 def skill_activation_payload(skill: SkillLocation) -> dict[str, Any]:

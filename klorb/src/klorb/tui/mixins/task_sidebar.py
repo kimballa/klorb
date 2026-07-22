@@ -6,6 +6,7 @@ from typing import Any
 
 from textual import work
 
+from klorb.process_config import persist_task_sidebar
 from klorb.session import ToolCallEvent
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import (
@@ -38,6 +39,7 @@ class TaskSidebarMixin(ReplAppBase):
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
         self._task_sidebar_shown = not self._task_sidebar_shown
         sidebar.display = self._task_sidebar_shown
+        persist_task_sidebar(self._task_sidebar_shown)
         if self._task_sidebar_shown:
             self._refresh_task_sidebar()
 

@@ -389,7 +389,7 @@ class ReplApp(
         and in between turns."""
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
-        self._task_sidebar_shown: bool = False
+        self._task_sidebar_shown: bool = self._process_config.task_sidebar_shown
         """Whether the `TaskSidebar` panel (Ctrl+T) is currently visible -- see
         `TaskSidebarMixin.action_toggle_task_sidebar`."""
         if self._process_config.theme is not None and self._process_config.theme in self.available_themes:

@@ -3,6 +3,9 @@
 
 ## Bugs
 
+* When you open a workspace and it asks you if you trust it or not, and you click 'yes',
+  it clobbers any existing .klorb/klorb-config.json with defaults.
+
 * The summary of a Bash tool call has a `(exit 1, 0.30s)` appended when it's
   done running. This should be on its own line, not the end of the command line.
 
@@ -31,9 +34,6 @@
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
 ## Feature backlog
-
-* Task List can be toggled with ^T; the open/closed state should be tracked in the user's homedir
-  config file as a process_config value, and restored the next time you open klorb.
 
 * moonshotai/kimi-k3 - Give Kimi k3 a spin
 

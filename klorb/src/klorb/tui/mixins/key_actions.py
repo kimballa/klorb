@@ -15,11 +15,12 @@ from klorb.process_config import user_config_path
 from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
-from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
+from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID, TASK_SIDEBAR_ID
 from klorb.tui.formatting import random_greeting
 from klorb.tui.panels.confirm_screen import SaveOnQuitScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
+from klorb.tui.widgets.task_sidebar import TaskSidebar
 from klorb.watchdog import force_exit
 from klorb.workspace.last_session import clear_last_session, write_last_session
 
@@ -375,6 +376,10 @@ class KeyActionsMixin(ReplAppBase):
         message as the first turn.
         """
         configure_tiktoken_cache_env()
+
+        # Initialize task sidebar visibility from config
+        sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
+        sidebar.display = self._task_sidebar_shown
 
         self._watchdog.start()
         if self._watchdog.enabled:
