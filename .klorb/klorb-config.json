@@ -60,7 +60,8 @@
         ["pip", "show", "*"],
         ["sleep", "*"],
         ["grep", "-A", "*", "*"],
-        ["tail", "*", "*"]
+        ["tail", "*", "*"],
+        ["markdownlint-cli2", "--config", "*", "*"]
       ]
     },
     "shareEnv": [

@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message
 from klorb.process_config import ProcessConfig
@@ -133,6 +135,7 @@ def test_claude_md_read_when_compatibility_enabled(tmp_path: Path) -> None:
     assert body is not None
     assert "agents content" in body
     assert "claude content" in body
+    # When no .klorb/INSTRUCTIONS.md exists, AGENTS.md gets priority 1
     assert '<ContextFile filename="AGENTS.md" priority="1">' in body
     assert '<ContextFile filename="CLAUDE.md" priority="2">' in body
 
@@ -221,3 +224,80 @@ def test_send_turn_only_prepends_interjection_once(tmp_path: Path) -> None:
     assert len(user_msgs) == 2
     assert "ProjectGuidance" in user_msgs[0].content
     assert "ProjectGuidance" not in user_msgs[1].content
+
+
+def test_instructions_md_in_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from klorb.session.mixins import skills
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "INSTRUCTIONS.md").write_text("config dir instructions")
+    (tmp_path / "AGENTS.md").write_text("agents content")
+
+    monkeypatch.setattr(skills, "KLORB_CONFIG_DIR", config_dir)
+
+    session = _session(tmp_path)
+    body = session._build_context_files_interjection()
+
+    assert body is not None
+    assert "config dir instructions" in body
+    assert "agents content" in body
+    assert '<ContextFile filename="KLORB_CONFIG_DIR/INSTRUCTIONS.md" priority="1">' in body
+    assert '<ContextFile filename="AGENTS.md" priority="2">' in body
+    assert body.index("KLORB_CONFIG_DIR/INSTRUCTIONS.md") < body.index("AGENTS.md")
+
+
+def test_instructions_md_priority_ordering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from klorb.session.mixins import skills
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "INSTRUCTIONS.md").write_text("config dir instructions")
+    (tmp_path / ".klorb").mkdir()
+    (tmp_path / ".klorb" / "INSTRUCTIONS.md").write_text("project instructions")
+    (tmp_path / "AGENTS.md").write_text("agents content")
+    (tmp_path / "CLAUDE.md").write_text("claude content")
+
+    monkeypatch.setattr(skills, "KLORB_CONFIG_DIR", config_dir)
+
+    session = _session(tmp_path, compatibility_claude_markdown=True)
+    body = session._build_context_files_interjection()
+
+    assert body is not None
+    # Priority order: config dir, .klorb/INSTRUCTIONS.md, AGENTS.md, CLAUDE.md
+    assert '<ContextFile filename="KLORB_CONFIG_DIR/INSTRUCTIONS.md" priority="1">' in body
+    assert '<ContextFile filename=".klorb/INSTRUCTIONS.md" priority="2">' in body
+    assert '<ContextFile filename="AGENTS.md" priority="3">' in body
+    assert '<ContextFile filename="CLAUDE.md" priority="4">' in body
+    # Verify ordering
+    assert body.index("KLORB_CONFIG_DIR/INSTRUCTIONS.md") < body.index(".klorb/INSTRUCTIONS.md")
+    assert body.index(".klorb/INSTRUCTIONS.md") < body.index("AGENTS.md")
+    assert body.index("AGENTS.md") < body.index("CLAUDE.md")
+
+
+def test_instructions_md_only_when_untrusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from klorb.session.mixins import skills
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "INSTRUCTIONS.md").write_text("config dir instructions")
+    (tmp_path / ".klorb").mkdir()
+    (tmp_path / ".klorb" / "INSTRUCTIONS.md").write_text("project instructions")
+    (tmp_path / "AGENTS.md").write_text("agents content")
+    (tmp_path / "CLAUDE.md").write_text("claude content")
+
+    monkeypatch.setattr(skills, "KLORB_CONFIG_DIR", config_dir)
+
+    session = _session(tmp_path, compatibility_claude_markdown=True, trusted=False)
+    interjection = session._build_context_files_interjection()
+    assert interjection is not None
+    assert "config dir instructions" in interjection
+    assert "project instructions" not in interjection
+    assert "agents" not in interjection
+    assert "claude" not in interjection

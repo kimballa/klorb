@@ -93,6 +93,7 @@ COMMANDS below.
   current directory is a trusted workspace, the per-project config layer is
   included; otherwise it's skipped. `--config` layers an additional config
   file on top of the usual stack. Exit status is `0` on success.
+
 ## OPTIONS
 
 * `-m` *PROMPT*, `--message` *PROMPT*
@@ -186,116 +187,153 @@ COMMANDS below.
   nor `tools.logCalls` is set; an explicit flag or config key overrides this.
   See `docs/specs/tool-call-logging.md`.
 
+## FILES
+
+### Config file stack
+
+klorb merges `klorb-config.json` files in increasing order of precedence:
+
+1. Built-in defaults (`klorb.resources/default-config.json`) — shipped inside
+   every klorb install, never missing.
+2. `/etc/klorb/klorb-config.json` (or the file named by `$KLORB_ETC_CONFIG`).
+3. `$KLORB_CONFIG_DIR/klorb-config.json` (default `~/.config/klorb/klorb-config.json`).
+4. `<workspace>/.klorb/klorb-config.json` — only read when the workspace is trusted.
+5. `--config` on the command line, if given.
+
+Later layers override earlier ones. Each layer may contain a `sessionDefaults` key
+with session-scoped settings nested inside it.
+
+See `docs/specs/process-and-session-config.md` for the full config schema and
+`docs/specs/persisted-json-schema-versioning.md` for the on-disk format.
+
+### Context instruction files
+
+klorb reads project-supplied instruction files into the model's context on the
+very first turn of a trusted workspace. Files are read in priority order (highest
+first); the model uses the priority tag to decide which file wins on conflict:
+
+1. `$KLORB_CONFIG_DIR/INSTRUCTIONS.md` — durable, per-install instructions
+   (default `~/.config/klorb/INSTRUCTIONS.md`).
+2. `<workspace>/.klorb/INSTRUCTIONS.md` — durable per-project instructions kept
+   alongside `klorb-config.json`.
+3. `<workspace>/AGENTS.md` — General root-level convention.
+4. `<workspace>/CLAUDE.md` — only when `compatibility.claudeMarkdown` is `true`
+   in the config file stack.
+
+None of the workspace files are read (or even stat-ed) when the workspace is untrusted.
+See `docs/specs/workspace-context-files.md` for details.
+
 ## EXAMPLES
 
 Start the interactive REPL with the default model:
 
-```
+```bash
 klorb
 ```
 
 Send a single prompt and print the response:
 
-```
+```bash
 klorb -m "What is the capital of France?"
 ```
 
 Send a single prompt to a specific model:
 
-```
+```bash
 klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
 ```
 
 Start the REPL without writing a session log:
 
-```
+```bash
 klorb --no-session-log
 ```
 
 Send a one-shot prompt and also write a session log:
 
-```
+```bash
 klorb --session-log -m "What is 2+2?"
 ```
 
 Start the REPL with a starting message, then keep chatting:
 
-```
+```bash
 klorb -m "What is 2+2?" --interactive
 ```
 
 Start the REPL with settings from an extra config file, on top of the usual
 `/etc`, per-user, and per-project `klorb-config.json` files:
 
-```
+```bash
 klorb --config ./ci-defaults.json
 ```
 
 Send a one-shot prompt that auto-approves any tool-permission "ask" verdict
 it hits, without an interactive prompt to confirm it:
 
-```
+```bash
 klorb -y -m "Clean up this directory."
 ```
 
 Bootstrap a per-user config file and `~/.local/bin/klorb` symlink:
 
-```
+```bash
 klorb init
 ```
 
 Send a one-shot prompt and record every tool call to `tool-calls.log`:
 
-```
+```bash
 klorb --log-tool-calls -m "List the files in this directory."
 ```
 
 Force tool-call logging off even though `LOG_TOOL_CALLS=1` is set in the
 environment:
 
-```
+```bash
 klorb --no-log-tool-calls -m "List the files in this directory."
 ```
+
 Dump the resolved system prompt and tool definitions for the default
 operator role:
 
-```
+```bash
 klorb system-prompt
 ```
 
 Dump the system prompt for a different role and model:
 
-```
+```bash
 klorb system-prompt --role auditor --model openai/gpt-5-nano
 ```
 
 List every discovered model as a table:
 
-```
+```bash
 klorb models
 ```
 
 List just the model names, for scripting:
 
-```
+```bash
 klorb models --brief
 ```
 
 List every model as JSON, with live per-token pricing:
 
-```
+```bash
 klorb models --json --costs
 ```
 
 Show the merged config from all config files:
 
-```
+```bash
 klorb show-config
 ```
 
 Show the merged config with an extra config file layered on top:
 
-```
+```bash
 klorb show-config --config ./ci-defaults.json
 ```
 

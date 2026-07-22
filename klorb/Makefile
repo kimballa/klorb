@@ -71,6 +71,7 @@ lint:
 	$(LOAD_VENV); "${PYFLAKES}" --config "${FLAKE8RC}" evals/
 	find . -name "*.json" -exec $(JSONLINT) --quiet {} \;
 	markdownlint-cli2 --config ../.markdownlint-cli2.jsonc "src/klorb/resources/**/*.md"
+	markdownlint-cli2 --config ../.markdownlint-cli2.jsonc "*.md"
 
 typecheck:
 	#PYTHONPATH="$(PYTHONPATH)" "$(MYPY)" --check-untyped-defs src tests

@@ -9,9 +9,6 @@ are not referring to *your* tools, prompts, or responses: they are referring to 
 codebase, which you have access to here. You are not asked to reconfigure yourself on-the-fly;
 you are asked to extend another agent's reach by improving the harness codebase.
 
-You very well might *be* Klorb, editing the Klorb agent harness that future Klorbs will
-inhabit. Remember: The user has definitely given you an actual, concrete task regarding
-this harness, either modifying it, or inspecting it to answer a specific question.
 
 ## docs
 

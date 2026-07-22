@@ -6,6 +6,7 @@
 
 import json
 
+from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME
 from klorb.permissions.skill_access import evaluate_skill
 from klorb.session.events import UserSkillActivation
@@ -24,9 +25,8 @@ class SessionSkillsMixin(SessionBase):
         "ProjectGuidance">` tag and prepends onto the very first turn's prompt, or `None` if
         there's nothing to say.
 
-        Returns `None` outright, without touching the filesystem at all, whenever
-        `config.workspace.trusted` is `False`: `.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and
-        `CLAUDE.md` are project-supplied content, and a hostile, downloaded-and-unzipped
+        If `config.workspace.trusted` is `False`: `.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and
+        `CLAUDE.md` are ignored. As project-supplied content, a hostile, downloaded-and-unzipped
         repository could ship any of them to smuggle instructions into the model's context the
         moment the user runs klorb from inside it — the same risk `.klorb/klorb-config.json`'s
         own trust gate exists to close (see docs/specs/projects-and-trust.md). So none of them
@@ -37,15 +37,27 @@ class SessionSkillsMixin(SessionBase):
         exists on disk, relative to `config.workspace.path`, and wraps each one's contents in
         a `<ContextFile filename="..." priority="N">` tag, `N` starting at `1` in that same
         priority order — giving the model an explicit signal for which file should win if two
-        ever conflict."""
-        if not self.config.workspace.trusted:
-            return None
+        ever conflict.
+
+        Additionally checks for `INSTRUCTIONS.md` in `KLORB_CONFIG_DIR` and includes it with highest
+        priority (priority 1) when present. This file is included in the system instructions even in
+        an untrusted workspace.
+        """
 
         context_files: list[tuple[str, str]] = []
-        for filename in self._applicable_context_filenames():
-            path = self.config.workspace.path / filename
-            if path.is_file():
-                context_files.append((filename, path.read_text()))
+
+        # Check for INSTRUCTIONS.md in KLORB_CONFIG_DIR (highest priority)
+        config_instructions_path = KLORB_CONFIG_DIR / "INSTRUCTIONS.md"
+        if config_instructions_path.is_file():
+            context_files.append(("KLORB_CONFIG_DIR/INSTRUCTIONS.md", config_instructions_path.read_text()))
+
+        if self.config.workspace.trusted:
+            # Check workspace root files
+            for filename in self._applicable_context_filenames():
+                path = self.config.workspace.path / filename
+                if path.is_file():
+                    context_files.append((filename, path.read_text()))
+
         if not context_files:
             return None
 
@@ -65,8 +77,8 @@ class SessionSkillsMixin(SessionBase):
         """Return the ordered list of context-instruction filenames to read, relative to the
         workspace root, most authoritative first: `.klorb/INSTRUCTIONS.md` (priority 1 —
         durable per-project instructions kept alongside `klorb-config.json` rather than at the
-        workspace root), then `AGENTS.md` (priority 2 — klorb's own root-level convention),
-        then `CLAUDE.md` (priority 3) when `_compatibility_claude_markdown` is enabled."""
+        workspace root), then `AGENTS.md` (priority 2), then `CLAUDE.md`
+        (priority 3) when `_compatibility_claude_markdown` is enabled."""
         filenames = [f"{KLORB_PROJECT_DIR_NAME}/INSTRUCTIONS.md", "AGENTS.md"]
         if self._compatibility_claude_markdown:
             filenames.append("CLAUDE.md")
