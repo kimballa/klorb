@@ -3,9 +3,6 @@
 
 ## Bugs
 
-* The summary of a Bash tool call has a `(exit 1, 0.30s)` appended when it's
-  done running. This should be on its own line, not the end of the command line.
-
 * When restoring a session, do not print `<SystemInterjection>` blocks as part of
   the user's message in the history. Those blocks should just be culled.
 

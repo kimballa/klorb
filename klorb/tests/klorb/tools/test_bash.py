@@ -739,7 +739,7 @@ def test_summary_leads_with_intent_ahead_of_the_command(tmp_path: Path) -> None:
     args = {"command": "echo hi", "intent": "Say hi", "shell_lifetime": "command"}
     result = tool.apply(args)
 
-    assert tool.summary(args, result) == f"Bash: Say hi\n$ echo hi (ok, {result['runtime']:.2f}s)"
+    assert tool.summary(args, result) == f"Bash: Say hi\n$ echo hi\n(ok, {result['runtime']:.2f}s)"
 
 
 def test_summary_falls_back_to_the_bare_command_with_no_intent(tmp_path: Path) -> None:
@@ -752,7 +752,7 @@ def test_summary_falls_back_to_the_bare_command_with_no_intent(tmp_path: Path) -
     result = tool.apply(args)
     args_without_intent = {key: value for key, value in args.items() if key != "intent"}
 
-    assert tool.summary(args_without_intent, result) == f"Bash: echo hi (ok, {result['runtime']:.2f}s)"
+    assert tool.summary(args_without_intent, result) == f"Bash: echo hi\n(ok, {result['runtime']:.2f}s)"
 
 
 # --- sandboxed execution (opt-in; needs a real, working bwrap) ---

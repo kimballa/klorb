@@ -1273,7 +1273,7 @@ class BashTool(InterruptibleTool):
         if not isinstance(result, dict):
             return f"Bash: {label}"
         status = "ok" if result.get("success") else f"exit {result.get('exit_status')}"
-        return f"Bash: {label} ({status}, {result.get('runtime', 0):.2f}s)"
+        return f"Bash: {label}\n({status}, {result.get('runtime', 0):.2f}s)"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Same as the default pretty-JSON rendering, but with inline `stdout`/`stderr` capped
