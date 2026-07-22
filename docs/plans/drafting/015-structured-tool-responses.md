@@ -80,11 +80,13 @@ This has three problems this plan fixes together, since they all touch the same 
   plan.
 * `WebFetchTool`'s ad hoc `"error"` result key is retired in favor of raising (`ValueError` /
   `ToolCallError`), so the envelope's `is_error`/`error_message` become the single source of
-  truth there, matching what `error_category`/`is_retryable` are for.
+  truth there, matching what `error_category`/`is_retryable` are for. **Locked in** -- see
+  "Changes to existing files" below.
 * `BashTool` keeps its existing non-raising, rich-result-dict design for a failed command
   (see "Design decision: Bash exit status" below) -- this is the one deliberate deviation from
-  "the envelope's `response_body` is `None` whenever `is_error` is `True`", and is called out
-  explicitly for review rather than silently implemented.
+  "the envelope's `response_body` is `None` whenever `is_error` is `True`". **Locked in**: this
+  plan implements the `is_success()`-driven `business_logic` categorization described there, not
+  a literal `BashTool.apply()` raise.
 
 ## New module: `klorb/src/klorb/tools/response_envelope.py`
 
@@ -212,10 +214,10 @@ would cycle.
 No klorb call site raises `"transient"` today -- there's no built-in Python exception that
 uniquely means "retryable network hiccup" the way `PermissionError` does for permission. It
 exists in the enum for a tool to opt into explicitly via `ToolCallError(msg,
-category="transient")`; `WebFetchTool`'s timeout/connection-error cleanup below is the first
-(and, for this plan, only) user of it.
+category="transient")`; `WebFetchTool`'s timeout/connection-error/HTTP-429 cleanup below is the
+first (and, for this plan, only) user of it.
 
-## Design decision: Bash exit-status handling (flagged for review)
+## Design decision: Bash exit-status handling (locked in)
 
 The user-facing request for this plan says "Bash tool exit status non zero should be a more
 generic `ToolCallError` that routes to the category of business_logic." Implemented literally --
@@ -255,9 +257,12 @@ overrides, or its three result-construction call sites, and without losing `stdo
 failed command (arguably the single most useful part of a failed command's response). The
 tradeoff is that `response_body` is no longer unconditionally `None` when `is_error` is `True` --
 this is the one place in the envelope's contract with an exception, and it's why this section
-exists as its own callout rather than being folded silently into the assignment table above. If
-the intent was specifically that `BashTool.apply()` itself must raise, say so and this plan's
-Bash section gets reworked before implementation.
+exists as its own callout rather than being folded silently into the assignment table above.
+
+**Decision: accepted as written above.** `BashTool.apply()`'s internals, `summary()`,
+`detail_view()`, and `is_success()` are unchanged; the `business_logic` categorization is applied
+one layer up in `_run_tool_calls`, exactly as described. Nothing in `bash.py` itself changes for
+this plan.
 
 ## Changes to existing files
 
@@ -317,14 +322,23 @@ Bash section gets reworked before implementation.
   json.dumps(envelope.to_wire_dict())`.
 * `_format_tool_response_content` itself is deleted (its whole job moves into the step above).
 
-**`klorb/src/klorb/tools/web/fetch.py`**
+**`klorb/src/klorb/tools/web/fetch.py`** -- **locked in**
+
 * Remove the `{"error": ...}` result-dict pattern (lines 174, 181, 203, 221, 225, 233, 282, 319,
   345 -- see Problem #2) in favor of raising:
   * Unsupported `method` (line 172-175): `raise ValueError(...)` (`validation`).
   * `parse_domain` failure (line 178-181): let the existing `ValueError` from `parse_domain`
     propagate instead of catching and re-wrapping it into a dict (`validation`).
   * `httpx.TimeoutException`/`httpx.RequestError` (lines 219-226): `raise ToolCallError(...,
-    category="transient")` -- this plan's one real user of `"transient"`.
+    category="transient")`.
+  * **HTTP 429 from the fetched server** (new check, right after `response_code = response.
+    status_code` at line 237, before the body is read): `if response_code == 429: raise
+    ToolCallError(f"Fetch {url} was rate-limited (429).", category="transient")` -- a 429 is the
+    canonical retryable-later case and shouldn't be handed back as an ordinary `response_code`
+    inside a successful `response_body` the way a 200/404/500 is. Any other status code
+    (including other 4xx/5xx) is left exactly as today -- a normal, successful `response_body`
+    carrying `response_code`, since the fetch itself worked and the model needs to see the actual
+    status to decide what to do next.
   * "No session available for spill" (lines 319, 345): `raise ToolCallError(..., 
     category="business_logic")` -- not a bad argument, a missing-infrastructure precondition.
   * The three `user_cancel`/`body_exceeded_max_bytes` dicts (lines 203, 233, 282, 309) are **not**
@@ -397,6 +411,6 @@ empty-list omission and `classify_exception`'s dispatch table directly.
   real regression is more likely to show up there than in a narrowly-scoped new test)
 * New `klorb/tests/klorb/tools/test_response_envelope.py` per "Tests to update" above.
 * Manually inspect one full transcript (`--log-tool-calls`, or a TUI session) for a mixed
-  success/`ValueError`/`PermissionError`/Bash-failure/WebFetch-timeout run, confirming the
-  envelope JSON is well-formed and the model still behaves sensibly reading it (no regression in
-  task completion behavior from the added JSON wrapping).
+  success/`ValueError`/`PermissionError`/Bash-failure/WebFetch-timeout/WebFetch-429 run,
+  confirming the envelope JSON is well-formed and the model still behaves sensibly reading it (no
+  regression in task completion behavior from the added JSON wrapping).
