@@ -335,10 +335,17 @@ this plan.
     status_code` at line 237, before the body is read): `if response_code == 429: raise
     ToolCallError(f"Fetch {url} was rate-limited (429).", category="transient")` -- a 429 is the
     canonical retryable-later case and shouldn't be handed back as an ordinary `response_code`
-    inside a successful `response_body` the way a 200/404/500 is. Any other status code
-    (including other 4xx/5xx) is left exactly as today -- a normal, successful `response_body`
-    carrying `response_code`, since the fetch itself worked and the model needs to see the actual
-    status to decide what to do next.
+    inside a successful `response_body` the way a 200/404/500 is.
+  * **HTTP 401/403 from the fetched server** (same new check, alongside the 429 one): `if
+    response_code in (401, 403): raise ToolCallError(f"Fetch {url} was rejected ({response_code}
+    {response_text}).", category="permission")` -- the remote server's own auth/authorization
+    rejection, distinct from (and checked after) klorb's own domain-permission-ask
+    (`raise_if_not_allowed(..., url=url)` at line 191-195, which governs whether klorb will fetch
+    the domain at all, before any request is sent). Not retryable, same as any other `permission`
+    result.
+  * Any other status code (200, other 4xx/5xx besides 401/403/429) is left exactly as today -- a
+    normal, successful `response_body` carrying `response_code`, since the fetch itself worked and
+    the model needs to see the actual status to decide what to do next.
   * "No session available for spill" (lines 319, 345): `raise ToolCallError(..., 
     category="business_logic")` -- not a bad argument, a missing-infrastructure precondition.
   * The three `user_cancel`/`body_exceeded_max_bytes` dicts (lines 203, 233, 282, 309) are **not**
@@ -411,6 +418,7 @@ empty-list omission and `classify_exception`'s dispatch table directly.
   real regression is more likely to show up there than in a narrowly-scoped new test)
 * New `klorb/tests/klorb/tools/test_response_envelope.py` per "Tests to update" above.
 * Manually inspect one full transcript (`--log-tool-calls`, or a TUI session) for a mixed
-  success/`ValueError`/`PermissionError`/Bash-failure/WebFetch-timeout/WebFetch-429 run,
-  confirming the envelope JSON is well-formed and the model still behaves sensibly reading it (no
-  regression in task completion behavior from the added JSON wrapping).
+  success/`ValueError`/`PermissionError`/Bash-failure/WebFetch-timeout/WebFetch-429/
+  WebFetch-401-or-403 run, confirming the envelope JSON is well-formed and the model still
+  behaves sensibly reading it (no regression in task completion behavior from the added JSON
+  wrapping).
