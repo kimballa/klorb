@@ -266,8 +266,15 @@ config) has one place to live.
   message to the first envelope built in that round. This keeps a standing reminder (e.g.
   `TodoNextTool`'s current-task nudge) visible even deep inside a multi-round tool loop that
   never returns to a fresh user-turn prompt — the exact case where the XML-on-user-prompt
-  delivery alone would go stale. `user_interjections` is reserved on the schema for a future
-  queued-user-message delivery mechanism; nothing populates it yet.
+  delivery alone would go stale.
+* `user_interjections` carries user messages queued during an active agent turn. When the
+  user presses Enter while a turn is in flight, the TUI queues the message (via
+  `Session.enqueue_queued_message`) and mounts a `<Queued message>` header plus the
+  message text in italics in the history. The next time `_run_tool_calls()` runs (i.e. the
+  next tool-call round), it drains the queue (via `Session.drain_queued_messages`) and
+  attaches each message as a `UserInterjectionPayload` on the first envelope built in that
+  round, mirroring how `system_interjections` are delivered. When the turn finishes, the
+  TUI transitions the history widgets from italics to regular styling to confirm delivery.
 
 ## Session naming
 

@@ -278,7 +278,7 @@ async def test_shift_tab_cycles_permission_framework_while_prompt_input_is_disab
 
         await _wait_until(pilot, turn_streaming.is_set)
         await pilot.pause()
-        assert prompt_input.disabled is True
+        assert prompt_input.disabled is False
 
         await pilot.press("shift+tab")
         await pilot.pause()

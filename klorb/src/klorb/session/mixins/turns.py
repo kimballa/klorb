@@ -293,6 +293,7 @@ class SessionTurnsMixin(SessionBase):
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
 
         self.active_cancel_event = callbacks.cancel_event
+        self._current_turn_handlers = callbacks
         try:
             try:
                 reply, _ = self._send_and_receive(
@@ -346,6 +347,7 @@ class SessionTurnsMixin(SessionBase):
             return reply.content
         finally:
             self.active_cancel_event = None
+            self._current_turn_handlers = None
 
     def send_turn(
         self,
@@ -472,7 +474,16 @@ class SessionTurnsMixin(SessionBase):
             prompt = f"{_wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
-            naming_result = self._run_session_naming(original_prompt)
+            # The classifier call below can take several seconds; `_current_turn_handlers` is set
+            # for its duration too (not just inside `_dispatch_turn`, which hasn't started yet) so
+            # a message queued while "still setting up" fires `on_enqueue_message` like any other
+            # queued message, instead of silently sitting in `_queued_messages` with no UI feedback
+            # until the turn that follows drains it.
+            self._current_turn_handlers = callbacks or TurnEventHandlers()
+            try:
+                naming_result = self._run_session_naming(original_prompt)
+            finally:
+                self._current_turn_handlers = None
             if callbacks is not None and callbacks.on_session_name_changed is not None:
                 callbacks.on_session_name_changed(naming_result)
         user_message = Message(

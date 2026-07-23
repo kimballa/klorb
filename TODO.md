@@ -3,6 +3,8 @@
 
 ## Bugs
 
+* Project dir names in ~/.local/share/klorb/ should be `<basename>-<uuid>`, not the other way around.
+
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
@@ -56,10 +58,6 @@
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
   that readfile and editfile can interact in a loop even with field masking making literal context
   matching in EditFile impossible.)
-
-* If it's the agent's turn the "send a message" textbox prompt should be "queue a message..."
-  and you should be allowed to type before it's actually your turn to send.
-  * Queue it up as a `user_interjection` to send with the next `tool_results` batch.
 
 * `klorb system-prompt` should have a `--export` option
   that dumps the *resolved* system prompt files for the current role + model into the
@@ -176,12 +174,3 @@
   supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
   otherwise.
 * Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
-
-### Plan 015: Structured tool-response envelope
-
-* Populate `ToolResponseEnvelope.user_interjections`: a mechanism for delivering an
-  actually-queued user message mid-tool-loop (analogous to how `system_interjections` now
-  delivers standing-interjection-provider advisories onto a tool_response), so a user's
-  message sent while a long multi-round tool loop is in flight doesn't have to wait for the
-  loop to finish before reaching the model. The field is reserved and documented in the system
-  prompt today, but nothing produces a non-empty list yet.

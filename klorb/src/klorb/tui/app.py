@@ -23,7 +23,7 @@ from textual.widgets import Footer, Header, Static
 from klorb.logging_config import TuiHistoryNotice
 from klorb.models.model import Model
 from klorb.process_config import ProcessConfig, persist_session_default, persist_theme, user_config_path
-from klorb.session import Session, ThinkingEffort
+from klorb.session import Session, ThinkingEffort, TurnEventHandlers
 from klorb.session_statistics import SessionStatistics
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill.catalog import get_skill_catalog_registry
@@ -237,6 +237,17 @@ class ReplApp(
         margin: 1 0 0 0;
     }
 
+    .queued-prompt-header {
+        color: $text-muted;
+        margin: 1 0 0 0;
+        text-style: italic;
+    }
+
+    .queued-prompt {
+        color: $accent;
+        text-style: bold italic;
+    }
+
     .interrupted {
         color: $text-muted;
         margin: 1 0 0 0;
@@ -384,6 +395,16 @@ class ReplApp(
         self._task_sidebar_shown: bool = self._process_config.task_sidebar_shown
         """Whether the `TaskSidebar` panel (Ctrl+T) is currently visible -- see
         `TaskSidebarMixin.action_toggle_task_sidebar`."""
+        self._queued_message_widgets: list[Static] = []
+        """History widgets for user messages queued during the agent turn, tracked so
+        `_finish_turn` can transition them from italics to regular once delivered."""
+        self._active_turn_callbacks: TurnEventHandlers | None = None
+        """The `TurnEventHandlers` built by `_send_prompt` for the turn currently in flight, or
+        `None` between turns. `Session.drain_queued_messages()`'s `on_send_queued_message` hook
+        needs a live callbacks object to fire against; `Session._current_turn_handlers` isn't
+        usable for `_finish_turn`'s end-of-turn drain because `_dispatch_turn` already clears it
+        before `send_turn()` returns to `_send_prompt`, i.e. before `_finish_turn` ever runs. See
+        `_send_prompt`/`_finish_turn`."""
         if self._process_config.theme is not None and self._process_config.theme in self.available_themes:
             self.theme = self._process_config.theme
         self.title = "klorb"

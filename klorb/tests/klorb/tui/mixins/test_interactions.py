@@ -91,13 +91,11 @@ async def test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt
         assert prompt_input.text == "line one\nline two\nline three"
 
 
-async def test_exiting_interaction_mode_unmutes_but_leaves_the_prompt_input_disabled() -> None:
+async def test_exiting_interaction_mode_unmutes_and_re_enables_the_prompt_input() -> None:
     """The other half of `test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input`:
-    `_exit_interaction_mode` un-mutes and expands the prompt input back to fit its (untouched)
-    draft text once a panel is dismissed, but deliberately leaves it *disabled* -- an interaction
-    panel only appears part-way through a still-running turn, so the input must stay locked until
-    `_finish_turn` re-enables it, rather than being re-enabled here and letting the user launch a
-    second concurrent turn whose panels would stack onto this one's."""
+    `_exit_interaction_mode` un-mutes, expands, and re-enables the prompt input once a panel is
+    dismissed, so the user can queue messages while the turn continues. Focus is moved onto the
+    input so typing can resume immediately."""
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))
 
@@ -111,7 +109,7 @@ async def test_exiting_interaction_mode_unmutes_but_leaves_the_prompt_input_disa
         app._exit_interaction_mode()
         await pilot.pause()
 
-        assert prompt_input.disabled is True
+        assert prompt_input.disabled is False
         assert prompt_input.has_class("interaction-active") is False
         assert prompt_input.outer_size.height > 1
         assert prompt_input.text == "line one\nline two\nline three"

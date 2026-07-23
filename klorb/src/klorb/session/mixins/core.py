@@ -22,6 +22,7 @@ from klorb.session.constants import (
     ThinkingEffort,
     generate_session_id,
 )
+from klorb.session.events import QueuedMessage, TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session_naming import (
     SessionName,
@@ -198,6 +199,16 @@ class SessionCoreMixin(SessionBase):
         self._teardown_callbacks: dict[str, Callable[[], None]] = {}
         """Callbacks registered via `register_teardown()`, keyed by subject, invoked once each
         by `close()`. See `register_teardown`/`close`."""
+        self._queued_messages: list[QueuedMessage] = []
+        """User messages typed during an active agent turn, awaiting delivery as the next
+        user turn when the current turn ends. Enqueued by the TUI when the user presses
+        Enter while `_turn_in_flight` is `True`; drained by `_finish_turn()` or
+        `_run_tool_calls()`. An empty list means no pending messages."""
+        self._current_turn_handlers: TurnEventHandlers | None = None
+        """The `TurnEventHandlers` for the currently active turn, or `None` when no turn is
+        running. Set at the top of `_dispatch_turn` and cleared in its `finally`. Used by
+        `enqueue_queued_message` and `drain_queued_messages` to call the `on_enqueue_message`
+        and `on_send_queued_message` hooks."""
         self.scratchpad = Scratchpad(scratchpad_path)
         """This session's scratchpad file (see `klorb.tools.scratchpad.common.Scratchpad`,
         which does all the work of resolving `scratchpad_path` — a caller-supplied path to
@@ -336,6 +347,43 @@ class SessionCoreMixin(SessionBase):
         """Set `cur_chainlink_task_id` -- the only way a caller (`klorb.tools.tasks.todo_next.
         TodoNextTool`) should change it, rather than assigning the attribute directly."""
         self.cur_chainlink_task_id = task_id
+
+    def enqueue_queued_message(self, queued_msg: QueuedMessage) -> None:
+        """Append `queued_msg` to the queue of user messages awaiting delivery as the next
+        user turn when the current turn ends. Called by the TUI when the user presses Enter
+        while an agent turn is in flight. If the current turn's `TurnEventHandlers` has an
+        `on_enqueue_message` hook, it is called with `queued_msg` so the UI can create the
+        italics "queued..." block and save widget references in `queued_msg.history_data`."""
+        self._queued_messages.append(queued_msg)
+        if (self._current_turn_handlers is not None
+                and self._current_turn_handlers.on_enqueue_message is not None):
+            self._current_turn_handlers.on_enqueue_message(queued_msg)
+
+    def drain_queued_messages(
+        self, callbacks: TurnEventHandlers | None = None,
+    ) -> list[QueuedMessage]:
+        """Return every queued message currently in the queue and clear it. The returned
+        messages are folded into a single new user turn by `_finish_turn()` (see its
+        docstring for why one turn, not one per message) or delivered as individual
+        `UserInterjectionPayload`s on tool-response envelopes by `_run_tool_calls()`.
+
+        The `on_send_queued_message` hook, if present, is called with each drained message so
+        the UI can remove its italics block from the history -- it does not, itself, submit
+        anything; that's the caller's job with the returned list. Taken from `callbacks` when
+        given; otherwise falls back to the current turn's
+        `_current_turn_handlers`, for `_run_tool_calls()`'s mid-turn call (drained while
+        `_dispatch_turn` is still on the stack, so `_current_turn_handlers` is still live). An
+        explicit `callbacks` is required for a drain that happens *after* the turn that owned it
+        has already ended -- `_finish_turn()`'s own end-of-turn drain, since `_dispatch_turn`
+        clears `_current_turn_handlers` before `send_turn()` returns to any such caller."""
+        messages = list(self._queued_messages)
+        self._queued_messages.clear()
+        handlers = callbacks if callbacks is not None else self._current_turn_handlers
+        if handlers is not None:
+            for queued_msg in messages:
+                if handlers.on_send_queued_message is not None:
+                    handlers.on_send_queued_message(queued_msg)
+        return messages
 
     def load_messages(self, messages: list[Message]) -> None:
         """Replace this session's conversation history with `messages` — e.g. restoring a

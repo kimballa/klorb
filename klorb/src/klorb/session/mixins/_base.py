@@ -28,7 +28,13 @@ from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskReq
 from klorb.role import Role
 from klorb.session.config import SessionConfig
 from klorb.session.constants import ThinkingEffort
-from klorb.session.events import PermissionDecision, ToolCallOutcome, TurnEventHandlers, UserSkillActivation
+from klorb.session.events import (
+    PermissionDecision,
+    QueuedMessage,
+    ToolCallOutcome,
+    TurnEventHandlers,
+    UserSkillActivation,
+)
 from klorb.session_naming import SessionName
 from klorb.session_statistics import SessionStatistics
 from klorb.system_prompt import SystemPrompt
@@ -89,6 +95,8 @@ class SessionBase:
     _pending_permission_framework_interjection: str | None
     _standing_interjection_providers: dict[str, Callable[[], str | None]]
     _teardown_callbacks: dict[str, Callable[[], None]]
+    _queued_messages: list[QueuedMessage]
+    _current_turn_handlers: TurnEventHandlers | None
     scratchpad: Scratchpad
     statistics: SessionStatistics
 
@@ -184,3 +192,10 @@ class SessionBase:
         tool_use_message: Message,
         callbacks: TurnEventHandlers,
     ) -> None: ...
+
+    def enqueue_queued_message(self, queued_msg: QueuedMessage) -> None: ...
+
+    def drain_queued_messages(
+        self, callbacks: TurnEventHandlers | None = None,
+    ) -> list[QueuedMessage]:
+        raise NotImplementedError

@@ -39,6 +39,7 @@ from klorb.session import (
     TurnEventHandlers,
     generate_session_id,
 )
+from klorb.session.events import QueuedMessage
 from klorb.session_naming import SessionName
 from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
 from klorb.token_estimate import estimate_tokens
@@ -561,6 +562,29 @@ def test_send_turn_invokes_on_session_name_changed_callback(monkeypatch: pytest.
     session.send_turn("please fix the auth bug", TurnEventHandlers(on_session_name_changed=spy))
 
     spy.assert_called_once_with(name)
+
+
+def test_enqueue_queued_message_during_naming_classifier_fires_on_enqueue_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A message queued while the session-naming classifier is still running -- the "still
+    setting up" window before `_dispatch_turn` starts and sets `_current_turn_handlers` -- must
+    fire `on_enqueue_message` immediately, not silently sit in the queue with no caller told
+    about it until the interrupted turn later drains it."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    enqueue_spy = MagicMock()
+
+    def fake_generate_session_name(*args: Any, **kwargs: Any) -> SessionName:
+        session.enqueue_queued_message(QueuedMessage(message_text="typed during setup"))
+        return SessionName(title="Fix auth bug", slug="fix-auth-bug")
+
+    monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", fake_generate_session_name)
+
+    session.send_turn("please fix the auth bug", TurnEventHandlers(on_enqueue_message=enqueue_spy))
+
+    enqueue_spy.assert_called_once()
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:

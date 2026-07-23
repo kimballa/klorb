@@ -95,18 +95,21 @@ class InteractionsMixin(ReplAppBase):
         return self.query_one(f"#{INTERACTION_PANEL_ID}", Vertical)
 
     def _exit_interaction_mode(self) -> None:
-        """Un-mute and un-collapse the prompt input once an interaction panel is dismissed, but
-        leave it *disabled*: an interaction panel only ever appears part-way through a turn that
-        is still running (a permission ask, ask-user-questions, or escalate-privileges callback
-        fired from inside `Session.send_turn`), so the input must stay locked until the whole turn
-        finishes and `_finish_turn` re-enables it. Re-enabling here instead would let the user
-        submit a second prompt mid-turn, launching a second concurrent `_send_prompt` worker whose
-        own tool calls would mount interaction panels into `#interaction-panel` alongside this
-        turn's — the "stacked panels" bug this guards against. Focus is intentionally not moved
-        onto the (still-disabled) input either; the removed panel's focus is reassigned by Textual
-        on its own."""
+        """Un-mute and un-collapse the prompt input once an interaction panel is dismissed and
+        re-enable it so the user can queue messages while the turn continues.
+
+        An interaction panel only ever appears part-way through a turn that is still running
+        (a permission ask, ask-user-questions, or escalate-privileges callback fired from
+        inside `Session.send_turn`). Re-enabling the input here is safe because queued
+        submissions no longer launch a second `_send_prompt` worker — they are queued via
+        `_queue_prompt` instead (see `on_prompt_input_submitted`), and `_turn_in_flight`
+        still prevents a second turn from starting. The removed panel's focus is reassigned
+        by Textual on its own; focus is moved explicitly onto the input here so the user can
+        immediately start typing."""
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.remove_class("interaction-active")
+        prompt_input.disabled = False
+        prompt_input.focus()
 
     def _record_interaction_history(self, header_text: str, body: str, decision_text: str) -> None:
         """Leave a permanent record of a just-finished permission ask or ask-user-questions

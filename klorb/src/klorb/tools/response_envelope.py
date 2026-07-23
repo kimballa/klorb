@@ -3,10 +3,10 @@
 `Message.content` is serialized from, in place of the bare result-or-`"Error: ..."` string
 `klorb.session.mixins.tool_execution._run_tool_calls` used to build. Gives the model a uniform
 set of fields to reason about a failed call with (`is_error`/`is_retryable`/`error_category`/
-`error_message`) instead of guessing from prose, and a reserved slot for harness advisories
-(`system_interjections`) and, in the future, queued user messages (`user_interjections`) to ride
-along with a tool result instead of only a user-turn prompt. See
-docs/specs/session-and-turns.md and docs/plans/archive/015-structured-tool-responses.md.
+`error_message`) instead of guessing from prose, and slots for harness advisories
+(`system_interjections`) and queued user messages (`user_interjections`) to ride along with a
+tool result instead of only a user-turn prompt. See docs/specs/session-and-turns.md and
+docs/plans/archive/015-structured-tool-responses.md.
 """
 
 from typing import Any
@@ -33,9 +33,12 @@ class SystemInterjectionPayload(BaseModel):
 
 
 class UserInterjectionPayload(BaseModel):
-    """Reserved for a future plan: a queued user message delivered mid-tool-loop, attached to a
-    `ToolResponseEnvelope`'s `user_interjections`. Nothing produces one of these yet -- see
-    docs/plans/archive/015-structured-tool-responses.md's "Out of scope" section."""
+    """A queued user message delivered mid-tool-loop, attached to a
+    `ToolResponseEnvelope`'s `user_interjections` on the first envelope of each tool-call
+    round. Produced by `_run_tool_calls()` when the user has queued messages during an
+    active agent turn (see `Session.enqueue_queued_message` /
+    `Session.drain_queued_messages`). See docs/specs/session-and-turns.md for the full
+    delivery mechanism."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -63,13 +66,15 @@ class ToolResponseEnvelope(BaseModel):
         response_body: Any,
         *,
         system_interjections: "tuple[SystemInterjectionPayload, ...]" = (),
+        user_interjections: "tuple[UserInterjectionPayload, ...]" = (),
     ) -> "ToolResponseEnvelope":
         """Build a successful call's envelope. `is_retryable` is unconditionally `False` --
         a successful call (even one whose `response_body` is empty, e.g. a Grep with no
         matches) is never something to retry."""
         return cls(
             is_error=False, is_retryable=False, response_body=response_body,
-            system_interjections=list(system_interjections))
+            system_interjections=list(system_interjections),
+            user_interjections=list(user_interjections))
 
     @classmethod
     def error(
@@ -79,6 +84,7 @@ class ToolResponseEnvelope(BaseModel):
         category: ErrorCategory | None,
         response_body: Any = None,
         system_interjections: "tuple[SystemInterjectionPayload, ...]" = (),
+        user_interjections: "tuple[UserInterjectionPayload, ...]" = (),
     ) -> "ToolResponseEnvelope":
         """Build a failed call's envelope. `is_retryable` is derived from `category` via
         `_RETRYABLE_CATEGORIES`, `False` when `category` is `None` (an unclassified failure
@@ -89,7 +95,8 @@ class ToolResponseEnvelope(BaseModel):
         return cls(
             is_error=True, is_retryable=category in _RETRYABLE_CATEGORIES,
             error_category=category, error_message=message, response_body=response_body,
-            system_interjections=list(system_interjections))
+            system_interjections=list(system_interjections),
+            user_interjections=list(user_interjections))
 
     def to_wire_dict(self) -> dict[str, Any]:
         """Serialize to the dict that becomes a `tool_response` `Message.content`'s JSON body:

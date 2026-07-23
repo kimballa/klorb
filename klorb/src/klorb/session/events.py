@@ -214,6 +214,22 @@ class ToolCallStartedEvent(BaseModel):
     args: dict[str, Any]
 
 
+class QueuedMessage(BaseModel):
+    """A user message queued during an active agent turn, awaiting delivery as the next
+    user turn when the current turn ends.
+
+    `message_text` is the raw prompt text the user typed. `history_data` is an opaque
+    field the UI layer can use to store widget references or other state needed to
+    transition the queued message's visual representation when it's eventually dispatched.
+    The Session layer treats this field as a black box.
+    """
+
+    model_config = ConfigDict(frozen=False, arbitrary_types_allowed=True)
+
+    message_text: str
+    history_data: Any = None
+
+
 class TurnEventHandlers(BaseModel):
     """Immutable bundle of the optional callbacks (and cancellation signal) a caller can
     supply for one turn: `on_chunk`/`on_thinking_chunk`/`on_reasoning_details` (streamed
@@ -251,6 +267,8 @@ class TurnEventHandlers(BaseModel):
     on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
     on_session_name_changed: Callable[[SessionName | None], None] | None = None
+    on_enqueue_message: Callable[["QueuedMessage"], None] | None = None
+    on_send_queued_message: Callable[["QueuedMessage"], None] | None = None
 
 
 class UserSkillActivation(BaseModel):

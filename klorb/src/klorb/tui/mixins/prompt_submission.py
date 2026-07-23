@@ -14,6 +14,7 @@ from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.session import Session, ToolCallEvent, ToolCallStartedEvent, TurnEventHandlers
+from klorb.session.events import QueuedMessage
 from klorb.session_naming import SessionName, session_id_suffix
 from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
@@ -40,6 +41,10 @@ class PromptSubmissionMixin(ReplAppBase):
         posting `Submitted` — so a `>`-prefixed `prompt_text` reaching here is always one
         that ruled out every palette option, dispatched as an ordinary prompt like any other
         (see `docs/specs/command-palette-from-prompt.md`).
+
+        When a turn is already in flight (`_turn_in_flight`), the prompt is queued rather
+        than dispatched — see `_queue_prompt` — and will be delivered as a
+        `UserInterjectionPayload` on the next tool-response envelope.
         """
         prompt_text = event.value.strip()
         if not prompt_text:
@@ -52,6 +57,10 @@ class PromptSubmissionMixin(ReplAppBase):
 
         if prompt_text.startswith("!") and "\n" not in prompt_text and "\r" not in prompt_text:
             self._submit_shell_command(prompt_text[1:].lstrip())
+            return
+
+        if self._turn_in_flight:
+            self._queue_prompt(prompt_text)
             return
 
         self._submit_prompt(prompt_text)
@@ -83,6 +92,25 @@ class PromptSubmissionMixin(ReplAppBase):
         self._shell_cancel_event = threading.Event()
         self.refresh_bindings()
         self._run_shell_command(command, self._shell_cancel_event)
+
+    def _queue_prompt(self, prompt_text: str) -> None:
+        """Queue `prompt_text` for delivery once the current turn ends, and echo it into the
+        history with a `<Queued message>` header and italic styling.
+
+        Called by `on_prompt_input_submitted` when `_turn_in_flight` is `True` — i.e. the
+        user pressed Enter while the agent turn was still running. The message is enqueued
+        in the `Session` (see `Session.enqueue_queued_message`) which calls the
+        `on_enqueue_message` hook so the UI can create the italics block and save widget
+        references in `queued_msg.history_data`. When the turn ends, `_finish_turn` drains
+        every message queued during it (this one, and any others typed after it) and submits
+        them together as a single new turn -- see `_finish_turn` -- at which point
+        `on_send_queued_message` fires for each to remove its italics block.
+
+        The `Static` is constructed with `markup=False`: `prompt_text` is arbitrary user
+        input and must render verbatim rather than be parsed as Textual console markup.
+        """
+        queued_msg = QueuedMessage(message_text=prompt_text)
+        self._session.enqueue_queued_message(queued_msg)
 
     @work(thread=True)
     def _run_shell_command(self, command: str, cancel_event: threading.Event) -> None:
@@ -240,6 +268,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
+        self._queued_message_widgets.clear()
         history.mount(Static("Session cleared.", classes="notice"))
 
         # Display new config parser warnings after we've already cleared the history.
@@ -254,14 +283,16 @@ class PromptSubmissionMixin(ReplAppBase):
         session_name.update(NEW_SESSION_LABEL)
 
     def _submit_prompt(self, prompt_text: str) -> None:
-        """Echo `prompt_text` into the history, disable the input, and dispatch it. The echoed
-        `Static` is constructed with `markup=False`: `prompt_text` is arbitrary user input and
-        must render verbatim rather than be parsed as Textual console markup.
+        """Echo `prompt_text` into the history and dispatch it. The echoed `Static` is
+        constructed with `markup=False`: `prompt_text` is arbitrary user input and must
+        render verbatim rather than be parsed as Textual console markup.
 
-        Drops the submit outright if a turn or shell command is already running (`_turn_in_flight`):
-        the input's `disabled` flag alone can't prevent a second submit that was queued before the
-        first one disabled the box, so this authoritative check-and-set is what actually keeps turns
-        serial (see `_turn_in_flight`).
+        Drops the submit outright if a turn or shell command is already running
+        (`_turn_in_flight`): the input's `disabled` flag alone can't prevent a second submit
+        that was queued before the first one disabled the box, so this authoritative
+        check-and-set is what actually keeps turns serial (see `_turn_in_flight`). The input
+        is *not* disabled here — the user can keep typing and queue messages for delivery as
+        `UserInterjectionPayload`s on the next tool-response envelope (see `_queue_prompt`).
 
         `_send_prompt` mounts a `TurnWaitingStatic` on its worker thread once it's actually
         about to start the turn -- immediately, unless this is the session's first submitted
@@ -272,9 +303,6 @@ class PromptSubmissionMixin(ReplAppBase):
         if self._turn_in_flight:
             return
         self._turn_in_flight = True
-
-        input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        input_widget.disabled = True
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         prompt_widget = Static(prompt_text, classes="prompt", markup=False)
@@ -415,23 +443,85 @@ class PromptSubmissionMixin(ReplAppBase):
             round_index += 1
             self.call_from_thread(self._maybe_refresh_task_sidebar_after_tool_call, event)
 
+        worker_thread_id = threading.get_ident()
+
+        def call_on_app_thread(fn: Any, *args: Any) -> Any:
+            """Run `fn(*args)` on the app's own thread and return its result.
+
+            `Session.enqueue_queued_message`/`drain_queued_messages` invoke
+            `on_enqueue_message`/`on_send_queued_message` from wherever the caller happens to be
+            running: `_run_tool_calls` calls `drain_queued_messages` from this worker thread (mid
+            tool-call round), but `_queue_prompt` calls `enqueue_queued_message` directly from the
+            Textual event handler on the app thread, and `_finish_turn` (always reached via
+            `call_from_thread`) calls `drain_queued_messages` from the app thread too.
+            `call_from_thread` raises if called from the thread it would hop onto, so the two
+            call sites need different handling -- this picks the right one by comparing the
+            calling thread against `worker_thread_id`, captured once above.
+            """
+            if threading.get_ident() == worker_thread_id:
+                return self.call_from_thread(fn, *args)
+            return fn(*args)
+
+        def handle_enqueue_message(queued_msg: QueuedMessage) -> None:
+            """Create the italics "queued..." block in the history and save widget
+            references in `queued_msg.history_data` so `handle_send_queued_message`
+            can remove them later."""
+            def _mount_queued_widgets() -> tuple[Static, Static]:
+                history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+                header_widget = Static("<Queued message>", classes="queued-prompt-header")
+                prompt_widget = Static(queued_msg.message_text, classes="queued-prompt", markup=False)
+                history.mount(header_widget)
+                history.mount(prompt_widget)
+                history.scroll_end(animate=False)
+                return header_widget, prompt_widget
+
+            header_widget, prompt_widget = call_on_app_thread(_mount_queued_widgets)
+            queued_msg.history_data = (header_widget, prompt_widget)
+
+        def handle_send_queued_message(queued_msg: QueuedMessage) -> None:
+            """Remove `queued_msg`'s italics block from the history now that it's been drained.
+
+            Only removes the widgets -- unlike an earlier version of this hook, it does *not*
+            submit `queued_msg` as its own new turn. `drain_queued_messages()` fires this once
+            per drained message, and a turn can drain more than one at once (several messages
+            typed in quick succession); calling `_submit_prompt` here per message would start a
+            second turn while the first was still `_turn_in_flight`, silently dropping every
+            message after the first (see `_finish_turn`, which instead submits every drained
+            message from a batch as a single concatenated turn). `_run_tool_calls`'s mid-turn
+            drain doesn't call `_submit_prompt` at all; it attaches each message to the current
+            tool-response envelope as its own `UserInterjectionPayload` instead (see
+            `SessionToolExecutionMixin._run_tool_calls`).
+            """
+            if queued_msg.history_data is not None:
+                header_widget, prompt_widget = queued_msg.history_data
+                call_on_app_thread(header_widget.remove)
+                call_on_app_thread(prompt_widget.remove)
+
+        callbacks = TurnEventHandlers(
+            on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
+            on_reasoning_details=handle_reasoning_details_chunk,
+            cancel_event=cancel_event,
+            on_tool_call_limit_reached=self._on_tool_call_limit_reached,
+            on_permission_ask=self._on_permission_ask,
+            on_ask_user_questions=self._on_ask_user_questions,
+            on_escalate_privileges=self._on_escalate_privileges,
+            on_tool_call_started=handle_tool_call_started,
+            on_tool_call=handle_tool_call,
+            on_session_name_changed=handle_session_name_changed,
+            on_enqueue_message=handle_enqueue_message,
+            on_send_queued_message=handle_send_queued_message)
+        # Stashed so `_finish_turn`'s end-of-turn `drain_queued_messages()` call has a live
+        # `on_send_queued_message` hook to fire -- by the time that runs, `Session` has already
+        # cleared its own `_current_turn_handlers` (see `drain_queued_messages`'s docstring).
+        self._active_turn_callbacks = callbacks
+
         # The outer try/finally guarantees `_turn_in_flight` is cleared however this worker
         # unwinds -- including a BaseException (e.g. asyncio.CancelledError / worker cancellation)
         # that slips past `except Exception` below and would otherwise leave the flag stuck True
         # forever. See `_ensure_turn_finished` and docs/specs/interrupt-and-liveness-watchdog.md.
         try:
             try:
-                response_text = self._session.send_turn(prompt_text, TurnEventHandlers(
-                    on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
-                    on_reasoning_details=handle_reasoning_details_chunk,
-                    cancel_event=cancel_event,
-                    on_tool_call_limit_reached=self._on_tool_call_limit_reached,
-                    on_permission_ask=self._on_permission_ask,
-                    on_ask_user_questions=self._on_ask_user_questions,
-                    on_escalate_privileges=self._on_escalate_privileges,
-                    on_tool_call_started=handle_tool_call_started,
-                    on_tool_call=handle_tool_call,
-                    on_session_name_changed=handle_session_name_changed))
+                response_text = self._session.send_turn(prompt_text, callbacks)
             except ResponseAborted:
                 self.call_from_thread(
                     self._handle_aborted_response, response_widget, accumulated,
@@ -543,6 +633,28 @@ class PromptSubmissionMixin(ReplAppBase):
         if was_pinned:
             history.scroll_end(animate=False)
 
+    def _finalize_queued_message_widgets(self) -> None:
+        """Transition every history widget mounted by `_queue_prompt` from its queued
+        (italic) state to regular styling, confirming delivery.
+
+        Called by `_finish_turn` once the turn has completed — by that point, any messages
+        that were in the queue have been drained and attached to tool-response envelopes by
+        `_run_tool_calls()`. The header widget (`<Queued message>`) is removed entirely
+        (the italic cue is gone, and the header would be confusing without it), and the
+        prompt widget's CSS class is swapped from `queued-prompt` to `prompt` so it matches
+        a normally-submitted prompt's styling.
+
+        Idempotent: safe to call when `_queued_message_widgets` is already empty (a turn
+        that had no queued messages).
+        """
+        for widget in self._queued_message_widgets:
+            if "queued-prompt-header" in (widget.classes):
+                widget.remove()
+            elif "queued-prompt" in (widget.classes):
+                widget.remove_class("queued-prompt")
+                widget.add_class("prompt")
+        self._queued_message_widgets.clear()
+
     def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None:
         """Scroll the history into view (iff `was_pinned`, see `_scroll_if_pinned`), refresh the
         token tally, and hand focus back to the input box. Also clears the in-flight turn's
@@ -571,7 +683,17 @@ class PromptSubmissionMixin(ReplAppBase):
         normally already cleared by the first response/thinking/tool-call widget mounted for the
         turn, but a turn can end without ever reaching one (e.g. `_show_error` before any content
         streamed), and this is idempotent for the ordinary case where it's already `None`.
+
+        If any messages were queued by the user during this turn, they're drained and folded
+        into a single new turn, submitted once via `_submit_prompt` -- not one `_submit_prompt`
+        call per queued message, which would only ever deliver the first (the second call would
+        find `_turn_in_flight` already `True`, set synchronously by the first, and get dropped
+        -- see `handle_send_queued_message`). Multiple queued messages are joined with a blank
+        line between each, in the order they were typed, so queueing "check the tests" then
+        "also check lint" while a turn is running reads to the model as one message covering
+        both, rather than as two separate turns or a lost second one.
         """
+        self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
@@ -584,5 +706,14 @@ class PromptSubmissionMixin(ReplAppBase):
         self._resolve_interrupt_notice()
         self._interrupt_notice_shown = False
         self.refresh_bindings()
+        # Drain any queued messages so the on_send_queued_message hook fires (removing each
+        # one's italics block) and, if any were pending, fold them into a single new turn below.
+        # `Session._current_turn_handlers` is already `None` by now (the turn that owned it, if
+        # any, has already returned), so the callbacks built for that turn -- stashed by
+        # `_send_prompt` -- are passed explicitly instead.
+        drained = self._session.drain_queued_messages(self._active_turn_callbacks)
+        self._active_turn_callbacks = None
+        if drained:
+            self._submit_prompt("\n\n".join(queued_msg.message_text for queued_msg in drained))
         if self._exit_requested:
             self.exit()

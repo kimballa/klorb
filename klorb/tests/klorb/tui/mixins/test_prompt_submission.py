@@ -90,6 +90,107 @@ async def test_second_submit_while_a_turn_is_in_flight_is_dropped() -> None:
     assert mock_provider.send_prompt.call_count == 1
 
 
+async def test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash() -> None:
+    """`_queue_prompt` (what `on_prompt_input_submitted` calls when `_turn_in_flight` is `True`)
+    runs synchronously on the app's own thread, since it's driven directly by a Textual event
+    handler -- not by `_send_prompt`'s worker thread. `Session.enqueue_queued_message` calls
+    `on_enqueue_message` inline, so that hook (`handle_enqueue_message` in
+    `klorb.tui.mixins.prompt_submission`) must not assume it's always reached from the worker
+    thread and unconditionally call `self.call_from_thread` -- doing so raises `RuntimeError:
+    The call_from_thread method must run in a different thread from the app` when invoked from
+    the app thread itself, which is exactly the case here."""
+    mock_provider = MagicMock()
+    first_turn_streaming = threading.Event()
+    release_first_turn = threading.Event()
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        first_turn_streaming.set()
+        release_first_turn.wait(timeout=5)
+        return _reply()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _wait_until(pilot, first_turn_streaming.is_set)
+
+        # `_current_turn_handlers` is now set (the worker is blocked inside `_send_and_receive`,
+        # past `_dispatch_turn`'s assignment) -- queue a second message the same way
+        # `on_prompt_input_submitted` would, directly on the app's own thread.
+        app._queue_prompt("second")
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert str(history.query_one(".queued-prompt-header", Static).content) == "<Queued message>"
+        assert history.query_one(".queued-prompt", Static).content == "second"
+
+        release_first_turn.set()
+        # `_finish_turn` dispatches the drained queued message as a fresh `_send_prompt` worker
+        # once the first one finishes -- poll rather than a single `wait_for_complete()`, since
+        # that second worker isn't necessarily registered yet at the moment the first completes.
+        await _wait_until(pilot, lambda: mock_provider.send_prompt.call_count == 2)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    # The queued message was delivered as a real second turn once the first one finished.
+    assert mock_provider.send_prompt.call_count == 2
+
+
+async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost() -> None:
+    """Queueing two messages while a turn is in flight must not silently drop the second one.
+
+    `_finish_turn` used to call `_submit_prompt` once per drained message (via
+    `on_send_queued_message`): the first call set `_turn_in_flight` back to `True` and kicked off
+    a new worker, so the second call found `_turn_in_flight` already `True` and was dropped --
+    after its history widgets had already been removed, so it vanished with no trace. The fix
+    folds every message drained from one batch into a single new turn instead."""
+    mock_provider = MagicMock()
+    first_turn_streaming = threading.Event()
+    release_first_turn = threading.Event()
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        first_turn_streaming.set()
+        release_first_turn.wait(timeout=5)
+        return _reply()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _wait_until(pilot, first_turn_streaming.is_set)
+
+        app._queue_prompt("second queued")
+        app._queue_prompt("third queued")
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(".queued-prompt")) == 2
+
+        release_first_turn.set()
+        await _wait_until(pilot, lambda: mock_provider.send_prompt.call_count == 2)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Both queued messages were delivered together as one new turn's content, not two
+        # separate turns (which would have needed a third `send_prompt` call) and not one
+        # message silently dropped.
+        assert mock_provider.send_prompt.call_count == 2
+        second_call_messages = mock_provider.send_prompt.call_args_list[1].args[0]
+        assert second_call_messages[-1].content == "second queued\n\nthird queued"
+
+        # The queued (italic) widgets are gone, replaced by one normal prompt widget echoing
+        # the same concatenated text that was actually sent.
+        assert len(history.query(".queued-prompt")) == 0
+        prompt_widgets = history.query(".prompt")
+        assert prompt_widgets.last(Static).content == "second queued\n\nthird queued"
+
+
 async def test_provider_error_is_shown_in_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")

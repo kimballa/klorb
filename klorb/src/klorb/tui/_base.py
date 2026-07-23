@@ -36,6 +36,7 @@ from klorb.session import (
     PermissionDecision,
     Session,
     ToolCallEvent,
+    TurnEventHandlers,
 )
 from klorb.tui.widgets.tool_call_widgets import (
     GettingReadyStatic,
@@ -82,6 +83,8 @@ class ReplAppBase(App[None]):
     _history_pinned_to_bottom: bool
     _turn_waiting_widget: TurnWaitingStatic | None
     _task_sidebar_shown: bool
+    _queued_message_widgets: list[Static]
+    _active_turn_callbacks: TurnEventHandlers | None
 
     def _update_status_bar(self) -> None: ...
 
