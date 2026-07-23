@@ -152,8 +152,6 @@
   that scaffold itself today (see docs/specs/chainlink-task-tracking.md); a flag would remove
   the need for the workaround.
 
-* Add a LICENSE file to this repo.
-
 * Ask (or send a patch) upstream for chainlink's `issue show`/`issue list --json` to report a
   `blocked_by_open` list (or count) alongside `blocked_by` -- right now `blocked_by` is never
   pruned as a blocker closes, so klorb's own `open_blocker_count()` (`klorb.tools.tasks.common`)
