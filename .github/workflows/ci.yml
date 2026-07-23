@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 #
-# CI workflow: runs the klorb lint, typecheck, and test suites on every pull request,
-# and on demand via workflow_dispatch. Mirrors the local dev loop documented in
-# klorb/README.md.
+# CI workflow: runs the klorb (Python) and vscode-plugin (TypeScript) lint, typecheck, and
+# test suites, plus the top-level docs lint, on every pull request and on demand via
+# workflow_dispatch. Mirrors the local dev loop documented in klorb/README.md.
 
 name: CI
 
@@ -38,6 +38,13 @@ jobs:
       - name: Cloud setup
         run: make cloud_setup
 
-      - name: Lint, typecheck, and test
+      - name: Lint, typecheck, and test (python)
         working-directory: klorb
         run: make lint typecheck test
+
+      - name: Lint, typecheck, and test (vscode-plugin)
+        working-directory: vscode-plugin
+        run: make lint typecheck test
+
+      - name: Lint docs
+        run: make lint_docs
