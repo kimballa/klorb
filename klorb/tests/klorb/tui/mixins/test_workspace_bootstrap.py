@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.workspace_bootstrap.WorkspaceBootstrapMixin."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -549,6 +550,36 @@ async def test_restores_tool_call_history_as_a_tool_call_widget(
         tool_calls=[ToolCallRequest(id="call-1", name="SampleTool", arguments='{"x": 1}')])
     tool_response = Message(
         content="42", role="tool_response", num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
+    write_last_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+
+    app = _repl_app_for_workspace(workspace, trust_manager)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(list(history.query(ToolCallStatic))) == 1
+
+
+async def test_restores_tool_call_history_from_a_structured_response_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `tool_response.content` saved as a `klorb.tools.response_envelope.
+    ToolResponseEnvelope`'s wire JSON (`Session._run_tool_calls`'s persisted shape) restores the
+    same way a legacy bare-string/`"Error: ..."` one does -- see
+    `klorb.tui.mixins.rendering.ReplApp._render_restored_tool_call`."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    tool_use = Message(
+        content="", role="tool_use", num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 0),
+        tool_calls=[ToolCallRequest(id="call-1", name="SampleTool", arguments='{"x": 1}')])
+    envelope_content = json.dumps({
+        "is_error": True, "is_retryable": False, "error_category": "business_logic",
+        "error_message": "boom",
+    })
+    tool_response = Message(
+        content=envelope_content, role="tool_response", num_tokens=1, processing_state="complete",
         timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
     write_last_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
 

@@ -183,3 +183,12 @@
   supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
   otherwise.
 * Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
+
+### Plan 015: Structured tool-response envelope
+
+* Populate `ToolResponseEnvelope.user_interjections`: a mechanism for delivering an
+  actually-queued user message mid-tool-loop (analogous to how `system_interjections` now
+  delivers standing-interjection-provider advisories onto a tool_response), so a user's
+  message sent while a long multi-round tool loop is in flight doesn't have to wait for the
+  loop to finish before reaching the model. The field is reserved and documented in the system
+  prompt today, but nothing produces a non-empty list yet.

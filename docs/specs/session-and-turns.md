@@ -155,8 +155,9 @@ config) has one place to live.
     stored with `role="tool_use"` (instead of `"assistant"`) and `Message.tool_calls`
     populated; `_run_tool_calls()` dispatches each one via
     `tool_registry.instantiate_tool(name).apply(...)`, appending a `role="tool_response"`
-    `Message` per call (feeding back `f"Error: {exc}"` as that call's result if lookup or
-    execution failed, rather than failing the turn), and `_dispatch_turn()` sends another
+    `Message` per call (rather than failing the turn if lookup or execution failed) whose
+    `content` is a JSON-serialized `klorb.tools.response_envelope.ToolResponseEnvelope` — see
+    "Tool-response envelope" below — and `_dispatch_turn()` sends another
     round with the updated history. This repeats until a plain `"assistant"` reply comes
     back, or one of three safety caps is exceeded and not raised past, which raises
     `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
@@ -225,6 +226,48 @@ config) has one place to live.
   user's starting message behaves exactly as if they'd typed it themselves, and the REPL
   stays open afterward. Passing `--no-interactive` without `-m`/`--message` is a usage error
   (there would be nothing to send).
+
+## Tool-response envelope
+
+* Every `role="tool_response"` `Message.content` `_run_tool_calls()` appends is
+  `json.dumps(envelope.to_wire_dict())` for a `klorb.tools.response_envelope.ToolResponseEnvelope`
+  — the harness's uniform, structured stand-in for the ad hoc `f"Error: {exc}"`-or-bare-result
+  string an earlier version of this dispatch loop used. Fields: `is_error` (the sole success/
+  failure discriminant), `is_retryable` (always `False` when `is_error` is `False`; otherwise
+  derived from `error_category`), `error_category` (a `klorb.tools.exceptions.ErrorCategory`,
+  `None` when unclassified), `error_message`, `response_body` (the tool's own result on success;
+  `None` on failure except for the one deviation below), and `system_interjections`/
+  `user_interjections` (below). `to_wire_dict()` omits `system_interjections`/`user_interjections`
+  entirely, not just as `[]`, when empty, and omits every other `None` field, so the common
+  (successful, no-interjection) case stays compact.
+* `error_category` assignment: `"syntax"` for a call whose `arguments` failed to parse as JSON
+  before any tool ran; `"validation"` for an unknown tool name or a caught `ValueError`;
+  `"permission"` for a caught `PermissionError` or a fail-closed/denied permission ask,
+  `AskUserQuestions` cancellation, or `EscalatePrivileges` denial (`AskUserQuestions`'s own
+  failure modes are `"business_logic"` instead — declining to answer isn't a resource-access
+  verdict); `"transient"` and any other category only via a tool explicitly raising
+  `klorb.tools.exceptions.ToolCallError(msg, category=...)`; `None` for an unclassified
+  exception. `klorb.tools.response_envelope.classify_exception()` is the single dispatch table
+  every catch site (first-attempt or retried-after-permission-decision) routes a caught
+  exception through, so categorization can't drift between call sites or go missing on a retry.
+* One deviation from "`response_body` is `None` when `is_error` is `True`": a tool whose
+  `apply()` never raises but signals failure through its own result shape (today, only
+  `BashTool`, via its `is_success()` override for a non-zero exit/timeout/dead terminal) gets
+  `ToolResponseEnvelope.error(None, category="business_logic", response_body=result)` — `
+  error_message` stays `None` (the detail already lives in `response_body["failure_reason"]`) but
+  `response_body` still carries the tool's own result, so a failed shell command's `stdout`/
+  `stderr` aren't discarded. See
+  [the structured tool-response envelope ADR](../adrs/wrap-tool-responses-in-a-structured-json-envelope.md).
+* `system_interjections` carries the same kind of harness advisory as an XML
+  `<SystemInterjection subject="...">` block prepended to a user-turn prompt (see
+  `_wrap_system_interjection()` above), just delivered a second way: `_run_tool_calls()` polls
+  every `_standing_interjection_providers` entry once per call to itself (i.e. once per
+  tool-call round, not once per individual call), and attaches whichever providers returned a
+  message to the first envelope built in that round. This keeps a standing reminder (e.g.
+  `TodoNextTool`'s current-task nudge) visible even deep inside a multi-round tool loop that
+  never returns to a fresh user-turn prompt — the exact case where the XML-on-user-prompt
+  delivery alone would go stale. `user_interjections` is reserved on the schema for a future
+  queued-user-message delivery mechanism; nothing populates it yet.
 
 ## Session naming
 

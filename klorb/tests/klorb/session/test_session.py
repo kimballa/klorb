@@ -1152,7 +1152,10 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     assert tool_use_message.tool_calls == [
         ToolCallRequest(id="call_1", name="echo", arguments='{"message": "hi"}')]
     tool_response_message = session.messages[4]
-    assert tool_response_message.content == "hi"
+    assert isinstance(tool_response_message.content, str)
+    envelope = json.loads(tool_response_message.content)
+    assert envelope["is_error"] is False
+    assert envelope["response_body"] == "hi"
     user_message = session.messages[2]
     assert user_message.processing_state == "aborted"
     # The user message's own num_tokens is set once, from its own content, at construction --
@@ -1272,7 +1275,10 @@ def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
         ToolCallRequest(id="call_1", name="echo", arguments='{"message": "hi there"}')]
     tool_response_message = session.messages[4]
     assert tool_response_message.tool_call_id == "call_1"
-    assert tool_response_message.content == "hi there"
+    assert isinstance(tool_response_message.content, str)
+    envelope = json.loads(tool_response_message.content)
+    assert envelope["is_error"] is False
+    assert envelope["response_body"] == "hi there"
     user_message = session.messages[2]
     assert user_message.processing_state == "complete"
     assert user_message.num_tokens == estimate_tokens(
@@ -1312,7 +1318,10 @@ def test_unknown_tool_call_reports_error_to_model() -> None:
     assert response == "recovered"
     tool_response_message = session.messages[4]
     assert tool_response_message.role == "tool_response"
-    assert tool_response_message.content.startswith("Error:")
+    assert isinstance(tool_response_message.content, str)
+    envelope = json.loads(tool_response_message.content)
+    assert envelope["is_error"] is True
+    assert envelope["error_category"] == "validation"
 
 
 def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising() -> None:
@@ -1330,8 +1339,11 @@ def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising() ->
     assert response == "recovered"
     tool_response_message = session.messages[4]
     assert tool_response_message.role == "tool_response"
-    assert tool_response_message.content.startswith("Error:")
-    assert "Invalid JSON" in tool_response_message.content
+    assert isinstance(tool_response_message.content, str)
+    envelope = json.loads(tool_response_message.content)
+    assert envelope["is_error"] is True
+    assert envelope["error_category"] == "syntax"
+    assert "Invalid JSON" in envelope["error_message"]
     user_message = session.messages[2]
     assert user_message.processing_state == "complete"
 
@@ -1770,10 +1782,23 @@ def _session_with_ask_tool(
         config, provider=mock_provider, tool_registry=tool_registry, process_config=process_config)
 
 
-def _tool_response_content(session: Session) -> str:
+def _tool_response_envelope(session: Session) -> dict[str, Any]:
     tool_response = next(m for m in session.messages if m.role == "tool_response")
     assert isinstance(tool_response.content, str)
-    return tool_response.content
+    envelope: dict[str, Any] = json.loads(tool_response.content)
+    return envelope
+
+
+def _tool_response_content(session: Session) -> str:
+    """The tool_response envelope rendered back to the old `_format_tool_response_content()`
+    shape (`"Error: {message}"` on failure, the raw result body on success) -- lets most of
+    this module's pre-envelope substring/equality assertions against the ask/permission tools'
+    plain-string results keep working unchanged."""
+    envelope = _tool_response_envelope(session)
+    if envelope["is_error"]:
+        return f"Error: {envelope['error_message']}"
+    body = envelope["response_body"]
+    return body if isinstance(body, str) else json.dumps(body)
 
 
 def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Path) -> None:
@@ -2093,11 +2118,12 @@ def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_pa
         f"Permission requires confirmation: access {target}", path=target, is_write=True)
     call = ToolCallRequest(id="call_1", name="ask_permission", arguments="{}")
 
-    result, error = session._retry_after_permission_decision(
+    outcome = session._retry_after_permission_decision(
         call, {}, ask_exc, PermissionDecision(action="allow"))
 
-    assert result is None
-    assert error == "still broken"
+    assert outcome.result is None
+    assert outcome.error == "still broken"
+    assert outcome.category == "validation"
     mock_registry.instantiate_tool.assert_called_once_with(
         "ask_permission", permission_override=PermissionOverride(paths=frozenset({target})))
 
@@ -2392,11 +2418,11 @@ def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None
     item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
 
-    result, error = session._retry_after_multi_permission_decisions(
+    outcome = session._retry_after_multi_permission_decisions(
         call, {}, [item], [PermissionDecision(action="allow", scope="once")])
 
-    assert result == "ok"
-    assert error is None
+    assert outcome.result == "ok"
+    assert outcome.error is None
     mock_registry.instantiate_tool.assert_called_once_with(
         "whatever", permission_override=PermissionOverride(skills=frozenset({("internal", "s")})))
     # "once" must not have touched the session's live skillRules.
@@ -2416,10 +2442,10 @@ def test_multi_ask_persistent_scope_applies_skill_grant(tmp_path: Path) -> None:
     item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
 
-    result, error = session._retry_after_multi_permission_decisions(
+    outcome = session._retry_after_multi_permission_decisions(
         call, {}, [item], [PermissionDecision(action="allow", scope="session")])
 
-    assert result == "ok"
-    assert error is None
+    assert outcome.result == "ok"
+    assert outcome.error is None
     assert config.skill_rules.allow == [("internal", "s")]
     mock_registry.instantiate_tool.assert_called_once_with("whatever", permission_override=None)

@@ -10,6 +10,7 @@ from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.web.fetch import WebFetchTool, _extract_mime_type, _is_text_mime
 from klorb.workspace import Workspace
@@ -103,17 +104,16 @@ def test_tool_parameters() -> None:
     assert "url" in params.model_fields
 
 
-def test_non_get_method_returns_error() -> None:
+def test_non_get_method_raises_value_error() -> None:
     tool = WebFetchTool(_context())
-    result = tool.apply({"url": "https://example.com/", "method": "POST"})
-    assert "error" in result
-    assert "GET" in result["error"]
+    with pytest.raises(ValueError, match="GET"):
+        tool.apply({"url": "https://example.com/", "method": "POST"})
 
 
-def test_invalid_url_returns_error() -> None:
+def test_invalid_url_raises_value_error() -> None:
     tool = WebFetchTool(_context())
-    result = tool.apply({"url": "not-a-url"})
-    assert "error" in result
+    with pytest.raises(ValueError, match="domain"):
+        tool.apply({"url": "not-a-url"})
 
 
 def test_domain_deny_raises_permission_error() -> None:
@@ -195,7 +195,21 @@ def test_redirect_followed() -> None:
     assert result["url"] == "https://example.com/final"
 
 
-def test_http_error_returns_error() -> None:
+def test_spill_without_a_session_raises_business_logic_tool_call_error() -> None:
+    rules = DomainRules(allow=["example.com"])
+    tool = WebFetchTool(_context(domain_rules=rules))
+    big_content = ("x" * (tool._spill_bytes + 1)).encode("utf-8")
+    mock_response = _make_response(content=big_content)
+    with patch("klorb.tools.web.fetch.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+        with pytest.raises(ToolCallError) as exc_info:
+            tool.apply({"url": "https://example.com/"})
+    assert exc_info.value.category == "business_logic"
+
+
+def test_http_error_raises_transient_tool_call_error() -> None:
     rules = DomainRules(allow=["example.com"])
     tool = WebFetchTool(_context(domain_rules=rules))
     with patch("klorb.tools.web.fetch.httpx.Client") as mock_client_cls:
@@ -203,8 +217,49 @@ def test_http_error_returns_error() -> None:
         mock_client = MagicMock()
         mock_client.request.side_effect = httpx.ConnectError("Connection refused")
         mock_client_cls.return_value = mock_client
-        result = tool.apply({"url": "https://example.com/"})
-    assert "error" in result
+        with pytest.raises(ToolCallError) as exc_info:
+            tool.apply({"url": "https://example.com/"})
+    assert exc_info.value.category == "transient"
+
+
+def test_timeout_raises_transient_tool_call_error() -> None:
+    rules = DomainRules(allow=["example.com"])
+    tool = WebFetchTool(_context(domain_rules=rules))
+    with patch("klorb.tools.web.fetch.httpx.Client") as mock_client_cls:
+        import httpx
+        mock_client = MagicMock()
+        mock_client.request.side_effect = httpx.TimeoutException("timed out")
+        mock_client_cls.return_value = mock_client
+        with pytest.raises(ToolCallError) as exc_info:
+            tool.apply({"url": "https://example.com/"})
+    assert exc_info.value.category == "transient"
+
+
+def test_429_raises_transient_tool_call_error() -> None:
+    rules = DomainRules(allow=["example.com"])
+    tool = WebFetchTool(_context(domain_rules=rules))
+    mock_response = _make_response(status_code=429, reason_phrase="Too Many Requests")
+    with patch("klorb.tools.web.fetch.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+        with pytest.raises(ToolCallError) as exc_info:
+            tool.apply({"url": "https://example.com/"})
+    assert exc_info.value.category == "transient"
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_401_403_raises_permission_tool_call_error(status_code: int) -> None:
+    rules = DomainRules(allow=["example.com"])
+    tool = WebFetchTool(_context(domain_rules=rules))
+    mock_response = _make_response(status_code=status_code, reason_phrase="Forbidden")
+    with patch("klorb.tools.web.fetch.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+        with pytest.raises(ToolCallError) as exc_info:
+            tool.apply({"url": "https://example.com/"})
+    assert exc_info.value.category == "permission"
 
 
 def test_summary_format() -> None:

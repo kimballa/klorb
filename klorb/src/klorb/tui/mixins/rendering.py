@@ -442,17 +442,16 @@ class RenderingMixin(ReplAppBase):
         self, call: ToolCallRequest, response: ChatMessage | None,
     ) -> RenderedToolCall:
         """Reconstruct a finished tool call's `RenderedToolCall` for `_mount_restored_history`
-        from persisted `Message`s alone — `call.arguments` (the
-        model's raw JSON-encoded arguments) and `response.content` (see
-        `_format_tool_response_content` in `klorb.session`, the encoding
-        `Session._run_tool_calls` used to fold a live call's `(result, error)` into one string,
-        the only form either survives in once persisted).
-
-        Best-effort, not lossless: a successful string result that happens to start with
-        `"Error: "` is indistinguishable here from an actual failure, since the two are folded
-        into the same `content` string on write; every other shape round-trips exactly. A
-        missing `response` (a truncated or hand-edited save file) renders as a call with a
-        `None` result rather than raising.
+        from persisted `Message`s alone — `call.arguments` (the model's raw JSON-encoded
+        arguments) and `response.content`, a JSON-serialized `klorb.tools.response_envelope.
+        ToolResponseEnvelope` (see `Session._run_tool_calls`), the only form either survives in
+        once persisted. A `response.content` predating this envelope format (a session saved by
+        an older klorb version) falls back to the old `"Error: {message}"`-or-bare-string/JSON
+        encoding, best-effort: a successful string result that happens to start with
+        `"Error: "` is indistinguishable there from an actual failure, since the two were folded
+        into the same `content` string on write; every other pre-envelope shape round-trips
+        exactly. A missing `response` (a truncated or hand-edited save file) renders as a call
+        with a `None` result rather than raising.
         """
         try:
             args = json.loads(call.arguments) if call.arguments else {}
@@ -465,11 +464,19 @@ class RenderingMixin(ReplAppBase):
         result: Any = None
         error: str | None = None
         if response is not None:
-            if response.content.startswith("Error: "):
+            try:
+                parsed = json.loads(response.content)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict) and "is_error" in parsed:
+                if parsed["is_error"]:
+                    error = parsed.get("error_message")
+                    if error is None:
+                        error = json.dumps(parsed.get("response_body"))
+                else:
+                    result = parsed.get("response_body")
+            elif response.content.startswith("Error: "):
                 error = response.content[len("Error: "):]
             else:
-                try:
-                    result = json.loads(response.content)
-                except json.JSONDecodeError:
-                    result = response.content
+                result = parsed if parsed is not None else response.content
         return self._render_tool_result(call.name, args, result, error, None)

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from klorb.permissions.domain_access import DomainRules, evaluate_domain, parse_domain
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.process_config import ABSOLUTE_MAX_BODY_BYTES
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.web.spill import get_or_create_tmpdir, grant_tmpdir_read_access, spill_file_path
@@ -170,15 +171,10 @@ class WebFetchTool(InterruptibleTool):
 
         # Only GET is supported
         if method != "GET":
-            return {
-                "error": f"Method {method!r} is not supported. Use `method: \"GET\"`.",
-            }
+            raise ValueError(f"Method {method!r} is not supported. Use `method: \"GET\"`.")
 
         # Parse and screen domain
-        try:
-            domain = parse_domain(url)
-        except ValueError as exc:
-            return {"error": str(exc)}
+        domain = parse_domain(url)
 
         # Check PermissionOverride for a once-scoped domain bypass
         override = self.context.permission_override
@@ -200,7 +196,7 @@ class WebFetchTool(InterruptibleTool):
             return {
                 "incomplete": True,
                 "incomplete_reason": "user_cancel",
-                "error": "Request canceled before it started.",
+                "message": "Request canceled before it started.",
             }
 
         # Build HTTP client
@@ -217,25 +213,27 @@ class WebFetchTool(InterruptibleTool):
         try:
             response = client.request(method, url, headers=headers)
         except httpx.TimeoutException:
-            return {
-                "error": f"Request timed out after {default_timeout} seconds.",
-            }
+            raise ToolCallError(
+                f"Request timed out after {default_timeout} seconds.", category="transient") from None
         except httpx.RequestError as exc:
-            return {
-                "error": f"HTTP request failed: {exc}",
-            }
+            raise ToolCallError(f"HTTP request failed: {exc}", category="transient") from exc
 
         # Check cancellation after response headers
         if cancel_event is not None and cancel_event.is_set():
             return {
                 "incomplete": True,
                 "incomplete_reason": "user_cancel",
-                "error": "Request canceled after response headers received.",
+                "message": "Request canceled after response headers received.",
             }
 
         final_url = str(response.url)
         response_code = response.status_code
         response_text = response.reason_phrase
+        if response_code == 429:
+            raise ToolCallError(f"Fetch {url} was rate-limited (429).", category="transient")
+        if response_code in (401, 403):
+            raise ToolCallError(
+                f"Fetch {url} was rejected ({response_code} {response_text}).", category="permission")
         content_type = response.headers.get("content-type")
         mime_type = _extract_mime_type(content_type)
         is_text = _is_text_mime(mime_type)
@@ -279,7 +277,7 @@ class WebFetchTool(InterruptibleTool):
                 return {
                     "incomplete": True,
                     "incomplete_reason": "user_cancel",
-                    "error": "Request canceled during content processing.",
+                    "message": "Request canceled during content processing.",
                 }
             try:
                 body_text = _clean_html(body_text)
@@ -316,7 +314,7 @@ class WebFetchTool(InterruptibleTool):
         """Write binary content to a spill file and return the path."""
         session = self.context.session
         if session is None:
-            return {"error": "No session available for spill."}
+            raise ToolCallError("No session available for spill.", category="business_logic")
 
         tmpdir = get_or_create_tmpdir(session)
         file_path = spill_file_path(tmpdir, domain)
@@ -342,7 +340,7 @@ class WebFetchTool(InterruptibleTool):
         """Write text content to a spill file and return the path."""
         session = self.context.session
         if session is None:
-            return {"error": "No session available for spill."}
+            raise ToolCallError("No session available for spill.", category="business_logic")
 
         tmpdir = get_or_create_tmpdir(session)
         file_path = spill_file_path(tmpdir, domain)

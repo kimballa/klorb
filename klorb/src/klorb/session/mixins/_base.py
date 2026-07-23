@@ -28,7 +28,7 @@ from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskReq
 from klorb.role import Role
 from klorb.session.config import SessionConfig
 from klorb.session.constants import ThinkingEffort
-from klorb.session.events import PermissionDecision, TurnEventHandlers, UserSkillActivation
+from klorb.session.events import PermissionDecision, ToolCallOutcome, TurnEventHandlers, UserSkillActivation
 from klorb.session_naming import SessionName
 from klorb.session_statistics import SessionStatistics
 from klorb.system_prompt import SystemPrompt
@@ -151,7 +151,7 @@ class SessionBase:
         args: dict[str, Any],
         ask_exc: PermissionAskRequired,
         decision: PermissionDecision,
-    ) -> tuple[Any, str | None]:
+    ) -> ToolCallOutcome:
         raise NotImplementedError
 
     def _resolve_multi_permission_ask(
@@ -160,7 +160,7 @@ class SessionBase:
         args: dict[str, Any],
         multi_ask_exc: MultiPermissionAskRequired,
         callbacks: TurnEventHandlers,
-    ) -> tuple[Any, str | None]:
+    ) -> ToolCallOutcome:
         raise NotImplementedError
 
     def _resolve_ask_user_questions(
@@ -168,7 +168,7 @@ class SessionBase:
         call: ToolCallRequest,
         ask_exc: AskUserQuestionsRequired,
         callbacks: TurnEventHandlers,
-    ) -> tuple[Any, str | None]:
+    ) -> ToolCallOutcome:
         raise NotImplementedError
 
     def _resolve_escalate_privileges(
@@ -176,7 +176,7 @@ class SessionBase:
         call: ToolCallRequest,
         escalate_exc: EscalatePrivilegesRequired,
         callbacks: TurnEventHandlers,
-    ) -> tuple[Any, str | None]:
+    ) -> ToolCallOutcome:
         raise NotImplementedError
 
     def _run_tool_calls(

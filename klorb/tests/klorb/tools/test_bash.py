@@ -5,15 +5,20 @@ stderr capture and spill), and the bash -i noise-stripping. See
 docs/specs/bash-tool-and-command-permissions.md.
 """
 
+import json
 import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from klorb import sandbox
+from klorb.api_provider import ProviderResponse
+from klorb.message import Message, ToolCallRequest
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.file_access import FileRules
@@ -22,6 +27,7 @@ from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskIte
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.bash import BashTool, build_bash_env
+from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -339,6 +345,52 @@ def test_is_success_reflects_a_nonzero_exit(tmp_path: Path) -> None:
     assert ok["success"] is True
     assert tool.is_success(args={}, result=ok, error=None) is True
     assert tool.is_success(args={}, result=None, error="boom") is False
+
+
+def test_session_dispatch_reports_nonzero_exit_as_business_logic_error(tmp_path: Path) -> None:
+    """`BashTool.apply()` never raises for a command that merely runs and fails (see
+    `test_is_success_reflects_a_nonzero_exit` above), so `Session._run_tool_calls` must derive
+    the `ToolResponseEnvelope`'s `business_logic` categorization from `is_success()` itself, one
+    layer up -- see docs/plans/archive/015-structured-tool-responses.md's "Design decision: Bash
+    exit-status handling". `response_body` still carries the tool's own result (stdout/stderr/
+    exit_status), even though `is_error` is `True`, so a failed command's diagnostic detail isn't
+    dropped."""
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path, trusted=True),
+        command_rules=CommandRules(allow=[["false"]]))
+    tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        ProviderResponse(
+            message=Message(
+                content="", role="assistant", num_tokens=3, processing_state="complete",
+                timestamp=datetime.now(), finish_reason="tool_calls",
+                tool_calls=[ToolCallRequest(
+                    id="call_1", name="Bash",
+                    arguments=json.dumps({
+                        "command": "false", "shell_lifetime": "command", "intent": "test intent"}))]),
+            prompt_tokens=10),
+        ProviderResponse(
+            message=Message(
+                content="done", role="assistant", num_tokens=1, processing_state="complete",
+                timestamp=datetime.now(), finish_reason="stop"),
+            prompt_tokens=10),
+    ]
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    _live_sessions.append(session)
+
+    response = session.send_turn("run false")
+
+    assert response == "done"
+    tool_response = next(m for m in session.messages if m.role == "tool_response")
+    assert isinstance(tool_response.content, str)
+    envelope = json.loads(tool_response.content)
+    assert envelope["is_error"] is True
+    assert envelope["is_retryable"] is False
+    assert envelope["error_category"] == "business_logic"
+    assert "error_message" not in envelope
+    assert envelope["response_body"]["success"] is False
+    assert envelope["response_body"]["exit_status"] == 1
 
 
 def test_signal_death_is_decoded(tmp_path: Path) -> None:

@@ -17,11 +17,13 @@ from klorb.session.events import (
     EscalatePrivilegesContext,
     PermissionAskContext,
     PermissionDecision,
+    ToolCallOutcome,
     TurnEventHandlers,
 )
 from klorb.session.mixins._base import SessionBase
 from klorb.tools.ask.common import AskUserQuestionsRequired
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
+from klorb.tools.response_envelope import classify_exception
 
 if TYPE_CHECKING:
     # `GrantAction`/`GrantScope` are simple `Literal` aliases living in `klorb.permissions.grant`,
@@ -80,19 +82,19 @@ class SessionPermissionsMixin(SessionBase):
         args: dict[str, Any],
         ask_exc: PermissionAskRequired,
         decision: PermissionDecision,
-    ) -> tuple[Any, str | None]:
-        """Resolve a `PermissionAskRequired` into a `(result, error)` pair (see
-        `_format_tool_response_content` for how a caller turns this into `tool_response`
-        content): for a persistent `scope`, first applies the grant `decision` implies via
-        `ask_exc.resource.apply_grant()` — passing `self.config` and `self._process_config`
-        (possibly `None`; `apply_grant()` skips the process-wide ripple, but still persists to
-        disk, in that case) — then retries the call exactly once, same as
+    ) -> ToolCallOutcome:
+        """Resolve a `PermissionAskRequired` into a `ToolCallOutcome` (see
+        `klorb.tools.response_envelope.ToolResponseEnvelope` for how a caller turns this into
+        `tool_response` content): for a persistent `scope`, first applies the grant `decision`
+        implies via `ask_exc.resource.apply_grant()` — passing `self.config` and
+        `self._process_config` (possibly `None`; `apply_grant()` skips the process-wide ripple,
+        but still persists to disk, in that case) — then retries the call exactly once, same as
         `scope="once"` (which instead retries via a one-shot `ToolSetupContext.
         permission_override`, persisting nothing — only meaningful for `action="allow"`; a
         `"once"` deny needs no override at all). Reports a denial for `action="deny"` (any
         scope) or `other_text` with no retry. Any exception from the retried call (including a
         second `PermissionAskRequired`) is reported the same generic way an ordinary tool
-        failure is — never a second ask.
+        failure is — never a second ask — via `classify_exception()`.
 
         Handles every resource kind `ask_exc.resource` might be: the persistent-scope grant is
         dispatched by `_apply_ask_grant`, and a `scope="once"` retry carries the resource on the
@@ -100,11 +102,13 @@ class SessionPermissionsMixin(SessionBase):
         """
         assert ask_exc.resource.is_persistable
         if decision.other_text is not None:
-            return None, f"Permission denied: {ask_exc}. User note: {decision.other_text}"
+            return ToolCallOutcome(
+                error=f"Permission denied: {ask_exc}. User note: {decision.other_text}",
+                category="permission")
         if decision.action == "deny":
             if decision.scope != "once":
                 self._apply_ask_grant("deny", decision.scope, ask_exc)
-            return None, f"Permission denied: {ask_exc}"
+            return ToolCallOutcome(error=f"Permission denied: {ask_exc}", category="permission")
         if decision.scope in ("session", "workspace", "homedir"):
             self._apply_ask_grant("allow", decision.scope, ask_exc)
         assert self._tool_registry is not None
@@ -114,10 +118,11 @@ class SessionPermissionsMixin(SessionBase):
                 tool = self._tool_registry.instantiate_tool(call.name, permission_override=override)
             else:
                 tool = self._tool_registry.instantiate_tool(call.name)
-            return tool.apply(args), None
+            return ToolCallOutcome(result=tool.apply(args))
         except Exception as exc:
             logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
-            return None, str(exc)
+            message, category, response_body = classify_exception(exc)
+            return ToolCallOutcome(error=message, category=category, response_body=response_body)
 
     def _apply_ask_grant(
         self,
@@ -135,8 +140,8 @@ class SessionPermissionsMixin(SessionBase):
         args: dict[str, Any],
         items: list[PermissionAskItem],
         decisions: list[PermissionDecision],
-    ) -> tuple[Any, str | None]:
-        """Resolve a `MultiPermissionAskRequired`'s items into a `(result, error)` pair, given
+    ) -> ToolCallOutcome:
+        """Resolve a `MultiPermissionAskRequired`'s items into a `ToolCallOutcome`, given
         one `PermissionDecision` already collected per item (`_run_tool_calls` stops collecting
         — and calls this with a shorter `decisions` list than `items` — at the first `"deny"`
         answer; see that method). Applies every persistent-scope `"allow"`/`"deny"` decision's
@@ -154,11 +159,12 @@ class SessionPermissionsMixin(SessionBase):
                 reason = f"Permission denied: {item.resource_description}"
                 if decision.other_text is not None:
                     reason += f". User note: {decision.other_text}"
-                return None, reason
+                return ToolCallOutcome(error=reason, category="permission")
 
         if len(decisions) < len(items):
             denied_item = items[len(decisions)]
-            return None, f"Permission denied: {denied_item.resource_description}"
+            return ToolCallOutcome(
+                error=f"Permission denied: {denied_item.resource_description}", category="permission")
 
         override: PermissionOverride | None = None
         for item, decision in zip(items, decisions):
@@ -172,10 +178,11 @@ class SessionPermissionsMixin(SessionBase):
         assert self._tool_registry is not None
         try:
             tool = self._tool_registry.instantiate_tool(call.name, permission_override=override)
-            return tool.apply(args), None
+            return ToolCallOutcome(result=tool.apply(args))
         except Exception as exc:
             logger.warning("Retried tool call %s(%s) failed: %s", call.name, call.arguments, exc)
-            return None, str(exc)
+            message, category, response_body = classify_exception(exc)
+            return ToolCallOutcome(error=message, category=category, response_body=response_body)
 
     def _resolve_multi_permission_ask(
         self,
@@ -183,8 +190,8 @@ class SessionPermissionsMixin(SessionBase):
         args: dict[str, Any],
         multi_ask_exc: MultiPermissionAskRequired,
         callbacks: TurnEventHandlers,
-    ) -> tuple[Any, str | None]:
-        """Resolve a `MultiPermissionAskRequired` into a `(result, error)` pair, branching on
+    ) -> ToolCallOutcome:
+        """Resolve a `MultiPermissionAskRequired` into a `ToolCallOutcome`, branching on
         `config.permission_framework` exactly like the single-item `PermissionAskRequired` path
         does — except a non-persistable (structural) item is never automatically failed closed
         here (see `MultiPermissionAskRequired`'s own docstring for why). `"ask"` asks about every
@@ -195,8 +202,10 @@ class SessionPermissionsMixin(SessionBase):
         if self.config.permission_framework == "deny":
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
             logger.warning("User configured us to auto-reject approval request.")
-            return None, (str(multi_ask_exc) +
-                "\nThis kind of request is automatically denied. Do not repeat it.")
+            return ToolCallOutcome(
+                error=str(multi_ask_exc) +
+                "\nThis kind of request is automatically denied. Do not repeat it.",
+                category="permission")
         if self.config.permission_framework == "auto":
             logger.info(
                 "Auto-approving permission ask under permissionFramework=auto: %s", multi_ask_exc)
@@ -207,8 +216,10 @@ class SessionPermissionsMixin(SessionBase):
         if callbacks.on_permission_ask is None:
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, multi_ask_exc)
             logger.warning("User unavailable to respond to approval request.")
-            return None, (str(multi_ask_exc) +
-                "\nThe user is unavailable to approve this kind of request. Do not repeat it.")
+            return ToolCallOutcome(
+                error=str(multi_ask_exc) +
+                "\nThe user is unavailable to approve this kind of request. Do not repeat it.",
+                category="permission")
 
         decisions: list[PermissionDecision] = []
         for item in multi_ask_exc.items:
@@ -225,8 +236,8 @@ class SessionPermissionsMixin(SessionBase):
         call: ToolCallRequest,
         ask_exc: AskUserQuestionsRequired,
         callbacks: TurnEventHandlers,
-    ) -> tuple[Any, str | None]:
-        """Resolve an `AskUserQuestionsRequired` into a `(result, error)` pair: asks
+    ) -> ToolCallOutcome:
+        """Resolve an `AskUserQuestionsRequired` into a `ToolCallOutcome`: asks
         `callbacks.on_ask_user_questions` about each of `ask_exc.questions` in turn, building
         `result["answers"]` from the collected `AskUserQuestionsAnswer`s. Unlike a permission
         ask, there is no `config.permission_framework` branching (asking the user isn't a
@@ -240,11 +251,12 @@ class SessionPermissionsMixin(SessionBase):
         would, since there is nobody to ask. A `cancelled` answer for any question
         short-circuits the rest of the batch: the call fails, naming the cancelled question and
         echoing back any answers already collected for earlier questions in the same call, so
-        that information isn't silently lost.
+        that information isn't silently lost. Both failure modes are reported as
+        `category="business_logic"` -- declining to answer isn't a resource-access denial.
         """
         if callbacks.on_ask_user_questions is None:
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
-            return None, str(ask_exc)
+            return ToolCallOutcome(error=str(ask_exc), category="business_logic")
 
         total = len(ask_exc.questions)
         answers: list[dict[str, Any]] = []
@@ -254,27 +266,29 @@ class SessionPermissionsMixin(SessionBase):
                 index=index, total=total))
             if answer.cancelled:
                 collected = ", ".join(a["header"] for a in answers) or "none"
-                return None, (
-                    f"User declined to answer question {index + 1}/{total} "
-                    f"('{question.header}': {question.question}). Answers already collected "
-                    f"for earlier questions in this call: {collected}. Don't keep guessing or "
-                    "re-asking the same thing a different way -- reconsider your approach, or "
-                    "ask a clearer, narrower question."
-                )
+                return ToolCallOutcome(
+                    error=(
+                        f"User declined to answer question {index + 1}/{total} "
+                        f"('{question.header}': {question.question}). Answers already collected "
+                        f"for earlier questions in this call: {collected}. Don't keep guessing or "
+                        "re-asking the same thing a different way -- reconsider your approach, or "
+                        "ask a clearer, narrower question."
+                    ),
+                    category="business_logic")
             answers.append({
                 "header": question.header,
                 "question": question.question,
                 "answer": answer.answer,
             })
-        return {"answers": answers}, None
+        return ToolCallOutcome(result={"answers": answers})
 
     def _resolve_escalate_privileges(
         self,
         call: ToolCallRequest,
         escalate_exc: EscalatePrivilegesRequired,
         callbacks: TurnEventHandlers,
-    ) -> tuple[Any, str | None]:
-        """Resolve an `EscalatePrivilegesRequired` into a `(result, error)` pair: asks
+    ) -> ToolCallOutcome:
+        """Resolve an `EscalatePrivilegesRequired` into a `ToolCallOutcome`: asks
         `callbacks.on_escalate_privileges` for an `EscalatePrivilegesDecision` and, on
         approval, records the scope into `SessionConfig.approved_scopes` (`self.config`,
         the in-memory, session-scoped set `is_privileged_path` consults — see
@@ -289,16 +303,19 @@ class SessionPermissionsMixin(SessionBase):
         (the session's own `SessionConfig`), which always exists, so — unlike when
         `approved_scopes` lived on `ProcessConfig` — a `Session` constructed without a
         `ProcessConfig` no longer fails closed here: escalation is session-scoped, and the
-        grant is recorded on the session itself.
+        grant is recorded on the session itself. Both failure modes (no callback, or an explicit
+        denial) are reported as `category="permission"`.
         """
         if callbacks.on_escalate_privileges is None:
             logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, escalate_exc)
-            return None, (
-                f"Escalation of '{escalate_exc.scope}' scope was not approved: there is no "
-                "interactive surface to ask through, so the privileged-path deny stays in "
-                "effect. Read or write the file through a non-privileged path instead, or ask "
-                "the user to run klorb interactively so they can approve this escalation."
-            )
+            return ToolCallOutcome(
+                error=(
+                    f"Escalation of '{escalate_exc.scope}' scope was not approved: there is no "
+                    "interactive surface to ask through, so the privileged-path deny stays in "
+                    "effect. Read or write the file through a non-privileged path instead, or ask "
+                    "the user to run klorb interactively so they can approve this escalation."
+                ),
+                category="permission")
 
         scope = escalate_exc.scope
         description = (
@@ -313,6 +330,7 @@ class SessionPermissionsMixin(SessionBase):
         if decision.approved:
             self.config.approved_scopes.add(scope)
             logger.info("Escalation approved for scope '%s'", scope)
-            return {"scope": scope, "approved": True}, None
+            return ToolCallOutcome(result={"scope": scope, "approved": True})
         logger.info("Escalation denied for scope '%s'", scope)
-        return None, f"Escalation of '{scope}' scope was denied by the user."
+        return ToolCallOutcome(
+            error=f"Escalation of '{scope}' scope was denied by the user.", category="permission")
