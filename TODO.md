@@ -1,36 +1,22 @@
 
 # TODO
 
-## Bugs
+## Agent / Harness
+
+### Bugs
 
 * Project dir names in ~/.local/share/klorb/ should be `<basename>-<uuid>`, not the other way around.
-
-* LLM output is being added to the history in an markdown-aware way and if the LLM
-  itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
-  ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
-  like `</Think>` in the middle of its output.
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
-* I had already explicitly worked to remove the "global" scrollbar so that only the "history"
-  scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
-  are still both present on a long enough session.
-  (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
-  ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
-  done by Textual's draw-over algorithm? This may not be fixable.
-
-* Have an agent do a pass over all/most source (or do it in sections) to remove existing
+* (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
-## Feature backlog
-
-* When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
-  near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
-  to type after ruling out any matches.
+### Feature backlog
 
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
@@ -68,17 +54,15 @@
   `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
   docs/specs/roles-and-system-prompts.md.
 
-* mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
-
 * Need a ProviderFactory
   * Produces ApiProviders from a string
   * Currently only openrouter api provider is supported from "openrouter" string.
   * model names now can be fully-qualified model name (fqmn): e.g.: "openrouter:gpt-4o-mini"
   * Session can get the current Provider from the ProviderFactory.
   * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
+
 * More tools:
   * Add Evals for GrepTool and FindFileTool.
-
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
     (see "Plan 013: WebFetch" section below)
 
@@ -93,11 +77,6 @@
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
       into a directory klorb itself trusts and auto-discovers deserves the same escalation
       klorb's own skills directory gets.
-* Add tips/suggestions:
-  * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
-    compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
-* Improve Workspace trust msg:
-  * When querying about workspace trust, list any workspace skills auto-allowed by config.
 
 * Eventually when we have a lot of skills, the skill list that is auto-advertised in the
   initial SystemInterjection should be pruned and only display some top most-relevant
@@ -146,17 +125,11 @@
 * Vector database indexing of skills and memories for fuzzier search of both.
   * ... and then do vectordb indexing of the codebase, too.
 
-* Ask (or send a patch) upstream for a `chainlink init --db-only` flag that skips writing the
-  Claude-Code-hooks/MCP scaffold (`.claude/settings.json`, `.claude/hooks/`, `.claude/mcp/`,
-  `.mcp.json`) and just sets up `.chainlink/`. klorb's `ChainlinkClient._ensure_setup()` prunes
-  that scaffold itself today (see docs/specs/chainlink-task-tracking.md); a flag would remove
-  the need for the workaround.
-
-* Ask (or send a patch) upstream for chainlink's `issue show`/`issue list --json` to report a
-  `blocked_by_open` list (or count) alongside `blocked_by` -- right now `blocked_by` is never
-  pruned as a blocker closes, so klorb's own `open_blocker_count()` (`klorb.tools.tasks.common`)
-  has to recompute "still in the way" itself by intersecting against a separately-fetched open-id
-  set, rather than trusting chainlink's own data.
+* Integrate with `chainlink init --db-only`, once merged. Then we don't need to include the code
+  to remove all the extraneous stuff it adds.
+  (see docs/specs/chainlink-task-tracking.md)
+* Integrate with `chainlink`'s `blocked_by_open` field, once merged. Then we don't have to look
+  up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
 ### Plan 013: WebFetch
 
@@ -172,3 +145,42 @@
   supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
   otherwise.
 * Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
+
+## TUI
+
+### Bugs
+
+* LLM output is being added to the history in an markdown-aware way and if the LLM
+  itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
+  ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
+  like `</Think>` in the middle of its output.
+
+* I had already explicitly worked to remove the "global" scrollbar so that only the "history"
+  scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
+  are still both present on a long enough session.
+  (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
+  ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
+  done by Textual's draw-over algorithm? This may not be fixable.
+
+* mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
+
+### Feature backlog
+
+* When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
+  near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
+  to type after ruling out any matches.
+
+* Add tips/suggestions:
+  * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
+    compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
+* Improve Workspace trust msg:
+  * When querying about workspace trust, list any workspace skills auto-allowed by config.
+
+## VSCode plugin
+
+### Bugs
+
+### Feature backlog
+
+* Figure out how to align to the Agent Host Protocol: https://microsoft.github.io/agent-host-protocol/
+* VSCodeApi should be made universally accessible via a Provider, rather than prop-drilled everywhere.

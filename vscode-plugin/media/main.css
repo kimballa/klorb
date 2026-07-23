@@ -27,13 +27,28 @@ body {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.history-entry {
+.bubble {
+  box-sizing: border-box;
+  width: 85%;
+  padding: 6px 10px;
+  border-radius: 12px;
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--vscode-widget-border, transparent);
+  text-align: left;
+  background-color: color-mix(in srgb, var(--vscode-sideBar-background) 88%, white 12%);
+}
+
+.bubble-user {
+  align-self: flex-end;
+}
+
+.bubble-server {
+  align-self: flex-start;
 }
 
 .input-row {

@@ -1,12 +1,12 @@
 // © Copyright 2026 Aaron Kimball
 import { createRoot } from 'react-dom/client';
 
-import { App, type VsCodeApi } from './App';
+import { App, type ChatEntry, type VsCodeApi } from './App';
 
 declare function acquireVsCodeApi(): VsCodeApi;
 
 interface SessionState {
-  entries: string[];
+  entries: ChatEntry[];
 }
 
 function main(): void {

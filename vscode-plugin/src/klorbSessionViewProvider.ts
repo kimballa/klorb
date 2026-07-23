@@ -1,19 +1,39 @@
 // © Copyright 2026 Aaron Kimball
 import * as vscode from 'vscode';
 
+import type { KlorbServerProcess } from './klorbServerProcess';
+
+interface SubmitMessage {
+  type: 'submit';
+  text: string;
+}
+
+function isSubmitMessage(message: unknown): message is SubmitMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === 'submit' &&
+    typeof (message as { text?: unknown }).text === 'string'
+  );
+}
+
 /**
- * Backs the "Klorb session" side panel: a scrolling history of static entries above a
- * multi-line prompt textbox. Today the webview only appends what the user typed to its own
- * history (see src/webview/App.tsx, mounted by src/webview/main.tsx and bundled to
- * out/webview/main.js); it does not yet talk to `klorb server` (docs/specs/klorb-server.md)
- * or any other klorb process.
+ * Backs the "Klorb session" side panel: a scrolling history of chat bubbles above a
+ * multi-line prompt textbox (see src/webview/App.tsx, mounted by src/webview/main.tsx and
+ * bundled to out/webview/main.js). Submitting the textbox posts a `{type: 'submit', text}`
+ * message from the webview to `_handleMessage()`, which forwards `text` to the shared
+ * `KlorbServerProcess` as a `greet` command (docs/specs/klorb-server.md) and posts the reply
+ * back to the webview as `{type: 'reply', text}`.
  */
 export class KlorbSessionViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'klorb.sessionView';
 
   private _view: vscode.WebviewView | undefined;
 
-  public constructor(private readonly _extensionUri: vscode.Uri) {}
+  public constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _server: KlorbServerProcess,
+  ) {}
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -26,6 +46,21 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this._extensionUri],
     };
     webviewView.webview.html = this._getHtml(webviewView.webview);
+    webviewView.webview.onDidReceiveMessage((message: unknown) => {
+      void this._handleMessage(message);
+    });
+  }
+
+  private async _handleMessage(message: unknown): Promise<void> {
+    if (!isSubmitMessage(message)) {
+      return;
+    }
+    const reply = await this._server.greet(message.text);
+    const text =
+      typeof reply.message === 'string'
+        ? reply.message
+        : String(reply.error ?? 'unrecognized reply from klorb server');
+    this._view?.webview.postMessage({ type: 'reply', text });
   }
 
   /**

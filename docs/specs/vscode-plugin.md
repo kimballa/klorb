@@ -4,32 +4,61 @@
 
 `vscode-plugin/` is a VS Code extension that docks a "Klorb session" panel in the editor's
 secondary side bar (the right-hand auxiliary bar, matching where tools like this one dock by
-default). The panel shows an append-only, top-to-bottom scrolling history above a multi-line
-prompt textbox: typing text and pressing Enter appends it as a new entry at the bottom of the
-history and clears the box; Shift+Enter inserts a newline in the box instead of submitting.
-Today the panel only echoes what the user typed into its own history — it does not
-yet talk to a klorb process. See [[klorb-server]] for the JSONL stdin/stdout protocol a later
-iteration of this extension is expected to drive.
+default). The panel shows an append-only, top-to-bottom scrolling history of chat bubbles above
+a multi-line prompt textbox: typing text and pressing Enter appends it as a right-aligned bubble
+at the bottom of the history, clears the box, and sends it to a `klorb server` child process
+(see [[klorb-server]] for the JSONL stdin/stdout protocol) as a `greet` command; the server's
+reply appears as a left-aligned bubble once it arrives. Shift+Enter inserts a newline in the box
+instead of submitting. Activation spawns one `klorb server` process, shared by the whole
+extension; the **Klorb: Restart Server** command palette entry kills and respawns it, picking up
+any change to the `klorb.serverPath`/`klorb.openRouterApiKey` settings (see "Configuration"
+below).
 
 ## How it works
 
 * `vscode-plugin/src/extension.ts` is the extension's activation entry point
   (`package.json`'s `main`, compiled to `out/extension.js`). `activate()` constructs one
-  `KlorbSessionViewProvider` and registers it as the provider for the `klorb.sessionView`
-  webview view, and registers the `klorb.restartSession` command.
+  `KlorbServerProcess`, starts it via `readServerOptions()` (reads `klorb.serverPath` and
+  `klorb.openRouterApiKey` off `vscode.workspace.getConfiguration('klorb')`, folding the API key
+  into the child's `OPENROUTER_API_KEY` environment variable when non-empty), constructs one
+  `KlorbSessionViewProvider` bound to that server, and registers it as the provider for the
+  `klorb.sessionView` webview view. It also registers the `klorb.restartSession` command
+  (see below) and `klorb.restartServer`, which re-reads the same options and calls
+  `server.start()` again — `start()` stops any prior child first, so this both applies changed
+  settings and recovers from a crashed/hung server. `context.subscriptions` disposes the server
+  (killing the child process) when the extension deactivates.
+* `vscode-plugin/src/klorbServerProcess.ts`'s `KlorbServerProcess` owns the one `klorb server`
+  child process and the JSONL request/response exchange over its stdin/stdout ([[klorb-server]]
+  documents the wire protocol). `start()` spawns `<command> server` (via an injected `SpawnFn`,
+  defaulting to real `child_process.spawn`, so tests can drive the class against a fake process)
+  and wires a `readline.Interface` over the child's stdout. `greet(name)` writes
+  `{"greet": name}\n` to the child's stdin and returns a `Promise` that resolves with the next
+  stdout line once parsed (`parseReplyLine()`, exported separately for direct unit testing);
+  since the protocol carries no request id and replies arrive strictly in request order (see
+  [[klorb-server]]'s "Out of scope"), pending `greet()` calls are tracked as a FIFO queue of
+  `Promise` resolvers rather than correlated by id. `stop()` kills the child, tears down the
+  `readline.Interface`, and resolves any still-pending `greet()` calls with
+  `{"error": "klorb server restarted"}` rather than leaving them hanging forever.
 * `vscode-plugin/src/klorbSessionViewProvider.ts`'s `KlorbSessionViewProvider` implements
   `vscode.WebviewViewProvider`. `resolveWebviewView()` enables scripts, restricts
-  `localResourceRoots` to the extension's own install directory, and sets the webview's HTML.
-  `restart()` re-sets the webview's HTML (with a fresh nonce and a cache-busting query string
-  on the compiled webview script's URI), which is what the `klorb.restartSession` command
-  palette entry calls — it reloads the panel's webview document (and therefore
-  `out/webview/main.js`) without requiring a full "Reload Window", so a rebuilt webview script
-  is picked up immediately. This only covers changes to `src/webview/*`, though: `restart()`
-  itself runs as a method on the already-`require()`d `KlorbSessionViewProvider` instance, so a
-  change to `klorbSessionViewProvider.ts` or `extension.ts` needs VS Code's own "Developer:
-  Reload Window" (or a full restart) to take effect, the same as for any other extension host
-  code change. `registerWebviewViewProvider()` is called with
-  `webviewOptions: { retainContextWhenHidden: true }` so the in-progress history and draft
+  `localResourceRoots` to the extension's own install directory, sets the webview's HTML, and
+  registers `onDidReceiveMessage` to relay `{type: 'submit', text}` messages from the webview
+  (see "Webview chat protocol" below) into `_handleMessage()`. `_handleMessage()` calls
+  `this._server.greet(text)` and posts the reply back to the webview as `{type: 'reply', text}}`,
+  where `text` is the reply's `message` field on success or its `error` field (or a generic
+  fallback string) otherwise — so a malformed/unrecognized-command reply still surfaces as a
+  bubble in the panel instead of silently vanishing. `restart()` re-sets the webview's HTML (with
+  a fresh nonce and a cache-busting query string on the compiled webview script's URI), which is
+  what the `klorb.restartSession` command palette entry calls — it reloads the panel's webview
+  document (and therefore `out/webview/main.js`) without requiring a full "Reload Window", so a
+  rebuilt webview script is picked up immediately. This only covers changes to `src/webview/*`,
+  though: `restart()` itself runs as a method on the already-`require()`d
+  `KlorbSessionViewProvider` instance, so a change to `klorbSessionViewProvider.ts` or
+  `extension.ts` needs VS Code's own "Developer: Reload Window" (or a full restart) to take
+  effect, the same as for any other extension host code change. (`klorb.restartServer`, unlike
+  `klorb.restartSession`, only restarts the `KlorbServerProcess` child and never touches the
+  webview's HTML — the two commands are independent.) `registerWebviewViewProvider()` is called
+  with `webviewOptions: { retainContextWhenHidden: true }` so the in-progress history and draft
   text survive the view being hidden (e.g. the auxiliary bar closed) and re-shown.
 * Panel placement comes from `package.json`'s `contributes.viewsContainers.secondarySidebar`
   entry (container id `klorb`) plus a `views.klorb` entry (view id `klorb.sessionView`, type
@@ -46,8 +75,16 @@ iteration of this extension is expected to drive.
   against the VS Code theme's CSS custom properties (`--vscode-*`) exactly as before, since
   React produces the same DOM shape; `#root { display: contents }` keeps the mount div itself
   out of the flex layout so `.title`/`#history`/`.input-row` lay out as if they were direct
-  children of `<body>`. `#history` is the only element with `overflow-y: auto`, so a scrollbar
-  appears there once its content overflows the panel.
+  children of `<body>`. `#history` is a flex column (the only element with `overflow-y: auto`,
+  so a scrollbar appears there once its content overflows the panel) and each chat bubble is a
+  `.bubble` div: `width: 85%`, rounded corners (`border-radius: 12px`), left-justified text
+  (`text-align: left`), and a background one shade lighter than the panel
+  (`color-mix(in srgb, var(--vscode-sideBar-background) 88%, white 12%)`) so a bubble reads as
+  a raised surface against the side bar in both light and dark themes. `.bubble-user` (`entry.role
+  === 'user'`) sets `align-self: flex-end`, clinging to the history's right edge; `.bubble-server`
+  sets `align-self: flex-start`, clinging to the left edge — `align-self` alone is enough since
+  `#history`'s main axis is vertical (`flex-direction: column`), so cross-axis alignment is
+  purely horizontal.
 * `vscode-plugin/src/webview/main.tsx` is the webview's entry point, compiled separately (see
   "Webview build" below) and loaded as a plain classic `<script>`. `main()` calls
   `acquireVsCodeApi()` exactly once, reads any persisted `SessionState` via
@@ -57,21 +94,39 @@ iteration of this extension is expected to drive.
   Code webview API only allows one call per page load — which is why the single `vscode` value
   from that one call is threaded through as a prop rather than re-acquired.
 * `vscode-plugin/src/webview/App.tsx`'s `App` component owns all of the panel's interactive
-  state: `entries` (the history, seeded from `initialEntries`) and `draft` (the textarea's
-  controlled value). Submitting appends `draft.trim()` to `entries` and clears `draft`; a
-  `useEffect` keyed on `entries` calls `vscode.setState({ entries })` (so history survives
-  `retainContextWhenHidden`'s context teardown/rebuild) and scrolls the history's last child
-  into view. History entries are keyed by array index in the `.map()` that renders them — safe
-  here specifically because entries only ever append, never reorder or get removed or inserted
-  in the middle, which is the one case React's own docs call out as fine for index keys. The
-  one piece of logic broken out into its own pure function, independent of React, is
-  `vscode-plugin/src/webview/keyHandling.ts`'s `classifyEnterKey(shiftKey, ctrlKey)`, which
-  returns `'newline'` if either modifier is held and `'submit'` otherwise; `App`'s `onKeyDown`
-  handler calls `event.preventDefault()` and submits only when it returns `'submit'`, otherwise
-  it lets the textarea's own default newline insertion happen. Pulling this one decision out as
-  a standalone function is what makes it reachable from
+  state: `entries` (the chat history, seeded from `initialEntries`, each a `ChatEntry` of
+  `{role: 'user' | 'server', text}`) and `draft` (the textarea's controlled value). Submitting
+  appends a `{role: 'user', text: draft.trim()}` entry, clears `draft`, and posts
+  `{type: 'submit', text}` to the extension host via `vscode.postMessage()`; a `useEffect` with
+  an empty dependency array subscribes `window`'s `message` event for the panel's lifetime and
+  appends a `{role: 'server', text}` entry whenever a `{type: 'reply', text}` message arrives
+  (see "Webview chat protocol" below). A separate `useEffect` keyed on `entries` calls
+  `vscode.setState({ entries })` (so history survives `retainContextWhenHidden`'s context
+  teardown/rebuild) and scrolls the history's last child into view. History entries are keyed by
+  array index in the `.map()` that renders them — safe here specifically because entries only
+  ever append, never reorder or get removed or inserted in the middle, which is the one case
+  React's own docs call out as fine for index keys. The one piece of logic broken out into its
+  own pure function, independent of React, is `vscode-plugin/src/webview/keyHandling.ts`'s
+  `classifyEnterKey(shiftKey, ctrlKey)`, which returns `'newline'` if either modifier is held and
+  `'submit'` otherwise; `App`'s `onKeyDown` handler calls `event.preventDefault()` and submits
+  only when it returns `'submit'`, otherwise it lets the textarea's own default newline insertion
+  happen. Pulling this one decision out as a standalone function is what makes it reachable from
   `vscode-plugin/test/keyHandling.test.ts` without a browser, React, or a VS Code extension
   host.
+
+### Webview chat protocol
+
+The webview and the extension host exchange two message shapes over the standard
+`vscode.postMessage()` / `window.addEventListener('message', ...)` webview messaging channel —
+independent of the `klorb server` JSONL protocol, which only ever runs between the extension
+host and the child process, never reaching the webview directly:
+
+* Webview → host: `{type: 'submit', text: string}`, sent once per `App.submit()` call.
+  `KlorbSessionViewProvider`'s `isSubmitMessage()` type guard validates the shape before acting
+  on it, since `onDidReceiveMessage`'s payload is untyped from the extension host's point of
+  view.
+* Host → webview: `{type: 'reply', text: string}`, posted once per resolved `greet()` call.
+  `App.tsx`'s `isReplyMessage()` type guard performs the same validation on the webview side.
 
 ### Webview build: esbuild bundle, not an ES module
 
@@ -150,13 +205,31 @@ toolchain in place of `pip`/`uv`:
 * `clean` removes `out/`, `coverage/`, the packaged `.vsix`, and `tsconfig.tsbuildinfo`.
   `distclean` additionally removes `node_modules/`.
 
+## Configuration
+
+`package.json`'s `contributes.configuration` (title "Klorb") declares two settings, both read by
+`extension.ts`'s `readServerOptions()` each time a `KlorbServerProcess` is started (at activation
+and on `klorb.restartServer`):
+
+* `klorb.serverPath` (string, default `"klorb"`): the command run as `<serverPath> server` to
+  launch the child process. Overriding it points the extension at a `klorb` not on `PATH` (e.g.
+  a venv's `bin/klorb` during local development of the Python side).
+* `klorb.openRouterApiKey` (string, default `""`): forwarded to the child process as its
+  `OPENROUTER_API_KEY` environment variable (see `klorb.openrouter.OPENROUTER_API_KEY_ENV_VAR` in
+  the `klorb/` subproject) when non-empty; left out of the child's environment entirely when
+  empty, so an API key already exported in the shell that launched VS Code still reaches the
+  child unless this setting overrides it. This is a plain string setting, not VS Code
+  `SecretStorage` — it is stored (and, if the user syncs settings, synced) as plaintext in
+  `settings.json` like any other setting.
+
 ## Out of scope
 
-* No communication with a running `klorb` process yet. `[[klorb-server]]` documents the JSONL
-  protocol a later iteration of `KlorbSessionViewProvider` is expected to speak (spawning
-  `klorb server` as a child process and exchanging JSONL messages over its stdin/stdout)
-  instead of only appending typed text to its own history.
-* History entries are plain text nodes with no formatting, editing, deletion, or persistence
-  beyond `vscode.getState()`'s in-memory-while-the-window-is-open lifetime — nothing is written
-  to disk.
-* No extension settings/configuration surface exists yet (no `contributes.configuration`).
+* No concurrent/multiplexed requests: `KlorbServerProcess.greet()` calls are matched to replies
+  strictly in FIFO order, matching `[[klorb-server]]`'s own one-in-one-out protocol. A second
+  command beyond `greet` (or a way to cancel an in-flight one) is not implemented.
+* History entries render as plain text with no markdown/formatting, editing, or deletion, and no
+  persistence beyond `vscode.getState()`'s in-memory-while-the-window-is-open lifetime — nothing
+  is written to disk, and history is lost on `klorb.restartServer` or a full window reload just
+  as it always was on `klorb.restartSession`.
+* `klorb.openRouterApiKey` is a plain settings string, not `SecretStorage`-backed — see
+  "Configuration" above.

@@ -18,6 +18,9 @@
     // with a top-level heading.
     "MD041": false,
 
+    // Duplicate subheadings are allowed.
+    "MD024": false,
+
     // Match this repo's already-established conventions so `fix: true` converges
     // instead of fighting the majority style.
     "MD004": { "style": "asterisk" },

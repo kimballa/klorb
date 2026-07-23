@@ -45,8 +45,27 @@
       {
         "command": "klorb.restartSession",
         "title": "Klorb: Restart Session"
+      },
+      {
+        "command": "klorb.restartServer",
+        "title": "Klorb: Restart Server"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Klorb",
+      "properties": {
+        "klorb.serverPath": {
+          "type": "string",
+          "default": "klorb",
+          "description": "Path to the `klorb` command used to launch `klorb server`."
+        },
+        "klorb.openRouterApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenRouter API key, passed to the `klorb server` process as the OPENROUTER_API_KEY environment variable."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p ./ && tsc -p tsconfig.webview.json && node_modules/.bin/esbuild src/webview/main.tsx --tsconfig=tsconfig.webview.json --sourcemap --define:process.env.NODE_ENV=\\\"development\\\" --outfile=out/webview/main.js --bundle --format=iife --platform=browser --target=es2022",
