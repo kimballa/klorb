@@ -49,7 +49,7 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p ./ && tsc -p tsconfig.webview.json && node_modules/.bin/esbuild src/webview/main.ts --bundle --outfile=out/webview/main.js --format=iife --platform=browser --target=es2022",
+    "compile": "tsc -p ./ && tsc -p tsconfig.webview.json && node_modules/.bin/esbuild src/webview/main.tsx --tsconfig=tsconfig.webview.json --sourcemap --define:process.env.NODE_ENV=\\\"development\\\" --outfile=out/webview/main.js --bundle --format=iife --platform=browser --target=es2022",
     "watch": "tsc -w -p ./",
     "lint": "eslint src test",
     "test": "vitest run",
@@ -58,10 +58,15 @@
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
     "@types/vscode": "^1.94.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.0",
     "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.2",
     "vitest": "^2.1.8"

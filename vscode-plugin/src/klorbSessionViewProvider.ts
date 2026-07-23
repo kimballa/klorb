@@ -4,8 +4,9 @@ import * as vscode from 'vscode';
 /**
  * Backs the "Klorb session" side panel: a scrolling history of static entries above a
  * multi-line prompt textbox. Today the webview only appends what the user typed to its own
- * history (see src/webview/main.ts, bundled to out/webview/main.js); it does not yet talk to
- * `klorb server` (docs/specs/klorb-server.md) or any other klorb process.
+ * history (see src/webview/App.tsx, mounted by src/webview/main.tsx and bundled to
+ * out/webview/main.js); it does not yet talk to `klorb server` (docs/specs/klorb-server.md)
+ * or any other klorb process.
  */
 export class KlorbSessionViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'klorb.sessionView';
@@ -60,13 +61,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider {
   <title>Klorb session</title>
 </head>
 <body>
-  <div class="title">Klorb session</div>
-  <div id="history"></div>
-  <div class="input-row">
-    <textarea id="prompt-input" rows="2"
-      placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"></textarea>
-    <button id="submit-button">Send</button>
-  </div>
+  <div id="root"></div>
   <script nonce="${nonce}" src="${scriptUri}?v=${Date.now()}"></script>
 </body>
 </html>`;

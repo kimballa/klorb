@@ -36,8 +36,9 @@ lint:
 compile:
 	"$(TSC)" -p ./
 	"$(TSC)" -p tsconfig.webview.json
-	"$(ESBUILD)" src/webview/main.ts --bundle --outfile=out/webview/main.js \
-		--format=iife --platform=browser --target=es2022
+	"$(ESBUILD)" src/webview/main.tsx --tsconfig=tsconfig.webview.json --bundle \
+		--sourcemap --define:process.env.NODE_ENV=\"development\" \
+		--outfile=out/webview/main.js --format=iife --platform=browser --target=es2022
 
 test:
 	"$(VITEST)" run

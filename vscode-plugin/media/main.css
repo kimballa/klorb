@@ -9,6 +9,13 @@ body {
   background-color: var(--vscode-sideBar-background);
 }
 
+/* React mounts into this div; display: contents makes it invisible to the flex layout so
+   .title/#history/.input-row lay out as if they were direct children of body, same as before
+   React owned them. */
+#root {
+  display: contents;
+}
+
 .title {
   flex: 0 0 auto;
   padding: 8px 12px;
