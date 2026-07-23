@@ -1,0 +1,69 @@
+{
+  "name": "klorb-vscode",
+  "displayName": "Klorb",
+  "description": "Klorb agent harness session panel for VS Code",
+  "version": "0.1.0",
+  "license": "BSD-3-Clause",
+  "author": {
+    "name": "Aaron Kimball",
+    "email": "akimball83@gmail.com"
+  },
+  "publisher": "aaronkimball",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kimballa/klorb.git",
+    "directory": "vscode-plugin"
+  },
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "klorb",
+          "title": "Klorb",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "klorb": [
+        {
+          "type": "webview",
+          "id": "klorb.sessionView",
+          "name": "Session"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "klorb.restartSession",
+        "title": "Klorb: Restart Session"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./ && tsc -p tsconfig.webview.json && node_modules/.bin/esbuild src/webview/main.ts --bundle --outfile=out/webview/main.js --format=iife --platform=browser --target=es2022",
+    "watch": "tsc -w -p ./",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "package": "vsce package --out klorb-vscode.vsix"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.94.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,13 @@
+.vscode/**
+src/**
+test/**
+.gitignore
+.eslintrc*
+eslint.config.mjs
+tsconfig.json
+tsconfig.webview.json
+Makefile
+*.map
+*.vsix
+.nyc_output/**
+coverage/**

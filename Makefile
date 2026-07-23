@@ -33,5 +33,6 @@ cloud_setup:
 lint:
 	markdownlint-cli2 "docs/**/*.md" "*.md"
 	$(MAKE) -C klorb lint
+	$(MAKE) -C vscode-plugin lint
 
 .PHONY: ${COMMANDS}

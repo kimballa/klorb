@@ -11,6 +11,8 @@ dist/
 build/
 *.egg-info/
 node_modules/
+out/
+*.vsix
 venv/
 .tsbuildinfo
 .env
