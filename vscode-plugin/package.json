@@ -63,6 +63,11 @@
           "type": "string",
           "default": "",
           "description": "OpenRouter API key, passed to the `klorb server` process as the OPENROUTER_API_KEY environment variable."
+        },
+        "klorb.configPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to an additional klorb-config.json file, passed to `klorb server` as `--config` when non-empty."
         }
       }
     }
@@ -89,5 +94,11 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.2",
     "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "@vscode/vsce-sign@2.0.9": true,
+    "esbuild@0.24.2": true,
+    "esbuild@0.21.5": true,
+    "keytar@7.9.0": true
   }
 }

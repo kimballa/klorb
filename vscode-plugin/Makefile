@@ -3,12 +3,12 @@
 # vscode-plugin Makefile
 #
 # * `make help` for all commands
-# * `make lint test` to run all CI checks.
+# * `make lint typecheck test` to run all CI checks.
 # * `make install_dev_deps` to install local deps, `install_deps` for production
 #   * `make sync_deps` to resolve and update the package-lock.json from package.json
 # * `make install` to package the extension as a .vsix and install it into this VS Code
 
-COMMANDS=help lint clean distclean sync_deps \
+COMMANDS=help lint typecheck clean distclean sync_deps \
 	install_deps install_dev_deps test compile install all
 
 NPM=npm
@@ -24,7 +24,7 @@ CODE ?= code
 
 VSIX=klorb-vscode.vsix
 
-all: lint test
+all: lint typecheck test
 
 help:
 	@echo "Available commands:"
@@ -33,9 +33,13 @@ help:
 lint:
 	"$(ESLINT)" src test
 
-compile:
+# Type-checks both the extension host code and the webview code without bundling -- see
+# `compile`, which builds on this to also produce the webview's runtime bundle.
+typecheck:
 	"$(TSC)" -p ./
 	"$(TSC)" -p tsconfig.webview.json
+
+compile: typecheck
 	"$(ESBUILD)" src/webview/main.tsx --tsconfig=tsconfig.webview.json --bundle \
 		--sourcemap --define:process.env.NODE_ENV=\"development\" \
 		--outfile=out/webview/main.js --format=iife --platform=browser --target=es2022

@@ -5,7 +5,8 @@
 `klorb server` runs klorb as a persistent, non-interactive process that speaks
 newline-delimited JSON (JSONL) over stdin/stdout, for driving klorb from another program (a
 supervisor process, an IDE extension, a test harness) rather than a terminal. It's reachable as
-a CLI subcommand (`klorb server`) with no flags of its own today.
+a CLI subcommand (`klorb server --config PATH`), where `--config` is the only flag of its own
+today.
 
 ## Wire protocol
 
@@ -52,13 +53,18 @@ a CLI subcommand (`klorb server`) with no flags of its own today.
     from `run()`; a malformed or unrecognized record is reported to the caller as an
     `{"error": ...}` reply on stdout, not as a process failure.
   * `JsonlServer` installs no `SIGINT` handling of its own — see "SIGINT handling" below.
-* `klorb.cli.run_server_cli(argv)` parses `klorb server`'s own flags (none today, beyond the
-  free `-h`/`--help` argparse provides), constructs a `JsonlServer` against the process's real
-  `sys.stdin`/`sys.stdout`, and calls `run()`. `klorb.cli.main()` recognizes `klorb server ...`
-  the same way it recognizes the other subcommands (`init`, `system-prompt`, `models`,
-  `show-config`): only when `server` is literally `sys.argv[1]`, checked before the normal
-  one-shot/REPL `argparse` parser runs, so it can't be confused with `server` appearing later
-  in `argv` (e.g. as a one-shot prompt's own text).
+* `klorb.cli.run_server_cli(argv)` parses `klorb server`'s own flags (`--config`, plus the free
+  `-h`/`--help` argparse provides), resolves `--config` through the same `load_process_config()`
+  file stack every other subcommand reads (see `run_show_config_cli()`), logging any
+  `process_config.config_warnings` (e.g. a `--config` file that isn't valid JSON) as warnings.
+  `JsonlServer` itself has no config-dependent behavior yet, so the resolved config isn't passed
+  to it -- `--config` exists today so callers that always pass a configured path (an IDE
+  extension) don't need special-casing, and is otherwise a no-op beyond validation. It then
+  constructs a `JsonlServer` against the process's real `sys.stdin`/`sys.stdout` and calls
+  `run()`. `klorb.cli.main()` recognizes `klorb server ...` the same way it recognizes the other
+  subcommands (`init`, `system-prompt`, `models`, `show-config`): only when `server` is literally
+  `sys.argv[1]`, checked before the normal one-shot/REPL `argparse` parser runs, so it can't be
+  confused with `server` appearing later in `argv` (e.g. as a one-shot prompt's own text).
 
 ### SIGINT handling
 

@@ -1015,6 +1015,47 @@ def test_run_server_cli_returns_zero_on_keyboard_interrupt() -> None:
     assert exit_code == 0
 
 
+def test_run_server_cli_passes_config_flag_path(
+    stub_process_config: MagicMock,
+) -> None:
+    with patch("klorb.cli.TrustManager") as mock_tm_cls:
+        mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+            path=Path.cwd(), trusted=False)
+        with patch("klorb.cli.JsonlServer", return_value=MagicMock()):
+            cli.run_server_cli(["--config", "/some/extra-config.json"])
+
+    stub_process_config.assert_called_once_with(
+        config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)
+
+
+def test_run_server_cli_passes_no_config_flag_path_by_default(
+    stub_process_config: MagicMock,
+) -> None:
+    with patch("klorb.cli.TrustManager") as mock_tm_cls:
+        mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+            path=Path.cwd(), trusted=False)
+        with patch("klorb.cli.JsonlServer", return_value=MagicMock()):
+            cli.run_server_cli([])
+
+    stub_process_config.assert_called_once_with(
+        config_flag_path=None, cwd=mock.ANY, workspace=mock.ANY)
+
+
+def test_run_server_cli_logs_config_warnings(
+    stub_process_config: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stub_process_config.return_value = ProcessConfig(config_warnings=["bad klorb-config.json"])
+    with patch("klorb.cli.TrustManager") as mock_tm_cls:
+        mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
+            path=Path.cwd(), trusted=False)
+        with patch("klorb.cli.JsonlServer", return_value=MagicMock()):
+            with caplog.at_level("WARNING"):
+                cli.run_server_cli([])
+
+    assert "bad klorb-config.json" in caplog.text
+
+
 def test_version_flag_exits_with_version(capsys: pytest.CaptureFixture[str]) -> None:
     from klorb import __version__
 

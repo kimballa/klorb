@@ -14,6 +14,9 @@ export type SpawnFn = (
 export interface KlorbServerOptions {
   command: string;
   env: NodeJS.ProcessEnv;
+  /** Path to an additional klorb-config.json file, passed to `klorb server` as `--config`
+   * when non-empty (see docs/specs/klorb-server.md). */
+  configPath?: string;
 }
 
 const defaultSpawnFn: SpawnFn = (command, args, env) => spawn(command, args, { env });
@@ -61,7 +64,11 @@ export class KlorbServerProcess {
   /** Stops any running server, then spawns a fresh `klorb server` with the given options. */
   public start(options: KlorbServerOptions): void {
     this.stop();
-    const child = this._spawnFn(options.command, ['server'], options.env);
+    const args = ['server'];
+    if (options.configPath !== undefined && options.configPath.length > 0) {
+      args.push('--config', options.configPath);
+    }
+    const child = this._spawnFn(options.command, args, options.env);
     this._child = child;
     this._rl = readline.createInterface({ input: child.stdout });
     this._rl.on('line', (line: string) => this._handleLine(line));

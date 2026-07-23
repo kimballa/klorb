@@ -182,5 +182,5 @@
 
 ### Feature backlog
 
-* Figure out how to align to the Agent Host Protocol: https://microsoft.github.io/agent-host-protocol/
+* Figure out how to align to the Agent Host Protocol: <https://microsoft.github.io/agent-host-protocol/>
 * VSCodeApi should be made universally accessible via a Provider, rather than prop-drilled everywhere.

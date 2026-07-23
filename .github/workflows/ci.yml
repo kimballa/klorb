@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 #
-# CI workflow: runs the klorb lint, typecheck, and test suites on every pull request,
-# and on demand via workflow_dispatch. Mirrors the local dev loop documented in
-# klorb/README.md.
+# CI workflow: runs the klorb (Python) and vscode-plugin (TypeScript) lint, typecheck, and
+# test suites, plus the top-level docs lint, on every pull request and on demand via
+# workflow_dispatch. Mirrors the local dev loop documented in klorb/README.md.
 
 name: CI
 
@@ -22,9 +22,16 @@ jobs:
         uses: actions/checkout@v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7
         with:
           python-version-file: klorb/.python-version
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: vscode-plugin/package-lock.json
 
       # Installs the standalone uv binary and caches its resolution/download cache keyed on
       # dev-requirements.txt, so `make cloud_setup` below (which drives uv internally) can
@@ -35,9 +42,33 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "klorb/dev-requirements.txt"
 
+      # `cloud_setup` below runs `cargo install chainlink-tracker` (no version pin) via
+      # klorb/Makefile's install_chainlink target, which compiles the crate and its
+      # dependency tree from scratch (~90s) unless cargo already sees a matching install
+      # recorded in ~/.cargo/.crates2.json -- caching the resulting binary plus that install
+      # record lets `cargo install` short-circuit to its "already installed" check instead of
+      # rebuilding. Bump the key's trailing version suffix to force a rebuild (e.g. after
+      # deliberately wanting the latest chainlink-tracker release) -- with no local lockfile
+      # pinning its version, a stale cache otherwise never expires on its own.
+      - name: Cache chainlink-tracker cargo install
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/chainlink
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: chainlink-tracker-cargo-install-${{ runner.os }}-v1
+
       - name: Cloud setup
         run: make cloud_setup
 
-      - name: Lint, typecheck, and test
+      - name: Lint, typecheck, and test (python)
         working-directory: klorb
         run: make lint typecheck test
+
+      - name: Lint, typecheck, and test (vscode-plugin)
+        working-directory: vscode-plugin
+        run: make lint typecheck test
+
+      - name: Lint docs
+        run: make lint_docs

@@ -11,27 +11,28 @@ at the bottom of the history, clears the box, and sends it to a `klorb server` c
 reply appears as a left-aligned bubble once it arrives. Shift+Enter inserts a newline in the box
 instead of submitting. Activation spawns one `klorb server` process, shared by the whole
 extension; the **Klorb: Restart Server** command palette entry kills and respawns it, picking up
-any change to the `klorb.serverPath`/`klorb.openRouterApiKey` settings (see "Configuration"
-below).
+any change to the `klorb.serverPath`/`klorb.openRouterApiKey`/`klorb.configPath` settings (see
+"Configuration" below).
 
 ## How it works
 
 * `vscode-plugin/src/extension.ts` is the extension's activation entry point
   (`package.json`'s `main`, compiled to `out/extension.js`). `activate()` constructs one
-  `KlorbServerProcess`, starts it via `readServerOptions()` (reads `klorb.serverPath` and
-  `klorb.openRouterApiKey` off `vscode.workspace.getConfiguration('klorb')`, folding the API key
-  into the child's `OPENROUTER_API_KEY` environment variable when non-empty), constructs one
-  `KlorbSessionViewProvider` bound to that server, and registers it as the provider for the
-  `klorb.sessionView` webview view. It also registers the `klorb.restartSession` command
+  `KlorbServerProcess`, starts it via `readServerOptions()` (reads `klorb.serverPath`,
+  `klorb.openRouterApiKey`, and `klorb.configPath` off `vscode.workspace.getConfiguration('klorb')`,
+  folding the API key into the child's `OPENROUTER_API_KEY` environment variable when non-empty),
+  constructs one `KlorbSessionViewProvider` bound to that server, and registers it as the provider
+  for the `klorb.sessionView` webview view. It also registers the `klorb.restartSession` command
   (see below) and `klorb.restartServer`, which re-reads the same options and calls
   `server.start()` again — `start()` stops any prior child first, so this both applies changed
   settings and recovers from a crashed/hung server. `context.subscriptions` disposes the server
   (killing the child process) when the extension deactivates.
 * `vscode-plugin/src/klorbServerProcess.ts`'s `KlorbServerProcess` owns the one `klorb server`
   child process and the JSONL request/response exchange over its stdin/stdout ([[klorb-server]]
-  documents the wire protocol). `start()` spawns `<command> server` (via an injected `SpawnFn`,
-  defaulting to real `child_process.spawn`, so tests can drive the class against a fake process)
-  and wires a `readline.Interface` over the child's stdout. `greet(name)` writes
+  documents the wire protocol). `start()` spawns `<command> server`, appending `--config
+  <configPath>` when `configPath` is non-empty (via an injected `SpawnFn`, defaulting to real
+  `child_process.spawn`, so tests can drive the class against a fake process) and wires a
+  `readline.Interface` over the child's stdout. `greet(name)` writes
   `{"greet": name}\n` to the child's stdin and returns a `Promise` that resolves with the next
   stdout line once parsed (`parseReplyLine()`, exported separately for direct unit testing);
   since the protocol carries no request id and replies arrive strictly in request order (see
@@ -207,7 +208,7 @@ toolchain in place of `pip`/`uv`:
 
 ## Configuration
 
-`package.json`'s `contributes.configuration` (title "Klorb") declares two settings, both read by
+`package.json`'s `contributes.configuration` (title "Klorb") declares three settings, all read by
 `extension.ts`'s `readServerOptions()` each time a `KlorbServerProcess` is started (at activation
 and on `klorb.restartServer`):
 
@@ -221,6 +222,9 @@ and on `klorb.restartServer`):
   child unless this setting overrides it. This is a plain string setting, not VS Code
   `SecretStorage` — it is stored (and, if the user syncs settings, synced) as plaintext in
   `settings.json` like any other setting.
+* `klorb.configPath` (string, default `""`): path to an additional `klorb-config.json` file,
+  passed to the child process as `<serverPath> server --config <configPath>` when non-empty (see
+  [[klorb-server]]'s `--config` flag). Left off the spawn args entirely when empty.
 
 ## Out of scope
 

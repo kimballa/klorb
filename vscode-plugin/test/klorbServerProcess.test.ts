@@ -78,4 +78,40 @@ describe('KlorbServerProcess', () => {
     const server = new KlorbServerProcess();
     await expect(server.greet('Ada')).resolves.toEqual({ error: 'klorb server is not running' });
   });
+
+  it('spawns without --config when configPath is omitted', () => {
+    const { child } = makeFakeChild();
+    let spawnArgs: string[] | undefined;
+    const server = new KlorbServerProcess((_command, args) => {
+      spawnArgs = args;
+      return child;
+    });
+    server.start({ command: 'klorb', env: {} });
+
+    expect(spawnArgs).toEqual(['server']);
+  });
+
+  it('spawns without --config when configPath is empty', () => {
+    const { child } = makeFakeChild();
+    let spawnArgs: string[] | undefined;
+    const server = new KlorbServerProcess((_command, args) => {
+      spawnArgs = args;
+      return child;
+    });
+    server.start({ command: 'klorb', env: {}, configPath: '' });
+
+    expect(spawnArgs).toEqual(['server']);
+  });
+
+  it('passes --config when configPath is set', () => {
+    const { child } = makeFakeChild();
+    let spawnArgs: string[] | undefined;
+    const server = new KlorbServerProcess((_command, args) => {
+      spawnArgs = args;
+      return child;
+    });
+    server.start({ command: 'klorb', env: {}, configPath: '/tmp/klorb-config.json' });
+
+    expect(spawnArgs).toEqual(['server', '--config', '/tmp/klorb-config.json']);
+  });
 });

@@ -544,7 +544,7 @@ def run_show_config_cli(argv: list[str]) -> int:
 
 
 def build_server_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb server`'s own flags -- there are none today -- see
+    """Build the argument parser for `klorb server`'s own flags (`--config`) -- see
     `run_server_cli()`.
     """
     parser = argparse.ArgumentParser(
@@ -555,6 +555,13 @@ def build_server_parser() -> argparse.ArgumentParser:
             "receives a shutdown command or stdin reaches EOF. See docs/specs/klorb-server.md."
         ),
     )
+    parser.add_argument(
+        "--config", dest="config", default=None,
+        help=(
+            "Path to an additional klorb-config.json file, applied on top of the "
+            "/etc, per-user, and per-project config files."
+        ),
+    )
     return parser
 
 
@@ -563,13 +570,25 @@ def run_server_cli(argv: list[str]) -> int:
     JsonlServer` against this process's own stdin/stdout until it receives a
     `{"action": "shutdown"}` command or stdin reaches EOF, returning 0 either way.
 
+    `--config` is parsed and resolved through the same `load_process_config()` file stack as
+    every other subcommand (see `run_show_config_cli()`), so a malformed `--config` file is
+    surfaced via `process_config.config_warnings` rather than silently ignored. `JsonlServer`
+    itself has no config-dependent behavior yet -- the resolved config isn't passed to it.
+
     Installs no `SIGINT` handling of its own: a `SIGINT` (e.g. Ctrl-C) is left to the
     interpreter's ordinary `KeyboardInterrupt`, which unwinds the blocked stdin read the same
     way it would for any other Python script. It's caught here so the process exits cleanly
     with status 0 instead of printing a traceback.
     """
     parser = build_server_parser()
-    parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    cwd = Path.cwd()
+    config_flag_path = Path(args.config) if args.config is not None else None
+    workspace = TrustManager().resolve_workspace(cwd)
+    process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
+    for warning in process_config.config_warnings:
+        logger.warning(warning)
 
     server = JsonlServer(stdin=sys.stdin, stdout=sys.stdout)
     try:
