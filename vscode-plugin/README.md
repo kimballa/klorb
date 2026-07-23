@@ -30,7 +30,8 @@ the local VS Code with `code --install-extension`. Reload the VS Code window aft
 it up. Use the **Klorb: Restart Session** command from the command palette to reload the panel's
 webview after recompiling, without reloading the whole window. Use **Klorb: Restart Server** to
 kill and respawn the `klorb server` child process the panel talks to — needed after changing the
-`klorb.serverPath`/`klorb.openRouterApiKey` settings, or if the server process wedges.
+`klorb.serverPath`/`klorb.openRouterApiKey`/`klorb.configPath` settings, or if the server process
+wedges.
 
 After reloading, open the **Secondary Side Bar** if it isn't already open — `Ctrl+Alt+B` (or `Cmd+Option+B` on Mac), or View → Appearance → Secondary Side Bar — and the Klorb icon should appear on its icon rail.
 
@@ -40,5 +41,7 @@ After reloading, open the **Secondary Side Bar** if it isn't already open — `C
   `"klorb"`, i.e. whatever resolves on `PATH`).
 * `klorb.openRouterApiKey` — OpenRouter API key, passed to the `klorb server` process as its
   `OPENROUTER_API_KEY` environment variable.
+* `klorb.configPath` — path to an additional `klorb-config.json` file, passed to `klorb server`
+  as `--config` when non-empty (default: `""`, i.e. no `--config` flag is passed).
 
 See `docs/specs/vscode-plugin.md` at the repo root for how the extension is put together.

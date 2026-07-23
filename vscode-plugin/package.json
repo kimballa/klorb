@@ -63,6 +63,11 @@
           "type": "string",
           "default": "",
           "description": "OpenRouter API key, passed to the `klorb server` process as the OPENROUTER_API_KEY environment variable."
+        },
+        "klorb.configPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to an additional klorb-config.json file, passed to `klorb server` as `--config` when non-empty."
         }
       }
     }

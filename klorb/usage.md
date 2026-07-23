@@ -20,7 +20,7 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb show-config` [`--config` *FILE*]
 
-`klorb server`
+`klorb server` [`--config` *FILE*]
 
 ## DESCRIPTION
 
@@ -99,7 +99,7 @@ replies to stdout — see COMMANDS below.
   current directory is a trusted workspace, the per-project config layer is
   included; otherwise it's skipped. `--config` layers an additional config
   file on top of the usual stack. Exit status is `0` on success.
-* `server`
+* `server` [`--config` *FILE*]
 
   Runs a persistent process that reads newline-delimited JSON (JSONL)
   command records from stdin, one line at a time, and writes a JSONL reply
@@ -108,7 +108,11 @@ replies to stdout — see COMMANDS below.
   replies `{"message": "hello, someName!"}`; `{"action": "shutdown"}` stops
   the loop with no reply; any other record gets `{"error": "..."}`.
   Stops (exit status `0`) on a shutdown command, on stdin reaching EOF, or on
-  `SIGINT` — see `docs/specs/klorb-server.md`.
+  `SIGINT` — see `docs/specs/klorb-server.md`. `--config` layers an
+  additional config file on top of the usual `/etc`, per-user, and
+  per-project files; the resolved config isn't consumed by the server loop
+  itself yet, but a malformed `--config` file is still surfaced as a
+  warning.
 
 ## OPTIONS
 
