@@ -9,7 +9,7 @@ APT_GET=sudo apt-get
 NPM=npm
 
 COMMANDS=help cloud_setup lint lint_docs typecheck sync_deps \
-	install_deps install_dev_deps test
+	install_deps install_dev_deps test clean distclean
 
 # Python executable to use when creating the venv. Can be overridden on the command line
 # (e.g. PYTHON=python3.12 make cloud_setup) or via the cloud session-start script.
@@ -27,8 +27,8 @@ cloud_setup:
 	./bin/install_rust.sh
 	$(NPM) install -g markdownlint-cli2
 	$(NPM) install -g jsonlint
-	$(MAKE) install_dev_deps
-	$(MAKE) -C klorb PYTHON=$(PYTHON) init
+	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
+	$(MAKE) -C vscode-plugin install_dev_deps
 
 # Lint documentation Markdown (docs/ and the root-level agent-instruction files), then
 # delegate to klorb/'s and vscode-plugin/'s own lint targets (Python lint plus
@@ -59,5 +59,13 @@ install_dev_deps:
 test:
 	$(MAKE) -C klorb test
 	$(MAKE) -C vscode-plugin test
+
+clean:
+	$(MAKE) -C klorb clean
+	$(MAKE) -C vscode-plugin clean
+
+distclean:
+	$(MAKE) -C klorb distclean
+	$(MAKE) -C vscode-plugin distclean
 
 .PHONY: ${COMMANDS}
