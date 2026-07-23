@@ -30,12 +30,6 @@
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
 
-* Add a structured wrapper around all tool call responses.
-  In particular, standardized mechanisms for error reporting.
-  See <https://claudecertificationguide.com/learn/2-tool-design-mcp/2-2-structured-error-responses>
-  * Tool call responses are also a good opportunity for system interjections; e.g. to
-    remind the agent what its currently-active task is.
-
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
     into role, task, context, constraints, and output format. (maybe ask a
@@ -65,8 +59,7 @@
 
 * If it's the agent's turn the "send a message" textbox prompt should be "queue a message..."
   and you should be allowed to type before it's actually your turn to send.
-  * The next logical thing to do is to implement "interrupting" in the conversation so you
-    can interject midway thru what it's saying.
+  * Queue it up as a `user_interjection` to send with the next `tool_results` batch.
 
 * `klorb system-prompt` should have a `--export` option
   that dumps the *resolved* system prompt files for the current role + model into the
