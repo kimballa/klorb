@@ -8,7 +8,7 @@
 #   * `make sync_deps` to resolve and update dependency locks from the pkg manager.
 
 COMMANDS=help lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test evals venv init
+	install_deps install_dev_deps test evals venv init all
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
@@ -58,6 +58,8 @@ TESTARGS ?=--stepwise --lfnf=all --show-capture=log
 
 # Extra args forwarded to `evals/run_evals.py`, e.g. `EVALARGS='--model openai/gpt-4o' make evals`.
 EVALARGS ?=--model xiaomi/mimo-v2.5 --self-review
+
+all: lint typecheck test
 
 help:
 	@echo "Available commands:"

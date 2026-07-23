@@ -193,7 +193,7 @@ would cycle.
 ## Error-category assignment table
 
 | Site | Condition | `error_category` | `response_body` |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `_run_tool_calls`, before any tool runs | `call.arguments` fails `json.loads` | `"syntax"` | `None` |
 | `_run_tool_calls` | `NoSuchToolException` (unknown tool name) | `"validation"` | `None` |
 | Any `except Exception` site (first attempt or retry) | `isinstance(exc, ValueError)` | `"validation"` | `None` |
@@ -267,14 +267,17 @@ this plan.
 ## Changes to existing files
 
 **`klorb/src/klorb/tools/exceptions.py`**
+
 * Add `ErrorCategory` (`Literal["transient", "syntax", "validation", "permission",
   "business_logic"]`) and `ToolCallError` (above), alongside the existing `NoSuchToolException`.
 
 **`klorb/src/klorb/tools/response_envelope.py`** (new)
+
 * `SystemInterjectionPayload`, `UserInterjectionPayload`, `ToolResponseEnvelope`,
   `classify_exception()` (all above).
 
 **`klorb/src/klorb/session/events.py`**
+
 * New `ToolCallOutcome` (small `@dataclass`, not a pydantic model -- it's an internal
   `_run_tool_calls`-loop value, never serialized): `result: Any = None`, `error: str | None =
   None`, `category: ErrorCategory | None = None`, `response_body: Any = None`. Replaces the
@@ -289,6 +292,7 @@ this plan.
   `ToolCallEvent` need no changes. Only the wire `content` string changes shape.
 
 **`klorb/src/klorb/session/mixins/permissions.py`**
+
 * `_retry_after_permission_decision`, `_retry_after_multi_permission_decisions`,
   `_resolve_multi_permission_ask`, `_resolve_ask_user_questions`, `_resolve_escalate_privileges`:
   return `ToolCallOutcome` instead of `tuple[Any, str | None]`. Every existing `return None,
@@ -303,6 +307,7 @@ this plan.
   unclassified.
 
 **`klorb/src/klorb/session/mixins/tool_execution.py`**
+
 * Poll `_standing_interjection_providers` once at the top of `_run_tool_calls` (before the `for
   call in tool_use_message.tool_calls:` loop), building `list[SystemInterjectionPayload]` the
   same sorted-by-subject order `send_turn()` already uses -- reusing the existing registry
@@ -346,7 +351,7 @@ this plan.
   * Any other status code (200, other 4xx/5xx besides 401/403/429) is left exactly as today -- a
     normal, successful `response_body` carrying `response_code`, since the fetch itself worked and
     the model needs to see the actual status to decide what to do next.
-  * "No session available for spill" (lines 319, 345): `raise ToolCallError(..., 
+  * "No session available for spill" (lines 319, 345): `raise ToolCallError(...,
     category="business_logic")` -- not a bad argument, a missing-infrastructure precondition.
   * The three `user_cancel`/`body_exceeded_max_bytes` dicts (lines 203, 233, 282, 309) are **not**
     errors -- a cancelled or truncated-but-returned fetch is a legitimate, successful outcome
@@ -357,6 +362,7 @@ this plan.
     `"error"` field.
 
 **`klorb/src/klorb/resources/system_prompts.d/default_sys.md`**
+
 * Extend the "Continuing system context" section (currently only documents the
   `<SystemInterjection>` XML wrapper used in user-turn prompts, around line 281-293) with a new
   paragraph documenting the `tool_response` JSON envelope shape: `is_error`/`is_retryable`/
