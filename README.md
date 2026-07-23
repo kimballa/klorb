@@ -16,8 +16,8 @@ klorb is your friendly neighborhood agent.
 
 ## Setup
 
-This repository is organized as a collection of subprojects (see `CLAUDE.md`); each has its
-own provisioning steps. For the Python harness and CLI, see
+This repository is organized as a collection of subprojects (see `AGENTS.md`); each has its
+own provisioning steps. For the main Python harness and TUI, see
 [`klorb/README.md`](klorb/README.md#setup).
 
 The top-level `make cloud_setup` target performs the installation steps described there
