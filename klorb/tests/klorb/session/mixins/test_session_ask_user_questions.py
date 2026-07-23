@@ -56,10 +56,20 @@ def _session(mock_provider: MagicMock) -> Session:
     return Session(config, provider=mock_provider, tool_registry=tool_registry)
 
 
-def _tool_response_content(session: Session) -> str:
+def _tool_response_envelope(session: Session) -> dict:
     tool_response = next(m for m in session.messages if m.role == "tool_response")
     assert isinstance(tool_response.content, str)
-    return tool_response.content
+    envelope: dict = json.loads(tool_response.content)
+    return envelope
+
+
+def _tool_response_content(session: Session) -> str:
+    """The failed-call's `error_message`, or the successful call's `response_body` rendered
+    back to a string, for tests that only care about substring matches against either."""
+    envelope = _tool_response_envelope(session)
+    if envelope["is_error"]:
+        return str(envelope["error_message"])
+    return json.dumps(envelope["response_body"])
 
 
 def test_no_callback_fails_closed() -> None:
@@ -73,7 +83,10 @@ def test_no_callback_fails_closed() -> None:
     response = session.send_turn("try it")
 
     assert response == "done"
-    assert "Error:" in _tool_response_content(session)
+    envelope = _tool_response_envelope(session)
+    assert envelope["is_error"] is True
+    assert envelope["is_retryable"] is False
+    assert envelope["error_category"] == "business_logic"
     assert "1 question" in _tool_response_content(session)
 
 

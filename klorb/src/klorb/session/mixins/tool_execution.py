@@ -26,20 +26,11 @@ from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call
 from klorb.tools.ask.common import AskUserQuestionsRequired
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
-from klorb.tools.exceptions import NoSuchToolException
+from klorb.tools.exceptions import ErrorCategory, NoSuchToolException
+from klorb.tools.response_envelope import SystemInterjectionPayload, ToolResponseEnvelope, classify_exception
 from klorb.tools.tool import describe_tool_arg_json_error
 
 logger = logging.getLogger(__name__)
-
-
-def _format_tool_response_content(result: Any, error: str | None) -> str:
-    """Render a tool call's `(result, error)` pair (see `ToolCallEvent`) as the string stored
-    in its `role="tool_response"` `Message.content`: `"Error: {error}"` on failure, otherwise
-    `result` unchanged if it's already a string, else its JSON encoding.
-    """
-    if error is not None:
-        return f"Error: {error}"
-    return result if isinstance(result, str) else json.dumps(result)
 
 
 class SessionToolExecutionMixin(SessionBase):
@@ -53,14 +44,23 @@ class SessionToolExecutionMixin(SessionBase):
     ) -> None:
         """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
         via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
-        per call — carrying that call's result, or a description of the error if the tool
-        was unknown or raised — so the next round can send it back to the model. Also fires
-        `callbacks.on_tool_call`, if given, once per call with a `ToolCallEvent` carrying the
-        same result-or-error outcome as raw data, for a UI to render. When `self._log_tool_calls`
-        is set, also appends the call's name/arguments and result/error to `$KLORB_STATE_DIR/tool-calls.log`
-        via
-        `klorb.tool_call_log.log_tool_call` — an out-of-band record independent of both
-        `callbacks.on_tool_call` and the ordinary `logging` module.
+        per call — its `content` a JSON-serialized `klorb.tools.response_envelope.
+        ToolResponseEnvelope` carrying that call's result, or a categorized description of the
+        error if the tool was unknown or raised — so the next round can send it back to the
+        model. Also fires `callbacks.on_tool_call`, if given, once per call with a
+        `ToolCallEvent` carrying the same result-or-error outcome as raw data, for a UI to
+        render. When `self._log_tool_calls` is set, also appends the call's name/arguments and
+        result/error to `$KLORB_STATE_DIR/tool-calls.log` via `klorb.tool_call_log.log_tool_call`
+        — an out-of-band record independent of both `callbacks.on_tool_call` and the ordinary
+        `logging` module.
+
+        Every registered `_standing_interjection_providers` entry (see
+        `register_standing_interjection`) is polled once per call to this method — i.e. once per
+        tool-call round, not once per individual call within it — and, for whichever providers
+        returned a message, attached as `system_interjections` on the first envelope built in
+        this round, so a standing reminder stays visible even deep inside a multi-round tool
+        loop that never returns to the user-turn prompt (where the XML `<SystemInterjection>`
+        form is otherwise delivered — see `_wrap_system_interjection`).
 
         Before executing each call, checks it against `config.max_tool_calls_per_turn`
         (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`)
@@ -119,6 +119,11 @@ class SessionToolExecutionMixin(SessionBase):
         logger.info(
             "Dispatching %d tool call(s) requested by the model: %s",
             len(tool_use_message.tool_calls), [call.name for call in tool_use_message.tool_calls])
+        system_interjections: list[SystemInterjectionPayload] = []
+        for subject in sorted(self._standing_interjection_providers):
+            message = self._standing_interjection_providers[subject]()
+            if message is not None:
+                system_interjections.append(SystemInterjectionPayload(subject=subject, body=message))
         for call in tool_use_message.tool_calls:
             if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
                 # Stop before running the next call (and before asking about any more of this
@@ -154,6 +159,8 @@ class SessionToolExecutionMixin(SessionBase):
             args: dict[str, Any] = {}
             result: Any = None
             error: str | None = None
+            category: ErrorCategory | None = None
+            response_body: Any = None
             raw_arguments: str | None = None
             try:
                 args = json.loads(call.arguments) if call.arguments else {}
@@ -163,6 +170,7 @@ class SessionToolExecutionMixin(SessionBase):
                     call.name, json_exc, call.arguments)
                 raw_arguments = call.arguments
                 error = describe_tool_arg_json_error(call.name, raw_arguments, json_exc)
+                category = "syntax"
                 # Remove the offending tool call args from the tool_use message so it
                 # doesn't get sent to the API on subsequent turns (which would
                 # cause a 400 Bad Request error due to the invalid JSON).
@@ -180,42 +188,72 @@ class SessionToolExecutionMixin(SessionBase):
                     result = tool.apply(args)
                     logger.info("Tool call %s succeeded: %s", call.name, result)
                 except MultiPermissionAskRequired as multi_ask_exc:
-                    result, error = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
+                    outcome = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
+                    result, error, category, response_body = (
+                        outcome.result, outcome.error, outcome.category, outcome.response_body)
                 except AskUserQuestionsRequired as ask_questions_exc:
-                    result, error = self._resolve_ask_user_questions(call, ask_questions_exc, callbacks)
+                    outcome = self._resolve_ask_user_questions(call, ask_questions_exc, callbacks)
+                    result, error, category, response_body = (
+                        outcome.result, outcome.error, outcome.category, outcome.response_body)
                 except EscalatePrivilegesRequired as escalate_exc:
-                    result, error = self._resolve_escalate_privileges(call, escalate_exc, callbacks)
+                    outcome = self._resolve_escalate_privileges(call, escalate_exc, callbacks)
+                    result, error, category, response_body = (
+                        outcome.result, outcome.error, outcome.category, outcome.response_body)
                 except PermissionAskRequired as ask_exc:
                     if not ask_exc.resource.is_persistable or self.config.permission_framework == "deny":
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                         error = str(ask_exc)
+                        category = "permission"
                     elif self.config.permission_framework == "auto":
                         logger.info(
                             "Auto-approving permission ask under permissionFramework=auto: %s", ask_exc)
                         decision = PermissionDecision(action="allow", scope="session")
-                        result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                        outcome = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                        result, error, category, response_body = (
+                            outcome.result, outcome.error, outcome.category, outcome.response_body)
                     elif callbacks.on_permission_ask is None:
                         logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, ask_exc)
                         error = str(ask_exc)
+                        category = "permission"
                     else:
                         decision = callbacks.on_permission_ask(PermissionAskContext(
                             resource=ask_exc.resource, resource_description=str(ask_exc)))
-                        result, error = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                        outcome = self._retry_after_permission_decision(call, args, ask_exc, decision)
+                        result, error, category, response_body = (
+                            outcome.result, outcome.error, outcome.category, outcome.response_body)
                 except NoSuchToolException:
                     logger.warning("Tool call %s: tool not found", call.name)
                     error = f"No such tool: {call.name!r}"
+                    category = "validation"
                     self.statistics.unknown_tool_calls += 1
                 except Exception as exc:
                     logger.warning("Tool call %s(%s) failed: %s", call.name, call.arguments, exc)
-                    error = str(exc)
+                    error, category, response_body = classify_exception(exc)
             # Per-tool success/failure tracking (only when a Tool instance was resolved)
+            tool_succeeded: bool | None = None
             if tool is not None:
+                tool_succeeded = tool.is_success(args, result, error)
                 tool_stats = self.statistics.tools.setdefault(call.name, ToolCallStats())
-                if tool.is_success(args, result, error):
+                if tool_succeeded:
                     tool_stats.success_count += 1
                 else:
                     tool_stats.failed_count += 1
-            content = _format_tool_response_content(result, error)
+            first_call_interjections = (
+                tuple(system_interjections) if call is tool_use_message.tool_calls[0] else ())
+            if error is None and tool_succeeded is False:
+                # A tool whose `apply()` never raises but signals failure via its own result
+                # shape (e.g. `BashTool` for a non-zero exit) -- see `Tool.is_success()`.
+                envelope = ToolResponseEnvelope.error(
+                    None, category="business_logic", response_body=result,
+                    system_interjections=first_call_interjections)
+            elif error is None:
+                envelope = ToolResponseEnvelope.success(
+                    result, system_interjections=first_call_interjections)
+            else:
+                envelope = ToolResponseEnvelope.error(
+                    error, category=category, response_body=response_body,
+                    system_interjections=first_call_interjections)
+            content = json.dumps(envelope.to_wire_dict())
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)
             if callbacks.on_tool_call is not None:

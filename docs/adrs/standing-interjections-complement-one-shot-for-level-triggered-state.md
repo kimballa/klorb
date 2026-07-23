@@ -55,3 +55,11 @@
   for v1: it's the least surprising behavior, needs no extra "have I already reminded the model
   recently" bookkeeping, and can be revisited if it proves noisy in a long session with many
   turns — see docs/plans/archive/005-session-scoped-bash-terminals.md's "Out of scope" section.
+
+  The registry itself is unchanged by
+  [the structured tool-response envelope ADR](wrap-tool-responses-in-a-structured-json-envelope.md):
+  it now has two delivery mechanisms for the same polled providers (the XML
+  `<SystemInterjection>` block onto a user-turn prompt described above, and a JSON
+  `system_interjections` list attached to the first `tool_response` envelope of each
+  `_run_tool_calls` round), not a design change to `register_standing_interjection` or how a
+  provider is polled.

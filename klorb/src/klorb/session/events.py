@@ -2,10 +2,11 @@
 """Pydantic types exchanged between `Session` and a caller's `TurnEventHandlers` callbacks:
 the `*Context`/`*Decision`/`*Answer`/`*Event` pairs for permission asks, `AskUserQuestions`,
 `EscalatePrivileges`, and finished/started tool calls, plus the `TurnEventHandlers` bundle
-itself and `UserSkillActivation`."""
+itself, `UserSkillActivation`, and `ToolCallOutcome`."""
 
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -14,6 +15,26 @@ from klorb.permissions.resource import BashCommandContext, PermissionResource
 from klorb.permissions.table import PermissionAskItem
 from klorb.session_naming import SessionName
 from klorb.tools.ask.common import QuestionOption
+from klorb.tools.exceptions import ErrorCategory
+
+
+@dataclass
+class ToolCallOutcome:
+    """The outcome of resolving one tool call's ask-style exception (a permission ask,
+    `AskUserQuestions`, or `EscalatePrivileges`), returned by every `_resolve_*`/`_retry_after_*`
+    method in `klorb.session.mixins.permissions`. Replaces a bare `tuple[Any, str | None]` --
+    see `.claude/skills/encapsulate-in-classes/SKILL.md`'s guidance against returning
+    loosely-related values positionally.
+
+    `result` and `response_body` are mutually exclusive by convention, mirroring
+    `klorb.tools.response_envelope.ToolResponseEnvelope`: `result` is meaningful only when
+    `error is None` (a successful resolution); `response_body` only when it's not (a failure
+    whose exception carried its own payload, e.g. a retried call's `ToolCallError`)."""
+
+    result: Any = None
+    error: str | None = None
+    category: ErrorCategory | None = None
+    response_body: Any = None
 
 
 class PermissionAskContext(BaseModel):

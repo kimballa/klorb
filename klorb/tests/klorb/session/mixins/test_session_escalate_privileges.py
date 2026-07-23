@@ -66,10 +66,20 @@ def _session(mock_provider: MagicMock, *, process_config: ProcessConfig | None =
     return Session(config, provider=mock_provider, tool_registry=tool_registry, process_config=pc)
 
 
-def _tool_response_content(session: Session) -> str:
+def _tool_response_envelope(session: Session) -> dict:
     tool_response = next(m for m in session.messages if m.role == "tool_response")
     assert isinstance(tool_response.content, str)
-    return tool_response.content
+    envelope: dict = json.loads(tool_response.content)
+    return envelope
+
+
+def _tool_response_content(session: Session) -> str:
+    """The failed-call's `error_message`, or the successful call's `response_body` rendered
+    back to a string, for tests that only care about substring matches against either."""
+    envelope = _tool_response_envelope(session)
+    if envelope["is_error"]:
+        return str(envelope["error_message"])
+    return json.dumps(envelope["response_body"])
 
 
 def test_no_callback_fails_closed() -> None:
@@ -83,9 +93,10 @@ def test_no_callback_fails_closed() -> None:
     response = session.send_turn("try it")
 
     assert response == "done"
-    content = _tool_response_content(session)
-    assert "Error:" in content
-    assert "not approved" in content
+    envelope = _tool_response_envelope(session)
+    assert envelope["is_error"] is True
+    assert envelope["error_category"] == "permission"
+    assert "not approved" in _tool_response_content(session)
 
 
 def test_invalid_scope_reports_error_without_invoking_callback() -> None:
@@ -100,9 +111,10 @@ def test_invalid_scope_reports_error_without_invoking_callback() -> None:
     response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
 
     assert response == "done"
-    content = _tool_response_content(session)
-    assert "Error:" in content
-    assert "Valid scopes" in content
+    envelope = _tool_response_envelope(session)
+    assert envelope["is_error"] is True
+    assert envelope["error_category"] == "validation"
+    assert "Valid scopes" in _tool_response_content(session)
     on_escalate.assert_not_called()
 
 
@@ -171,9 +183,10 @@ def test_denied_does_not_record_scope() -> None:
 
     assert response == "done"
     assert "workspace" not in session.config.approved_scopes
-    content = _tool_response_content(session)
-    assert "Error:" in content
-    assert "denied" in content
+    envelope = _tool_response_envelope(session)
+    assert envelope["is_error"] is True
+    assert envelope["error_category"] == "permission"
+    assert "denied" in _tool_response_content(session)
 
 
 def test_escalation_succeeds_without_process_config(tmp_path: Path) -> None:
