@@ -51,7 +51,7 @@ jobs:
       # deliberately wanting the latest chainlink-tracker release) -- with no local lockfile
       # pinning its version, a stale cache otherwise never expires on its own.
       - name: Cache chainlink-tracker cargo install
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/chainlink
