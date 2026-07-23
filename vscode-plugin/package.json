@@ -94,5 +94,11 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.2",
     "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "@vscode/vsce-sign@2.0.9": true,
+    "esbuild@0.24.2": true,
+    "esbuild@0.21.5": true,
+    "keytar@7.9.0": true
   }
 }

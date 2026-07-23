@@ -42,6 +42,23 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "klorb/dev-requirements.txt"
 
+      # `cloud_setup` below runs `cargo install chainlink-tracker` (no version pin) via
+      # klorb/Makefile's install_chainlink target, which compiles the crate and its
+      # dependency tree from scratch (~90s) unless cargo already sees a matching install
+      # recorded in ~/.cargo/.crates2.json -- caching the resulting binary plus that install
+      # record lets `cargo install` short-circuit to its "already installed" check instead of
+      # rebuilding. Bump the key's trailing version suffix to force a rebuild (e.g. after
+      # deliberately wanting the latest chainlink-tracker release) -- with no local lockfile
+      # pinning its version, a stale cache otherwise never expires on its own.
+      - name: Cache chainlink-tracker cargo install
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/chainlink
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: chainlink-tracker-cargo-install-${{ runner.os }}-v1
+
       - name: Cloud setup
         run: make cloud_setup
 
