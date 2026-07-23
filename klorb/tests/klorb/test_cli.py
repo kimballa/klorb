@@ -2,6 +2,7 @@
 """Tests for klorb.cli."""
 
 import json
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -959,6 +960,59 @@ def test_run_show_config_cli_includes_session_config(
     session = payload["sessionDefaults"]
     assert session["model"] == "some/model"
     assert session["tools.maxCallsPerTurn"] == 10
+
+
+# --- server subcommand ---
+
+
+def test_main_dispatches_to_server_subcommand_when_argv1_is_server() -> None:
+    with patch("klorb.cli.run_server_cli", return_value=0) as mock_run:
+        with patch("sys.argv", ["klorb", "server"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    mock_run.assert_called_once_with([])
+    assert exc_info.value.code == 0
+
+
+def test_main_propagates_server_subcommand_failure_exit_code() -> None:
+    with patch("klorb.cli.run_server_cli", return_value=1):
+        with patch("sys.argv", ["klorb", "server"]):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+
+    assert exc_info.value.code == 1
+
+
+def test_main_does_not_treat_server_as_a_subcommand_unless_it_is_argv1() -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_server_cli") as mock_run:
+            with patch("sys.argv", ["klorb", "-m", "server"]):
+                cli.main()
+
+    mock_run.assert_not_called()
+
+
+def test_run_server_cli_runs_jsonl_server_against_stdio() -> None:
+    mock_server = MagicMock()
+    mock_server.run.return_value = 0
+    with patch("klorb.cli.JsonlServer", return_value=mock_server) as mock_server_cls:
+        exit_code = cli.run_server_cli([])
+
+    mock_server_cls.assert_called_once_with(stdin=sys.stdin, stdout=sys.stdout)
+    mock_server.run.assert_called_once_with()
+    assert exit_code == 0
+
+
+def test_run_server_cli_returns_zero_on_keyboard_interrupt() -> None:
+    mock_server = MagicMock()
+    mock_server.run.side_effect = KeyboardInterrupt()
+    with patch("klorb.cli.JsonlServer", return_value=mock_server):
+        exit_code = cli.run_server_cli([])
+
+    assert exit_code == 0
 
 
 def test_version_flag_exits_with_version(capsys: pytest.CaptureFixture[str]) -> None:

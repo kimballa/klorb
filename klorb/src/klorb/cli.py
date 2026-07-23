@@ -23,6 +23,7 @@ from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.role import OPERATOR_ROLE_NAME, get_role
+from klorb.server import JsonlServer
 from klorb.session import Session, SessionConfig
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens
@@ -36,6 +37,7 @@ INIT_SUBCOMMAND = "init"
 SYSTEM_PROMPT_SUBCOMMAND = "system-prompt"
 MODELS_SUBCOMMAND = "models"
 SHOW_CONFIG_SUBCOMMAND = "show-config"
+SERVER_SUBCOMMAND = "server"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
             "symlink.\n"
             "  system-prompt     Dump the resolved system prompt and tool definitions.\n"
             "  models            List every discovered model.\n"
-            "  show-config       Show the merged config from all config files.\n\n"
+            "  show-config       Show the merged config from all config files.\n"
+            "  server            Run a persistent JSONL server on stdin/stdout.\n\n"
             "Run `klorb <subcommand> --help` to see subcommand-specific flags."
         ),
     )
@@ -522,7 +525,6 @@ def run_show_config_cli(argv: list[str]) -> int:
     parser = build_show_config_parser()
     args = parser.parse_args(argv)
 
-    load_dotenv()
     cwd = Path.cwd()
     config_flag_path = Path(args.config) if args.config is not None else None
     trust_manager = TrustManager()
@@ -539,6 +541,42 @@ def run_show_config_cli(argv: list[str]) -> int:
         _wrap_compact_list_elements(config_dict), indent=2, sort_keys=True,
         cls=_ConfigJSONEncoder))
     return 0
+
+
+def build_server_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for `klorb server`'s own flags -- there are none today -- see
+    `run_server_cli()`.
+    """
+    parser = argparse.ArgumentParser(
+        prog="klorb server",
+        description=(
+            "Run a persistent klorb server process: reads newline-delimited JSON (JSONL) "
+            "command records from stdin and writes JSONL reply records to stdout, until it "
+            "receives a shutdown command or stdin reaches EOF. See docs/specs/klorb-server.md."
+        ),
+    )
+    return parser
+
+
+def run_server_cli(argv: list[str]) -> int:
+    """Parse `argv` (the arguments following `klorb server`) and run a `klorb.server.
+    JsonlServer` against this process's own stdin/stdout until it receives a
+    `{"action": "shutdown"}` command or stdin reaches EOF, returning 0 either way.
+
+    Installs no `SIGINT` handling of its own: a `SIGINT` (e.g. Ctrl-C) is left to the
+    interpreter's ordinary `KeyboardInterrupt`, which unwinds the blocked stdin read the same
+    way it would for any other Python script. It's caught here so the process exits cleanly
+    with status 0 instead of printing a traceback.
+    """
+    parser = build_server_parser()
+    parser.parse_args(argv)
+
+    server = JsonlServer(stdin=sys.stdin, stdout=sys.stdout)
+    try:
+        return server.run()
+    except KeyboardInterrupt:
+        logger.debug("klorb server interrupted by SIGINT")
+        return 0
 
 
 def main() -> None:
@@ -577,6 +615,9 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == SHOW_CONFIG_SUBCOMMAND:
         raise SystemExit(run_show_config_cli(sys.argv[2:]))
+
+    if len(sys.argv) > 1 and sys.argv[1] == SERVER_SUBCOMMAND:
+        raise SystemExit(run_server_cli(sys.argv[2:]))
 
     parser = build_parser()
     args = parser.parse_args()

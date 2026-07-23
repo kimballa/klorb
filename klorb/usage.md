@@ -20,6 +20,8 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 
 `klorb show-config` [`--config` *FILE*]
 
+`klorb server`
+
 ## DESCRIPTION
 
 klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
@@ -38,7 +40,10 @@ when `models` is the very first argument), it lists every model klorb has
 discovered — see COMMANDS below. Invoked as `klorb show-config` (only
 recognized when `show-config` is the very first argument), it prints the
 merged config from all config files to stdout as pretty-printed JSON — see
-COMMANDS below.
+COMMANDS below. Invoked as `klorb server` (only recognized when `server` is
+the very first argument), it instead runs a persistent process that reads
+newline-delimited JSON commands from stdin and writes newline-delimited JSON
+replies to stdout — see COMMANDS below.
 
 ## COMMANDS
 
@@ -94,6 +99,16 @@ COMMANDS below.
   current directory is a trusted workspace, the per-project config layer is
   included; otherwise it's skipped. `--config` layers an additional config
   file on top of the usual stack. Exit status is `0` on success.
+* `server`
+
+  Runs a persistent process that reads newline-delimited JSON (JSONL)
+  command records from stdin, one line at a time, and writes a JSONL reply
+  record to stdout for each — flushed immediately, so a caller reading
+  stdout sees each reply as soon as it's produced. `{"greet": "someName"}`
+  replies `{"message": "hello, someName!"}`; `{"action": "shutdown"}` stops
+  the loop with no reply; any other record gets `{"error": "..."}`.
+  Stops (exit status `0`) on a shutdown command, on stdin reaching EOF, or on
+  `SIGINT` — see `docs/specs/klorb-server.md`.
 
 ## OPTIONS
 
@@ -342,10 +357,19 @@ Show the merged config with an extra config file layered on top:
 klorb show-config --config ./ci-defaults.json
 ```
 
+Run the persistent JSONL server, greet it, then ask it to shut down:
+
+```bash
+klorb server
+{"greet": "Ada"}
+{"action": "shutdown"}
+```
+
 ## SEE ALSO
 
 `docs/specs/openrouter-prompt-client.md`, `docs/specs/terminal-repl.md`,
 `docs/specs/paths-and-logging.md`, `docs/specs/session-and-turns.md`,
 `docs/specs/process-and-session-config.md`,
 `docs/specs/persisted-json-schema-versioning.md`, `docs/specs/klorb-init.md`,
-`docs/specs/tool-call-logging.md`, `docs/specs/model-framework.md`
+`docs/specs/tool-call-logging.md`, `docs/specs/model-framework.md`,
+`docs/specs/klorb-server.md`
