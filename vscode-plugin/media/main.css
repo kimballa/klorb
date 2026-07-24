@@ -10,8 +10,7 @@ body {
 }
 
 /* React mounts into this div; display: contents makes it invisible to the flex layout so
-   .title/#history/.input-row lay out as if they were direct children of body, same as before
-   React owned them. */
+   .title/#history/.input-row lay out as if they were direct children of body. */
 #root {
   display: contents;
 }
@@ -32,9 +31,11 @@ body {
   gap: 8px;
 }
 
+/* The user's submitted prompts keep the raised-bubble look, clinging to the right edge so
+   they read distinctly from the agent's full-width entries below/above them. */
 .bubble {
   box-sizing: border-box;
-  width: 85%;
+  max-width: 85%;
   padding: 6px 10px;
   border-radius: 12px;
   white-space: pre-wrap;
@@ -43,12 +44,59 @@ body {
   background-color: color-mix(in srgb, var(--vscode-sideBar-background) 88%, white 12%);
 }
 
-.bubble-user {
+.bubble-prompt {
   align-self: flex-end;
 }
 
-.bubble-server {
-  align-self: flex-start;
+/* Agent-produced entries (markdown responses, thinking, errors, notices) render full-width
+   with no bubble chrome. */
+.entry {
+  align-self: stretch;
+  word-break: break-word;
+}
+
+/* react-markdown wraps text in block elements; trim their outer margins so streamed
+   responses don't accumulate vertical gaps against the flex column's own spacing. */
+.entry-response > :first-child {
+  margin-top: 0;
+}
+
+.entry-response > :last-child {
+  margin-bottom: 0;
+}
+
+.entry-response pre {
+  overflow-x: auto;
+  padding: 6px 8px;
+  background-color: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+}
+
+.entry-response code {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.entry-thinking {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+.entry-thinking summary {
+  cursor: pointer;
+}
+
+.entry-thinking .thinking-text {
+  white-space: pre-wrap;
+  margin-top: 4px;
+}
+
+.entry-error {
+  color: var(--vscode-errorForeground);
+  white-space: pre-wrap;
+}
+
+.entry-notice {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
 }
 
 .input-row {
@@ -57,29 +105,10 @@ body {
   gap: 6px;
   padding: 8px 12px;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  align-items: flex-end;
 }
 
 #prompt-input {
   flex: 1 1 auto;
-  resize: none;
-  min-height: 2.4em;
-  max-height: 12em;
-  font-family: var(--vscode-font-family);
-  color: var(--vscode-input-foreground);
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border, transparent);
-  padding: 4px 6px;
-}
-
-#submit-button {
-  flex: 0 0 auto;
-  color: var(--vscode-button-foreground);
-  background-color: var(--vscode-button-background);
-  border: none;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-#submit-button:hover {
-  background-color: var(--vscode-button-hoverBackground);
+  width: auto;
 }

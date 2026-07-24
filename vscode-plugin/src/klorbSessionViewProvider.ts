@@ -1,39 +1,36 @@
 // © Copyright 2026 Aaron Kimball
 import * as vscode from 'vscode';
 
-import type { KlorbServerProcess } from './klorbServerProcess';
-
-interface SubmitMessage {
-  type: 'submit';
-  text: string;
-}
-
-function isSubmitMessage(message: unknown): message is SubmitMessage {
-  return (
-    typeof message === 'object' &&
-    message !== null &&
-    (message as { type?: unknown }).type === 'submit' &&
-    typeof (message as { text?: unknown }).text === 'string'
-  );
-}
+import { errorMessage, type AcpConnection } from './acpConnection';
+import type { SessionUpdateListener } from './klorbAcpClient';
+import { parseWebviewMessage, type HostMessage } from './shared/webviewMessages';
 
 /**
- * Backs the "Klorb session" side panel: a scrolling history of chat bubbles above a
- * multi-line prompt textbox (see src/webview/App.tsx, mounted by src/webview/main.tsx and
- * bundled to out/webview/main.js). Submitting the textbox posts a `{type: 'submit', text}`
- * message from the webview to `_handleMessage()`, which forwards `text` to the shared
- * `KlorbServerProcess` as a `greet` command (docs/specs/klorb-server.md) and posts the reply
- * back to the webview as `{type: 'reply', text}`.
+ * Backs the "Klorb session" side panel: a scrolling history of prompts, streamed thinking,
+ * and streamed markdown responses above a multi-line prompt input (see src/webview/App.tsx,
+ * mounted by src/webview/main.tsx and bundled to out/webview/main.js). The webview and the
+ * host exchange the typed messages defined in src/shared/webviewMessages.ts: the webview
+ * posts user intent (`submitPrompt`, `cancelTurn`), and this provider drives the shared
+ * `AcpConnection` and posts turn lifecycle + streamed text back. As the connection's
+ * `SessionUpdateListener`, it forwards `agent_message_chunk`/`agent_thought_chunk` text into
+ * the panel.
  */
-export class KlorbSessionViewProvider implements vscode.WebviewViewProvider {
+export class KlorbSessionViewProvider
+  implements vscode.WebviewViewProvider, SessionUpdateListener
+{
   public static readonly viewType = 'klorb.sessionView';
 
   private _view: vscode.WebviewView | undefined;
+  private _connection: AcpConnection | undefined;
 
-  public constructor(
-    private readonly _extensionUri: vscode.Uri,
-    private readonly _server: KlorbServerProcess,
-  ) {}
+  public constructor(private readonly _extensionUri: vscode.Uri) {}
+
+  /** Wires the connection this provider drives. Set once during activation — the provider
+   * and connection reference each other (the provider is the connection's listener), so one
+   * side has to be attached after construction. */
+  public setConnection(connection: AcpConnection): void {
+    this._connection = connection;
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -51,16 +48,52 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  public onAgentText(text: string): void {
+    this.postHostMessage({ type: 'agentChunk', text });
+  }
+
+  public onThoughtText(text: string): void {
+    this.postHostMessage({ type: 'thoughtChunk', text });
+  }
+
+  /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
+  public postHostMessage(message: HostMessage): void {
+    void this._view?.webview.postMessage(message);
+  }
+
   private async _handleMessage(message: unknown): Promise<void> {
-    if (!isSubmitMessage(message)) {
+    const parsed = parseWebviewMessage(message);
+    if (parsed === undefined) {
       return;
     }
-    const reply = await this._server.greet(message.text);
-    const text =
-      typeof reply.message === 'string'
-        ? reply.message
-        : String(reply.error ?? 'unrecognized reply from klorb server');
-    this._view?.webview.postMessage({ type: 'reply', text });
+    switch (parsed.type) {
+      case 'submitPrompt':
+        await this._runTurn(parsed.text);
+        break;
+      case 'cancelTurn':
+        this._connection?.cancel();
+        break;
+    }
+  }
+
+  private async _runTurn(text: string): Promise<void> {
+    const connection = this._connection;
+    if (connection === undefined || !connection.isReady) {
+      this.postHostMessage({
+        type: 'turnError',
+        message:
+          'klorb server connection is not ready — check the klorb.serverPath setting and ' +
+          'run "Klorb: Restart Server".',
+      });
+      return;
+    }
+    this.postHostMessage({ type: 'turnStarted' });
+    try {
+      const stopReason = await connection.prompt(text);
+      this.postHostMessage({ type: 'turnEnded', stopReason });
+    } catch (err) {
+      this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
+    }
   }
 
   /**
