@@ -9,7 +9,7 @@ APT_GET=sudo apt-get
 NPM=npm
 
 COMMANDS=help cloud_setup lint lint_docs typecheck sync_deps \
-	install_deps install_dev_deps test clean distclean
+	install_deps install_dev_deps test clean distclean all
 
 # Python executable to use when creating the venv. Can be overridden on the command line
 # (e.g. PYTHON=python3.12 make cloud_setup) or via the cloud session-start script.
@@ -67,5 +67,10 @@ clean:
 distclean:
 	$(MAKE) -C klorb distclean
 	$(MAKE) -C vscode-plugin distclean
+
+# e2e test cycle.
+all: lint_docs
+	$(MAKE) -C klorb all
+	$(MAKE) -C vscode-plugin all
 
 .PHONY: ${COMMANDS}
