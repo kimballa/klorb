@@ -16,6 +16,9 @@ will, with your help.
 * Only implement plans (with permission) that you find in the `ready/` folder.
 * Plans have id numbers which should be unique. If duplicate numbers exist, alert
   the user for reconciliation.
+* After writing or editing any plan document (or any other markdown under `docs/`), run
+  `make lint_docs` from the repository root and fix what it reports — CI runs the same
+  check and will fail the branch otherwise.
 * After planning docs are moved to the archive dir, they are no longer modified, even if
   later decisions cause the plan to be out-of-date with respect to the source code. That's
   OK -- the plan was a planning doc for a task, not a specification to be maintained in
