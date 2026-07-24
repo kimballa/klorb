@@ -95,12 +95,9 @@ that shape:
   over the streams, and serves until the client disconnects (EOF), then closes any live
   session (`Session.close()`) and returns 0. `logger.debug` breadcrumbs at start/stop,
   session create/replace/close, and turn start/end (per AGENTS.md's logging rule).
-* Any line arriving before/instead of ACP framing that parses as the *old* stub protocol's
-  JSON objects gets a one-line JSON error reply naming the mismatch
-  (`{"error": "klorb server now speaks ACP; upgrade the klorb VS Code extension"}`) — the
-  SDK will otherwise reject non-JSON-RPC traffic anyway; if intercepting pre-framing lines
-  through the SDK proves awkward, drop this nicety and just let the SDK's error reply stand
-  (note the choice in the spec).
+* The old stub JSONL protocol (`greet`/`shutdown`) is erased outright, with no
+  compatibility handling — a client speaking it just gets the SDK's standard JSON-RPC
+  error replies.
 
 ### 5. CLI + cleanup
 
@@ -148,5 +145,5 @@ that shape:
   `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}`
   and friends; observe a full prompt turn streaming `session/update` notifications. Include
   this recipe (with working JSON lines) in the rewritten spec's Usage section.
-* The VS Code stub still builds; its greet now surfaces the upgrade-mismatch error string in
-  the panel (acceptable until increment 002 lands).
+* The VS Code stub still builds; its greet round-trip now surfaces a protocol error in the
+  panel (acceptable until increment 002 lands).

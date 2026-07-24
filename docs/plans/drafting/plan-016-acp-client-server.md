@@ -249,10 +249,10 @@ spawns the other side for real.
 ## Increments
 
 Order matters: each is a runnable checkpoint, and the client increments each consume the
-server increment landed just before them. The old JSONL stub is removed in 001; the stub
-plugin's greet round-trip is replaced in 002 — between those two checkpoints the plugin still
-builds and runs but its send button reports the server-upgrade mismatch (001 keeps `klorb
-server` answering pre-ACP lines with a JSON error object naming the version skew).
+server increment landed just before them. The old JSONL stub protocol was a proof of concept
+and is erased outright in 001, with no compatibility shim; the stub plugin's greet round-trip
+is replaced in 002 — between those two checkpoints the plugin still builds and runs, but its
+send button surfaces a protocol error in the panel until 002 lands.
 
 | Increment | Side | Delivers |
 | --- | --- | --- |
@@ -273,8 +273,8 @@ Every increment also: updates the relevant spec(s) (`docs/specs/klorb-server.md`
 `docs/specs/vscode-plugin.md` — current-state documents, rewritten as the feature lands, per
 AGENTS.md's spec rules), records genuinely contested decisions as ADRs, adds new dependencies
 through the sanctioned flows (`.claude/skills/add-python-dependency` for Python; `npm install`
-+ committed lockfile for the plugin), and leaves `make lint typecheck test` green in each
-touched subproject.
+with a committed lockfile for the plugin), and leaves `make lint typecheck test` green in
+each touched subproject.
 
 ## Decisions taken (flagging for review)
 
@@ -302,8 +302,6 @@ touched subproject.
 
 ## Open questions for Aaron
 
-* Should the server *also* keep a `--jsonl` compatibility flag for the old stub protocol?
-  (Plan says no — nothing but the stub plugin ever spoke it.)
 * Is degrading gracefully against stock ACP clients (Zed etc.) worth actively testing, or is
   "should mostly work, untested" fine for now? (Plan assumes the latter.)
 * `klorb.openRouterApiKey` remains a plain settings string in the plugin. Moving it to VS Code

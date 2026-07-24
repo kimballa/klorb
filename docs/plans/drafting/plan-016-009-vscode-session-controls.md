@@ -35,7 +35,7 @@ Docked under the prompt input, one line, ellipsizing gracefully at narrow widths
   timings).
 * Token tally: `used / limit` with the TUI's SI formatting — port `format_token_count`'s
   rules into a pure `formatTokenCount.ts` (raw < 1000; k/M/B at 2 significant figures)
-  and unit-test it; omit ` / limit` when max is null.
+  and unit-test it; omit `/ limit` when max is null.
 * Session title: "New session…" placeholder until a title/name update arrives (TUI status
   line semantics).
 
