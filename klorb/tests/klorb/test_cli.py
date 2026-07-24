@@ -2,11 +2,10 @@
 """Tests for klorb.cli."""
 
 import json
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -995,21 +994,24 @@ def test_main_does_not_treat_server_as_a_subcommand_unless_it_is_argv1() -> None
     mock_run.assert_not_called()
 
 
-def test_run_server_cli_runs_jsonl_server_against_stdio() -> None:
+def test_run_server_cli_runs_acp_server_against_stdio() -> None:
+    mock_streams = MagicMock()
     mock_server = MagicMock()
-    mock_server.run.return_value = 0
-    with patch("klorb.cli.JsonlServer", return_value=mock_server) as mock_server_cls:
-        exit_code = cli.run_server_cli([])
+    mock_server.run = AsyncMock(return_value=0)
+    with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+        mock_streams_cls.from_stdio = AsyncMock(return_value=mock_streams)
+        with patch("klorb.cli.AcpServer", return_value=mock_server) as mock_server_cls:
+            exit_code = cli.run_server_cli([])
 
-    mock_server_cls.assert_called_once_with(stdin=sys.stdin, stdout=sys.stdout)
+    mock_streams_cls.from_stdio.assert_called_once_with()
+    mock_server_cls.assert_called_once_with(mock_streams, mock.ANY)
     mock_server.run.assert_called_once_with()
     assert exit_code == 0
 
 
 def test_run_server_cli_returns_zero_on_keyboard_interrupt() -> None:
-    mock_server = MagicMock()
-    mock_server.run.side_effect = KeyboardInterrupt()
-    with patch("klorb.cli.JsonlServer", return_value=mock_server):
+    with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+        mock_streams_cls.from_stdio = AsyncMock(side_effect=KeyboardInterrupt())
         exit_code = cli.run_server_cli([])
 
     assert exit_code == 0
@@ -1021,8 +1023,10 @@ def test_run_server_cli_passes_config_flag_path(
     with patch("klorb.cli.TrustManager") as mock_tm_cls:
         mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
             path=Path.cwd(), trusted=False)
-        with patch("klorb.cli.JsonlServer", return_value=MagicMock()):
-            cli.run_server_cli(["--config", "/some/extra-config.json"])
+        with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+            mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
+            with patch("klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))):
+                cli.run_server_cli(["--config", "/some/extra-config.json"])
 
     stub_process_config.assert_called_once_with(
         config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)
@@ -1034,8 +1038,10 @@ def test_run_server_cli_passes_no_config_flag_path_by_default(
     with patch("klorb.cli.TrustManager") as mock_tm_cls:
         mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
             path=Path.cwd(), trusted=False)
-        with patch("klorb.cli.JsonlServer", return_value=MagicMock()):
-            cli.run_server_cli([])
+        with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+            mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
+            with patch("klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))):
+                cli.run_server_cli([])
 
     stub_process_config.assert_called_once_with(
         config_flag_path=None, cwd=mock.ANY, workspace=mock.ANY)
@@ -1049,9 +1055,11 @@ def test_run_server_cli_logs_config_warnings(
     with patch("klorb.cli.TrustManager") as mock_tm_cls:
         mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
             path=Path.cwd(), trusted=False)
-        with patch("klorb.cli.JsonlServer", return_value=MagicMock()):
-            with caplog.at_level("WARNING"):
-                cli.run_server_cli([])
+        with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+            mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
+            with patch("klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))):
+                with caplog.at_level("WARNING"):
+                    cli.run_server_cli([])
 
     assert "bad klorb-config.json" in caplog.text
 

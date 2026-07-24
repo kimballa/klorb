@@ -146,6 +146,18 @@
   otherwise.
 * Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
 
+### Plan 016: ACP client/server
+
+* The `agent-client-protocol` SDK (0.7.1)'s `Connection._run_request` re-raises a caught
+  `RequestError` after sending its JSON-RPC error reply on the wire, and the SDK's own
+  `TaskSupervisor` logs that re-raise via `logging.exception("Background task failed", ...)`
+  against the root logger -- so every *expected* JSON-RPC error `KlorbAcpAgent` raises (an
+  unknown `sessionId`, a second concurrent prompt, an unsupported content block, ...) prints a
+  full traceback to stderr via Python's `lastResort` handler, not just genuinely unexpected
+  failures. Worth revisiting once `klorb server`'s own logging is wired up for real (a later
+  increment): either configure/quiet the `acp` package's loggers, or confirm there's a cleaner
+  SDK-sanctioned way to avoid it.
+
 ## TUI
 
 ### Bugs

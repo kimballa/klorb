@@ -2,6 +2,7 @@
 """Command-line entry point for klorb."""
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -21,9 +22,9 @@ from klorb.models.openrouter_pricing import (
 )
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
-from klorb.process_config import apply_cli_flags_to_session, load_process_config
+from klorb.process_config import ProcessConfig, apply_cli_flags_to_session, load_process_config
 from klorb.role import OPERATOR_ROLE_NAME, get_role
-from klorb.server import JsonlServer
+from klorb.server import AcpServer, ServerStreams
 from klorb.session import Session, SessionConfig
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens
@@ -53,7 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  system-prompt     Dump the resolved system prompt and tool definitions.\n"
             "  models            List every discovered model.\n"
             "  show-config       Show the merged config from all config files.\n"
-            "  server            Run a persistent JSONL server on stdin/stdout.\n\n"
+            "  server            Run a persistent Agent Client Protocol (ACP) server on "
+            "stdin/stdout.\n\n"
             "Run `klorb <subcommand> --help` to see subcommand-specific flags."
         ),
     )
@@ -550,9 +552,9 @@ def build_server_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klorb server",
         description=(
-            "Run a persistent klorb server process: reads newline-delimited JSON (JSONL) "
-            "command records from stdin and writes JSONL reply records to stdout, until it "
-            "receives a shutdown command or stdin reaches EOF. See docs/specs/klorb-server.md."
+            "Run a persistent klorb server process: speaks the Agent Client Protocol (ACP) -- "
+            "JSON-RPC 2.0 over newline-delimited stdio -- until the client disconnects. See "
+            "docs/specs/klorb-server.md."
         ),
     )
     parser.add_argument(
@@ -565,20 +567,31 @@ def build_server_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _run_acp_server(process_config: ProcessConfig) -> int:
+    """Bind an `AcpServer` to this process's real stdio and serve until the client disconnects.
+    Split out from `run_server_cli()` because binding stdio (`ServerStreams.from_stdio()`)
+    needs a running event loop, so the whole flow has to live inside one `asyncio.run()` call.
+    """
+    streams = await ServerStreams.from_stdio()
+    server = AcpServer(streams, process_config)
+    return await server.run()
+
+
 def run_server_cli(argv: list[str]) -> int:
-    """Parse `argv` (the arguments following `klorb server`) and run a `klorb.server.
-    JsonlServer` against this process's own stdin/stdout until it receives a
-    `{"action": "shutdown"}` command or stdin reaches EOF, returning 0 either way.
+    """Parse `argv` (the arguments following `klorb server`) and run a `klorb.server.AcpServer`
+    -- an Agent Client Protocol (ACP) server -- against this process's own stdin/stdout until
+    the client disconnects, returning 0.
 
     `--config` is parsed and resolved through the same `load_process_config()` file stack as
     every other subcommand (see `run_show_config_cli()`), so a malformed `--config` file is
-    surfaced via `process_config.config_warnings` rather than silently ignored. `JsonlServer`
-    itself has no config-dependent behavior yet -- the resolved config isn't passed to it.
+    surfaced via `process_config.config_warnings` rather than silently ignored. The resolved
+    `ProcessConfig` is the template every ACP `session/new` request's `SessionConfig` is copied
+    from -- see `klorb.server.klorb_agent.KlorbAcpAgent.new_session`.
 
     Installs no `SIGINT` handling of its own: a `SIGINT` (e.g. Ctrl-C) is left to the
-    interpreter's ordinary `KeyboardInterrupt`, which unwinds the blocked stdin read the same
-    way it would for any other Python script. It's caught here so the process exits cleanly
-    with status 0 instead of printing a traceback.
+    interpreter's ordinary `KeyboardInterrupt`, which unwinds the blocked read the same way it
+    would for any other Python script. It's caught here so the process exits cleanly with
+    status 0 instead of printing a traceback.
     """
     parser = build_server_parser()
     args = parser.parse_args(argv)
@@ -590,9 +603,8 @@ def run_server_cli(argv: list[str]) -> int:
     for warning in process_config.config_warnings:
         logger.warning(warning)
 
-    server = JsonlServer(stdin=sys.stdin, stdout=sys.stdout)
     try:
-        return server.run()
+        return asyncio.run(_run_acp_server(process_config))
     except KeyboardInterrupt:
         logger.debug("klorb server interrupted by SIGINT")
         return 0
