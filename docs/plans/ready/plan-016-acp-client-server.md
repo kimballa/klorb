@@ -370,11 +370,9 @@ section is your operating procedure. Follow it step by step.
    the turn ends.
 8. **Webview stays ACP-ignorant** — the extension host translates ACP to a typed
    webview-message protocol. Keeps the browser bundle lean and the UI testable with fixtures.
-
-## Open questions for Aaron
-
-* Is degrading gracefully against stock ACP clients (Zed etc.) worth actively testing, or is
-  "should mostly work, untested" fine for now? (Plan assumes the latter.)
+9. **Support for ACP clients other than the official plugin is best-effort**. 
+   We don't have an active test plan for other ACP clients (e.g. Zed). "Should mostly work,
+   but left untested" is the current strategy.
 
 Resolved during drafting review: the `_klorb/askUserQuestions` extension method (decision 5)
 is confirmed over ACP elicitation; the old JSONL stub protocol is erased outright in 001 with

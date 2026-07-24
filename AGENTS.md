@@ -47,6 +47,10 @@ lowerCamelCase namespacing (`thinking.effort`, `terminal.input.maxLines`) — th
 VSCode's and Claude Code's own settings files — not the snake_case used for internal Python
 identifiers. See `docs/specs/process-and-session-config.md`'s "On-disk key naming" section.
 
+Various bugs or  planned tasks are enumerated in `/TODO.md`. New follow-up tasks may be added there,
+but if a task is **completed**, do not mark it complete -- remove it entirely!
+
+
 ## subprojects
 
 The Klorb project is organized as a collection of subprojects:
