@@ -276,6 +276,77 @@ through the sanctioned flows (`.claude/skills/add-python-dependency` for Python;
 with a committed lockfile for the plugin), and leaves `make lint typecheck test` green in
 each touched subproject.
 
+## How to execute an increment (instructions for the implementing agent)
+
+You have been asked to implement one increment of Plan 016 — say `plan-016-00N-<slug>`. This
+section is your operating procedure. Follow it step by step.
+
+### Scope discipline
+
+1. Read `docs/plans/README-PLANS.md` first and obey it (plans only execute from `ready/`,
+   with explicit permission).
+2. Read **this overview in full**, then your increment's own document in full, before
+   writing any code. The overview owns the architecture and vocabulary (`AcpServer`,
+   `TurnBridge`, `ServerStreams`, the `_klorb/*` namespace, the ordered-outbound-queue rule);
+   your increment doc owns the deliverables. If they seem to conflict, the increment doc
+   wins for scope and this overview wins for architecture — and say so in your report.
+3. Implement **only your increment**. Do not start the next one, and do not "improve" a
+   later increment's territory while you're nearby. If you notice a real problem in a later
+   increment's plan, note it in your report; don't act on it.
+4. Increments 002+ assume every lower-numbered increment is already merged. Do not re-read
+   the archived plan docs of completed increments to learn current behavior — read the
+   *specs* (`docs/specs/klorb-server.md`, `docs/specs/vscode-plugin.md`) and the code, which
+   are kept current as each increment lands. Plan docs describe intent at planning time and
+   are not maintained.
+
+### Before coding
+
+1. Read the specs and source files your increment doc names. For server increments that
+   means at minimum `docs/specs/klorb-server.md`, `docs/specs/session-and-turns.md`, and
+   `klorb/src/klorb/session/events.py`; for client increments,
+   `docs/specs/vscode-plugin.md` and the existing `vscode-plugin/src/` layout.
+2. **Verify the SDK surface.** This plan was written against `agent-client-protocol` 0.7.x
+   (Python) and `@agentclientprotocol/sdk` 0.14.x (TypeScript). Where your increment names
+   an SDK class/method/field, confirm it exists in the installed, pinned version before
+   building on it (read the package's own source in the venv / `node_modules`). If the real
+   surface differs, adapt to the SDK, keep this plan's *wire-level* contracts (method names,
+   `_meta.klorb` shapes, capability flags — those are klorb's own and not SDK-dependent),
+   and record the deviation in the spec you update.
+3. Do the architecture review README-PLANS.md prescribes: check the increment's approach
+   still fits the codebase as it exists today, and raise concerns before implementing.
+
+### While coding
+
+1. Follow AGENTS.md and CLAUDE.md without exception: copyright headers on new files
+   (`# © Copyright 2026 Aaron Kimball` / `// © Copyright 2026 Aaron Kimball`), explicit
+   typing everywhere, state encapsulated in classes (no module-level mutable globals, no
+   loose tuples), constants defined once and imported, `logger.debug` breadcrumbs on
+   consequential actions, comments only for non-obvious WHY.
+2. New wire surface goes through the established registries: an extension method must be
+   named `_klorb/<camelCase>`, advertised under the appropriate side's
+   `capabilities._meta.klorb`, gated on the peer's advertisement before use, and added to
+   the extension-method registry section of `docs/specs/klorb-server.md` with full
+   param/result shapes. Custom data rides only in `_meta.klorb` — never as new fields on
+   standard ACP types.
+3. Write the tests your increment doc lists. They are a floor, not a ceiling; they are
+    also a scope guide — don't re-test `Session` internals or other already-covered
+    machinery beyond what the listed assertions need.
+
+### Before declaring done
+
+ 1. Run, and get green: `make -C klorb lint typecheck test` and/or
+    `make -C vscode-plugin lint test compile` (whichever sides you touched), **and**
+    `make lint_docs` at the repository root (CI enforces it on every markdown change,
+    including the spec updates you just made).
+ 2. Update the spec(s) to describe the *new current state* (present tense, no
+    diff-narration); write any ADR your increment doc calls for; log any deliberately
+    deferred follow-ups in `TODO.md` under a `### Plan 016` section.
+ 3. Walk the increment's "Checkpoint criteria" manually — including the hand-run recipe —
+    and report the outcome honestly, including anything that didn't work.
+ 4. When the increment is complete and merged, `git mv` its plan document to
+    `docs/plans/archive/`. The overview document stays in place until the final increment
+    (012) archives it too.
+
 ## Decisions taken (flagging for review)
 
 1. **`AcpServer`** as the replacement name for `JsonlServer` (rationale above).
@@ -304,8 +375,11 @@ each touched subproject.
 
 * Is degrading gracefully against stock ACP clients (Zed etc.) worth actively testing, or is
   "should mostly work, untested" fine for now? (Plan assumes the latter.)
-* `klorb.openRouterApiKey` remains a plain settings string in the plugin. Moving it to VS Code
-  `SecretStorage` would fit naturally into increment 009 if wanted.
+
+Resolved during drafting review: the `_klorb/askUserQuestions` extension method (decision 5)
+is confirmed over ACP elicitation; the old JSONL stub protocol is erased outright in 001 with
+no compatibility shim; and the OpenRouter API key moves to VS Code `SecretStorage` as part of
+increment 009.
 
 ## Future work
 

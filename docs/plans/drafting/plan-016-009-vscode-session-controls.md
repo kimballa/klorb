@@ -8,7 +8,8 @@
 Surface increment 008's control plane in the client: a status row in the panel (model +
 thinking, permission-mode badge, token tally, session title), native pickers for model and
 thinking, a new-session command, session stats, and workspace-trust bridging. After this
-increment the plugin has functional parity with every session-affecting TUI command.
+increment the plugin has functional parity with every session-affecting TUI command. The
+OpenRouter API key also moves from plaintext settings into VS Code `SecretStorage`.
 
 ## Deliverables
 
@@ -59,7 +60,29 @@ changes (they're VS Code-idiomatic and free):
 * `klorb.reloadSkills`: calls the ext method, toast with the count.
 * All contributed in `package.json` with "Klorb: …" titles.
 
-### 4. Workspace trust bridging
+### 4. OpenRouter API key moves to `SecretStorage`
+
+The API key stops living in plaintext settings and moves to VS Code's OS-keychain-backed
+secret store (`vscode.ExtensionContext.secrets`):
+
+* New command `klorb.setOpenRouterApiKey` ("Klorb: Set OpenRouter API Key"):
+  `showInputBox({password: true})` → `context.secrets.store('klorb.openRouterApiKey',
+  value)`; an empty submission deletes the stored secret. A companion
+  `klorb.clearOpenRouterApiKey` command deletes it explicitly.
+* Server spawn (`readServerOptions()` / `KlorbServerProcess.start()`) resolves the key in
+  precedence order: stored secret → legacy `klorb.openRouterApiKey` setting → inherit the
+  environment (current behavior). The spawn path becomes async to read the secret; thread
+  `context.secrets` in via the constructor, not a global.
+* One-time migration nudge: if the legacy setting is non-empty and no secret is stored,
+  show an information message offering to move it into secret storage and blank the
+  setting (modifying user settings via `WorkspaceConfiguration.update`); "Not now"
+  suppresses the nudge for the session, never permanently.
+* The legacy setting stays declared in `package.json` for compatibility, with its
+  description updated to point at the command (`"Deprecated: prefer the 'Klorb: Set
+  OpenRouter API Key' command, which stores the key in your OS keychain instead of
+  plaintext settings."`).
+
+### 5. Workspace trust bridging
 
 * On connect, if VS Code's own workspace trust (`vscode.workspace.isTrusted`) is granted
   but the klorb workspace is untrusted, show a one-time prompt ("Trust this workspace in
@@ -81,12 +104,17 @@ changes (they're VS Code-idiomatic and free):
 * Command tests with the faked `vscode` surface: QuickPick flows call the control
   interface with the picked values; trust prompt logic honors the isTrusted /
   restricted-mode matrix.
+* API-key resolution tests (faked `secrets` + configuration): precedence order
+  (secret → legacy setting → environment), set/clear commands store/delete, migration
+  nudge fires only in the legacy-set/no-secret state and blanks the setting on accept.
 
 ## Checkpoint criteria
 
 * Both subprojects green.
 * Manual: switch model from the status chip and see the next turn use it; cycle the
   badge to `auto` and watch tools run unprompted; new-session clears the panel; stats
-  and skills-reload commands work; untrusted-workspace flow end to end.
+  and skills-reload commands work; untrusted-workspace flow end to end; set the API key
+  via the command, blank the legacy setting, and confirm the server still authenticates.
 * `docs/specs/vscode-plugin.md` updated (status row anatomy, command table, trust
-  bridging rules).
+  bridging rules, API-key storage/precedence — replacing the current spec's plaintext
+  caveat).
