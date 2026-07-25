@@ -180,7 +180,15 @@ Here are the officially-sanctioned CI commands:
 * use `make lint` for linting.
 * use `make typecheck` for typechecking.
 * use `make test` to invoke test suites.
-* These are run in the `klorb/` subdir, or from the root with `make -C klorb <target>`
+
+*Where* you run these commands is important:
+
+* When working on the agent / harness itself, the ACP server, or the TUI, run in the `klorb/`
+  subdir, or from the root with `make -C klorb <target>`.
+* When working on the VSCode plugin, run in the `vscode-plugin/`
+  subdir, or from the root with `make -C vscode-plugin <target>`.
+* If you edit `TODO.md` or any documentation (specs, ADRs, etc), run `make lint` from
+  the root directory to run markdownlint.
 
 ### Import Rules
 
