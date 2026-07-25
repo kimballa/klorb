@@ -35,6 +35,17 @@ wedges.
 
 After reloading, open the **Secondary Side Bar** if it isn't already open — `Ctrl+Alt+B` (or `Cmd+Option+B` on Mac), or View → Appearance → Secondary Side Bar — and the Klorb icon should appear on its icon rail.
 
+## Building for distribution
+
+```bash
+make dist
+```
+
+Packages a minified, production `.vsix` (production React build, no sourcemapped source text,
+no `node_modules` along for the ride) — the artifact meant for actually shipping the extension,
+as opposed to `make install`'s unminified dev build for local iteration. See
+`docs/specs/vscode-plugin.md`'s "Build tooling" section at the repo root for the details.
+
 ## Settings
 
 * `klorb.serverPath` — path to the `klorb` command used to launch `klorb server` (default:

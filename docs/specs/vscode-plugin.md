@@ -368,7 +368,24 @@ of two.
 * `install` (not present in `klorb/Makefile`, since the Python side has no editor-installation
   step) runs `compile`, packages the result into a `.vsix` with `@vscode/vsce`, and installs
   it into the local VS Code with `code --install-extension` — the interop step needed to
-  actually try the extension out, as opposed to just linting/testing it.
+  actually try the extension out, as opposed to just linting/testing it. This is the
+  *development* build: unminified, `NODE_ENV=development` (so React's own dev-only warnings
+  surface real bugs during testing), full sourcemaps.
+* `dist` runs `compile:prod` (the `:prod` `esbuild` scripts — `--minify`,
+  `--define:process.env.NODE_ENV=\"production\"` for the webview bundle,
+  `--sourcemap=linked --sources-content=false`, `--legal-comments=linked`) and packages the
+  result the same way `install` does, but doesn't also install it into the local VS Code — it
+  produces the artifact meant for actual distribution (`vsce publish`, or handing the `.vsix` to
+  someone else), not another local dev-loop iteration. See
+  `docs/adrs/production-vsix-build-is-minified-and-drops-node-modules.md`.
+* `.vscodeignore` excludes `node_modules/**`, `package-lock.json`, and `types/**` from every
+  packaged `.vsix` (dev or prod) — since both the extension host and the webview are fully
+  bundled by `esbuild`, nothing at runtime ever `require()`s a package out of `node_modules`, so
+  shipping a second copy of every dependency alongside the bundle that already inlines them is
+  pure waste. `**/*.map` is also excluded (sourcemaps stay in the local `out/` build output for
+  debugging, not in the shipped package) — `**/*.LEGAL.txt` is deliberately *not* excluded, since
+  it's the license attribution `--legal-comments=linked` collects for the bundled dependencies'
+  code inside the very file it ships alongside.
 * `clean` removes `out/`, `coverage/`, the packaged `.vsix`, and `tsconfig.tsbuildinfo`.
   `distclean` additionally removes `node_modules/`.
 

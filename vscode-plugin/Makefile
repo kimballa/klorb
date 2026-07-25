@@ -7,9 +7,10 @@
 # * `make install_dev_deps` to install local deps, `install_deps` for production
 #   * `make sync_deps` to resolve and update the package-lock.json from package.json
 # * `make install` to package the extension as a .vsix and install it into this VS Code
+# * `make dist` to build a minified, production .vsix for distribution (doesn't install it)
 
 COMMANDS=help lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test compile install all
+	install_deps install_dev_deps test compile install dist all
 
 NPM=npm
 # The VS Code CLI used to install the packaged .vsix into the local editor. Overridable
@@ -63,6 +64,16 @@ install_dev_deps:
 install: compile
 	"$(NPM)" run package
 	"$(CODE)" --force --install-extension "$(VSIX)"
+
+# Builds the distributable .vsix: minified bundles, a production React build (dead
+# `NODE_ENV !== "production"` branches compiled out), and license comments collected into a
+# linked `.LEGAL.txt` next to each bundle instead of left inline -- see
+# docs/adrs/production-vsix-build-is-minified-and-drops-node-modules.md. Unlike `install`, this
+# doesn't install the result into the local VS Code; it just produces the artifact meant for
+# actual distribution (e.g. `vsce publish`, or handing the .vsix to someone else).
+dist:
+	"$(NPM)" run compile:prod
+	"$(NPM)" run package
 
 clean:
 	-rm -rf out

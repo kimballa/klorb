@@ -3,6 +3,7 @@
 .vscode/**
 src/**
 test/**
+types/**
 .gitignore
 .eslintrc*
 eslint.config.mjs
@@ -11,7 +12,9 @@ tsconfig.json
 tsconfig.webview.json
 vitest.config.mts
 Makefile
-*.map
+**/*.map
 *.vsix
 .nyc_output/**
 coverage/**
+node_modules/**
+package-lock.json
