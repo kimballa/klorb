@@ -1,9 +1,10 @@
 // © Copyright 2026 Aaron Kimball
 import { type ChildProcessWithoutNullStreams } from 'child_process';
 import { PassThrough } from 'stream';
+
 import { describe, expect, it } from 'vitest';
 
-import { KlorbServerProcess } from '../src/klorbServerProcess';
+import { KlorbServerProcess } from 'host/klorbServerProcess';
 
 function makeFakeChild(): ChildProcessWithoutNullStreams {
   const child = {
@@ -11,7 +12,7 @@ function makeFakeChild(): ChildProcessWithoutNullStreams {
     stdout: new PassThrough(),
     killed: false,
     kill(): boolean {
-      child.killed = true;
+      (child as { killed: boolean }).killed = true;
       return true;
     },
   } as unknown as ChildProcessWithoutNullStreams;

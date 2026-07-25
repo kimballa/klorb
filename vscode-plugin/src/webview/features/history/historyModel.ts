@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import type { HostMessage } from '../shared/webviewMessages';
+import type { HostMessage } from 'shared/webviewMessages';
 
 /** What kind of content a history entry holds. */
 export type HistoryEntryKind = 'prompt' | 'response' | 'thinking' | 'error' | 'notice';
@@ -20,7 +20,7 @@ export function appendPrompt(entries: readonly HistoryEntry[], text: string): Hi
 function appendChunk(
   entries: readonly HistoryEntry[],
   kind: 'response' | 'thinking',
-  text: string,
+  text: string
 ): HistoryEntry[] {
   const last = entries[entries.length - 1];
   if (last !== undefined && last.kind === kind && last.streaming) {
@@ -41,7 +41,7 @@ function finishStreaming(entries: readonly HistoryEntry[]): HistoryEntry[] {
  */
 export function applyHostMessage(
   entries: readonly HistoryEntry[],
-  message: HostMessage,
+  message: HostMessage
 ): HistoryEntry[] {
   switch (message.type) {
     case 'turnStarted':
@@ -61,7 +61,10 @@ export function applyHostMessage(
       ];
     }
     case 'turnError':
-      return [...finishStreaming(entries), { kind: 'error', text: message.message, streaming: false }];
+      return [
+        ...finishStreaming(entries),
+        { kind: 'error', text: message.message, streaming: false },
+      ];
     case 'sessionReset':
       return [];
   }

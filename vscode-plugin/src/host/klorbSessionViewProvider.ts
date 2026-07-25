@@ -1,9 +1,8 @@
 // © Copyright 2026 Aaron Kimball
 import * as vscode from 'vscode';
 
-import { errorMessage, type AcpConnection } from './acpConnection';
-import type { SessionUpdateListener } from './klorbAcpClient';
-import { parseWebviewMessage, type HostMessage } from './shared/webviewMessages';
+import { errorMessage, type AcpConnection, type SessionUpdateListener } from 'host/features/acp';
+import { parseWebviewMessage, type HostMessage } from 'shared/webviewMessages';
 
 /**
  * Backs the "Klorb session" side panel: a scrolling history of prompts, streamed thinking,
@@ -15,9 +14,7 @@ import { parseWebviewMessage, type HostMessage } from './shared/webviewMessages'
  * `SessionUpdateListener`, it forwards `agent_message_chunk`/`agent_thought_chunk` text into
  * the panel.
  */
-export class KlorbSessionViewProvider
-  implements vscode.WebviewViewProvider, SessionUpdateListener
-{
+export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, SessionUpdateListener {
   public static readonly viewType = 'klorb.sessionView';
 
   private _view: vscode.WebviewView | undefined;
@@ -35,7 +32,7 @@ export class KlorbSessionViewProvider
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
     _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken,
+    _token: vscode.CancellationToken
   ): void {
     this._view = webviewView;
     webviewView.webview.options = {
@@ -113,10 +110,10 @@ export class KlorbSessionViewProvider
 
   private _getHtml(webview: vscode.Webview): string {
     const scriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this._extensionUri, 'out', 'webview', 'main.js'),
+      vscode.Uri.joinPath(this._extensionUri, 'out', 'webview', 'main.js')
     );
     const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'),
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css')
     );
     const nonce = getNonce();
     return `<!DOCTYPE html>

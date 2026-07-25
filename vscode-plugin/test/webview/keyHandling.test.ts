@@ -1,7 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import { describe, expect, it } from 'vitest';
 
-import { classifyEnterKey } from '../src/webview/keyHandling';
+import { classifyEnterKey } from 'webview/keyHandling';
 
 describe('classifyEnterKey', () => {
   it('submits on a bare Enter', () => {

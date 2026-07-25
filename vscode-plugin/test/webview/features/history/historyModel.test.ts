@@ -6,7 +6,7 @@ import {
   applyHostMessage,
   applyTurnFlag,
   type HistoryEntry,
-} from '../src/webview/historyModel';
+} from 'webview/features/history';
 
 describe('appendPrompt', () => {
   it('appends a finished prompt entry', () => {

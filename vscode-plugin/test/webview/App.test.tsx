@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { App, type VsCodeApi } from '../src/webview/App';
+import App from 'webview/App';
+import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
 
 interface FakeVsCode {
   vscode: VsCodeApi;
@@ -30,6 +31,9 @@ function postHostMessage(data: unknown): void {
 }
 
 function promptTextarea(container: HTMLElement): Element {
+  // Testing Library has no role-based query for the <vscode-textarea> custom element, so a
+  // direct querySelector is the only way to reach it (see typeAndSubmit's comment below).
+  // eslint-disable-next-line testing-library/no-node-access
   const textarea = container.querySelector('vscode-textarea');
   if (textarea === null) {
     throw new Error('vscode-textarea not rendered');
@@ -89,6 +93,9 @@ describe('App', () => {
 
     postHostMessage({ type: 'thoughtChunk', text: 'pondering deeply' });
 
+    // No Testing Library query targets a bare <details> by class; a direct query is the only
+    // way to assert its collapsed state here.
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
     const details = container.querySelector('details.entry-thinking');
     expect(details).not.toBeNull();
     expect(details?.hasAttribute('open')).toBe(false);
@@ -143,7 +150,7 @@ describe('App', () => {
       <App
         vscode={vscode}
         initialEntries={[{ kind: 'prompt', text: 'old prompt', streaming: false }]}
-      />,
+      />
     );
 
     expect(screen.getByText('old prompt')).toBeTruthy();

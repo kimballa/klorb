@@ -10,7 +10,7 @@ import type {
 
 /** The `RequestError` class from the loaded ACP SDK module. Passed in as a value because the
  * SDK is ESM-only and the extension host is CommonJS — the module object arrives via the one
- * dynamic `import()` in `AcpConnection.start()` (see src/acpConnection.ts). */
+ * dynamic `import()` in `AcpConnection.start()` (see src/host/features/acp/acpConnection.ts). */
 export type RequestErrorClass = (typeof import('@agentclientprotocol/sdk'))['RequestError'];
 
 /** Receives the streamed text the agent produces during a prompt turn. */
@@ -41,7 +41,7 @@ export class KlorbAcpClient {
   public constructor(
     listener: SessionUpdateListener,
     requestError: RequestErrorClass,
-    log: LogFn = (message: string) => console.warn(message),
+    log: LogFn = (message: string) => console.warn(message)
   ) {
     this._listener = listener;
     this._requestError = requestError;
@@ -77,7 +77,7 @@ export class KlorbAcpClient {
    * approval panel when the plan-016-006 increment builds it.
    */
   public async requestPermission(
-    params: RequestPermissionRequest,
+    params: RequestPermissionRequest
   ): Promise<RequestPermissionResponse> {
     const rejectOption =
       params.options.find((option) => option.kind === 'reject_once') ??
@@ -89,7 +89,7 @@ export class KlorbAcpClient {
     }
     this._log(
       `klorb: auto-rejecting permission ask "${params.toolCall.title ?? ''}" ` +
-        `with option "${rejectOption.name}" (interactive approvals not implemented yet)`,
+        `with option "${rejectOption.name}" (interactive approvals not implemented yet)`
     );
     return { outcome: { outcome: 'selected', optionId: rejectOption.optionId } };
   }

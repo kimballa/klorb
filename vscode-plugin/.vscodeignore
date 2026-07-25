@@ -1,11 +1,15 @@
+*~
+*.swp
 .vscode/**
 src/**
 test/**
 .gitignore
 .eslintrc*
 eslint.config.mjs
+.prettierrc.json
 tsconfig.json
 tsconfig.webview.json
+vitest.config.mts
 Makefile
 *.map
 *.vsix

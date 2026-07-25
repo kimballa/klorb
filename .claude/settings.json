@@ -29,7 +29,9 @@
       "Skill(code-review)",
       "Skill(code-review:*)",
       "Bash(venv/bin/pip show *)",
-      "Bash(venv/bin/flake8 --config .flake8 evals/cases.py)"
+      "Bash(venv/bin/flake8 --config .flake8 evals/cases.py)",
+      "Bash(npm view *)",
+      "Bash(npm install *)"
     ]
   },
   "hooks": {

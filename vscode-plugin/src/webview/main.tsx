@@ -5,8 +5,9 @@ import '@vscode-elements/elements/dist/vscode-button/index.js';
 import '@vscode-elements/elements/dist/vscode-textarea/index.js';
 import { createRoot } from 'react-dom/client';
 
-import { App, type VsCodeApi } from './App';
-import type { HistoryEntry } from './historyModel';
+import App from 'webview/App';
+import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
+import type { HistoryEntry } from 'webview/features/history';
 
 declare function acquireVsCodeApi(): VsCodeApi;
 

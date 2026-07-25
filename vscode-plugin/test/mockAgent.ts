@@ -1,8 +1,9 @@
 // © Copyright 2026 Aaron Kimball
-import * as acp from '@agentclientprotocol/sdk';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
 import { PassThrough, Readable, Writable } from 'stream';
+
+import * as acp from '@agentclientprotocol/sdk';
 
 /**
  * A scriptable ACP agent for driving the code under test from the *agent* side of the
@@ -18,9 +19,13 @@ export class MockAgent implements acp.Agent {
   public readonly receivedPrompts: acp.PromptRequest[] = [];
   public readonly receivedCancels: acp.CancelNotification[] = [];
   public sessionIdToIssue = 'sess-1';
-  public onInitialize: ((params: acp.InitializeRequest) => Promise<acp.InitializeResponse>) | undefined;
+  public onInitialize:
+    ((params: acp.InitializeRequest) => Promise<acp.InitializeResponse>) | undefined;
   public onPrompt:
-    | ((params: acp.PromptRequest, connection: acp.AgentSideConnection) => Promise<acp.PromptResponse>)
+    | ((
+        params: acp.PromptRequest,
+        connection: acp.AgentSideConnection
+      ) => Promise<acp.PromptResponse>)
     | undefined;
 
   public async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
@@ -95,7 +100,7 @@ export function createMockAgentChild(agent: MockAgent = new MockAgent()): MockAg
 
   const stream = acp.ndJsonStream(
     Writable.toWeb(stdout) as unknown as WritableStream<Uint8Array>,
-    Readable.toWeb(stdin) as unknown as ReadableStream<Uint8Array>,
+    Readable.toWeb(stdin) as unknown as ReadableStream<Uint8Array>
   );
   agent.connection = new acp.AgentSideConnection(() => agent, stream);
   return { child, agent };

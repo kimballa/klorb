@@ -3,17 +3,34 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022"],
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "paths": {
+      "shared/*": ["./src/shared/*"],
+      "host/*": ["./src/host/*"]
+    },
     "outDir": "out",
-    "rootDir": "src",
+    "types": ["node"],
+    "noEmit": true,
     "sourceMap": true,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
     "skipLibCheck": true,
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "out", "test", "src/webview/**"]
+  "include": [
+    "src/**/*.ts",
+    "types/**/*.d.ts",
+    "test/host/**/*.ts",
+    "test/shared/**/*.ts",
+    "test/mockAgent.ts"
+  ],
+  "exclude": ["node_modules", "out", "test/webview/**", "src/webview/**"]
 }

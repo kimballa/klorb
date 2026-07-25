@@ -73,8 +73,11 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./ && tsc -p tsconfig.webview.json && node_modules/.bin/esbuild src/webview/main.tsx --tsconfig=tsconfig.webview.json --sourcemap --define:process.env.NODE_ENV=\\\"development\\\" --outfile=out/webview/main.js --bundle --format=iife --platform=browser --target=es2022",
-    "watch": "tsc -w -p ./",
+    "typecheck": "tsgo -p ./ && tsgo -p tsconfig.webview.json",
+    "build:extension": "esbuild src/extension.ts --tsconfig=tsconfig.json --bundle --sourcemap --outfile=out/extension.js --format=cjs --platform=node --target=es2022 --external:vscode",
+    "build:webview": "esbuild src/webview/main.tsx --tsconfig=tsconfig.webview.json --bundle --sourcemap --define:process.env.NODE_ENV=\\\"development\\\" --outfile=out/webview/main.js --format=iife --platform=browser --target=es2022",
+    "compile": "npm run typecheck && npm run build:extension && npm run build:webview",
+    "watch": "tsgo -w -p ./",
     "lint": "eslint src test",
     "test": "vitest run",
     "package": "vsce package --out klorb-vscode.vsix"
@@ -90,23 +93,35 @@
     "@eslint/js": "^9.17.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.20.1",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@types/vscode": "^1.94.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.0",
     "eslint": "^9.17.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-node": "^0.4.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-testing-library": "^7.16.2",
     "jsdom": "^29.1.1",
-    "typescript": "^5.7.2",
+    "prettier": "^3.9.5",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.18.2",
+    "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^2.1.8"
   },
   "allowScripts": {
     "@vscode/vsce-sign@2.0.9": true,
     "esbuild@0.24.2": true,
     "esbuild@0.21.5": true,
-    "keytar@7.9.0": true
+    "keytar@7.9.0": true,
+    "unrs-resolver@1.12.2": true
   }
 }

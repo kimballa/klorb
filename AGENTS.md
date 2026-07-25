@@ -62,7 +62,8 @@ The Klorb project is organized as a collection of subprojects:
   whatsoever (so that the VSCode plugin, or other mechanisms, can use it too). The CLI is
   included in the same python packages as the library logic for convenience and harmonized
   dependencies, but none of the agentic stuff should be directly intertwined in the CLI side.
-* `vscode-plugin` - Plugin for VSCode to use the Klorb harness. (Not yet implemented)
+* `vscode-plugin` - Plugin for VSCode to use the Klorb harness. See "vscode-plugin source tree"
+  below for how its source is organized.
 
 ## rules for development
 
@@ -189,3 +190,59 @@ Here are the officially-sanctioned CI commands:
   inline imports within a method body unless absolutely required to break
   a detected circular import.
 * Use `isort`-compatible import order
+
+### vscode-plugin source tree
+
+`vscode-plugin/src/` is split by JavaScript runtime, not by feature, at the top level:
+
+* `src/host/` — extension-host code (runs under Node, `require()`d by VS Code). The activation
+  entry point (`extension.ts`, matching `package.json`'s `main`) stays directly under `src/`,
+  sibling to `host/`, the same way the webview's entry point (`main.tsx`) stays directly under
+  `src/webview/` rather than nested in a feature.
+* `src/webview/` — webview UI code (runs in a sandboxed `vscode-webview://` document; React).
+* `src/shared/` — types/utilities included by both the host and webview tsconfigs
+  (`tsconfig.json` and `tsconfig.webview.json`) — e.g. the host↔webview message protocol.
+* `types/` — ambient `.d.ts` declarations (e.g. the vendored `vscode-elements` JSX typings).
+* `test/` mirrors the `src/` tree file-for-file (`test/host/`, `test/webview/`, `test/shared/`),
+  including the `features/` nesting described below.
+
+`src/webview/tsconfig.json` and `test/webview/tsconfig.json` are tiny pointer files
+(`{"extends": "../../tsconfig.webview.json"}`) that exist purely so VS Code's editor tooling
+picks the right project: it only auto-discovers a file literally named `tsconfig.json` by
+walking up from whatever file is open, so without these, opening a file under `src/webview/` or
+`test/webview/` would find the *host* `tsconfig.json` (which excludes that subtree entirely) and
+fall back to an "orphan file" with no `paths` aliases at all — the actual `tsc`/`tsgo`/`esbuild`
+invocations always pass `-p tsconfig.webview.json` (or `-p ./`) explicitly, so these two files
+are never referenced by any script and exist only for the editor's benefit.
+
+Within `src/host/` and `src/webview/`, most code lives under a `features/<name>/` folder
+(`src/webview/features/history/`, `src/host/features/acp/`, ...), following the "bulletproof
+react" style: a feature's `index.ts` is the *only* module anyone outside that feature may
+import — never deep-import a file from inside another feature
+(`webview/features/history/historyModel` from outside `features/history/` is wrong; import
+`webview/features/history` and let its `index.ts` re-export what's needed). This is enforced by
+`eslint.config.mjs`'s `no-restricted-imports` rule. Inside a feature, organize submodules
+however the feature needs (`components/`, `hooks.ts`/`hooks/`, `types.ts`/`types/`, or plain
+files) — the barrel is what's contractual, not the internal shape. A top-level `src/webview/
+components/` and `src/webview/hooks/` (outside any `features/` folder) hold pieces that are
+genuinely universal across features (e.g. `VsCodeApiProvider`/`useVsCodeApi`), not specific to
+one.
+
+Every tsconfig (`tsconfig.json` for the host, `tsconfig.webview.json` for the webview) declares
+`paths` aliases rooted at `src/`: `shared/*`, plus `host/*` (host tsconfig only) or `webview/*`
+(webview tsconfig only) — never both in the same config, since the host and webview must not
+import each other's code. Applying this repo's general Import Rules (above) to vscode-plugin
+specifically: relative imports (`./foo`, `../foo`) are reserved for imports between files inside
+the *same* `features/<name>/` folder; every other import — including between two top-level,
+non-feature files in the same directory — uses the rooted alias form (`import PromptInput from
+'webview/components/PromptInput'`, not `'./components/PromptInput'`). `vitest.config.mts` uses
+the `vite-tsconfig-paths` plugin (pointed at both tsconfigs via its `projects` option) so tests
+resolve the same aliases; adding a new subtree under `test/` also requires adding it to the
+matching tsconfig's `include` (see that file's comments) or the alias won't resolve for tests
+rooted there.
+
+React component/hook files (not plain utility/model modules like `historyModel.ts` or
+`keyHandling.ts`, which keep named exports) export their component or hook as `export default`.
+A feature's `index.ts` barrel re-exports a default-exported piece by name (`export { default as
+HistoryView } from './components/HistoryView';`) so consumers still get a named import from the
+barrel.

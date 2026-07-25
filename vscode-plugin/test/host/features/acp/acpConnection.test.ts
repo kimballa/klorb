@@ -2,10 +2,10 @@
 import * as acp from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AcpConnection, errorMessage } from '../src/acpConnection';
-import type { SessionUpdateListener } from '../src/klorbAcpClient';
-import { KlorbServerProcess } from '../src/klorbServerProcess';
-import { createMockAgentChild, MockAgent } from './mockAgent';
+import { AcpConnection, errorMessage, type SessionUpdateListener } from 'host/features/acp';
+import { KlorbServerProcess } from 'host/klorbServerProcess';
+
+import { createMockAgentChild, MockAgent } from '../../../mockAgent';
 
 const OPTIONS = { command: 'klorb', env: {} };
 
@@ -49,10 +49,10 @@ describe('AcpConnection', () => {
     expect(connection.isReady).toBe(true);
     expect(connection.sessionId).toBe('sess-1');
     expect(agent.receivedInitializes).toHaveLength(1);
-    expect(agent.receivedInitializes[0].protocolVersion).toBe(acp.PROTOCOL_VERSION);
+    expect(agent.receivedInitializes[0]!.protocolVersion).toBe(acp.PROTOCOL_VERSION);
     expect(agent.receivedNewSessions).toHaveLength(1);
-    expect(agent.receivedNewSessions[0].cwd).toBe('/work');
-    expect(agent.receivedNewSessions[0].mcpServers).toEqual([]);
+    expect(agent.receivedNewSessions[0]!.cwd).toBe('/work');
+    expect(agent.receivedNewSessions[0]!.mcpServers).toEqual([]);
   });
 
   it('resolves prompt() with the stop reason', async () => {
@@ -61,8 +61,8 @@ describe('AcpConnection', () => {
 
     await expect(connection.prompt('hello')).resolves.toBe('end_turn');
     expect(agent.receivedPrompts).toHaveLength(1);
-    expect(agent.receivedPrompts[0].sessionId).toBe('sess-1');
-    expect(agent.receivedPrompts[0].prompt).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(agent.receivedPrompts[0]!.sessionId).toBe('sess-1');
+    expect(agent.receivedPrompts[0]!.prompt).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
   it('delivers streamed response and thought chunks to the listener in order', async () => {
@@ -75,8 +75,14 @@ describe('AcpConnection', () => {
         sessionUpdate: 'agent_thought_chunk',
         content: { type: 'text', text: 'pondering' },
       });
-      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello' } });
-      await send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' world' } });
+      await send({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Hello' },
+      });
+      await send({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: ' world' },
+      });
       return { stopReason: 'end_turn' };
     };
     const { connection, events } = makeHarness(agent);
@@ -100,7 +106,7 @@ describe('AcpConnection', () => {
     await vi.waitFor(() => expect(agent.receivedPrompts).toHaveLength(1));
     connection.cancel();
     await vi.waitFor(() => expect(agent.receivedCancels).toHaveLength(1));
-    expect(agent.receivedCancels[0].sessionId).toBe('sess-1');
+    expect(agent.receivedCancels[0]!.sessionId).toBe('sess-1');
 
     finishPrompt?.();
     await expect(turn).resolves.toBe('cancelled');

@@ -1,7 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import { type FormEvent, type JSX, type KeyboardEvent, useState } from 'react';
 
-import { classifyEnterKey } from '../keyHandling';
+import { classifyEnterKey } from 'webview/keyHandling';
 
 interface PromptInputProps {
   /** True while a prompt turn is running: the input is disabled and Stop replaces Send. */
@@ -22,7 +22,11 @@ function targetValue(event: FormEvent<HTMLElement> | KeyboardEvent<HTMLElement>)
  * (`classifyEnterKey`), and while a turn is in flight the textarea is disabled and a Stop
  * button (or Escape with focus anywhere in the row) cancels the turn.
  */
-export function PromptInput({ inFlight, onSubmit, onCancel }: PromptInputProps): JSX.Element {
+export default function PromptInput({
+  inFlight,
+  onSubmit,
+  onCancel,
+}: PromptInputProps): JSX.Element {
   const [draft, setDraft] = useState('');
 
   function submit(): void {

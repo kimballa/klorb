@@ -87,7 +87,7 @@ const WEBVIEW_BARE_TYPES: readonly string[] = ['cancelTurn'];
 function parseMessage(
   data: unknown,
   fieldSpecs: readonly FieldSpec[],
-  bareTypes: readonly string[],
+  bareTypes: readonly string[]
 ): Record<string, unknown> | undefined {
   if (typeof data !== 'object' || data === null) {
     return undefined;

@@ -2,9 +2,13 @@
 import { RequestError } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 
-import { KlorbAcpClient, type SessionUpdateListener } from '../src/klorbAcpClient';
+import { KlorbAcpClient, type SessionUpdateListener } from 'host/features/acp';
 
-function makeListener(): { listener: SessionUpdateListener; agentText: string[]; thoughtText: string[] } {
+function makeListener(): {
+  listener: SessionUpdateListener;
+  agentText: string[];
+  thoughtText: string[];
+} {
   const agentText: string[] = [];
   const thoughtText: string[] = [];
   return {

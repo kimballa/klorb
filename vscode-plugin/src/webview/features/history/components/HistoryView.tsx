@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 
 import type { HistoryEntry } from '../historyModel';
 
-interface HistoryViewProps {
+export interface HistoryViewProps {
   entries: HistoryEntry[];
   /** Ref to the scrolling container, so the owner can keep the newest entry in view. */
   historyRef: RefObject<HTMLDivElement | null>;
@@ -48,7 +48,7 @@ function renderEntry(entry: HistoryEntry, index: number): JSX.Element {
 
 /** The append-only history scroll: prompts as right-aligned bubbles, responses as rendered
  * markdown, thinking as a collapsed-by-default disclosure that streams while open. */
-export function HistoryView({ entries, historyRef }: HistoryViewProps): JSX.Element {
+export default function HistoryView({ entries, historyRef }: HistoryViewProps): JSX.Element {
   // Entries only ever append here, never reorder or remove, so an index key is stable.
   return (
     <div id="history" ref={historyRef}>

@@ -1,9 +1,11 @@
 // © Copyright 2026 Aaron Kimball
-import type { ClientSideConnection, InitializeResponse } from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'stream';
 
+import type { ClientSideConnection, InitializeResponse } from '@agentclientprotocol/sdk';
+
+import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerProcess';
+
 import { KlorbAcpClient, type LogFn, type SessionUpdateListener } from './klorbAcpClient';
-import type { KlorbServerOptions, KlorbServerProcess } from './klorbServerProcess';
 
 /** How long `start()` waits for the `initialize` reply before concluding the spawned binary
  * doesn't speak ACP at all (e.g. an older klorb that ignores the request without answering). */
@@ -46,7 +48,7 @@ export class AcpConnection {
     serverProcess: KlorbServerProcess,
     listener: SessionUpdateListener,
     log: LogFn = (message: string) => console.log(message),
-    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS,
+    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS
   ) {
     this._serverProcess = serverProcess;
     this._listener = listener;
@@ -79,7 +81,7 @@ export class AcpConnection {
     });
     const stream = acp.ndJsonStream(
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>,
+      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
     );
     const client = new KlorbAcpClient(this._listener, acp.RequestError, this._log);
     const connection = new acp.ClientSideConnection(() => client, stream);
@@ -99,16 +101,16 @@ export class AcpConnection {
             protocolVersion: acp.PROTOCOL_VERSION,
             clientCapabilities: {},
           }),
-          connection,
+          connection
         ),
-        this._initializeTimeoutMs,
+        this._initializeTimeoutMs
       );
     } catch (err) {
       this.stop();
       throw new Error(
         `klorb server did not complete the ACP initialize handshake (${errorMessage(err)}). ` +
           'The configured binary (klorb.serverPath) may be an older, pre-ACP klorb — ' +
-          'update klorb and run "Klorb: Restart Server".',
+          'update klorb and run "Klorb: Restart Server".'
       );
     }
     if (initResult.protocolVersion !== acp.PROTOCOL_VERSION) {
@@ -116,7 +118,7 @@ export class AcpConnection {
       throw new Error(
         `klorb server speaks ACP protocol version ${initResult.protocolVersion}, but this ` +
           `extension requires version ${acp.PROTOCOL_VERSION}. Update klorb (or the ` +
-          'extension) so the two match, then run "Klorb: Restart Server".',
+          'extension) so the two match, then run "Klorb: Restart Server".'
       );
     }
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
@@ -232,7 +234,7 @@ export class AcpConnection {
         (err: unknown) => {
           clearTimeout(timer);
           reject(err instanceof Error ? err : new Error(errorMessage(err)));
-        },
+        }
       );
     });
   }

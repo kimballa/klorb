@@ -6,7 +6,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'child_process';
 export type SpawnFn = (
   command: string,
   args: string[],
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.ProcessEnv
 ) => ChildProcessWithoutNullStreams;
 
 /** Where to find `klorb` and what environment to launch it with. */
@@ -23,10 +23,10 @@ const defaultSpawnFn: SpawnFn = (command, args, env) => spawn(command, args, { e
 /**
  * Owns the one `klorb server` child process: spawning it with the right arguments and
  * environment, killing it, and restarting it. The ACP protocol spoken over the child's
- * stdin/stdout is owned by `AcpConnection` (src/acpConnection.ts), which binds to the
- * `ChildProcessWithoutNullStreams` this class returns from `start()`. `spawnFn` is injected
- * (defaulting to real `child_process.spawn`) so tests can drive this class against a fake
- * process instead of a real `klorb` binary.
+ * stdin/stdout is owned by `AcpConnection` (src/host/features/acp/acpConnection.ts), which
+ * binds to the `ChildProcessWithoutNullStreams` this class returns from `start()`. `spawnFn` is
+ * injected (defaulting to real `child_process.spawn`) so tests can drive this class against a
+ * fake process instead of a real `klorb` binary.
  */
 export class KlorbServerProcess {
   private readonly _spawnFn: SpawnFn;

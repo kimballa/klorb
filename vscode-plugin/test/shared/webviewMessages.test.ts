@@ -6,7 +6,7 @@ import {
   parseWebviewMessage,
   type HostMessage,
   type WebviewMessage,
-} from '../src/shared/webviewMessages';
+} from 'shared/webviewMessages';
 
 describe('parseHostMessage', () => {
   it('round-trips every host message shape', () => {

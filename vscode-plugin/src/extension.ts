@@ -1,10 +1,11 @@
 // © Copyright 2026 Aaron Kimball
 import * as os from 'os';
+
 import * as vscode from 'vscode';
 
-import { AcpConnection, errorMessage } from './acpConnection';
-import { KlorbServerProcess, type KlorbServerOptions } from './klorbServerProcess';
-import { KlorbSessionViewProvider } from './klorbSessionViewProvider';
+import { AcpConnection, errorMessage } from 'host/features/acp';
+import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
+import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
 
 function readServerOptions(): KlorbServerOptions {
   const config = vscode.workspace.getConfiguration('klorb');
@@ -43,7 +44,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(KlorbSessionViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
-    }),
+    })
   );
 
   context.subscriptions.push(
@@ -55,7 +56,7 @@ export function activate(context: vscode.ExtensionContext): void {
         .catch((err: unknown) => {
           void vscode.window.showErrorMessage(`Klorb: ${errorMessage(err)}`);
         });
-    }),
+    })
   );
 
   context.subscriptions.push(
@@ -71,7 +72,7 @@ export function activate(context: vscode.ExtensionContext): void {
           void vscode.window.showErrorMessage(`Klorb: ${message}`);
           provider.postHostMessage({ type: 'turnError', message });
         });
-    }),
+    })
   );
 }
 

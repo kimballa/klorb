@@ -21,8 +21,16 @@ restarting the child process.
 
 ## How it works
 
+`vscode-plugin/src/` splits by JavaScript runtime at the top level — `src/host/` (extension
+host, Node/CommonJS), `src/webview/` (webview UI, sandboxed browser document), `src/shared/`
+(types/utilities included by both) — with `test/` mirroring that tree file-for-file. See
+`AGENTS.md`'s "vscode-plugin source tree" section for the full directory-layout and import
+conventions (the `features/<name>/` barrel pattern, the `shared/*`/`webview/*`/`host/*` rooted
+import aliases, and the React default-export convention); this spec covers how those pieces fit
+together for this extension specifically.
+
 * `vscode-plugin/src/extension.ts` is the extension's activation entry point
-  (`package.json`'s `main`, compiled to `out/extension.js`). `activate()` constructs one
+  (`package.json`'s `main`, bundled to `out/extension.js`). `activate()` constructs one
   `KlorbServerProcess`, one `KlorbSessionViewProvider`, and one `AcpConnection` wired to both
   (the provider is the connection's `SessionUpdateListener`; `provider.setConnection()`
   completes the reference cycle after construction, since the provider and connection
@@ -39,15 +47,16 @@ restarting the child process.
   `context.subscriptions` stops the connection (killing the child process) when the extension
   deactivates. A handshake or connection failure at any of these points surfaces as both a VS
   Code error notification and a `turnError` panel message, rather than failing silently.
-* `vscode-plugin/src/klorbServerProcess.ts`'s `KlorbServerProcess` owns spawning, killing, and
-  restarting the one `klorb server` child process — nothing about the wire protocol spoken over
-  its stdio. `start()` stops any running child, spawns `<command> server` (appending `--config
-  <configPath>` when non-empty) via an injected `SpawnFn` (defaulting to real
+* `vscode-plugin/src/host/klorbServerProcess.ts`'s `KlorbServerProcess` owns spawning, killing,
+  and restarting the one `klorb server` child process — nothing about the wire protocol spoken
+  over its stdio. `start()` stops any running child, spawns `<command> server` (appending
+  `--config <configPath>` when non-empty) via an injected `SpawnFn` (defaulting to real
   `child_process.spawn`, so tests can drive the class against a fake process), and returns the
   new `ChildProcessWithoutNullStreams` so the caller can bind a protocol connection to its
   stdio. `stop()` kills the child if one is running.
-* `vscode-plugin/src/acpConnection.ts`'s `AcpConnection` owns the ACP client-side connection to
-  the child: `start(options, cwd)` spawns the child via `KlorbServerProcess`, builds an
+* `vscode-plugin/src/host/features/acp/acpConnection.ts`'s `AcpConnection` owns the ACP
+  client-side connection to the child: `start(options, cwd)` spawns the child via
+  `KlorbServerProcess`, builds an
   `acp.ndJsonStream()` over its stdout/stdin (via Node's `Readable.toWeb()`/`Writable.toWeb()`,
   bridging the child's Node streams to the Web Streams API the SDK's stream type expects), and
   constructs the SDK's `ClientSideConnection` with a `KlorbAcpClient` as its `Client`
@@ -66,8 +75,9 @@ restarting the child process.
   `errorMessage()` (exported alongside the class) renders both real `Error` instances and the
   SDK's plain `{code, message}` JSON-RPC rejection objects as a readable string, since ACP
   request failures reject with the latter shape, not an `Error`.
-* `vscode-plugin/src/klorbAcpClient.ts`'s `KlorbAcpClient` implements the ACP SDK's `Client`
-  interface: the handler for requests/notifications the server sends back over the connection.
+* `vscode-plugin/src/host/features/acp/klorbAcpClient.ts`'s `KlorbAcpClient` implements the ACP
+  SDK's `Client` interface: the handler for requests/notifications the server sends back over
+  the connection.
   `sessionUpdate()` dispatches `agent_message_chunk`/`agent_thought_chunk` text content to a
   `SessionUpdateListener` (`onAgentText`/`onThoughtText`) and logs (rather than errors on) any
   other update kind, since later increments add handling for `tool_call`, `plan`, etc.
@@ -77,8 +87,10 @@ restarting the child process.
   extension's output channel rather than silently vanishing. `readTextFile()`/
   `writeTextFile()`/`createTerminal()` throw the SDK's `RequestError.methodNotFound()`
   synchronously, matching the client never advertising the `fs`/`terminal` capabilities during
-  `initialize()`.
-* `vscode-plugin/src/klorbSessionViewProvider.ts`'s `KlorbSessionViewProvider` implements
+  `initialize()`. `src/host/features/acp/index.ts` is this feature's barrel, re-exporting
+  `AcpConnection`, `errorMessage`, `KlorbAcpClient`, and the `SessionUpdateListener` type — the
+  only things `extension.ts` and `klorbSessionViewProvider.ts` (outside the feature) import.
+* `vscode-plugin/src/host/klorbSessionViewProvider.ts`'s `KlorbSessionViewProvider` implements
   `vscode.WebviewViewProvider` and `SessionUpdateListener`. `resolveWebviewView()` enables
   scripts, restricts `localResourceRoots` to the extension's own install directory, sets the
   webview's HTML, and registers `onDidReceiveMessage` to parse and dispatch `WebviewMessage`s
@@ -117,8 +129,8 @@ restarting the child process.
 
 ### Webview UI structure
 
-* `vscode-plugin/src/webview/main.tsx` is the webview's entry point, compiled separately (see
-  "Webview build" below) and loaded as a plain classic `<script>`. It imports the
+* `vscode-plugin/src/webview/main.tsx` is the webview's entry point, bundled separately (see
+  "Build" below) and loaded as a plain classic `<script>`. It imports the
   `@vscode-elements/elements` custom-element modules used by the panel (registering
   `<vscode-textarea>`/`<vscode-button>` with the browser), calls `acquireVsCodeApi()` exactly
   once, reads any persisted `SessionState` via `vscode.getState()`, and mounts `<App vscode=
@@ -135,14 +147,28 @@ restarting the child process.
   `inFlight` (whether a turn is currently running). A `window` `message` listener (subscribed
   for the panel's lifetime via a `useEffect` with an empty dependency array) parses each
   incoming payload with `parseHostMessage()` and applies it to both pieces of state via the
-  pure functions in `historyModel.ts`. Submitting a prompt appends a `'prompt'` entry
-  optimistically, sets `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up
-  confirms or corrects it), and posts `{type: 'submitPrompt', text}`. A separate `useEffect`
-  keyed on `entries` calls `vscode.setState({entries})` (so history survives
+  pure functions in the `features/history` feature. Submitting a prompt appends a `'prompt'`
+  entry optimistically, sets `inFlight` to `true` (the host's own `turnStarted`/`turnError`
+  follow-up confirms or corrects it), and posts `{type: 'submitPrompt', text}`. A separate
+  `useEffect` keyed on `entries` calls `vscode.setState({entries})` (so history survives
   `retainContextWhenHidden`'s context teardown/rebuild) and scrolls the history's last child
-  into view.
-* `vscode-plugin/src/webview/historyModel.ts` is the pure, React-independent reducer logic for
-  the history list, kept separate specifically so it's unit-testable without mounting anything:
+  into view. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
+  below) so any descendant can reach `vscode` via `useVsCodeApi()` without it being threaded
+  through as an explicit prop down every intermediate component.
+* `vscode-plugin/src/webview/components/VsCodeApiProvider.tsx` and `vscode-plugin/src/webview/
+  hooks/useVsCodeApi.ts` are the top-level (not feature-specific) pieces that distribute the
+  `vscode` object: `VsCodeApiProvider` wraps a React context around the single `vscode` value
+  `App` received as a prop, and `useVsCodeApi()` reads it back out (throwing if called outside
+  the provider). `VsCodeApiProvider.tsx` is also the `VsCodeApi` interface's canonical home —
+  `App.tsx`/`main.tsx`/tests import the type from there. Because `acquireVsCodeApi()` may only
+  be called once per page load (see the ADR referenced above), this is the only sanctioned path
+  to the `vscode` object for anything that isn't `main.tsx`/`App.tsx` themselves.
+* `vscode-plugin/src/webview/features/history/` is the `history` feature: `historyModel.ts`
+  holds the pure, React-independent reducer logic for the history list (kept separate
+  specifically so it's unit-testable without mounting anything) and `components/HistoryView.tsx`
+  renders it. `index.ts` is the feature's barrel — the only module anyone outside
+  `features/history/` may import (as `webview/features/history`, per this repo's absolute-import
+  convention — see `AGENTS.md`'s "vscode-plugin source tree" section).
   * `HistoryEntry` is `{kind: 'prompt' | 'response' | 'thinking' | 'error' | 'notice', text,
     streaming: boolean}`.
   * `appendPrompt(entries, text)` appends a finished `'prompt'` entry.
@@ -156,21 +182,22 @@ restarting the child process.
   * `applyTurnFlag(inFlight, message)` is the parallel reducer for the `inFlight` boolean:
     `turnStarted` raises it, `turnEnded`/`turnError`/`sessionReset` clear it, every other
     message leaves it unchanged.
-* `vscode-plugin/src/webview/components/HistoryView.tsx` renders the `HistoryEntry[]` list:
-  `'prompt'` entries as a right-aligned `.bubble` (index-keyed — safe here specifically because
-  entries only ever append, never reorder or get removed or inserted in the middle, the one
-  case React's own docs call out as fine for index keys); `'response'` entries through
-  `react-markdown`; `'thinking'` entries as a collapsed-by-default `<details>` disclosure
-  (muted/italic styling, matching the TUI's thinking block) that keeps streaming into its body
-  while the reader has it open; `'error'`/`'notice'` entries as plain styled text.
+  * `HistoryView` renders the `HistoryEntry[]` list: `'prompt'` entries as a right-aligned
+    `.bubble` (index-keyed — safe here specifically because entries only ever append, never
+    reorder or get removed or inserted in the middle, the one case React's own docs call out as
+    fine for index keys); `'response'` entries through `react-markdown`; `'thinking'` entries as
+    a collapsed-by-default `<details>` disclosure (muted/italic styling, matching the TUI's
+    thinking block) that keeps streaming into its body while the reader has it open;
+    `'error'`/`'notice'` entries as plain styled text.
 * `vscode-plugin/src/webview/components/PromptInput.tsx` renders the `<vscode-textarea>` +
   `<vscode-button>` input row: disabled (and the button replaced by a Stop button) while
   `inFlight` is true. Its own `onKeyDown` handles Escape (calls `onCancel` when `inFlight`) and
   Enter, delegating the submit-vs-newline decision to `keyHandling.ts`'s `classifyEnterKey()`.
 * `vscode-plugin/src/webview/keyHandling.ts`'s `classifyEnterKey(shiftKey, ctrlKey)` returns
   `'newline'` if either modifier is held and `'submit'` otherwise. Pulling this one decision out
-  as a standalone function is what makes it reachable from `vscode-plugin/test/keyHandling.test.ts`
-  without a browser, React, or a VS Code extension host.
+  as a standalone function is what makes it reachable from
+  `vscode-plugin/test/webview/keyHandling.test.ts` without a browser, React, or a VS Code
+  extension host.
 
 ### Webview message protocol
 
@@ -190,46 +217,94 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
   and `MessageEvent.data` (webview side) are untyped `unknown`.
 
-### Webview build: esbuild bundle, not an ES module
+### Build: two esbuild bundles, two typecheck-only tsconfigs
 
-The extension host code (`src/extension.ts`, `src/acpConnection.ts`,
-`src/klorbSessionViewProvider.ts`, ...) and the webview code (`src/webview/*.ts`/`*.tsx`,
-`src/shared/*.ts`) run in two different JavaScript environments — the extension host is a
-Node/CommonJS process with the `vscode` module and Node's `child_process`/`stream` APIs
-available, the webview is a sandboxed `vscode-webview://` document with neither — so they're
-built by two different pipelines:
+The extension host code (`src/extension.ts`, `src/host/**`) and the webview code
+(`src/webview/**`, `src/shared/**`) run in two different JavaScript environments — the
+extension host is a Node/CommonJS process with the `vscode` module and Node's
+`child_process`/`stream` APIs available, the webview is a sandboxed `vscode-webview://` document
+with neither — so they're built by two different pipelines, both `noEmit: true` (typecheck-only)
+tsconfigs paired with their own `esbuild` bundle (see
+`docs/adrs/bundle-extension-host-with-esbuild-not-tsc-emit.md` for why the host is bundled at
+all, not just type-checked):
 
-* `tsconfig.json` compiles everything under `src/` *except* `src/webview/`, with
-  `module`/`moduleResolution` set to `nodenext` (CommonJS output, resolvable by the extension
-  host's `require()`), into `out/`. `@agentclientprotocol/sdk` is ESM-only, so
-  `AcpConnection.start()` loads it with a dynamic `import()` rather than a top-level import —
-  the only way a CommonJS module can consume a pure-ESM package; every other symbol the host
-  imports from the SDK is type-only (erased at compile time, so it doesn't hit this
-  restriction). `skipLibCheck: true` is set because the SDK's own shipped `.d.ts` re-exports its
-  generated schema module in a way `tsc` flags as an export-ambiguity error under this
-  project's strict settings — a problem in the SDK's own type declarations, not in code this
-  project controls, so it's skipped rather than routing every SDK type through a local
-  re-export shim.
-* `tsconfig.webview.json` type-checks `src/webview/*.ts`/`*.tsx` and `src/shared/*.ts`
-  (`jsx: "react-jsx"` for the automatic JSX runtime; `moduleResolution: "bundler"`;
-  `types: []` so ambient `@types/node` globals aren't pulled into browser-only code;
-  `skipLibCheck: true` for the same SDK-declaration reason as above, though the webview
-  tsconfig doesn't import the SDK itself) but does not emit (`noEmit: true`) — `esbuild` does,
-  bundling `src/webview/main.tsx` into one self-contained `out/webview/main.js` with React,
-  `react-dom/client`, `react-markdown`, and `@vscode-elements/elements` all inlined alongside
-  the plugin's own webview code. It also includes `vscode-plugin/types/*.d.ts` — the vendored
-  vscode-elements JSX declarations (see "Component library" below) — so `<vscode-button>` etc.
-  type-check as JSX intrinsics. The `--define:process.env.NODE_ENV=\"development\"` flag and
-  the choice to skip `--minify` are unchanged from the original stub (see
+* `tsconfig.json` type-checks everything under `src/` *except* `src/webview/` (plus
+  `test/host/**`, `test/shared/**`, `test/mockAgent.ts` — see "Test tree" below), with
+  `module`/`moduleResolution` set to `nodenext` (matching the extension host's real CommonJS
+  `require()` semantics) and `lib: ["ES2022"]` (no `DOM` — the host never runs in a browser).
+  Its `paths` alias `host/*` to `src/host/*` and `shared/*` to `src/shared/*`.
+  `@agentclientprotocol/sdk` is ESM-only, so `AcpConnection.start()` loads it with a dynamic
+  `import()` rather than a top-level import — the only way a CommonJS module can consume a
+  pure-ESM package; every other symbol the host imports from the SDK is type-only (erased at
+  compile time, so it doesn't hit this restriction). `skipLibCheck: true` is set because the
+  SDK's own shipped `.d.ts` re-exports its generated schema module in a way the compiler flags
+  as an export-ambiguity error under this project's strict settings — a problem in the SDK's own
+  type declarations, not in code this project controls, so it's skipped rather than routing
+  every SDK type through a local re-export shim. `verbatimModuleSyntax` is deliberately *not*
+  set here (unlike the webview config): it requires CommonJS-formatted files (this project has
+  no `"type": "module"` in `package.json`) to use `import x = require(...)` syntax instead of
+  plain `import`/`export`, which would fight the host's existing ESM-style source throughout.
+  `esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode` (the
+  `build:extension` npm script) produces the actual `out/extension.js` VS Code `require()`s;
+  `vscode` is the one import left external since the module only exists inside a running VS
+  Code process, not on disk.
+* `tsconfig.webview.json` type-checks `src/webview/**` and `src/shared/**` (plus
+  `test/webview/**` — see "Test tree" below) with `jsx: "react-jsx"` (automatic JSX runtime),
+  `module: "preserve"` + `moduleResolution: "bundler"` (the pairing TypeScript recommends when a
+  bundler, not `tsc` itself, does the real compilation), `lib: ["ES2022", "DOM",
+  "DOM.Iterable"]`, and `types: []` so ambient `@types/node` globals aren't pulled into
+  browser-only code. Its `paths` alias `webview/*` to `src/webview/*` and `shared/*` to
+  `src/shared/*` — deliberately no `host/*` here, so the webview can't accidentally import
+  extension-host-only code. `skipLibCheck: true` is set for the same SDK-declaration reason as
+  the host config, though the webview tsconfig doesn't import the SDK itself. It also includes
+  `vscode-plugin/types/*.d.ts` — the vendored vscode-elements JSX declarations (see "Component
+  library" below) — so `<vscode-button>` etc. type-check as JSX intrinsics.
+  `esbuild src/webview/main.tsx --bundle --format=iife --platform=browser` (the `build:webview`
+  npm script) bundles `src/webview/main.tsx` into one self-contained `out/webview/main.js` with
+  React, `react-dom/client`, `react-markdown`, and `@vscode-elements/elements` all inlined
+  alongside the plugin's own webview code. The `--define:process.env.NODE_ENV=\"development\"`
+  flag and the choice to skip `--minify` are unchanged from the original stub (see
   `docs/adrs/use-react-for-the-webview-ui.md`); `docs/adrs/bundle-webview-script-with-esbuild-not-es-modules.md`
   explains why the output loads as a plain `<script nonce="...">` rather than
-  `<script type="module">`.
+  `<script type="module">`. `src/webview/tsconfig.json` and `test/webview/tsconfig.json` are
+  pointer files (`{"extends": "../../tsconfig.webview.json"}`) that exist purely so VS Code's
+  editor tooling — which only auto-discovers a file literally named `tsconfig.json` by walking
+  up from the open file — picks `tsconfig.webview.json`'s settings for files under those
+  subtrees instead of falling back to the host `tsconfig.json` (which excludes them) with no
+  `paths` aliases at all; no script ever invokes these two files directly.
+* Both configs' `paths` aliases are what let source anywhere in `vscode-plugin/src/` use rooted
+  imports (`shared/webviewMessages`, `webview/App`, `host/klorbServerProcess`, ...) instead of
+  relative `../../` chains — see `AGENTS.md`'s "vscode-plugin source tree" section for the full
+  convention (including the one exception: relative imports within the same `features/<name>/`
+  folder). `esbuild` resolves and inlines these at bundle time regardless of what Node's own
+  `require()` resolution would do with the same bare specifier — the reason the host needs
+  bundling in the first place (see the ADR referenced above).
+* Typechecking (`npm run typecheck`, i.e. `make typecheck`) runs `tsgo -p ./` and
+  `tsgo -p tsconfig.webview.json` — `tsgo` (the `@typescript/native-preview` package's native,
+  Go-ported compiler) rather than classic `tsc`. Linting still resolves against a real,
+  non-prerelease `typescript` (`^6.0.3`), since `typescript-eslint` doesn't yet support the
+  TypeScript 7.x line `tsgo` tracks; `@typescript-eslint/parser` is pinned as its own explicit
+  devDependency so it hoists to the top-level `node_modules` (`eslint-plugin-import-x`'s
+  cross-module parsing `require()`s it directly, and won't find a copy nested only inside the
+  `typescript-eslint` meta-package's own `node_modules`). See
+  `docs/adrs/vscode-plugin-typechecks-with-tsgo-lints-with-typescript-6.md`.
 
-`npm run compile` (and the Makefile's `compile` target) runs the extension-host `tsc`, the
-webview `tsc --noEmit` type-check, and the `esbuild` bundle, in that order. `vitest` (`make
-test`) transpiles TypeScript itself (via `vitest.config.ts`'s `esbuild.jsx: 'automatic'`
-setting, matching `tsconfig.webview.json`'s JSX mode) independent of either build path, so it
-imports source modules directly rather than the built bundle.
+### Test tree
+
+`vscode-plugin/test/` mirrors `vscode-plugin/src/` file-for-file (`test/host/`, `test/webview/`,
+`test/shared/`, including the `features/` nesting) and resolves the same rooted aliases as
+application code, via `vitest.config.mts`'s `vite-tsconfig-paths` plugin (pointed at both
+`tsconfig.json` and `tsconfig.webview.json` via its `projects` option, since neither config's own
+`include` would otherwise cover `test/`). `test/mockAgent.ts` is the one top-level exception —
+a shared test helper, not a mirror of any single `src/` file, analogous to a `conftest.py`.
+Because `vite-tsconfig-paths` only resolves aliases for importers a tsconfig's own `include`
+covers, adding a new test subtree also means adding its glob to the matching tsconfig's
+`include` (see each tsconfig's own comments) — otherwise the aliases silently fail to resolve
+for tests rooted there, even though application code resolves them fine.
+
+`vitest` (`make test`) transpiles TypeScript itself (via `vitest.config.mts`'s
+`esbuild.jsx: 'automatic'` setting, matching `tsconfig.webview.json`'s JSX mode) independent of
+either `esbuild` bundle, so it imports source modules directly rather than the built bundle.
 
 ### Component library
 
@@ -250,7 +325,10 @@ is model-generated and the webview runs under a CSP-locked `vscode-webview://` o
 ## Build tooling
 
 `vscode-plugin/Makefile` mirrors `klorb/Makefile`'s target names, mapped onto the npm/VS Code
-toolchain in place of `pip`/`uv`:
+toolchain in place of `pip`/`uv`. The canonical command lines live in `package.json`'s
+`scripts`, not the `Makefile`: `make lint`/`typecheck`/`test`/`compile` each just run the
+matching `npm run <script>`, so there's one place to change a build/lint/test invocation instead
+of two.
 
 * `sync_deps` runs `npm install`, resolving `package.json`'s version ranges into
   `package-lock.json` — the npm analog of `uv pip compile` recomputing
@@ -265,14 +343,28 @@ toolchain in place of `pip`/`uv`:
   `out/webview/main.js` at build time rather than the packaged extension `require()`-ing a
   separate `node_modules` copy at runtime, so from `vsce`/`npm ci`'s point of view they still
   need to be present wherever `install` (below) runs its build, i.e. wherever `install_deps` or
-  `install_dev_deps` ran. `devDependencies` covers everything build/lint/test-only
-  (`typescript`, `esbuild`, `eslint`, `vitest`, `jsdom`, `@testing-library/react`, ...).
-* `lint` runs `eslint` (flat config in `eslint.config.mjs`, `typescript-eslint`'s recommended
-  rules plus `eslint-plugin-react-hooks`'s `recommended-latest` config scoped to
-  `src/webview/**/*.tsx`) over `src/` and `test/`.
-* `test` runs `vitest run` over `test/`.
-* `compile` runs the extension-host `tsc`, the webview `tsc --noEmit` type-check, and the
-  `esbuild` webview bundle described above.
+  `install_dev_deps` ran. `devDependencies` covers everything build/lint/test-only (`typescript`,
+  `@typescript/native-preview` (`tsgo`), `esbuild`, `eslint` and its plugins, `vitest`, `jsdom`,
+  `@testing-library/react`, ...).
+* `lint` runs `eslint` (flat config in `eslint.config.mjs`) over `src/` and `test/`:
+  `typescript-eslint`'s recommended rules; `eslint-plugin-import-x` (the actively-maintained,
+  flat-config-native fork of the classic `eslint-plugin-import`) with its `recommended` and
+  `typescript` presets, resolving this project's `shared/*`/`webview/*`/`host/*` aliases via
+  `eslint-import-resolver-typescript` pointed at both tsconfigs; `eslint-plugin-react-hooks` and
+  `eslint-plugin-react` (`recommended` + `jsx-runtime`, `react/prop-types` off since TypeScript
+  already checks prop shapes) scoped to `src/webview/**/*.tsx`; `eslint-plugin-testing-library`'s
+  `flat/react` preset scoped to `test/**` (`testing-library/no-manual-cleanup` is turned off —
+  this project's `vitest.config.mts` doesn't set `test.globals: true`, so
+  `@testing-library/react`'s own auto-cleanup, which relies on detecting a global `afterEach`,
+  never engages; the explicit `afterEach(cleanup)` in `test/webview/App.test.tsx` is genuinely
+  required, not redundant); and `eslint-plugin-prettier`/`eslint-config-prettier` so formatting
+  violations surface as lint errors. `no-restricted-imports` blocks deep imports into a feature's
+  internals from outside it (`webview/features/*/**`, `host/features/*/**`) — see `AGENTS.md`'s
+  "vscode-plugin source tree" section.
+* `test` runs `vitest run` over `test/` (see "Test tree" above for how it resolves the same
+  rooted aliases as application code).
+* `typecheck` runs `tsgo` against both tsconfigs (see "Build" above for why `tsgo`, not `tsc`).
+* `compile` runs `typecheck` then both `esbuild` bundles (`build:extension`, `build:webview`).
 * `install` (not present in `klorb/Makefile`, since the Python side has no editor-installation
   step) runs `compile`, packages the result into a `.vsix` with `@vscode/vsce`, and installs
   it into the local VS Code with `code --install-extension` — the interop step needed to
