@@ -7,7 +7,9 @@ import VsCodeApiProvider, { type VsCodeApi } from 'webview/components/VsCodeApiP
 import {
   HistoryView,
   appendPrompt,
+  applyExpandAllToolCalls,
   applyHostMessage,
+  applyToolCallExpandedToggle,
   applyTurnFlag,
   type HistoryEntry,
 } from 'webview/features/history';
@@ -28,6 +30,7 @@ interface AppProps {
 export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
+  const [expandAllToolCalls, setExpandAllToolCalls] = useState(false);
   const historyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,12 +44,12 @@ export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
       if (message === undefined) {
         return;
       }
-      setEntries((prev) => applyHostMessage(prev, message));
+      setEntries((prev) => applyHostMessage(prev, message, expandAllToolCalls));
       setInFlight((prev) => applyTurnFlag(prev, message));
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [expandAllToolCalls]);
 
   function submit(text: string): void {
     setEntries((prev) => appendPrompt(prev, text));
@@ -59,10 +62,28 @@ export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
     vscode.postMessage({ type: 'cancelTurn' });
   }
 
+  function toggleExpandAllToolCalls(): void {
+    setExpandAllToolCalls((prev) => {
+      const next = !prev;
+      setEntries((prevEntries) => applyExpandAllToolCalls(prevEntries, next));
+      return next;
+    });
+  }
+
+  function toggleToolCallExpanded(callId: string): void {
+    setEntries((prev) => applyToolCallExpandedToggle(prev, callId));
+  }
+
   return (
     <VsCodeApiProvider vscode={vscode}>
       <div className="title">Klorb session</div>
-      <HistoryView entries={entries} historyRef={historyRef} />
+      <HistoryView
+        entries={entries}
+        historyRef={historyRef}
+        expandAllToolCalls={expandAllToolCalls}
+        onToggleExpandAllToolCalls={toggleExpandAllToolCalls}
+        onToggleToolCallExpanded={toggleToolCallExpanded}
+      />
       <div id="interaction-area"></div>
       <PromptInput inFlight={inFlight} onSubmit={submit} onCancel={cancel} />
       <div id="status-row"></div>

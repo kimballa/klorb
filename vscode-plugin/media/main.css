@@ -99,6 +99,105 @@ body {
   font-style: italic;
 }
 
+.history-header {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.tool-call {
+  align-self: stretch;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-radius: 4px;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.tool-call-icon {
+  flex: 0 0 auto;
+}
+
+.tool-call-icon-error {
+  color: var(--vscode-errorForeground);
+}
+
+.tool-call-title {
+  flex: 1 1 auto;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  overflow-wrap: anywhere;
+}
+
+button.tool-call-title {
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tool-call-toggle {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.tool-call-failed {
+  border-color: var(--vscode-errorForeground);
+}
+
+.tool-call-detail {
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.tool-call-content-text,
+.tool-call-diff-plain {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.tool-call-diff {
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow-x: auto;
+}
+
+.diff-row {
+  display: flex;
+  gap: 8px;
+  white-space: pre;
+}
+
+.diff-gutter {
+  flex: 0 0 auto;
+  width: 3em;
+  text-align: right;
+  color: var(--vscode-descriptionForeground);
+}
+
+.diff-row-add {
+  background-color: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, green) 15%, transparent);
+}
+
+.diff-row-del {
+  background-color: color-mix(in srgb, var(--vscode-gitDecoration-deletedResourceForeground, red) 15%, transparent);
+}
+
+.diff-hunk-separator {
+  color: var(--vscode-descriptionForeground);
+  justify-content: center;
+}
+
 .input-row {
   flex: 0 0 auto;
   display: flex;

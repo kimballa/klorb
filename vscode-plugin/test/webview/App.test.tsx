@@ -144,6 +144,51 @@ describe('App', () => {
     expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
   });
 
+  it('renders a tool call chip that goes busy then completed', () => {
+    const { vscode } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Read foo.py',
+      kind: 'read',
+      locations: [{ path: '/tmp/foo.py', line: 3 }],
+    });
+
+    expect(screen.getByText('Read foo.py')).toBeTruthy();
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    expect(container.querySelector('.tool-call-in_progress')).not.toBeNull();
+
+    postHostMessage({
+      type: 'toolCallUpdated',
+      callId: 'call-1',
+      status: 'completed',
+      contentText: 'read 10 lines',
+    });
+
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    expect(container.querySelector('.tool-call-completed')).not.toBeNull();
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    expect(container.querySelector('.tool-call-in_progress')).toBeNull();
+  });
+
+  it('posts openLocation with the payload when a tool call title is clicked', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Read foo.py',
+      kind: 'read',
+      locations: [{ path: '/tmp/foo.py', line: 3 }],
+    });
+    fireEvent.click(screen.getByText('Read foo.py'));
+
+    expect(posted).toContainEqual({ type: 'openLocation', path: '/tmp/foo.py', line: 3 });
+  });
+
   it('clears the history on sessionReset', () => {
     const { vscode } = makeVsCode();
     render(

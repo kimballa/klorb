@@ -4,13 +4,23 @@ import ReactMarkdown from 'react-markdown';
 
 import type { HistoryEntry } from '../historyModel';
 
+import ToolCallChip from './ToolCallChip';
+
 export interface HistoryViewProps {
   entries: HistoryEntry[];
   /** Ref to the scrolling container, so the owner can keep the newest entry in view. */
   historyRef: RefObject<HTMLDivElement | null>;
+  /** Whether the global "expand all tool calls" toggle is currently on. */
+  expandAllToolCalls: boolean;
+  onToggleExpandAllToolCalls(): void;
+  onToggleToolCallExpanded(callId: string): void;
 }
 
-function renderEntry(entry: HistoryEntry, index: number): JSX.Element {
+function renderEntry(
+  entry: HistoryEntry,
+  index: number,
+  onToggleToolCallExpanded: (callId: string) => void
+): JSX.Element {
   switch (entry.kind) {
     case 'prompt':
       return (
@@ -43,16 +53,35 @@ function renderEntry(entry: HistoryEntry, index: number): JSX.Element {
           {entry.text}
         </div>
       );
+    case 'toolCall':
+      return <ToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />;
   }
 }
 
 /** The append-only history scroll: prompts as right-aligned bubbles, responses as rendered
- * markdown, thinking as a collapsed-by-default disclosure that streams while open. */
-export default function HistoryView({ entries, historyRef }: HistoryViewProps): JSX.Element {
-  // Entries only ever append here, never reorder or remove, so an index key is stable.
+ * markdown, thinking as a collapsed-by-default disclosure that streams while open, and tool
+ * calls as `ToolCallChip`s. A small fixed header above the scrolling entries holds the global
+ * "expand all tool calls" toggle (mirrors the TUI's Ctrl+O — see `historyModel.ts`'s
+ * `applyExpandAllToolCalls`); `historyRef` still points at the scrolling entries container
+ * itself, not this wrapping fragment, so the owner's scroll-into-view logic is unaffected. */
+export default function HistoryView({
+  entries,
+  historyRef,
+  expandAllToolCalls,
+  onToggleExpandAllToolCalls,
+  onToggleToolCallExpanded,
+}: HistoryViewProps): JSX.Element {
   return (
-    <div id="history" ref={historyRef}>
-      {entries.map(renderEntry)}
-    </div>
+    <>
+      <div className="history-header">
+        <vscode-button id="toggle-tool-call-detail" secondary onClick={onToggleExpandAllToolCalls}>
+          {expandAllToolCalls ? 'Collapse all tool calls' : 'Expand all tool calls'}
+        </vscode-button>
+      </div>
+      {/* Entries only ever append here, never reorder or remove, so an index key is stable. */}
+      <div id="history" ref={historyRef}>
+        {entries.map((entry, index) => renderEntry(entry, index, onToggleToolCallExpanded))}
+      </div>
+    </>
   );
 }

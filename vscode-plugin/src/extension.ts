@@ -3,9 +3,34 @@ import * as os from 'os';
 
 import * as vscode from 'vscode';
 
+import { EditorIntegration, type EditorIntegrationVsCode } from 'host/editorIntegration';
 import { AcpConnection, errorMessage } from 'host/features/acp';
 import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
 import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
+
+/** The real `vscode`-backed `EditorIntegrationVsCode` -- the one place `EditorIntegration`'s
+ * VS Code calls are actually made, so `editorIntegration.ts` itself never needs a real `vscode`
+ * value import (see that module's own doc comment). */
+function realEditorIntegrationVsCode(): EditorIntegrationVsCode {
+  return {
+    fileUri: (path: string) => vscode.Uri.file(path),
+    parseUri: (value: string) => vscode.Uri.parse(value),
+    openTextDocument: (uri) => vscode.workspace.openTextDocument(uri),
+    showTextDocument: (document) => vscode.window.showTextDocument(document),
+    revealLine: (editor, line) => {
+      const position = new vscode.Position(Math.max(0, line - 1), 0);
+      editor.selection = new vscode.Selection(position, position);
+      editor.revealRange(new vscode.Range(position, position));
+    },
+    showWarningMessage: (message) => {
+      void vscode.window.showWarningMessage(message);
+    },
+    registerDiffContentProvider: (scheme, provider) =>
+      vscode.workspace.registerTextDocumentContentProvider(scheme, provider),
+    openDiffEditor: (oldUri, newUri, title) =>
+      vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title),
+  };
+}
 
 function readServerOptions(): KlorbServerOptions {
   const config = vscode.workspace.getConfiguration('klorb');
@@ -27,7 +52,9 @@ function sessionCwd(): string {
 
 export function activate(context: vscode.ExtensionContext): void {
   const serverProcess = new KlorbServerProcess();
-  const provider = new KlorbSessionViewProvider(context.extensionUri);
+  const editorIntegration = new EditorIntegration(realEditorIntegrationVsCode());
+  context.subscriptions.push(editorIntegration);
+  const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration);
   const connection = new AcpConnection(serverProcess, provider);
   provider.setConnection(connection);
   context.subscriptions.push({ dispose: () => connection.stop() });

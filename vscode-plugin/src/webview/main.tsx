@@ -1,7 +1,10 @@
 // © Copyright 2026 Aaron Kimball
-// Importing these modules registers the <vscode-textarea>/<vscode-button> custom elements
-// with the browser; the components themselves are rendered from App.tsx/PromptInput.tsx.
+// Importing these modules registers the <vscode-textarea>/<vscode-button>/<vscode-icon>/
+// <vscode-progress-ring> custom elements with the browser; the components themselves are
+// rendered from App.tsx/PromptInput.tsx/ToolCallChip.tsx.
 import '@vscode-elements/elements/dist/vscode-button/index.js';
+import '@vscode-elements/elements/dist/vscode-icon/index.js';
+import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
 import '@vscode-elements/elements/dist/vscode-textarea/index.js';
 import { createRoot } from 'react-dom/client';
 

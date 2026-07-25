@@ -1,16 +1,43 @@
 // © Copyright 2026 Aaron Kimball
-import type { HostMessage } from 'shared/webviewMessages';
+import type {
+  HostMessage,
+  ToolCallDiff,
+  ToolCallLocation,
+  ToolCallStartedMessage,
+  ToolCallUpdatedMessage,
+} from 'shared/webviewMessages';
 
-/** What kind of content a history entry holds. */
+/** What kind of content a plain-text history entry holds. */
 export type HistoryEntryKind = 'prompt' | 'response' | 'thinking' | 'error' | 'notice';
 
-/** One entry in the panel's history scroll. `streaming` marks an entry still receiving
- * chunks; the next chunk of the same kind extends it instead of appending a new entry. */
-export interface HistoryEntry {
+/** One plain-text entry in the panel's history scroll. `streaming` marks an entry still
+ * receiving chunks; the next chunk of the same kind extends it instead of appending a new
+ * entry. */
+export interface TextHistoryEntry {
   kind: HistoryEntryKind;
   text: string;
   streaming: boolean;
 }
+
+/** A tool-call chip entry: `expanded` starts at whatever the global "expand all tool calls"
+ * mode was when the call started, and can then also be flipped individually (its own chevron)
+ * or in bulk (the global toggle re-applies to every tool-call entry at once) -- mirrors the
+ * TUI's Ctrl+O, which flips every `ToolCallStatic` in the history at once (see
+ * `klorb.tui.mixins.key_actions.action_toggle_tool_call_detail`). */
+export interface ToolCallHistoryEntry {
+  kind: 'toolCall';
+  callId: string;
+  status: 'in_progress' | 'completed' | 'failed';
+  title: string;
+  toolKind: string;
+  locations: ToolCallLocation[];
+  contentText?: string;
+  diff?: ToolCallDiff;
+  expanded: boolean;
+}
+
+/** One entry in the panel's history scroll. */
+export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry;
 
 /** Appends the user's submitted prompt as a finished (non-streaming) entry. */
 export function appendPrompt(entries: readonly HistoryEntry[], text: string): HistoryEntry[] {
@@ -30,18 +57,78 @@ function appendChunk(
 }
 
 function finishStreaming(entries: readonly HistoryEntry[]): HistoryEntry[] {
-  return entries.map((entry) => (entry.streaming ? { ...entry, streaming: false } : entry));
+  return entries.map((entry) =>
+    entry.kind !== 'toolCall' && entry.streaming ? { ...entry, streaming: false } : entry
+  );
+}
+
+function appendToolCallStarted(
+  entries: readonly HistoryEntry[],
+  message: ToolCallStartedMessage,
+  expandAllToolCalls: boolean
+): HistoryEntry[] {
+  const entry: ToolCallHistoryEntry = {
+    kind: 'toolCall',
+    callId: message.callId,
+    status: 'in_progress',
+    title: message.title,
+    toolKind: message.kind,
+    locations: message.locations,
+    expanded: expandAllToolCalls,
+  };
+  return [...entries, entry];
+}
+
+/** Mutates the matching `toolCall` entry in place, or appends a new one if `callId` names no
+ * entry yet -- the fallback for a call that never got a `toolCallStarted` (e.g. a
+ * malformed-arguments call that failed before `on_tool_call_started` could fire). */
+function applyToolCallUpdated(
+  entries: readonly HistoryEntry[],
+  message: ToolCallUpdatedMessage,
+  expandAllToolCalls: boolean
+): HistoryEntry[] {
+  const index = entries.findIndex(
+    (entry) => entry.kind === 'toolCall' && entry.callId === message.callId
+  );
+  const status = message.status === 'failed' ? 'failed' : 'completed';
+  if (index === -1) {
+    const entry: ToolCallHistoryEntry = {
+      kind: 'toolCall',
+      callId: message.callId,
+      status,
+      title: message.title ?? 'Tool call',
+      toolKind: 'other',
+      locations: message.locations ?? [],
+      contentText: message.contentText,
+      diff: message.diff,
+      expanded: expandAllToolCalls,
+    };
+    return [...entries, entry];
+  }
+  const previous = entries[index] as ToolCallHistoryEntry;
+  const updated: ToolCallHistoryEntry = {
+    ...previous,
+    status,
+    title: message.title ?? previous.title,
+    locations: message.locations ?? previous.locations,
+    contentText: message.contentText ?? previous.contentText,
+    diff: message.diff ?? previous.diff,
+  };
+  return [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
 }
 
 /**
  * Applies one host→webview message to the history entry list, returning the new list (the
  * input is never mutated). Streamed chunks extend the trailing streaming entry of the same
  * kind or start a new one — so a response arriving after thinking (or vice versa) starts its
- * own entry, and interleaved phases stay in order.
+ * own entry, and interleaved phases stay in order. `expandAllToolCalls` seeds a newly-started
+ * tool-call entry's initial expanded state (see `ToolCallHistoryEntry`); it's ignored by every
+ * other message.
  */
 export function applyHostMessage(
   entries: readonly HistoryEntry[],
-  message: HostMessage
+  message: HostMessage,
+  expandAllToolCalls = false
 ): HistoryEntry[] {
   switch (message.type) {
     case 'turnStarted':
@@ -67,7 +154,35 @@ export function applyHostMessage(
       ];
     case 'sessionReset':
       return [];
+    case 'toolCallStarted':
+      return appendToolCallStarted(entries, message, expandAllToolCalls);
+    case 'toolCallUpdated':
+      return applyToolCallUpdated(entries, message, expandAllToolCalls);
   }
+}
+
+/** Flips every `toolCall` entry's `expanded` flag to `expand` at once -- the global "expand
+ * all tool calls" toggle, mirroring the TUI's Ctrl+O (see `ToolCallHistoryEntry`). */
+export function applyExpandAllToolCalls(
+  entries: readonly HistoryEntry[],
+  expand: boolean
+): HistoryEntry[] {
+  return entries.map((entry) =>
+    entry.kind === 'toolCall' ? { ...entry, expanded: expand } : entry
+  );
+}
+
+/** Flips one `toolCall` entry's `expanded` flag (its own chevron), leaving every other entry
+ * -- including every other tool call -- untouched. */
+export function applyToolCallExpandedToggle(
+  entries: readonly HistoryEntry[],
+  callId: string
+): HistoryEntry[] {
+  return entries.map((entry) =>
+    entry.kind === 'toolCall' && entry.callId === callId
+      ? { ...entry, expanded: !entry.expanded }
+      : entry
+  );
 }
 
 /**

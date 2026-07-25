@@ -10,7 +10,11 @@ Client Protocol](https://agentclientprotocol.com) (ACP) — see [[klorb-server]]
 `klorb server` child process: submitting a prompt sends `session/prompt`, and the server's
 streamed response and thinking text (`session/update` → `agent_message_chunk`/
 `agent_thought_chunk`) render live in the history as markdown/a collapsed disclosure
-respectively. A Stop button (or Escape while a turn is in flight) sends `session/cancel`.
+respectively. Tool calls (`session/update` → `tool_call`/`tool_call_update`) render as chips
+that go from a busy spinner to a one-line completed/failed summary, expandable to full detail
+or a colored diff view; a chip naming a file location links to opening that file (or a real
+diff editor) in VS Code itself. A Stop button (or Escape while a turn is in flight) sends
+`session/cancel`.
 Shift+Enter (or Ctrl+Enter) inserts a newline in the prompt box instead of submitting.
 Activation spawns one `klorb server` process and creates one ACP session, shared by the whole
 extension; **Klorb: Restart Server** kills and respawns the child and re-initializes the ACP
@@ -79,9 +83,11 @@ together for this extension specifically.
   SDK's `Client` interface: the handler for requests/notifications the server sends back over
   the connection.
   `sessionUpdate()` dispatches `agent_message_chunk`/`agent_thought_chunk` text content to a
-  `SessionUpdateListener` (`onAgentText`/`onThoughtText`) and logs (rather than errors on) any
-  other update kind, since later increments add handling for `tool_call`, `plan`, etc.
-  `requestPermission()` auto-answers every ask with the first `reject_once` (falling back to
+  `SessionUpdateListener` (`onAgentText`/`onThoughtText`), flattens `tool_call`/`tool_call_update`
+  updates into `ToolCallStartedMessage`/`ToolCallUpdatedMessage` (`onToolCallStarted`/
+  `onToolCallUpdated` — see "Tool-call rendering and editor integration" below), and logs
+  (rather than errors on) any other update kind, since later increments add handling for `plan`
+  etc. `requestPermission()` auto-answers every ask with the first `reject_once` (falling back to
   `reject_always`, then whatever option is first) — a stand-in until `plan-016-006` builds the
   real approval panel — logging what was declined so a denied tool call is visible in the
   extension's output channel rather than silently vanishing. `readTextFile()`/
@@ -96,11 +102,16 @@ together for this extension specifically.
   webview's HTML, and registers `onDidReceiveMessage` to parse and dispatch `WebviewMessage`s
   (see "Webview message protocol" below). `onAgentText`/`onThoughtText` (the
   `SessionUpdateListener` methods `AcpConnection` calls as chunks stream in) post `agentChunk`/
-  `thoughtChunk` host messages. `_runTurn(text)` — invoked for a `submitPrompt` message — posts
-  `turnStarted`, awaits `AcpConnection.prompt(text)`, and posts either `turnEnded {stopReason}`
-  or (on rejection) `turnError {message}`; a `cancelTurn` message calls
+  `thoughtChunk` host messages; `onToolCallStarted`/`onToolCallUpdated` post the flattened
+  `toolCallStarted`/`toolCallUpdated` messages as-is, and `onToolCallUpdated` additionally
+  records any `diff` payload with the shared `EditorIntegration` (see "Tool-call rendering and
+  editor integration" below) before posting, since the diff text isn't retained anywhere else
+  once flattened into the webview message. `_runTurn(text)` — invoked for a `submitPrompt`
+  message — posts `turnStarted`, awaits `AcpConnection.prompt(text)`, and posts either
+  `turnEnded {stopReason}` or (on rejection) `turnError {message}`; a `cancelTurn` message calls
   `AcpConnection.cancel()` directly, with no reply of its own (the in-flight prompt's own
-  `turnEnded`/`turnError` follow-up is the confirmation). `restart()` re-sets the webview's HTML
+  `turnEnded`/`turnError` follow-up is the confirmation); `openLocation`/`openDiff` messages are
+  routed to `EditorIntegration.openLocation()`/`openDiff()`. `restart()` re-sets the webview's HTML
   (with a fresh nonce and a cache-busting query string on the compiled webview script's URI),
   which is what `klorb.restartSession` calls — it reloads the panel's webview document (and
   therefore `out/webview/main.js`) without requiring a full "Reload Window", so a rebuilt
@@ -143,13 +154,18 @@ together for this extension specifically.
   bottom: the title, `HistoryView`, a placeholder `#interaction-area` div (approval/question
   panels mount there starting in `plan-016-006`), `PromptInput`, and a placeholder
   `#status-row` div (model/thinking/permission-mode controls arrive in `plan-016-009`). It owns
-  all interactive state: `entries` (a `HistoryEntry[]`, seeded from `initialEntries`) and
-  `inFlight` (whether a turn is currently running). A `window` `message` listener (subscribed
-  for the panel's lifetime via a `useEffect` with an empty dependency array) parses each
-  incoming payload with `parseHostMessage()` and applies it to both pieces of state via the
-  pure functions in the `features/history` feature. Submitting a prompt appends a `'prompt'`
-  entry optimistically, sets `inFlight` to `true` (the host's own `turnStarted`/`turnError`
-  follow-up confirms or corrects it), and posts `{type: 'submitPrompt', text}`. A separate
+  all interactive state: `entries` (a `HistoryEntry[]`, seeded from `initialEntries`), `inFlight`
+  (whether a turn is currently running), and `expandAllToolCalls` (the global "expand all tool
+  calls" toggle — see `features/history` below). A `window` `message` listener (subscribed for
+  the panel's lifetime via a `useEffect` keyed on `expandAllToolCalls`, so a newly-started tool
+  call always sees the current toggle state) parses each incoming payload with
+  `parseHostMessage()` and applies it to `entries`/`inFlight` via the pure functions in the
+  `features/history` feature. Submitting a prompt appends a `'prompt'` entry optimistically,
+  sets `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up confirms or
+  corrects it), and posts `{type: 'submitPrompt', text}`. Toggling the global tool-call expand
+  mode flips `expandAllToolCalls` and applies it to every existing tool-call entry at once
+  (`applyExpandAllToolCalls`); toggling one chip's own chevron flips just that entry
+  (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`. A separate
   `useEffect` keyed on `entries` calls `vscode.setState({entries})` (so history survives
   `retainContextWhenHidden`'s context teardown/rebuild) and scrolls the history's last child
   into view. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
@@ -165,30 +181,47 @@ together for this extension specifically.
   to the `vscode` object for anything that isn't `main.tsx`/`App.tsx` themselves.
 * `vscode-plugin/src/webview/features/history/` is the `history` feature: `historyModel.ts`
   holds the pure, React-independent reducer logic for the history list (kept separate
-  specifically so it's unit-testable without mounting anything) and `components/HistoryView.tsx`
-  renders it. `index.ts` is the feature's barrel — the only module anyone outside
-  `features/history/` may import (as `webview/features/history`, per this repo's absolute-import
-  convention — see `AGENTS.md`'s "vscode-plugin source tree" section).
-  * `HistoryEntry` is `{kind: 'prompt' | 'response' | 'thinking' | 'error' | 'notice', text,
-    streaming: boolean}`.
+  specifically so it's unit-testable without mounting anything), `renderDiffLines.ts` is the
+  pure diff-hunk-to-row-model helper `ToolCallChip` maps over, and `components/HistoryView.tsx`/
+  `components/ToolCallChip.tsx` render them. `index.ts` is the feature's barrel — the only
+  module anyone outside `features/history/` may import (as `webview/features/history`, per this
+  repo's absolute-import convention — see `AGENTS.md`'s "vscode-plugin source tree" section).
+  * `HistoryEntry` is `TextHistoryEntry | ToolCallHistoryEntry`. `TextHistoryEntry` is
+    `{kind: 'prompt' | 'response' | 'thinking' | 'error' | 'notice', text, streaming: boolean}`.
+    `ToolCallHistoryEntry` is `{kind: 'toolCall', callId, status: 'in_progress' | 'completed' |
+    'failed', title, toolKind, locations, contentText?, diff?, expanded: boolean}` — `toolKind`
+    and `status` are plain strings (mirroring `HostMessage`'s own `kind`/`status` fields), and
+    `expanded` is this one chip's own collapsed/expanded state (see below).
   * `appendPrompt(entries, text)` appends a finished `'prompt'` entry.
-  * `applyHostMessage(entries, message)` is the `HostMessage` reducer: `agentChunk`/
-    `thoughtChunk` extend the trailing streaming entry of the matching kind, or start a new one
-    if the last entry is a different kind (or not currently streaming) — so thinking and
-    response phases interleave correctly across a turn. `turnEnded` finalizes every streaming
-    entry's `streaming` flag and, for any `stopReason` other than `"end_turn"`, appends a
-    `'notice'` entry naming the reason. `turnError` finalizes streaming entries and appends an
-    `'error'` entry. `sessionReset` clears the list.
+  * `applyHostMessage(entries, message, expandAllToolCalls = false)` is the `HostMessage`
+    reducer: `agentChunk`/`thoughtChunk` extend the trailing streaming entry of the matching
+    kind, or start a new one if the last entry is a different kind (or not currently streaming)
+    — so thinking and response phases interleave correctly across a turn. `turnEnded` finalizes
+    every streaming entry's `streaming` flag and, for any `stopReason` other than `"end_turn"`,
+    appends a `'notice'` entry naming the reason. `turnError` finalizes streaming entries and
+    appends an `'error'` entry. `sessionReset` clears the list. `toolCallStarted` appends a new
+    `'toolCall'` entry with `status: 'in_progress'` and `expanded` seeded from
+    `expandAllToolCalls`. `toolCallUpdated` mutates the matching `callId`'s entry in place
+    (status/title/content/diff/locations), or appends a new entry (also seeded from
+    `expandAllToolCalls`) if no `toolCallStarted` for that `callId` was ever seen — the fallback
+    for a call that failed before `on_tool_call_started` could fire (e.g. malformed arguments).
   * `applyTurnFlag(inFlight, message)` is the parallel reducer for the `inFlight` boolean:
     `turnStarted` raises it, `turnEnded`/`turnError`/`sessionReset` clear it, every other
     message leaves it unchanged.
-  * `HistoryView` renders the `HistoryEntry[]` list: `'prompt'` entries as a right-aligned
-    `.bubble` (index-keyed — safe here specifically because entries only ever append, never
-    reorder or get removed or inserted in the middle, the one case React's own docs call out as
-    fine for index keys); `'response'` entries through `react-markdown`; `'thinking'` entries as
-    a collapsed-by-default `<details>` disclosure (muted/italic styling, matching the TUI's
-    thinking block) that keeps streaming into its body while the reader has it open;
-    `'error'`/`'notice'` entries as plain styled text.
+  * `applyExpandAllToolCalls(entries, expand)` sets every `'toolCall'` entry's `expanded` flag to
+    `expand` at once — the reducer behind the global toggle, mirroring the TUI's Ctrl+O
+    (`klorb.tui.mixins.key_actions.action_toggle_tool_call_detail`), which flips every
+    `ToolCallStatic` in the history together. `applyToolCallExpandedToggle(entries, callId)`
+    flips just the one named entry (a chip's own chevron), independently of the global mode.
+  * `HistoryView` renders a small fixed header (the global "expand all tool calls"
+    `<vscode-button>`) above the scrolling `HistoryEntry[]` list: `'prompt'` entries as a
+    right-aligned `.bubble` (index-keyed — safe here specifically because entries only ever
+    append, never reorder or get removed or inserted in the middle, the one case React's own
+    docs call out as fine for index keys); `'response'` entries through `react-markdown`;
+    `'thinking'` entries as a collapsed-by-default `<details>` disclosure (muted/italic styling,
+    matching the TUI's thinking block) that keeps streaming into its body while the reader has
+    it open; `'error'`/`'notice'` entries as plain styled text; `'toolCall'` entries as a
+    `ToolCallChip`.
 * `vscode-plugin/src/webview/components/PromptInput.tsx` renders the `<vscode-textarea>` +
   `<vscode-button>` input row: disabled (and the button replaced by a Stop button) while
   `inFlight` is true. Its own `onKeyDown` handles Escape (calls `onCancel` when `inFlight`) and
@@ -198,6 +231,55 @@ together for this extension specifically.
   as a standalone function is what makes it reachable from
   `vscode-plugin/test/webview/keyHandling.test.ts` without a browser, React, or a VS Code
   extension host.
+
+### Tool-call rendering and editor integration
+
+* `vscode-plugin/src/webview/features/history/components/ToolCallChip.tsx` renders one
+  `ToolCallHistoryEntry` as a collapsed row plus (when `expanded`) its detail. The collapsed
+  row shows: a `<vscode-progress-ring>` while `status === 'in_progress'`; an error-colored
+  `error` `<vscode-icon>` when `status === 'failed'`; otherwise a codicon looked up from
+  `toolKind` — `book` (read), `edit` (edit), `search` (search), `terminal` (execute), `globe`
+  (fetch), `checklist` (think), `trash` (delete), `tools` (any other/unrecognized kind,
+  including `other`) — via `KIND_ICON`, a `Record<string, string>` (not a switch, so an
+  unrecognized `ToolKind` degrades to the generic icon instead of a type error). The title
+  becomes a `<button>` posting `openLocation {path, line?}` (the entry's first `location`) when
+  `locations` is non-empty, plain text otherwise; a trailing `<vscode-icon actionIcon>` chevron
+  toggles this one chip's `expanded` flag. The expanded detail shows `contentText` as plain
+  text, or — when `diff` is present — a colored gutter view (`renderDiffLines(diff.hunks)`'s row
+  models, green `add`/red `del`/plain `context`, a `⋮` separator between hunks) when
+  `diff.hunks` is present, else a plain `<pre>` of `diff.newText` (the fallback for a plain ACP
+  diff block lacking `_meta.klorb.diffHunks` — not colored, since there's no hunk structure to
+  render), plus an "Open diff" `<vscode-button>` posting `openDiff {callId, path}`.
+* `vscode-plugin/src/webview/main.tsx` additionally imports `@vscode-elements/elements`'s
+  `vscode-icon`/`vscode-progress-ring` modules (alongside `vscode-button`/`vscode-textarea`) to
+  register those custom elements.
+* `vscode-plugin/src/host/editorIntegration.ts`'s `EditorIntegration` bridges `openLocation`/
+  `openDiff` webview messages to real VS Code editor integration. Its VS Code calls are all
+  reached through an injected `EditorIntegrationVsCode` facade (the same "keep the real
+  side-effecting API behind an injectable seam" shape `klorbServerProcess.ts`'s `SpawnFn` uses)
+  — `editorIntegration.ts` itself only ever imports `vscode`'s *types* (`import type * as vscode
+  from 'vscode'`), never its runtime value, so the module loads cleanly under `vitest` without a
+  running VS Code extension host; `extension.ts`'s `realEditorIntegrationVsCode()` builds the
+  one real implementation, since `extension.ts` already imports real `vscode` values for
+  wiring up the rest of the extension.
+  * `openLocation(path, line?)` opens `path` via `vscode.workspace.openTextDocument`/
+    `vscode.window.showTextDocument`, moving the cursor/selection/viewport to `line` (1-indexed,
+    matching klorb's own line-numbering convention — see `klorb.tools.util.diff_lines.DiffLine`)
+    when given. A path that can't be opened (deleted, renamed, outside the workspace) surfaces
+    a `vscode.window.showWarningMessage` instead of throwing.
+  * `recordDiff(callId, {oldText, newText})` — called by `KlorbSessionViewProvider.
+    onToolCallUpdated()` whenever a `tool_call_update` carries a `diff` — keeps a bounded
+    (50-entry, oldest-evicted) `Map` from `callId` to its diff payload, since the reconstructed
+    before/after text isn't retained anywhere else once flattened into the webview message.
+  * `openDiff(callId, path)` looks up `callId`'s recorded payload (warning instead of opening
+    anything if none was recorded, e.g. after a window reload — `vscode.getState()` doesn't
+    persist this host-side map) and shows a real `vscode.diff` between two read-only virtual
+    documents served by a `KlorbDiffContentProvider` registered under the `klorb-diff:` scheme
+    (one `EditorIntegration` per extension activation registers its own provider instance),
+    titled `"<basename> (Klorb edit)"`. The reassembled before/after text is a hunk-context view,
+    not necessarily the whole file (see docs/adrs/persist-diff-hunks-in-edit-result.md) — an
+    elided view, the same caveat [[klorb-server]] records for the update's own `oldText`/
+    `newText`.
 
 ### Webview message protocol
 
@@ -209,13 +291,33 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
 `docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md`).
 
 * Webview → host (`WebviewMessage`): `{type: 'submitPrompt', text: string}` (once per submitted
-  prompt) and `{type: 'cancelTurn'}` (Stop button or Escape while a turn is running).
+  prompt), `{type: 'cancelTurn'}` (Stop button or Escape while a turn is running),
+  `{type: 'openLocation', path: string, line?: number}` (a tool-call title link), and
+  `{type: 'openDiff', callId: string, path: string}` ("Open diff").
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
   string}`, `{type: 'thoughtChunk', text: string}`, `{type: 'turnEnded', stopReason: string}`,
-  `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`.
+  `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`,
+  `{type: 'toolCallStarted', callId, title, kind, locations}`, and
+  `{type: 'toolCallUpdated', callId, status, title?, contentText?, diff?, locations?}` — `kind`/
+  `status` are plain strings (mirroring `turnEnded`'s own loosely-typed `stopReason`) so a value
+  this client doesn't recognize yet still round-trips instead of failing to parse; `locations`
+  is `{path: string, line?: number}[]`; `diff` is `{path, oldText: string | null, newText:
+  string, hunks?}` — `oldText`/`newText` are always present (ACP's own convention, `oldText:
+  null` for a brand-new file), `hunks` (`{lines: {kind: 'context' | 'add' | 'del', oldLineno:
+  number | null, newLineno: number | null, text: string}[]}[]`) only when the server attached
+  `_meta.klorb.diffHunks` (klorb's own server always does) and is preferred for rendering when
+  present. `KlorbAcpClient.sessionUpdate()` builds these two messages from ACP's `tool_call`/
+  `tool_call_update` session updates (see "Tool-call rendering and editor integration" above);
+  klorb's own server never omits `tool_call`'s `kind`/`locations` or `tool_call_update`'s
+  `status` (see [[klorb-server]]'s tool-call update mapping section), but the flattening
+  defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
+  agent does.
 * `parseHostMessage()`/`parseWebviewMessage()` are the type guards each side runs on every
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
-  and `MessageEvent.data` (webview side) are untyped `unknown`.
+  and `MessageEvent.data` (webview side) are untyped `unknown`. The four richer message types
+  above (nested arrays/objects) are validated by dedicated guard functions; every other message
+  type still goes through the original `FieldSpec`-driven `parseMessage()` (one required string
+  field, or none).
 
 ### Build: two esbuild bundles, two typecheck-only tsconfigs
 
@@ -421,14 +523,19 @@ of two.
 4. Run **Klorb: Restart Session** from the command palette to clear the panel and start a fresh
    ACP session without restarting the child process; run **Klorb: Restart Server** to kill and
    respawn `klorb server` itself (e.g. after changing `klorb.serverPath`).
+5. Ask for an edit to a file in the workspace. Watch its tool-call chip go from a busy spinner
+   to a completed summary; click the chevron to expand it and see the colored diff (or the
+   detail text, for a non-edit call); click "Open diff" to see the change in a real editor diff
+   view; click a read call's title to jump to that file/line. Click "Expand all tool calls" in
+   the history header to flip every chip at once, mirroring the TUI's Ctrl+O.
 
 ## Out of scope
 
-* No tool-call display, permission approval UI, `AskUserQuestions` panel, task panel, or
-  model/thinking/permission-mode controls yet — every permission ask is auto-rejected by
+* No permission approval UI, `AskUserQuestions` panel, task panel, or model/thinking/
+  permission-mode controls yet — every permission ask is auto-rejected by
   `KlorbAcpClient.requestPermission()`, since [[klorb-server]] itself fails every `"ask"`
   permission verdict closed at this checkpoint anyway (no `on_permission_ask` callback wired
-  server-side until `plan-016-005`). These land across `plan-016-004` through `plan-016-011`.
+  server-side until `plan-016-005`). These land across `plan-016-005` through `plan-016-011`.
 * No mid-turn message queueing — a second `submitPrompt` while a turn is in flight is rejected
   by `AcpConnection.prompt()` (mirroring [[klorb-server]]'s own one-prompt-at-a-time rule), not
   queued client-side. Lands in `plan-016-012`.

@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendPrompt,
+  applyExpandAllToolCalls,
   applyHostMessage,
+  applyToolCallExpandedToggle,
   applyTurnFlag,
   type HistoryEntry,
+  type ToolCallHistoryEntry,
 } from 'webview/features/history';
 
 describe('appendPrompt', () => {
@@ -91,6 +94,166 @@ describe('applyHostMessage', () => {
   it('leaves entries unchanged on turnStarted', () => {
     const entries = appendPrompt([], 'question');
     expect(applyHostMessage(entries, { type: 'turnStarted' })).toEqual(entries);
+  });
+});
+
+describe('applyHostMessage tool calls', () => {
+  it('appends an in-progress tool call entry on toolCallStarted', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Read foo.py',
+      kind: 'read',
+      locations: [{ path: '/tmp/foo.py' }],
+    });
+    expect(entries).toEqual([
+      {
+        kind: 'toolCall',
+        callId: 'call-1',
+        status: 'in_progress',
+        title: 'Read foo.py',
+        toolKind: 'read',
+        locations: [{ path: '/tmp/foo.py' }],
+        expanded: false,
+      },
+    ]);
+  });
+
+  it('seeds a new tool call entry expanded when the global mode is on', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(
+      entries,
+      {
+        type: 'toolCallStarted',
+        callId: 'call-1',
+        title: 'Read foo.py',
+        kind: 'read',
+        locations: [],
+      },
+      true
+    );
+    expect((entries[0] as ToolCallHistoryEntry).expanded).toBe(true);
+  });
+
+  it('mutates the matching entry in place on toolCallUpdated, preserving order', () => {
+    let entries: HistoryEntry[] = [];
+    entries = appendPrompt(entries, 'edit the file');
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Edit foo.py',
+      kind: 'edit',
+      locations: [{ path: '/tmp/foo.py' }],
+    });
+    entries = applyHostMessage(entries, { type: 'agentChunk', text: 'working on it' });
+    entries = applyHostMessage(entries, {
+      type: 'toolCallUpdated',
+      callId: 'call-1',
+      status: 'completed',
+      contentText: 'edited 1 line',
+    });
+
+    expect(entries).toHaveLength(3);
+    expect(entries[1]).toEqual({
+      kind: 'toolCall',
+      callId: 'call-1',
+      status: 'completed',
+      title: 'Edit foo.py',
+      toolKind: 'edit',
+      locations: [{ path: '/tmp/foo.py' }],
+      contentText: 'edited 1 line',
+      expanded: false,
+    });
+  });
+
+  it('appends a toolCallUpdated for an unknown callId (malformed-arguments fallback)', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, {
+      type: 'toolCallUpdated',
+      callId: 'call-orphan',
+      status: 'failed',
+      contentText: 'bad JSON arguments',
+    });
+    expect(entries).toEqual([
+      {
+        kind: 'toolCall',
+        callId: 'call-orphan',
+        status: 'failed',
+        title: 'Tool call',
+        toolKind: 'other',
+        locations: [],
+        contentText: 'bad JSON arguments',
+        diff: undefined,
+        expanded: false,
+      },
+    ]);
+  });
+
+  it('interleaves tool calls with streamed chunks, preserving arrival order', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, { type: 'agentChunk', text: 'before' });
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Grep',
+      kind: 'search',
+      locations: [],
+    });
+    entries = applyHostMessage(entries, { type: 'agentChunk', text: 'after' });
+    expect(entries.map((entry) => entry.kind)).toEqual(['response', 'toolCall', 'response']);
+  });
+});
+
+describe('applyExpandAllToolCalls', () => {
+  it('flips every tool call entry to the given mode, leaving other entries untouched', () => {
+    let entries: HistoryEntry[] = [];
+    entries = appendPrompt(entries, 'question');
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Read',
+      kind: 'read',
+      locations: [],
+    });
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-2',
+      title: 'Grep',
+      kind: 'search',
+      locations: [],
+    });
+
+    entries = applyExpandAllToolCalls(entries, true);
+
+    expect(entries[0]!.kind).toBe('prompt');
+    expect((entries[1] as ToolCallHistoryEntry).expanded).toBe(true);
+    expect((entries[2] as ToolCallHistoryEntry).expanded).toBe(true);
+  });
+});
+
+describe('applyToolCallExpandedToggle', () => {
+  it('flips only the named entry', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-1',
+      title: 'Read',
+      kind: 'read',
+      locations: [],
+    });
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'call-2',
+      title: 'Grep',
+      kind: 'search',
+      locations: [],
+    });
+
+    entries = applyToolCallExpandedToggle(entries, 'call-2');
+
+    expect((entries[0] as ToolCallHistoryEntry).expanded).toBe(false);
+    expect((entries[1] as ToolCallHistoryEntry).expanded).toBe(true);
   });
 });
 

@@ -22,6 +22,8 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
   const listener: SessionUpdateListener = {
     onAgentText: (text: string) => events.push(`agent:${text}`),
     onThoughtText: (text: string) => events.push(`thought:${text}`),
+    onToolCallStarted: (message) => events.push(`toolCallStarted:${message.callId}`),
+    onToolCallUpdated: (message) => events.push(`toolCallUpdated:${message.callId}`),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   return { agent, connection, events };

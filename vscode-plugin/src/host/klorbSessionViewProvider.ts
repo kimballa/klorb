@@ -1,18 +1,26 @@
 // © Copyright 2026 Aaron Kimball
 import * as vscode from 'vscode';
 
+import type { EditorIntegration } from 'host/editorIntegration';
 import { errorMessage, type AcpConnection, type SessionUpdateListener } from 'host/features/acp';
-import { parseWebviewMessage, type HostMessage } from 'shared/webviewMessages';
+import {
+  parseWebviewMessage,
+  type HostMessage,
+  type ToolCallStartedMessage,
+  type ToolCallUpdatedMessage,
+} from 'shared/webviewMessages';
 
 /**
  * Backs the "Klorb session" side panel: a scrolling history of prompts, streamed thinking,
- * and streamed markdown responses above a multi-line prompt input (see src/webview/App.tsx,
- * mounted by src/webview/main.tsx and bundled to out/webview/main.js). The webview and the
- * host exchange the typed messages defined in src/shared/webviewMessages.ts: the webview
- * posts user intent (`submitPrompt`, `cancelTurn`), and this provider drives the shared
- * `AcpConnection` and posts turn lifecycle + streamed text back. As the connection's
- * `SessionUpdateListener`, it forwards `agent_message_chunk`/`agent_thought_chunk` text into
- * the panel.
+ * streamed markdown responses, and tool-call chips above a multi-line prompt input (see
+ * src/webview/App.tsx, mounted by src/webview/main.tsx and bundled to out/webview/main.js).
+ * The webview and the host exchange the typed messages defined in
+ * src/shared/webviewMessages.ts: the webview posts user intent (`submitPrompt`, `cancelTurn`,
+ * `openLocation`, `openDiff`), and this provider drives the shared `AcpConnection` and posts
+ * turn lifecycle + streamed text + tool-call updates back. As the connection's
+ * `SessionUpdateListener`, it forwards `agent_message_chunk`/`agent_thought_chunk` text and
+ * `tool_call`/`tool_call_update` updates into the panel, and routes `openLocation`/`openDiff`
+ * to the shared `EditorIntegration`.
  */
 export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, SessionUpdateListener {
   public static readonly viewType = 'klorb.sessionView';
@@ -20,7 +28,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   private _view: vscode.WebviewView | undefined;
   private _connection: AcpConnection | undefined;
 
-  public constructor(private readonly _extensionUri: vscode.Uri) {}
+  public constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _editorIntegration: EditorIntegration
+  ) {}
 
   /** Wires the connection this provider drives. Set once during activation — the provider
    * and connection reference each other (the provider is the connection's listener), so one
@@ -53,6 +64,20 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this.postHostMessage({ type: 'thoughtChunk', text });
   }
 
+  public onToolCallStarted(message: ToolCallStartedMessage): void {
+    this.postHostMessage(message);
+  }
+
+  public onToolCallUpdated(message: ToolCallUpdatedMessage): void {
+    if (message.diff !== undefined) {
+      this._editorIntegration.recordDiff(message.callId, {
+        oldText: message.diff.oldText,
+        newText: message.diff.newText,
+      });
+    }
+    this.postHostMessage(message);
+  }
+
   /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
   public postHostMessage(message: HostMessage): void {
     void this._view?.webview.postMessage(message);
@@ -69,6 +94,12 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
         break;
       case 'cancelTurn':
         this._connection?.cancel();
+        break;
+      case 'openLocation':
+        await this._editorIntegration.openLocation(parsed.path, parsed.line);
+        break;
+      case 'openDiff':
+        await this._editorIntegration.openDiff(parsed.callId, parsed.path);
         break;
     }
   }
