@@ -51,6 +51,11 @@ together for this extension specifically.
   `context.subscriptions` stops the connection (killing the child process) when the extension
   deactivates. A handshake or connection failure at any of these points surfaces as both a VS
   Code error notification and a `turnError` panel message, rather than failing silently.
+  `activate()` also creates the "Klorb" output channel (`vscode.window.createOutputChannel`,
+  selectable from VS Code's Output panel dropdown) and passes an `appendLine`-backed `LogFn`
+  into `AcpConnection`, so both the extension's own diagnostic logging and the `klorb server`
+  child's stderr (see `AcpConnection` below) land in one place instead of the void `console.log`
+  would otherwise go to.
 * `vscode-plugin/src/host/klorbServerProcess.ts`'s `KlorbServerProcess` owns spawning, killing,
   and restarting the one `klorb server` child process — nothing about the wire protocol spoken
   over its stdio. `start()` stops any running child, spawns `<command> server` (appending
@@ -64,7 +69,12 @@ together for this extension specifically.
   `acp.ndJsonStream()` over its stdout/stdin (via Node's `Readable.toWeb()`/`Writable.toWeb()`,
   bridging the child's Node streams to the Web Streams API the SDK's stream type expects), and
   constructs the SDK's `ClientSideConnection` with a `KlorbAcpClient` as its `Client`
-  implementation. It performs `initialize()` (asserting the negotiated `protocolVersion`
+  implementation. It also pipes the child's `stderr` -- where klorb's Python `logging` output
+  goes -- to `_log` line-by-line (`_pipeStderr()`, buffering a trailing partial line and
+  chunk-split multi-byte characters via `StringDecoder` until a newline or stream close
+  completes them), so server-side log output reaches the same sink (the "Klorb" output channel
+  in the real extension, see `extension.ts` above) as the connection's own diagnostics rather
+  than an unread pipe. It performs `initialize()` (asserting the negotiated `protocolVersion`
   matches `acp.PROTOCOL_VERSION`; a mismatch or a hung/failed handshake — bounded by a 10-second
   timeout — throws a readable error naming `klorb.serverPath` as the likely fix, covering an old
   pre-ACP klorb binary) and then `newSession(cwd)`, storing the returned `sessionId`.

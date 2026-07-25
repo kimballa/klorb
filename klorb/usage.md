@@ -205,6 +205,10 @@ replies to stdout — see COMMANDS below.
   (`$KLORB_STATE_DIR/session-logs/`) and the `--log-tool-calls` audit file
   (`$KLORB_STATE_DIR/tool-calls.log`). Defaults to `~/.local/state/klorb`.
 
+* `KLORB_LOG_EVEL`
+
+  Verbosity level to use for Klorb loggers: CRITICAL, ERROR, WARNING, INFO, DEBUG.
+
 * `LOG_TOOL_CALLS`
 
   Set to `1` or `true` to enable tool-call logging when neither `--log-tool-calls`

@@ -66,6 +66,52 @@ def test_configure_logging_writes_log_records_to_file() -> None:
     assert "hello from a test" in log_path.read_text(encoding="utf-8")
 
 
+def test_configure_logging_sets_root_logger_to_default_klorb_log_level() -> None:
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    assert logging.getLogger().level == logging_config.klorb_log_level
+
+
+def test_configure_logging_respects_klorb_log_level_env_override(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KLORB_LOG_LEVEL", "ERROR")
+
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    assert logging.getLogger().level == logging.ERROR
+
+
+def test_configure_logging_ignores_invalid_klorb_log_level_env_override(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KLORB_LOG_LEVEL", "not-a-level")
+
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    assert logging.getLogger().level == logging_config.klorb_log_level
+
+
+def test_configure_logging_raises_third_party_loggers_to_a_more_terse_klorb_log_level(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KLORB_LOG_LEVEL", "ERROR")
+
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    assert logging.getLogger("httpcore").level == logging.ERROR
+    assert logging.getLogger("httpx").level == logging.ERROR
+    assert logging.getLogger("openai").level == logging.ERROR
+
+
+def test_configure_logging_leaves_third_party_loggers_at_default_when_klorb_log_level_is_less_terse(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KLORB_LOG_LEVEL", "DEBUG")
+
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    assert logging.getLogger("httpcore").level == logging.WARNING
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("openai").level == logging.INFO
+
+
 def test_prune_session_logs_no_op_on_empty_dir(tmp_path: Path) -> None:
     logs = tmp_path / "session-logs"
     logs.mkdir()

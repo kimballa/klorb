@@ -73,27 +73,33 @@ export class MockAgent implements acp.Agent {
 export interface MockAgentChild {
   child: ChildProcessWithoutNullStreams;
   agent: MockAgent;
+  /** The same stream as `child.stderr`, typed `Writable` so tests can write fake log output to
+   * it directly -- `ChildProcessWithoutNullStreams.stderr` is typed `Readable` only. */
+  stderr: Writable;
 }
 
 /**
- * Builds the fake `klorb server` child: `child.stdin`/`child.stdout` are `PassThrough`s with
- * the given agent's `AgentSideConnection` wired to their far ends, so code under test that
- * binds an ACP client connection to the child's stdio talks real protocol traffic to the
- * mock. `kill()` ends both streams, which is what makes the client side's connection-closed
- * handling observable in tests.
+ * Builds the fake `klorb server` child: `child.stdin`/`child.stdout`/`child.stderr` are
+ * `PassThrough`s with the given agent's `AgentSideConnection` wired to the stdin/stdout ends,
+ * so code under test that binds an ACP client connection to the child's stdio talks real
+ * protocol traffic to the mock. `kill()` ends all three streams, which is what makes the
+ * client side's connection-closed handling observable in tests.
  */
 export function createMockAgentChild(agent: MockAgent = new MockAgent()): MockAgentChild {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
+  const stderr = new PassThrough();
   const emitter = new EventEmitter();
   const child = Object.assign(emitter, {
     stdin,
     stdout,
+    stderr,
     killed: false,
     kill(): boolean {
       (child as { killed: boolean }).killed = true;
       stdin.end();
       stdout.end();
+      stderr.end();
       return true;
     },
   }) as unknown as ChildProcessWithoutNullStreams;
@@ -103,5 +109,5 @@ export function createMockAgentChild(agent: MockAgent = new MockAgent()): MockAg
     Readable.toWeb(stdin) as unknown as ReadableStream<Uint8Array>
   );
   agent.connection = new acp.AgentSideConnection(() => agent, stream);
-  return { child, agent };
+  return { child, agent, stderr };
 }

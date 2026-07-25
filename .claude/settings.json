@@ -32,7 +32,8 @@
       "Bash(venv/bin/flake8 --config .flake8 evals/cases.py)",
       "Bash(npm view *)",
       "Bash(npm install *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(npm run *)"
     ]
   },
   "hooks": {

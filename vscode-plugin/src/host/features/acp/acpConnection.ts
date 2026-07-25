@@ -1,5 +1,6 @@
 // © Copyright 2026 Aaron Kimball
 import { Readable, Writable } from 'stream';
+import { StringDecoder } from 'string_decoder';
 
 import type { ClientSideConnection, InitializeResponse } from '@agentclientprotocol/sdk';
 
@@ -79,6 +80,7 @@ export class AcpConnection {
     child.on('error', (err: Error) => {
       this._log(`klorb: server process error: ${err.message}`);
     });
+    this._pipeStderr(child.stderr);
     const stream = acp.ndJsonStream(
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
@@ -204,6 +206,31 @@ export class AcpConnection {
     this._sessionId = undefined;
     reject?.(new Error('klorb server exited unexpectedly; run "Klorb: Restart Server"'));
     this._serverProcess.stop();
+  }
+
+  /** Forwards the child's stderr -- where klorb's Python `logging` output goes -- to `_log`
+   * line-by-line, so it lands in the extension's output channel instead of an unread pipe
+   * (an unread stderr pipe can eventually fill its OS buffer and block the child on write).
+   * Buffers a trailing partial line (and multi-byte characters split across chunk boundaries,
+   * via `StringDecoder`) until a newline or stream close completes it. */
+  private _pipeStderr(stderr: Readable): void {
+    const decoder = new StringDecoder('utf8');
+    let buffer = '';
+    stderr.on('data', (chunk: Buffer) => {
+      buffer += decoder.write(chunk);
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        this._log(line);
+      }
+    });
+    stderr.on('close', () => {
+      buffer += decoder.end();
+      if (buffer.length > 0) {
+        this._log(buffer);
+        buffer = '';
+      }
+    });
   }
 
   /** Races `request` against the connection closing, so a request against a dead server

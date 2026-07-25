@@ -159,6 +159,32 @@ describe('AcpConnection', () => {
     await expect(connection.start(OPTIONS, '/work')).rejects.toThrow(/protocol version/);
   });
 
+  it('forwards child stderr to the log, line-by-line, buffering partial lines', async () => {
+    const logs: string[] = [];
+    const { child, stderr } = createMockAgentChild();
+    const serverProcess = new KlorbServerProcess(() => child);
+    const listener: SessionUpdateListener = {
+      onAgentText: () => undefined,
+      onThoughtText: () => undefined,
+      onToolCallStarted: () => undefined,
+      onToolCallUpdated: () => undefined,
+    };
+    const connection = new AcpConnection(
+      serverProcess,
+      listener,
+      (message: string) => logs.push(message),
+      500
+    );
+    await connection.start(OPTIONS, '/work');
+
+    stderr.write('DEBUG one\nDEBUG two\nDEBUG thr');
+    await vi.waitFor(() => expect(logs).toContain('DEBUG two'));
+    expect(logs).not.toContain('DEBUG thr');
+
+    stderr.write('ee\n');
+    await vi.waitFor(() => expect(logs).toContain('DEBUG three'));
+  });
+
   it('stop() rejects an in-flight prompt with a restart-style error', async () => {
     const agent = new MockAgent();
     agent.onPrompt = () => new Promise<acp.PromptResponse>(() => undefined);

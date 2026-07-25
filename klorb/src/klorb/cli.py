@@ -25,7 +25,7 @@ from klorb.openrouter import OpenRouterApiProvider
 from klorb.process_config import ProcessConfig, apply_cli_flags_to_session, load_process_config
 from klorb.role import OPERATOR_ROLE_NAME, get_role
 from klorb.server import AcpServer, ServerStreams
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, generate_session_id
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens
 from klorb.tools.registry import ToolRegistry
@@ -592,9 +592,24 @@ def run_server_cli(argv: list[str]) -> int:
     interpreter's ordinary `KeyboardInterrupt`, which unwinds the blocked read the same way it
     would for any other Python script. It's caught here so the process exits cleanly with
     status 0 instead of printing a traceback.
+
+    Configures logging (`configure_logging(repl_mode=False, log_path=...)`) before anything
+    else runs, so every subsequent log call -- including `process_config.config_warnings`
+    below -- is captured. `repl_mode=False` sends records to stderr (visible to a client, e.g.
+    the VSCode plugin, that captures the server subprocess's stderr) in addition to the session
+    log file; unlike a one-shot prompt (see
+    docs/adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md), a server
+    process has no interactive/headless distinction to key that default off of and no single
+    `Session` whose id could name the log file -- `KlorbAcpAgent.new_session` may replace it
+    many times over the process's life -- so the log file is instead keyed off a
+    `generate_session_id()`-shaped id minted for the server process itself.
     """
     parser = build_server_parser()
     args = parser.parse_args(argv)
+
+    log_path = session_log_path(f"server-{generate_session_id()}")
+    configure_logging(repl_mode=False, log_path=log_path)
+    logger.debug("klorb server logging to %s", log_path)
 
     cwd = Path.cwd()
     config_flag_path = Path(args.config) if args.config is not None else None

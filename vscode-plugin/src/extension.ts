@@ -51,11 +51,15 @@ function sessionCwd(): string {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const outputChannel = vscode.window.createOutputChannel('Klorb');
+  context.subscriptions.push(outputChannel);
+  const log = (message: string): void => outputChannel.appendLine(message);
+
   const serverProcess = new KlorbServerProcess();
   const editorIntegration = new EditorIntegration(realEditorIntegrationVsCode());
   context.subscriptions.push(editorIntegration);
   const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration);
-  const connection = new AcpConnection(serverProcess, provider);
+  const connection = new AcpConnection(serverProcess, provider, log);
   provider.setConnection(connection);
   context.subscriptions.push({ dispose: () => connection.stop() });
 

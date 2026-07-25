@@ -192,6 +192,22 @@
 
 ### Bugs
 
+Connection to the ACP server does not read any file, because it believes it needs to escalate to
+the user for permission, which is always denied because we haven't yet implemented permission
+screens:
+
+```
+{"ts": "2026-07-25 01:46:22", "level": "INFO", "log": "klorb.session.mixins.turns", "msg": "Turn tool-call round 1/200 for xiaomi/mimo-v2.5"}
+{"ts": "2026-07-25 01:46:22", "level": "INFO", "log": "klorb.session.mixins.tool_execution", "msg": "Dispatching 1 tool call(s) requested by the model: ['ReadFile']"}
+{"ts": "2026-07-25 01:46:22", "level": "INFO", "log": "klorb.session.mixins.tool_execution", "msg": "Tool call 1/50 this turn, 1/200 this session: ReadFile({\"filename\": \"/home/aaron/src/klorb/TODO.md\"}) [id=call_b052e06f6ce3460d965af928]"}
+{"ts": "2026-07-25 01:46:22", "level": "DEBUG", "log": "klorb.session.mixins.tool_execution", "msg": "Tool call ReadFile parsed arguments: {'filename': '/home/aaron/src/klorb/TODO.md'}"}
+{"ts": "2026-07-25 01:46:22", "level": "DEBUG", "log": "klorb.tools.read_file", "msg": "ReadFile /home/aaron/src/klorb/TODO.md (start_line=None, end_line=None)"}
+{"ts": "2026-07-25 01:46:22", "level": "WARNING", "log": "klorb.session.mixins.tool_execution", "msg": "Tool call ReadFile({\"filename\": \"/home/aaron/src/klorb/TODO.md\"}) failed: Permission requires confirmation: read /home/aaron/src/klorb/TODO.md"}
+```
+
+...is it b/c the workspace isn't trusted yet? Do we need to do that before proceding to increment 5?
+
+
 ### Feature backlog
 
 * Figure out how to align to the Agent Host Protocol: <https://microsoft.github.io/agent-host-protocol/>

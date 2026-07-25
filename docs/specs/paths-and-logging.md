@@ -51,8 +51,16 @@ paths or calling `logging.basicConfig` itself.
       already exist), prunes old logs from that directory via `prune_session_logs()` (see
       below), and attaches a `FileHandler` for it. When `log_path` is `None`, no file is
       created, no pruning happens, and no `FileHandler` is attached.
-    * Calls `logging.basicConfig(level="NOTSET", handlers=[...], force=True)` with whichever
-      handlers were selected above.
+    * Calls `logging.basicConfig(level=root_level, handlers=[...], force=True)` with whichever
+      handlers were selected above, where `root_level` is `klorb_log_level` (module constant,
+      default `logging.DEBUG`), overridable via the `KLORB_LOG_LEVEL` environment variable (a
+      level name, e.g. `KLORB_LOG_LEVEL=INFO`); an unset or unrecognized value falls back to
+      `klorb_log_level`, resolved lazily at call time via `_resolve_klorb_log_level()`.
+    * Sets the `httpcore`, `httpx`, and `openai` loggers (`_THIRD_PARTY_LOG_LEVELS`) to their
+      own default level — `WARNING`, `WARNING`, and `INFO` respectively — or to `root_level`
+      instead when `root_level` is more terse (a higher numeric value) than that default, so a
+      terser `KLORB_LOG_LEVEL` also quiets these noisy third-party loggers rather than leaving
+      them at their normally-chattier defaults.
   * `prune_session_logs(logs_dir, *, keep_path, max_files=DEFAULT_MAX_SESSION_LOG_FILES,
     max_bytes=DEFAULT_MAX_SESSION_LOG_BYTES) -> None`, which deletes the oldest `*.log` files
     in `logs_dir` so that, once the new log file `keep_path` is opened, the directory holds at
@@ -122,6 +130,10 @@ paths or calling `logging.basicConfig` itself.
 
 * `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR`, `KLORB_STATE_DIR` — override the corresponding
   default directory. Read once, at process start (when `klorb.paths` is first imported).
+* `KLORB_LOG_LEVEL` — overrides `klorb_log_level` (default `logging.DEBUG`), the root logger
+  level `configure_logging()` sets on each call. Read lazily at each `configure_logging()` call
+  (not at import time), so a value loaded from `.env` partway through startup is honored. An
+  unset or unrecognized level name is ignored and falls back to `klorb_log_level`.
 
 ## Out of scope
 

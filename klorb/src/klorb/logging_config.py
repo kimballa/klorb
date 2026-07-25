@@ -6,6 +6,7 @@ REPL) a handler that surfaces WARNING+ records in the live conversation history.
 import io
 import json
 import logging
+import os
 import tempfile
 from collections.abc import Iterable, Iterator
 from datetime import datetime
@@ -33,6 +34,43 @@ The newly-opened session's own file is not yet counted against this (it starts e
 over the session); this bounds the accumulated *older* logs. The single newest existing log is
 always retained even when it alone exceeds this, so a big log is never deleted merely for being
 big — see `prune_session_logs()`."""
+
+klorb_log_level: int = logging.DEBUG
+"""Default level for klorb's root logger, set by `configure_logging()`. Overridable via the
+`KLORB_LOG_LEVEL` environment variable (e.g. `KLORB_LOG_LEVEL=INFO`); an unset or unrecognized
+value falls back to this default. Also the floor `_THIRD_PARTY_LOG_LEVELS` entries get raised
+to when this level is more terse than their own default — see `_resolve_klorb_log_level()` and
+docs/specs/paths-and-logging.md."""
+
+KLORB_LOG_LEVEL_ENV_VAR = "KLORB_LOG_LEVEL"
+
+_THIRD_PARTY_LOG_LEVELS: dict[str, int] = {
+    "httpcore": logging.WARNING,
+    "httpx": logging.WARNING,
+    "openai": logging.INFO,
+}
+"""Default levels for chatty third-party loggers, applied by `configure_logging()`. Each is
+raised to `klorb_log_level` (env-overridden) instead when that level is more terse (a higher
+numeric value) than the default listed here."""
+
+
+def _resolve_klorb_log_level() -> int:
+    """Resolve the effective root log level: the `KLORB_LOG_LEVEL` env var if set to a
+    recognized level name (e.g. `DEBUG`, `INFO`, `WARNING`), else `klorb_log_level`. Resolved
+    lazily (at call time, not import time) so a value supplied via a `.env` file — loaded by
+    `klorb.cli.main()`'s `load_dotenv()` call before `configure_logging()` runs — is actually
+    honored, unlike a module-level constant computed from `os.environ` at import time.
+    """
+    override = os.environ.get(KLORB_LOG_LEVEL_ENV_VAR)
+    if not override:
+        return klorb_log_level
+    level = logging.getLevelNamesMapping().get(override.strip().upper())
+    if level is None:
+        logger.warning(
+            "Ignoring invalid %s=%r; using default level %s",
+            KLORB_LOG_LEVEL_ENV_VAR, override, logging.getLevelName(klorb_log_level))
+        return klorb_log_level
+    return level
 
 
 def session_log_path(session_id: str) -> Path:
@@ -175,6 +213,12 @@ def configure_logging(
     its output is mounted directly into the conversation history for a person to read. Every
     other handler gets `JsonLogFormatter`, so the console/session-log output stays valid JSON
     regardless of what a logged message contains.
+
+    The root logger's level is `klorb_log_level`, overridable via the `KLORB_LOG_LEVEL`
+    environment variable (see `_resolve_klorb_log_level()`). The chatty third-party loggers in
+    `_THIRD_PARTY_LOG_LEVELS` (`httpcore`, `httpx`, `openai`) are set to their own default level
+    from that mapping, or to the resolved klorb level when that's more terse (a higher numeric
+    value) than their default.
     """
     handlers: list[logging.Handler] = [TextualHandler()] if repl_mode else [logging.StreamHandler()]
 
@@ -197,7 +241,10 @@ def configure_logging(
         if handler.formatter is None:
             handler.setFormatter(json_formatter)
 
-    logging.basicConfig(level="NOTSET", handlers=handlers, force=True)
+    root_level = _resolve_klorb_log_level()
+    logging.basicConfig(level=root_level, handlers=handlers, force=True)
+    for logger_name, default_level in _THIRD_PARTY_LOG_LEVELS.items():
+        logging.getLogger(logger_name).setLevel(max(default_level, root_level))
 
 
 def crash_log_path(workspace_root: Path) -> Path:

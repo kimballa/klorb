@@ -1055,13 +1055,33 @@ def test_run_server_cli_logs_config_warnings(
     with patch("klorb.cli.TrustManager") as mock_tm_cls:
         mock_tm_cls.return_value.resolve_workspace.return_value = Workspace(
             path=Path.cwd(), trusted=False)
-        with patch("klorb.cli.ServerStreams") as mock_streams_cls:
-            mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
-            with patch("klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))):
-                with caplog.at_level("WARNING"):
-                    cli.run_server_cli([])
+        with patch("klorb.cli.configure_logging"):
+            with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+                mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
+                with patch(
+                    "klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))
+                ):
+                    with caplog.at_level("WARNING"):
+                        cli.run_server_cli([])
 
     assert "bad klorb-config.json" in caplog.text
+
+
+def test_run_server_cli_configures_logging_to_stderr_and_session_log_file() -> None:
+    """`repl_mode=False` sends records to a plain `StreamHandler` (stderr) in addition to the
+    session log file, so a client that captures the server subprocess's stderr (e.g. the
+    VSCode plugin) sees debug-level output too -- see docs/specs/paths-and-logging.md."""
+    with patch("klorb.cli.generate_session_id", return_value="some-session-id"):
+        with patch("klorb.cli.configure_logging") as mock_configure_logging:
+            with patch("klorb.cli.ServerStreams") as mock_streams_cls:
+                mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
+                with patch(
+                    "klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))
+                ):
+                    cli.run_server_cli([])
+
+    mock_configure_logging.assert_called_once_with(
+        repl_mode=False, log_path=session_log_path("server-some-session-id"))
 
 
 def test_version_flag_exits_with_version(capsys: pytest.CaptureFixture[str]) -> None:
