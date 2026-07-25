@@ -1,12 +1,17 @@
 // © Copyright 2026 Aaron Kimball
+// Importing these modules registers the <vscode-textarea>/<vscode-button> custom elements
+// with the browser; the components themselves are rendered from App.tsx/PromptInput.tsx.
+import '@vscode-elements/elements/dist/vscode-button/index.js';
+import '@vscode-elements/elements/dist/vscode-textarea/index.js';
 import { createRoot } from 'react-dom/client';
 
-import { App, type ChatEntry, type VsCodeApi } from './App';
+import { App, type VsCodeApi } from './App';
+import type { HistoryEntry } from './historyModel';
 
 declare function acquireVsCodeApi(): VsCodeApi;
 
 interface SessionState {
-  entries: ChatEntry[];
+  entries: HistoryEntry[];
 }
 
 function main(): void {
