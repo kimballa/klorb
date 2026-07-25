@@ -195,7 +195,8 @@ class SessionToolExecutionMixin(SessionBase):
                         callbacks.on_tool_call_started(ToolCallStartedEvent(
                             call_id=call.id, name=call.name, args=args))
                     result = tool.apply(args)
-                    logger.info("Tool call %s succeeded: %s", call.name, result)
+                    logger.info("Tool call %s succeeded", call.name)
+                    logger.debug("Tool call %s result: %s", call.name, result)
                 except MultiPermissionAskRequired as multi_ask_exc:
                     outcome = self._resolve_multi_permission_ask(call, args, multi_ask_exc, callbacks)
                     result, error, category, response_body = (

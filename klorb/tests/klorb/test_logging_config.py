@@ -28,6 +28,18 @@ def test_session_log_path_builds_path_under_session_logs_dir() -> None:
     assert log_path == logging_config.SESSION_LOGS_DIR / "2026-06-30-10-00-happy-otter.log"
 
 
+def test_configure_minimal_logging_attaches_a_text_stream_handler() -> None:
+    logging_config.configure_minimal_logging()
+
+    handlers = logging.getLogger().handlers
+    assert len(handlers) == 1
+    assert type(handlers[0]) is logging.StreamHandler
+    record = logging.LogRecord("klorb.test", logging.WARNING, __file__, 1, "uh oh", None, None)
+    formatted = handlers[0].format(record)
+    assert "uh oh" in formatted
+    assert not formatted.startswith("{")
+
+
 def test_configure_logging_creates_session_log_file_when_given_a_path() -> None:
     log_path = logging_config.session_log_path("some-session-id")
     logging_config.configure_logging(repl_mode=True, log_path=log_path)
@@ -55,6 +67,41 @@ def test_configure_logging_attaches_stream_handler_outside_repl_mode() -> None:
     handlers = logging.getLogger().handlers
     assert not any(isinstance(handler, TextualHandler) for handler in handlers)
     assert any(type(handler) is logging.StreamHandler for handler in handlers)
+
+
+def test_configure_logging_formats_stderr_as_text_not_json() -> None:
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    stream_handler = next(
+        h for h in logging.getLogger().handlers if type(h) is logging.StreamHandler)
+    record = logging.LogRecord(
+        "klorb.test", logging.INFO, __file__, 1, "hello there", None, None)
+
+    formatted = stream_handler.format(record)
+
+    assert "hello there" in formatted
+    assert not formatted.startswith("{")
+
+
+def test_configure_logging_prepends_stderr_prefix() -> None:
+    logging_config.configure_logging(repl_mode=False, log_path=None, stderr_prefix="[server] ")
+
+    stream_handler = next(
+        h for h in logging.getLogger().handlers if type(h) is logging.StreamHandler)
+    record = logging.LogRecord(
+        "klorb.test", logging.INFO, __file__, 1, "hello there", None, None)
+
+    assert stream_handler.format(record).startswith("[server] ")
+
+
+def test_configure_logging_keeps_json_formatter_for_file_handler() -> None:
+    log_path = logging_config.session_log_path("json-format-session")
+    logging_config.configure_logging(repl_mode=False, log_path=log_path)
+
+    file_handler = next(
+        h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler))
+
+    assert isinstance(file_handler.formatter, logging_config.JsonLogFormatter)
 
 
 def test_configure_logging_writes_log_records_to_file() -> None:

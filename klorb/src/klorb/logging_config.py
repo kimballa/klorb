@@ -44,6 +44,15 @@ docs/specs/paths-and-logging.md."""
 
 KLORB_LOG_LEVEL_ENV_VAR = "KLORB_LOG_LEVEL"
 
+TEXT_LOG_FORMAT = "%(asctime)s - %(levelname)s:%(name)s:%(message)s"
+"""`%`-style format string shared by every human-readable (non-JSON) log handler: the
+`TuiHistoryLogHandler` mounted into the TUI conversation history, and the console handler
+(`TextualHandler`/`StreamHandler`) `configure_logging()` attaches for stderr output. Defined once
+here so the two stay identical rather than drifting if edited separately."""
+
+TEXT_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+"""`datefmt` paired with `TEXT_LOG_FORMAT`, and also used by `JsonLogFormatter`'s `ts` field."""
+
 _THIRD_PARTY_LOG_LEVELS: dict[str, int] = {
     "httpcore": logging.WARNING,
     "httpx": logging.WARNING,
@@ -193,26 +202,50 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(payload)
 
 
+def configure_minimal_logging(is_server: bool = False) -> None:
+    """Install a bare-bones stderr text handler as a stopgap until `configure_logging()` runs.
+
+    `klorb.cli.main()` calls this immediately after `load_dotenv()`, before argument parsing or
+    subcommand dispatch, so any log call made in that window (which can be arbitrarily long: it
+    includes `build_parser()`/`parse_args()`, `TrustManager` resolution, `load_process_config()`,
+    etc.) is still visible on stderr instead of silently falling through to `logging`'s built-in
+    `lastResort` handler. `configure_logging()` (`force=True`) replaces these handlers once the
+    caller knows enough about the invocation (subcommand, `repl_mode`, `log_path`) to configure
+    logging properly.
+    """
+    prefix="[server] " if is_server else ""
+    logging.basicConfig(
+        level=_resolve_klorb_log_level(), handlers=[logging.StreamHandler()],
+        format=f"{prefix}{TEXT_LOG_FORMAT}", datefmt=TEXT_LOG_DATEFMT, force=True)
+
+
 def configure_logging(
     *,
     repl_mode: bool,
     log_path: Path | None,
     max_log_files: int = DEFAULT_MAX_SESSION_LOG_FILES,
     max_log_bytes: int = DEFAULT_MAX_SESSION_LOG_BYTES,
+    stderr_prefix: str = "",
 ) -> None:
     """Configure the root logger.
 
     In the REPL (`repl_mode=True`), logs go to a `TextualHandler` (the active Textual
     app's console, or stderr when none is running), plus a `TuiHistoryLogHandler` that mounts
     any `WARNING`+ record into the running app's conversation history. Otherwise, for a one-shot
-    prompt, logs go directly to stderr. When `log_path` is given, log records are also written to
-    that file, and the session-logs directory is first pruned (via `prune_session_logs()`,
-    bounded by `max_log_files`/`max_log_bytes`) so old logs don't accumulate without limit.
+    prompt or the `server` subcommand, logs go directly to stderr. When `log_path` is given, log
+    records are also written to that file, and the session-logs directory is first pruned (via
+    `prune_session_logs()`, bounded by `max_log_files`/`max_log_bytes`) so old logs don't
+    accumulate without limit.
 
-    The `TuiHistoryLogHandler` (when present) is given a plain human-readable formatter, since
-    its output is mounted directly into the conversation history for a person to read. Every
-    other handler gets `JsonLogFormatter`, so the console/session-log output stays valid JSON
-    regardless of what a logged message contains.
+    The console handler (`TextualHandler`/`StreamHandler`) and the `TuiHistoryLogHandler` (when
+    present) both use the same plain human-readable `TEXT_LOG_FORMAT`, since one is stderr read
+    by a person at a terminal and the other is mounted directly into the conversation history for
+    a person to read. `stderr_prefix` is prepended to the console handler's format string only
+    (e.g. `"[server] "` for `klorb server`, whose stderr may be interleaved with other processes'
+    output by a client that captures it) -- the `TuiHistoryLogHandler` never takes a prefix, since
+    `repl_mode` and a non-empty `stderr_prefix` are never both true in practice. The file handler
+    (when `log_path` is given) always gets `JsonLogFormatter`, so session-log records stay valid
+    JSON regardless of what a logged message contains, for machine parsing.
 
     The root logger's level is `klorb_log_level`, overridable via the `KLORB_LOG_LEVEL`
     environment variable (see `_resolve_klorb_log_level()`). The chatty third-party loggers in
@@ -220,26 +253,25 @@ def configure_logging(
     from that mapping, or to the resolved klorb level when that's more terse (a higher numeric
     value) than their default.
     """
-    handlers: list[logging.Handler] = [TextualHandler()] if repl_mode else [logging.StreamHandler()]
+    console_handler: logging.Handler = TextualHandler() if repl_mode else logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(
+        fmt=f"{stderr_prefix}{TEXT_LOG_FORMAT}", datefmt=TEXT_LOG_DATEFMT))
+    handlers: list[logging.Handler] = [console_handler]
 
     if repl_mode:
         tui_history_handler = TuiHistoryLogHandler()
         tui_history_handler.setLevel(logging.WARNING)
         tui_history_handler.setFormatter(logging.Formatter(
-            fmt="%(asctime)s - %(levelname)s:%(name)s:%(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"))
+            fmt=TEXT_LOG_FORMAT, datefmt=TEXT_LOG_DATEFMT))
         handlers.append(tui_history_handler)
 
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         prune_session_logs(
             log_path.parent, keep_path=log_path, max_files=max_log_files, max_bytes=max_log_bytes)
-        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
-
-    json_formatter = JsonLogFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-    for handler in handlers:
-        if handler.formatter is None:
-            handler.setFormatter(json_formatter)
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setFormatter(JsonLogFormatter(datefmt=TEXT_LOG_DATEFMT))
+        handlers.append(file_handler)
 
     root_level = _resolve_klorb_log_level()
     logging.basicConfig(level=root_level, handlers=handlers, force=True)

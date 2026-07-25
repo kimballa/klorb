@@ -55,6 +55,23 @@ def test_main_prints_prompt_response(capsys: pytest.CaptureFixture[str]) -> None
     assert capsys.readouterr().out == "model reply\n"
 
 
+def test_main_configures_minimal_logging_immediately_after_load_dotenv() -> None:
+    """`configure_minimal_logging()` must run right after `load_dotenv()`, before argument
+    parsing or subcommand dispatch, so a log call anywhere in that window still reaches
+    stderr -- see docs/specs/paths-and-logging.md."""
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "model reply"
+    parent = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.load_dotenv", parent.load_dotenv):
+            with patch("klorb.cli.configure_minimal_logging", parent.configure_minimal_logging):
+                with patch("sys.argv", ["klorb", "-m", "what is 2+2?"]):
+                    cli.main()
+
+    call_names = [name for name, _, _ in parent.mock_calls]
+    assert call_names.index("load_dotenv") < call_names.index("configure_minimal_logging")
+
+
 def test_main_accepts_long_message_flag() -> None:
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "model reply"
@@ -1070,7 +1087,9 @@ def test_run_server_cli_logs_config_warnings(
 def test_run_server_cli_configures_logging_to_stderr_and_session_log_file() -> None:
     """`repl_mode=False` sends records to a plain `StreamHandler` (stderr) in addition to the
     session log file, so a client that captures the server subprocess's stderr (e.g. the
-    VSCode plugin) sees debug-level output too -- see docs/specs/paths-and-logging.md."""
+    VSCode plugin) sees debug-level output too -- see docs/specs/paths-and-logging.md. Each
+    stderr line is prefixed with `"[server] "` so it's distinguishable from other processes'
+    output a client may interleave with it."""
     with patch("klorb.cli.generate_session_id", return_value="some-session-id"):
         with patch("klorb.cli.configure_logging") as mock_configure_logging:
             with patch("klorb.cli.ServerStreams") as mock_streams_cls:
@@ -1081,7 +1100,8 @@ def test_run_server_cli_configures_logging_to_stderr_and_session_log_file() -> N
                     cli.run_server_cli([])
 
     mock_configure_logging.assert_called_once_with(
-        repl_mode=False, log_path=session_log_path("server-some-session-id"))
+        repl_mode=False, log_path=session_log_path("server-some-session-id"),
+        stderr_prefix="[server] ")
 
 
 def test_version_flag_exits_with_version(capsys: pytest.CaptureFixture[str]) -> None:

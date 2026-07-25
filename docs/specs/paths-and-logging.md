@@ -30,11 +30,24 @@ paths or calling `logging.basicConfig` itself.
     `klorb/src/klorb/session.py` as `yyyy-mm-dd-hh-mm-<nonce>`, where `<nonce>` is a
     two-word kebab-case slug from `coolname.generate_slug(2)`, the resulting log file name
     takes the same form (e.g. `2026-06-30-15-38-festive-frog.log`).
+  * `configure_minimal_logging() -> None`, which installs a single stderr `logging.StreamHandler`
+    formatted with `TEXT_LOG_FORMAT`/`TEXT_LOG_DATEFMT` at the resolved klorb log level
+    (`_resolve_klorb_log_level()`), via `logging.basicConfig(..., force=True)`. `klorb.cli.main()`
+    calls this immediately after `load_dotenv()`, before argument parsing or subcommand dispatch,
+    so a log call anywhere in that window still reaches stderr instead of falling through to
+    `logging`'s built-in `lastResort` handler. The real `configure_logging()` call later in each
+    code path replaces these handlers (`force=True`).
   * `configure_logging(*, repl_mode: bool, log_path: Path | None, max_log_files: int = ...,
-    max_log_bytes: int = ...) -> None`, which:
+    max_log_bytes: int = ..., stderr_prefix: str = "") -> None`, which:
     * Attaches a `TextualHandler` (the active Textual app's console, or stderr when none is
       running) when `repl_mode` is True; otherwise attaches a plain `logging.StreamHandler`
-      (stderr) for a one-shot prompt.
+      (stderr) for a one-shot prompt or the `server` subcommand. This handler is formatted with
+      the same plain, human-readable `TEXT_LOG_FORMAT`/`TEXT_LOG_DATEFMT` as the
+      `TuiHistoryLogHandler` below, not JSON, so stderr output reads the same whether it's coming
+      from the REPL's pre-mount console fallback or a one-shot/server process. `stderr_prefix` is
+      prepended to this handler's format string only — `klorb.cli.run_server_cli()` passes
+      `"[server] "` so a client that captures the server subprocess's stderr can tell its lines
+      apart from other interleaved output.
     * Also attaches a `TuiHistoryLogHandler`, level-filtered to `WARNING`+, when `repl_mode` is
       True. Its `emit()` posts a `TuiHistoryNotice` message to whichever Textual `App` is
       currently running (found via `textual._context.active_app`, the same lookup
@@ -49,8 +62,10 @@ paths or calling `logging.basicConfig` itself.
       `repl_mode` is False and this handler is never attached at all).
     * When `log_path` is not `None`, also creates its parent directory (if it doesn't
       already exist), prunes old logs from that directory via `prune_session_logs()` (see
-      below), and attaches a `FileHandler` for it. When `log_path` is `None`, no file is
-      created, no pruning happens, and no `FileHandler` is attached.
+      below), and attaches a `FileHandler` for it, formatted with `JsonLogFormatter` so the
+      session-log file stays valid JSON (one object per line) regardless of what a logged
+      message contains, for machine parsing. When `log_path` is `None`, no file is created, no
+      pruning happens, and no `FileHandler` is attached.
     * Calls `logging.basicConfig(level=root_level, handlers=[...], force=True)` with whichever
       handlers were selected above, where `root_level` is `klorb_log_level` (module constant,
       default `logging.DEBUG`), overridable via the `KLORB_LOG_LEVEL` environment variable (a
@@ -113,7 +128,9 @@ paths or calling `logging.basicConfig` itself.
     ../adrs/tee-textual-crash-output-to-a-tmp-file.md).
 * `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `load_dotenv()` first, so a `.env`
   file can supply `KLORB_STATE_DIR` (or the other `KLORB_*` directory env vars) before
-  logging is set up. It then parses CLI arguments, resolves whether the session is
+  logging is set up, then immediately calls `configure_minimal_logging()` as a stopgap before
+  argument parsing or subcommand dispatch (`init`/`system-prompt`/`models`/`show-config`/
+  `server`) run. It then parses CLI arguments, resolves whether the session is
   interactive (see [[session-and-turns]] for the `--interactive` flag's defaulting rules),
   and constructs the `Session` (which assigns its id). `session_log` defaults to True when
   interactive and False for a one-shot prompt; the `--session-log` / `--no-session-log`

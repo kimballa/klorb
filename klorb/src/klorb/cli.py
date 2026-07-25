@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from klorb import __version__
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
-from klorb.logging_config import configure_logging, session_log_path
+from klorb.logging_config import configure_logging, configure_minimal_logging, session_log_path
 from klorb.models.model import Model
 from klorb.models.openrouter_pricing import (
     MAX_PRICING_REQUESTS_PER_SECOND,
@@ -593,11 +593,13 @@ def run_server_cli(argv: list[str]) -> int:
     would for any other Python script. It's caught here so the process exits cleanly with
     status 0 instead of printing a traceback.
 
-    Configures logging (`configure_logging(repl_mode=False, log_path=...)`) before anything
-    else runs, so every subsequent log call -- including `process_config.config_warnings`
-    below -- is captured. `repl_mode=False` sends records to stderr (visible to a client, e.g.
-    the VSCode plugin, that captures the server subprocess's stderr) in addition to the session
-    log file; unlike a one-shot prompt (see
+    Configures logging (`configure_logging(repl_mode=False, log_path=..., stderr_prefix="[server]
+    ")`) before anything else runs, so every subsequent log call -- including
+    `process_config.config_warnings` below -- is captured. `repl_mode=False` sends records to
+    stderr (visible to a client, e.g. the VSCode plugin, that captures the server subprocess's
+    stderr) in addition to the session log file; the `"[server] "` prefix marks each stderr line
+    as coming from this process when a client interleaves it with output from others. Unlike a
+    one-shot prompt (see
     docs/adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md), a server
     process has no interactive/headless distinction to key that default off of and no single
     `Session` whose id could name the log file -- `KlorbAcpAgent.new_session` may replace it
@@ -608,7 +610,7 @@ def run_server_cli(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     log_path = session_log_path(f"server-{generate_session_id()}")
-    configure_logging(repl_mode=False, log_path=log_path)
+    configure_logging(repl_mode=False, log_path=log_path, stderr_prefix="[server] ")
     logger.debug("klorb server logging to %s", log_path)
 
     cwd = Path.cwd()
@@ -649,6 +651,10 @@ def main() -> None:
     docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md.
     """
     load_dotenv()
+    # Call `configure_minimal_logging()` immediately after before argument parsing or subcommand
+    # dispatch -- so a log call anywhere in that window still reaches stderr.
+    is_server: bool = bool(sys.argv and len(sys.argv) > 1 and sys.argv[1] == SERVER_SUBCOMMAND)
+    configure_minimal_logging(is_server)
 
     if len(sys.argv) > 1 and sys.argv[1] == INIT_SUBCOMMAND:
         raise SystemExit(run_init_cli(sys.argv[2:]))
@@ -713,6 +719,8 @@ def main() -> None:
         tool_registry=tool_registry,
     )
 
+    # Replace early-bird logging setup with a full config now that we have terminal / interactivity
+    # flags parsed and log path established.
     log_path = session_log_path(session.id) if session_log else None
     configure_logging(repl_mode=interactive, log_path=log_path)
     logger.debug("Logging to %s", log_path)
