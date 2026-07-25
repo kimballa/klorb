@@ -196,7 +196,7 @@ Connection to the ACP server does not read any file, because it believes it need
 the user for permission, which is always denied because we haven't yet implemented permission
 screens:
 
-```
+```plain
 {"ts": "2026-07-25 01:46:22", "level": "INFO", "log": "klorb.session.mixins.turns", "msg": "Turn tool-call round 1/200 for xiaomi/mimo-v2.5"}
 {"ts": "2026-07-25 01:46:22", "level": "INFO", "log": "klorb.session.mixins.tool_execution", "msg": "Dispatching 1 tool call(s) requested by the model: ['ReadFile']"}
 {"ts": "2026-07-25 01:46:22", "level": "INFO", "log": "klorb.session.mixins.tool_execution", "msg": "Tool call 1/50 this turn, 1/200 this session: ReadFile({\"filename\": \"/home/aaron/src/klorb/TODO.md\"}) [id=call_b052e06f6ce3460d965af928]"}
@@ -206,7 +206,6 @@ screens:
 ```
 
 ...is it b/c the workspace isn't trusted yet? Do we need to do that before proceding to increment 5?
-
 
 ### Feature backlog
 
