@@ -6,7 +6,8 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'child_process';
 export type SpawnFn = (
   command: string,
   args: string[],
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  cwd: string
 ) => ChildProcessWithoutNullStreams;
 
 /** Where to find `klorb` and what environment to launch it with. */
@@ -18,7 +19,7 @@ export interface KlorbServerOptions {
   configPath?: string;
 }
 
-const defaultSpawnFn: SpawnFn = (command, args, env) => spawn(command, args, { env });
+const defaultSpawnFn: SpawnFn = (command, args, env, cwd) => spawn(command, args, { env, cwd });
 
 /**
  * Owns the one `klorb server` child process: spawning it with the right arguments and
@@ -48,15 +49,21 @@ export class KlorbServerProcess {
   /**
    * Stops any running server, then spawns a fresh `klorb server` with the given options,
    * returning the new child process so the caller can bind a protocol connection to its
-   * stdio streams.
+   * stdio streams. `cwd` is the workspace folder the session will be opened against — it
+   * becomes the server process's own working directory, which is what `ProcessConfig`
+   * resolution (`klorb.process_config.load_process_config`) uses to find and trust the
+   * project's `.klorb/klorb-config.json` (see docs/specs/klorb-server.md and
+   * docs/specs/projects-and-trust.md). Without it, the server inherits the extension host's
+   * own cwd instead of the open workspace, and every workspace-scoped permission grant
+   * (e.g. `readDirs`) is resolved against the wrong directory.
    */
-  public start(options: KlorbServerOptions): ChildProcessWithoutNullStreams {
+  public start(options: KlorbServerOptions, cwd: string): ChildProcessWithoutNullStreams {
     this.stop();
     const args = ['server'];
     if (options.configPath !== undefined && options.configPath.length > 0) {
       args.push('--config', options.configPath);
     }
-    const child = this._spawnFn(options.command, args, options.env);
+    const child = this._spawnFn(options.command, args, options.env, cwd);
     this._child = child;
     return child;
   }

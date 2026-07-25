@@ -24,7 +24,7 @@ describe('KlorbServerProcess', () => {
     const child = makeFakeChild();
     const server = new KlorbServerProcess(() => child);
 
-    expect(server.start({ command: 'klorb', env: {} })).toBe(child);
+    expect(server.start({ command: 'klorb', env: {} }, '/workspace')).toBe(child);
     expect(server.child).toBe(child);
     expect(server.isRunning).toBe(true);
   });
@@ -32,7 +32,7 @@ describe('KlorbServerProcess', () => {
   it('kills the child on stop()', () => {
     const child = makeFakeChild();
     const server = new KlorbServerProcess(() => child);
-    server.start({ command: 'klorb', env: {} });
+    server.start({ command: 'klorb', env: {} }, '/workspace');
 
     server.stop();
 
@@ -53,8 +53,8 @@ describe('KlorbServerProcess', () => {
       return next;
     });
 
-    server.start({ command: 'klorb', env: {} });
-    server.start({ command: 'klorb', env: {} });
+    server.start({ command: 'klorb', env: {} }, '/workspace');
+    server.start({ command: 'klorb', env: {} }, '/workspace');
 
     expect(first.killed).toBe(true);
     expect(second.killed).toBe(false);
@@ -67,7 +67,7 @@ describe('KlorbServerProcess', () => {
       spawnArgs = args;
       return makeFakeChild();
     });
-    server.start({ command: 'klorb', env: {} });
+    server.start({ command: 'klorb', env: {} }, '/workspace');
 
     expect(spawnArgs).toEqual(['server']);
   });
@@ -78,7 +78,7 @@ describe('KlorbServerProcess', () => {
       spawnArgs = args;
       return makeFakeChild();
     });
-    server.start({ command: 'klorb', env: {}, configPath: '' });
+    server.start({ command: 'klorb', env: {}, configPath: '' }, '/workspace');
 
     expect(spawnArgs).toEqual(['server']);
   });
@@ -89,8 +89,19 @@ describe('KlorbServerProcess', () => {
       spawnArgs = args;
       return makeFakeChild();
     });
-    server.start({ command: 'klorb', env: {}, configPath: '/tmp/klorb-config.json' });
+    server.start({ command: 'klorb', env: {}, configPath: '/tmp/klorb-config.json' }, '/workspace');
 
     expect(spawnArgs).toEqual(['server', '--config', '/tmp/klorb-config.json']);
+  });
+
+  it('passes cwd through to the spawn function', () => {
+    let spawnCwd: string | undefined;
+    const server = new KlorbServerProcess((_command, _args, _env, cwd) => {
+      spawnCwd = cwd;
+      return makeFakeChild();
+    });
+    server.start({ command: 'klorb', env: {} }, '/workspace/project');
+
+    expect(spawnCwd).toBe('/workspace/project');
   });
 });
