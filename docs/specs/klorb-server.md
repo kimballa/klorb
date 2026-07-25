@@ -13,10 +13,12 @@ full architecture this checkpoint is the first increment of (protocol mapping, t
 extensibility rules, the increments still to come).
 
 At this checkpoint the server supports `initialize`, `session/new`, `session/prompt` with
-streamed response, thinking text, and tool-call activity, and `session/cancel` — a prompt
-against a plain-conversation model, or one that calls tools, is fully usable end to end. Every
-permission `"ask"` verdict still fails closed, since no `on_permission_ask` callback is wired up
-yet — lands in a later increment (see "Out of scope" below).
+streamed response, thinking text, and tool-call activity, `session/cancel`, and
+`session/request_permission` for both an ordinary permission `"ask"` verdict and an
+`EscalatePrivileges` request — a prompt against a plain-conversation model, one that calls
+tools, or one whose tools need interactive approval, is fully usable end to end. `AskUserQuestions`
+still fails closed, since no `on_ask_user_questions` callback is wired up yet — lands in
+`plan-016-007` (see "Out of scope" below).
 
 ## Wire protocol
 
@@ -49,11 +51,24 @@ yet — lands in a later increment (see "Out of scope" below).
 
 ### Extension methods
 
-None exist yet — `agentCapabilities._meta.klorb` is `{}`. Every `_klorb/*` request
-`KlorbAcpAgent` doesn't recognize gets the standard `-32601` method-not-found error; every
-unrecognized `_klorb/*` *notification* is silently ignored, per ACP's own extensibility rules.
-Later increments (`plan-016-007` and on) grow this section with each extension method's exact
-name, params/result shape, and capability flag as they land.
+`agentCapabilities._meta.klorb` is `{}` — no *agent*-advertised extension method exists yet.
+Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize gets the standard `-32601`
+method-not-found error; every unrecognized `_klorb/*` *notification* is silently ignored, per
+ACP's own extensibility rules. Later increments (`plan-016-007` and on) grow the agent side of
+this section as they land.
+
+One *client*-advertised extension method exists, called server → client:
+
+* **`_klorb/raiseToolCallLimit`** — sent when a turn's `max_tool_calls_per_turn`/
+  `max_tool_calls_per_session` cap is reached (see docs/specs/session-and-turns.md's tool-call
+  cap section). Params: `{sessionId: string, message: string}` (`message` is the same
+  human-readable cap-reached prompt `Session._confirm_limit_increase` builds for the TUI's
+  `ToolCallLimitScreen`). Result: `{approved: boolean}` — `true` doubles the reached cap and lets
+  the call proceed, exactly as the TUI's confirmation does. `TurnBridge` calls this only when the
+  client advertised `clientCapabilities._meta.klorb.raiseToolCallLimit = true` at `initialize`;
+  otherwise `on_tool_call_limit_reached` returns `False` immediately with no wire traffic at all,
+  and the turn fails with `ToolCallLimitExceeded` (the same fail-closed behavior a headless
+  one-shot run already has).
 
 ## How it works
 
@@ -109,15 +124,24 @@ name, params/result shape, and capability flag as they land.
   tool_call_started_update()`/`tool_call_finished_update()` (passing this turn's
   `Session.tool_registry`/`Session.config.workspace.path` through — see "Tool-call update
   mapping" below), plus a fresh `threading.Event` per turn as `cancel_event` — later increments
-  add handlers to this one class rather than new plumbing. **Ordering guarantee:** every
-  callback fires on the worker thread and is enqueued onto one `asyncio.Queue` via
-  `loop.call_soon_threadsafe`; a single pump task awaits each `session/update` send in exactly
-  the order the callbacks fired. One queue and one pump task per turn is what makes this an
-  actual guarantee rather than an accident of scheduling — independently-scheduled coroutines
-  wouldn't preserve order. `run_turn()` always drains and stops the pump task in a `finally`,
-  whether `send_turn()` succeeds, raises `klorb.api_provider.ResponseAborted` (a cancelled
-  turn), or raises anything else — the exception always propagates to the caller only after the
-  pump has fully drained, so no queued update is ever lost or reordered around it.
+  add handlers to this one class rather than new plumbing. `on_tool_call_started`/`on_tool_call`
+  additionally push/pop `event.call_id` on a per-turn stack, so a same-turn permission/escalation
+  ask can link itself to whichever call is currently in flight — see "Permission asks and
+  escalation" below. **Ordering guarantee:** every callback fires on the worker thread and is
+  enqueued onto one `asyncio.Queue` via `loop.call_soon_threadsafe`; a single pump task awaits
+  each `session/update` send in exactly the order the callbacks fired. One queue and one pump
+  task per turn is what makes this an actual guarantee rather than an accident of scheduling —
+  independently-scheduled coroutines wouldn't preserve order. `run_turn()` always drains and
+  stops the pump task in a `finally`, whether `send_turn()` succeeds, raises `klorb.api_provider.
+  ResponseAborted` (a cancelled turn), or raises anything else — the exception always propagates
+  to the caller only after the pump has fully drained, so no queued update is ever lost or
+  reordered around it. `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached`
+  are blocking asks rather than fire-and-forget notifications: each builds its
+  `session/request_permission`/`_klorb/raiseToolCallLimit` round trip as a coroutine and runs it
+  via `asyncio.run_coroutine_threadsafe(...).result()`, first `await`ing `queue.join()` inside
+  that coroutine so every `session/update` already enqueued has actually been sent before the
+  ask goes out on the wire — the same ordering guarantee, extended to asks, so a permission
+  prompt never overtakes the `tool_call` update that explains what it's about.
 
 ### Tool-call update mapping
 
@@ -191,6 +215,99 @@ directly rather than a live `Session`, so they're callable from a test with just
   rendering (a default summary/detail string, or no location/diff content) rather than
   propagating, with the reason logged at `debug` level.
 
+### Permission asks and escalation
+
+`Session.send_turn()`'s `on_permission_ask`/`on_escalate_privileges` callbacks (see
+docs/specs/permissions.md's "Interactive `"ask"` confirmation" section and
+docs/specs/session-and-turns.md) are both wired through `TurnBridge` onto the single ACP
+`session/request_permission` request — the same request shape both a permission ask and an
+`EscalatePrivileges` ask use, distinguished by their `_meta.klorb` payload, so a stock
+(non-klorb-aware) ACP client still gets a comprehensible approve/deny prompt for either. Neither
+callback fires for a `"auto"`/`"deny"` `permission_framework` session — `Session` itself
+short-circuits before ever calling back, exactly as it does for the TUI.
+
+* **Tool-call linkage.** Every `session/request_permission` names the `tool_call:
+  acp.schema.ToolCallUpdate` (just `toolCallId`, no other field) the ask belongs to:
+  `klorb.server.update_mapping.permission_ask_tool_call_update(call_id, fallback_title)` returns
+  `ToolCallUpdate(tool_call_id=call_id)` for the most recent call `TurnBridge`'s per-turn stack
+  has in flight (pushed on `on_tool_call_started`, popped on `on_tool_call` — asks are raised
+  from within `apply()`, so one is always live in practice), or, defensively, a freshly
+  synthesized id titled `fallback_title` (the ask's own `resource_description`/`description`)
+  when the stack is empty.
+* **Permission-ask options** (`klorb.server.update_mapping.permission_ask_options`, pure —
+  built from `PermissionAskContext.resource` alone): up to five fixed options, id encoding
+  `<action>:<scope>` —
+
+  | `optionId` | `kind` | Name | Always offered? |
+  | --- | --- | --- | --- |
+  | `allow:once` | `allow_once` | "Allow once" | yes |
+  | `deny:once` | `reject_once` | "Deny" | yes |
+  | `allow:session` | `allow_always` | "Allow for this session" | yes |
+  | `allow:workspace` | `allow_always` | "Always allow (workspace)" | only if `resource.is_persistable` |
+  | `allow:homedir` | `allow_always` | "Always allow (home config)" | only if `resource.is_persistable` |
+
+  A `StructuralResource` item (`resource.is_persistable` is `False` — see
+  docs/specs/permissions.md) offers only the first three: it names no filesystem path, command
+  pattern, skill, or domain a workspace/homedir grant could be recorded against. This is a
+  narrower surface than the TUI's own 2D grid (no persistent-scope `Deny`, no free-text "Other"
+  row as a selectable option) — a client wanting the free-text redirect instead sets
+  `_meta.klorb.otherText` on its response (below), and persistent-scope denial isn't offered at
+  this checkpoint. Every option's own `_meta.klorb.scope` carries its `optionId`'s scope token,
+  so a client can style/group options without parsing ids itself.
+* **Escalation options** (`klorb.server.update_mapping.escalate_privileges_options`, fixed,
+  no per-context data): exactly `allow:once` (`allow_once`, "Approve for this session") and
+  `deny:once` (`reject_once`, "Deny") — an `EscalatePrivileges` grant is always session-scoped
+  and revokes when the session ends, so there is no persistent-scope option to offer at all.
+* **`_meta.klorb` on a permission-ask request**
+  (`klorb.server.update_mapping.permission_ask_meta`): always `resourceDescription`. For a
+  `BashTool` ask (`PermissionAskContext.bash_context` set): `commandText` (the full compound
+  command), `itemCommandText` (this item's own statement — see
+  docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md),
+  `itemIndex`/`itemTotal` (0-based, this item's position within its `sibling_items` batch —
+  mirroring `AskUserQuestionsItemContext.index`/`.total`'s own convention), `grantPatterns`
+  (`list[list[str]]`, the `commandRules` pattern a persistent grant would cover — the risk
+  classifier's own `suggested_pattern` when it offered one, else the same deterministic
+  literal-argv patterns `CommandResource.grant_preview()` computes; omitted entirely for a
+  non-`CommandResource` bash item, e.g. a redirect or structural item), and `riskLevel` (the
+  classifier's 0–10 `risk_score`, omitted when classification didn't run or failed).
+* **`_meta.klorb` on an escalation request**
+  (`klorb.server.update_mapping.escalate_privileges_meta`): `escalation.scope`/
+  `escalation.description`, so the client can render this as its own distinct flow (e.g. a
+  red-border panel) rather than an ordinary permission grid.
+* **Risk classification** reuses `klorb.permissions.risk_classifier.
+  resolve_item_risk_assessment(ctx, session=, process_config=)` directly — the same
+  gating/sibling-batching/per-session-caching function `klorb.tui.mixins.interactions.
+  InteractionsMixin._confirm_permission_ask` calls, whose own docstring calls out non-TUI reuse
+  (e.g. "a future VSCode plugin") as the reason it lives outside `klorb.tui` in the first place.
+  `TurnBridge.on_permission_ask` calls it synchronously — no `asyncio.to_thread` offload needed,
+  unlike the TUI, since the callback already runs on `Session.send_turn()`'s own worker thread,
+  off the event loop. On the first ask of a `sibling_items` batch this classifies every item in
+  one request (`classify_command_risk()`); the cache (keyed in `Session.tool_state`) means the
+  remaining items of the same compound command reuse that one report. Classifier failure (or
+  `tools.bash.riskClassifier.enabled=false`) degrades to `risk=None`: `grantPatterns` falls back
+  to the deterministic literal-argv computation, `riskLevel` is omitted, and the ask still
+  proceeds. `TurnBridge.on_permission_ask` also calls `record_decision_history()` right after
+  building the final decision, exactly as the TUI does, so a later item's/turn's classification
+  in the same session can calibrate against it.
+* **Decision mapping**
+  (`klorb.server.update_mapping.permission_decision_from_outcome`/
+  `escalate_privileges_decision_from_outcome`): a `cancelled` `RequestPermissionResponse.outcome`
+  maps to `PermissionDecision(action="deny", scope="once")` / `EscalatePrivilegesDecision(
+  approved=False)`. A `selected` outcome whose `_meta.klorb.otherText` is a non-empty string
+  (regardless of which `optionId` was actually selected alongside it) maps to
+  `PermissionDecision(action="deny", scope="once", other_text=...)` — the free-text redirect the
+  TUI's panel supports. Otherwise the `optionId`'s own `<action>:<scope>` is split back into the
+  decision directly (an unrecognized `optionId` raises `ValueError`, propagating as a turn
+  failure — a compliant client only ever echoes back an id this request itself offered); an
+  escalation `optionId` other than `allow:once` (including a client echoing back `deny:once`)
+  denies. `PermissionDecision.grant_patterns` is threaded through unconditionally from the risk
+  classifier's own suggestion (`None` when the classifier didn't suggest one, even if
+  `grantPatterns`'s display value fell back to the deterministic computation) — mirroring the
+  TUI's own unconditional threading — so a persistent grant this decision causes is recorded at
+  exactly the pattern the client displayed, never silently recomputed to something else.
+* **`permission_framework` interplay**: unchanged from docs/specs/permissions.md — `"auto"`/
+  `"deny"` sessions never reach `TurnBridge`'s callbacks at all; only `"ask"` does.
+
 ### Single top-level session
 
 The server supports exactly **one live `Session` at a time**, matching klorb's current
@@ -248,17 +365,32 @@ captured transcript, since it depends on a live model call; `initialize`/`sessio
 are a real captured transcript. `klorb/tests/klorb/server/test_acp_server_core.py` exercises
 the full streaming path end to end against a scripted provider.)
 
+A model turn that calls `Bash` under the default `permission_framework: "ask"` additionally
+sends a `session/request_permission` request mid-turn — this is the request the client answers,
+e.g. with `allow:session`, to let the command run:
+
+```text
+< {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"...","update":{"sessionUpdate":"tool_call","toolCallId":"call_1","title":"Run: ls","kind":"execute","status":"in_progress"}}}
+< {"jsonrpc":"2.0","id":3,"method":"session/request_permission","params":{"sessionId":"...","toolCall":{"toolCallId":"call_1"},"options":[{"optionId":"allow:once","kind":"allow_once","name":"Allow once","_meta":{"klorb":{"scope":"once"}}},{"optionId":"deny:once","kind":"reject_once","name":"Deny","_meta":{"klorb":{"scope":"once"}}},{"optionId":"allow:session","kind":"allow_always","name":"Allow for this session","_meta":{"klorb":{"scope":"session"}}}],"_meta":{"klorb":{"resourceDescription":"run shell command: ls","commandText":"ls","itemCommandText":"ls","itemIndex":0,"itemTotal":1,"riskLevel":0,"grantPatterns":[["ls"]]}}}}
+> {"jsonrpc":"2.0","id":3,"result":{"outcome":{"outcome":"selected","optionId":"allow:session"}}}
+```
+
 ## Out of scope
 
 * A stock ACP client doesn't yet render tool-call activity specially — the klorb VS Code
   plugin's own rendering (running animation, expandable detail, open-file/open-diff editor
   integration) lands in `plan-016-004`; this checkpoint only emits the `tool_call`/
   `tool_call_update` notifications themselves (see "Tool-call update mapping" above).
-* Every `"ask"` permission verdict fails closed: no `on_permission_ask` callback is wired
-  through `TurnBridge` yet, so a tool call that would prompt interactively in the TUI is denied
-  instead. Lands in `plan-016-005` (`session/request_permission`).
-* `AskUserQuestions` and `EscalatePrivileges` calls fail closed the same way, for the same
-  reason — no callback wired yet. Land in `plan-016-005`/`plan-016-007`.
+* A stock ACP client doesn't yet render a permission-ask option grid or an escalation panel
+  specially — the klorb VS Code plugin's own approval panels (option grid, command preview,
+  free-text "other", escalation styling) land in `plan-016-006`; this checkpoint only emits the
+  `session/request_permission` request itself (see "Permission asks and escalation" above).
+* No persistent-scope `Deny` option, and no free-text "Other" row as a selectable
+  `PermissionOption` — a client wants the free-text redirect via `_meta.klorb.otherText` on its
+  response instead (see "Permission asks and escalation" above); a genuinely first-class
+  persistent-deny option may be revisited if a real client needs one.
+* `AskUserQuestions` calls still fail closed: no `on_ask_user_questions` callback is wired
+  through `TurnBridge` yet. Lands in `plan-016-007` (`_klorb/askUserQuestions`).
 * No session modes (`session/set_mode`), model/thinking config options, session naming/
   token-usage updates, or workspace-trust bridging — `permission_framework` is fixed at
   `"ask"` for the lifetime of a session created through this server. Lands in `plan-016-008`.

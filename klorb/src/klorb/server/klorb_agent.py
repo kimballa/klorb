@@ -78,6 +78,7 @@ class KlorbAcpAgent(acp.Agent):
         self._model_registry = model_registry if model_registry is not None else ModelRegistry()
         self._trust_manager = trust_manager if trust_manager is not None else TrustManager()
         self._client: acp.Client | None = None
+        self._client_capabilities: ClientCapabilities | None = None
         self._session: Session | None = None
         self._acp_session_id: str | None = None
         self._turn_bridge: TurnBridge | None = None
@@ -106,10 +107,22 @@ class KlorbAcpAgent(acp.Agent):
     ) -> acp.InitializeResponse:
         logger.debug(
             "ACP initialize: client protocolVersion=%s clientInfo=%s", protocol_version, client_info)
+        self._client_capabilities = client_capabilities
         return acp.InitializeResponse(
             protocol_version=acp.PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(field_meta={"klorb": {}}),
         )
+
+    def _client_supports(self, flag: str) -> bool:
+        """Whether the client advertised `clientCapabilities._meta.klorb.<flag>` at
+        `initialize()` -- `False` if `initialize()` hasn't run yet, the client sent no
+        `_meta`, or it omitted this specific flag."""
+        if self._client_capabilities is None or self._client_capabilities.field_meta is None:
+            return False
+        klorb_meta = self._client_capabilities.field_meta.get("klorb")
+        if not isinstance(klorb_meta, dict):
+            return False
+        return bool(klorb_meta.get(flag))
 
     async def new_session(
         self, cwd: str, mcp_servers: list[_McpServerSpec], **kwargs: Any,
@@ -128,7 +141,9 @@ class KlorbAcpAgent(acp.Agent):
             process_config=self._process_config, tool_registry=tool_registry)
         self._session = session
         self._acp_session_id = session.id
-        self._turn_bridge = TurnBridge(session, self._require_client(), self._acp_session_id)
+        self._turn_bridge = TurnBridge(
+            session, self._require_client(), self._acp_session_id, self._process_config,
+            raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"))
         logger.debug("session/new created ACP session %s for cwd=%s", self._acp_session_id, cwd)
         return acp.NewSessionResponse(session_id=self._acp_session_id)
 

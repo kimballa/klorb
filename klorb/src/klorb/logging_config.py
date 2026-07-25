@@ -213,7 +213,7 @@ def configure_minimal_logging(is_server: bool = False) -> None:
     caller knows enough about the invocation (subcommand, `repl_mode`, `log_path`) to configure
     logging properly.
     """
-    prefix="[server] " if is_server else ""
+    prefix = "[server] " if is_server else ""
     logging.basicConfig(
         level=_resolve_klorb_log_level(), handlers=[logging.StreamHandler()],
         format=f"{prefix}{TEXT_LOG_FORMAT}", datefmt=TEXT_LOG_DATEFMT, force=True)

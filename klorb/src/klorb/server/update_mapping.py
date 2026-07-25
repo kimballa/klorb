@@ -14,21 +14,38 @@ location/diff content) rather than propagating, with the reason logged at `debug
 
 import json
 import logging
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import acp
 from acp.schema import (
+    AllowedOutcome,
+    DeniedOutcome,
     FileEditToolCallContent,
+    PermissionOption,
+    PermissionOptionKind,
     ToolCallLocation,
     ToolCallProgress,
     ToolCallStart,
     ToolCallStatus,
+    ToolCallUpdate,
     ToolKind,
 )
 
+from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import canonicalize_dir
-from klorb.session.events import ToolCallEvent, ToolCallStartedEvent
+from klorb.permissions.resource import CommandResource, PermissionResource
+from klorb.permissions.risk_classifier import ItemRiskAssessment
+from klorb.session import SessionConfig
+from klorb.session.events import (
+    EscalatePrivilegesContext,
+    EscalatePrivilegesDecision,
+    PermissionAskContext,
+    PermissionDecision,
+    ToolCallEvent,
+    ToolCallStartedEvent,
+)
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.tool import DiffPreview, Tool, default_tool_call_detail, default_tool_call_summary
@@ -262,3 +279,185 @@ def tool_call_finished_update(
     return acp.update_tool_call(
         event.call_id, status=status, content=content,
         raw_output=_json_safe_result(event.result))
+
+
+_PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
+    ("allow:once", "allow_once", "Allow once"),
+    ("deny:once", "reject_once", "Deny"),
+    ("allow:session", "allow_always", "Allow for this session"),
+)
+"""Options a `session/request_permission` for a `PermissionAskContext` always carries -- see
+`permission_ask_options`."""
+
+_PERSISTENT_PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
+    ("allow:workspace", "allow_always", "Always allow (workspace)"),
+    ("allow:homedir", "allow_always", "Always allow (home config)"),
+)
+"""Additional options offered only when `PermissionResource.is_persistable` is `True` -- a
+`StructuralResource` ask has no rule a workspace/homedir grant could be recorded against."""
+
+_ESCALATE_PRIVILEGES_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
+    ("allow:once", "allow_once", "Approve for this session"),
+    ("deny:once", "reject_once", "Deny"),
+)
+
+_VALID_ACTIONS: tuple[str, ...] = ("allow", "deny")
+_VALID_SCOPES: tuple[str, ...] = ("once", "session", "workspace", "homedir")
+
+
+def _permission_option(option_id: str, kind: PermissionOptionKind, name: str) -> PermissionOption:
+    """One `PermissionOption`, with `_meta.klorb.scope` carrying `option_id`'s own scope token
+    (the part after the `:`) so a client needn't parse ids -- see
+    docs/specs/klorb-server.md's permission-ask option registry."""
+    scope = option_id.split(":", 1)[1]
+    return PermissionOption(
+        option_id=option_id, kind=kind, name=name, field_meta={"klorb": {"scope": scope}})
+
+
+def permission_ask_options(resource: PermissionResource) -> list[PermissionOption]:
+    """The `session/request_permission` options for `resource`: always once/deny/session, plus
+    workspace/homedir when `resource.is_persistable` -- a `StructuralResource` (no persistable
+    rule of its own) only ever offers once/deny/session."""
+    specs = list(_PERMISSION_OPTION_SPECS)
+    if resource.is_persistable:
+        specs += _PERSISTENT_PERMISSION_OPTION_SPECS
+    return [_permission_option(option_id, kind, name) for option_id, kind, name in specs]
+
+
+def escalate_privileges_options() -> list[PermissionOption]:
+    """The fixed two-option `session/request_permission` grid for an `EscalatePrivilegesContext`
+    ask: approve for this session, or deny -- there is no persistent-grant scope for an
+    escalation, which always revokes at the end of the session."""
+    return [
+        _permission_option(option_id, kind, name)
+        for option_id, kind, name in _ESCALATE_PRIVILEGES_OPTION_SPECS]
+
+
+def permission_ask_tool_call_update(call_id: str | None, fallback_title: str) -> ToolCallUpdate:
+    """The `toolCall` a `session/request_permission` request links itself to: the most recent
+    in-flight call's own id (`call_id`, tracked by `TurnBridge` -- asks are raised from within a
+    call's `apply()`, so one is always live in practice), or, defensively, a freshly synthesized
+    id titled `fallback_title` when no call is in flight."""
+    if call_id is not None:
+        return ToolCallUpdate(tool_call_id=call_id)
+    logger.debug(
+        "No in-flight tool call to link a permission ask to; synthesizing tool_call_id for %r",
+        fallback_title)
+    return ToolCallUpdate(tool_call_id=str(uuid.uuid4()), title=fallback_title)
+
+
+def _display_grant_patterns(
+    resource: PermissionResource, risk: ItemRiskAssessment | None, session_config: SessionConfig,
+) -> list[list[str]] | None:
+    """The `commandRules` pattern(s) to show the client as `_meta.klorb.grantPatterns`: the risk
+    classifier's own `suggested_pattern` when it offered one, else the same deterministic
+    literal-argv patterns `CommandResource.grant_preview()` computes. `None` for any resource
+    kind other than `CommandResource` -- only a bash-command ask has a `commandRules` pattern to
+    preview at all."""
+    if not isinstance(resource, CommandResource):
+        return None
+    if risk is not None and risk.suggested_pattern:
+        return [risk.suggested_pattern]
+    return compute_command_grant_patterns(session_config.command_rules, list(resource.argv))
+
+
+def permission_decision_grant_patterns(
+    resource: PermissionResource, risk: ItemRiskAssessment | None,
+) -> list[list[str]] | None:
+    """The pattern to thread through as `PermissionDecision.grant_patterns` -- unlike
+    `_display_grant_patterns`, this is `None` whenever the risk classifier didn't suggest a
+    pattern, so a persistent grant falls back to `apply_command_permission_grant`'s own
+    deterministic computation rather than persisting a preview-only fallback pattern that was
+    never actually vetted by the classifier -- mirrors `klorb.tui.mixins.interactions.
+    InteractionsMixin._confirm_permission_ask`."""
+    if isinstance(resource, CommandResource) and risk is not None and risk.suggested_pattern:
+        return [risk.suggested_pattern]
+    return None
+
+
+def permission_ask_meta(
+    ctx: PermissionAskContext, risk: ItemRiskAssessment | None, item_index: int, item_total: int,
+    session_config: SessionConfig,
+) -> dict[str, Any]:
+    """The `_meta.klorb` payload for a `session/request_permission` request built from `ctx`:
+    always `resourceDescription`; for a `BashTool` ask (`ctx.bash_context` set), additionally the
+    full/per-item command text, this item's position within its sibling batch, a grant-pattern
+    preview, and the risk classifier's score (`risk`, or `None` if classification is disabled,
+    not a bash ask, or the classifier failed -- see
+    `klorb.permissions.risk_classifier.resolve_item_risk_assessment`)."""
+    meta: dict[str, Any] = {"resourceDescription": ctx.resource_description}
+    if ctx.bash_context is not None:
+        meta["commandText"] = ctx.bash_context.command_text
+        meta["itemCommandText"] = ctx.bash_context.item_command_text
+        meta["itemIndex"] = item_index
+        meta["itemTotal"] = item_total
+        grant_patterns = _display_grant_patterns(ctx.resource, risk, session_config)
+        if grant_patterns is not None:
+            meta["grantPatterns"] = grant_patterns
+        if risk is not None:
+            meta["riskLevel"] = risk.risk_score
+    return meta
+
+
+def escalate_privileges_meta(ctx: EscalatePrivilegesContext) -> dict[str, Any]:
+    """The `_meta.klorb` payload for an `EscalatePrivilegesContext` ask's `session/
+    request_permission` request: `escalation.scope`/`escalation.description`, so the client can
+    render this as its own distinct (e.g. red-border) flow rather than an ordinary permission
+    grid."""
+    return {"escalation": {"scope": ctx.scope, "description": ctx.description}}
+
+
+def _split_option_id(option_id: str) -> tuple[
+    Literal["allow", "deny"], Literal["once", "session", "workspace", "homedir"],
+]:
+    action, _, scope = option_id.partition(":")
+    if action not in _VALID_ACTIONS or scope not in _VALID_SCOPES:
+        raise ValueError(f"Unrecognized permission option id: {option_id!r}")
+    return cast(Literal["allow", "deny"], action), cast(
+        Literal["once", "session", "workspace", "homedir"], scope)
+
+
+def _other_text(outcome: AllowedOutcome) -> str | None:
+    """The user's free-text redirect, if the client's response carried one: a non-empty
+    `_meta.klorb.otherText` string on a `selected` outcome, regardless of which option id was
+    actually selected alongside it -- see docs/specs/klorb-server.md."""
+    if not outcome.field_meta:
+        return None
+    klorb_meta = outcome.field_meta.get("klorb")
+    if not isinstance(klorb_meta, dict):
+        return None
+    candidate = klorb_meta.get("otherText")
+    return candidate if isinstance(candidate, str) and candidate else None
+
+
+def permission_decision_from_outcome(
+    outcome: AllowedOutcome | DeniedOutcome, grant_patterns: list[list[str]] | None,
+) -> PermissionDecision:
+    """Map a `RequestPermissionResponse.outcome` back onto a `PermissionDecision`: a `cancelled`
+    outcome (the client dismissed the request without picking an option) is
+    `action="deny", scope="once"`; a `selected` outcome whose `_meta.klorb.otherText` is a
+    non-empty string is the free-text redirect (`action="deny", scope="once", other_text=...`),
+    regardless of the option id chosen; otherwise the option id's own `<action>:<scope>` encodes
+    the decision directly. `grant_patterns` (from `permission_decision_grant_patterns`) is
+    threaded through unconditionally, matching `klorb.tui.mixins.interactions.InteractionsMixin.
+    _confirm_permission_ask`'s own unconditional threading -- it's only ever consulted downstream
+    for a persistent-scope `"allow"`."""
+    if outcome.outcome == "cancelled":
+        return PermissionDecision(action="deny", scope="once")
+    other_text = _other_text(outcome)
+    if other_text is not None:
+        return PermissionDecision(action="deny", scope="once", other_text=other_text)
+    action, scope = _split_option_id(outcome.option_id)
+    return PermissionDecision(action=action, scope=scope, grant_patterns=grant_patterns)
+
+
+def escalate_privileges_decision_from_outcome(
+    outcome: AllowedOutcome | DeniedOutcome,
+) -> EscalatePrivilegesDecision:
+    """Map a `RequestPermissionResponse.outcome` back onto an `EscalatePrivilegesDecision`:
+    approved only for a `selected` outcome whose option id is `"allow:once"` (`escalate_privileges_
+    options`'s "Approve for this session" option); a `cancelled` outcome, or any other selected
+    option id, is a denial."""
+    if outcome.outcome == "cancelled":
+        return EscalatePrivilegesDecision(approved=False)
+    return EscalatePrivilegesDecision(approved=outcome.option_id == "allow:once")

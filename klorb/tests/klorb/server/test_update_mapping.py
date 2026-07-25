@@ -5,18 +5,35 @@ See docs/specs/klorb-server.md's tool-call update mapping section."""
 from pathlib import Path
 
 import pytest
+from acp.schema import AllowedOutcome, DeniedOutcome
 
+from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules, canonicalize_dir
+from klorb.permissions.resource import BashCommandContext, CommandResource, PathResource, StructuralResource
+from klorb.permissions.risk_classifier import ItemRiskAssessment
 from klorb.process_config import ProcessConfig
 from klorb.server.update_mapping import (
     TOOL_KIND_MAP,
     TOOL_LOCATION_ARG,
     _diff_text,
+    escalate_privileges_decision_from_outcome,
+    escalate_privileges_meta,
+    escalate_privileges_options,
+    permission_ask_meta,
+    permission_ask_options,
+    permission_ask_tool_call_update,
+    permission_decision_from_outcome,
+    permission_decision_grant_patterns,
     tool_call_finished_update,
     tool_call_started_update,
 )
 from klorb.session import SessionConfig
-from klorb.session.events import ToolCallEvent, ToolCallStartedEvent
+from klorb.session.events import (
+    EscalatePrivilegesContext,
+    PermissionAskContext,
+    ToolCallEvent,
+    ToolCallStartedEvent,
+)
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.util import build_diff_hunks
 from klorb.workspace import Workspace
@@ -258,3 +275,184 @@ def test_finished_update_handles_no_tool_registry_at_all(tmp_path: Path) -> None
 
     assert update.status == "completed"
     assert update.content is not None
+
+
+def test_permission_ask_options_offers_workspace_and_homedir_for_a_persistable_resource(
+    tmp_path: Path,
+) -> None:
+    resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
+
+    options = permission_ask_options(resource)
+
+    assert [option.option_id for option in options] == [
+        "allow:once", "deny:once", "allow:session", "allow:workspace", "allow:homedir"]
+    assert [option.kind for option in options] == [
+        "allow_once", "reject_once", "allow_always", "allow_always", "allow_always"]
+    for option in options:
+        assert option.field_meta is not None
+        assert option.field_meta["klorb"]["scope"] == option.option_id.split(":", 1)[1]
+
+
+def test_permission_ask_options_omits_workspace_and_homedir_for_a_structural_resource() -> None:
+    resource = StructuralResource(reason="couldn't classify this")
+
+    options = permission_ask_options(resource)
+
+    assert [option.option_id for option in options] == ["allow:once", "deny:once", "allow:session"]
+
+
+def test_escalate_privileges_options_offers_exactly_approve_and_deny() -> None:
+    options = escalate_privileges_options()
+
+    assert [option.option_id for option in options] == ["allow:once", "deny:once"]
+    assert [option.name for option in options] == ["Approve for this session", "Deny"]
+
+
+def test_permission_ask_tool_call_update_links_the_given_call_id() -> None:
+    update = permission_ask_tool_call_update("call-1", "fallback title")
+
+    assert update.tool_call_id == "call-1"
+    assert update.title is None
+
+
+def test_permission_ask_tool_call_update_synthesizes_an_id_when_none_in_flight() -> None:
+    update = permission_ask_tool_call_update(None, "fallback title")
+
+    assert update.tool_call_id
+    assert update.title == "fallback title"
+
+
+def test_permission_ask_meta_for_a_non_bash_ask_only_carries_resource_description(tmp_path: Path) -> None:
+    resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
+    ctx = PermissionAskContext(resource=resource, resource_description="Read foo.txt")
+    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+
+    meta = permission_ask_meta(ctx, None, 0, 1, session_config)
+
+    assert meta == {"resourceDescription": "Read foo.txt"}
+
+
+def test_permission_ask_meta_for_a_bash_ask_carries_command_and_item_fields(tmp_path: Path) -> None:
+    resource = CommandResource(argv=("echo", "hi"))
+    bash_context = BashCommandContext(
+        command_text="echo hi; echo bye", is_compound=True, item_command_text="echo hi")
+    ctx = PermissionAskContext(
+        resource=resource, bash_context=bash_context, resource_description="Run command: echo hi")
+    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+
+    meta = permission_ask_meta(ctx, None, 0, 2, session_config)
+
+    assert meta["resourceDescription"] == "Run command: echo hi"
+    assert meta["commandText"] == "echo hi; echo bye"
+    assert meta["itemCommandText"] == "echo hi"
+    assert meta["itemIndex"] == 0
+    assert meta["itemTotal"] == 2
+    assert "riskLevel" not in meta
+    # No risk suggestion given -- falls back to the deterministic literal-argv grant pattern.
+    assert meta["grantPatterns"] == compute_command_grant_patterns(
+        session_config.command_rules, ["echo", "hi"])
+
+
+def test_permission_ask_meta_prefers_the_risk_classifiers_suggested_pattern(tmp_path: Path) -> None:
+    resource = CommandResource(argv=("pytest", "-k", "foo"))
+    bash_context = BashCommandContext(command_text="pytest -k foo", item_command_text="pytest -k foo")
+    ctx = PermissionAskContext(
+        resource=resource, bash_context=bash_context, resource_description="Run pytest")
+    risk = ItemRiskAssessment(
+        item_id="item-0", risk_score=2, rationale="routine test run",
+        suggested_pattern=["pytest", "**"])
+    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+
+    meta = permission_ask_meta(ctx, risk, 0, 1, session_config)
+
+    assert meta["grantPatterns"] == [["pytest", "**"]]
+    assert meta["riskLevel"] == 2
+
+
+def test_escalate_privileges_meta_carries_scope_and_description(tmp_path: Path) -> None:
+    ctx = EscalatePrivilegesContext(scope="workspace", description="Grant .klorb/ access")
+
+    meta = escalate_privileges_meta(ctx)
+
+    assert meta == {"escalation": {"scope": "workspace", "description": "Grant .klorb/ access"}}
+
+
+def test_permission_decision_grant_patterns_only_set_from_risk_suggestion() -> None:
+    resource = CommandResource(argv=("git", "status"))
+    risk = ItemRiskAssessment(
+        item_id="item-0", risk_score=1, rationale="read-only", suggested_pattern=["git", "status"])
+
+    assert permission_decision_grant_patterns(resource, risk) == [["git", "status"]]
+    assert permission_decision_grant_patterns(resource, None) is None
+
+    risk_no_pattern = ItemRiskAssessment(
+        item_id="item-0", risk_score=1, rationale="read-only", suggested_pattern=[])
+    assert permission_decision_grant_patterns(resource, risk_no_pattern) is None
+
+
+@pytest.mark.parametrize(("option_id", "expected_action", "expected_scope"), [
+    ("allow:once", "allow", "once"),
+    ("deny:once", "deny", "once"),
+    ("allow:session", "allow", "session"),
+    ("allow:workspace", "allow", "workspace"),
+    ("allow:homedir", "allow", "homedir"),
+])
+def test_permission_decision_from_outcome_round_trips_every_option_id(
+    option_id: str, expected_action: str, expected_scope: str,
+) -> None:
+    outcome = AllowedOutcome(outcome="selected", option_id=option_id)
+
+    decision = permission_decision_from_outcome(outcome, None)
+
+    assert decision.action == expected_action
+    assert decision.scope == expected_scope
+    assert decision.other_text is None
+
+
+def test_permission_decision_from_outcome_threads_through_grant_patterns() -> None:
+    outcome = AllowedOutcome(outcome="selected", option_id="allow:workspace")
+
+    decision = permission_decision_from_outcome(outcome, [["pytest", "**"]])
+
+    assert decision.grant_patterns == [["pytest", "**"]]
+
+
+def test_permission_decision_from_outcome_cancelled_denies_once() -> None:
+    outcome = DeniedOutcome(outcome="cancelled")
+
+    decision = permission_decision_from_outcome(outcome, None)
+
+    assert decision.action == "deny"
+    assert decision.scope == "once"
+    assert decision.other_text is None
+
+
+def test_permission_decision_from_outcome_other_text_overrides_the_selected_option() -> None:
+    outcome = AllowedOutcome(
+        outcome="selected", option_id="allow:workspace",
+        field_meta={"klorb": {"otherText": "use /tmp/scratch instead"}})
+
+    decision = permission_decision_from_outcome(outcome, None)
+
+    assert decision.action == "deny"
+    assert decision.scope == "once"
+    assert decision.other_text == "use /tmp/scratch instead"
+
+
+def test_permission_decision_from_outcome_rejects_an_unrecognized_option_id() -> None:
+    outcome = AllowedOutcome(outcome="selected", option_id="bogus:once")
+
+    with pytest.raises(ValueError, match="Unrecognized permission option id"):
+        permission_decision_from_outcome(outcome, None)
+
+
+def test_escalate_privileges_decision_from_outcome_approves_only_allow_once() -> None:
+    approved = escalate_privileges_decision_from_outcome(
+        AllowedOutcome(outcome="selected", option_id="allow:once"))
+    denied_option = escalate_privileges_decision_from_outcome(
+        AllowedOutcome(outcome="selected", option_id="deny:once"))
+    cancelled = escalate_privileges_decision_from_outcome(DeniedOutcome(outcome="cancelled"))
+
+    assert approved.approved is True
+    assert denied_option.approved is False
+    assert cancelled.approved is False

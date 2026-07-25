@@ -138,6 +138,11 @@ The Klorb project is organized as a collection of subprojects:
   version. Record change history — what changed, why, and what alternatives were rejected — in
   an ADR (docs/adrs/) instead; cross-reference it by name from the docstring/comment/spec if the
   current behavior's rationale needs a pointer.
+* Method docstring comments should succinctly describe the *purpose* of the method. Why would
+  someone else call this method? Do not narrate every step it performs; the code does that
+  implicitly. If the reasoning behind some code is not obvious, add a regular comment at that
+  specific point in the method body explaining what it does, why, or why at that particular point.
+  If you edit a method or function, you almost *never* need to make its docstring longer.
 * Add `logger.debug()` calls around consequential actions and workflows: creating or removing
   files/directories, registering cleanup handlers (`atexit`, etc.), granting or widening
   permissions, spawning subprocesses or sessions, and similar state-changing or multi-step
@@ -187,7 +192,7 @@ Here are the officially-sanctioned CI commands:
   subdir, or from the root with `make -C klorb <target>`.
 * When working on the VSCode plugin, run in the `vscode-plugin/`
   subdir, or from the root with `make -C vscode-plugin <target>`.
-* If you edit `TODO.md` or any documentation (specs, ADRs, etc), run `make lint` from
+* If you edit `TODO.md` or any documentation (specs, ADRs, etc), run `make lint_docs` from
   the root directory to run markdownlint.
 
 ### Import Rules

@@ -5,6 +5,7 @@ See docs/specs/klorb-server.md's "Testing strategy" section."""
 
 import asyncio
 import socket
+from collections.abc import Callable
 from typing import Any
 
 import acp
@@ -16,20 +17,43 @@ from klorb.server.acp_server import AcpServer, ServerStreams
 from klorb.workspace import TrustManager
 
 
+class RecordedPermissionRequest:
+    """One `request_permission()` call `HarnessClient` received, recorded verbatim for a test's
+    assertions: `meta` is the `_meta.klorb` payload unpacked back into kwargs by the SDK's own
+    router (see `acp.router.MessageRouter._make_func`), not the raw `_meta` dict."""
+
+    def __init__(
+        self, options: list[acp.schema.PermissionOption], session_id: str,
+        tool_call: acp.schema.ToolCallUpdate, meta: dict[str, Any],
+    ) -> None:
+        self.options = options
+        self.session_id = session_id
+        self.tool_call = tool_call
+        self.meta = meta
+
+
 class HarnessClient:
     """Implements the ACP `Client` protocol on the test side of the connection, recording every
     `session/update` notification the server sends for assertions.
 
-    Every other `Client` method (`request_permission`, `read_text_file`, terminal handling, ...)
-    raises `NotImplementedError`: `KlorbAcpAgent` doesn't call any of them at this checkpoint
-    (no tool calls, no permission asks) -- see
-    docs/plans/archive/plan-016-001-python-acp-server-core.md. They're still implemented
+    `request_permission()`/`ext_method()` record every call into `permission_requests`/
+    `ext_method_calls` and answer via `on_request_permission`/`on_ext_method` -- settable by a
+    test before driving a turn -- defaulting to `None`, which still raises `NotImplementedError`
+    (a test exercising a path that shouldn't ask must fail loudly, not hang). Every other
+    `Client` method (`read_text_file`, terminal handling, ...) still raises `NotImplementedError`
+    unconditionally: `KlorbAcpAgent` doesn't call any of them yet. They're still implemented
     (rather than omitted) so this class structurally satisfies `acp.Client`, which
     `acp.connect_to_agent()` requires.
     """
 
     def __init__(self) -> None:
         self.session_updates: list[acp.SessionNotification] = []
+        self.permission_requests: list[RecordedPermissionRequest] = []
+        self.on_request_permission: (
+            Callable[[RecordedPermissionRequest], acp.RequestPermissionResponse] | None
+        ) = None
+        self.ext_method_calls: list[tuple[str, dict[str, Any]]] = []
+        self.on_ext_method: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
 
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         self.session_updates.append(acp.SessionNotification(session_id=session_id, update=update))
@@ -43,7 +67,11 @@ class HarnessClient:
     async def request_permission(
         self, options: Any, session_id: str, tool_call: Any, **kwargs: Any,
     ) -> Any:
-        raise NotImplementedError("HarnessClient.request_permission is not used at this checkpoint")
+        recorded = RecordedPermissionRequest(options, session_id, tool_call, kwargs)
+        self.permission_requests.append(recorded)
+        if self.on_request_permission is None:
+            raise NotImplementedError("HarnessClient.on_request_permission was not set by the test")
+        return self.on_request_permission(recorded)
 
     async def write_text_file(self, content: str, path: str, session_id: str, **kwargs: Any) -> Any:
         raise NotImplementedError("HarnessClient.write_text_file is not used at this checkpoint")
@@ -73,7 +101,10 @@ class HarnessClient:
         raise NotImplementedError("HarnessClient.kill_terminal is not used at this checkpoint")
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("HarnessClient.ext_method is not used at this checkpoint")
+        self.ext_method_calls.append((method, params))
+        if self.on_ext_method is None:
+            raise NotImplementedError("HarnessClient.on_ext_method was not set by the test")
+        return self.on_ext_method(method, params)
 
 
 class AcpHarness:
