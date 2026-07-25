@@ -11,6 +11,7 @@ constructing one `TrustManager` per process and threading it to every place that
 reaching for a module-level global — see docs/adrs/thread-trustmanager-explicitly-not-a-global-singleton.md.
 """
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from klorb.permissions.directory_access import find_workspace_root
 from klorb.schema_envelope import read_versioned_json, write_versioned_json
 
 from . import Workspace
+
+logger = logging.getLogger(__name__)
 
 PROJECTS_SCHEMA_NAME = "klorb-projects"
 PROJECTS_SCHEMA_VERSION = "1.0.0"
@@ -90,18 +93,31 @@ class TrustManager:
         """
         canonical_cwd = cwd.resolve(strict=False)
         records = self._load()
+        logger.debug(
+            "resolve_workspace: cwd=%s canonical_cwd=%s (%d known project(s) in %s)",
+            cwd, canonical_cwd, len(records), self._path)
 
         for record in records:
             if record.path == canonical_cwd:
+                logger.debug(
+                    "resolve_workspace: exact match on registered project %s (id=%s, trusted=%s)",
+                    record.path, record.id, record.trusted)
                 return Workspace(id=record.id, path=record.path, is_project=True, trusted=record.trusted)
 
         for ancestor in canonical_cwd.parents:
             for record in records:
                 if record.path == ancestor:
+                    logger.debug(
+                        "resolve_workspace: ancestor match on registered project %s (id=%s, "
+                        "trusted=%s)", record.path, record.id, record.trusted)
                     return Workspace(
                         id=record.id, path=record.path, is_project=True, trusted=record.trusted)
 
-        return Workspace(path=find_workspace_root(canonical_cwd), is_project=False, trusted=False)
+        workspace_root = find_workspace_root(canonical_cwd)
+        logger.debug(
+            "resolve_workspace: no registered project found; falling back to unregistered, "
+            "untrusted workspace at %s", workspace_root)
+        return Workspace(path=workspace_root, is_project=False, trusted=False)
 
     def register_project(self, path: Path, trusted: bool) -> Workspace:
         """Create a new `projects.json` entry for `path` (canonicalized) with a fresh uuid4 id,

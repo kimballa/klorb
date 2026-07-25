@@ -746,6 +746,10 @@ def load_process_config(
     """
     cwd = cwd if cwd is not None else Path.cwd()
     workspace = workspace if workspace is not None else Workspace(path=find_workspace_root(cwd))
+    logger.debug(
+        "load_process_config: cwd=%s workspace=%s (id=%s, is_project=%s, trusted=%s) "
+        "config_flag_path=%s", cwd, workspace.path, workspace.id, workspace.is_project,
+        workspace.trusted, config_flag_path)
 
     config_warnings: list[str] = []
     merged: dict[str, Any] = {}
@@ -795,9 +799,16 @@ def load_process_config(
     merge_layer(read_versioned_json(
         user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
     if workspace.trusted:
+        logger.debug(
+            "load_process_config: workspace %s is trusted; reading project config layer %s",
+            workspace.path, project_config_path(workspace.path))
         merge_layer(read_versioned_json(
             project_config_path(workspace.path), expected_schema_name=CONFIG_SCHEMA_NAME,
             warnings=config_warnings))
+    else:
+        logger.debug(
+            "load_process_config: workspace %s is not trusted; skipping project config layer %s",
+            workspace.path, project_config_path(workspace.path))
     if config_flag_path is not None:
         merge_layer(read_versioned_json(
             config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
@@ -815,6 +826,14 @@ def load_process_config(
     session_overrides["set_env"] = merged_set_env
     session_overrides["workspace"] = workspace
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
+    logger.debug(
+        "load_process_config: merged readDirs=%s writeDirs=%s readFiles=%s writeFiles=%s "
+        "(deny/ask/allow counts) for workspace %s",
+        {category: len(paths) for category, paths in concatenated_read_dirs.items()},
+        {category: len(paths) for category, paths in concatenated_write_dirs.items()},
+        {category: len(paths) for category, paths in concatenated_read_files.items()},
+        {category: len(paths) for category, paths in concatenated_write_files.items()},
+        workspace.path)
     return ProcessConfig(
         session=SessionConfig(**session_overrides), config_warnings=config_warnings,
         **process_overrides)

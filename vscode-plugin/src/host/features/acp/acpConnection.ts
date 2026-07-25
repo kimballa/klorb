@@ -76,7 +76,7 @@ export class AcpConnection {
     this.stop();
     const acp = await import('@agentclientprotocol/sdk');
     this._log(`klorb: starting "${options.command} server"`);
-    const child = this._serverProcess.start(options);
+    const child = this._serverProcess.start(options, cwd);
     child.on('error', (err: Error) => {
       this._log(`klorb: server process error: ${err.message}`);
     });
