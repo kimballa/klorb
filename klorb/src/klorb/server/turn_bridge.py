@@ -10,7 +10,9 @@ from typing import Any
 
 import acp
 
+from klorb.server.update_mapping import tool_call_finished_update, tool_call_started_update
 from klorb.session import Session, TurnEventHandlers
+from klorb.session.events import ToolCallEvent, ToolCallStartedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +24,17 @@ value a real session update could be."""
 
 class TurnBridge:
     """Runs one `Session.send_turn()` call per `run_turn()` invocation, forwarding streamed
-    text as ACP `session/update` notifications sent through `client`.
+    text and tool-call activity as ACP `session/update` notifications sent through `client`.
 
-    Every `on_chunk`/`on_thinking_chunk` callback fires on `Session.send_turn()`'s worker
-    thread (via `asyncio.to_thread`); each is enqueued onto one `asyncio.Queue` via
-    `loop.call_soon_threadsafe`, and a single pump task awaits each `client.session_update()`
-    call in the order the callbacks fired -- the ordering guarantee described in
-    docs/specs/klorb-server.md. `run_turn()` always drains and stops the pump task in a
-    `finally`, whether `send_turn()` succeeds, raises `ResponseAborted`, or raises anything
-    else.
+    Every `on_chunk`/`on_thinking_chunk`/`on_tool_call_started`/`on_tool_call` callback fires on
+    `Session.send_turn()`'s worker thread (via `asyncio.to_thread`); each is enqueued onto one
+    `asyncio.Queue` via `loop.call_soon_threadsafe`, and a single pump task awaits each
+    `client.session_update()` call in the order the callbacks fired -- the ordering guarantee
+    described in docs/specs/klorb-server.md. `on_tool_call_started`/`on_tool_call` delegate the
+    klorb-event-to-ACP-update translation to `klorb.server.update_mapping`, passing this turn's
+    `Session.tool_registry`/`Session.config.workspace.path` through. `run_turn()` always drains
+    and stops the pump task in a `finally`, whether `send_turn()` succeeds, raises
+    `ResponseAborted`, or raises anything else.
     """
 
     def __init__(self, session: Session, client: acp.Client, session_id: str) -> None:
@@ -57,9 +61,19 @@ class TurnBridge:
         def on_thinking_chunk(delta_text: str) -> None:
             enqueue(acp.update_agent_thought_text(delta_text))
 
+        def on_tool_call_started(event: ToolCallStartedEvent) -> None:
+            enqueue(tool_call_started_update(
+                event, self._session.tool_registry, self._session.config.workspace.path))
+
+        def on_tool_call(event: ToolCallEvent) -> None:
+            enqueue(tool_call_finished_update(
+                event, self._session.tool_registry, self._session.config.workspace.path))
+
         cancel_event = threading.Event()
         handlers = TurnEventHandlers(
-            on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk, cancel_event=cancel_event)
+            on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
+            on_tool_call_started=on_tool_call_started, on_tool_call=on_tool_call,
+            cancel_event=cancel_event)
 
         async def pump() -> None:
             while True:

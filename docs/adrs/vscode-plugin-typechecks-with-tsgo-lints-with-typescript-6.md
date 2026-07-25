@@ -1,4 +1,4 @@
-# vscode-plugin typechecks with tsgo, lints with typescript@6.x
+# vscode-plugin typechecks with tsgo, lints with <typescript@6.x>
 
 * Date: 2026-07-24 22:35
 * Question: `vscode-plugin` wanted to typecheck with `tsgo` (the native, Go-ported TypeScript

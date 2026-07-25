@@ -13,11 +13,10 @@ full architecture this checkpoint is the first increment of (protocol mapping, t
 extensibility rules, the increments still to come).
 
 At this checkpoint the server supports `initialize`, `session/new`, `session/prompt` with
-streamed response and thinking text, and `session/cancel` — a prompt against a
-plain-conversation model (no tool calls, no permission asks) is fully usable end to end. Tool
-calls execute but produce no `session/update` for them yet; every permission `"ask"` verdict
-fails closed, since no `on_permission_ask` callback is wired up yet either. Both land in a later
-increment (see "Out of scope" below).
+streamed response, thinking text, and tool-call activity, and `session/cancel` — a prompt
+against a plain-conversation model, or one that calls tools, is fully usable end to end. Every
+permission `"ask"` verdict still fails closed, since no `on_permission_ask` callback is wired up
+yet — lands in a later increment (see "Out of scope" below).
 
 ## Wire protocol
 
@@ -104,11 +103,14 @@ name, params/result shape, and capability flag as they land.
 * `klorb.server.turn_bridge.TurnBridge` is the sync/async bridge one `Session` instance keeps
   for its whole lifetime: `run_turn(prompt_text) -> str` (async) runs `Session.send_turn()` on a
   worker thread via `asyncio.to_thread()`, keeping the event loop free to service concurrent
-  ACP requests (`session/cancel`) while a turn is in flight. It wires only `on_chunk` →
-  `acp.update_agent_message_text()` and `on_thinking_chunk` → `acp.update_agent_thought_text()`
-  at this checkpoint, plus a fresh `threading.Event` per turn as `cancel_event` — later
-  increments add handlers to this one class rather than new plumbing. **Ordering guarantee:**
-  every callback fires on the worker thread and is enqueued onto one `asyncio.Queue` via
+  ACP requests (`session/cancel`) while a turn is in flight. It wires `on_chunk` →
+  `acp.update_agent_message_text()`, `on_thinking_chunk` → `acp.update_agent_thought_text()`, and
+  `on_tool_call_started`/`on_tool_call` → `klorb.server.update_mapping.
+  tool_call_started_update()`/`tool_call_finished_update()` (passing this turn's
+  `Session.tool_registry`/`Session.config.workspace.path` through — see "Tool-call update
+  mapping" below), plus a fresh `threading.Event` per turn as `cancel_event` — later increments
+  add handlers to this one class rather than new plumbing. **Ordering guarantee:** every
+  callback fires on the worker thread and is enqueued onto one `asyncio.Queue` via
   `loop.call_soon_threadsafe`; a single pump task awaits each `session/update` send in exactly
   the order the callbacks fired. One queue and one pump task per turn is what makes this an
   actual guarantee rather than an accident of scheduling — independently-scheduled coroutines
@@ -116,6 +118,78 @@ name, params/result shape, and capability flag as they land.
   whether `send_turn()` succeeds, raises `klorb.api_provider.ResponseAborted` (a cancelled
   turn), or raises anything else — the exception always propagates to the caller only after the
   pump has fully drained, so no queued update is ever lost or reordered around it.
+
+### Tool-call update mapping
+
+`klorb.server.update_mapping` holds the pure functions (no I/O beyond read-only path
+canonicalization, no live `Session`/ACP connection needed) that turn a klorb tool-call event into
+an ACP `session/update`: `tool_call_started_update(event, tool_registry, workspace_root)` maps
+`klorb.session.events.ToolCallStartedEvent` to a `tool_call` update, and
+`tool_call_finished_update(event, tool_registry, workspace_root)` maps `ToolCallEvent` to a
+`tool_call_update`. Both take the turn's `ToolRegistry` (or `None`) and workspace root `Path`
+directly rather than a live `Session`, so they're callable from a test with just
+`ToolRegistry.discover_tools()` and a workspace path — no ACP harness, no `Session` construction.
+
+* **Started update** (`status="in_progress"` unconditionally — klorb fires
+  `on_tool_call_started` immediately before `apply()` runs, so there's no separate `"pending"`
+  phase worth reporting):
+  * `title` — the tool's pre-execution summary, via `Tool.summary(args)` with no result/error
+    (the same string `RunningToolCallStatic` shows in the TUI), falling back to
+    `default_tool_call_summary()` for a name the turn's `ToolRegistry` doesn't have (unregistered,
+    or no registry at all).
+  * `kind` — from `TOOL_KIND_MAP: dict[str, ToolKind]`, keyed by klorb tool name:
+
+    | `ToolKind` | Tools |
+    | --- | --- |
+    | `read` | `ReadFile`, `ReadMemory`, `ReadScratchpad`, `ReadSkillFile` |
+    | `edit` | `EditFile`, `ReplaceAll`, `CreateFile`, `EditMemory`, `CreateMemory`, `EditScratchpad` |
+    | `search` | `Grep`, `FindFile`, `ListDir`, `SearchMemories`, `SearchScratchpad`, `SearchSkills`, `ListMemories` |
+    | `execute` | `Bash` |
+    | `fetch` | `WebFetch` |
+    | `think` | `TodoList`, `TodoNext`, `TodoCreate`, `TodoUpdate`, `ActivateSkill` |
+    | `delete` | `ForgetMemory` |
+    | `other` | `AskUserQuestions`, `EscalatePrivileges` |
+
+    A name this table doesn't cover (a future tool added without an entry) falls back to
+    `"other"` at lookup time — `tests/klorb/server/test_update_mapping.py` parametrizes over
+    every tool `ToolRegistry.discover_tools()` currently returns so that omission fails the test
+    loudly instead of passing silently.
+  * `locations` — `[{path, line}]` for a tool whose call names a filesystem path, resolved
+    against `workspace_root` via `klorb.permissions.directory_access.canonicalize_dir()` (the
+    same canonicalization primitive the file tools themselves use via `canonicalize_candidate()`
+    under the hood). `TOOL_LOCATION_ARG: dict[str, str]` names which arg key holds the path, per
+    tool — `ReadFile`/`EditFile`/`CreateFile`: `filename`; `Grep`: `path`; `FindFile`/`ListDir`:
+    `dirname`. (Every one of these tools names its path argument something other than a
+    uniform `"path"` key; `TOOL_LOCATION_ARG`'s values reflect each tool's actual argument name,
+    not a normalized one.) `ReadFile`'s `start_line` arg additionally sets `line` on the one
+    location reported. A tool not in this table (including `EditScratchpad`, whose subject is
+    harness-managed and never a model-nameable path) emits no `locations` at all.
+  * `rawInput` — `event.args`, unchanged (already a JSON-safe dict, parsed from the model's tool
+    call).
+* **Finished update**: `status` is `"failed"` when `event.error` is set, else `"completed"`.
+  * `content`, on success: an edit-family call whose result carries diff hunks (`Tool.
+    diff_preview()` returns non-`None`) reports one ACP `diff` content block —
+    `oldText`/`newText` reassembled from the hunks' `context`+`del`/`context`+`add` lines (`None`
+    `oldText` for a brand-new file/memory/scratchpad, matching ACP's own convention). This is a
+    hunk-reassembled *approximation* of the touched file, not its literal full contents — klorb
+    persists hunks, not whole files, by design (see
+    docs/adrs/persist-diff-hunks-in-edit-result.md) — so the raw hunks additionally ride under
+    the block's `_meta.klorb.diffHunks` for a client that wants to render a real gutter view
+    (lands in `plan-016-004`) instead of reassembled text. The block's `path` is
+    `args["filename"]` (resolved against `workspace_root`) for every edit-family tool that has
+    one, or the tool's own name for `EditScratchpad`. Every other successful call reports one
+    text content block with the tool's `detail_view()` output (instantiate-and-render, falling
+    back to `default_tool_call_detail()`) — the same string the TUI's Ctrl+O detail shows.
+  * `content`, on failure (regardless of tool identity): one text content block with the error
+    string (`event.error`), plus `event.raw_arguments` when set — the malformed-JSON case, where
+    no tool ever ran.
+  * `rawOutput` — `event.result`, unchanged, unless it isn't JSON-serializable (checked via
+    `json.dumps()`), in which case it's omitted and the reason logged at `debug`.
+* **Totality**: every function in `update_mapping.py` is total — no klorb event may raise a
+  mapping failure out to the caller. A per-field failure (a tool's `summary()`/`detail_view()`/
+  `diff_preview()` override raising, or an unresolvable location) degrades to a simpler
+  rendering (a default summary/detail string, or no location/diff content) rather than
+  propagating, with the reason logged at `debug` level.
 
 ### Single top-level session
 
@@ -176,9 +250,10 @@ the full streaming path end to end against a scripted provider.)
 
 ## Out of scope
 
-* Tool calls execute (when a session has tools configured — see docs/specs/tool-framework.md)
-  but produce no `tool_call`/`tool_call_update` session updates yet — the model still gets its
-  results, but an ACP client can't see them happen. Lands in `plan-016-003`.
+* A stock ACP client doesn't yet render tool-call activity specially — the klorb VS Code
+  plugin's own rendering (running animation, expandable detail, open-file/open-diff editor
+  integration) lands in `plan-016-004`; this checkpoint only emits the `tool_call`/
+  `tool_call_update` notifications themselves (see "Tool-call update mapping" above).
 * Every `"ask"` permission verdict fails closed: no `on_permission_ask` callback is wired
   through `TurnBridge` yet, so a tool call that would prompt interactively in the TUI is denied
   instead. Lands in `plan-016-005` (`session/request_permission`).
