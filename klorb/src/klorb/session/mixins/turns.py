@@ -6,8 +6,10 @@
 
 import logging
 import re
+import subprocess
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from klorb.api_provider import ProviderResponse, ResponseAborted
@@ -467,10 +469,30 @@ class SessionTurnsMixin(SessionBase):
             self._metadata_seeded = True
             started_at = self._session_started_at.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
             workspace_root = str(self.config.workspace.path)
-            metadata_body = (
-                f"The session began at {started_at}.\n"
+
+            workspace_git_path: Path = self.config.workspace.path / ".git"
+            git_branch: str|None = None
+            if workspace_git_path.exists():
+                logger.debug("Found git repo for workspace at %s", workspace_git_path)
+                git_branch_output: subprocess.CompletedProcess = subprocess.run(
+                    ["git", "branch", "--show-current", "--no-color"], cwd=workspace_root,
+                    timeout=5.0, capture_output=True, text=True)
+                if git_branch_output.returncode == 0:
+                    git_branch = str(git_branch_output.stdout).strip()
+                    logger.info("Current git branch is %s", git_branch)
+                else:
+                    logger.error(".git subdir of workspace found at '%s' "
+                                 "but git branch returncode=%s: stderr=%s",
+                                 workspace_git_path, git_branch_output.returncode, git_branch_output.stderr)
+
+            metadata_strs = [
+                f"The session began at {started_at}."
                 f"The workspace root is `{workspace_root}`."
-            )
+            ]
+            if git_branch:
+                metadata_strs.append(f"The current git branch is `{git_branch}`")
+
+            metadata_body = "\n".join(metadata_strs)
             prompt = f"{_wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
