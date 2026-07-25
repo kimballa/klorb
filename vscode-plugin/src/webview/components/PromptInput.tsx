@@ -1,5 +1,6 @@
 // © Copyright 2026 Aaron Kimball
-import { type FormEvent, type JSX, type KeyboardEvent, useState } from 'react';
+import type { VscodeTextarea } from '@vscode-elements/elements';
+import { type JSX, type SyntheticEvent, type KeyboardEvent, useRef, useState } from 'react';
 
 import { classifyEnterKey } from 'webview/keyHandling';
 
@@ -12,7 +13,7 @@ interface PromptInputProps {
 
 /** Reads the current text out of the event's target element. The target is the
  * `<vscode-textarea>` custom element, whose `value` property mirrors its inner textarea. */
-function targetValue(event: FormEvent<HTMLElement> | KeyboardEvent<HTMLElement>): string {
+function targetValue(event: SyntheticEvent | KeyboardEvent<HTMLElement>): string {
   const value = (event.target as { value?: unknown }).value;
   return typeof value === 'string' ? value : '';
 }
@@ -28,11 +29,18 @@ export default function PromptInput({
   onCancel,
 }: PromptInputProps): JSX.Element {
   const [draft, setDraft] = useState('');
+  const textareaRef = useRef<VscodeTextarea>(null);
 
   function submit(): void {
     const text = draft.trim();
     if (text.length === 0 || inFlight) {
       return;
+    }
+    // Clearing the underlying element directly, not just React's `value` prop, guarantees the
+    // textarea is empty before it's disabled below, regardless of how the custom element
+    // reconciles a prop update against its own internal state.
+    if (textareaRef.current !== null) {
+      textareaRef.current.value = '';
     }
     setDraft('');
     onSubmit(text);
@@ -57,12 +65,13 @@ export default function PromptInput({
   return (
     <div className="input-row" onKeyDown={handleKeyDown}>
       <vscode-textarea
+        ref={textareaRef}
         id="prompt-input"
         rows={2}
         placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
         value={draft}
         disabled={inFlight}
-        onInput={(event: FormEvent<HTMLElement>) => setDraft(targetValue(event))}
+        onInput={(event: SyntheticEvent) => setDraft(targetValue(event))}
       />
       {inFlight ? (
         <vscode-button id="stop-button" onClick={() => onCancel()}>
