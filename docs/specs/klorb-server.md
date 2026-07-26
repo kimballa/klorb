@@ -127,9 +127,10 @@ client that doesn't understand it):
 
 * **`_klorb/usage`** — sent once per turn, after every other `session/update` for that turn has
   gone out, whether the turn succeeded, was cancelled, or raised. Params: `{sessionId: string,
-  usedTokens: int, maxTokens: int | null}` — `Session.total_tokens_used()`/
-  `Session.max_context_window()`, the same numbers the TUI status bar shows. Per-chunk emission
-  is deliberately avoided (chatty, and the TUI itself only refreshes per turn).
+  usedTokens: int, maxTokens: int | null, outputTokens: int}` —
+  `Session.total_tokens_used()`/`Session.max_context_window()`/
+  `Session.total_output_tokens_used()`, the same numbers the TUI status bar shows. Per-chunk
+  emission is deliberately avoided (chatty, and the TUI itself only refreshes per turn).
 
 ## Session modes
 

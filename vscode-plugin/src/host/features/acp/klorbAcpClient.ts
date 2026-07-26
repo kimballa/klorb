@@ -1,6 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import type {
   CreateTerminalResponse,
+  NewSessionResponse,
   PermissionOption,
   ReadTextFileResponse,
   RequestPermissionRequest,
@@ -31,7 +32,20 @@ import type {
  * dynamic `import()` in `AcpConnection.start()` (see src/host/features/acp/acpConnection.ts). */
 export type RequestErrorClass = (typeof import('@agentclientprotocol/sdk'))['RequestError'];
 
-/** Receives the streamed text and tool-call activity the agent produces during a prompt turn. */
+/** The session's initial control-plane state, captured from `session/new`'s response (its
+ * `modes.currentModeId` and `_meta.klorb.workspace`/`.title`) -- see
+ * `sessionInfoFromResponse()`. A field is `undefined` when the response didn't carry it (e.g.
+ * a peer ACP agent that doesn't advertise `modes` at all); `title` is additionally `null` for
+ * "no title yet", distinct from `undefined` for "the response didn't say". */
+export interface SessionInfo {
+  modeId: string | undefined;
+  workspacePath: string | undefined;
+  workspaceTrusted: boolean | undefined;
+  title: string | null | undefined;
+}
+
+/** Receives the streamed text, tool-call activity, and control-plane state the agent produces
+ * over the life of a session. */
 export interface SessionUpdateListener {
   /** A piece of streamed response text (`agent_message_chunk`). */
   onAgentText(text: string): void;
@@ -51,6 +65,36 @@ export interface SessionUpdateListener {
    * Fire-and-forget: the eventual answer arrives back through
    * `KlorbAcpClient.resolveQuestionAnswer()`, not this call's return value. */
   postQuestionAsk(message: QuestionAskMessage): void;
+  /** `session/new`'s response just built (or replaced) the session -- its starting
+   * permission mode, workspace trust state, and title, so the status row (and workspace
+   * trust bridging) reflect the true starting state instead of guessing. */
+  onSessionInfo(info: SessionInfo): void;
+  /** The session's permission mode changed (`current_mode_update`), whether from this
+   * client's own `session/set_mode` or (in principle) the agent changing it autonomously. */
+  onModeChanged(modeId: string): void;
+  /** The session's title changed (`session_info_update`'s `title` field). */
+  onSessionTitleChanged(title: string | null): void;
+  /** The turn that just finished used `usedTokens` of `maxTokens`, and the session has
+   * generated `outputTokens` in total (`_klorb/usage`, sent once per turn). */
+  onUsageUpdate(usedTokens: number, maxTokens: number | null, outputTokens: number): void;
+}
+
+/** Extracts `SessionInfo` from a `session/new` response's `modes.currentModeId` and
+ * `_meta.klorb.workspace`/`.title` -- see docs/specs/klorb-server.md's "Wire protocol" and
+ * "Session naming and token usage" sections. */
+export function sessionInfoFromResponse(session: NewSessionResponse): SessionInfo {
+  const meta = klorbMetaOf(session._meta);
+  const workspace =
+    typeof meta.workspace === 'object' && meta.workspace !== null
+      ? (meta.workspace as Record<string, unknown>)
+      : undefined;
+  const title = meta.title;
+  return {
+    modeId: session.modes?.currentModeId,
+    workspacePath: typeof workspace?.path === 'string' ? workspace.path : undefined,
+    workspaceTrusted: typeof workspace?.trusted === 'boolean' ? workspace.trusted : undefined,
+    title: title === null ? null : typeof title === 'string' ? title : undefined,
+  };
 }
 
 /** The user's decision on a permission ask, normalized from a `permissionDecision` webview
@@ -363,10 +407,38 @@ export class KlorbAcpClient {
       case 'tool_call_update':
         this._listener.onToolCallUpdated(toolCallUpdatedMessage(update));
         break;
+      case 'current_mode_update':
+        this._listener.onModeChanged(update.currentModeId);
+        break;
+      case 'session_info_update':
+        if (update.title !== undefined) {
+          this._listener.onSessionTitleChanged(update.title);
+        }
+        break;
       default:
         this._log(`klorb: ignoring unhandled session update: ${update.sessionUpdate}`);
         break;
     }
+  }
+
+  /** Handles a `_klorb/*` extension notification -- today just `_klorb/usage`, sent once per
+   * turn (see docs/specs/klorb-server.md's extension-methods section). An unrecognized
+   * extension notification is logged and ignored, per ACP's own extensibility rules. */
+  public async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    if (method === '_klorb/usage') {
+      const { usedTokens, maxTokens, outputTokens } = params;
+      if (
+        typeof usedTokens === 'number' &&
+        (maxTokens === null || typeof maxTokens === 'number') &&
+        typeof outputTokens === 'number'
+      ) {
+        this._listener.onUsageUpdate(usedTokens, maxTokens ?? null, outputTokens);
+      } else {
+        this._log(`klorb: malformed _klorb/usage params: ${JSON.stringify(params)}`);
+      }
+      return;
+    }
+    this._log(`klorb: ignoring unrecognized ext notification: ${method}`);
   }
 
   /**

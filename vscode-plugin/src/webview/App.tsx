@@ -1,10 +1,15 @@
 // © Copyright 2026 Aaron Kimball
 import { type JSX, useEffect, useRef, useState } from 'react';
 
-import { parseHostMessage, type QuestionAskMessage } from 'shared/webviewMessages';
+import {
+  parseHostMessage,
+  type QuestionAskMessage,
+  type StatusUpdateMessage,
+} from 'shared/webviewMessages';
 import ApprovalPanel, { type ApprovalDecision } from 'webview/components/ApprovalPanel';
 import PromptInput from 'webview/components/PromptInput';
 import QuestionPanel, { type QuestionPanelAnswer } from 'webview/components/QuestionPanel';
+import StatusRow from 'webview/components/StatusRow';
 import VsCodeApiProvider, { type VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import {
   HistoryView,
@@ -20,10 +25,15 @@ import {
   type PendingInteraction,
 } from 'webview/features/history';
 
+/** The status row's data, without the message envelope's `type` discriminant -- see
+ * `shared/webviewMessages.ts`'s `StatusUpdateMessage` for field semantics. */
+export type StatusSnapshot = Omit<StatusUpdateMessage, 'type'>;
+
 interface AppProps {
   vscode: VsCodeApi;
   initialEntries: HistoryEntry[];
   initialPendingInteraction?: PendingInteraction;
+  initialStatus?: StatusSnapshot;
 }
 
 /**
@@ -39,6 +49,7 @@ export default function App({
   vscode,
   initialEntries,
   initialPendingInteraction,
+  initialStatus,
 }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
@@ -46,12 +57,13 @@ export default function App({
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | undefined>(
     initialPendingInteraction
   );
+  const [status, setStatus] = useState<StatusSnapshot>(initialStatus ?? {});
   const historyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    vscode.setState({ entries, pendingInteraction });
+    vscode.setState({ entries, pendingInteraction, status });
     historyRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
-  }, [entries, pendingInteraction, vscode]);
+  }, [entries, pendingInteraction, status, vscode]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent<unknown>): void {
@@ -62,10 +74,28 @@ export default function App({
       setEntries((prev) => applyHostMessage(prev, message, expandAllToolCalls));
       setInFlight((prev) => applyTurnFlag(prev, message));
       setPendingInteraction((prev) => applyPendingInteraction(prev, message));
+      if (message.type === 'statusUpdate') {
+        // The host always posts the complete currently-known snapshot (never a delta), so a
+        // wholesale replace -- not a merge -- is correct here (see `StatusUpdateMessage`'s
+        // own doc comment).
+        setStatus(message);
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [expandAllToolCalls]);
+
+  function pickModel(): void {
+    vscode.postMessage({ type: 'pickModel' });
+  }
+
+  function pickThinking(): void {
+    vscode.postMessage({ type: 'pickThinking' });
+  }
+
+  function cyclePermissionMode(): void {
+    vscode.postMessage({ type: 'cyclePermissionMode' });
+  }
 
   function submit(text: string): void {
     setEntries((prev) => appendPrompt(prev, text));
@@ -137,7 +167,7 @@ export default function App({
 
   return (
     <VsCodeApiProvider vscode={vscode}>
-      <div className="title">Klorb session</div>
+      <div className="title">{sessionTitleText(status)}</div>
       <HistoryView
         entries={entries}
         historyRef={historyRef}
@@ -157,10 +187,24 @@ export default function App({
         muted={pendingInteraction !== undefined}
         onSubmit={submit}
         onCancel={cancel}
+        onCyclePermissionMode={cyclePermissionMode}
       />
-      <div id="status-row"></div>
+      <StatusRow
+        {...status}
+        onPickModel={pickModel}
+        onPickThinking={pickThinking}
+        onCyclePermissionMode={cyclePermissionMode}
+      />
     </VsCodeApiProvider>
   );
+}
+
+/** The panel's top title bar text: the active session's title, `New session…` until one
+ * arrives, with an `(Untrusted)` suffix appended whenever `workspaceTrusted === false` (TUI
+ * header parity). */
+function sessionTitleText(status: StatusSnapshot): string {
+  const title = status.sessionTitle ?? 'New session…';
+  return status.workspaceTrusted === false ? `${title} (Untrusted)` : title;
 }
 
 /** Renders a `QuestionPanelAnswer` as the compact history text `appendQuestionInteraction()`

@@ -11,7 +11,7 @@ import '@vscode-elements/elements/dist/vscode-textarea/index.js';
 import '@vscode-elements/elements/dist/vscode-textfield/index.js';
 import { createRoot } from 'react-dom/client';
 
-import App from 'webview/App';
+import App, { type StatusSnapshot } from 'webview/App';
 import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import type { HistoryEntry, PendingInteraction } from 'webview/features/history';
 
@@ -20,6 +20,7 @@ declare function acquireVsCodeApi(): VsCodeApi;
 interface SessionState {
   entries: HistoryEntry[];
   pendingInteraction?: PendingInteraction;
+  status?: StatusSnapshot;
 }
 
 function main(): void {
@@ -37,6 +38,7 @@ function main(): void {
       vscode={vscode}
       initialEntries={state.entries}
       initialPendingInteraction={state.pendingInteraction}
+      initialStatus={state.status}
     />
   );
 }

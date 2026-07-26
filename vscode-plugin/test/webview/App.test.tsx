@@ -260,6 +260,66 @@ describe('App', () => {
     expect(screen.getByText(/Answer: JSON/)).toBeTruthy();
   });
 
+  it('renders a statusUpdate in the status row and posts intents on click', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'statusUpdate',
+      model: 'gpt-5',
+      thinkingEnabled: true,
+      thinkingEffort: 'high',
+      permissionMode: 'auto',
+    });
+
+    expect(screen.getByText('gpt-5')).toBeTruthy();
+    expect(screen.getByText('High')).toBeTruthy();
+    fireEvent.click(screen.getByText('gpt-5'));
+    fireEvent.click(screen.getByText('High'));
+    fireEvent.click(screen.getByText('[auto]'));
+
+    expect(posted).toContainEqual({ type: 'pickModel' });
+    expect(posted).toContainEqual({ type: 'pickThinking' });
+    expect(posted).toContainEqual({ type: 'cyclePermissionMode' });
+  });
+
+  it('posts cyclePermissionMode on Shift+Tab in the prompt textarea, without moving focus', () => {
+    const { vscode, posted } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    const textarea = promptTextarea(container);
+    fireEvent.keyDown(textarea, { key: 'Tab', shiftKey: true });
+
+    expect(posted).toContainEqual({ type: 'cyclePermissionMode' });
+  });
+
+  it('shows the active session title in the top title bar, not the status row', () => {
+    const { vscode } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    expect(screen.getByText('New session…')).toBeTruthy();
+
+    postHostMessage({
+      type: 'statusUpdate',
+      sessionTitle: 'Fix the bug',
+      workspaceTrusted: false,
+    });
+
+    expect(screen.getByText('Fix the bug (Untrusted)')).toBeTruthy();
+  });
+
+  it('replaces the status snapshot wholesale on each statusUpdate', () => {
+    const { vscode } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({ type: 'statusUpdate', model: 'gpt-5', permissionMode: 'ask' });
+    expect(screen.getByText('gpt-5')).toBeTruthy();
+
+    postHostMessage({ type: 'statusUpdate', permissionMode: 'auto' });
+    expect(screen.queryByText('gpt-5')).toBeNull();
+    expect(screen.getAllByText('...')).toHaveLength(2);
+  });
+
   it('clears the history on sessionReset', () => {
     const { vscode } = makeVsCode();
     render(

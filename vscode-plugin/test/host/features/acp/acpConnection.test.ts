@@ -26,6 +26,10 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onToolCallUpdated: (message) => events.push(`toolCallUpdated:${message.callId}`),
     postPermissionAsk: (message) => events.push(`permissionAsk:${message.requestId}`),
     postQuestionAsk: (message) => events.push(`questionAsk:${message.requestId}`),
+    onSessionInfo: (info) => events.push(`sessionInfo:${info.modeId ?? ''}`),
+    onModeChanged: (modeId) => events.push(`modeChanged:${modeId}`),
+    onSessionTitleChanged: (title) => events.push(`titleChanged:${title ?? ''}`),
+    onUsageUpdate: (usedTokens) => events.push(`usage:${usedTokens}`),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   return { agent, connection, events };
@@ -62,6 +66,45 @@ describe('AcpConnection', () => {
     expect(agent.receivedNewSessions[0]!.mcpServers).toEqual([]);
   });
 
+  it('forwards session/new response state via onSessionInfo', async () => {
+    const agent = new MockAgent();
+    agent.newSessionResult = {
+      modes: {
+        currentModeId: 'ask',
+        availableModes: [{ id: 'ask', name: 'Ask before acting' }],
+      },
+      _meta: { klorb: { workspace: { path: '/work', trusted: false }, title: null } },
+    };
+    const { connection, events } = makeHarness(agent);
+
+    await connection.start(OPTIONS, '/work');
+
+    expect(events).toContain('sessionInfo:ask');
+  });
+
+  it('setSessionMode() sends session/set_mode for the live session', async () => {
+    const { agent, connection } = makeHarness();
+    await connection.start(OPTIONS, '/work');
+
+    await connection.setSessionMode('auto');
+
+    expect(agent.receivedSetSessionModes).toEqual([{ sessionId: 'sess-1', modeId: 'auto' }]);
+  });
+
+  it('extMethod() injects sessionId and returns the agent result', async () => {
+    const agent = new MockAgent();
+    agent.onExtMethod = async () => ({ skillCount: 3 });
+    const { connection } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+
+    const result = await connection.extMethod('_klorb/reloadSkills', {});
+
+    expect(agent.receivedExtMethods).toEqual([
+      { method: '_klorb/reloadSkills', params: { sessionId: 'sess-1' } },
+    ]);
+    expect(result).toEqual({ skillCount: 3 });
+  });
+
   it('resolves prompt() with the stop reason', async () => {
     const { agent, connection } = makeHarness();
     await connection.start(OPTIONS, '/work');
@@ -96,7 +139,7 @@ describe('AcpConnection', () => {
     await connection.start(OPTIONS, '/work');
 
     await connection.prompt('hi');
-    expect(events).toEqual(['thought:pondering', 'agent:Hello', 'agent: world']);
+    expect(events).toEqual(['sessionInfo:', 'thought:pondering', 'agent:Hello', 'agent: world']);
   });
 
   it('sends session/cancel for the live session on cancel()', async () => {
@@ -175,6 +218,10 @@ describe('AcpConnection', () => {
       onToolCallUpdated: () => undefined,
       postPermissionAsk: () => undefined,
       postQuestionAsk: () => undefined,
+      onSessionInfo: () => undefined,
+      onModeChanged: () => undefined,
+      onSessionTitleChanged: () => undefined,
+      onUsageUpdate: () => undefined,
     };
     const connection = new AcpConnection(
       serverProcess,

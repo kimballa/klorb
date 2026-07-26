@@ -198,6 +198,11 @@
 * Improve Workspace trust msg:
   * When querying about workspace trust, list any workspace skills auto-allowed by config.
 
+* Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
+  command-palette entries into one Off/Low/Medium/High choice, mirroring the VS Code plugin's
+  merged thinking chip/`klorb.setThinking` QuickPick (see
+  docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md).
+
 ## VSCode plugin
 
 ### Bugs
@@ -207,3 +212,8 @@
   any) being reloaded, on startup.
 
 ### Feature backlog
+
+* The prompt textbox should start as one line tall and expand to be up to ten lines tall
+  at which point it gains a vertical scrollbar. This needs to account for hard newlines
+  (inserted with shift+enter) as well as text wrapping.
+  [show the code sample from ee-web's assembly instructions height calculator.]

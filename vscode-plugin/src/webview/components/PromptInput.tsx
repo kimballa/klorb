@@ -12,6 +12,7 @@ interface PromptInputProps {
   muted?: boolean;
   onSubmit(text: string): void;
   onCancel(): void;
+  onCyclePermissionMode(): void;
 }
 
 /** Reads the current text out of the event's target element. The target is the
@@ -31,6 +32,7 @@ export default function PromptInput({
   muted = false,
   onSubmit,
   onCancel,
+  onCyclePermissionMode,
 }: PromptInputProps): JSX.Element {
   const [draft, setDraft] = useState('');
   const textareaRef = useRef<VscodeTextarea>(null);
@@ -51,6 +53,13 @@ export default function PromptInput({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === 'Tab' && event.shiftKey) {
+      // Claims Shift+Tab for the permission-mode cycle (mirroring the TUI's own Shift+Tab)
+      // instead of letting it fall through to the browser's default tab-order navigation.
+      event.preventDefault();
+      onCyclePermissionMode();
+      return;
+    }
     if (event.key === 'Escape') {
       if (inFlight) {
         onCancel();

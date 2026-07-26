@@ -273,4 +273,5 @@ class TurnBridge:
                 "sessionId": self._session_id,
                 "usedTokens": self._session.total_tokens_used(),
                 "maxTokens": self._session.max_context_window(),
+                "outputTokens": self._session.total_output_tokens_used(),
             })

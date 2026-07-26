@@ -1,10 +1,12 @@
 // (c) Copyright 2026 Aaron Kimball
 
 import HistoryView, { type HistoryViewProps } from './components/HistoryView';
+import SessionStatsCard from './components/SessionStatsCard';
 import {
   type HistoryEntryKind,
   type HistoryEntry,
   type PendingInteraction,
+  type SessionStatsHistoryEntry,
   type TextHistoryEntry,
   type ToolCallHistoryEntry,
   appendInteraction,
@@ -24,6 +26,7 @@ export {
   type HistoryEntryKind,
   type HistoryViewProps,
   type PendingInteraction,
+  type SessionStatsHistoryEntry,
   type TextHistoryEntry,
   type ToolCallHistoryEntry,
   appendInteraction,
@@ -36,4 +39,5 @@ export {
   applyTurnFlag,
   renderDiffLines,
   HistoryView,
+  SessionStatsCard,
 };

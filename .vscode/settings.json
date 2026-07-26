@@ -19,7 +19,9 @@
     "**/__pycache__": true,
     "**/.mypy_cache": true,
     "**/.pytest_cache": true,
-    "**/*.egg-info": true
+    "**/*.egg-info": true,
+    "vscode-plugin/node_modules": true,
+    "vscode-plugin/out": true,
   },
   "evenBetterToml.formatter.allowedBlankLines": 3,
   "evenBetterToml.formatter.indentEntries": true,
@@ -34,10 +36,27 @@
   "[python]": {
     "editor.defaultFormatter": "ms-python.autopep8"
   },
+  "[css]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
   "makefile.makefilePath": "klorb/Makefile",
   "prettier.configPath": "vscode-plugin/.prettierrc.json",
   "prettier.documentSelectors": [
-    "**/*.{ts,js,tsx,jsx,cjs,mjs}"
+    "**/*.{ts,js,tsx,jsx,cjs,mjs,css}"
   ],
-  "js/ts.experimental.useTsgo": true
+  "js/ts.experimental.useTsgo": true,
+  "search.exclude": {
+    "*.vsix": true,
+    "vscode-plugin/out/**": true
+  },
+  "prettier.printWidth": 100
 }

@@ -8,6 +8,7 @@ import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerPro
 
 import {
   KlorbAcpClient,
+  sessionInfoFromResponse,
   type LogFn,
   type RaiseToolCallLimitFn,
   type SessionUpdateListener,
@@ -161,6 +162,34 @@ export class AcpConnection {
     const session = await this._raceClosed(connection.newSession({ cwd, mcpServers: [] }));
     this._sessionId = session.sessionId;
     this._log(`klorb: session created: ${session.sessionId}`);
+    this._listener.onSessionInfo(sessionInfoFromResponse(session));
+  }
+
+  /** Changes the session's permission-framework mode (`session/set_mode`). The server also
+   * broadcasts a `current_mode_update` confirming the change, which `KlorbAcpClient.
+   * sessionUpdate()` forwards to the listener the same way this call's return does. */
+  public async setSessionMode(modeId: string): Promise<void> {
+    const { connection, sessionId } = this._requireReady();
+    await this._raceClosed(connection.setSessionMode({ sessionId, modeId }));
+  }
+
+  /** Calls a `_klorb/*` extension method against the live session, injecting `sessionId`
+   * automatically -- every klorb ext method requires it (see docs/specs/klorb-server.md). */
+  public async extMethod(
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const { connection, sessionId } = this._requireReady();
+    return this._raceClosed(connection.extMethod(method, { sessionId, ...params }));
+  }
+
+  private _requireReady(): { connection: ClientSideConnection; sessionId: string } {
+    const connection = this._connection;
+    const sessionId = this._sessionId;
+    if (connection === undefined || sessionId === undefined) {
+      throw new Error('klorb server connection is not ready');
+    }
+    return { connection, sessionId };
   }
 
   /**

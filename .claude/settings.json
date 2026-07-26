@@ -33,7 +33,9 @@
       "Bash(npm view *)",
       "Bash(npm install *)",
       "Bash(npx vitest *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(npx eslint *)"
     ]
   },
   "hooks": {

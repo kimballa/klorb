@@ -146,6 +146,59 @@ export interface QuestionAskMessage {
   total: number;
 }
 
+/** A thinking-effort level, mirroring `klorb.session.constants.ThinkingEffort`. */
+export type ThinkingEffort = 'low' | 'medium' | 'high';
+
+/** A coalesced snapshot of the session's control-plane state -- the status row's data source.
+ * Every field is independently optional: the host posts this whenever any one piece changes
+ * (a `current_mode_update`, a `session_info_update`, a `_klorb/usage` notification, or a
+ * `_klorb/getSessionConfig`/`_klorb/setSessionConfig` round trip), always with the *complete*
+ * currently-known state -- not a delta -- so the webview can simply replace its local status
+ * with each message rather than merging partial updates (see
+ * `host/features/sessionControls/sessionControls.ts`). A field stays absent until the host
+ * has learned it at least once (e.g. `model` before the first `_klorb/getSessionConfig`
+ * reply); `maxTokens`/`sessionTitle` additionally use `null` for a real "no limit"/"no title"
+ * value, distinct from "not yet known". */
+export interface StatusUpdateMessage {
+  type: 'statusUpdate';
+  model?: string;
+  thinkingEnabled?: boolean;
+  thinkingEffort?: ThinkingEffort;
+  permissionMode?: string;
+  usedTokens?: number;
+  maxTokens?: number | null;
+  outputTokens?: number;
+  sessionTitle?: string | null;
+  workspaceTrusted?: boolean;
+}
+
+/** An ordered label -> numeric-value map, rendered as a right-aligned two-column table row per
+ * entry (see `SessionStatsMessage`). */
+export type SessionStatsCounts = Record<string, number>;
+
+/** One tool's success/failure row in a `SessionStatsMessage`'s "Per-tool breakdown". */
+export interface SessionStatsToolRow {
+  name: string;
+  succeeded: number;
+  failed: number;
+}
+
+/** A rendered `_klorb/sessionStats` result (`klorb.showSessionStats`), appended to the history
+ * as a `SessionStatsCard` -- mirrors `klorb.session_statistics.SessionStatistics.
+ * format_report()`'s TUI layout (see docs/specs/vscode-plugin.md's status row and session
+ * controls section) as two right-aligned numeric tables plus a separated cost line, rather
+ * than the TUI's own preformatted monospace text. `cachePercent` is the "Cached tokens" row's
+ * own extra percentage annotation, not a `tokenUsage` entry of its own; `totalCost` renders in
+ * its own visually-separated block below the token table. */
+export interface SessionStatsMessage {
+  type: 'sessionStats';
+  messageCounts: SessionStatsCounts;
+  toolBreakdown: SessionStatsToolRow[];
+  tokenUsage: SessionStatsCounts;
+  cachePercent: number;
+  totalCost: number;
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -157,7 +210,9 @@ export type HostMessage =
   | ToolCallStartedMessage
   | ToolCallUpdatedMessage
   | PermissionAskMessage
-  | QuestionAskMessage;
+  | QuestionAskMessage
+  | StatusUpdateMessage
+  | SessionStatsMessage;
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
@@ -205,6 +260,21 @@ export type QuestionAnswerMessage =
   | { type: 'questionAnswer'; requestId: number; selectedOptionIndex: number }
   | { type: 'questionAnswer'; requestId: number; otherText: string };
 
+/** The user clicked the status row's model chip: show the model picker. */
+export interface PickModelMessage {
+  type: 'pickModel';
+}
+
+/** The user clicked the status row's thinking chip: show the Off/Low/Medium/High picker. */
+export interface PickThinkingMessage {
+  type: 'pickThinking';
+}
+
+/** The user clicked the status row's permission badge: cycle ask -> auto -> deny -> ask. */
+export interface CyclePermissionModeMessage {
+  type: 'cyclePermissionMode';
+}
+
 /** Every message the webview may post to the extension host. */
 export type WebviewMessage =
   | SubmitPromptMessage
@@ -212,7 +282,10 @@ export type WebviewMessage =
   | OpenLocationMessage
   | OpenDiffMessage
   | PermissionDecisionMessage
-  | QuestionAnswerMessage;
+  | QuestionAnswerMessage
+  | PickModelMessage
+  | PickThinkingMessage
+  | CyclePermissionModeMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
 interface FieldSpec {
@@ -230,7 +303,12 @@ const HOST_BARE_TYPES: readonly string[] = ['turnStarted', 'sessionReset'];
 
 const WEBVIEW_FIELD_SPECS: readonly FieldSpec[] = [{ field: 'text', types: ['submitPrompt'] }];
 
-const WEBVIEW_BARE_TYPES: readonly string[] = ['cancelTurn'];
+const WEBVIEW_BARE_TYPES: readonly string[] = [
+  'cancelTurn',
+  'pickModel',
+  'pickThinking',
+  'cyclePermissionMode',
+];
 
 function parseMessage(
   data: unknown,
@@ -424,6 +502,62 @@ function parsePermissionDecision(
   return undefined;
 }
 
+function isThinkingEffort(value: unknown): value is ThinkingEffort {
+  return value === 'low' || value === 'medium' || value === 'high';
+}
+
+function parseStatusUpdate(record: Record<string, unknown>): StatusUpdateMessage | undefined {
+  if (
+    (record.model !== undefined && typeof record.model !== 'string') ||
+    (record.thinkingEnabled !== undefined && typeof record.thinkingEnabled !== 'boolean') ||
+    (record.thinkingEffort !== undefined && !isThinkingEffort(record.thinkingEffort)) ||
+    (record.permissionMode !== undefined && typeof record.permissionMode !== 'string') ||
+    (record.usedTokens !== undefined && typeof record.usedTokens !== 'number') ||
+    (record.maxTokens !== undefined &&
+      record.maxTokens !== null &&
+      typeof record.maxTokens !== 'number') ||
+    (record.outputTokens !== undefined && typeof record.outputTokens !== 'number') ||
+    (record.sessionTitle !== undefined &&
+      record.sessionTitle !== null &&
+      typeof record.sessionTitle !== 'string') ||
+    (record.workspaceTrusted !== undefined && typeof record.workspaceTrusted !== 'boolean')
+  ) {
+    return undefined;
+  }
+  return record as unknown as StatusUpdateMessage;
+}
+
+function isSessionStatsCounts(value: unknown): value is SessionStatsCounts {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  return Object.values(value as Record<string, unknown>).every((v) => typeof v === 'number');
+}
+
+function isSessionStatsToolRow(value: unknown): value is SessionStatsToolRow {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.name === 'string' && typeof v.succeeded === 'number' && typeof v.failed === 'number'
+  );
+}
+
+function parseSessionStats(record: Record<string, unknown>): SessionStatsMessage | undefined {
+  if (
+    !isSessionStatsCounts(record.messageCounts) ||
+    !Array.isArray(record.toolBreakdown) ||
+    !record.toolBreakdown.every(isSessionStatsToolRow) ||
+    !isSessionStatsCounts(record.tokenUsage) ||
+    typeof record.cachePercent !== 'number' ||
+    typeof record.totalCost !== 'number'
+  ) {
+    return undefined;
+  }
+  return record as unknown as SessionStatsMessage;
+}
+
 function parseOpenLocation(record: Record<string, unknown>): OpenLocationMessage | undefined {
   if (
     typeof record.path === 'string' &&
@@ -462,6 +596,10 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parsePermissionAsk(record);
     case 'questionAsk':
       return parseQuestionAsk(record);
+    case 'statusUpdate':
+      return parseStatusUpdate(record);
+    case 'sessionStats':
+      return parseSessionStats(record);
     default:
       return undefined;
   }

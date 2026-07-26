@@ -18,6 +18,9 @@ function makeListener(): {
   toolCallsUpdated: ToolCallUpdatedMessage[];
   permissionAsks: PermissionAskMessage[];
   questionAsks: QuestionAskMessage[];
+  modeChanges: string[];
+  titleChanges: (string | null)[];
+  usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[];
 } {
   const agentText: string[] = [];
   const thoughtText: string[] = [];
@@ -25,6 +28,9 @@ function makeListener(): {
   const toolCallsUpdated: ToolCallUpdatedMessage[] = [];
   const permissionAsks: PermissionAskMessage[] = [];
   const questionAsks: QuestionAskMessage[] = [];
+  const modeChanges: string[] = [];
+  const titleChanges: (string | null)[] = [];
+  const usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[] = [];
   return {
     agentText,
     thoughtText,
@@ -32,6 +38,9 @@ function makeListener(): {
     toolCallsUpdated,
     permissionAsks,
     questionAsks,
+    modeChanges,
+    titleChanges,
+    usageUpdates,
     listener: {
       onAgentText: (text: string) => agentText.push(text),
       onThoughtText: (text: string) => thoughtText.push(text),
@@ -39,6 +48,11 @@ function makeListener(): {
       onToolCallUpdated: (message: ToolCallUpdatedMessage) => toolCallsUpdated.push(message),
       postPermissionAsk: (message: PermissionAskMessage) => permissionAsks.push(message),
       postQuestionAsk: (message: QuestionAskMessage) => questionAsks.push(message),
+      onSessionInfo: () => undefined,
+      onModeChanged: (modeId: string) => modeChanges.push(modeId),
+      onSessionTitleChanged: (title: string | null) => titleChanges.push(title),
+      onUsageUpdate: (usedTokens: number, maxTokens: number | null, outputTokens: number) =>
+        usageUpdates.push({ usedTokens, maxTokens, outputTokens }),
     },
   };
 }
@@ -66,6 +80,82 @@ describe('KlorbAcpClient', () => {
     });
 
     expect(thoughtText).toEqual(['hmm']);
+  });
+
+  it('dispatches current_mode_update to onModeChanged', async () => {
+    const { listener, modeChanges } = makeListener();
+    const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+    await client.sessionUpdate({
+      sessionId: 's1',
+      update: { sessionUpdate: 'current_mode_update', currentModeId: 'auto' },
+    });
+
+    expect(modeChanges).toEqual(['auto']);
+  });
+
+  it('dispatches session_info_update to onSessionTitleChanged when title is present', async () => {
+    const { listener, titleChanges } = makeListener();
+    const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+    await client.sessionUpdate({
+      sessionId: 's1',
+      update: { sessionUpdate: 'session_info_update', title: 'Fix the bug' },
+    });
+    await client.sessionUpdate({
+      sessionId: 's1',
+      update: { sessionUpdate: 'session_info_update', title: null },
+    });
+    await client.sessionUpdate({
+      sessionId: 's1',
+      update: { sessionUpdate: 'session_info_update' },
+    });
+
+    expect(titleChanges).toEqual(['Fix the bug', null]);
+  });
+
+  describe('extNotification', () => {
+    it('dispatches _klorb/usage to onUsageUpdate', async () => {
+      const { listener, usageUpdates } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      await client.extNotification('_klorb/usage', {
+        usedTokens: 1400,
+        maxTokens: 128000,
+        outputTokens: 300,
+      });
+      await client.extNotification('_klorb/usage', {
+        usedTokens: 50,
+        maxTokens: null,
+        outputTokens: 20,
+      });
+
+      expect(usageUpdates).toEqual([
+        { usedTokens: 1400, maxTokens: 128000, outputTokens: 300 },
+        { usedTokens: 50, maxTokens: null, outputTokens: 20 },
+      ]);
+    });
+
+    it('logs and ignores malformed _klorb/usage params', async () => {
+      const { listener, usageUpdates } = makeListener();
+      const logs: string[] = [];
+      const client = new KlorbAcpClient(listener, RequestError, (msg: string) => logs.push(msg));
+
+      await client.extNotification('_klorb/usage', { usedTokens: 'not a number' });
+
+      expect(usageUpdates).toEqual([]);
+      expect(logs.some((line) => line.includes('malformed'))).toBe(true);
+    });
+
+    it('logs and ignores an unrecognized ext notification', async () => {
+      const { listener } = makeListener();
+      const logs: string[] = [];
+      const client = new KlorbAcpClient(listener, RequestError, (msg: string) => logs.push(msg));
+
+      await client.extNotification('_klorb/somethingElse', {});
+
+      expect(logs.some((line) => line.includes('unrecognized'))).toBe(true);
+    });
   });
 
   describe('requestPermission', () => {

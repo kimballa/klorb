@@ -26,10 +26,15 @@ button (or Escape while a turn is in flight) sends `session/cancel`.
 Shift+Enter (or Ctrl+Enter) inserts a newline in the prompt box instead of submitting.
 Activation spawns one `klorb server` process and creates one ACP session, shared by the whole
 extension; **Klorb: Restart Server** kills and respawns the child and re-initializes the ACP
-connection (picking up any change to the `klorb.serverPath`/`klorb.openRouterApiKey`/
-`klorb.configPath` settings — see "Configuration" below); **Klorb: Restart Session** replaces
+connection (picking up any change to the `klorb.serverPath`/`klorb.configPath` settings or the
+stored OpenRouter API key — see "Configuration" below); **Klorb: New Session** replaces
 the live ACP session with a fresh one (`session/new`) and clears the panel's history, without
-restarting the child process.
+restarting the child process. The panel's top title bar shows the active session's title (see
+"Status row and session controls" below); a status row docked under the prompt input shows the
+model chip, the thinking chip, a clickable permission-mode badge, and the token tally.
+**Klorb: Select Model**, **Klorb: Set Thinking**, **Klorb: Cycle Permission Mode**, **Klorb:
+Show Session Stats**, and **Klorb: Reload Skills** drive the same session-control surface from
+the command palette.
 
 ## How it works
 
@@ -43,27 +48,30 @@ together for this extension specifically.
 
 * `vscode-plugin/src/extension.ts` is the extension's activation entry point
   (`package.json`'s `main`, bundled to `out/extension.js`). `activate()` constructs one
-  `KlorbServerProcess`, one `KlorbSessionViewProvider`, and one `AcpConnection` wired to both
+  `KlorbServerProcess`, one `KlorbSessionViewProvider`, one `AcpConnection` wired to both
   (the provider is the connection's `SessionUpdateListener`; `provider.setConnection()`
   completes the reference cycle after construction, since the provider and connection
-  otherwise have no way to point at each other from a single constructor call). It starts the
-  connection via `readServerOptions()` (reads `klorb.serverPath`, `klorb.openRouterApiKey`,
-  and `klorb.configPath` off `vscode.workspace.getConfiguration('klorb')`, folding the API key
-  into the child's `OPENROUTER_API_KEY` environment variable when non-empty) and `sessionCwd()`
-  (the first workspace folder, or the home directory if none is open — ACP requires an
-  absolute `cwd` for `session/new`), registers the view provider for the `klorb.sessionView`
-  webview view, and registers `klorb.restartSession` (calls `AcpConnection.newSession()` for a
-  fresh conversation, then posts a `sessionReset` message to clear the panel) and
-  `klorb.restartServer` (calls `AcpConnection.start()` again — `start()` stops any prior child
-  first, so this both applies changed settings and recovers from a crashed/hung server).
-  `context.subscriptions` stops the connection (killing the child process) when the extension
-  deactivates. A handshake or connection failure at any of these points surfaces as both a VS
-  Code error notification and a `turnError` panel message, rather than failing silently.
-  `activate()` also creates the "Klorb" output channel (`vscode.window.createOutputChannel`,
-  selectable from VS Code's Output panel dropdown) and passes an `appendLine`-backed `LogFn`
-  into `AcpConnection`, so both the extension's own diagnostic logging and the `klorb server`
-  child's stderr (see `AcpConnection` below) land in one place instead of the void `console.log`
-  would otherwise go to.
+  otherwise have no way to point at each other from a single constructor call), one
+  `SessionControls` wrapping the connection (`provider.setSessionControls()` completes that
+  reference cycle the same way), one `ApiKeyManager`, and one `WorkspaceTrustBridge` (see
+  "Status row and session controls" below for all four). It starts the connection via
+  `readServerOptions()` (reads `klorb.serverPath`/`klorb.configPath` off
+  `vscode.workspace.getConfiguration('klorb')` and resolves the OpenRouter API key through
+  `ApiKeyManager.resolve()`, folding it into the child's `OPENROUTER_API_KEY` environment
+  variable when defined) and `sessionCwd()` (the first workspace folder, or the home directory
+  if none is open — ACP requires an absolute `cwd` for `session/new`), registers the view
+  provider for the `klorb.sessionView` webview view, and registers `klorb.newSession` (calls
+  `AcpConnection.newSession()` for a fresh conversation, then posts a `sessionReset` message to
+  clear the panel) and `klorb.restartServer` (calls `AcpConnection.start()` again — `start()`
+  stops any prior child first, so this both applies changed settings and recovers from a
+  crashed/hung server). `context.subscriptions` stops the connection (killing the child
+  process) when the extension deactivates. A handshake or connection failure at any of these
+  points surfaces as both a VS Code error notification and a `turnError` panel message, rather
+  than failing silently. `activate()` also creates the "Klorb" output channel
+  (`vscode.window.createOutputChannel`, selectable from VS Code's Output panel dropdown) and
+  passes an `appendLine`-backed `LogFn` into `AcpConnection`, so both the extension's own
+  diagnostic logging and the `klorb server` child's stderr (see `AcpConnection` below) land in
+  one place instead of the void `console.log` would otherwise go to.
 * `vscode-plugin/src/host/klorbServerProcess.ts`'s `KlorbServerProcess` owns spawning, killing,
   and restarting the one `klorb server` child process — nothing about the wire protocol spoken
   over its stdio. `start()` stops any running child, spawns `<command> server` (appending
@@ -87,35 +95,47 @@ together for this extension specifically.
   timeout — throws a readable error naming `klorb.serverPath` as the likely fix, covering an old
   pre-ACP klorb binary), advertising `clientCapabilities._meta.klorb.raiseToolCallLimit = true`
   (see [[klorb-server]]'s extension-methods section), and then `newSession(cwd)`, storing the
-  returned `sessionId`. `prompt(text)` sends `session/prompt` with one `TextContentBlock` and
-  resolves with the ACP `stopReason`; only one prompt may be in flight at a time (matching
-  [[klorb-server]]'s own one-prompt-at-a-time rule), so a second call while one is running
-  rejects immediately rather than queuing. `cancel()` sends `session/cancel` as a fire-and-forget
-  notification — the in-flight `prompt()` call still resolves normally once the server winds the
-  turn down and replies with `stopReason: "cancelled"`. `stop()` kills the child and rejects any
-  in-flight `prompt()` with a restart-style error; the same rejection fires automatically if the
-  connection closes out from under an in-flight prompt (child crash, unexpected EOF).
-  `errorMessage()` (exported alongside the class) renders both real `Error` instances and the
-  SDK's plain `{code, message}` JSON-RPC rejection objects as a readable string, since ACP
-  request failures reject with the latter shape, not an `Error`. The `client` getter exposes the
-  live `KlorbAcpClient` (`undefined` before `start()` completes or after `stop()`), which
-  `KlorbSessionViewProvider` uses to forward a `permissionDecision` webview message and to
-  trigger `repostPendingAsk()` after the webview view is recreated (see "Approval panel" below).
+  returned `sessionId` and forwarding the response's `modes`/`_meta.klorb.workspace`/`.title`
+  to the listener as a `SessionInfo` via `onSessionInfo()` (`sessionInfoFromResponse()`, see
+  "Status row and session controls" below). `prompt(text)` sends `session/prompt` with one
+  `TextContentBlock` and resolves with the ACP `stopReason`; only one prompt may be in flight at
+  a time (matching [[klorb-server]]'s own one-prompt-at-a-time rule), so a second call while one
+  is running rejects immediately rather than queuing. `cancel()` sends `session/cancel` as a
+  fire-and-forget notification — the in-flight `prompt()` call still resolves normally once the
+  server winds the turn down and replies with `stopReason: "cancelled"`. `setSessionMode(modeId)`
+  sends `session/set_mode`; `extMethod(method, params)` calls a `_klorb/*` extension method
+  against the live session, injecting `sessionId` into `params` automatically -- both are the
+  low-level wire calls `SessionControls` builds its typed control-plane surface on top of.
+  `stop()` kills the child and rejects any in-flight `prompt()` with a restart-style error; the
+  same rejection fires automatically if the connection closes out from under an in-flight
+  prompt (child crash, unexpected EOF). `errorMessage()` (exported alongside the class) renders
+  both real `Error` instances and the SDK's plain `{code, message}` JSON-RPC rejection objects
+  as a readable string, since ACP request failures reject with the latter shape, not an
+  `Error`. The `client` getter exposes the live `KlorbAcpClient` (`undefined` before `start()`
+  completes or after `stop()`), which `KlorbSessionViewProvider` uses to forward a
+  `permissionDecision` webview message and to trigger `repostPendingAsk()` after the webview
+  view is recreated (see "Approval panel" below).
 * `vscode-plugin/src/host/features/acp/klorbAcpClient.ts`'s `KlorbAcpClient` implements the ACP
   SDK's `Client` interface: the handler for requests/notifications the server sends back over
   the connection.
   `sessionUpdate()` dispatches `agent_message_chunk`/`agent_thought_chunk` text content to a
   `SessionUpdateListener` (`onAgentText`/`onThoughtText`), flattens `tool_call`/`tool_call_update`
   updates into `ToolCallStartedMessage`/`ToolCallUpdatedMessage` (`onToolCallStarted`/
-  `onToolCallUpdated` — see "Tool-call rendering and editor integration" below), and logs
-  (rather than errors on) any other update kind, since later increments add handling for `plan`
-  etc. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension method are covered in
-  "Approval panel" below. `readTextFile()`/`writeTextFile()`/`createTerminal()` throw the SDK's
+  `onToolCallUpdated` — see "Tool-call rendering and editor integration" below), dispatches
+  `current_mode_update`/`session_info_update` to `onModeChanged`/`onSessionTitleChanged` (the
+  latter only when the update carries a `title` field at all), and logs (rather than errors on)
+  any other update kind, since later increments add handling for `plan` etc. `extNotification()`
+  dispatches `_klorb/usage` to `onUsageUpdate(usedTokens, maxTokens)` (logging and ignoring a
+  malformed payload) and logs-and-ignores any other extension notification, per ACP's own
+  extensibility rules. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension
+  method are covered in "Approval panel" below. `readTextFile()`/`writeTextFile()`/
+  `createTerminal()` throw the SDK's
   `RequestError.methodNotFound()` synchronously, matching the client never advertising the
   `fs`/`terminal` capabilities during `initialize()`. `src/host/features/acp/index.ts` is this
-  feature's barrel, re-exporting `AcpConnection`, `errorMessage`, `KlorbAcpClient`,
-  `PermissionDecisionResult`, `RaiseToolCallLimitFn`, and the `SessionUpdateListener` type — the
-  only things `extension.ts` and `klorbSessionViewProvider.ts` (outside the feature) import.
+  feature's barrel, re-exporting `AcpConnection`, `errorMessage`, `KlorbAcpClient`, `LogFn`,
+  `PermissionDecisionResult`, `RaiseToolCallLimitFn`, and the `SessionInfo`/`SessionUpdateListener`
+  types — the only things `extension.ts`, `klorbSessionViewProvider.ts`, and the
+  `sessionControls` feature (outside the feature) import.
 * `vscode-plugin/src/host/klorbSessionViewProvider.ts`'s `KlorbSessionViewProvider` implements
   `vscode.WebviewViewProvider` and `SessionUpdateListener`. `resolveWebviewView()` enables
   scripts, restricts `localResourceRoots` to the extension's own install directory, sets the
@@ -126,13 +146,19 @@ together for this extension specifically.
   `toolCallStarted`/`toolCallUpdated` messages as-is, and `onToolCallUpdated` additionally
   records any `diff` payload with the shared `EditorIntegration` (see "Tool-call rendering and
   editor integration" below) before posting, since the diff text isn't retained anywhere else
-  once flattened into the webview message. `_runTurn(text)` — invoked for a `submitPrompt`
-  message — posts `turnStarted`, awaits `AcpConnection.prompt(text)`, and posts either
-  `turnEnded {stopReason}` or (on rejection) `turnError {message}`; a `cancelTurn` message calls
-  `AcpConnection.cancel()` directly, with no reply of its own (the in-flight prompt's own
-  `turnEnded`/`turnError` follow-up is the confirmation); `openLocation`/`openDiff` messages are
-  routed to `EditorIntegration.openLocation()`/`openDiff()`; a `permissionDecision` message is
-  routed to `AcpConnection.client?.resolvePermissionDecision()` (see "Approval panel" below).
+  once flattened into the webview message. `onSessionInfo`/`onModeChanged`/
+  `onSessionTitleChanged`/`onUsageUpdate` (see "Status row and session controls" below) each
+  delegate straight to the matching `SessionControls.apply*()` method, set via
+  `setSessionControls()` the same way `setConnection()` wires the connection. `_runTurn(text)`
+  — invoked for a `submitPrompt` message — posts `turnStarted`, awaits `AcpConnection.prompt
+  (text)`, and posts either `turnEnded {stopReason}` or (on rejection) `turnError {message}`; a
+  `cancelTurn` message calls `AcpConnection.cancel()` directly, with no reply of its own (the
+  in-flight prompt's own `turnEnded`/`turnError` follow-up is the confirmation);
+  `openLocation`/`openDiff` messages are routed to `EditorIntegration.openLocation()`/
+  `openDiff()`; a `permissionDecision` message is routed to `AcpConnection.client?.
+  resolvePermissionDecision()` (see "Approval panel" below); `pickModel`/`cyclePermissionMode`
+  messages execute the `klorb.selectModel`/`klorb.cyclePermissionMode` commands, so a status
+  row click drives the same code path as its command-palette equivalent.
   `postPermissionAsk()` (the `SessionUpdateListener` method `KlorbAcpClient` calls to post an
   ask) posts the `permissionAsk` host message and, if the view is hidden at that moment, shows a
   "Klorb needs your approval" notification with a "Show Klorb" action
@@ -140,9 +166,11 @@ together for this extension specifically.
   invisible forever. `resolveWebviewView()` additionally calls
   `AcpConnection.client?.repostPendingAsk()` once the webview's message handler is wired up, so
   an ask still awaiting an answer from before a webview reload is shown again to the fresh
-  webview instance. `restart()` re-sets the webview's HTML
+  webview instance, and `SessionControls.postSnapshot()` the same way, so the status row sees
+  the current control-plane state instead of its placeholder defaults. `restart()` re-sets the
+  webview's HTML
   (with a fresh nonce and a cache-busting query string on the compiled webview script's URI),
-  which is what `klorb.restartSession` calls — it reloads the panel's webview document (and
+  which is what `klorb.newSession` calls — it reloads the panel's webview document (and
   therefore `out/webview/main.js`) without requiring a full "Reload Window", so a rebuilt
   webview script is picked up immediately. This only covers changes to `src/webview/*`, though:
   `restart()` itself runs as a method on the already-`require()`d `KlorbSessionViewProvider`
@@ -180,35 +208,42 @@ together for this extension specifically.
   which is why the single `vscode` value from that one call is threaded through as a prop
   rather than re-acquired (see `docs/adrs/call-acquirevscodeapi-exactly-once-per-webview-page.md`).
 * `vscode-plugin/src/webview/App.tsx`'s `App` component is the panel's layout shell, top to
-  bottom: the title, `HistoryView`, an `#interaction-area` div that mounts `ApprovalPanel` while
-  a permission ask is outstanding or `QuestionPanel` while an `AskUserQuestions` question is
-  outstanding, `PromptInput`, and a placeholder `#status-row` div (model/thinking/permission-mode
-  controls arrive in `plan-016-009`). It owns all interactive state: `entries` (a
-  `HistoryEntry[]`, seeded from `initialEntries`), `inFlight` (whether a turn is currently
-  running), `expandAllToolCalls` (the global "expand all tool calls" toggle — see
-  `features/history` below), and `pendingInteraction` (a `PermissionAskMessage |
-  QuestionAskMessage | undefined`, seeded from `initialPendingInteraction` — see "Approval and
-  question panels" below). A `window` `message` listener (subscribed for the panel's lifetime via
-  a `useEffect` keyed on `expandAllToolCalls`, so a newly-started tool call always sees the
-  current toggle state) parses each incoming payload with `parseHostMessage()` and applies it to
-  `entries`/`inFlight`/`pendingInteraction` via the pure functions in the `features/history`
-  feature. Submitting a prompt appends a `'prompt'` entry optimistically, sets `inFlight` to
-  `true` (the host's own `turnStarted`/`turnError` follow-up confirms or corrects it), and posts
-  `{type: 'submitPrompt', text}`. Toggling the global tool-call expand mode flips
-  `expandAllToolCalls` and applies it to every existing tool-call entry at once
-  (`applyExpandAllToolCalls`); toggling one chip's own chevron flips just that entry
-  (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`.
+  bottom: the title (`.title`, `sessionTitleText()` — the active session's `sessionTitle`, or
+  `New session…` until one arrives, with an `(Untrusted)` suffix appended whenever
+  `workspaceTrusted === false`, TUI header parity), `HistoryView`, an `#interaction-area` div
+  that mounts `ApprovalPanel` while a permission ask is outstanding or `QuestionPanel` while an
+  `AskUserQuestions` question is outstanding, `PromptInput`, and `StatusRow` (see "Status row
+  and session controls" below). It owns all interactive state: `entries` (a `HistoryEntry[]`,
+  seeded from `initialEntries`),
+  `inFlight` (whether a turn is currently running), `expandAllToolCalls` (the global "expand all
+  tool calls" toggle — see `features/history` below), `pendingInteraction` (a `PermissionAskMessage
+  | QuestionAskMessage | undefined`, seeded from `initialPendingInteraction` — see "Approval and
+  question panels" below), and `status` (a `StatusSnapshot`, seeded from `initialStatus` — see
+  "Status row and session controls" below). A `window` `message` listener (subscribed for the
+  panel's lifetime via a `useEffect` keyed on `expandAllToolCalls`, so a newly-started tool call
+  always sees the current toggle state) parses each incoming payload with `parseHostMessage()`
+  and applies it to `entries`/`inFlight`/`pendingInteraction` via the pure functions in the
+  `features/history` feature, and replaces `status` wholesale with a `statusUpdate` message's
+  own fields (never merged — the host always posts the complete currently-known snapshot, see
+  "Status row and session controls" below). Submitting a prompt appends a `'prompt'` entry
+  optimistically, sets `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up
+  confirms or corrects it), and posts `{type: 'submitPrompt', text}`. Toggling the global
+  tool-call expand mode flips `expandAllToolCalls` and applies it to every existing tool-call
+  entry at once (`applyExpandAllToolCalls`); toggling one chip's own chevron flips just that
+  entry (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`.
   `handleApprovalDecision()` (passed to `ApprovalPanel` as `onDecision`) appends an
   `appendInteraction()` record, clears `pendingInteraction`, and posts `{type:
   'permissionDecision', ...}` back to the host; `handleQuestionAnswer()` (passed to
   `QuestionPanel` as `onAnswer`) is the parallel handler, appending an `appendQuestionInteraction()`
-  record and posting `{type: 'questionAnswer', ...}`. A separate `useEffect` keyed on
-  `entries`/`pendingInteraction` calls `vscode.setState({entries, pendingInteraction})` (so
-  history and an unanswered interaction both survive `retainContextWhenHidden`'s context
-  teardown/rebuild) and scrolls the history's last child into view. `App`'s returned tree is
-  wrapped in `<VsCodeApiProvider vscode={vscode}>` (see below) so any descendant can reach
-  `vscode` via `useVsCodeApi()` without it being threaded through as an explicit prop down every
-  intermediate component.
+  record and posting `{type: 'questionAnswer', ...}`; `pickModel()`/`cyclePermissionMode()`
+  (passed to `StatusRow` as `onPickModel`/`onCyclePermissionMode`) post `{type: 'pickModel'}`/
+  `{type: 'cyclePermissionMode'}`. A separate `useEffect` keyed on
+  `entries`/`pendingInteraction`/`status` calls `vscode.setState({entries, pendingInteraction,
+  status})` (so history, an unanswered interaction, and the status snapshot all survive
+  `retainContextWhenHidden`'s context teardown/rebuild) and scrolls the history's last child
+  into view. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
+  below) so any descendant can reach `vscode` via `useVsCodeApi()` without it being threaded
+  through as an explicit prop down every intermediate component.
 * `vscode-plugin/src/webview/components/VsCodeApiProvider.tsx` and `vscode-plugin/src/webview/
   hooks/useVsCodeApi.ts` are the top-level (not feature-specific) pieces that distribute the
   `vscode` object: `VsCodeApiProvider` wraps a React context around the single `vscode` value
@@ -275,16 +310,19 @@ together for this extension specifically.
     `'thinking'` entries as a collapsed-by-default `<details>` disclosure (muted/italic styling,
     matching the TUI's thinking block) that keeps streaming into its body while the reader has
     it open; `'error'`/`'notice'`/`'interaction'` entries as plain styled text; `'toolCall'`
-    entries as a `ToolCallChip`.
+    entries as a `ToolCallChip`; `'sessionStats'` entries as a `SessionStatsCard` (see "Status
+    row and session controls" below).
 * `vscode-plugin/src/webview/components/PromptInput.tsx` renders the `<vscode-textarea>` +
   `<vscode-button>` input row: disabled (and the button replaced by a Stop button) while
   `inFlight` is true, and additionally styled with the `.input-row-muted` CSS class (dimmed
   opacity) while its `muted` prop is set — `App` passes `muted={pendingInteraction !==
   undefined}`, since a permission ask or question ask always arrives mid-turn (`inFlight` is
   already true), so `muted` layers the TUI's interaction-mode visual treatment on top of the
-  already-disabled input rather than changing whether it's disabled. Its own `onKeyDown` handles Escape (calls `onCancel` when
-  `inFlight`) and Enter, delegating the submit-vs-newline decision to `keyHandling.ts`'s
-  `classifyEnterKey()`.
+  already-disabled input rather than changing whether it's disabled. Its own `onKeyDown` handles
+  Shift+Tab (calls `onCyclePermissionMode`, `preventDefault`ed so it doesn't fall through to the
+  browser's default tab-order navigation — mirroring the TUI's own Shift+Tab), Escape (calls
+  `onCancel` when `inFlight`), and Enter, delegating the submit-vs-newline decision to
+  `keyHandling.ts`'s `classifyEnterKey()`.
 * `vscode-plugin/src/webview/keyHandling.ts`'s `classifyEnterKey(shiftKey, ctrlKey)` returns
   `'newline'` if either modifier is held and `'submit'` otherwise. Pulling this one decision out
   as a standalone function is what makes it reachable from
@@ -463,6 +501,158 @@ webview panel (see below).
   `appendQuestionInteraction(entries, ask, answerText)` (called from `App`'s
   `handleQuestionAnswer()`) is the same record for an answered question.
 
+### Status row and session controls
+
+Surfaces [[klorb-server]]'s control-plane surface (session modes, model/thinking config,
+session stats, workspace trust, skills reload) as a docked status row plus native command-
+palette commands — see docs/plans/archive/plan-016-009-vscode-session-controls.md for the
+increment this landed in.
+
+* **`SessionControls`** (`vscode-plugin/src/host/features/sessionControls/sessionControls.ts`)
+  is a thin, typed layer over `AcpConnection`'s `setSessionMode()`/`extMethod()` calls, and the
+  single place that coalesces every control-plane notification into one running
+  `StatusSnapshot` (`model`, `thinkingEnabled`, `thinkingEffort`, `permissionMode`,
+  `usedTokens`, `maxTokens`, `outputTokens`, `sessionTitle`, `workspaceTrusted`), broadcast to
+  its constructor's `onStatus` callback — always the *complete* currently-known snapshot, not a
+  delta, every time any one field changes. `applySessionInfo(info: SessionInfo)` (called once
+  per `session/new`, via `KlorbSessionViewProvider.onSessionInfo()`) applies the session's
+  starting mode/workspace-trust/title, resets the transient token tallies and the
+  not-yet-fetched model/thinking fields to unknown, then kicks off a background
+  `getSessionConfig()` fetch (logged and swallowed on failure) so the model chip populates
+  promptly without the caller waiting on it.
+  `applyModeChanged(modeId)`/`applySessionTitleChanged(title)`/`applyUsageUpdate(usedTokens,
+  maxTokens, outputTokens)` are the parallel handlers for a pushed
+  `current_mode_update`/`session_info_update`/`_klorb/usage`. `getSessionConfig()`/
+  `setSessionConfig(update)` round-trip
+  `_klorb/getSessionConfig`/`_klorb/setSessionConfig` (model selection and thinking
+  enabled/effort ride one call each, mirroring the wire shape 1:1 — see [[klorb-server]]'s
+  "Model and thinking session config" section); `setMode(modeId)` sends `session/set_mode` and
+  applies the change eagerly (the server's own `current_mode_update` push then re-applies the
+  same value, harmlessly); `cyclePermissionMode()` advances through the fixed
+  `PERMISSION_MODE_CYCLE` (`ask -> auto -> deny -> ask`, mirroring
+  `klorb.tui.constants.PERMISSION_FRAMEWORK_CYCLE`); `sessionStats()`/`trustWorkspace()`/
+  `reloadSkills()` round-trip their own `_klorb/*` ext methods. `postSnapshot()` re-broadcasts
+  the current snapshot unchanged — called by `KlorbSessionViewProvider.resolveWebviewView()` so
+  a recreated webview sees real state instead of placeholder defaults, mirroring
+  `KlorbAcpClient.repostPendingInteraction()`.
+* **Webview `StatusRow`** (`src/webview/components/StatusRow.tsx`) is docked under the prompt
+  input, one line (the session title itself lives in `App`'s top `.title` bar instead, see its
+  own bullet above). The model chip and the thinking chip are separate, independently clickable
+  buttons, each opening its own picker: the model chip reads `model`, or `...` before the first
+  `_klorb/getSessionConfig` reply, and clicking it posts `{type: 'pickModel'}`; the thinking chip
+  reads the effort name (`Low`/`Medium`/`High`) while thinking is enabled, `Off` while disabled,
+  or `...` before `thinkingEnabled`/`thinkingEffort` are known, and clicking it posts
+  `{type: 'pickThinking'}` — this opens the same single `Off`/`Low`/`Medium`/`High` QuickPick
+  **Klorb: Set Thinking** does (see its own bullet below), covering whether thinking is enabled
+  and its effort level as one four-way choice rather than two separately-settable properties —
+  see docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md for why. The permission
+  badge reads `[ask]`/`[auto]`/`[deny]`, defaulting to `[ask]` before any mode is known; clicking
+  it posts `{type: 'cyclePermissionMode'}`; a brief
+  `.status-permission-badge-flash` CSS-transition highlight plays on every change (its own
+  `useEffect`, keyed on `permissionMode`, comparing against the previous render's value via a
+  `useRef`). The token tally renders `formatTokenCount.ts`'s SI-suffixed `↑ <used> / <limit>`
+  and `↓ <output>` (2 significant figures once >= 1000, mirroring
+  `klorb.tui.formatting.format_token_count` one-for-one — see that module's own docstring for
+  the rounding rule, and `klorb.tui.mixins.status_bar`'s own two footer tallies for the TUI
+  parity this mirrors) space-joined into one chip, omitting `/ <limit>` when `maxTokens` is
+  `null`, either half until its own count is known, and the whole chip until at least one count
+  is known.
+* **Message protocol.** `StatusUpdateMessage` (host → webview, `shared/webviewMessages.ts`) is
+  `{type: 'statusUpdate', model?, thinkingEnabled?, thinkingEffort?, permissionMode?,
+  usedTokens?, maxTokens?, outputTokens?, sessionTitle?, workspaceTrusted?}` — every field
+  independently optional, since the host posts one whenever any single piece of
+  `SessionControls`'s snapshot changes but always with the complete snapshot (see `App`'s own
+  bullet above for why the webview replaces its local `status` wholesale rather than merging).
+  `PickModelMessage`/`PickThinkingMessage`/`CyclePermissionModeMessage` (webview → host)
+  are the three bare `{type: 'pickModel'}`/`{type: 'pickThinking'}`/
+  `{type: 'cyclePermissionMode'}` intents the status row's clickable chips (and the prompt
+  input's Shift+Tab handler, for the last one) post. `KlorbSessionViewProvider._handleMessage()`
+  maps `pickModel`/`pickThinking`/`cyclePermissionMode` to the same
+  `klorb.selectModel`/`klorb.setThinking`/`klorb.cyclePermissionMode` commands the command
+  palette itself runs, rather than duplicating their `QuickPick` flows.
+  `SessionStatsMessage` (host → webview) is `{type: 'sessionStats', messageCounts:
+  Record<string, number>, toolBreakdown: {name, succeeded, failed}[], tokenUsage: Record<string,
+  number>, cachePercent: number, totalCost: number}` — posted once per `klorb.showSessionStats`
+  invocation (not a coalesced/replayed snapshot like `StatusUpdateMessage`, since each stats
+  request is its own permanent history entry, not ongoing state).
+* **Native pickers and commands** (`src/host/features/sessionControls/commands.ts`) use
+  `vscode.window.showQuickPick` — not webview panels — for infrequent control changes; each
+  handler takes `SessionControls` plus an injected `CommandsVsCode` facade (the same "keep the
+  real side-effecting API behind an injectable seam" shape `EditorIntegration`'s
+  `EditorIntegrationVsCode` uses, so this module loads under `vitest` without a running
+  extension host) built once by `extension.ts`'s `realCommandsVsCode()`.
+  * **`klorb.selectModel`**: QuickPick of `getSessionConfig().model.available`, current one
+    marked `"current"`; on pick, `setSessionConfig({model: pickedId})`.
+  * **`klorb.setThinking`**: `pickThinkingState()`'s single `Off`/`Low`/`Medium`/`High`
+    QuickPick (current choice marked `"current"` — `Off` when disabled, the effort name when
+    enabled). Picking `Off` calls `setSessionConfig({thinking: {enabled: false}})`; picking an
+    effort calls `setSessionConfig({thinking: {enabled: true, effort}})` — always sending both
+    fields together, so there's no path that changes `effort` while silently leaving `enabled`
+    at whatever it previously was (see docs/adrs/merge-thinking-enabled-and-effort-into-one-
+    picker.md).
+  * **`klorb.cyclePermissionMode`** (also reachable from the status row badge): calls
+    `SessionControls.cyclePermissionMode()`.
+  * **`klorb.newSession`**: see the `extension.ts` bullet above.
+  * **`klorb.showSessionStats`**: `formatSessionStats()`
+    (`src/host/features/sessionControls/formatSessionStats.ts`) extracts a `_klorb/
+    sessionStats` result's snake_case fields (see [[klorb-server]]'s extension-methods
+    section) into the structured `SessionStatsData` shape (`messageCounts`/`tokenUsage`
+    ordered label -> value maps, a sorted `toolBreakdown`, `cachePercent`, `totalCost` — see
+    docs/specs/klorb-server.md's own derivation for `cache_pct`/`uncached_tokens`/
+    `in_out_tokens`, which this mirrors) — no string formatting at this layer. `vs.
+    postSessionStats(data)` posts it to the webview as a `sessionStats` message, which
+    `historyModel.ts`'s `applyHostMessage()` appends as a `SessionStatsHistoryEntry`, rendered
+    by `SessionStatsCard` (`src/webview/features/history/components/SessionStatsCard.tsx`) as
+    a permanent history entry — not a toast, and not dumped to the output channel. The card
+    lays out message/tool-call counts, token usage, and the total cost as one shared
+    `.session-stats-grid` CSS grid (five columns: `max-content` label, a `1fr` spacer for
+    breathing room, `max-content` right-aligned comma-grouped value, `max-content` note, and a
+    trailing `2fr` spacer that keeps the numbers from spreading to the panel's far edge)
+    rather than several independently-sized tables, specifically so every section's value
+    column lands in the same place — a section title or the "Per-tool breakdown" subtitle is a
+    grid item spanning every column, which is what lets titles and differently-shaped rows
+    interleave with the aligned numeric rows in one flat DOM list (`StatRow` returns its
+    label/spacer/value/note/spacer as a bare `<>` fragment of five plain `<span>`s for exactly
+    this reason — see the component's own doc comment). A rule marking where the summary rows
+    start sits between "Output tokens" and "Total tokens": four individually auto-placed,
+    bordered `.session-stats-rule-cell`s plus one plain, unbordered `<span>` for the trailing
+    spacer column — every row in this grid, without exception, consumes exactly five
+    auto-placed cells; a single `grid-column`-spanning div in place of those five would leave
+    its row's last column free for the *next* auto-placed item to slide into, desyncing every
+    row after it from the grid's five columns (this is exactly the rendering bug an earlier
+    version of this rule had — see the component's own inline comment where it's built). The
+    "Cached tokens" row's own dim `(<cachePercent>%)` note is the only row using that column.
+    The stat-name column uses the
+    panel's regular UI font (`.session-stats-label`); everything else keeps the card's
+    monospace font for tabular-looking numbers. This is the
+    same layout `klorb.session_statistics.SessionStatistics.format_report()` renders as
+    monospace text for the TUI, reimplemented as a real grid instead of preformatted lines.
+  * **`klorb.reloadSkills`**: calls `SessionControls.reloadSkills()`, toasts the resulting
+    skill count.
+  * All eight are contributed in `package.json` with "Klorb: …" titles.
+* **Workspace trust bridging** (`src/host/features/sessionControls/workspaceTrustBridge.ts`'s
+  `WorkspaceTrustBridge`) offers, at most once per activation, to trust the session's workspace
+  in Klorb: if VS Code's own workspace trust (`vscode.workspace.isTrusted`) is already granted
+  but `SessionControls.workspaceTrusted === false`, `offerIfNeeded()` (called once right after
+  `AcpConnection.start()` resolves, and again after `klorb.restartServer`) shows an information
+  message ("Trust this workspace in Klorb? …") with Trust/Not now, calling
+  `SessionControls.trustWorkspace()` on accept. If VS Code itself is in Restricted Mode at that
+  point, `offerIfNeeded()` no-ops instead of offering; the constructor's own
+  `vscode.workspace.onDidGrantWorkspaceTrust` subscription re-invokes `offerIfNeeded()` once VS
+  Code's own trust is later granted, which is what lets the offer eventually happen in that
+  case. An `_offered` flag (not a re-checkable predicate) guarantees at most one prompt per
+  activation regardless of how many times `offerIfNeeded()` is called.
+* **OpenRouter API key storage** (`src/host/apiKeyStorage.ts`'s `ApiKeyManager`) stores the key
+  in VS Code's OS-keychain-backed `vscode.ExtensionContext.secrets` (`SecretStorage`), keyed
+  `klorb.openRouterApiKey`. `resolve()` — called from `extension.ts`'s `readServerOptions()`,
+  threaded into the child's `OPENROUTER_API_KEY` environment variable when defined — returns the
+  stored secret, or `undefined` (rather than an empty string) when none is set so an
+  already-exported `OPENROUTER_API_KEY` in the shell that launched VS Code passes through to
+  the child unchanged. `setApiKeyCommand()` (`klorb.setOpenRouterApiKey`) prompts via
+  `showInputBox({password: true})` and stores the value, or deletes the stored secret on an
+  empty submission; `clearApiKeyCommand()` (`klorb.clearOpenRouterApiKey`) deletes it
+  explicitly.
+
 ### Webview message protocol
 
 The webview and the extension host exchange messages shaped by the discriminated unions in
@@ -476,8 +666,10 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   prompt), `{type: 'cancelTurn'}` (Stop button or Escape while a turn is running),
   `{type: 'openLocation', path: string, line?: number}` (a tool-call title link),
   `{type: 'openDiff', callId: string, path: string}` ("Open diff"), `PermissionDecisionMessage`
-  ("Approval and question panels" above) answering a `permissionAsk`, and
-  `QuestionAnswerMessage` ("Approval and question panels" above) answering a `questionAsk`.
+  ("Approval and question panels" above) answering a `permissionAsk`, `QuestionAnswerMessage`
+  ("Approval and question panels" above) answering a `questionAsk`, `{type: 'pickModel'}` and
+  `{type: 'cyclePermissionMode'}` ("Status row and session controls" above, the status row's
+  two clickable chips).
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
   string}`, `{type: 'thoughtChunk', text: string}`, `{type: 'turnEnded', stopReason: string}`,
   `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`,
@@ -495,8 +687,9 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   klorb's own server never omits `tool_call`'s `kind`/`locations` or `tool_call_update`'s
   `status` (see [[klorb-server]]'s tool-call update mapping section), but the flattening
   defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
-  agent does, `PermissionAskMessage` ("Approval and question panels" above), and
-  `QuestionAskMessage` ("Approval and question panels" above).
+  agent does, `PermissionAskMessage` ("Approval and question panels" above),
+  `QuestionAskMessage` ("Approval and question panels" above), `StatusUpdateMessage`, and
+  `SessionStatsMessage` (both "Status row and session controls" above).
 * `parseHostMessage()`/`parseWebviewMessage()` are the type guards each side runs on every
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
   and `MessageEvent.data` (webview side) are untyped `unknown`. The richer message types above
@@ -681,20 +874,13 @@ of two.
 
 ## Configuration
 
-`package.json`'s `contributes.configuration` (title "Klorb") declares three settings, all read by
-`extension.ts`'s `readServerOptions()` each time a connection is started (at activation and on
-`klorb.restartServer`):
+`package.json`'s `contributes.configuration` (title "Klorb") declares two settings, both read
+(along with the OpenRouter API key — see below) by `extension.ts`'s `readServerOptions()` each
+time a connection is started (at activation and on `klorb.restartServer`):
 
 * `klorb.serverPath` (string, default `"klorb"`): the command run as `<serverPath> server` to
   launch the child process. Overriding it points the extension at a `klorb` not on `PATH` (e.g.
   a venv's `bin/klorb` during local development of the Python side).
-* `klorb.openRouterApiKey` (string, default `""`): forwarded to the child process as its
-  `OPENROUTER_API_KEY` environment variable (see `klorb.openrouter.OPENROUTER_API_KEY_ENV_VAR` in
-  the `klorb/` subproject) when non-empty; left out of the child's environment entirely when
-  empty, so an API key already exported in the shell that launched VS Code still reaches the
-  child unless this setting overrides it. This is a plain string setting, not VS Code
-  `SecretStorage` — it is stored (and, if the user syncs settings, synced) as plaintext in
-  `settings.json` like any other setting.
 * `klorb.configPath` (string, default `""`): path to an additional `klorb-config.json` file,
   passed to the child process as `<serverPath> server --config <configPath>` when non-empty (see
   [[klorb-server]]'s `--config` flag). Left off the spawn args entirely when empty.
@@ -708,7 +894,7 @@ of two.
 3. Type a prompt and press Enter. Thinking (if the configured model streams it) and the
    response render live in the history; press Stop (or Escape) mid-stream to cancel and observe
    the turn end with a "Turn ended: cancelled" notice.
-4. Run **Klorb: Restart Session** from the command palette to clear the panel and start a fresh
+4. Run **Klorb: New Session** from the command palette to clear the panel and start a fresh
    ACP session without restarting the child process; run **Klorb: Restart Server** to kill and
    respawn `klorb server` itself (e.g. after changing `klorb.serverPath`).
 5. Ask for an edit to a file in the workspace. Watch its tool-call chip go from a busy spinner
@@ -730,17 +916,38 @@ of two.
    the second by typing into "Other…" and clicking Send, then press Escape on the third and
    observe the batch stop (no further question arrives) with a compact "(cancelled)" record in
    the history.
+8. Click the status row's model chip (or run **Klorb: Select Model**) and pick a different
+   model; send a prompt and confirm the reply used it. Click the thinking chip (or run
+   **Klorb: Set Thinking**) and pick `High` from the `Off`/`Low`/`Medium`/`High` QuickPick;
+   confirm the chip reads `High` and updates independently of the model chip. Click the
+   thinking chip again and pick `Off`; confirm the chip reads `Off`. Click it once more and
+   pick `Medium`, confirming a single pick both re-enables thinking and sets its effort in one
+   step (no separate "enable" question, and no stale effort left over from before it was
+   disabled). Click the permission badge (or run
+   **Klorb: Cycle Permission Mode**, or press Shift+Tab with focus in the prompt textbox) to
+   cycle to `[auto]` and watch a `Bash` prompt run without an `ApprovalPanel`; cycle to `[deny]`
+   and watch the same kind of prompt fail closed. Send a prompt and confirm the status row's
+   token tally shows both the `↑` context count and the `↓` output count once the turn
+   completes. Run **Klorb: Show Session Stats** and confirm a `SessionStatsCard` lands in the
+   history (aligned right-justified
+   numbers across every section, plus a separated cost line — not a toast, not the output
+   channel); run **Klorb: Reload Skills**
+   and confirm the toast's skill count. Open a workspace VS Code itself already trusts but that
+   Klorb hasn't seen before, and accept the "Trust this workspace in Klorb?" prompt — the panel's
+   top title bar's `(Untrusted)` suffix should disappear.
+9. Run **Klorb: Set OpenRouter API Key**, paste a key, then run **Klorb: Restart Server** and
+   confirm the child still authenticates; run **Klorb: Clear OpenRouter API Key** and confirm a
+   subsequent restart falls back to the inherited environment.
 
 ## Out of scope
 
-* No task panel or model/thinking/permission-mode controls yet — these land across
-  `plan-016-008` through `plan-016-011`.
+* No task panel yet — chainlink-backed plan updates land in `plan-016-011`.
 * No mid-turn message queueing — a second `submitPrompt` while a turn is in flight is rejected
   by `AcpConnection.prompt()` (mirroring [[klorb-server]]'s own one-prompt-at-a-time rule), not
   queued client-side. Lands in `plan-016-012`.
 * No persistence beyond `vscode.getState()`'s in-memory-while-the-window-is-open lifetime —
-  nothing is written to disk, and history is lost on `klorb.restartServer`, `klorb.
-  restartSession`, or a full window reload.
+  nothing is written to disk, and history (including the status snapshot) is lost on
+  `klorb.restartServer`, `klorb.newSession`, or a full window reload.
 * No production (minified) webview bundle — see
   `docs/adrs/bundle-webview-script-with-esbuild-not-es-modules.md`'s reasoning, unchanged from
   the original stub.

@@ -66,6 +66,28 @@ describe('parseHostMessage', () => {
           ],
         },
       },
+      { type: 'statusUpdate' },
+      {
+        type: 'statusUpdate',
+        model: 'gpt-5',
+        thinkingEnabled: true,
+        thinkingEffort: 'high',
+        permissionMode: 'auto',
+        usedTokens: 1400,
+        maxTokens: 128000,
+        outputTokens: 300,
+        sessionTitle: 'Fix the bug',
+        workspaceTrusted: true,
+      },
+      { type: 'statusUpdate', maxTokens: null, sessionTitle: null },
+      {
+        type: 'sessionStats',
+        messageCounts: { 'User messages': 1 },
+        toolBreakdown: [{ name: 'Bash', succeeded: 1, failed: 0 }],
+        tokenUsage: { 'Input tokens': 100 },
+        cachePercent: 0,
+        totalCost: 0,
+      },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -142,6 +164,43 @@ describe('parseHostMessage', () => {
         total: 1,
       })
     ).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', model: 42 })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', thinkingEffort: 'extreme' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', usedTokens: '1400' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', maxTokens: 'unlimited' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', outputTokens: '300' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', sessionTitle: 7 })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', workspaceTrusted: 'yes' })).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'sessionStats',
+        messageCounts: {},
+        toolBreakdown: [],
+        tokenUsage: {},
+        cachePercent: 0,
+        // totalCost missing
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'sessionStats',
+        messageCounts: { 'User messages': 'not a number' },
+        toolBreakdown: [],
+        tokenUsage: {},
+        cachePercent: 0,
+        totalCost: 0,
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'sessionStats',
+        messageCounts: {},
+        toolBreakdown: [{ name: 'Bash', succeeded: 1 }],
+        tokenUsage: {},
+        cachePercent: 0,
+        totalCost: 0,
+      })
+    ).toBeUndefined();
   });
 });
 
@@ -159,6 +218,8 @@ describe('parseWebviewMessage', () => {
       { type: 'questionAnswer', requestId: 1, selectedOptionIndex: 0 },
       { type: 'questionAnswer', requestId: 1, otherText: 'widget' },
       { type: 'questionAnswer', requestId: 1, cancelled: true },
+      { type: 'pickModel' },
+      { type: 'cyclePermissionMode' },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);

@@ -43,12 +43,40 @@
     },
     "commands": [
       {
-        "command": "klorb.restartSession",
-        "title": "Klorb: Restart Session"
+        "command": "klorb.newSession",
+        "title": "Klorb: New Session"
       },
       {
         "command": "klorb.restartServer",
         "title": "Klorb: Restart Server"
+      },
+      {
+        "command": "klorb.selectModel",
+        "title": "Klorb: Select Model"
+      },
+      {
+        "command": "klorb.setThinking",
+        "title": "Klorb: Set Thinking"
+      },
+      {
+        "command": "klorb.cyclePermissionMode",
+        "title": "Klorb: Cycle Permission Mode"
+      },
+      {
+        "command": "klorb.showSessionStats",
+        "title": "Klorb: Show Session Stats"
+      },
+      {
+        "command": "klorb.reloadSkills",
+        "title": "Klorb: Reload Skills"
+      },
+      {
+        "command": "klorb.setOpenRouterApiKey",
+        "title": "Klorb: Set OpenRouter API Key"
+      },
+      {
+        "command": "klorb.clearOpenRouterApiKey",
+        "title": "Klorb: Clear OpenRouter API Key"
       }
     ],
     "configuration": {
@@ -58,11 +86,6 @@
           "type": "string",
           "default": "klorb",
           "description": "Path to the `klorb` command used to launch `klorb server`."
-        },
-        "klorb.openRouterApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenRouter API key, passed to the `klorb server` process as the OPENROUTER_API_KEY environment variable."
         },
         "klorb.configPath": {
           "type": "string",

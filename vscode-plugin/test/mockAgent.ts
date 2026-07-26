@@ -18,7 +18,12 @@ export class MockAgent implements acp.Agent {
   public readonly receivedNewSessions: acp.NewSessionRequest[] = [];
   public readonly receivedPrompts: acp.PromptRequest[] = [];
   public readonly receivedCancels: acp.CancelNotification[] = [];
+  public readonly receivedSetSessionModes: acp.SetSessionModeRequest[] = [];
+  public readonly receivedExtMethods: { method: string; params: Record<string, unknown> }[] = [];
   public sessionIdToIssue = 'sess-1';
+  /** Extra fields merged onto the default `{sessionId}` `session/new` response -- lets a test
+   * script `modes`/`_meta` without overriding `newSession()` entirely. */
+  public newSessionResult: Partial<acp.NewSessionResponse> = {};
   public onInitialize:
     ((params: acp.InitializeRequest) => Promise<acp.InitializeResponse>) | undefined;
   public onPrompt:
@@ -26,6 +31,11 @@ export class MockAgent implements acp.Agent {
         params: acp.PromptRequest,
         connection: acp.AgentSideConnection
       ) => Promise<acp.PromptResponse>)
+    | undefined;
+  public onSetSessionMode:
+    ((params: acp.SetSessionModeRequest) => Promise<acp.SetSessionModeResponse | void>) | undefined;
+  public onExtMethod:
+    | ((method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>)
     | undefined;
 
   public async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
@@ -38,7 +48,7 @@ export class MockAgent implements acp.Agent {
 
   public async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     this.receivedNewSessions.push(params);
-    return { sessionId: this.sessionIdToIssue };
+    return { sessionId: this.sessionIdToIssue, ...this.newSessionResult };
   }
 
   public async authenticate(_params: acp.AuthenticateRequest): Promise<acp.AuthenticateResponse> {
@@ -60,12 +70,42 @@ export class MockAgent implements acp.Agent {
     this.receivedCancels.push(params);
   }
 
+  public async setSessionMode(
+    params: acp.SetSessionModeRequest
+  ): Promise<acp.SetSessionModeResponse | void> {
+    this.receivedSetSessionModes.push(params);
+    if (this.onSetSessionMode !== undefined) {
+      return this.onSetSessionMode(params);
+    }
+    return {};
+  }
+
+  public async extMethod(
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    this.receivedExtMethods.push({ method, params });
+    if (this.onExtMethod !== undefined) {
+      return this.onExtMethod(method, params);
+    }
+    return {};
+  }
+
   /** Streams one session update to the client, as the server does mid-turn. */
   public async sendUpdate(sessionId: string, update: acp.SessionUpdate): Promise<void> {
     if (this.connection === undefined) {
       throw new Error('MockAgent.connection is not wired yet');
     }
     await this.connection.sessionUpdate({ sessionId, update });
+  }
+
+  /** Sends one `_klorb/*` extension notification to the client, as the server does after a
+   * turn (`_klorb/usage`) or other fire-and-forget event. */
+  public async sendExtNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    if (this.connection === undefined) {
+      throw new Error('MockAgent.connection is not wired yet');
+    }
+    await this.connection.extNotification(method, params);
   }
 }
 

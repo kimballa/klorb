@@ -2,7 +2,13 @@
 import * as vscode from 'vscode';
 
 import type { EditorIntegration } from 'host/editorIntegration';
-import { errorMessage, type AcpConnection, type SessionUpdateListener } from 'host/features/acp';
+import {
+  errorMessage,
+  type AcpConnection,
+  type SessionInfo,
+  type SessionUpdateListener,
+} from 'host/features/acp';
+import type { SessionControls } from 'host/features/sessionControls';
 import {
   parseWebviewMessage,
   type HostMessage,
@@ -34,6 +40,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
 
   private _view: vscode.WebviewView | undefined;
   private _connection: AcpConnection | undefined;
+  private _sessionControls: SessionControls | undefined;
 
   public constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -45,6 +52,14 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
    * side has to be attached after construction. */
   public setConnection(connection: AcpConnection): void {
     this._connection = connection;
+  }
+
+  /** Wires the `SessionControls` this provider routes mode/title/usage pushes into, and whose
+   * status snapshots it posts to the webview as `statusUpdate` -- set once during activation,
+   * after the connection (which `SessionControls` itself wraps), for the same construction-
+   * order reason as `setConnection()`. */
+  public setSessionControls(sessionControls: SessionControls): void {
+    this._sessionControls = sessionControls;
   }
 
   public resolveWebviewView(
@@ -62,6 +77,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       void this._handleMessage(message);
     });
     this._connection?.client?.repostPendingInteraction();
+    this._sessionControls?.postSnapshot();
   }
 
   public onAgentText(text: string): void {
@@ -84,6 +100,22 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       });
     }
     this.postHostMessage(message);
+  }
+
+  public onSessionInfo(info: SessionInfo): void {
+    this._sessionControls?.applySessionInfo(info);
+  }
+
+  public onModeChanged(modeId: string): void {
+    this._sessionControls?.applyModeChanged(modeId);
+  }
+
+  public onSessionTitleChanged(title: string | null): void {
+    this._sessionControls?.applySessionTitleChanged(title);
+  }
+
+  public onUsageUpdate(usedTokens: number, maxTokens: number | null, outputTokens: number): void {
+    this._sessionControls?.applyUsageUpdate(usedTokens, maxTokens, outputTokens);
   }
 
   /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
@@ -154,6 +186,15 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
               ? { otherText: parsed.otherText }
               : { selectedOptionIndex: parsed.selectedOptionIndex }
         );
+        break;
+      case 'pickModel':
+        await vscode.commands.executeCommand('klorb.selectModel');
+        break;
+      case 'pickThinking':
+        await vscode.commands.executeCommand('klorb.setThinking');
+        break;
+      case 'cyclePermissionMode':
+        await vscode.commands.executeCommand('klorb.cyclePermissionMode');
         break;
     }
   }

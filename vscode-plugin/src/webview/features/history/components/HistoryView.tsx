@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 
 import type { HistoryEntry } from '../historyModel';
 
+import SessionStatsCard from './SessionStatsCard';
 import ToolCallChip from './ToolCallChip';
 
 export interface HistoryViewProps {
@@ -61,6 +62,8 @@ function renderEntry(
       );
     case 'toolCall':
       return <ToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />;
+    case 'sessionStats':
+      return <SessionStatsCard entry={entry} key={index} />;
   }
 }
 

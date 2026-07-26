@@ -225,6 +225,7 @@ async def test_usage_notification_after_turn_matches_total_tokens_used(
     assert usage_calls[0]["sessionId"] == session_id
     assert usage_calls[0]["usedTokens"] == session.total_tokens_used()
     assert usage_calls[0]["maxTokens"] == session.max_context_window()
+    assert usage_calls[0]["outputTokens"] == session.total_output_tokens_used()
 
 
 async def test_session_stats_ext_method_returns_statistics_json(

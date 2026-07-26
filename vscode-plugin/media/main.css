@@ -20,6 +20,9 @@ body {
   padding: 8px 12px;
   font-weight: 600;
   border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 #history {
@@ -193,11 +196,19 @@ button.tool-call-title {
 }
 
 .diff-row-add {
-  background-color: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, green) 15%, transparent);
+  background-color: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-addedResourceForeground, green) 15%,
+    transparent
+  );
 }
 
 .diff-row-del {
-  background-color: color-mix(in srgb, var(--vscode-gitDecoration-deletedResourceForeground, red) 15%, transparent);
+  background-color: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-deletedResourceForeground, red) 15%,
+    transparent
+  );
 }
 
 .diff-hunk-separator {
@@ -425,4 +436,105 @@ button.tool-call-title {
 #prompt-input {
   flex: 1 1 auto;
   width: auto;
+}
+
+#status-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 8px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+}
+
+.status-chip {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  white-space: nowrap;
+}
+
+button.status-chip {
+  cursor: pointer;
+}
+
+button.status-chip:hover {
+  color: var(--vscode-foreground);
+}
+
+.status-permission-badge-flash {
+  color: var(--vscode-textLink-foreground);
+  transition: color 0.2s ease-out;
+}
+
+.session-stats {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--vscode-editor-font-family, monospace);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* One shared grid for the whole card (message counts, token usage, and cost all as direct
+   children) so their value columns size and align together -- see SessionStatsCard.tsx's own
+   doc comment for why this can't be several independently-sized tables/grids. */
+.session-stats-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content max-content 2fr;
+  row-gap: 3px;
+}
+
+.session-stats-title {
+  grid-column: 1 / -1;
+  font-weight: 600;
+}
+
+.session-stats-section-spaced {
+  margin-top: 8px;
+}
+
+.session-stats-subtitle {
+  grid-column: 1 / -1;
+  color: var(--vscode-descriptionForeground);
+}
+
+.session-stats-label {
+  /* The stat-name column reads better in the panel's regular UI font -- only the numeric
+     columns benefit from the monospace/tabular figures the rest of the card uses. */
+  font-family: var(--vscode-font-family);
+  text-align: left;
+  padding-right: 12px;
+}
+
+.session-stats-value {
+  text-align: right;
+  padding-right: 12px;
+}
+
+.session-stats-note {
+  text-align: left;
+  color: var(--vscode-descriptionForeground);
+  padding-right: 12px;
+}
+
+.session-stats-tool-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+}
+
+/* A spacer cell that goes across a column to create a horizontal rule in the table. */
+.session-stats-rule-cell {
+  border-top: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.7));
+  margin: 1px 0;
+}
+
+.session-stats-spacer {
+  grid-column: 1 / -1;
+  height: 4px;
 }

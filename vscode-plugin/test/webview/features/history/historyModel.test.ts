@@ -99,6 +99,40 @@ describe('applyHostMessage', () => {
     const entries = appendPrompt([], 'question');
     expect(applyHostMessage(entries, { type: 'turnStarted' })).toEqual(entries);
   });
+
+  it('leaves a sessionStats entry untouched when a later turn ends', () => {
+    const withStats = applyHostMessage([], {
+      type: 'sessionStats',
+      messageCounts: {},
+      toolBreakdown: [],
+      tokenUsage: {},
+      cachePercent: 0,
+      totalCost: 0,
+    });
+    const entries = applyHostMessage(withStats, { type: 'turnEnded', stopReason: 'end_turn' });
+    expect(entries).toEqual(withStats);
+  });
+
+  it('appends a sessionStats entry on sessionStats', () => {
+    const entries = applyHostMessage([], {
+      type: 'sessionStats',
+      messageCounts: { 'User messages': 1 },
+      toolBreakdown: [{ name: 'Bash', succeeded: 1, failed: 0 }],
+      tokenUsage: { 'Input tokens': 100 },
+      cachePercent: 25,
+      totalCost: 0.01,
+    });
+    expect(entries).toEqual([
+      {
+        kind: 'sessionStats',
+        messageCounts: { 'User messages': 1 },
+        toolBreakdown: [{ name: 'Bash', succeeded: 1, failed: 0 }],
+        tokenUsage: { 'Input tokens': 100 },
+        cachePercent: 25,
+        totalCost: 0.01,
+      },
+    ]);
+  });
 });
 
 describe('applyHostMessage tool calls', () => {

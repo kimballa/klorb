@@ -3,8 +3,21 @@ import * as os from 'os';
 
 import * as vscode from 'vscode';
 
+import { ApiKeyManager, type ApiKeyVsCode } from 'host/apiKeyStorage';
 import { EditorIntegration, type EditorIntegrationVsCode } from 'host/editorIntegration';
 import { AcpConnection, errorMessage } from 'host/features/acp';
+import {
+  SessionControls,
+  WorkspaceTrustBridge,
+  cyclePermissionModeCommand,
+  reloadSkillsCommand,
+  selectModelCommand,
+  setThinkingCommand,
+  showSessionStatsCommand,
+  type CommandsVsCode,
+  type PickableItem,
+  type WorkspaceTrustVsCode,
+} from 'host/features/sessionControls';
 import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
 import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
 
@@ -40,13 +53,53 @@ function realEditorIntegrationVsCode(): EditorIntegrationVsCode {
   };
 }
 
-function readServerOptions(): KlorbServerOptions {
+/** The real `vscode`-backed `ApiKeyVsCode` (see host/apiKeyStorage.ts's own doc comment). */
+function realApiKeyVsCode(context: vscode.ExtensionContext): ApiKeyVsCode {
+  return {
+    secrets: context.secrets,
+    showInputBox: (options) => vscode.window.showInputBox(options),
+    showInformationMessage: (message, ...items) =>
+      vscode.window.showInformationMessage(message, ...items),
+  };
+}
+
+/** The real `vscode`-backed `WorkspaceTrustVsCode` (see
+ * host/features/sessionControls/workspaceTrustBridge.ts's own doc comment). */
+function realWorkspaceTrustVsCode(): WorkspaceTrustVsCode {
+  return {
+    isTrusted: () => vscode.workspace.isTrusted,
+    onDidGrantWorkspaceTrust: (listener) => vscode.workspace.onDidGrantWorkspaceTrust(listener),
+    showInformationMessage: (message, ...items) =>
+      vscode.window.showInformationMessage(message, ...items),
+  };
+}
+
+/** The real `vscode`-backed `CommandsVsCode` (see
+ * host/features/sessionControls/commands.ts's own doc comment). */
+function realCommandsVsCode(provider: KlorbSessionViewProvider): CommandsVsCode {
+  return {
+    showQuickPick<T>(items: PickableItem<T>[], options: { placeHolder: string }) {
+      return vscode.window.showQuickPick(items, options);
+    },
+    showInformationMessage(message: string) {
+      return vscode.window.showInformationMessage(message);
+    },
+    showErrorMessage(message: string) {
+      return vscode.window.showErrorMessage(message);
+    },
+    postSessionStats(data) {
+      provider.postHostMessage({ type: 'sessionStats', ...data });
+    },
+  };
+}
+
+async function readServerOptions(apiKeyManager: ApiKeyManager): Promise<KlorbServerOptions> {
   const config = vscode.workspace.getConfiguration('klorb');
   const command = config.get<string>('serverPath', 'klorb');
-  const apiKey = config.get<string>('openRouterApiKey', '');
   const configPath = config.get<string>('configPath', '');
+  const apiKey = await apiKeyManager.resolve();
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (apiKey.length > 0) {
+  if (apiKey !== undefined) {
     env.OPENROUTER_API_KEY = apiKey;
   }
   return { command, env, configPath };
@@ -67,6 +120,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const editorIntegration = new EditorIntegration(realEditorIntegrationVsCode());
   context.subscriptions.push(editorIntegration);
   const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration);
+  const apiKeyManager = new ApiKeyManager(realApiKeyVsCode(context));
   const connection = new AcpConnection(
     serverProcess,
     provider,
@@ -74,17 +128,31 @@ export function activate(context: vscode.ExtensionContext): void {
     undefined,
     raiseToolCallLimitModal
   );
+  const sessionControls = new SessionControls(
+    connection,
+    (status) => provider.postHostMessage({ type: 'statusUpdate', ...status }),
+    log
+  );
   provider.setConnection(connection);
+  provider.setSessionControls(sessionControls);
+  const workspaceTrustBridge = new WorkspaceTrustBridge(
+    realWorkspaceTrustVsCode(),
+    sessionControls
+  );
+  context.subscriptions.push({ dispose: () => workspaceTrustBridge.dispose() });
   context.subscriptions.push({ dispose: () => connection.stop() });
 
-  const startConnection = (): void => {
-    void connection.start(readServerOptions(), sessionCwd()).catch((err: unknown) => {
+  const startConnection = async (): Promise<void> => {
+    try {
+      await connection.start(await readServerOptions(apiKeyManager), sessionCwd());
+      void workspaceTrustBridge.offerIfNeeded();
+    } catch (err) {
       const message = errorMessage(err);
       void vscode.window.showErrorMessage(`Klorb: ${message}`);
       provider.postHostMessage({ type: 'turnError', message });
-    });
+    }
   };
-  startConnection();
+  void startConnection();
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(KlorbSessionViewProvider.viewType, provider, {
@@ -93,7 +161,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('klorb.restartSession', () => {
+    vscode.commands.registerCommand('klorb.newSession', () => {
       provider.restart();
       void connection
         .newSession(sessionCwd())
@@ -106,11 +174,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('klorb.restartServer', () => {
-      void connection
-        .start(readServerOptions(), sessionCwd())
+      void readServerOptions(apiKeyManager)
+        .then((options) => connection.start(options, sessionCwd()))
         .then(() => {
           provider.postHostMessage({ type: 'sessionReset' });
           vscode.window.showInformationMessage('Klorb server restarted.');
+          void workspaceTrustBridge.offerIfNeeded();
         })
         .catch((err: unknown) => {
           const message = errorMessage(err);
@@ -118,6 +187,31 @@ export function activate(context: vscode.ExtensionContext): void {
           provider.postHostMessage({ type: 'turnError', message });
         });
     })
+  );
+
+  const commandsVsCode = realCommandsVsCode(provider);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('klorb.selectModel', () =>
+      selectModelCommand(sessionControls, commandsVsCode)
+    ),
+    vscode.commands.registerCommand('klorb.setThinking', () =>
+      setThinkingCommand(sessionControls, commandsVsCode)
+    ),
+    vscode.commands.registerCommand('klorb.cyclePermissionMode', () =>
+      cyclePermissionModeCommand(sessionControls, commandsVsCode)
+    ),
+    vscode.commands.registerCommand('klorb.showSessionStats', () =>
+      showSessionStatsCommand(sessionControls, commandsVsCode)
+    ),
+    vscode.commands.registerCommand('klorb.reloadSkills', () =>
+      reloadSkillsCommand(sessionControls, commandsVsCode)
+    ),
+    vscode.commands.registerCommand('klorb.setOpenRouterApiKey', () =>
+      apiKeyManager.setApiKeyCommand()
+    ),
+    vscode.commands.registerCommand('klorb.clearOpenRouterApiKey', () =>
+      apiKeyManager.clearApiKeyCommand()
+    )
   );
 }
 

@@ -3,6 +3,8 @@ import type {
   HostMessage,
   PermissionAskMessage,
   QuestionAskMessage,
+  SessionStatsCounts,
+  SessionStatsToolRow,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
@@ -44,8 +46,20 @@ export interface ToolCallHistoryEntry {
   expanded: boolean;
 }
 
+/** A "Show Session Stats" result entry -- rendered as a `SessionStatsCard` (two right-aligned
+ * numeric tables plus a separated cost line), mirroring the TUI's own stats notice. See
+ * `shared/webviewMessages.ts`'s `SessionStatsMessage` for field semantics. */
+export interface SessionStatsHistoryEntry {
+  kind: 'sessionStats';
+  messageCounts: SessionStatsCounts;
+  toolBreakdown: SessionStatsToolRow[];
+  tokenUsage: SessionStatsCounts;
+  cachePercent: number;
+  totalCost: number;
+}
+
 /** One entry in the panel's history scroll. */
-export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry;
+export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry | SessionStatsHistoryEntry;
 
 /** Appends the user's submitted prompt as a finished (non-streaming) entry. */
 export function appendPrompt(entries: readonly HistoryEntry[], text: string): HistoryEntry[] {
@@ -114,7 +128,7 @@ function appendChunk(
 
 function finishStreaming(entries: readonly HistoryEntry[]): HistoryEntry[] {
   return entries.map((entry) =>
-    entry.kind !== 'toolCall' && entry.streaming ? { ...entry, streaming: false } : entry
+    'streaming' in entry && entry.streaming ? { ...entry, streaming: false } : entry
   );
 }
 
@@ -220,6 +234,22 @@ export function applyHostMessage(
       // ApprovalPanel/QuestionPanel mounts from that state instead, and an `appendInteraction()`/
       // `appendQuestionInteraction()` record lands here only once the ask is answered.
       return [...entries];
+    case 'statusUpdate':
+      // Tracked separately by `App`'s own `status` state, not as a history entry -- the
+      // StatusRow renders from that state instead.
+      return [...entries];
+    case 'sessionStats':
+      return [
+        ...entries,
+        {
+          kind: 'sessionStats',
+          messageCounts: message.messageCounts,
+          toolBreakdown: message.toolBreakdown,
+          tokenUsage: message.tokenUsage,
+          cachePercent: message.cachePercent,
+          totalCost: message.totalCost,
+        },
+      ];
   }
 }
 
