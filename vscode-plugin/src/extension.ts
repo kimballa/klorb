@@ -12,6 +12,7 @@ import {
   cyclePermissionModeCommand,
   reloadSkillsCommand,
   selectModelCommand,
+  setPermissionModeCommand,
   setThinkingCommand,
   showSessionStatsCommand,
   type CommandsVsCode,
@@ -199,6 +200,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand('klorb.cyclePermissionMode', () =>
       cyclePermissionModeCommand(sessionControls, commandsVsCode)
+    ),
+    vscode.commands.registerCommand('klorb.setPermissionMode', () =>
+      setPermissionModeCommand(sessionControls, commandsVsCode)
     ),
     vscode.commands.registerCommand('klorb.showSessionStats', () =>
       showSessionStatsCommand(sessionControls, commandsVsCode)

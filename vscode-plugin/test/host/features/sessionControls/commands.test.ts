@@ -6,6 +6,7 @@ import {
   cyclePermissionModeCommand,
   reloadSkillsCommand,
   selectModelCommand,
+  setPermissionModeCommand,
   setThinkingCommand,
   showSessionStatsCommand,
   SessionControls,
@@ -189,6 +190,44 @@ describe('cyclePermissionModeCommand', () => {
     await cyclePermissionModeCommand(sessionControls, vs);
 
     expect(agent.receivedSetSessionModes).toEqual([{ sessionId: 'sess-1', modeId: 'auto' }]);
+  });
+});
+
+describe('setPermissionModeCommand', () => {
+  it('jumps straight to the picked mode, not just the next one in the cycle', async () => {
+    const agent = new MockAgent();
+    const sessionControls = await makeSessionControls(agent);
+    const vs = makeFakeVsCode();
+    vs.nextPick = { label: 'Deny', value: 'deny' };
+
+    await setPermissionModeCommand(sessionControls, vs);
+
+    expect(agent.receivedSetSessionModes).toEqual([{ sessionId: 'sess-1', modeId: 'deny' }]);
+  });
+
+  it('does nothing when the QuickPick is dismissed', async () => {
+    const agent = new MockAgent();
+    const sessionControls = await makeSessionControls(agent);
+    const vs = makeFakeVsCode();
+    vs.nextPick = undefined;
+
+    await setPermissionModeCommand(sessionControls, vs);
+
+    expect(agent.receivedSetSessionModes).toEqual([]);
+  });
+
+  it('reports a failure via showErrorMessage', async () => {
+    const agent = new MockAgent();
+    const sessionControls = await makeSessionControls(agent);
+    const vs = makeFakeVsCode();
+    vs.nextPick = { label: 'Deny', value: 'deny' };
+    agent.onSetSessionMode = async () => {
+      throw new Error('boom');
+    };
+
+    await setPermissionModeCommand(sessionControls, vs);
+
+    expect(vs.errorMessages).toEqual(['Klorb: Internal error']);
   });
 });
 

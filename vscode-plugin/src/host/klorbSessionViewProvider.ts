@@ -196,6 +196,18 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       case 'cyclePermissionMode':
         await vscode.commands.executeCommand('klorb.cyclePermissionMode');
         break;
+      case 'setPermissionMode':
+        await vscode.commands.executeCommand('klorb.setPermissionMode');
+        break;
+      case 'showSessionStats':
+        await vscode.commands.executeCommand('klorb.showSessionStats');
+        break;
+      case 'newSession':
+        await vscode.commands.executeCommand('klorb.newSession');
+        break;
+      case 'reloadSkills':
+        await vscode.commands.executeCommand('klorb.reloadSkills');
+        break;
     }
   }
 

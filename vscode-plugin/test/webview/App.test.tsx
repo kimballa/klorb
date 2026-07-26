@@ -283,6 +283,33 @@ describe('App', () => {
     expect(posted).toContainEqual({ type: 'cyclePermissionMode' });
   });
 
+  it('posts the status menu intents for the actions with no chip of their own', () => {
+    const { vscode, posted } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    const menu = container.querySelector('vscode-context-menu') as Element;
+    function selectMenuItem(value: string): void {
+      fireEvent(
+        menu,
+        new CustomEvent('vsc-context-menu-select', {
+          detail: { value, label: '', keybinding: '', separator: false, tabindex: 0 },
+        })
+      );
+    }
+
+    selectMenuItem('permissionMode');
+    selectMenuItem('sessionStats');
+    selectMenuItem('newSession');
+    selectMenuItem('reloadSkills');
+
+    expect(posted).toContainEqual({ type: 'setPermissionMode' });
+    expect(posted).not.toContainEqual({ type: 'cyclePermissionMode' });
+    expect(posted).toContainEqual({ type: 'showSessionStats' });
+    expect(posted).toContainEqual({ type: 'newSession' });
+    expect(posted).toContainEqual({ type: 'reloadSkills' });
+  });
+
   it('posts cyclePermissionMode on Shift+Tab in the prompt textarea, without moving focus', () => {
     const { vscode, posted } = makeVsCode();
     const { container } = render(<App vscode={vscode} initialEntries={[]} />);

@@ -1,10 +1,13 @@
 // © Copyright 2026 Aaron Kimball
-// Importing these modules registers the <vscode-badge>/<vscode-button>/<vscode-icon>/
-// <vscode-progress-ring>/<vscode-textarea>/<vscode-textfield> custom elements with the
-// browser; the components themselves are rendered from App.tsx/PromptInput.tsx/
-// ToolCallChip.tsx/ApprovalPanel.tsx/QuestionPanel.tsx.
+// Importing these modules registers the <vscode-badge>/<vscode-button>/<vscode-context-menu>/
+// <vscode-context-menu-item>/<vscode-icon>/<vscode-progress-ring>/<vscode-textarea>/
+// <vscode-textfield> custom elements with the browser; the components themselves are rendered
+// from App.tsx/PromptInput.tsx/ToolCallChip.tsx/ApprovalPanel.tsx/QuestionPanel.tsx/
+// StatusMenu.tsx.
 import '@vscode-elements/elements/dist/vscode-badge/index.js';
 import '@vscode-elements/elements/dist/vscode-button/index.js';
+import '@vscode-elements/elements/dist/vscode-context-menu/index.js';
+import '@vscode-elements/elements/dist/vscode-context-menu-item/index.js';
 import '@vscode-elements/elements/dist/vscode-icon/index.js';
 import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
 import '@vscode-elements/elements/dist/vscode-textarea/index.js';

@@ -2,6 +2,7 @@
 import { type JSX, useEffect, useRef, useState } from 'react';
 
 import type { ThinkingEffort } from 'shared/webviewMessages';
+import StatusMenu from 'webview/components/StatusMenu';
 import { formatTokenCount } from 'webview/formatTokenCount';
 
 export interface StatusRowProps {
@@ -15,6 +16,10 @@ export interface StatusRowProps {
   onPickModel(): void;
   onPickThinking(): void;
   onCyclePermissionMode(): void;
+  onSetPermissionMode(): void;
+  onShowSessionStats(): void;
+  onNewSession(): void;
+  onReloadSkills(): void;
 }
 
 const EFFORT_LABEL: Record<ThinkingEffort, string> = {
@@ -62,9 +67,10 @@ function tokenTally(
 }
 
 /**
- * The docked status row under the prompt input: the model chip (click to pick a model), the
- * thinking chip (click to pick Off/Low/Medium/High), the permission-mode badge (click to
- * cycle ask -> auto -> deny -> ask, flashing briefly on change), and the token tally -- see
+ * The docked status row under the prompt input: a leading chevron button opening the session
+ * commands menu (`StatusMenu`), the model chip (click to pick a model), the thinking chip
+ * (click to pick Off/Low/Medium/High), the permission-mode badge (click to cycle ask -> auto
+ * -> deny -> ask, flashing briefly on change), and the token tally -- see
  * docs/specs/vscode-plugin.md.
  */
 export default function StatusRow({
@@ -78,6 +84,10 @@ export default function StatusRow({
   onPickModel,
   onPickThinking,
   onCyclePermissionMode,
+  onSetPermissionMode,
+  onShowSessionStats,
+  onNewSession,
+  onReloadSkills,
 }: StatusRowProps): JSX.Element {
   const [flashing, setFlashing] = useState(false);
   const previousMode = useRef(permissionMode);
@@ -98,6 +108,14 @@ export default function StatusRow({
 
   return (
     <div id="status-row">
+      <StatusMenu
+        onPickModel={onPickModel}
+        onPickThinking={onPickThinking}
+        onSetPermissionMode={onSetPermissionMode}
+        onShowSessionStats={onShowSessionStats}
+        onNewSession={onNewSession}
+        onReloadSkills={onReloadSkills}
+      />
       <button type="button" className="status-chip status-model" onClick={onPickModel}>
         {model ?? '...'}
       </button>

@@ -3,6 +3,7 @@ export {
   cyclePermissionModeCommand,
   reloadSkillsCommand,
   selectModelCommand,
+  setPermissionModeCommand,
   setThinkingCommand,
   showSessionStatsCommand,
   type CommandsVsCode,

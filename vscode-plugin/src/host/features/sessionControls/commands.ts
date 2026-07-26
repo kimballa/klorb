@@ -3,7 +3,7 @@ import { errorMessage } from 'host/features/acp';
 import type { ThinkingEffort } from 'shared/webviewMessages';
 
 import { formatSessionStats, type SessionStatsData } from './formatSessionStats';
-import type { SessionControls } from './sessionControls';
+import { PERMISSION_MODE_CYCLE, type SessionControls } from './sessionControls';
 
 /** One selectable `showQuickPick` item, carrying the value it resolves to alongside its
  * display label -- VS Code's real `QuickPickItem` supports exactly this shape. */
@@ -110,6 +110,39 @@ export async function cyclePermissionModeCommand(
 ): Promise<void> {
   try {
     await sessionControls.cyclePermissionMode();
+  } catch (err) {
+    await vs.showErrorMessage(`Klorb: ${errorMessage(err)}`);
+  }
+}
+
+const PERMISSION_MODE_LABEL: Record<(typeof PERMISSION_MODE_CYCLE)[number], string> = {
+  ask: 'Ask',
+  auto: 'Auto',
+  deny: 'Deny',
+};
+
+/** `klorb.setPermissionMode` (also reachable from the status row's `StatusMenu`): a QuickPick
+ * of `Ask`/`Auto`/`Deny`, current one marked, jumping straight to the picked mode -- unlike
+ * `cyclePermissionModeCommand`, which only ever advances one step through
+ * `PERMISSION_MODE_CYCLE`. */
+export async function setPermissionModeCommand(
+  sessionControls: SessionControls,
+  vs: CommandsVsCode
+): Promise<void> {
+  try {
+    const current = sessionControls.currentModeId ?? 'ask';
+    const items: PickableItem<(typeof PERMISSION_MODE_CYCLE)[number]>[] = PERMISSION_MODE_CYCLE.map(
+      (mode) => ({
+        label: PERMISSION_MODE_LABEL[mode],
+        description: mode === current ? 'current' : undefined,
+        value: mode,
+      })
+    );
+    const picked = await vs.showQuickPick(items, { placeHolder: 'Permission mode' });
+    if (picked === undefined) {
+      return;
+    }
+    await sessionControls.setMode(picked.value);
   } catch (err) {
     await vs.showErrorMessage(`Klorb: ${errorMessage(err)}`);
   }

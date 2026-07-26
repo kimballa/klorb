@@ -219,7 +219,12 @@ describe('parseWebviewMessage', () => {
       { type: 'questionAnswer', requestId: 1, otherText: 'widget' },
       { type: 'questionAnswer', requestId: 1, cancelled: true },
       { type: 'pickModel' },
+      { type: 'pickThinking' },
       { type: 'cyclePermissionMode' },
+      { type: 'setPermissionMode' },
+      { type: 'showSessionStats' },
+      { type: 'newSession' },
+      { type: 'reloadSkills' },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);

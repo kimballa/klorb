@@ -97,6 +97,22 @@ export default function App({
     vscode.postMessage({ type: 'cyclePermissionMode' });
   }
 
+  function setPermissionMode(): void {
+    vscode.postMessage({ type: 'setPermissionMode' });
+  }
+
+  function showSessionStats(): void {
+    vscode.postMessage({ type: 'showSessionStats' });
+  }
+
+  function newSession(): void {
+    vscode.postMessage({ type: 'newSession' });
+  }
+
+  function reloadSkills(): void {
+    vscode.postMessage({ type: 'reloadSkills' });
+  }
+
   function submit(text: string): void {
     setEntries((prev) => appendPrompt(prev, text));
     // Raised optimistically; the host's turnStarted/turnError follow-up confirms or clears it.
@@ -194,6 +210,10 @@ export default function App({
         onPickModel={pickModel}
         onPickThinking={pickThinking}
         onCyclePermissionMode={cyclePermissionMode}
+        onSetPermissionMode={setPermissionMode}
+        onShowSessionStats={showSessionStats}
+        onNewSession={newSession}
+        onReloadSkills={reloadSkills}
       />
     </VsCodeApiProvider>
   );

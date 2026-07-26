@@ -11,6 +11,10 @@ const NOOP = {
   onPickModel: () => undefined,
   onPickThinking: () => undefined,
   onCyclePermissionMode: () => undefined,
+  onSetPermissionMode: () => undefined,
+  onShowSessionStats: () => undefined,
+  onNewSession: () => undefined,
+  onReloadSkills: () => undefined,
 };
 
 describe('StatusRow', () => {

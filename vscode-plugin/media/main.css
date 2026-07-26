@@ -472,6 +472,37 @@ button.status-chip:hover {
   transition: color 0.2s ease-out;
 }
 
+.status-menu-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.status-menu-button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+/* Positioned with `position: fixed` (set inline by StatusMenu.tsx, alongside `top`/`left`
+   computed from the button's own bounding rect) rather than CSS alone -- see that component's
+   own doc comment for why. `z-index` still belongs here: it doesn't need to win a specificity
+   fight against the shadow-DOM `:host` rule the way `position` does, since `vscode-context-menu`
+   never sets its own `z-index`. */
+.status-menu-popup {
+  z-index: 100;
+}
+
 .session-stats {
   display: flex;
   flex-direction: column;

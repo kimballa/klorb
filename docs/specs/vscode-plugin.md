@@ -537,8 +537,30 @@ increment this landed in.
   `KlorbAcpClient.repostPendingInteraction()`.
 * **Webview `StatusRow`** (`src/webview/components/StatusRow.tsx`) is docked under the prompt
   input, one line (the session title itself lives in `App`'s top `.title` bar instead, see its
-  own bullet above). The model chip and the thinking chip are separate, independently clickable
-  buttons, each opening its own picker: the model chip reads `model`, or `...` before the first
+  own bullet above). Its leading chip is `StatusMenu` (`src/webview/components/StatusMenu.tsx`):
+  a small solid `.status-menu-button` (`--vscode-button-background`/`-foreground`/
+  `-hoverBackground`, the same primary-button palette `<vscode-button>` itself renders with,
+  reproduced in plain CSS here since this is a bare `<button>` not the custom element) reading
+  `^`, opening a `<vscode-context-menu>` listing every session command the row doesn't already
+  expose as its own chip — Set Model, Set Thinking, Set Permission Mode, Session Stats, New
+  Session, Reload Skills. Picking an item dispatches to the same handler its own chip would use
+  for the first two (`onPickModel`/`onPickThinking`), a dedicated `onSetPermissionMode` for the
+  third (distinct from the badge's own `onCyclePermissionMode`, see below), or posts one of
+  `showSessionStats`/`newSession`/`reloadSkills` (webview → host) for the last three. The popup
+  is positioned with an inline `position: fixed` plus `top`/`left` computed from the chevron
+  button's own `getBoundingClientRect()` (set imperatively in `openMenu()`, not through a CSS
+  rule): `vscode-context-menu`'s own shadow-DOM styles set `:host { position: relative }`, which
+  an ordinary page-level stylesheet rule can't reliably out-specificity, but an inline style on
+  the host element always wins over any stylesheet — shadow-root or page — that doesn't mark
+  itself `!important`; `position: fixed` also means the popup isn't clipped by any ancestor's
+  layout or `overflow`, since its containing block is the whole webview viewport rather than
+  `#status-row` or any element between it and the page root. The menu tracks its own open/closed
+  state internally (outside click, Escape, item pick all close it without any React round trip);
+  the button only ever calls `openMenu()` (which sets the popup's position and then
+  `menuRef.current.show = true`) to open it, so there's no `open` boolean in React state to keep
+  in sync with the element's own visibility. The model chip and the
+  thinking chip are separate, independently clickable buttons, each opening its own picker: the
+  model chip reads `model`, or `...` before the first
   `_klorb/getSessionConfig` reply, and clicking it posts `{type: 'pickModel'}`; the thinking chip
   reads the effort name (`Low`/`Medium`/`High`) while thinking is enabled, `Off` while disabled,
   or `...` before `thinkingEnabled`/`thinkingEffort` are known, and clicking it posts
@@ -563,13 +585,16 @@ increment this landed in.
   independently optional, since the host posts one whenever any single piece of
   `SessionControls`'s snapshot changes but always with the complete snapshot (see `App`'s own
   bullet above for why the webview replaces its local `status` wholesale rather than merging).
-  `PickModelMessage`/`PickThinkingMessage`/`CyclePermissionModeMessage` (webview → host)
-  are the three bare `{type: 'pickModel'}`/`{type: 'pickThinking'}`/
-  `{type: 'cyclePermissionMode'}` intents the status row's clickable chips (and the prompt
-  input's Shift+Tab handler, for the last one) post. `KlorbSessionViewProvider._handleMessage()`
-  maps `pickModel`/`pickThinking`/`cyclePermissionMode` to the same
-  `klorb.selectModel`/`klorb.setThinking`/`klorb.cyclePermissionMode` commands the command
-  palette itself runs, rather than duplicating their `QuickPick` flows.
+  `PickModelMessage`/`PickThinkingMessage`/`CyclePermissionModeMessage`/
+  `SetPermissionModeMessage`/`ShowSessionStatsMessage`/`NewSessionMessage`/`ReloadSkillsMessage`
+  (webview → host) are the seven bare `{type: 'pickModel'}`/`{type: 'pickThinking'}`/
+  `{type: 'cyclePermissionMode'}`/`{type: 'setPermissionMode'}`/`{type: 'showSessionStats'}`/
+  `{type: 'newSession'}`/`{type: 'reloadSkills'}` intents the status row's clickable chips (and
+  the prompt input's Shift+Tab handler, for `cyclePermissionMode`) post.
+  `KlorbSessionViewProvider._handleMessage()` maps each one to the same
+  `klorb.selectModel`/`klorb.setThinking`/`klorb.cyclePermissionMode`/`klorb.setPermissionMode`/
+  `klorb.showSessionStats`/`klorb.newSession`/`klorb.reloadSkills` command the command palette
+  itself runs, rather than duplicating their `QuickPick`/handler logic.
   `SessionStatsMessage` (host → webview) is `{type: 'sessionStats', messageCounts:
   Record<string, number>, toolBreakdown: {name, succeeded, failed}[], tokenUsage: Record<string,
   number>, cachePercent: number, totalCost: number}` — posted once per `klorb.showSessionStats`
@@ -592,6 +617,11 @@ increment this landed in.
     picker.md).
   * **`klorb.cyclePermissionMode`** (also reachable from the status row badge): calls
     `SessionControls.cyclePermissionMode()`.
+  * **`klorb.setPermissionMode`** (also reachable from the status row's `StatusMenu`): a QuickPick
+    of `Ask`/`Auto`/`Deny` (`PERMISSION_MODE_CYCLE`'s three values, current one read from
+    `SessionControls.currentModeId` and marked `"current"`); on pick, calls
+    `SessionControls.setMode(pickedModeId)` directly, jumping straight to the chosen mode rather
+    than only advancing one step through the cycle the way `cyclePermissionMode` does.
   * **`klorb.newSession`**: see the `extension.ts` bullet above.
   * **`klorb.showSessionStats`**: `formatSessionStats()`
     (`src/host/features/sessionControls/formatSessionStats.ts`) extracts a `_klorb/
@@ -629,7 +659,7 @@ increment this landed in.
     monospace text for the TUI, reimplemented as a real grid instead of preformatted lines.
   * **`klorb.reloadSkills`**: calls `SessionControls.reloadSkills()`, toasts the resulting
     skill count.
-  * All eight are contributed in `package.json` with "Klorb: …" titles.
+  * All nine are contributed in `package.json` with "Klorb: …" titles.
 * **Workspace trust bridging** (`src/host/features/sessionControls/workspaceTrustBridge.ts`'s
   `WorkspaceTrustBridge`) offers, at most once per activation, to trust the session's workspace
   in Klorb: if VS Code's own workspace trust (`vscode.workspace.isTrusted`) is already granted
@@ -667,9 +697,10 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   `{type: 'openLocation', path: string, line?: number}` (a tool-call title link),
   `{type: 'openDiff', callId: string, path: string}` ("Open diff"), `PermissionDecisionMessage`
   ("Approval and question panels" above) answering a `permissionAsk`, `QuestionAnswerMessage`
-  ("Approval and question panels" above) answering a `questionAsk`, `{type: 'pickModel'}` and
-  `{type: 'cyclePermissionMode'}` ("Status row and session controls" above, the status row's
-  two clickable chips).
+  ("Approval and question panels" above) answering a `questionAsk`, and `{type: 'pickModel'}`/
+  `{type: 'pickThinking'}`/`{type: 'cyclePermissionMode'}`/`{type: 'showSessionStats'}`/
+  `{type: 'newSession'}`/`{type: 'reloadSkills'}` ("Status row and session controls" above, the
+  status row's chips and its `StatusMenu` popup).
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
   string}`, `{type: 'thoughtChunk', text: string}`, `{type: 'turnEnded', stopReason: string}`,
   `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`,

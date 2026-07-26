@@ -275,6 +275,31 @@ export interface CyclePermissionModeMessage {
   type: 'cyclePermissionMode';
 }
 
+/** The user picked "Set Permission Mode" from the status row's menu: show the Ask/Auto/Deny
+ * QuickPick, same as the **Klorb: Set Permission Mode** command -- jumps straight to the
+ * picked mode, unlike `CyclePermissionModeMessage`, which only advances one step. */
+export interface SetPermissionModeMessage {
+  type: 'setPermissionMode';
+}
+
+/** The user picked "Session Stats" from the status row's menu: show the current session's
+ * stats, same as the **Klorb: Show Session Stats** command. */
+export interface ShowSessionStatsMessage {
+  type: 'showSessionStats';
+}
+
+/** The user picked "New Session" from the status row's menu: start a fresh session, same as
+ * the **Klorb: New Session** command. */
+export interface NewSessionMessage {
+  type: 'newSession';
+}
+
+/** The user picked "Reload Skills" from the status row's menu: reload skills, same as the
+ * **Klorb: Reload Skills** command. */
+export interface ReloadSkillsMessage {
+  type: 'reloadSkills';
+}
+
 /** Every message the webview may post to the extension host. */
 export type WebviewMessage =
   | SubmitPromptMessage
@@ -285,7 +310,11 @@ export type WebviewMessage =
   | QuestionAnswerMessage
   | PickModelMessage
   | PickThinkingMessage
-  | CyclePermissionModeMessage;
+  | CyclePermissionModeMessage
+  | SetPermissionModeMessage
+  | ShowSessionStatsMessage
+  | NewSessionMessage
+  | ReloadSkillsMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
 interface FieldSpec {
@@ -308,6 +337,10 @@ const WEBVIEW_BARE_TYPES: readonly string[] = [
   'pickModel',
   'pickThinking',
   'cyclePermissionMode',
+  'setPermissionMode',
+  'showSessionStats',
+  'newSession',
+  'reloadSkills',
 ];
 
 function parseMessage(
