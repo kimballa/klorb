@@ -3,9 +3,12 @@
 See docs/specs/klorb-server.md's tool-call update mapping section."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import acp
 import pytest
 from acp.schema import AllowedOutcome, DeniedOutcome
+from fixtures.sample_models import sample_model_registry
 
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules, canonicalize_dir
@@ -13,21 +16,25 @@ from klorb.permissions.resource import BashCommandContext, CommandResource, Path
 from klorb.permissions.risk_classifier import ItemRiskAssessment
 from klorb.process_config import ProcessConfig
 from klorb.server.update_mapping import (
+    SESSION_MODES,
     TOOL_KIND_MAP,
     TOOL_LOCATION_ARG,
     _diff_text,
     escalate_privileges_decision_from_outcome,
     escalate_privileges_meta,
     escalate_privileges_options,
+    parse_session_config_update,
     permission_ask_meta,
     permission_ask_options,
     permission_ask_tool_call_update,
     permission_decision_from_outcome,
     permission_decision_grant_patterns,
+    session_config_json,
+    session_mode_state,
     tool_call_finished_update,
     tool_call_started_update,
 )
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.session.events import (
     EscalatePrivilegesContext,
     PermissionAskContext,
@@ -465,3 +472,48 @@ def test_escalate_privileges_decision_from_outcome_approves_only_allow_once() ->
     assert approved.approved is True
     assert denied_option.approved is False
     assert cancelled.approved is False
+
+
+def test_session_mode_state_reports_all_three_modes_with_the_current_one_selected() -> None:
+    state = session_mode_state("auto")
+
+    assert state.available_modes == SESSION_MODES
+    assert {mode.id for mode in state.available_modes} == {"ask", "auto", "deny"}
+    assert state.current_mode_id == "auto"
+
+
+def test_session_config_json_reports_current_values_and_every_registered_model() -> None:
+    config = SessionConfig(model="beta", thinking_enabled=False, thinking_effort="low")
+    session = Session(config, provider=MagicMock(), model_registry=sample_model_registry())
+
+    payload = session_config_json(session, sample_model_registry())
+
+    assert payload["model"]["current"] == "beta"
+    assert payload["model"]["available"] == [
+        {"id": "alpha", "name": "alpha"},
+        {"id": "beta", "name": "beta"},
+        {"id": "gamma", "name": "gamma"},
+    ]
+    assert payload["thinking"] == {"enabled": False, "effort": "low"}
+
+
+def test_parse_session_config_update_leaves_unset_fields_none() -> None:
+    update = parse_session_config_update({"sessionId": "s1", "model": "gamma"})
+
+    assert update.model == "gamma"
+    assert update.thinking is None
+
+
+def test_parse_session_config_update_parses_thinking_fields() -> None:
+    update = parse_session_config_update(
+        {"sessionId": "s1", "thinking": {"enabled": True, "effort": "high"}})
+
+    assert update.model is None
+    assert update.thinking is not None
+    assert update.thinking.enabled is True
+    assert update.thinking.effort == "high"
+
+
+def test_parse_session_config_update_rejects_an_unrecognized_thinking_effort() -> None:
+    with pytest.raises(acp.RequestError):
+        parse_session_config_update({"sessionId": "s1", "thinking": {"effort": "extreme"}})

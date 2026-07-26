@@ -1021,7 +1021,7 @@ def test_run_server_cli_runs_acp_server_against_stdio() -> None:
             exit_code = cli.run_server_cli([])
 
     mock_streams_cls.from_stdio.assert_called_once_with()
-    mock_server_cls.assert_called_once_with(mock_streams, mock.ANY)
+    mock_server_cls.assert_called_once_with(mock_streams, mock.ANY, config_flag_path=None)
     mock_server.run.assert_called_once_with()
     assert exit_code == 0
 
@@ -1042,11 +1042,15 @@ def test_run_server_cli_passes_config_flag_path(
             path=Path.cwd(), trusted=False)
         with patch("klorb.cli.ServerStreams") as mock_streams_cls:
             mock_streams_cls.from_stdio = AsyncMock(return_value=MagicMock())
-            with patch("klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0))):
+            with patch(
+                "klorb.cli.AcpServer", return_value=MagicMock(run=AsyncMock(return_value=0)),
+            ) as mock_server_cls:
                 cli.run_server_cli(["--config", "/some/extra-config.json"])
 
     stub_process_config.assert_called_once_with(
         config_flag_path=Path("/some/extra-config.json"), cwd=mock.ANY, workspace=mock.ANY)
+    mock_server_cls.assert_called_once_with(
+        mock.ANY, mock.ANY, config_flag_path=Path("/some/extra-config.json"))
 
 
 def test_run_server_cli_passes_no_config_flag_path_by_default(

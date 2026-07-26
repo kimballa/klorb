@@ -25,6 +25,8 @@ from acp.schema import (
     FileEditToolCallContent,
     PermissionOption,
     PermissionOptionKind,
+    SessionMode,
+    SessionModeState,
     ToolCallLocation,
     ToolCallProgress,
     ToolCallStart,
@@ -32,12 +34,15 @@ from acp.schema import (
     ToolCallUpdate,
     ToolKind,
 )
+from pydantic import BaseModel, ValidationError
 
+from klorb.models.registry import ModelRegistry
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import canonicalize_dir
 from klorb.permissions.resource import CommandResource, PermissionResource
 from klorb.permissions.risk_classifier import ItemRiskAssessment
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
+from klorb.session.constants import PermissionFramework, ThinkingEffort
 from klorb.session.events import (
     AskUserQuestionsAnswer,
     AskUserQuestionsItemContext,
@@ -523,3 +528,70 @@ def ask_user_questions_answer_from_result(
         raise ValueError(
             f"_klorb/askUserQuestions selectedOptionIndex out of range: {selected_index!r}")
     return AskUserQuestionsAnswer(answer=format_answer(ctx.options[selected_index], None))
+
+
+SESSION_MODES: list[SessionMode] = [
+    SessionMode(id="ask", name="Ask before acting"),
+    SessionMode(id="auto", name="Auto-approve"),
+    SessionMode(id="deny", name="Deny tool asks"),
+]
+"""Every `PermissionFramework` literal, mapped to the fixed ACP `SessionMode` labels
+`klorb.server.klorb_agent` advertises on `session/new` and `session/set_mode` -- see
+docs/specs/klorb-server.md's "Session modes" section."""
+
+
+def session_mode_state(permission_framework: PermissionFramework) -> SessionModeState:
+    """Map a session's current `permission_framework` onto ACP's session-modes surface: the
+    fixed `SESSION_MODES` list, with `currentModeId` set from `permission_framework`."""
+    return SessionModeState(available_modes=SESSION_MODES, current_mode_id=permission_framework)
+
+
+def session_config_json(session: Session, model_registry: ModelRegistry) -> dict[str, Any]:
+    """Build the `_klorb/getSessionConfig`/`_klorb/setSessionConfig` result payload: the
+    session's current model and thinking settings, plus every model `model_registry` knows
+    about -- see docs/specs/klorb-server.md's "Model and thinking session config" section. The
+    pinned ACP SDK (0.7.x) has no generic select/boolean config-option surface, and no notion
+    of `thinking.enabled`/`thinking.effort` at all (`session/set_model` exists but is marked
+    unstable and only covers `model`), so both ride this one ext-method JSON shape uniformly
+    rather than splitting model onto the native surface and thinking onto an ext method."""
+    return {
+        "model": {
+            "current": session.config.model,
+            "available": [
+                {"id": model.name(), "name": model.name()}
+                for model in sorted(model_registry.models(), key=lambda model: model.name())
+            ],
+        },
+        "thinking": {
+            "enabled": session.config.thinking_enabled,
+            "effort": session.config.thinking_effort,
+        },
+    }
+
+
+class SessionConfigThinkingUpdate(BaseModel):
+    """The `thinking` sub-object of a `_klorb/setSessionConfig` request's params -- see
+    `SessionConfigUpdate`. A field left unset (`None`) is left unchanged by the caller."""
+
+    enabled: bool | None = None
+    effort: ThinkingEffort | None = None
+
+
+class SessionConfigUpdate(BaseModel):
+    """A validated `_klorb/setSessionConfig` request's params -- see
+    `parse_session_config_update`. A field left unset (`None`) is left unchanged by the
+    caller."""
+
+    model: str | None = None
+    thinking: SessionConfigThinkingUpdate | None = None
+
+
+def parse_session_config_update(params: dict[str, Any]) -> SessionConfigUpdate:
+    """Validate a `_klorb/setSessionConfig` request's params against `SessionConfigUpdate`,
+    raising `acp.RequestError.invalid_params` (e.g. for an unrecognized `thinking.effort`
+    string) instead of letting a `pydantic.ValidationError` escape as an unhandled
+    exception."""
+    try:
+        return SessionConfigUpdate.model_validate(params)
+    except ValidationError as exc:
+        raise acp.RequestError.invalid_params({"reason": str(exc)}) from exc

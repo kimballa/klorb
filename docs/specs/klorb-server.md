@@ -15,9 +15,13 @@ extensibility rules, the increments still to come).
 At this checkpoint the server supports `initialize`, `session/new`, `session/prompt` with
 streamed response, thinking text, and tool-call activity, `session/cancel`,
 `session/request_permission` for both an ordinary permission `"ask"` verdict and an
-`EscalatePrivileges` request, and `_klorb/askUserQuestions` for `AskUserQuestions` — a prompt
-against a plain-conversation model, one that calls tools, one whose tools need interactive
-approval, or one that asks the user structured questions, is fully usable end to end.
+`EscalatePrivileges` request, `_klorb/askUserQuestions` for `AskUserQuestions`, session modes
+(`session/set_mode`) for the permission framework, model/thinking session config
+(`_klorb/getSessionConfig`/`_klorb/setSessionConfig`), session naming and token-usage updates,
+and `_klorb/sessionStats`/`_klorb/trustWorkspace`/`_klorb/reloadSkills` — a prompt against a
+plain-conversation model, one that calls tools, one whose tools need interactive approval, or
+one that asks the user structured questions, is fully usable end to end, and a client can steer
+how the session operates the same way the TUI's own commands do.
 
 ## Wire protocol
 
@@ -27,11 +31,16 @@ approval, or one that asks the user structured questions, is fully usable end to
   Python SDK (import name `acp`, pinned `>= 0.7.0, < 0.8.0`) owns it.
 * `initialize` negotiates the protocol version (klorb always replies with `acp.PROTOCOL_VERSION`,
   the SDK's own current value) and exchanges capabilities. klorb's `agentCapabilities._meta`
-  carries `{"klorb": {}}` — an empty envelope today, grown by later increments as `_klorb/*`
-  extension methods are added (see "Extension methods" below).
+  carries `{"klorb": {"sessionConfig": true, "sessionStats": true, "trustWorkspace": true,
+  "reloadSkills": true}}` — grown by later increments as more `_klorb/*` extension methods are
+  added (see "Extension methods" below).
 * `session/new` builds a fresh `Session` for the given `cwd`, tearing down any existing one
   first — see "Single top-level session" below. `mcpServers` is accepted but never acted on
-  (klorb has no MCP support).
+  (klorb has no MCP support). The response's `modes` field advertises the session's permission
+  framework as ACP session modes (see "Session modes" below); its `_meta.klorb` carries
+  `{workspace: {path, trusted}, title: string | null}` — the resolved workspace's trust state,
+  and the session's name if one is already known (always `null` today, since every session
+  built here is fresh — see "Single top-level session").
 * `session/prompt` sends one turn. Only `TextContentBlock` prompt content is supported at this
   checkpoint — an image/audio/resource block gets a JSON-RPC `invalid params` error instead of
   being silently dropped or misread. The reply's `stopReason` is `"end_turn"` on success or
@@ -50,11 +59,43 @@ approval, or one that asks the user structured questions, is fully usable end to
 
 ### Extension methods
 
-`agentCapabilities._meta.klorb` is `{}` — no *agent*-advertised extension method exists yet.
-Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize gets the standard `-32601`
-method-not-found error; every unrecognized `_klorb/*` *notification* is silently ignored, per
-ACP's own extensibility rules. Later increments (`plan-016-007` and on) grow the agent side of
-this section as they land.
+`agentCapabilities._meta.klorb` is `{"sessionConfig": true, "sessionStats": true,
+"trustWorkspace": true, "reloadSkills": true}` — the *agent*-advertised extension methods below,
+all client → server. Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize gets the
+standard `-32601` method-not-found error; every unrecognized `_klorb/*` *notification* is
+silently ignored, per ACP's own extensibility rules. Later increments grow this section as they
+land.
+
+* **`_klorb/getSessionConfig`** — reads the session's model/thinking config. Params:
+  `{sessionId: string}`. Result: `{model: {current: string, available: [{id: string, name:
+  string}]}, thinking: {enabled: boolean, effort: "low" | "medium" | "high"}}` — `available` is
+  every model `ModelRegistry` knows about, `id`/`name` both `Model.name()` (there's no separate
+  display-name concept). See "Model and thinking session config" below for why this rides an
+  ext method rather than the SDK's own `session/set_model`.
+* **`_klorb/setSessionConfig`** — changes the session's model/thinking config. Params:
+  `{sessionId: string, model?: string, thinking?: {enabled?: boolean, effort?: "low" | "medium"
+  | "high"}}` — every field left unset is left unchanged. `model` is assigned unvalidated
+  (mirroring `Session.active_model_name()`'s own tolerance for an unregistered OpenRouter model
+  id); an unrecognized `thinking.effort` string is a JSON-RPC `invalid params` error. Result:
+  the same shape `_klorb/getSessionConfig` returns, reflecting the change.
+* **`_klorb/sessionStats`** — the `SessionStatistics` payload the TUI's "Show session stats"
+  command renders. Params: `{sessionId: string}`. Result: `Session.statistics.model_dump(mode=
+  "json")` verbatim (`user_messages`, `response_messages`, `thinking_messages`, `tool_calls`,
+  `tools: {<name>: {success_count, failed_count}}`, `unknown_tool_calls`, `malformed_tool_calls`,
+  `input_tokens`, `output_tokens`, `cached_tokens`, `total_cost`).
+* **`_klorb/trustWorkspace`** — trusts the session's current workspace, mirroring
+  `klorb.tui.mixins.workspace_bootstrap.WorkspaceBootstrapMixin._apply_workspace_config`'s
+  non-interactive half (persist via `TrustManager.set_trusted` when the workspace is a
+  registered project, then reload and re-apply the now-unlocked layered config onto the live
+  session/process config in place). Params: `{sessionId: string}`. Result:
+  `{workspace: {path: string, trusted: true}}`. Trusting mid-session triggers the same
+  context-file-seeding rules a trusted TUI session gets on its first turn — no new policy, see
+  docs/specs/permissions.md. The server always has trust management enabled today (`AcpServer`/
+  `KlorbAcpAgent` construct a real `TrustManager` whenever the caller doesn't inject one), so
+  there is currently no path that makes this ext method unavailable.
+* **`_klorb/reloadSkills`** — rebuilds the process-wide skill catalog from a fresh disk scan
+  against the session's workspace, mirroring the TUI's "Reload skills" command
+  (`ReplApp.reload_skills`). Params: `{sessionId: string}`. Result: `{skillCount: int}`.
 
 One *client*-advertised extension method exists, called server → client:
 
@@ -79,6 +120,63 @@ One *client*-advertised extension method exists, called server → client:
   `on_ask_user_questions` returns `AskUserQuestionsAnswer(cancelled=True)` immediately with no
   wire traffic at all — the tool reports the batch as declined, same as the TUI's Escape, instead
   of hanging a headless client.
+
+One extension *notification* exists, server → client, sent unconditionally (no capability gate
+— an unrecognized notification is just ignored, unlike a request, so there's no wire cost to a
+client that doesn't understand it):
+
+* **`_klorb/usage`** — sent once per turn, after every other `session/update` for that turn has
+  gone out, whether the turn succeeded, was cancelled, or raised. Params: `{sessionId: string,
+  usedTokens: int, maxTokens: int | null}` — `Session.total_tokens_used()`/
+  `Session.max_context_window()`, the same numbers the TUI status bar shows. Per-chunk emission
+  is deliberately avoided (chatty, and the TUI itself only refreshes per turn).
+
+## Session modes
+
+The permission framework (`SessionConfig.permission_framework`) is exposed as ACP session
+modes: three fixed `SessionMode`s, ids matching the `PermissionFramework` literals:
+
+| `modeId` | Name | `PermissionFramework` behavior |
+| --- | --- | --- |
+| `ask` | "Ask before acting" | `on_permission_ask` fires per tool-use ask (see "Permission asks and escalation" below) |
+| `auto` | "Auto-approve" | every ask auto-approved with an in-memory `"session"`-scope grant, no callback |
+| `deny` | "Deny tool asks" | every ask fails closed, no callback |
+
+`session/new`'s response carries the current state in `modes`; `session/set_mode(modeId, sessionId)`
+calls `Session.set_permission_framework(modeId)` — not a direct `config.permission_framework`
+assignment, so the model-facing `<SystemInterjection subject="PermissionFramework">` notice
+`set_permission_framework` queues is still sent on the session's next turn (see
+docs/specs/permissions.md) — then broadcasts a `current_mode_update` confirming the change. An
+unrecognized `modeId` is a JSON-RPC `invalid params` error (`Session.set_permission_framework`'s
+own `ValueError`, translated).
+
+## Model and thinking session config
+
+Model choice and thinking enabled/effort ride `_klorb/getSessionConfig`/
+`_klorb/setSessionConfig` (see "Extension methods" above) rather than the ACP SDK's own session
+config surface. The pinned SDK (`agent-client-protocol` 0.7.x) has exactly one native select for
+this: `SessionModelState`/`session/set_model`, covering `model` only, and marked **UNSTABLE** in
+the SDK's own schema — there is no SDK-native notion of `thinking.enabled`/`thinking.effort` at
+all, and no generic select/boolean "config option" surface of the kind an earlier draft of this
+plan anticipated. Rather than split model onto the unstable native surface and thinking onto an
+ext method, both ride one ext-method JSON shape uniformly; `session/set_model` stays an explicit
+`RequestError.method_not_found`, like every other protocol method this server doesn't implement
+(see "Single top-level session" below). Setting `model`/`thinking.*` mutates only
+`Session.config` — unlike the TUI's `select_model()`/`set_thinking_enabled()`/
+`set_thinking_effort()`, it does not also update `ProcessConfig.session` or persist to the
+per-user config file, since those are interactive-UI default-setting behaviors, not properties
+of one ACP session.
+
+## Session naming and token usage
+
+Session naming (see docs/specs/session-and-turns.md's "Session naming" section) already ran on
+every session's first turn before this checkpoint; `TurnBridge` now bridges its result out over
+ACP. `TurnEventHandlers.on_session_name_changed` enqueues a `session_info_update` (`title`: the
+derived title on success, `null` on failure) the same way `on_chunk`/`on_thinking_chunk` do, so
+it's ordered relative to them like any other fire-and-forget callback for that turn. `session/
+new`'s `_meta.klorb.title` additionally reports the session's name at the moment `session/new`
+returns (always `null` today — see "Single top-level session": every session this server builds
+is fresh, never restored).
 
 ## How it works
 
@@ -111,26 +209,42 @@ One *client*-advertised extension method exists, called server → client:
     docs/specs/session-and-turns.md's "Session naming" section), but the identity a client
     keeps addressing requests to has to stay fixed for the session's lifetime regardless.
   * `initialize()`: negotiates `protocolVersion` (always replies `acp.PROTOCOL_VERSION`) and
-    returns `agentCapabilities._meta = {"klorb": {}}`.
+    returns `agentCapabilities._meta` with the flags listed in "Wire protocol" above.
   * `new_session(cwd, mcp_servers)`: resolves a `Workspace` for `cwd` (`TrustManager.
     resolve_workspace()`, the same ancestor-search/registration-lookup the CLI uses), copies it
     onto a fresh `SessionConfig` (`process_config.session.model_copy()`), builds a `ToolRegistry`
     via `ToolRegistry.discover_tools()`, closes any existing `Session`, and constructs the new
-    one. `permission_framework` is left at the `SessionConfig` default (`"ask"`) — with no
-    `on_permission_ask` callback wired up yet, every ask fails closed, which is the same net
-    effect a `"deny"` policy would have (see docs/specs/permissions.md).
+    one. `permission_framework` starts at the `SessionConfig` default (`"ask"`) — a normal
+    `"ask"` session, so `on_permission_ask` fires as usual (see "Permission asks and escalation"
+    below); `session/set_mode` (see "Session modes" above) changes it mid-session. Returns
+    `modes`/`_meta.klorb` as described in "Wire protocol" above.
+  * `set_session_mode(mode_id, session_id)`: see "Session modes" above.
   * `prompt(prompt, session_id)`: validates `session_id`, rejects a second concurrent prompt,
     concatenates the request's `TextContentBlock`s (any other block type is a JSON-RPC error),
     and delegates to `TurnBridge.run_turn()`.
   * `cancel(session_id)`: sets `Session.active_cancel_event`, if one is live for that session.
+  * `ext_method(method, params)`: dispatches `_klorb/getSessionConfig`/`_klorb/setSessionConfig`/
+    `_klorb/sessionStats`/`_klorb/reloadSkills`/`_klorb/trustWorkspace` by name (see "Extension
+    methods" above); every `sessionId` is validated the same way `prompt`/`cancel` validate
+    theirs. `_apply_workspace_config(workspace)` (private, used by `_klorb/trustWorkspace`)
+    mirrors `klorb.tui.mixins.workspace_bootstrap.WorkspaceBootstrapMixin._apply_workspace_config`
+    one-for-one minus its TUI-only history-notice/header side effects: reloads layered config via
+    `load_process_config(config_flag_path=self._config_flag_path, cwd=workspace.path,
+    workspace=workspace)`, copies every non-`session`/`argv`/`cli_flags` `ProcessConfig` field
+    from the reload onto the live one, sets `workspace` on both the live session and process
+    config templates, concatenates (never replaces) `read_dirs`/`write_dirs` from the reload onto
+    both (`klorb.permissions.directory_access.concat_dir_rules` — hoisted there from
+    `klorb.tui.formatting` so this non-TUI module can reuse it without a Textual dependency), and
+    forces a fresh `SkillCatalogRegistry` scan.
   * `close()`: closes the live session, if any — called once by `AcpServer.run()` when the
     client disconnects.
 * `klorb.server.turn_bridge.TurnBridge` is the sync/async bridge one `Session` instance keeps
   for its whole lifetime: `run_turn(prompt_text) -> str` (async) runs `Session.send_turn()` on a
   worker thread via `asyncio.to_thread()`, keeping the event loop free to service concurrent
   ACP requests (`session/cancel`) while a turn is in flight. It wires `on_chunk` →
-  `acp.update_agent_message_text()`, `on_thinking_chunk` → `acp.update_agent_thought_text()`, and
-  `on_tool_call_started`/`on_tool_call` → `klorb.server.update_mapping.
+  `acp.update_agent_message_text()`, `on_thinking_chunk` → `acp.update_agent_thought_text()`,
+  `on_session_name_changed` → a `SessionInfoUpdate` (see "Session naming and token usage" above),
+  and `on_tool_call_started`/`on_tool_call` → `klorb.server.update_mapping.
   tool_call_started_update()`/`tool_call_finished_update()` (passing this turn's
   `Session.tool_registry`/`Session.config.workspace.path` through — see "Tool-call update
   mapping" below), plus a fresh `threading.Event` per turn as `cancel_event` — later increments
@@ -145,7 +259,9 @@ One *client*-advertised extension method exists, called server → client:
   stops the pump task in a `finally`, whether `send_turn()` succeeds, raises `klorb.api_provider.
   ResponseAborted` (a cancelled turn), or raises anything else — the exception always propagates
   to the caller only after the pump has fully drained, so no queued update is ever lost or
-  reordered around it. `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached`
+  reordered around it; once drained, the `_klorb/usage` notification for the turn goes out (see
+  "Session naming and token usage" above), strictly after every `session/update` the turn
+  produced. `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached`
   are blocking asks rather than fire-and-forget notifications: each builds its
   `session/request_permission`/`_klorb/raiseToolCallLimit` round trip as a coroutine and runs it
   via `asyncio.run_coroutine_threadsafe(...).result()`, first `await`ing `queue.join()` inside
@@ -371,25 +487,29 @@ singleton-session reality. `session/new` tears down any existing session (`Sessi
 and builds a fresh one — the same semantics as the TUI's `/clear`. `loadSession` isn't
 advertised (`AgentCapabilities.load_session` stays at its SDK default of `False`), so a
 compliant client never calls `session/load`; `KlorbAcpAgent` still implements it (and every
-other protocol method this checkpoint doesn't support — `list_sessions`, `set_session_mode`,
-`set_session_model`, `authenticate`, `fork_session`, `resume_session`, `ext_method`) as an
-explicit `RequestError.method_not_found`, rather than relying on the Protocol base class's
-inherited no-op, so an unexpected call fails loudly instead of silently returning nothing.
-`ext_notification` is the one exception: an unrecognized extension *notification* is ignored,
-per ACP's own extensibility rules. Multiple top-level sessions and subagent child sessions are
-explicitly future work — see the plan overview.
+other protocol method this checkpoint doesn't support — `list_sessions`, `set_session_model`
+(see "Model and thinking session config" above), `authenticate`, `fork_session`,
+`resume_session`) as an explicit `RequestError.method_not_found`, rather than relying on the
+Protocol base class's inherited no-op, so an unexpected call fails loudly instead of silently
+returning nothing. `ext_notification` is the one exception: an unrecognized extension
+*notification* is ignored, per ACP's own extensibility rules. Multiple top-level sessions and
+subagent child sessions are explicitly future work — see the plan overview.
 
 ### CLI wiring
 
 `klorb.cli.run_server_cli(argv)` parses `klorb server`'s own flags (`--config`), resolves it
 through the same `load_process_config()` file stack every other subcommand reads (see
 `run_show_config_cli()`), logging any `process_config.config_warnings` as warnings, then runs
-`AcpServer(ServerStreams.from_stdio(), process_config)` to completion via `asyncio.run()` — the
-resolved `ProcessConfig` genuinely shapes every session the server builds now, unlike the old
-JSONL stub where `--config` existed only for validation. `klorb.cli.main()` recognizes `klorb
-server ...` the same way it recognizes the other subcommands (`init`, `system-prompt`,
-`models`, `show-config`): only when `server` is literally `sys.argv[1]`, checked before the
-normal one-shot/REPL `argparse` parser runs.
+`AcpServer(ServerStreams.from_stdio(), process_config, config_flag_path=config_flag_path)` to
+completion via `asyncio.run()` — the resolved `ProcessConfig` genuinely shapes every session the
+server builds now, unlike the old JSONL stub where `--config` existed only for validation.
+`config_flag_path` (the parsed `--config` value, `None` if omitted) is threaded all the way
+through to `KlorbAcpAgent`, which keeps it for `_klorb/trustWorkspace`'s own
+`load_process_config()` re-resolution — the same value `klorb.tui.ReplApp` keeps as its own
+`_config_flag_path` for the same purpose. `klorb.cli.main()` recognizes `klorb server ...` the
+same way it recognizes the other subcommands (`init`, `system-prompt`, `models`, `show-config`):
+only when `server` is literally `sys.argv[1]`, checked before the normal one-shot/REPL `argparse`
+parser runs.
 
 ### SIGINT handling
 
@@ -444,9 +564,6 @@ e.g. with `allow:session`, to let the command run:
 * No free-text "Other" row as a selectable `PermissionOption` — a client wants the free-text
   redirect via `_meta.klorb.otherText` on its response instead (see "Permission asks and
   escalation" above).
-* No session modes (`session/set_mode`), model/thinking config options, session naming/
-  token-usage updates, or workspace-trust bridging — `permission_framework` is fixed at
-  `"ask"` for the lifetime of a session created through this server. Lands in `plan-016-008`.
 * No chainlink task-plan (`session/update` → `plan`) updates. Lands in `plan-016-010`.
 * No mid-turn message queueing (`_klorb/enqueueMessage`) — a second `session/prompt` while one
   is in flight is a JSON-RPC error, not queued. Lands in `plan-016-012`.

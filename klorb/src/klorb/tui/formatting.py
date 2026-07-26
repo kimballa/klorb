@@ -14,23 +14,7 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.content import Content
 
-from klorb.permissions.directory_access import DirRules
 from klorb.tools.util.diff_lines import DiffHunk, DiffLine
-
-
-def concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
-    """Concatenate `addition`'s deny/ask/allow entries onto `base`'s own, per category —
-    never replacing what's already there. Used by `ReplApp._apply_workspace_config` to fold a
-    freshly-(re)loaded `Workspace`'s config-file grants into a live `SessionConfig` without
-    discarding any in-session-only grant ("Allow (this session)") already present; duplicate
-    entries across the two are harmless (see docs/specs/permissions.md — evaluation is by
-    category membership, not list position, so redundancy costs nothing but a few extra
-    entries in the list)."""
-    return DirRules(
-        deny=list(base.deny) + list(addition.deny),
-        ask=list(base.ask) + list(addition.ask),
-        allow=list(base.allow) + list(addition.allow),
-    )
 
 
 def random_greeting() -> str:

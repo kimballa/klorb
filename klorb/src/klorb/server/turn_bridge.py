@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 import acp
+from acp.schema import SessionInfoUpdate
 
 from klorb.permissions.risk_classifier import (
     ItemRiskAssessment,
@@ -44,6 +45,7 @@ from klorb.session.events import (
     ToolCallEvent,
     ToolCallStartedEvent,
 )
+from klorb.session_naming import SessionName
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,13 @@ an extension already stripped -- `acp.Client.ext_method()`'s own proxy re-adds i
 _ASK_USER_QUESTIONS_EXT_METHOD = "klorb/askUserQuestions"
 """The `_klorb/askUserQuestions` extension method name, with the leading `_` stripped -- see
 `_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why."""
+
+_USAGE_EXT_NOTIFICATION = "klorb/usage"
+"""The `_klorb/usage` extension notification name, with the leading `_` stripped -- see
+`_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why. Sent unconditionally (no
+capability gate): unlike a blocking ext *request*, an unrecognized ext *notification* is
+silently ignored per ACP's own extensibility rules, so there's no wire cost to a client that
+doesn't understand it."""
 
 _AskResultT = TypeVar("_AskResultT")
 
@@ -91,7 +100,10 @@ class TurnBridge:
     caching rather than each re-implementing it (see that module's docstring).
 
     `run_turn()` always drains and stops the pump task in a `finally`, whether `send_turn()`
-    succeeds, raises `ResponseAborted`, or raises anything else.
+    succeeds, raises `ResponseAborted`, or raises anything else -- and, once drained, sends one
+    `_klorb/usage` notification carrying the session's resulting token tally. `on_session_name_
+    changed` enqueues a `session_info_update` (title) the same way `on_chunk`/`on_thinking_chunk`
+    do, ordered relative to them like any other fire-and-forget callback.
     """
 
     def __init__(
@@ -111,7 +123,9 @@ class TurnBridge:
         reply and any reasoning text out as ACP `session/update` notifications. Returns the
         model's final response text; propagates whatever `Session.send_turn()` raises
         (including `klorb.api_provider.ResponseAborted` on a cancelled turn), after the pump
-        task has fully drained.
+        task has fully drained and a `_klorb/usage` notification carrying the turn's resulting
+        token tally has gone out -- unconditionally, whether the turn succeeded, aborted, or
+        raised.
         """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[Any] = asyncio.Queue()
@@ -126,6 +140,11 @@ class TurnBridge:
 
         def on_thinking_chunk(delta_text: str) -> None:
             enqueue(acp.update_agent_thought_text(delta_text))
+
+        def on_session_name_changed(session_name: SessionName | None) -> None:
+            enqueue(SessionInfoUpdate(
+                session_update="session_info_update",
+                title=session_name.title if session_name is not None else None))
 
         def on_tool_call_started(event: ToolCallStartedEvent) -> None:
             call_id_stack.append(event.call_id)
@@ -232,7 +251,8 @@ class TurnBridge:
             on_tool_call_started=on_tool_call_started, on_tool_call=on_tool_call,
             on_permission_ask=on_permission_ask, on_escalate_privileges=on_escalate_privileges,
             on_ask_user_questions=on_ask_user_questions,
-            on_tool_call_limit_reached=on_tool_call_limit_reached, cancel_event=cancel_event)
+            on_tool_call_limit_reached=on_tool_call_limit_reached,
+            on_session_name_changed=on_session_name_changed, cancel_event=cancel_event)
 
         async def pump() -> None:
             while True:
@@ -249,3 +269,8 @@ class TurnBridge:
         finally:
             enqueue(_SENTINEL)
             await pump_task
+            await self._client.ext_notification(_USAGE_EXT_NOTIFICATION, {
+                "sessionId": self._session_id,
+                "usedTokens": self._session.total_tokens_used(),
+                "maxTokens": self._session.max_context_window(),
+            })

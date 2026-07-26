@@ -39,11 +39,12 @@ class HarnessClient:
     `request_permission()`/`ext_method()` record every call into `permission_requests`/
     `ext_method_calls` and answer via `on_request_permission`/`on_ext_method` -- settable by a
     test before driving a turn -- defaulting to `None`, which still raises `NotImplementedError`
-    (a test exercising a path that shouldn't ask must fail loudly, not hang). Every other
-    `Client` method (`read_text_file`, terminal handling, ...) still raises `NotImplementedError`
-    unconditionally: `KlorbAcpAgent` doesn't call any of them yet. They're still implemented
-    (rather than omitted) so this class structurally satisfies `acp.Client`, which
-    `acp.connect_to_agent()` requires.
+    (a test exercising a path that shouldn't ask must fail loudly, not hang). `ext_notification()`
+    (fire-and-forget, e.g. `_klorb/usage`) just records every call into `ext_notification_calls`
+    -- there's nothing to answer. Every other `Client` method (`read_text_file`, terminal
+    handling, ...) still raises `NotImplementedError` unconditionally: `KlorbAcpAgent` doesn't
+    call any of them yet. They're still implemented (rather than omitted) so this class
+    structurally satisfies `acp.Client`, which `acp.connect_to_agent()` requires.
     """
 
     def __init__(self) -> None:
@@ -54,6 +55,7 @@ class HarnessClient:
         ) = None
         self.ext_method_calls: list[tuple[str, dict[str, Any]]] = []
         self.on_ext_method: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
+        self.ext_notification_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         self.session_updates.append(acp.SessionNotification(session_id=session_id, update=update))
@@ -62,7 +64,7 @@ class HarnessClient:
         pass
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
-        pass
+        self.ext_notification_calls.append((method, params))
 
     async def request_permission(
         self, options: Any, session_id: str, tool_call: Any, **kwargs: Any,

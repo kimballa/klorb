@@ -59,7 +59,9 @@ async def test_initialize_echoes_protocol_version_and_klorb_meta(
 
     assert response.protocol_version == acp.PROTOCOL_VERSION
     assert response.agent_capabilities is not None
-    assert response.agent_capabilities.field_meta == {"klorb": {}}
+    assert response.agent_capabilities.field_meta == {"klorb": {
+        "sessionConfig": True, "sessionStats": True, "trustWorkspace": True, "reloadSkills": True,
+    }}
 
 
 async def test_new_session_returns_the_live_sessions_id(
@@ -117,8 +119,14 @@ async def test_prompt_streams_thinking_then_message_chunks_in_order(
         session_id=session_response.session_id, prompt=[acp.text_block("hi")])
 
     assert response.stop_reason == "end_turn"
-    updates = harness.harness_client.session_updates
-    kinds = [(update.update.session_update, update.update.content.text) for update in updates]
+    # The session's first turn also fires a `session_info_update` (session naming -- see
+    # test_acp_server_session_controls.py) alongside the message/thought chunks this test is
+    # about; filtered out here rather than asserted on.
+    updates = [
+        update.update for update in harness.harness_client.session_updates
+        if update.update.session_update in ("agent_thought_chunk", "agent_message_chunk")
+    ]
+    kinds = [(update.session_update, update.content.text) for update in updates]
     assert kinds == [
         ("agent_thought_chunk", "thinking..."),
         ("agent_message_chunk", "hello"),
@@ -151,9 +159,12 @@ async def test_update_ordering_matches_the_order_callbacks_fired(
 
     await harness.client.prompt(session_id=session_response.session_id, prompt=[acp.text_block("hi")])
 
+    # See test_prompt_streams_thinking_then_message_chunks_in_order for why session_info_update
+    # is filtered out here.
     kinds = [
         (update.update.session_update, update.update.content.text)
         for update in harness.harness_client.session_updates
+        if update.update.session_update in ("agent_thought_chunk", "agent_message_chunk")
     ]
     assert kinds == [
         ("agent_thought_chunk", "t1"),

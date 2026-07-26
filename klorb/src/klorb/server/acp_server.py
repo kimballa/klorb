@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+from pathlib import Path
 
 import acp
 
@@ -50,11 +51,12 @@ class AcpServer:
 
     Constructed with a `ServerStreams` and a `ProcessConfig` -- the template every ACP
     `session/new` request's `SessionConfig` is copied from (see `KlorbAcpAgent.new_session`).
-    `provider`/`model_registry`/`trust_manager` are forwarded to the `KlorbAcpAgent` this
-    constructs, exactly like `KlorbAcpAgent`'s own optional constructor params -- `None` (the
-    default) means a real one; a test harness injects a scripted `ApiProvider` and an isolated
-    `TrustManager` here instead. The `KlorbAcpAgent` is built once, here, and exposed via
-    `agent` so a test harness can inspect its live `Session` directly.
+    `provider`/`model_registry`/`trust_manager`/`config_flag_path` are forwarded to the
+    `KlorbAcpAgent` this constructs, exactly like `KlorbAcpAgent`'s own optional constructor
+    params -- `None` (the default) means a real one; a test harness injects a scripted
+    `ApiProvider` and an isolated `TrustManager` here instead. The `KlorbAcpAgent` is built
+    once, here, and exposed via `agent` so a test harness can inspect its live `Session`
+    directly.
     """
 
     def __init__(
@@ -64,10 +66,12 @@ class AcpServer:
         provider: ApiProvider | None = None,
         model_registry: ModelRegistry | None = None,
         trust_manager: TrustManager | None = None,
+        config_flag_path: Path | None = None,
     ) -> None:
         self._streams = streams
         self._agent = KlorbAcpAgent(
-            process_config, provider=provider, model_registry=model_registry, trust_manager=trust_manager)
+            process_config, provider=provider, model_registry=model_registry, trust_manager=trust_manager,
+            config_flag_path=config_flag_path)
 
     @property
     def agent(self) -> KlorbAcpAgent:

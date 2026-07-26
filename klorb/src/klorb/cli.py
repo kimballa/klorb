@@ -567,13 +567,16 @@ def build_server_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run_acp_server(process_config: ProcessConfig) -> int:
+async def _run_acp_server(process_config: ProcessConfig, config_flag_path: Path | None) -> int:
     """Bind an `AcpServer` to this process's real stdio and serve until the client disconnects.
     Split out from `run_server_cli()` because binding stdio (`ServerStreams.from_stdio()`)
     needs a running event loop, so the whole flow has to live inside one `asyncio.run()` call.
+    `config_flag_path` is threaded through to `KlorbAcpAgent` (via `AcpServer`) so
+    `_klorb/trustWorkspace` can re-resolve layered config the same way `process_config` itself
+    was originally built, mirroring `klorb.tui.ReplApp`'s own `_config_flag_path`.
     """
     streams = await ServerStreams.from_stdio()
-    server = AcpServer(streams, process_config)
+    server = AcpServer(streams, process_config, config_flag_path=config_flag_path)
     return await server.run()
 
 
@@ -621,7 +624,7 @@ def run_server_cli(argv: list[str]) -> int:
         logger.warning(warning)
 
     try:
-        return asyncio.run(_run_acp_server(process_config))
+        return asyncio.run(_run_acp_server(process_config, config_flag_path))
     except KeyboardInterrupt:
         logger.debug("klorb server interrupted by SIGINT")
         return 0

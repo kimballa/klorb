@@ -86,7 +86,13 @@ async def test_tool_calls_emit_ordered_started_and_finished_updates_matched_by_c
         session_id=session_response.session_id, prompt=[acp.text_block("read two files")])
 
     assert response.stop_reason == "end_turn"
-    updates = [notification.update for notification in harness.harness_client.session_updates]
+    # The session's first turn also fires a `session_info_update` (session naming -- see
+    # test_acp_server_session_controls.py); filtered out here since this test is only about
+    # tool-call update ordering.
+    updates = [
+        notification.update for notification in harness.harness_client.session_updates
+        if notification.update.session_update != "session_info_update"
+    ]
     assert [update.session_update for update in updates] == [
         "tool_call", "tool_call_update", "tool_call", "tool_call_update"]
 

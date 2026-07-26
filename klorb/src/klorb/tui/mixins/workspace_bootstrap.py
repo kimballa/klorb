@@ -8,6 +8,7 @@ from textual import work
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config, project_config_path
 from klorb.session import Session
 from klorb.tools.registry import ToolRegistry
@@ -15,7 +16,6 @@ from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
-from klorb.tui.formatting import concat_dir_rules
 from klorb.tui.panels.confirm_screen import ConfirmScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
