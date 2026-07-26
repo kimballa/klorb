@@ -124,6 +124,28 @@ export interface PermissionAskMessage {
   klorbMeta: Record<string, unknown>;
 }
 
+/** One selectable option in a `questionAsk`'s option list, flattened from a `_klorb/
+ * askUserQuestions` request's own `options` entry. */
+export interface QuestionAskOption {
+  label: string;
+  description?: string;
+}
+
+/** A `_klorb/askUserQuestions` ext request the server is waiting on an answer for -- mounts the
+ * `QuestionPanel` in the interaction area until a matching `questionAnswer` resolves it. One
+ * question of a multi-question `AskUserQuestions` batch, asked serially (`index`/`total` name
+ * this question's position, e.g. "Question 2 of 3" -- see docs/specs/klorb-server.md's
+ * extension-method registry). */
+export interface QuestionAskMessage {
+  type: 'questionAsk';
+  requestId: number;
+  header: string;
+  question: string;
+  options: QuestionAskOption[];
+  index: number;
+  total: number;
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -134,7 +156,8 @@ export type HostMessage =
   | SessionResetMessage
   | ToolCallStartedMessage
   | ToolCallUpdatedMessage
-  | PermissionAskMessage;
+  | PermissionAskMessage
+  | QuestionAskMessage;
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
@@ -172,13 +195,24 @@ export type PermissionDecisionMessage =
   | { type: 'permissionDecision'; requestId: number; cancelled: true }
   | { type: 'permissionDecision'; requestId: number; optionId: string; otherText?: string };
 
+/** The user's answer to a `questionAsk`, echoed back to the host: `selectedOptionIndex` picks
+ * one of the ask's own `options`, `otherText` is a free-text answer, or `cancelled` for Escape
+ * (which stops the whole question batch server-side, unlike a permission ask's per-item deny --
+ * see docs/specs/klorb-server.md). A discriminated union for the same reason
+ * `PermissionDecisionMessage` is one. */
+export type QuestionAnswerMessage =
+  | { type: 'questionAnswer'; requestId: number; cancelled: true }
+  | { type: 'questionAnswer'; requestId: number; selectedOptionIndex: number }
+  | { type: 'questionAnswer'; requestId: number; otherText: string };
+
 /** Every message the webview may post to the extension host. */
 export type WebviewMessage =
   | SubmitPromptMessage
   | CancelTurnMessage
   | OpenLocationMessage
   | OpenDiffMessage
-  | PermissionDecisionMessage;
+  | PermissionDecisionMessage
+  | QuestionAnswerMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
 interface FieldSpec {
@@ -321,6 +355,52 @@ function parsePermissionAsk(record: Record<string, unknown>): PermissionAskMessa
   return undefined;
 }
 
+function isQuestionAskOption(value: unknown): value is QuestionAskOption {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.label === 'string' &&
+    (v.description === undefined || typeof v.description === 'string')
+  );
+}
+
+function parseQuestionAsk(record: Record<string, unknown>): QuestionAskMessage | undefined {
+  if (
+    typeof record.requestId === 'number' &&
+    typeof record.header === 'string' &&
+    typeof record.question === 'string' &&
+    Array.isArray(record.options) &&
+    record.options.every(isQuestionAskOption) &&
+    typeof record.index === 'number' &&
+    typeof record.total === 'number'
+  ) {
+    return record as unknown as QuestionAskMessage;
+  }
+  return undefined;
+}
+
+function parseQuestionAnswer(record: Record<string, unknown>): QuestionAnswerMessage | undefined {
+  if (typeof record.requestId !== 'number') {
+    return undefined;
+  }
+  if (record.cancelled === true) {
+    return { type: 'questionAnswer', requestId: record.requestId, cancelled: true };
+  }
+  if (typeof record.selectedOptionIndex === 'number') {
+    return {
+      type: 'questionAnswer',
+      requestId: record.requestId,
+      selectedOptionIndex: record.selectedOptionIndex,
+    };
+  }
+  if (typeof record.otherText === 'string') {
+    return { type: 'questionAnswer', requestId: record.requestId, otherText: record.otherText };
+  }
+  return undefined;
+}
+
 function parsePermissionDecision(
   record: Record<string, unknown>
 ): PermissionDecisionMessage | undefined {
@@ -380,6 +460,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseToolCallUpdated(record);
     case 'permissionAsk':
       return parsePermissionAsk(record);
+    case 'questionAsk':
+      return parseQuestionAsk(record);
     default:
       return undefined;
   }
@@ -403,6 +485,8 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parseOpenDiff(record);
     case 'permissionDecision':
       return parsePermissionDecision(record);
+    case 'questionAnswer':
+      return parseQuestionAnswer(record);
     default:
       return undefined;
   }

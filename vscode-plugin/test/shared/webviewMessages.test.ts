@@ -42,6 +42,15 @@ describe('parseHostMessage', () => {
         klorbMeta: { resourceDescription: 'run shell command: ls' },
       },
       {
+        type: 'questionAsk',
+        requestId: 1,
+        header: 'Format',
+        question: 'Which format?',
+        options: [{ label: 'JSON' }, { label: 'YAML', description: 'human-friendly' }],
+        index: 0,
+        total: 2,
+      },
+      {
         type: 'toolCallUpdated',
         callId: 'call-2',
         status: 'failed',
@@ -113,6 +122,26 @@ describe('parseHostMessage', () => {
         klorbMeta: {},
       })
     ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'questionAsk',
+        requestId: 1,
+        header: 'x',
+        question: 'y?',
+        options: [{ label: 'a' }],
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'questionAsk',
+        requestId: 1,
+        header: 'x',
+        question: 'y?',
+        options: [{ description: 'no label' }],
+        index: 0,
+        total: 1,
+      })
+    ).toBeUndefined();
   });
 });
 
@@ -127,6 +156,9 @@ describe('parseWebviewMessage', () => {
       { type: 'permissionDecision', requestId: 1, optionId: 'allow:once' },
       { type: 'permissionDecision', requestId: 1, optionId: 'deny:once', otherText: 'do X' },
       { type: 'permissionDecision', requestId: 1, cancelled: true },
+      { type: 'questionAnswer', requestId: 1, selectedOptionIndex: 0 },
+      { type: 'questionAnswer', requestId: 1, otherText: 'widget' },
+      { type: 'questionAnswer', requestId: 1, cancelled: true },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);
@@ -147,5 +179,7 @@ describe('parseWebviewMessage', () => {
     expect(
       parseWebviewMessage({ type: 'permissionDecision', requestId: 1, otherText: 'x' })
     ).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'questionAnswer', requestId: 1 })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'questionAnswer', selectedOptionIndex: 0 })).toBeUndefined();
   });
 });

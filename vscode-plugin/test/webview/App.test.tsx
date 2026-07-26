@@ -189,13 +189,13 @@ describe('App', () => {
     expect(posted).toContainEqual({ type: 'openLocation', path: '/tmp/foo.py', line: 3 });
   });
 
-  it('restores a pending ask from initialPendingAsk (the vscode.setState round-trip)', () => {
+  it('restores a pending interaction from initialPendingInteraction (the vscode.setState round-trip)', () => {
     const { vscode } = makeVsCode();
     render(
       <App
         vscode={vscode}
         initialEntries={[]}
-        initialPendingAsk={{
+        initialPendingInteraction={{
           type: 'permissionAsk',
           requestId: 7,
           title: 'Run: ls',
@@ -232,6 +232,32 @@ describe('App', () => {
     });
     expect(screen.queryByText('Permission requested: Run command')).toBeNull();
     expect(screen.getByText(/Decision: Allow once/)).toBeTruthy();
+  });
+
+  it('mounts the QuestionPanel on a questionAsk and posts the answer on a click', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'questionAsk',
+      requestId: 1,
+      header: 'Format',
+      question: 'Which format?',
+      options: [{ label: 'JSON' }, { label: 'YAML', description: 'human-friendly' }],
+      index: 0,
+      total: 2,
+    });
+
+    expect(screen.getByText('Which format?')).toBeTruthy();
+    fireEvent.click(screen.getByText('JSON'));
+
+    expect(posted).toContainEqual({
+      type: 'questionAnswer',
+      requestId: 1,
+      selectedOptionIndex: 0,
+    });
+    expect(screen.queryByText('Which format?')).toBeNull();
+    expect(screen.getByText(/Answer: JSON/)).toBeTruthy();
   });
 
   it('clears the history on sessionReset', () => {

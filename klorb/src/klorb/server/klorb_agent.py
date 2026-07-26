@@ -143,7 +143,8 @@ class KlorbAcpAgent(acp.Agent):
         self._acp_session_id = session.id
         self._turn_bridge = TurnBridge(
             session, self._require_client(), self._acp_session_id, self._process_config,
-            raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"))
+            raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),
+            ask_user_questions_capable=self._client_supports("askUserQuestions"))
         logger.debug("session/new created ACP session %s for cwd=%s", self._acp_session_id, cwd)
         return acp.NewSessionResponse(session_id=self._acp_session_id)
 

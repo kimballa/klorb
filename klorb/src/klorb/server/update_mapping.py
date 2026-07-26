@@ -39,6 +39,8 @@ from klorb.permissions.resource import CommandResource, PermissionResource
 from klorb.permissions.risk_classifier import ItemRiskAssessment
 from klorb.session import SessionConfig
 from klorb.session.events import (
+    AskUserQuestionsAnswer,
+    AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
     EscalatePrivilegesDecision,
     PermissionAskContext,
@@ -46,6 +48,7 @@ from klorb.session.events import (
     ToolCallEvent,
     ToolCallStartedEvent,
 )
+from klorb.tools.ask.common import QuestionOption, format_answer
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.tool import DiffPreview, Tool, default_tool_call_detail, default_tool_call_summary
@@ -471,3 +474,52 @@ def escalate_privileges_decision_from_outcome(
     if outcome.outcome == "cancelled":
         return EscalatePrivilegesDecision(approved=False)
     return EscalatePrivilegesDecision(approved=outcome.option_id == "allow:once")
+
+
+def ask_user_questions_ext_params(
+    ctx: AskUserQuestionsItemContext, session_id: str,
+) -> dict[str, Any]:
+    """The `_klorb/askUserQuestions` ext request params for one question of an
+    `AskUserQuestionsItemContext` batch: `{sessionId, header, question, options: [{label,
+    description?}], index, total}` -- `index`/`total` verbatim from `ctx`, since klorb asks
+    serially, one request per question, exactly as the TUI panel is driven."""
+    return {
+        "sessionId": session_id,
+        "header": ctx.header,
+        "question": ctx.question,
+        "options": [_ask_user_questions_option(option) for option in ctx.options],
+        "index": ctx.index,
+        "total": ctx.total,
+    }
+
+
+def _ask_user_questions_option(option: QuestionOption) -> dict[str, Any]:
+    return (
+        {"label": option.label, "description": option.description} if option.description
+        else {"label": option.label})
+
+
+def ask_user_questions_answer_from_result(
+    ctx: AskUserQuestionsItemContext, result: dict[str, Any],
+) -> AskUserQuestionsAnswer:
+    """Map a `_klorb/askUserQuestions` result (`{selectedOptionIndex: int} | {otherText: str} |
+    {cancelled: true}`) back onto an `AskUserQuestionsAnswer`. The final answer string is
+    formatted here (`klorb.tools.ask.common.format_answer`), not by the client, the same
+    server-owns-the-one-formatting-rule invariant `permission_decision_from_outcome` follows for
+    a permission ask's free-text redirect. A `selectedOptionIndex` outside `ctx.options`'s range,
+    or a result naming none of the three recognized keys, raises `ValueError`, propagating as a
+    turn failure -- a compliant client only ever echoes back a shape this request itself allows."""
+    if result.get("cancelled") is True:
+        return AskUserQuestionsAnswer(cancelled=True)
+    if "otherText" in result:
+        other_text = result["otherText"]
+        if not isinstance(other_text, str):
+            raise ValueError(f"_klorb/askUserQuestions otherText must be a string: {other_text!r}")
+        return AskUserQuestionsAnswer(answer=format_answer(None, other_text))
+    selected_index = result.get("selectedOptionIndex")
+    if not isinstance(selected_index, int) or isinstance(selected_index, bool) or not (
+        0 <= selected_index < len(ctx.options)
+    ):
+        raise ValueError(
+            f"_klorb/askUserQuestions selectedOptionIndex out of range: {selected_index!r}")
+    return AskUserQuestionsAnswer(answer=format_answer(ctx.options[selected_index], None))

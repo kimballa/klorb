@@ -1,13 +1,14 @@
 // © Copyright 2026 Aaron Kimball
 import { describe, expect, it } from 'vitest';
 
-import type { PermissionAskMessage } from 'shared/webviewMessages';
+import type { PermissionAskMessage, QuestionAskMessage } from 'shared/webviewMessages';
 import {
   appendInteraction,
   appendPrompt,
+  appendQuestionInteraction,
   applyExpandAllToolCalls,
   applyHostMessage,
-  applyPendingAsk,
+  applyPendingInteraction,
   applyToolCallExpandedToggle,
   applyTurnFlag,
   type HistoryEntry,
@@ -300,7 +301,30 @@ describe('appendInteraction', () => {
   });
 });
 
-describe('applyPendingAsk', () => {
+describe('appendQuestionInteraction', () => {
+  const ask: QuestionAskMessage = {
+    type: 'questionAsk',
+    requestId: 1,
+    header: 'Format',
+    question: 'Which format?',
+    options: [{ label: 'JSON' }],
+    index: 0,
+    total: 2,
+  };
+
+  it('appends a compact record with the header/count, question, and answer', () => {
+    const entries = appendQuestionInteraction([], ask, 'JSON');
+    expect(entries).toEqual([
+      {
+        kind: 'interaction',
+        text: 'Question 1 of 2 · Format\nWhich format?\nAnswer: JSON',
+        streaming: false,
+      },
+    ]);
+  });
+});
+
+describe('applyPendingInteraction', () => {
   const ask: PermissionAskMessage = {
     type: 'permissionAsk',
     requestId: 1,
@@ -308,15 +332,26 @@ describe('applyPendingAsk', () => {
     options: [],
     klorbMeta: {},
   };
+  const questionAsk: QuestionAskMessage = {
+    type: 'questionAsk',
+    requestId: 2,
+    header: 'Format',
+    question: 'Which format?',
+    options: [],
+    index: 0,
+    total: 1,
+  };
 
-  it('sets the pending ask on permissionAsk and clears it on sessionReset', () => {
-    expect(applyPendingAsk(undefined, ask)).toEqual(ask);
-    expect(applyPendingAsk(ask, { type: 'sessionReset' })).toBeUndefined();
+  it('sets the pending interaction on permissionAsk/questionAsk and clears it on sessionReset', () => {
+    expect(applyPendingInteraction(undefined, ask)).toEqual(ask);
+    expect(applyPendingInteraction(ask, { type: 'sessionReset' })).toBeUndefined();
+    expect(applyPendingInteraction(undefined, questionAsk)).toEqual(questionAsk);
+    expect(applyPendingInteraction(questionAsk, { type: 'sessionReset' })).toBeUndefined();
   });
 
-  it('leaves the pending ask alone for unrelated messages', () => {
-    expect(applyPendingAsk(ask, { type: 'agentChunk', text: 'x' })).toEqual(ask);
-    expect(applyPendingAsk(undefined, { type: 'turnStarted' })).toBeUndefined();
+  it('leaves the pending interaction alone for unrelated messages', () => {
+    expect(applyPendingInteraction(ask, { type: 'agentChunk', text: 'x' })).toEqual(ask);
+    expect(applyPendingInteraction(undefined, { type: 'turnStarted' })).toBeUndefined();
   });
 });
 

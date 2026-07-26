@@ -2,7 +2,7 @@
 // Importing these modules registers the <vscode-badge>/<vscode-button>/<vscode-icon>/
 // <vscode-progress-ring>/<vscode-textarea>/<vscode-textfield> custom elements with the
 // browser; the components themselves are rendered from App.tsx/PromptInput.tsx/
-// ToolCallChip.tsx/ApprovalPanel.tsx.
+// ToolCallChip.tsx/ApprovalPanel.tsx/QuestionPanel.tsx.
 import '@vscode-elements/elements/dist/vscode-badge/index.js';
 import '@vscode-elements/elements/dist/vscode-button/index.js';
 import '@vscode-elements/elements/dist/vscode-icon/index.js';
@@ -11,16 +11,15 @@ import '@vscode-elements/elements/dist/vscode-textarea/index.js';
 import '@vscode-elements/elements/dist/vscode-textfield/index.js';
 import { createRoot } from 'react-dom/client';
 
-import type { PermissionAskMessage } from 'shared/webviewMessages';
 import App from 'webview/App';
 import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
-import type { HistoryEntry } from 'webview/features/history';
+import type { HistoryEntry, PendingInteraction } from 'webview/features/history';
 
 declare function acquireVsCodeApi(): VsCodeApi;
 
 interface SessionState {
   entries: HistoryEntry[];
-  pendingAsk?: PermissionAskMessage;
+  pendingInteraction?: PendingInteraction;
 }
 
 function main(): void {
@@ -34,7 +33,11 @@ function main(): void {
     throw new Error('#root element is missing from the webview HTML shell');
   }
   createRoot(container).render(
-    <App vscode={vscode} initialEntries={state.entries} initialPendingAsk={state.pendingAsk} />
+    <App
+      vscode={vscode}
+      initialEntries={state.entries}
+      initialPendingInteraction={state.pendingInteraction}
+    />
   );
 }
 

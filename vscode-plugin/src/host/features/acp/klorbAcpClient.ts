@@ -18,6 +18,8 @@ import type {
   DiffHunkLine,
   PermissionAskMessage,
   PermissionAskOption,
+  QuestionAskMessage,
+  QuestionAskOption,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
@@ -40,10 +42,15 @@ export interface SessionUpdateListener {
   /** A tool call finished or otherwise changed (`tool_call_update`). */
   onToolCallUpdated(message: ToolCallUpdatedMessage): void;
   /** Posts a permission ask to the webview, or re-posts an already-outstanding one after a
-   * webview reload (see `KlorbAcpClient.repostPendingAsk()`). Fire-and-forget: the eventual
-   * decision arrives back through `KlorbAcpClient.resolvePermissionDecision()`, not this call's
-   * return value. */
+   * webview reload (see `KlorbAcpClient.repostPendingInteraction()`). Fire-and-forget: the
+   * eventual decision arrives back through `KlorbAcpClient.resolvePermissionDecision()`, not
+   * this call's return value. */
   postPermissionAsk(message: PermissionAskMessage): void;
+  /** Posts a `_klorb/askUserQuestions` ask to the webview, or re-posts an already-outstanding
+   * one after a webview reload (see `KlorbAcpClient.repostPendingInteraction()`).
+   * Fire-and-forget: the eventual answer arrives back through
+   * `KlorbAcpClient.resolveQuestionAnswer()`, not this call's return value. */
+  postQuestionAsk(message: QuestionAskMessage): void;
 }
 
 /** The user's decision on a permission ask, normalized from a `permissionDecision` webview
@@ -217,6 +224,54 @@ function permissionAskMessage(
   };
 }
 
+/** The user's answer to a `_klorb/askUserQuestions` ask, normalized from a `questionAnswer`
+ * webview message into the shape `KlorbAcpClient` needs to build the ext method's result (see
+ * docs/specs/klorb-server.md's extension-method registry). */
+export type QuestionAnswerResult =
+  { cancelled: true } | { selectedOptionIndex: number } | { otherText: string };
+
+function isQuestionAskOptionParam(value: unknown): value is QuestionAskOption {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.label === 'string' &&
+    (v.description === undefined || typeof v.description === 'string')
+  );
+}
+
+/** Validates a `_klorb/askUserQuestions` ext request's raw params into a `QuestionAskMessage`
+ * (minus `requestId`, assigned by the caller), or `undefined` if the server sent something this
+ * client can't make sense of -- defensive against a future/buggy server, since ext method params
+ * arrive as untyped `Record<string, unknown>`. */
+function questionAskMessageFromParams(
+  params: Record<string, unknown>
+): Omit<QuestionAskMessage, 'requestId'> | undefined {
+  const { header, question, options, index, total } = params;
+  if (
+    typeof header !== 'string' ||
+    typeof question !== 'string' ||
+    typeof index !== 'number' ||
+    typeof total !== 'number' ||
+    !Array.isArray(options) ||
+    !options.every(isQuestionAskOptionParam)
+  ) {
+    return undefined;
+  }
+  return { type: 'questionAsk', header, question, options, index, total };
+}
+
+function questionAnswerResultToWire(result: QuestionAnswerResult): Record<string, unknown> {
+  if ('cancelled' in result) {
+    return { cancelled: true };
+  }
+  if ('otherText' in result) {
+    return { otherText: result.otherText };
+  }
+  return { selectedOptionIndex: result.selectedOptionIndex };
+}
+
 function permissionResponseFromDecision(
   decision: PermissionDecisionResult
 ): RequestPermissionResponse {
@@ -244,22 +299,33 @@ export type LogFn = (message: string) => void;
  * it serves. Dispatches `agent_message_chunk`/`agent_thought_chunk` session updates to the
  * listener as streamed text, and `tool_call`/`tool_call_update` updates as flattened
  * `ToolCallStarted`/`ToolCallUpdated` messages (see `toolCallStartedMessage`/
- * `toolCallUpdatedMessage`); `requestPermission()` posts a `permissionAsk` through the listener
- * and awaits the matching decision (see `_ask`/`resolvePermissionDecision`), and `extMethod()`
- * answers `_klorb/raiseToolCallLimit` via the injected `RaiseToolCallLimitFn`. The fs/terminal
- * methods fail with JSON-RPC method-not-found since the client never advertises those
- * capabilities.
+ * `toolCallUpdatedMessage`); `requestPermission()` posts a `permissionAsk` and `extMethod()`'s
+ * `_klorb/askUserQuestions` handling posts a `questionAsk`, both through the listener and both
+ * sharing one "pending interaction" slot/queue (see `_pendingInteraction`/`_enqueueInteraction`)
+ * since the server only ever has one blocking ask outstanding at a time regardless of kind.
+ * `extMethod()` additionally answers `_klorb/raiseToolCallLimit` via the injected
+ * `RaiseToolCallLimitFn`. The fs/terminal methods fail with JSON-RPC method-not-found since the
+ * client never advertises those capabilities.
  */
 export class KlorbAcpClient {
   private readonly _listener: SessionUpdateListener;
   private readonly _requestError: RequestErrorClass;
   private readonly _log: LogFn;
   private readonly _raiseToolCallLimit: RaiseToolCallLimitFn;
-  private _nextAskRequestId = 1;
-  private _askBusy = false;
-  private _askQueue: Array<() => void> = [];
-  private _pendingAsk:
-    | { message: PermissionAskMessage; resolve: (decision: PermissionDecisionResult) => void }
+  private _nextRequestId = 1;
+  private _interactionBusy = false;
+  private _interactionQueue: Array<() => void> = [];
+  private _pendingInteraction:
+    | {
+        kind: 'permission';
+        message: PermissionAskMessage;
+        resolve: (decision: PermissionDecisionResult) => void;
+      }
+    | {
+        kind: 'question';
+        message: QuestionAskMessage;
+        resolve: (answer: QuestionAnswerResult) => void;
+      }
     | undefined;
 
   public constructor(
@@ -307,35 +373,27 @@ export class KlorbAcpClient {
    * Posts a permission ask (or `EscalatePrivileges` ask, distinguished by
    * `klorbMeta.escalation` -- see docs/specs/klorb-server.md) to the webview via the listener
    * and resolves once a matching `permissionDecision` arrives through
-   * `resolvePermissionDecision()`. Calls are served strictly one at a time: a second concurrent
-   * ask queues behind the first (via `_askBusy`/`_askQueue`) rather than posting a second
-   * `ApprovalPanel` on top of the first, even though the server itself only ever asks one at a
-   * time in practice. The first (non-concurrent) ask posts synchronously, within this call.
+   * `resolvePermissionDecision()`. Calls are served strictly one at a time, sharing the same
+   * pending-interaction queue a `_klorb/askUserQuestions` ask uses (see `_enqueueInteraction()`)
+   * rather than posting a second `ApprovalPanel` on top of the first, even though the server
+   * itself only ever asks one thing at a time in practice. The first (non-concurrent) ask posts
+   * synchronously, within this call.
    */
   public requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     return new Promise<RequestPermissionResponse>((resolve) => {
-      const run = (): void => {
-        void this._ask(params).then((decision) => {
-          this._askBusy = false;
-          resolve(permissionResponseFromDecision(decision));
-          this._askQueue.shift()?.();
-        });
-      };
-      if (this._askBusy) {
-        this._askQueue.push(run);
-      } else {
-        this._askBusy = true;
-        run();
-      }
-    });
-  }
-
-  private _ask(params: RequestPermissionRequest): Promise<PermissionDecisionResult> {
-    const requestId = this._nextAskRequestId++;
-    const message = permissionAskMessage(params, requestId);
-    return new Promise<PermissionDecisionResult>((resolve) => {
-      this._pendingAsk = { message, resolve };
-      this._listener.postPermissionAsk(message);
+      this._enqueueInteraction(() => {
+        const requestId = this._nextRequestId++;
+        const message = permissionAskMessage(params, requestId);
+        this._pendingInteraction = {
+          kind: 'permission',
+          message,
+          resolve: (decision) => {
+            this._finishInteraction();
+            resolve(permissionResponseFromDecision(decision));
+          },
+        };
+        this._listener.postPermissionAsk(message);
+      });
     });
   }
 
@@ -344,22 +402,65 @@ export class KlorbAcpClient {
    * duplicate post after a reload race) is logged and ignored rather than resolving the wrong
    * ask. */
   public resolvePermissionDecision(requestId: number, decision: PermissionDecisionResult): void {
-    if (this._pendingAsk === undefined || this._pendingAsk.message.requestId !== requestId) {
+    if (
+      this._pendingInteraction === undefined ||
+      this._pendingInteraction.kind !== 'permission' ||
+      this._pendingInteraction.message.requestId !== requestId
+    ) {
       this._log(`klorb: ignoring permission decision for unknown request ${requestId}`);
       return;
     }
-    const { resolve } = this._pendingAsk;
-    this._pendingAsk = undefined;
-    resolve(decision);
+    this._pendingInteraction.resolve(decision);
   }
 
-  /** Re-posts the currently outstanding ask, if any, to the webview -- called when the webview
-   * is recreated (e.g. after a reload) while an ask from before the reload is still awaiting an
-   * answer, so the fresh webview instance can render it instead of leaving it stuck invisible. */
-  public repostPendingAsk(): void {
-    if (this._pendingAsk !== undefined) {
-      this._listener.postPermissionAsk(this._pendingAsk.message);
+  /** Resolves the outstanding question named `requestId`, if any -- called when the webview
+   * posts back a `questionAnswer`. An answer naming a stale/unknown `requestId` is logged and
+   * ignored, mirroring `resolvePermissionDecision()`. */
+  public resolveQuestionAnswer(requestId: number, answer: QuestionAnswerResult): void {
+    if (
+      this._pendingInteraction === undefined ||
+      this._pendingInteraction.kind !== 'question' ||
+      this._pendingInteraction.message.requestId !== requestId
+    ) {
+      this._log(`klorb: ignoring question answer for unknown request ${requestId}`);
+      return;
     }
+    this._pendingInteraction.resolve(answer);
+  }
+
+  /** Re-posts the currently outstanding interaction (a permission ask or a question ask), if
+   * any, to the webview -- called when the webview is recreated (e.g. after a reload) while an
+   * interaction from before the reload is still awaiting an answer, so the fresh webview
+   * instance can render it instead of leaving it stuck invisible. */
+  public repostPendingInteraction(): void {
+    if (this._pendingInteraction === undefined) {
+      return;
+    }
+    if (this._pendingInteraction.kind === 'permission') {
+      this._listener.postPermissionAsk(this._pendingInteraction.message);
+    } else {
+      this._listener.postQuestionAsk(this._pendingInteraction.message);
+    }
+  }
+
+  /** Runs `run` immediately if no interaction is outstanding, else queues it behind the current
+   * one -- the shared serialization a permission ask and a question ask both go through, so at
+   * most one is ever posted to the webview at a time. */
+  private _enqueueInteraction(run: () => void): void {
+    if (this._interactionBusy) {
+      this._interactionQueue.push(run);
+    } else {
+      this._interactionBusy = true;
+      run();
+    }
+  }
+
+  /** Clears the current pending interaction and starts the next queued one, if any -- called
+   * from a resolved interaction's own `resolve` before it settles its promise. */
+  private _finishInteraction(): void {
+    this._pendingInteraction = undefined;
+    this._interactionBusy = false;
+    this._interactionQueue.shift()?.();
   }
 
   public async extMethod(
@@ -371,7 +472,32 @@ export class KlorbAcpClient {
       const approved = await this._raiseToolCallLimit(message);
       return { approved };
     }
+    if (method === '_klorb/askUserQuestions') {
+      return this._askUserQuestions(params);
+    }
     throw this._requestError.methodNotFound(method);
+  }
+
+  private _askUserQuestions(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const partial = questionAskMessageFromParams(params);
+    if (partial === undefined) {
+      this._log(`klorb: malformed _klorb/askUserQuestions params: ${JSON.stringify(params)}`);
+      return Promise.resolve({ cancelled: true });
+    }
+    return new Promise<Record<string, unknown>>((resolve) => {
+      this._enqueueInteraction(() => {
+        const message: QuestionAskMessage = { ...partial, requestId: this._nextRequestId++ };
+        this._pendingInteraction = {
+          kind: 'question',
+          message,
+          resolve: (answer) => {
+            this._finishInteraction();
+            resolve(questionAnswerResultToWire(answer));
+          },
+        };
+        this._listener.postQuestionAsk(message);
+      });
+    });
   }
 
   public readTextFile(): Promise<ReadTextFileResponse> {

@@ -13,12 +13,11 @@ full architecture this checkpoint is the first increment of (protocol mapping, t
 extensibility rules, the increments still to come).
 
 At this checkpoint the server supports `initialize`, `session/new`, `session/prompt` with
-streamed response, thinking text, and tool-call activity, `session/cancel`, and
+streamed response, thinking text, and tool-call activity, `session/cancel`,
 `session/request_permission` for both an ordinary permission `"ask"` verdict and an
-`EscalatePrivileges` request — a prompt against a plain-conversation model, one that calls
-tools, or one whose tools need interactive approval, is fully usable end to end. `AskUserQuestions`
-still fails closed, since no `on_ask_user_questions` callback is wired up yet — lands in
-`plan-016-007` (see "Out of scope" below).
+`EscalatePrivileges` request, and `_klorb/askUserQuestions` for `AskUserQuestions` — a prompt
+against a plain-conversation model, one that calls tools, one whose tools need interactive
+approval, or one that asks the user structured questions, is fully usable end to end.
 
 ## Wire protocol
 
@@ -69,6 +68,17 @@ One *client*-advertised extension method exists, called server → client:
   otherwise `on_tool_call_limit_reached` returns `False` immediately with no wire traffic at all,
   and the turn fails with `ToolCallLimitExceeded` (the same fail-closed behavior a headless
   one-shot run already has).
+* **`_klorb/askUserQuestions`** — sent once per question in an `AskUserQuestionsRequired` batch,
+  serially, in the order the model asked them (see "AskUserQuestions" below). Params:
+  `{sessionId: string, header: string, question: string, options: [{label: string, description?:
+  string}], index: int, total: int}` (`index`/`total` are 0-based/the batch size, e.g. `0`/`3` for
+  the first of three questions — the same convention `itemIndex`/`itemTotal` uses for a bash
+  permission-ask batch). Result: `{selectedOptionIndex: int} | {otherText: string} |
+  {cancelled: true}`. `TurnBridge` calls this only when the client advertised
+  `clientCapabilities._meta.klorb.askUserQuestions = true` at `initialize`; otherwise
+  `on_ask_user_questions` returns `AskUserQuestionsAnswer(cancelled=True)` immediately with no
+  wire traffic at all — the tool reports the batch as declined, same as the TUI's Escape, instead
+  of hanging a headless client.
 
 ## How it works
 
@@ -316,6 +326,44 @@ short-circuits before ever calling back, exactly as it does for the TUI.
 * **`permission_framework` interplay**: unchanged from docs/specs/permissions.md — `"auto"`/
   `"deny"` sessions never reach `TurnBridge`'s callbacks at all; only `"ask"` does.
 
+### AskUserQuestions
+
+`Session.send_turn()`'s `on_ask_user_questions` callback (see
+docs/specs/session-and-turns.md's `AskUserQuestions` coverage and
+`klorb.session.mixins.permissions.SessionPermissionsMixin._resolve_ask_user_questions`) is wired
+through `TurnBridge` onto `_klorb/askUserQuestions`, one blocking ext request per question in the
+batch, asked serially in order — the same one-at-a-time shape the TUI's `AskUserQuestionsPanel`
+drives, and the same shape a same-turn bash permission-ask batch already uses for its own
+`itemIndex`/`itemTotal` convention.
+
+* **Params** (`klorb.server.update_mapping.ask_user_questions_ext_params(ctx, session_id)`,
+  pure): `{sessionId, header, question, options: [{label, description?}], index, total}` — built
+  directly from the `AskUserQuestionsItemContext`
+  `Session._resolve_ask_user_questions` (`PermissionsMixin`) passes in for this one question;
+  `index`/`total` are threaded through verbatim, not re-derived.
+* **Answer formatting.** The server, not the client, renders a selected option (or free text)
+  into the final answer string
+  (`klorb.server.update_mapping.ask_user_questions_answer_from_result(ctx, result)`, via
+  `klorb.tools.ask.common.format_answer` — `"label"`, or `"label: description"` when the option
+  has one) before building the `AskUserQuestionsAnswer` `on_ask_user_questions` returns to
+  `Session`. This mirrors the "one formatting rule stays in klorb" invariant
+  `permission_decision_from_outcome`'s free-text redirect already follows for a permission ask,
+  and is recorded as a deliberate choice (over letting the ACP client format it) in
+  docs/adrs/ask-user-questions-rides-a-klorb-ext-method-not-acp-elicitation.md.
+* **Result shapes.** `{selectedOptionIndex: int}` picks one of the question's own `options` (an
+  index outside `0..len(options)` raises `ValueError`, propagating as a turn failure — a
+  compliant client only ever echoes back an index this request itself offered); `{otherText:
+  string}` is the free-text answer, formatted the same way the TUI's "Other..." row is;
+  `{cancelled: true}` maps to `AskUserQuestionsAnswer(cancelled=True)`, which
+  `Session._resolve_ask_user_questions` treats exactly as the TUI's Escape does — the whole batch
+  stops, not just this one question, with earlier answers already collected reported back to the
+  model. No `PermissionDecision`-style deny/allow axis applies here (see
+  `AskUserQuestionsAnswer`'s own docstring for why).
+* **Capability gate.** `TurnBridge.on_ask_user_questions` calls `_klorb/askUserQuestions` only
+  when the client advertised `clientCapabilities._meta.klorb.askUserQuestions = true` at
+  `initialize` — see the extension-methods registry above for the fail-closed behavior when it
+  isn't.
+
 ### Single top-level session
 
 The server supports exactly **one live `Session` at a time**, matching klorb's current
@@ -396,8 +444,6 @@ e.g. with `allow:session`, to let the command run:
 * No free-text "Other" row as a selectable `PermissionOption` — a client wants the free-text
   redirect via `_meta.klorb.otherText` on its response instead (see "Permission asks and
   escalation" above).
-* `AskUserQuestions` calls still fail closed: no `on_ask_user_questions` callback is wired
-  through `TurnBridge` yet. Lands in `plan-016-007` (`_klorb/askUserQuestions`).
 * No session modes (`session/set_mode`), model/thinking config options, session naming/
   token-usage updates, or workspace-trust bridging — `permission_framework` is fixed at
   `"ask"` for the lifetime of a session created through this server. Lands in `plan-016-008`.

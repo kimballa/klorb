@@ -25,6 +25,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onToolCallStarted: (message) => events.push(`toolCallStarted:${message.callId}`),
     onToolCallUpdated: (message) => events.push(`toolCallUpdated:${message.callId}`),
     postPermissionAsk: (message) => events.push(`permissionAsk:${message.requestId}`),
+    postQuestionAsk: (message) => events.push(`questionAsk:${message.requestId}`),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   return { agent, connection, events };
@@ -53,6 +54,9 @@ describe('AcpConnection', () => {
     expect(connection.sessionId).toBe('sess-1');
     expect(agent.receivedInitializes).toHaveLength(1);
     expect(agent.receivedInitializes[0]!.protocolVersion).toBe(acp.PROTOCOL_VERSION);
+    expect(agent.receivedInitializes[0]!.clientCapabilities?._meta).toEqual({
+      klorb: { raiseToolCallLimit: true, askUserQuestions: true },
+    });
     expect(agent.receivedNewSessions).toHaveLength(1);
     expect(agent.receivedNewSessions[0]!.cwd).toBe('/work');
     expect(agent.receivedNewSessions[0]!.mcpServers).toEqual([]);
@@ -170,6 +174,7 @@ describe('AcpConnection', () => {
       onToolCallStarted: () => undefined,
       onToolCallUpdated: () => undefined,
       postPermissionAsk: () => undefined,
+      postQuestionAsk: () => undefined,
     };
     const connection = new AcpConnection(
       serverProcess,

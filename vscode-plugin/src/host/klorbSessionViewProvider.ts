@@ -7,6 +7,7 @@ import {
   parseWebviewMessage,
   type HostMessage,
   type PermissionAskMessage,
+  type QuestionAskMessage,
   type ToolCallStartedMessage,
   type ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
@@ -17,15 +18,16 @@ import {
  * src/webview/App.tsx, mounted by src/webview/main.tsx and bundled to out/webview/main.js).
  * The webview and the host exchange the typed messages defined in
  * src/shared/webviewMessages.ts: the webview posts user intent (`submitPrompt`, `cancelTurn`,
- * `openLocation`, `openDiff`, `permissionDecision`), and this provider drives the shared
- * `AcpConnection` and posts turn lifecycle + streamed text + tool-call updates back. As the
- * connection's `SessionUpdateListener`, it forwards `agent_message_chunk`/`agent_thought_chunk`
- * text and `tool_call`/`tool_call_update` updates into the panel, posts `permissionAsk`
- * messages (guarding that an ask arriving while the view is hidden surfaces a VS Code
- * notification rather than sitting invisible), and routes `openLocation`/`openDiff` to the
- * shared `EditorIntegration`. `resolveWebviewView()` also re-posts any ask still awaiting an
- * answer -- the live `KlorbAcpClient` behind `AcpConnection` outlives a webview reload, so its
- * pending ask just needs to be shown again to the fresh webview instance.
+ * `openLocation`, `openDiff`, `permissionDecision`, `questionAnswer`), and this provider drives
+ * the shared `AcpConnection` and posts turn lifecycle + streamed text + tool-call updates back.
+ * As the connection's `SessionUpdateListener`, it forwards `agent_message_chunk`/
+ * `agent_thought_chunk` text and `tool_call`/`tool_call_update` updates into the panel, posts
+ * `permissionAsk`/`questionAsk` messages (guarding that an ask arriving while the view is hidden
+ * surfaces a VS Code notification rather than sitting invisible), and routes `openLocation`/
+ * `openDiff` to the shared `EditorIntegration`. `resolveWebviewView()` also re-posts any
+ * interaction still awaiting an answer -- the live `KlorbAcpClient` behind `AcpConnection`
+ * outlives a webview reload, so its pending interaction just needs to be shown again to the
+ * fresh webview instance.
  */
 export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, SessionUpdateListener {
   public static readonly viewType = 'klorb.sessionView';
@@ -59,7 +61,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     webviewView.webview.onDidReceiveMessage((message: unknown) => {
       void this._handleMessage(message);
     });
-    this._connection?.client?.repostPendingAsk();
+    this._connection?.client?.repostPendingInteraction();
   }
 
   public onAgentText(text: string): void {
@@ -94,14 +96,26 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
    * can't sit invisible forever (see docs/specs/vscode-plugin.md's approval panel section). */
   public postPermissionAsk(message: PermissionAskMessage): void {
     this.postHostMessage(message);
+    this._notifyIfHidden('Klorb needs your approval');
+  }
+
+  /** Posts a `questionAsk` to the panel; if the Klorb view is hidden when it arrives, also shows
+   * a VS Code notification, mirroring `postPermissionAsk()`. */
+  public postQuestionAsk(message: QuestionAskMessage): void {
+    this.postHostMessage(message);
+    this._notifyIfHidden('Klorb has a question for you');
+  }
+
+  /** Shows a "Show Klorb" notification if the view is currently hidden -- shared by
+   * `postPermissionAsk()`/`postQuestionAsk()` so neither kind of interaction can sit invisible
+   * forever while the auxiliary bar is closed. */
+  private _notifyIfHidden(title: string): void {
     if (this._view !== undefined && !this._view.visible) {
-      void vscode.window
-        .showInformationMessage('Klorb needs your approval', 'Show Klorb')
-        .then((choice) => {
-          if (choice === 'Show Klorb') {
-            void vscode.commands.executeCommand('klorb.sessionView.focus');
-          }
-        });
+      void vscode.window.showInformationMessage(title, 'Show Klorb').then((choice) => {
+        if (choice === 'Show Klorb') {
+          void vscode.commands.executeCommand('klorb.sessionView.focus');
+        }
+      });
     }
   }
 
@@ -129,6 +143,16 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
           'cancelled' in parsed
             ? { cancelled: true }
             : { optionId: parsed.optionId, otherText: parsed.otherText }
+        );
+        break;
+      case 'questionAnswer':
+        this._connection?.client?.resolveQuestionAnswer(
+          parsed.requestId,
+          'cancelled' in parsed
+            ? { cancelled: true }
+            : 'otherText' in parsed
+              ? { otherText: parsed.otherText }
+              : { selectedOptionIndex: parsed.selectedOptionIndex }
         );
         break;
     }

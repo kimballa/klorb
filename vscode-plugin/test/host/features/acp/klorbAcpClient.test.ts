@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { KlorbAcpClient, type SessionUpdateListener } from 'host/features/acp';
 import type {
   PermissionAskMessage,
+  QuestionAskMessage,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
@@ -16,24 +17,28 @@ function makeListener(): {
   toolCallsStarted: ToolCallStartedMessage[];
   toolCallsUpdated: ToolCallUpdatedMessage[];
   permissionAsks: PermissionAskMessage[];
+  questionAsks: QuestionAskMessage[];
 } {
   const agentText: string[] = [];
   const thoughtText: string[] = [];
   const toolCallsStarted: ToolCallStartedMessage[] = [];
   const toolCallsUpdated: ToolCallUpdatedMessage[] = [];
   const permissionAsks: PermissionAskMessage[] = [];
+  const questionAsks: QuestionAskMessage[] = [];
   return {
     agentText,
     thoughtText,
     toolCallsStarted,
     toolCallsUpdated,
     permissionAsks,
+    questionAsks,
     listener: {
       onAgentText: (text: string) => agentText.push(text),
       onThoughtText: (text: string) => thoughtText.push(text),
       onToolCallStarted: (message: ToolCallStartedMessage) => toolCallsStarted.push(message),
       onToolCallUpdated: (message: ToolCallUpdatedMessage) => toolCallsUpdated.push(message),
       postPermissionAsk: (message: PermissionAskMessage) => permissionAsks.push(message),
+      postQuestionAsk: (message: QuestionAskMessage) => questionAsks.push(message),
     },
   };
 }
@@ -163,7 +168,7 @@ describe('KlorbAcpClient', () => {
       await second;
     });
 
-    it('re-posts the outstanding ask via repostPendingAsk()', async () => {
+    it('re-posts the outstanding ask via repostPendingInteraction()', async () => {
       const { listener, permissionAsks } = makeListener();
       const client = new KlorbAcpClient(listener, RequestError, () => undefined);
 
@@ -173,7 +178,7 @@ describe('KlorbAcpClient', () => {
         options: [{ optionId: 'deny:once', name: 'Deny', kind: 'reject_once' }],
       });
 
-      client.repostPendingAsk();
+      client.repostPendingInteraction();
       expect(permissionAsks).toHaveLength(2);
       expect(permissionAsks[0]).toEqual(permissionAsks[1]);
 
@@ -252,6 +257,105 @@ describe('KlorbAcpClient', () => {
       const client = new KlorbAcpClient(listener, RequestError, () => undefined);
 
       await expect(client.extMethod('_klorb/unknown', {})).rejects.toThrow(RequestError);
+    });
+  });
+
+  describe('_klorb/askUserQuestions', () => {
+    it('posts a flattened questionAsk and resolves with the selected option', async () => {
+      const { listener, questionAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const resultPromise = client.extMethod('_klorb/askUserQuestions', {
+        sessionId: 's1',
+        header: 'Format',
+        question: 'Which format?',
+        options: [{ label: 'JSON' }, { label: 'YAML', description: 'human-friendly' }],
+        index: 0,
+        total: 2,
+      });
+
+      expect(questionAsks).toEqual([
+        {
+          type: 'questionAsk',
+          requestId: 1,
+          header: 'Format',
+          question: 'Which format?',
+          options: [{ label: 'JSON' }, { label: 'YAML', description: 'human-friendly' }],
+          index: 0,
+          total: 2,
+        },
+      ]);
+
+      client.resolveQuestionAnswer(1, { selectedOptionIndex: 1 });
+      await expect(resultPromise).resolves.toEqual({ selectedOptionIndex: 1 });
+    });
+
+    it('resolves otherText and cancelled shapes', async () => {
+      const { listener } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const otherPromise = client.extMethod('_klorb/askUserQuestions', {
+        sessionId: 's1',
+        header: 'Name',
+        question: 'What should we call it?',
+        options: [],
+        index: 0,
+        total: 1,
+      });
+      client.resolveQuestionAnswer(1, { otherText: 'widget' });
+      await expect(otherPromise).resolves.toEqual({ otherText: 'widget' });
+
+      const cancelPromise = client.extMethod('_klorb/askUserQuestions', {
+        sessionId: 's1',
+        header: 'Ship it?',
+        question: 'Ready?',
+        options: [],
+        index: 0,
+        total: 1,
+      });
+      client.resolveQuestionAnswer(2, { cancelled: true });
+      await expect(cancelPromise).resolves.toEqual({ cancelled: true });
+    });
+
+    it('resolves cancelled immediately for malformed params, with no wire traffic', async () => {
+      const { listener, questionAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const result = await client.extMethod('_klorb/askUserQuestions', { header: 'bad' });
+
+      expect(result).toEqual({ cancelled: true });
+      expect(questionAsks).toEqual([]);
+    });
+
+    it('queues a permission ask and a question ask against the same interaction slot', async () => {
+      const { listener, permissionAsks, questionAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const permissionPromise = client.requestPermission({
+        sessionId: 's1',
+        toolCall: { toolCallId: 't1', title: 'First' },
+        options: [{ optionId: 'deny:once', name: 'Deny', kind: 'reject_once' }],
+      });
+      const questionPromise = client.extMethod('_klorb/askUserQuestions', {
+        sessionId: 's1',
+        header: 'Name',
+        question: 'What should we call it?',
+        options: [],
+        index: 0,
+        total: 1,
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(permissionAsks).toHaveLength(1);
+      expect(questionAsks).toHaveLength(0);
+
+      client.resolvePermissionDecision(1, { optionId: 'deny:once' });
+      await permissionPromise;
+      expect(questionAsks).toHaveLength(1);
+
+      client.resolveQuestionAnswer(2, { cancelled: true });
+      await expect(questionPromise).resolves.toEqual({ cancelled: true });
     });
   });
 

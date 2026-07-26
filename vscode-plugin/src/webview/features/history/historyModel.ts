@@ -2,11 +2,17 @@
 import type {
   HostMessage,
   PermissionAskMessage,
+  QuestionAskMessage,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
+
+/** The single interaction the server may be waiting on an answer for -- a permission ask or a
+ * `_klorb/askUserQuestions` question, tracked in one slot since the server never has more than
+ * one blocking ask outstanding at a time (see `applyPendingInteraction`). */
+export type PendingInteraction = PermissionAskMessage | QuestionAskMessage;
 
 /** What kind of content a plain-text history entry holds. */
 export type HistoryEntryKind =
@@ -75,6 +81,22 @@ export function appendInteraction(
     lines.push(commandText);
   }
   lines.push(`Decision: ${decisionName}`);
+  return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
+}
+
+/** Appends a compact permanent record of an answered `questionAsk` -- the `appendInteraction()`
+ * equivalent for a `_klorb/askUserQuestions` question, mirroring the TUI's own
+ * `_record_interaction_history` call for `AskUserQuestionsPanel`. */
+export function appendQuestionInteraction(
+  entries: readonly HistoryEntry[],
+  ask: QuestionAskMessage,
+  answerText: string
+): HistoryEntry[] {
+  const lines = [
+    `Question ${ask.index + 1} of ${ask.total} · ${ask.header}`,
+    ask.question,
+    `Answer: ${answerText}`,
+  ];
   return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
 }
 
@@ -193,32 +215,35 @@ export function applyHostMessage(
     case 'toolCallUpdated':
       return applyToolCallUpdated(entries, message, expandAllToolCalls);
     case 'permissionAsk':
-      // Tracked separately by `applyPendingAsk`, not as a history entry -- the ApprovalPanel
-      // mounts from that state instead, and an `appendInteraction()` record lands here only
-      // once the ask is answered.
+    case 'questionAsk':
+      // Tracked separately by `applyPendingInteraction`, not as a history entry -- the
+      // ApprovalPanel/QuestionPanel mounts from that state instead, and an `appendInteraction()`/
+      // `appendQuestionInteraction()` record lands here only once the ask is answered.
       return [...entries];
   }
 }
 
 /**
- * Tracks the permission ask currently awaiting an answer, from the same message stream: a
- * `permissionAsk` sets it (replacing any prior one, which the server never sends concurrently),
- * `sessionReset` clears it, every other message leaves it unchanged. Kept in the model (not
- * component state) so `vscode.setState` persistence keeps an unanswered ask visible across a
- * webview hide/show (see docs/specs/vscode-plugin.md's approval panel section) -- resolving a
- * decision clears it via the caller's own state update, not through this reducer.
+ * Tracks the interaction (a permission ask or a question ask) currently awaiting an answer,
+ * from the same message stream: a `permissionAsk`/`questionAsk` sets it (replacing any prior
+ * one, which the server never sends concurrently), `sessionReset` clears it, every other
+ * message leaves it unchanged. Kept in the model (not component state) so `vscode.setState`
+ * persistence keeps an unanswered interaction visible across a webview hide/show (see
+ * docs/specs/vscode-plugin.md's approval panel section) -- resolving a decision/answer clears it
+ * via the caller's own state update, not through this reducer.
  */
-export function applyPendingAsk(
-  pendingAsk: PermissionAskMessage | undefined,
+export function applyPendingInteraction(
+  pendingInteraction: PendingInteraction | undefined,
   message: HostMessage
-): PermissionAskMessage | undefined {
+): PendingInteraction | undefined {
   switch (message.type) {
     case 'permissionAsk':
+    case 'questionAsk':
       return message;
     case 'sessionReset':
       return undefined;
     default:
-      return pendingAsk;
+      return pendingInteraction;
   }
 }
 

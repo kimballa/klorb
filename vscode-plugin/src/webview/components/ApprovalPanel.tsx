@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { Fragment, type JSX, type KeyboardEvent, useState } from 'react';
+import { Fragment, type JSX, type KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import type { PermissionAskMessage, PermissionAskOption } from 'shared/webviewMessages';
 
@@ -122,10 +122,18 @@ function groupOptionsByScope(options: PermissionAskOption[]): ScopeRow[] | undef
  * command" disclosure, a grant-pattern summary, a risk badge with its rationale, the option grid
  * (grouped into Allow/Deny columns by scope, mirroring the TUI's own grid), and a free-text
  * "Other…" redirect. `klorbMeta.escalation` distinguishes an `EscalatePrivileges` ask with its
- * own header. Escape cancels (deny-once), matching the TUI's own Escape semantics.
+ * own header. Escape cancels (deny-once), matching the TUI's own Escape semantics. The panel
+ * grabs focus on mount (and again each time a new ask replaces it) so that Escape reaches
+ * `handleKeyDown` even before the user has clicked into an option or the "Other…" field -- a
+ * plain `onKeyDown` only fires for keys pressed while focus is somewhere inside this subtree.
  */
 export default function ApprovalPanel({ ask, onDecision }: ApprovalPanelProps): JSX.Element {
   const [otherText, setOtherText] = useState('');
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, [ask.requestId]);
 
   const escalation = metaEscalation(ask.klorbMeta);
   const headerKind = metaString(ask.klorbMeta, 'headerKind');
@@ -163,9 +171,17 @@ export default function ApprovalPanel({ ask, onDecision }: ApprovalPanelProps): 
     onDecision({ optionId: denyOnce.id, otherText: text });
   }
 
+  function handleOtherKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === 'Enter') {
+      submitOther();
+    }
+  }
+
   return (
     <div
       className={`approval-panel${escalation !== undefined ? ' approval-panel-escalation' : ''}`}
+      tabIndex={-1}
+      ref={panelRef}
       onKeyDown={handleKeyDown}>
       <div className="approval-header">
         {headerText}
@@ -243,6 +259,7 @@ export default function ApprovalPanel({ ask, onDecision }: ApprovalPanelProps): 
               const value = (event.target as { value?: unknown }).value;
               setOtherText(typeof value === 'string' ? value : '');
             }}
+            onKeyDown={handleOtherKeyDown}
           />
           <vscode-button secondary onClick={submitOther}>
             Send

@@ -20,6 +20,8 @@ from klorb.permissions.risk_classifier import (
 )
 from klorb.process_config import ProcessConfig
 from klorb.server.update_mapping import (
+    ask_user_questions_answer_from_result,
+    ask_user_questions_ext_params,
     escalate_privileges_decision_from_outcome,
     escalate_privileges_meta,
     escalate_privileges_options,
@@ -33,6 +35,8 @@ from klorb.server.update_mapping import (
 )
 from klorb.session import Session, TurnEventHandlers
 from klorb.session.events import (
+    AskUserQuestionsAnswer,
+    AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
     EscalatePrivilegesDecision,
     PermissionAskContext,
@@ -53,6 +57,10 @@ _RAISE_TOOL_CALL_LIMIT_EXT_METHOD = "klorb/raiseToolCallLimit"
 an extension already stripped -- `acp.Client.ext_method()`'s own proxy re-adds it on the wire
 (see `acp.agent.connection.AgentSideConnection.ext_method`)."""
 
+_ASK_USER_QUESTIONS_EXT_METHOD = "klorb/askUserQuestions"
+"""The `_klorb/askUserQuestions` extension method name, with the leading `_` stripped -- see
+`_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why."""
+
 _AskResultT = TypeVar("_AskResultT")
 
 
@@ -70,11 +78,12 @@ class TurnBridge:
     stack of in-flight `call_id`s so a same-turn permission/escalation ask can link itself to
     whichever call raised it.
 
-    `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached` are the turn's
-    blocking asks: each builds its `session/request_permission`/`_klorb/raiseToolCallLimit`
-    round trip as a coroutine and runs it via `call_blocking()`, which first awaits `queue.join()`
-    (so every `session/update` already enqueued has actually been sent before the ask goes out --
-    the same ordering guarantee, extended to asks) and then `asyncio.run_coroutine_threadsafe(...)
+    `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached`/
+    `on_ask_user_questions` are the turn's blocking asks: each builds its `session/
+    request_permission`/`_klorb/raiseToolCallLimit`/`_klorb/askUserQuestions` round trip as a
+    coroutine and runs it via `call_blocking()`, which first awaits `queue.join()` (so every
+    `session/update` already enqueued has actually been sent before the ask goes out -- the same
+    ordering guarantee, extended to asks) and then `asyncio.run_coroutine_threadsafe(...)
     .result()`s it, parking the worker thread until the client answers. `on_permission_ask` also
     calls `klorb.permissions.risk_classifier.resolve_item_risk_assessment`/`record_decision_history`
     for a `BashTool` ask, exactly as `klorb.tui.mixins.interactions.InteractionsMixin.
@@ -88,12 +97,14 @@ class TurnBridge:
     def __init__(
         self, session: Session, client: acp.Client, session_id: str,
         process_config: ProcessConfig, raise_tool_call_limit_capable: bool = False,
+        ask_user_questions_capable: bool = False,
     ) -> None:
         self._session = session
         self._client = client
         self._session_id = session_id
         self._process_config = process_config
         self._raise_tool_call_limit_capable = raise_tool_call_limit_capable
+        self._ask_user_questions_capable = ask_user_questions_capable
 
     async def run_turn(self, prompt_text: str) -> str:
         """Send `prompt_text` as one turn of `self._session`'s conversation, streaming the
@@ -185,6 +196,21 @@ class TurnBridge:
             response = call_blocking(_ask)
             return escalate_privileges_decision_from_outcome(response.outcome)
 
+        def on_ask_user_questions(ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
+            if not self._ask_user_questions_capable:
+                logger.debug(
+                    "Client did not advertise _klorb/askUserQuestions; declining question %d/%d "
+                    "closed for ACP session %s", ctx.index + 1, ctx.total, self._session_id)
+                return AskUserQuestionsAnswer(cancelled=True)
+
+            params = ask_user_questions_ext_params(ctx, self._session_id)
+
+            async def _ask() -> dict[str, Any]:
+                return await self._client.ext_method(_ASK_USER_QUESTIONS_EXT_METHOD, params)
+
+            result = call_blocking(_ask)
+            return ask_user_questions_answer_from_result(ctx, result)
+
         def on_tool_call_limit_reached(message: str) -> bool:
             if not self._raise_tool_call_limit_capable:
                 logger.debug(
@@ -205,6 +231,7 @@ class TurnBridge:
             on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
             on_tool_call_started=on_tool_call_started, on_tool_call=on_tool_call,
             on_permission_ask=on_permission_ask, on_escalate_privileges=on_escalate_privileges,
+            on_ask_user_questions=on_ask_user_questions,
             on_tool_call_limit_reached=on_tool_call_limit_reached, cancel_event=cancel_event)
 
         async def pump() -> None:

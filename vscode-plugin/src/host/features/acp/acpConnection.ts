@@ -124,7 +124,9 @@ export class AcpConnection {
         this._raceClosed(
           connection.initialize({
             protocolVersion: acp.PROTOCOL_VERSION,
-            clientCapabilities: { _meta: { klorb: { raiseToolCallLimit: true } } },
+            clientCapabilities: {
+              _meta: { klorb: { raiseToolCallLimit: true, askUserQuestions: true } },
+            },
           }),
           connection
         ),

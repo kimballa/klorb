@@ -168,6 +168,32 @@ describe('ApprovalPanel', () => {
     });
   });
 
+  it('focuses the panel on mount so Escape works before the user clicks into it', () => {
+    const { container } = render(<ApprovalPanel ask={BASH_ASK} onDecision={() => undefined} />);
+
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    expect(document.activeElement).toBe(container.querySelector('.approval-panel'));
+  });
+
+  it('posts the deny-once option with otherText on Enter in the "Other…" field', () => {
+    const onDecision = vi.fn<(decision: ApprovalDecision) => void>();
+    render(<ApprovalPanel ask={BASH_ASK} onDecision={onDecision} />);
+
+    fireEvent.click(screen.getByText('Other…'));
+    // eslint-disable-next-line testing-library/no-node-access
+    const textfield = document.querySelector('vscode-textfield') as HTMLElement & {
+      value: string;
+    };
+    textfield.value = 'do something else instead';
+    fireEvent(textfield, new Event('input', { bubbles: true }));
+    fireEvent.keyDown(textfield, { key: 'Enter' });
+
+    expect(onDecision).toHaveBeenCalledWith({
+      optionId: 'deny:once',
+      otherText: 'do something else instead',
+    });
+  });
+
   it('renders the escalation header and description distinctly', () => {
     render(<ApprovalPanel ask={ESCALATION_ASK} onDecision={() => undefined} />);
 
