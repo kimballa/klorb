@@ -53,6 +53,12 @@ function renderEntry(
           {entry.text}
         </div>
       );
+    case 'interaction':
+      return (
+        <div className="entry entry-interaction" key={index}>
+          {entry.text}
+        </div>
+      );
     case 'toolCall':
       return <ToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />;
   }

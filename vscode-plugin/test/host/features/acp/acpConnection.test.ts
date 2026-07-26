@@ -24,6 +24,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onThoughtText: (text: string) => events.push(`thought:${text}`),
     onToolCallStarted: (message) => events.push(`toolCallStarted:${message.callId}`),
     onToolCallUpdated: (message) => events.push(`toolCallUpdated:${message.callId}`),
+    postPermissionAsk: (message) => events.push(`permissionAsk:${message.requestId}`),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   return { agent, connection, events };
@@ -168,6 +169,7 @@ describe('AcpConnection', () => {
       onThoughtText: () => undefined,
       onToolCallStarted: () => undefined,
       onToolCallUpdated: () => undefined,
+      postPermissionAsk: () => undefined,
     };
     const connection = new AcpConnection(
       serverProcess,

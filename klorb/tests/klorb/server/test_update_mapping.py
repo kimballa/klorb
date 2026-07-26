@@ -285,9 +285,11 @@ def test_permission_ask_options_offers_workspace_and_homedir_for_a_persistable_r
     options = permission_ask_options(resource)
 
     assert [option.option_id for option in options] == [
-        "allow:once", "deny:once", "allow:session", "allow:workspace", "allow:homedir"]
+        "allow:once", "deny:once", "allow:session", "deny:session",
+        "allow:workspace", "allow:homedir", "deny:workspace", "deny:homedir"]
     assert [option.kind for option in options] == [
-        "allow_once", "reject_once", "allow_always", "allow_always", "allow_always"]
+        "allow_once", "reject_once", "allow_always", "reject_always",
+        "allow_always", "allow_always", "reject_always", "reject_always"]
     for option in options:
         assert option.field_meta is not None
         assert option.field_meta["klorb"]["scope"] == option.option_id.split(":", 1)[1]
@@ -298,7 +300,8 @@ def test_permission_ask_options_omits_workspace_and_homedir_for_a_structural_res
 
     options = permission_ask_options(resource)
 
-    assert [option.option_id for option in options] == ["allow:once", "deny:once", "allow:session"]
+    assert [option.option_id for option in options] == [
+        "allow:once", "deny:once", "allow:session", "deny:session"]
 
 
 def test_escalate_privileges_options_offers_exactly_approve_and_deny() -> None:
@@ -329,7 +332,7 @@ def test_permission_ask_meta_for_a_non_bash_ask_only_carries_resource_descriptio
 
     meta = permission_ask_meta(ctx, None, 0, 1, session_config)
 
-    assert meta == {"resourceDescription": "Read foo.txt"}
+    assert meta == {"resourceDescription": "Read foo.txt", "headerKind": "Read file"}
 
 
 def test_permission_ask_meta_for_a_bash_ask_carries_command_and_item_fields(tmp_path: Path) -> None:
@@ -343,11 +346,13 @@ def test_permission_ask_meta_for_a_bash_ask_carries_command_and_item_fields(tmp_
     meta = permission_ask_meta(ctx, None, 0, 2, session_config)
 
     assert meta["resourceDescription"] == "Run command: echo hi"
+    assert meta["headerKind"] == "Run command"
     assert meta["commandText"] == "echo hi; echo bye"
     assert meta["itemCommandText"] == "echo hi"
     assert meta["itemIndex"] == 0
     assert meta["itemTotal"] == 2
     assert "riskLevel" not in meta
+    assert "riskRationale" not in meta
     # No risk suggestion given -- falls back to the deterministic literal-argv grant pattern.
     assert meta["grantPatterns"] == compute_command_grant_patterns(
         session_config.command_rules, ["echo", "hi"])
@@ -367,6 +372,7 @@ def test_permission_ask_meta_prefers_the_risk_classifiers_suggested_pattern(tmp_
 
     assert meta["grantPatterns"] == [["pytest", "**"]]
     assert meta["riskLevel"] == 2
+    assert meta["riskRationale"] == "routine test run"
 
 
 def test_escalate_privileges_meta_carries_scope_and_description(tmp_path: Path) -> None:
@@ -394,8 +400,11 @@ def test_permission_decision_grant_patterns_only_set_from_risk_suggestion() -> N
     ("allow:once", "allow", "once"),
     ("deny:once", "deny", "once"),
     ("allow:session", "allow", "session"),
+    ("deny:session", "deny", "session"),
     ("allow:workspace", "allow", "workspace"),
     ("allow:homedir", "allow", "homedir"),
+    ("deny:workspace", "deny", "workspace"),
+    ("deny:homedir", "deny", "homedir"),
 ])
 def test_permission_decision_from_outcome_round_trips_every_option_id(
     option_id: str, expected_action: str, expected_scope: str,

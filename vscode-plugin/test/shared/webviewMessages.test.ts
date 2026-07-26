@@ -32,6 +32,16 @@ describe('parseHostMessage', () => {
         contentText: 'done',
       },
       {
+        type: 'permissionAsk',
+        requestId: 1,
+        title: 'Run: ls',
+        options: [
+          { id: 'allow:once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+          { id: 'deny:once', name: 'Deny', kind: 'reject_once' },
+        ],
+        klorbMeta: { resourceDescription: 'run shell command: ls' },
+      },
+      {
         type: 'toolCallUpdated',
         callId: 'call-2',
         status: 'failed',
@@ -82,6 +92,27 @@ describe('parseHostMessage', () => {
         diff: { path: '/x', newText: 'y' },
       })
     ).toBeUndefined();
+    expect(
+      parseHostMessage({ type: 'permissionAsk', requestId: 1, title: 'x', options: [] })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'permissionAsk',
+        requestId: 'not-a-number',
+        title: 'x',
+        options: [],
+        klorbMeta: {},
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'permissionAsk',
+        requestId: 1,
+        title: 'x',
+        options: [{ id: 'a', name: 'A' }],
+        klorbMeta: {},
+      })
+    ).toBeUndefined();
   });
 });
 
@@ -93,6 +124,9 @@ describe('parseWebviewMessage', () => {
       { type: 'openLocation', path: '/tmp/foo.py', line: 5 },
       { type: 'openLocation', path: '/tmp/foo.py' },
       { type: 'openDiff', callId: 'call-1', path: '/tmp/foo.py' },
+      { type: 'permissionDecision', requestId: 1, optionId: 'allow:once' },
+      { type: 'permissionDecision', requestId: 1, optionId: 'deny:once', otherText: 'do X' },
+      { type: 'permissionDecision', requestId: 1, cancelled: true },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);
@@ -108,5 +142,10 @@ describe('parseWebviewMessage', () => {
     expect(parseWebviewMessage({ type: 'openLocation' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'openLocation', path: '/x', line: 'nope' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'openDiff', path: '/x' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'permissionDecision', requestId: 1 })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'permissionDecision', optionId: 'x' })).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'permissionDecision', requestId: 1, otherText: 'x' })
+    ).toBeUndefined();
   });
 });

@@ -99,6 +99,13 @@ body {
   font-style: italic;
 }
 
+.entry-interaction {
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  border-left: 2px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  padding-left: 8px;
+}
+
 .history-header {
   flex: 0 0 auto;
   display: flex;
@@ -205,6 +212,143 @@ button.tool-call-title {
   padding: 8px 12px;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
   align-items: flex-end;
+}
+
+.approval-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--vscode-sideBar-background) 92%, white 8%);
+}
+
+.approval-panel-escalation {
+  border-color: var(--vscode-errorForeground);
+}
+
+.approval-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.approval-panel-escalation .approval-header {
+  color: var(--vscode-errorForeground);
+}
+
+.approval-item-count {
+  font-weight: normal;
+  color: var(--vscode-descriptionForeground);
+}
+
+.approval-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.approval-description {
+  word-break: break-word;
+}
+
+.approval-command,
+.approval-command-full {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+  background-color: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+  padding: 4px 6px;
+}
+
+.approval-command-full {
+  max-height: 8em;
+  overflow-y: auto;
+}
+
+.approval-grants {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.approval-risk {
+  align-self: flex-start;
+  display: inline-block;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.approval-risk-rationale {
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.approval-risk-medium {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  border-color: currentColor;
+}
+
+.approval-risk-high {
+  color: var(--vscode-errorForeground, #f14c4c);
+  border-color: currentColor;
+}
+
+.approval-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 6px;
+  width: 100%;
+}
+
+.approval-options-header {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+}
+
+.approval-options-cell {
+  display: flex;
+}
+
+.approval-options-cell vscode-button {
+  width: 100%;
+}
+
+.approval-other summary {
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+}
+
+.approval-other-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.approval-other-row vscode-textfield {
+  flex: 1 1 auto;
+}
+
+.input-row-muted {
+  opacity: 0.6;
 }
 
 #prompt-input {

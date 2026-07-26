@@ -285,6 +285,7 @@ _PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
     ("allow:once", "allow_once", "Allow once"),
     ("deny:once", "reject_once", "Deny"),
     ("allow:session", "allow_always", "Allow for this session"),
+    ("deny:session", "reject_always", "Deny for this session"),
 )
 """Options a `session/request_permission` for a `PermissionAskContext` always carries -- see
 `permission_ask_options`."""
@@ -292,9 +293,14 @@ _PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
 _PERSISTENT_PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
     ("allow:workspace", "allow_always", "Always allow (workspace)"),
     ("allow:homedir", "allow_always", "Always allow (home config)"),
+    ("deny:workspace", "reject_always", "Always deny (workspace)"),
+    ("deny:homedir", "reject_always", "Always deny (home config)"),
 )
 """Additional options offered only when `PermissionResource.is_persistable` is `True` -- a
-`StructuralResource` ask has no rule a workspace/homedir grant could be recorded against."""
+`StructuralResource` ask has no rule a workspace/homedir grant could be recorded against.
+Mirrors the always-offered specs' allow/deny pairing one scope further out -- see
+docs/adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md for why a
+persistent-scope deny is just as real a grant as a persistent-scope allow."""
 
 _ESCALATE_PRIVILEGES_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
     ("allow:once", "allow_once", "Approve for this session"),
@@ -315,9 +321,9 @@ def _permission_option(option_id: str, kind: PermissionOptionKind, name: str) ->
 
 
 def permission_ask_options(resource: PermissionResource) -> list[PermissionOption]:
-    """The `session/request_permission` options for `resource`: always once/deny/session, plus
-    workspace/homedir when `resource.is_persistable` -- a `StructuralResource` (no persistable
-    rule of its own) only ever offers once/deny/session."""
+    """The `session/request_permission` options for `resource`: always once/deny-once/session/
+    deny-session, plus workspace/homedir allow and deny when `resource.is_persistable` -- a
+    `StructuralResource` (no persistable rule of its own) only ever offers the always-on four."""
     specs = list(_PERMISSION_OPTION_SPECS)
     if resource.is_persistable:
         specs += _PERSISTENT_PERMISSION_OPTION_SPECS
@@ -380,12 +386,15 @@ def permission_ask_meta(
     session_config: SessionConfig,
 ) -> dict[str, Any]:
     """The `_meta.klorb` payload for a `session/request_permission` request built from `ctx`:
-    always `resourceDescription`; for a `BashTool` ask (`ctx.bash_context` set), additionally the
-    full/per-item command text, this item's position within its sibling batch, a grant-pattern
-    preview, and the risk classifier's score (`risk`, or `None` if classification is disabled,
-    not a bash ask, or the classifier failed -- see
-    `klorb.permissions.risk_classifier.resolve_item_risk_assessment`)."""
-    meta: dict[str, Any] = {"resourceDescription": ctx.resource_description}
+    always `resourceDescription` and `headerKind` (the same "Run command"/`resource.
+    header_kind()` noun phrase `PermissionAskPanel.header_text()` uses); for a `BashTool` ask
+    (`ctx.bash_context` set), additionally the full/per-item command text, this item's position
+    within its sibling batch, a grant-pattern preview, and the risk classifier's score and
+    rationale (`risk`, or `None` if classification is disabled, not a bash ask, or the classifier
+    failed -- see `klorb.permissions.risk_classifier.resolve_item_risk_assessment`)."""
+    header_kind = "Run command" if ctx.bash_context is not None else ctx.resource.header_kind()
+    meta: dict[str, Any] = {
+        "resourceDescription": ctx.resource_description, "headerKind": header_kind}
     if ctx.bash_context is not None:
         meta["commandText"] = ctx.bash_context.command_text
         meta["itemCommandText"] = ctx.bash_context.item_command_text
@@ -396,6 +405,7 @@ def permission_ask_meta(
             meta["grantPatterns"] = grant_patterns
         if risk is not None:
             meta["riskLevel"] = risk.risk_score
+            meta["riskRationale"] = risk.rationale
     return meta
 
 

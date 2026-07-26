@@ -1,6 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import type {
   HostMessage,
+  PermissionAskMessage,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
@@ -8,7 +9,8 @@ import type {
 } from 'shared/webviewMessages';
 
 /** What kind of content a plain-text history entry holds. */
-export type HistoryEntryKind = 'prompt' | 'response' | 'thinking' | 'error' | 'notice';
+export type HistoryEntryKind =
+  'prompt' | 'response' | 'thinking' | 'error' | 'notice' | 'interaction';
 
 /** One plain-text entry in the panel's history scroll. `streaming` marks an entry still
  * receiving chunks; the next chunk of the same kind extends it instead of appending a new
@@ -42,6 +44,38 @@ export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry;
 /** Appends the user's submitted prompt as a finished (non-streaming) entry. */
 export function appendPrompt(entries: readonly HistoryEntry[], text: string): HistoryEntry[] {
   return [...entries, { kind: 'prompt', text, streaming: false }];
+}
+
+function metaString(klorbMeta: Record<string, unknown>, key: string): string | undefined {
+  const value = klorbMeta[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Appends a compact permanent record of an answered permission ask -- the TUI's
+ * `_record_interaction_history` equivalent (see docs/specs/vscode-plugin.md's approval panel
+ * section): the ask's header, description/command, and the option name the user chose. */
+export function appendInteraction(
+  entries: readonly HistoryEntry[],
+  ask: PermissionAskMessage,
+  decisionName: string
+): HistoryEntry[] {
+  const isEscalation =
+    typeof ask.klorbMeta.escalation === 'object' && ask.klorbMeta.escalation !== null;
+  const headerKind = metaString(ask.klorbMeta, 'headerKind');
+  const lines = [
+    isEscalation ? 'Privilege escalation' : `Permission requested: ${headerKind ?? 'access'}`,
+  ];
+  const resourceDescription = metaString(ask.klorbMeta, 'resourceDescription');
+  if (resourceDescription !== undefined) {
+    lines.push(resourceDescription);
+  }
+  const commandText =
+    metaString(ask.klorbMeta, 'itemCommandText') ?? metaString(ask.klorbMeta, 'commandText');
+  if (commandText !== undefined) {
+    lines.push(commandText);
+  }
+  lines.push(`Decision: ${decisionName}`);
+  return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
 }
 
 function appendChunk(
@@ -158,6 +192,33 @@ export function applyHostMessage(
       return appendToolCallStarted(entries, message, expandAllToolCalls);
     case 'toolCallUpdated':
       return applyToolCallUpdated(entries, message, expandAllToolCalls);
+    case 'permissionAsk':
+      // Tracked separately by `applyPendingAsk`, not as a history entry -- the ApprovalPanel
+      // mounts from that state instead, and an `appendInteraction()` record lands here only
+      // once the ask is answered.
+      return [...entries];
+  }
+}
+
+/**
+ * Tracks the permission ask currently awaiting an answer, from the same message stream: a
+ * `permissionAsk` sets it (replacing any prior one, which the server never sends concurrently),
+ * `sessionReset` clears it, every other message leaves it unchanged. Kept in the model (not
+ * component state) so `vscode.setState` persistence keeps an unanswered ask visible across a
+ * webview hide/show (see docs/specs/vscode-plugin.md's approval panel section) -- resolving a
+ * decision clears it via the caller's own state update, not through this reducer.
+ */
+export function applyPendingAsk(
+  pendingAsk: PermissionAskMessage | undefined,
+  message: HostMessage
+): PermissionAskMessage | undefined {
+  switch (message.type) {
+    case 'permissionAsk':
+      return message;
+    case 'sessionReset':
+      return undefined;
+    default:
+      return pendingAsk;
   }
 }
 

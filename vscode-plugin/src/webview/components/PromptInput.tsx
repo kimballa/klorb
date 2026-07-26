@@ -7,6 +7,9 @@ import { classifyEnterKey } from 'webview/keyHandling';
 interface PromptInputProps {
   /** True while a prompt turn is running: the input is disabled and Stop replaces Send. */
   inFlight: boolean;
+  /** True while an `ApprovalPanel` (or other interaction-area panel) is active: visually mutes
+   * the already-disabled input row, mirroring the TUI's interaction-mode treatment. */
+  muted?: boolean;
   onSubmit(text: string): void;
   onCancel(): void;
 }
@@ -25,6 +28,7 @@ function targetValue(event: SyntheticEvent | KeyboardEvent<HTMLElement>): string
  */
 export default function PromptInput({
   inFlight,
+  muted = false,
   onSubmit,
   onCancel,
 }: PromptInputProps): JSX.Element {
@@ -63,7 +67,7 @@ export default function PromptInput({
   }
 
   return (
-    <div className="input-row" onKeyDown={handleKeyDown}>
+    <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
       <vscode-textarea
         ref={textareaRef}
         id="prompt-input"

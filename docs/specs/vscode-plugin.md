@@ -13,8 +13,13 @@ streamed response and thinking text (`session/update` → `agent_message_chunk`/
 respectively. Tool calls (`session/update` → `tool_call`/`tool_call_update`) render as chips
 that go from a busy spinner to a one-line completed/failed summary, expandable to full detail
 or a colored diff view; a chip naming a file location links to opening that file (or a real
-diff editor) in VS Code itself. A Stop button (or Escape while a turn is in flight) sends
-`session/cancel`.
+diff editor) in VS Code itself. A permission ask or `EscalatePrivileges` request
+(`session/request_permission`) renders as an `ApprovalPanel` docked directly above the prompt
+input — an option grid, a bash command preview with a "show full command" disclosure, a
+grant-pattern/risk-level summary, and a free-text "Other…" redirect — with the answered
+decision recorded as a compact permanent entry in the history scroll; the tool-call-limit
+extension ask (`_klorb/raiseToolCallLimit`) instead surfaces as a native modal warning. A Stop
+button (or Escape while a turn is in flight) sends `session/cancel`.
 Shift+Enter (or Ctrl+Enter) inserts a newline in the prompt box instead of submitting.
 Activation spawns one `klorb server` process and creates one ACP session, shared by the whole
 extension; **Klorb: Restart Server** kills and respawns the child and re-initializes the ACP
@@ -77,18 +82,22 @@ together for this extension specifically.
   than an unread pipe. It performs `initialize()` (asserting the negotiated `protocolVersion`
   matches `acp.PROTOCOL_VERSION`; a mismatch or a hung/failed handshake — bounded by a 10-second
   timeout — throws a readable error naming `klorb.serverPath` as the likely fix, covering an old
-  pre-ACP klorb binary) and then `newSession(cwd)`, storing the returned `sessionId`.
-  `prompt(text)` sends `session/prompt` with one `TextContentBlock` and resolves with the ACP
-  `stopReason`; only one prompt may be in flight at a time (matching [[klorb-server]]'s own
-  one-prompt-at-a-time rule), so a second call while one is running rejects immediately rather
-  than queuing. `cancel()` sends `session/cancel` as a fire-and-forget notification — the
-  in-flight `prompt()` call still resolves normally once the server winds the turn down and
-  replies with `stopReason: "cancelled"`. `stop()` kills the child and rejects any in-flight
-  `prompt()` with a restart-style error; the same rejection fires automatically if the
+  pre-ACP klorb binary), advertising `clientCapabilities._meta.klorb.raiseToolCallLimit = true`
+  (see [[klorb-server]]'s extension-methods section), and then `newSession(cwd)`, storing the
+  returned `sessionId`. `prompt(text)` sends `session/prompt` with one `TextContentBlock` and
+  resolves with the ACP `stopReason`; only one prompt may be in flight at a time (matching
+  [[klorb-server]]'s own one-prompt-at-a-time rule), so a second call while one is running
+  rejects immediately rather than queuing. `cancel()` sends `session/cancel` as a fire-and-forget
+  notification — the in-flight `prompt()` call still resolves normally once the server winds the
+  turn down and replies with `stopReason: "cancelled"`. `stop()` kills the child and rejects any
+  in-flight `prompt()` with a restart-style error; the same rejection fires automatically if the
   connection closes out from under an in-flight prompt (child crash, unexpected EOF).
   `errorMessage()` (exported alongside the class) renders both real `Error` instances and the
   SDK's plain `{code, message}` JSON-RPC rejection objects as a readable string, since ACP
-  request failures reject with the latter shape, not an `Error`.
+  request failures reject with the latter shape, not an `Error`. The `client` getter exposes the
+  live `KlorbAcpClient` (`undefined` before `start()` completes or after `stop()`), which
+  `KlorbSessionViewProvider` uses to forward a `permissionDecision` webview message and to
+  trigger `repostPendingAsk()` after the webview view is recreated (see "Approval panel" below).
 * `vscode-plugin/src/host/features/acp/klorbAcpClient.ts`'s `KlorbAcpClient` implements the ACP
   SDK's `Client` interface: the handler for requests/notifications the server sends back over
   the connection.
@@ -97,14 +106,12 @@ together for this extension specifically.
   updates into `ToolCallStartedMessage`/`ToolCallUpdatedMessage` (`onToolCallStarted`/
   `onToolCallUpdated` — see "Tool-call rendering and editor integration" below), and logs
   (rather than errors on) any other update kind, since later increments add handling for `plan`
-  etc. `requestPermission()` auto-answers every ask with the first `reject_once` (falling back to
-  `reject_always`, then whatever option is first) — a stand-in until `plan-016-006` builds the
-  real approval panel — logging what was declined so a denied tool call is visible in the
-  extension's output channel rather than silently vanishing. `readTextFile()`/
-  `writeTextFile()`/`createTerminal()` throw the SDK's `RequestError.methodNotFound()`
-  synchronously, matching the client never advertising the `fs`/`terminal` capabilities during
-  `initialize()`. `src/host/features/acp/index.ts` is this feature's barrel, re-exporting
-  `AcpConnection`, `errorMessage`, `KlorbAcpClient`, and the `SessionUpdateListener` type — the
+  etc. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension method are covered in
+  "Approval panel" below. `readTextFile()`/`writeTextFile()`/`createTerminal()` throw the SDK's
+  `RequestError.methodNotFound()` synchronously, matching the client never advertising the
+  `fs`/`terminal` capabilities during `initialize()`. `src/host/features/acp/index.ts` is this
+  feature's barrel, re-exporting `AcpConnection`, `errorMessage`, `KlorbAcpClient`,
+  `PermissionDecisionResult`, `RaiseToolCallLimitFn`, and the `SessionUpdateListener` type — the
   only things `extension.ts` and `klorbSessionViewProvider.ts` (outside the feature) import.
 * `vscode-plugin/src/host/klorbSessionViewProvider.ts`'s `KlorbSessionViewProvider` implements
   `vscode.WebviewViewProvider` and `SessionUpdateListener`. `resolveWebviewView()` enables
@@ -121,7 +128,16 @@ together for this extension specifically.
   `turnEnded {stopReason}` or (on rejection) `turnError {message}`; a `cancelTurn` message calls
   `AcpConnection.cancel()` directly, with no reply of its own (the in-flight prompt's own
   `turnEnded`/`turnError` follow-up is the confirmation); `openLocation`/`openDiff` messages are
-  routed to `EditorIntegration.openLocation()`/`openDiff()`. `restart()` re-sets the webview's HTML
+  routed to `EditorIntegration.openLocation()`/`openDiff()`; a `permissionDecision` message is
+  routed to `AcpConnection.client?.resolvePermissionDecision()` (see "Approval panel" below).
+  `postPermissionAsk()` (the `SessionUpdateListener` method `KlorbAcpClient` calls to post an
+  ask) posts the `permissionAsk` host message and, if the view is hidden at that moment, shows a
+  "Klorb needs your approval" notification with a "Show Klorb" action
+  (`vscode.commands.executeCommand('klorb.sessionView.focus')`) so an approval can't sit
+  invisible forever. `resolveWebviewView()` additionally calls
+  `AcpConnection.client?.repostPendingAsk()` once the webview's message handler is wired up, so
+  an ask still awaiting an answer from before a webview reload is shown again to the fresh
+  webview instance. `restart()` re-sets the webview's HTML
   (with a fresh nonce and a cache-busting query string on the compiled webview script's URI),
   which is what `klorb.restartSession` calls — it reloads the panel's webview document (and
   therefore `out/webview/main.js`) without requiring a full "Reload Window", so a rebuilt
@@ -161,22 +177,27 @@ together for this extension specifically.
   which is why the single `vscode` value from that one call is threaded through as a prop
   rather than re-acquired (see `docs/adrs/call-acquirevscodeapi-exactly-once-per-webview-page.md`).
 * `vscode-plugin/src/webview/App.tsx`'s `App` component is the panel's layout shell, top to
-  bottom: the title, `HistoryView`, a placeholder `#interaction-area` div (approval/question
-  panels mount there starting in `plan-016-006`), `PromptInput`, and a placeholder
-  `#status-row` div (model/thinking/permission-mode controls arrive in `plan-016-009`). It owns
-  all interactive state: `entries` (a `HistoryEntry[]`, seeded from `initialEntries`), `inFlight`
-  (whether a turn is currently running), and `expandAllToolCalls` (the global "expand all tool
-  calls" toggle — see `features/history` below). A `window` `message` listener (subscribed for
-  the panel's lifetime via a `useEffect` keyed on `expandAllToolCalls`, so a newly-started tool
-  call always sees the current toggle state) parses each incoming payload with
-  `parseHostMessage()` and applies it to `entries`/`inFlight` via the pure functions in the
-  `features/history` feature. Submitting a prompt appends a `'prompt'` entry optimistically,
-  sets `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up confirms or
-  corrects it), and posts `{type: 'submitPrompt', text}`. Toggling the global tool-call expand
-  mode flips `expandAllToolCalls` and applies it to every existing tool-call entry at once
+  bottom: the title, `HistoryView`, an `#interaction-area` div that mounts `ApprovalPanel` while
+  a permission ask is outstanding (a question panel mounts there in a later increment),
+  `PromptInput`, and a placeholder `#status-row` div (model/thinking/permission-mode controls
+  arrive in `plan-016-009`). It owns all interactive state: `entries` (a `HistoryEntry[]`, seeded
+  from `initialEntries`), `inFlight` (whether a turn is currently running), `expandAllToolCalls`
+  (the global "expand all tool calls" toggle — see `features/history` below), and `pendingAsk`
+  (a `PermissionAskMessage | undefined`, seeded from `initialPendingAsk` — see "Approval panel"
+  below). A `window` `message` listener (subscribed for the panel's lifetime via a `useEffect`
+  keyed on `expandAllToolCalls`, so a newly-started tool call always sees the current toggle
+  state) parses each incoming payload with `parseHostMessage()` and applies it to
+  `entries`/`inFlight`/`pendingAsk` via the pure functions in the `features/history` feature.
+  Submitting a prompt appends a `'prompt'` entry optimistically, sets `inFlight` to `true` (the
+  host's own `turnStarted`/`turnError` follow-up confirms or corrects it), and posts
+  `{type: 'submitPrompt', text}`. Toggling the global tool-call expand mode flips
+  `expandAllToolCalls` and applies it to every existing tool-call entry at once
   (`applyExpandAllToolCalls`); toggling one chip's own chevron flips just that entry
-  (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`. A separate
-  `useEffect` keyed on `entries` calls `vscode.setState({entries})` (so history survives
+  (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`.
+  `handleApprovalDecision()` (passed to `ApprovalPanel` as `onDecision`) appends an
+  `appendInteraction()` record, clears `pendingAsk`, and posts `{type: 'permissionDecision', ...}`
+  back to the host. A separate `useEffect` keyed on `entries`/`pendingAsk` calls
+  `vscode.setState({entries, pendingAsk})` (so history and an unanswered ask both survive
   `retainContextWhenHidden`'s context teardown/rebuild) and scrolls the history's last child
   into view. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
   below) so any descendant can reach `vscode` via `useVsCodeApi()` without it being threaded
@@ -197,12 +218,19 @@ together for this extension specifically.
   module anyone outside `features/history/` may import (as `webview/features/history`, per this
   repo's absolute-import convention — see `AGENTS.md`'s "vscode-plugin source tree" section).
   * `HistoryEntry` is `TextHistoryEntry | ToolCallHistoryEntry`. `TextHistoryEntry` is
-    `{kind: 'prompt' | 'response' | 'thinking' | 'error' | 'notice', text, streaming: boolean}`.
+    `{kind: 'prompt' | 'response' | 'thinking' | 'error' | 'notice' | 'interaction', text,
+    streaming: boolean}` — an `'interaction'` entry is always `streaming: false`, a compact
+    permanent record of an answered permission ask (see "Approval panel" below).
     `ToolCallHistoryEntry` is `{kind: 'toolCall', callId, status: 'in_progress' | 'completed' |
     'failed', title, toolKind, locations, contentText?, diff?, expanded: boolean}` — `toolKind`
     and `status` are plain strings (mirroring `HostMessage`'s own `kind`/`status` fields), and
     `expanded` is this one chip's own collapsed/expanded state (see below).
-  * `appendPrompt(entries, text)` appends a finished `'prompt'` entry.
+  * `appendPrompt(entries, text)` appends a finished `'prompt'` entry. `appendInteraction(entries,
+    ask, decisionName)` appends an `'interaction'` entry recording an answered `PermissionAskMessage`:
+    the header line (`"Privilege escalation"` when `ask.klorbMeta.escalation` is set, else
+    `"Permission requested: <ask.klorbMeta.headerKind>"`), `ask.klorbMeta.resourceDescription`
+    when present, `ask.klorbMeta.itemCommandText`/`commandText` when present, and `"Decision:
+    <decisionName>"` — the TUI's `_record_interaction_history` equivalent.
   * `applyHostMessage(entries, message, expandAllToolCalls = false)` is the `HostMessage`
     reducer: `agentChunk`/`thoughtChunk` extend the trailing streaming entry of the matching
     kind, or start a new one if the last entry is a different kind (or not currently streaming)
@@ -223,6 +251,10 @@ together for this extension specifically.
     (`klorb.tui.mixins.key_actions.action_toggle_tool_call_detail`), which flips every
     `ToolCallStatic` in the history together. `applyToolCallExpandedToggle(entries, callId)`
     flips just the one named entry (a chip's own chevron), independently of the global mode.
+  * `applyPendingAsk(pendingAsk, message)` is the parallel reducer for `App`'s `pendingAsk`
+    state: a `permissionAsk` message replaces it (the server never sends a concurrent one),
+    `sessionReset` clears it, every other message leaves it unchanged. A resolved decision clears
+    `pendingAsk` through `App`'s own `handleApprovalDecision()`, not through this reducer.
   * `HistoryView` renders a small fixed header (the global "expand all tool calls"
     `<vscode-button>`) above the scrolling `HistoryEntry[]` list: `'prompt'` entries as a
     right-aligned `.bubble` (index-keyed — safe here specifically because entries only ever
@@ -230,12 +262,17 @@ together for this extension specifically.
     docs call out as fine for index keys); `'response'` entries through `react-markdown`;
     `'thinking'` entries as a collapsed-by-default `<details>` disclosure (muted/italic styling,
     matching the TUI's thinking block) that keeps streaming into its body while the reader has
-    it open; `'error'`/`'notice'` entries as plain styled text; `'toolCall'` entries as a
-    `ToolCallChip`.
+    it open; `'error'`/`'notice'`/`'interaction'` entries as plain styled text; `'toolCall'`
+    entries as a `ToolCallChip`.
 * `vscode-plugin/src/webview/components/PromptInput.tsx` renders the `<vscode-textarea>` +
   `<vscode-button>` input row: disabled (and the button replaced by a Stop button) while
-  `inFlight` is true. Its own `onKeyDown` handles Escape (calls `onCancel` when `inFlight`) and
-  Enter, delegating the submit-vs-newline decision to `keyHandling.ts`'s `classifyEnterKey()`.
+  `inFlight` is true, and additionally styled with the `.input-row-muted` CSS class (dimmed
+  opacity) while its `muted` prop is set — `App` passes `muted={pendingAsk !== undefined}`, since
+  a permission ask always arrives mid-turn (`inFlight` is already true), so `muted` layers the
+  TUI's interaction-mode visual treatment on top of the already-disabled input rather than
+  changing whether it's disabled. Its own `onKeyDown` handles Escape (calls `onCancel` when
+  `inFlight`) and Enter, delegating the submit-vs-newline decision to `keyHandling.ts`'s
+  `classifyEnterKey()`.
 * `vscode-plugin/src/webview/keyHandling.ts`'s `classifyEnterKey(shiftKey, ctrlKey)` returns
   `'newline'` if either modifier is held and `'submit'` otherwise. Pulling this one decision out
   as a standalone function is what makes it reachable from
@@ -291,6 +328,92 @@ together for this extension specifically.
     elided view, the same caveat [[klorb-server]] records for the update's own `oldText`/
     `newText`.
 
+### Approval panel
+
+A permission ask (or `EscalatePrivileges` ask, distinguished by `klorbMeta.escalation`) renders
+as an `ApprovalPanel` docked directly above the prompt input — the tall-narrow equivalent of
+the TUI's interaction panel. The `_klorb/raiseToolCallLimit` tool-call-limit ask is a separate,
+host-only native modal, not a webview panel (see below).
+
+* **Host-side plumbing.** `KlorbAcpClient.requestPermission()` (`src/host/features/acp/
+  klorbAcpClient.ts`) flattens the ACP `RequestPermissionRequest` into a `PermissionAskMessage`
+  (`title` from `toolCall.title`, `options` flattened to `{id, name, kind, scope?}` — `scope`
+  from each option's own `_meta.klorb.scope` — and `klorbMeta` copied verbatim from the request's
+  `_meta.klorb`), assigns it the next `requestId`, and posts it through
+  `SessionUpdateListener.postPermissionAsk()`. Calls are served strictly one at a time: while an
+  ask is outstanding (`_askBusy`), a second concurrent `requestPermission()` call queues behind
+  it (`_askQueue`) rather than posting a second ask on top of the first — the first (idle-case)
+  ask posts synchronously, within the call. `resolvePermissionDecision(requestId, decision)`
+  resolves the matching outstanding ask (logging and ignoring a stale/unknown `requestId`) and
+  builds the ACP `RequestPermissionResponse`: a `cancelled` decision maps to
+  `{outcome: {outcome: "cancelled"}}`; a selected decision maps to `{outcome: {outcome:
+  "selected", optionId, _meta: {klorb: {otherText}}}}` when `otherText` is set (the free-text
+  redirect), else without the `_meta`. `repostPendingAsk()` re-posts the currently outstanding
+  ask's message unchanged — called by `KlorbSessionViewProvider.resolveWebviewView()` so an ask
+  from before a webview reload is shown again to the fresh webview instance, since the live
+  `KlorbAcpClient` (and its still-pending ACP request) outlives the reload. `extMethod()` answers
+  `_klorb/raiseToolCallLimit` (params `{sessionId, message}`, see [[klorb-server]]) via the
+  injected `RaiseToolCallLimitFn`, returning `{approved}`; any other ext method throws
+  `RequestError.methodNotFound()`. `AcpConnection.start()` advertises
+  `clientCapabilities._meta.klorb.raiseToolCallLimit = true` at `initialize()` and constructs
+  `KlorbAcpClient` with `extension.ts`'s `raiseToolCallLimitModal()` — a
+  `vscode.window.showWarningMessage(message, {modal: true}, "Continue")` — as the injected
+  function; `AcpConnection`'s `client` getter is what lets `KlorbSessionViewProvider` reach the
+  live `KlorbAcpClient` for both `resolvePermissionDecision()` and `repostPendingAsk()`.
+  `KlorbSessionViewProvider.postPermissionAsk()` posts the `permissionAsk` host message and, if
+  the Klorb view is hidden at that moment (`WebviewView.visible`), also shows a "Klorb needs
+  your approval" notification with a "Show Klorb" action
+  (`vscode.commands.executeCommand('klorb.sessionView.focus')`) so an approval can't sit
+  invisible forever.
+* **Webview `ApprovalPanel`** (`src/webview/components/ApprovalPanel.tsx`) is mounted in `App`'s
+  `#interaction-area` while `pendingAsk` is set (see the `App.tsx`/`historyModel.ts` bullets
+  above). Top to bottom: a header reading `"Permission requested: <klorbMeta.headerKind>"` (or
+  "Privilege escalation" — styled with the error-color accent via `.approval-panel-escalation` —
+  when `klorbMeta.escalation` is set), with `itemIndex`/`itemTotal` rendered as `"<itemIndex + 1>
+  of <itemTotal>"` when present; `klorbMeta.resourceDescription` and (for an escalation ask)
+  `klorbMeta.escalation.description`; for a bash ask, `klorbMeta.itemCommandText` in a monospace
+  block, with a "Show full command" `<details>` disclosure revealing `klorbMeta.commandText`
+  (scrollable, height-capped via `.approval-command-full`) when it differs from
+  `itemCommandText`; `klorbMeta.grantPatterns` (each pattern's argv tokens joined with spaces) as
+  a dim "grants: ..." line; `klorbMeta.riskLevel`, when present, as a bordered `"Risk: <N>/10"`
+  chip (`.approval-risk`, styled with an outline rather than a filled background so it reads as
+  informational rather than another button) colored by a low/medium/high band (`riskBand()`,
+  thresholds at 4 and 7), followed by `klorbMeta.riskRationale` (the classifier's one-sentence
+  explanation), italicized and colored by the same band, when present; the option grid (below);
+  and an "Other…" `<details>` disclosure with a `<vscode-textfield>` + "Send" button that submits
+  the ask's own `reject_once`-kind option's id (falling back to the first option) with
+  `otherText` set to the typed redirect. Escape (bubbling from anywhere in the panel) posts a
+  `{cancelled: true}` decision. All `klorbMeta` field access is defensive (`typeof` guards, no
+  throwing on a missing/malformed field), since `klorbMeta` is untyped pass-through data from the
+  wire.
+* **Option grid.** `groupOptionsByScope()` groups `ask.options` into one row per scope (`once`,
+  `session`, `workspace`, `homedir`, in that order) with an Allow and a Deny cell each
+  (`OptionCell`, one `<vscode-button>` per option present for that cell — `allow_*` kinds
+  primary, everything else secondary — or an empty cell when this ask's options don't cover that
+  scope/action pair, e.g. a `StructuralResource` ask's rows have no workspace/homedir column),
+  rendered as a two-column CSS grid with "Allow"/"Deny" column headers — the same allow/deny-by-
+  scope hierarchy as the TUI's own grid. Falls back to the previous flat wrapping row of buttons
+  (in `ask.options` order, no scope grouping) whenever any option is missing its own `scope` or
+  names a scope token this panel doesn't recognize -- e.g. a non-klorb ACP agent's options.
+* **Message protocol** (`src/shared/webviewMessages.ts`): `PermissionAskMessage` (host → webview)
+  is `{type: 'permissionAsk', requestId: number, title: string, options: PermissionAskOption[],
+  klorbMeta: Record<string, unknown>}`, where `PermissionAskOption` is `{id, name, kind,
+  scope?}`. `PermissionDecisionMessage` (webview → host) is a discriminated union — `{type:
+  'permissionDecision', requestId, cancelled: true}` or `{type: 'permissionDecision', requestId,
+  optionId: string, otherText?: string}` — so a consumer narrows on `'cancelled' in message`
+  rather than checking an optional field's presence. Both are validated by dedicated guards in
+  `parseHostMessage()`/`parseWebviewMessage()`, the same pattern `toolCallStarted`/
+  `toolCallUpdated` already use for nested-object payloads.
+* **Pending-ask persistence.** `App`'s `pendingAsk` state (not local `ApprovalPanel` state) is
+  what `vscode.setState({entries, pendingAsk})` persists, so an unanswered ask survives a
+  webview hide/show — `retainContextWhenHidden` already keeps the React tree alive across an
+  ordinary hide/show, and this state persistence is the backstop for an actual webview reload,
+  paired with the host-side `repostPendingAsk()` re-post described above.
+* **History record.** `historyModel.ts`'s `appendInteraction(entries, ask, decisionName)` (called
+  from `App`'s `handleApprovalDecision()`) appends an `'interaction'`-kind `HistoryEntry` — the
+  TUI's `_record_interaction_history` equivalent — rendered as plain styled text
+  (`.entry-interaction`) in the history scroll once the panel unmounts.
+
 ### Webview message protocol
 
 The webview and the extension host exchange messages shaped by the discriminated unions in
@@ -302,8 +425,9 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
 
 * Webview → host (`WebviewMessage`): `{type: 'submitPrompt', text: string}` (once per submitted
   prompt), `{type: 'cancelTurn'}` (Stop button or Escape while a turn is running),
-  `{type: 'openLocation', path: string, line?: number}` (a tool-call title link), and
-  `{type: 'openDiff', callId: string, path: string}` ("Open diff").
+  `{type: 'openLocation', path: string, line?: number}` (a tool-call title link),
+  `{type: 'openDiff', callId: string, path: string}` ("Open diff"), and
+  `PermissionDecisionMessage` ("Approval panel" above) answering a `permissionAsk`.
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
   string}`, `{type: 'thoughtChunk', text: string}`, `{type: 'turnEnded', stopReason: string}`,
   `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`,
@@ -321,12 +445,12 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   klorb's own server never omits `tool_call`'s `kind`/`locations` or `tool_call_update`'s
   `status` (see [[klorb-server]]'s tool-call update mapping section), but the flattening
   defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
-  agent does.
+  agent does, and `PermissionAskMessage` ("Approval panel" above).
 * `parseHostMessage()`/`parseWebviewMessage()` are the type guards each side runs on every
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
-  and `MessageEvent.data` (webview side) are untyped `unknown`. The four richer message types
-  above (nested arrays/objects) are validated by dedicated guard functions; every other message
-  type still goes through the original `FieldSpec`-driven `parseMessage()` (one required string
+  and `MessageEvent.data` (webview side) are untyped `unknown`. The richer message types above
+  (nested arrays/objects) are validated by dedicated guard functions; every other message type
+  still goes through the original `FieldSpec`-driven `parseMessage()` (one required string
   field, or none).
 
 ### Build: two esbuild bundles, two typecheck-only tsconfigs
@@ -420,10 +544,13 @@ either `esbuild` bundle, so it imports source modules directly rather than the b
 
 ### Component library
 
-The webview's interactive controls (`<vscode-textarea>`, `<vscode-button>`, and later
-increments' option grids, selects, and collapsibles) are `@vscode-elements/elements` custom
-elements, rendered directly from React 19 JSX with no wrapper package — React 19 passes JSX
-props straight through to custom elements' properties/attributes. Their TypeScript JSX typings
+The webview's interactive controls (`<vscode-textarea>`, `<vscode-button>`, `<vscode-icon>`,
+`<vscode-progress-ring>`, `<vscode-badge>`, `<vscode-textfield>`, and later increments' selects)
+are `@vscode-elements/elements` custom elements, rendered directly from React 19 JSX with no
+wrapper package — React 19 passes JSX props straight through to custom elements'
+properties/attributes; `<details>`/`<summary>` (plain HTML, not a vscode-elements component) is
+the disclosure used for the thinking block, the approval panel's "Show full command", and its
+"Other…" redirect. Their TypeScript JSX typings
 live in `vscode-plugin/types/global.d.ts`, vendored from the vscode-elements examples repo's
 own `global.d.ts` (declaring the `react`-module `JSX.IntrinsicElements` additions for every
 element the library ships) rather than hand-written per element as they're adopted. See
@@ -538,14 +665,20 @@ of two.
    detail text, for a non-edit call); click "Open diff" to see the change in a real editor diff
    view; click a read call's title to jump to that file/line. Click "Expand all tool calls" in
    the history header to flip every chip at once, mirroring the TUI's Ctrl+O.
+6. With a session's `permission_framework` at its `"ask"` default, run a prompt that uses `Bash`.
+   The `ApprovalPanel` appears above the input; approve with "Allow for this session" and watch
+   the command run and a compact "Decision: Allow for this session" record land in the history.
+   Try Escape (denies once) and "Other…" (redirects with free text) on a later ask in the same
+   session. Set `--max-tool-calls-per-turn 1` in a test config (see [[klorb-server]]'s
+   `session-and-turns.md` reference) and trigger a second tool call in one turn to see the
+   `_klorb/raiseToolCallLimit` native modal; "Continue" doubles the cap and lets the call proceed.
+   Hide the auxiliary bar before triggering an ask to see the "Klorb needs your approval"
+   notification, and click "Show Klorb" to bring the panel back into view.
 
 ## Out of scope
 
-* No permission approval UI, `AskUserQuestions` panel, task panel, or model/thinking/
-  permission-mode controls yet — every permission ask is auto-rejected by
-  `KlorbAcpClient.requestPermission()`, since [[klorb-server]] itself fails every `"ask"`
-  permission verdict closed at this checkpoint anyway (no `on_permission_ask` callback wired
-  server-side until `plan-016-005`). These land across `plan-016-005` through `plan-016-011`.
+* No `AskUserQuestions` panel, task panel, or model/thinking/permission-mode controls yet — these
+  land across `plan-016-007` through `plan-016-011`.
 * No mid-turn message queueing — a second `submitPrompt` while a turn is in flight is rejected
   by `AcpConnection.prompt()` (mirroring [[klorb-server]]'s own one-prompt-at-a-time rule), not
   queued client-side. Lands in `plan-016-012`.

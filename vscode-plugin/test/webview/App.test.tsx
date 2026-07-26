@@ -189,6 +189,51 @@ describe('App', () => {
     expect(posted).toContainEqual({ type: 'openLocation', path: '/tmp/foo.py', line: 3 });
   });
 
+  it('restores a pending ask from initialPendingAsk (the vscode.setState round-trip)', () => {
+    const { vscode } = makeVsCode();
+    render(
+      <App
+        vscode={vscode}
+        initialEntries={[]}
+        initialPendingAsk={{
+          type: 'permissionAsk',
+          requestId: 7,
+          title: 'Run: ls',
+          options: [{ id: 'allow:once', name: 'Allow once', kind: 'allow_once' }],
+          klorbMeta: { resourceDescription: 'run shell command: ls', headerKind: 'Run command' },
+        }}
+      />
+    );
+
+    expect(screen.getByText('Permission requested: Run command')).toBeTruthy();
+    expect(screen.getByText('run shell command: ls')).toBeTruthy();
+  });
+
+  it('mounts the ApprovalPanel on a permissionAsk and posts the decision on a click', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'permissionAsk',
+      requestId: 1,
+      title: 'Run: ls',
+      options: [{ id: 'allow:once', name: 'Allow once', kind: 'allow_once' }],
+      klorbMeta: { resourceDescription: 'run shell command: ls', headerKind: 'Run command' },
+    });
+
+    expect(screen.getByText('Permission requested: Run command')).toBeTruthy();
+    fireEvent.click(screen.getByText('Allow once'));
+
+    expect(posted).toContainEqual({
+      type: 'permissionDecision',
+      requestId: 1,
+      optionId: 'allow:once',
+      otherText: undefined,
+    });
+    expect(screen.queryByText('Permission requested: Run command')).toBeNull();
+    expect(screen.getByText(/Decision: Allow once/)).toBeTruthy();
+  });
+
   it('clears the history on sessionReset', () => {
     const { vscode } = makeVsCode();
     render(

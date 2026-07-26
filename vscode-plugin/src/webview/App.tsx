@@ -1,14 +1,17 @@
 // © Copyright 2026 Aaron Kimball
 import { type JSX, useEffect, useRef, useState } from 'react';
 
-import { parseHostMessage } from 'shared/webviewMessages';
+import { parseHostMessage, type PermissionAskMessage } from 'shared/webviewMessages';
+import ApprovalPanel, { type ApprovalDecision } from 'webview/components/ApprovalPanel';
 import PromptInput from 'webview/components/PromptInput';
 import VsCodeApiProvider, { type VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import {
   HistoryView,
+  appendInteraction,
   appendPrompt,
   applyExpandAllToolCalls,
   applyHostMessage,
+  applyPendingAsk,
   applyToolCallExpandedToggle,
   applyTurnFlag,
   type HistoryEntry,
@@ -17,26 +20,29 @@ import {
 interface AppProps {
   vscode: VsCodeApi;
   initialEntries: HistoryEntry[];
+  initialPendingAsk?: PermissionAskMessage;
 }
 
 /**
- * The panel's layout shell, top to bottom: the history scroll, a placeholder interaction
- * area (approval/question panels mount there in later increments), the prompt input row,
- * and a placeholder status row. All history/turn state lives here; the pure transition
- * logic is in `webview/features/history`'s `historyModel.ts`. Wraps its content in
- * `<VsCodeApiProvider>` so any descendant can reach the `vscode` object via `useVsCodeApi()`
- * instead of it being threaded through as an explicit prop down every intermediate component.
+ * The panel's layout shell, top to bottom: the history scroll, an interaction area (mounts
+ * `ApprovalPanel` while a permission ask is outstanding; a question panel mounts there in a
+ * later increment), the prompt input row, and a placeholder status row. All history/turn/
+ * pending-ask state lives here; the pure transition logic is in `webview/features/history`'s
+ * `historyModel.ts`. Wraps its content in `<VsCodeApiProvider>` so any descendant can reach the
+ * `vscode` object via `useVsCodeApi()` instead of it being threaded through as an explicit prop
+ * down every intermediate component.
  */
-export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
+export default function App({ vscode, initialEntries, initialPendingAsk }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
   const [expandAllToolCalls, setExpandAllToolCalls] = useState(false);
+  const [pendingAsk, setPendingAsk] = useState<PermissionAskMessage | undefined>(initialPendingAsk);
   const historyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    vscode.setState({ entries });
+    vscode.setState({ entries, pendingAsk });
     historyRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
-  }, [entries, vscode]);
+  }, [entries, pendingAsk, vscode]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent<unknown>): void {
@@ -46,6 +52,7 @@ export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
       }
       setEntries((prev) => applyHostMessage(prev, message, expandAllToolCalls));
       setInFlight((prev) => applyTurnFlag(prev, message));
+      setPendingAsk((prev) => applyPendingAsk(prev, message));
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -74,6 +81,29 @@ export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
     setEntries((prev) => applyToolCallExpandedToggle(prev, callId));
   }
 
+  function handleApprovalDecision(decision: ApprovalDecision): void {
+    if (pendingAsk === undefined) {
+      return;
+    }
+    const decisionName =
+      'cancelled' in decision
+        ? 'Deny'
+        : (pendingAsk.options.find((option) => option.id === decision.optionId)?.name ??
+          decision.optionId);
+    setEntries((prev) => appendInteraction(prev, pendingAsk, decisionName));
+    setPendingAsk(undefined);
+    vscode.postMessage(
+      'cancelled' in decision
+        ? { type: 'permissionDecision', requestId: pendingAsk.requestId, cancelled: true }
+        : {
+            type: 'permissionDecision',
+            requestId: pendingAsk.requestId,
+            optionId: decision.optionId,
+            otherText: decision.otherText,
+          }
+    );
+  }
+
   return (
     <VsCodeApiProvider vscode={vscode}>
       <div className="title">Klorb session</div>
@@ -84,8 +114,17 @@ export default function App({ vscode, initialEntries }: AppProps): JSX.Element {
         onToggleExpandAllToolCalls={toggleExpandAllToolCalls}
         onToggleToolCallExpanded={toggleToolCallExpanded}
       />
-      <div id="interaction-area"></div>
-      <PromptInput inFlight={inFlight} onSubmit={submit} onCancel={cancel} />
+      <div id="interaction-area">
+        {pendingAsk !== undefined ? (
+          <ApprovalPanel ask={pendingAsk} onDecision={handleApprovalDecision} />
+        ) : null}
+      </div>
+      <PromptInput
+        inFlight={inFlight}
+        muted={pendingAsk !== undefined}
+        onSubmit={submit}
+        onCancel={cancel}
+      />
       <div id="status-row"></div>
     </VsCodeApiProvider>
   );

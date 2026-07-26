@@ -1,6 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import type {
   CreateTerminalResponse,
+  PermissionOption,
   ReadTextFileResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -15,6 +16,8 @@ import type {
 import type {
   DiffHunk,
   DiffHunkLine,
+  PermissionAskMessage,
+  PermissionAskOption,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
@@ -36,7 +39,22 @@ export interface SessionUpdateListener {
   onToolCallStarted(message: ToolCallStartedMessage): void;
   /** A tool call finished or otherwise changed (`tool_call_update`). */
   onToolCallUpdated(message: ToolCallUpdatedMessage): void;
+  /** Posts a permission ask to the webview, or re-posts an already-outstanding one after a
+   * webview reload (see `KlorbAcpClient.repostPendingAsk()`). Fire-and-forget: the eventual
+   * decision arrives back through `KlorbAcpClient.resolvePermissionDecision()`, not this call's
+   * return value. */
+  postPermissionAsk(message: PermissionAskMessage): void;
 }
+
+/** The user's decision on a permission ask, normalized from a `permissionDecision` webview
+ * message into the shape `KlorbAcpClient` needs to build the ACP response (see
+ * docs/specs/klorb-server.md's decision-mapping section). */
+export type PermissionDecisionResult =
+  { cancelled: true } | { optionId: string; otherText?: string };
+
+/** Answers the `_klorb/raiseToolCallLimit` ext method's modal prompt; `true` doubles the
+ * reached tool-call cap and lets the call proceed, mirroring the TUI's own confirmation. */
+export type RaiseToolCallLimitFn = (message: string) => Promise<boolean>;
 
 function toLocationMessage(location: AcpToolCallLocation): ToolCallLocation {
   return location.line != null
@@ -166,6 +184,56 @@ function toolCallUpdatedMessage(update: ToolCallUpdate): ToolCallUpdatedMessage 
   return message;
 }
 
+/** Extracts an ACP `_meta.klorb` payload, or `{}` if absent -- every klorb-specific field
+ * (`resourceDescription`, `commandText`, `escalation`, an option's own `scope`, ...) rides
+ * under this one namespaced key (see docs/specs/klorb-server.md's extensibility rules). */
+function klorbMetaOf(meta: { [key: string]: unknown } | null | undefined): Record<string, unknown> {
+  if (meta == null || typeof meta.klorb !== 'object' || meta.klorb === null) {
+    return {};
+  }
+  return meta.klorb as Record<string, unknown>;
+}
+
+function toPermissionAskOption(option: PermissionOption): PermissionAskOption {
+  const scope = klorbMetaOf(option._meta).scope;
+  return {
+    id: option.optionId,
+    name: option.name,
+    kind: option.kind,
+    ...(typeof scope === 'string' ? { scope } : {}),
+  };
+}
+
+function permissionAskMessage(
+  params: RequestPermissionRequest,
+  requestId: number
+): PermissionAskMessage {
+  return {
+    type: 'permissionAsk',
+    requestId,
+    title: params.toolCall.title ?? '',
+    options: params.options.map(toPermissionAskOption),
+    klorbMeta: klorbMetaOf(params._meta),
+  };
+}
+
+function permissionResponseFromDecision(
+  decision: PermissionDecisionResult
+): RequestPermissionResponse {
+  if ('cancelled' in decision) {
+    return { outcome: { outcome: 'cancelled' } };
+  }
+  return {
+    outcome: {
+      outcome: 'selected',
+      optionId: decision.optionId,
+      ...(decision.otherText !== undefined
+        ? { _meta: { klorb: { otherText: decision.otherText } } }
+        : {}),
+    },
+  };
+}
+
 /** Logs a diagnostic line; injectable so tests can capture what would hit the console. */
 export type LogFn = (message: string) => void;
 
@@ -173,26 +241,37 @@ export type LogFn = (message: string) => void;
  * The klorb VS Code extension's implementation of the ACP SDK's `Client` interface: the
  * handler for requests and notifications the `klorb server` agent sends back over the
  * connection. Constructed fresh by each `AcpConnection.start()` alongside the SDK connection
- * it serves. This checkpoint dispatches `agent_message_chunk`/`agent_thought_chunk` session
- * updates to the listener as streamed text, and `tool_call`/`tool_call_update` updates as
- * flattened `ToolCallStarted`/`ToolCallUpdated` messages (see `toolCallStartedMessage`/
- * `toolCallUpdatedMessage`); it answers every permission ask with the first reject option, and
- * the fs/terminal methods fail with JSON-RPC method-not-found since the client never advertises
- * those capabilities.
+ * it serves. Dispatches `agent_message_chunk`/`agent_thought_chunk` session updates to the
+ * listener as streamed text, and `tool_call`/`tool_call_update` updates as flattened
+ * `ToolCallStarted`/`ToolCallUpdated` messages (see `toolCallStartedMessage`/
+ * `toolCallUpdatedMessage`); `requestPermission()` posts a `permissionAsk` through the listener
+ * and awaits the matching decision (see `_ask`/`resolvePermissionDecision`), and `extMethod()`
+ * answers `_klorb/raiseToolCallLimit` via the injected `RaiseToolCallLimitFn`. The fs/terminal
+ * methods fail with JSON-RPC method-not-found since the client never advertises those
+ * capabilities.
  */
 export class KlorbAcpClient {
   private readonly _listener: SessionUpdateListener;
   private readonly _requestError: RequestErrorClass;
   private readonly _log: LogFn;
+  private readonly _raiseToolCallLimit: RaiseToolCallLimitFn;
+  private _nextAskRequestId = 1;
+  private _askBusy = false;
+  private _askQueue: Array<() => void> = [];
+  private _pendingAsk:
+    | { message: PermissionAskMessage; resolve: (decision: PermissionDecisionResult) => void }
+    | undefined;
 
   public constructor(
     listener: SessionUpdateListener,
     requestError: RequestErrorClass,
-    log: LogFn = (message: string) => console.warn(message)
+    log: LogFn = (message: string) => console.warn(message),
+    raiseToolCallLimit: RaiseToolCallLimitFn = () => Promise.resolve(false)
   ) {
     this._listener = listener;
     this._requestError = requestError;
     this._log = log;
+    this._raiseToolCallLimit = raiseToolCallLimit;
   }
 
   public async sessionUpdate(params: SessionNotification): Promise<void> {
@@ -225,26 +304,74 @@ export class KlorbAcpClient {
   }
 
   /**
-   * Auto-answers with the first reject option (or a cancelled outcome if the server offered
-   * no options), logging what was declined. TODO(aaron): replace with the interactive
-   * approval panel when the plan-016-006 increment builds it.
+   * Posts a permission ask (or `EscalatePrivileges` ask, distinguished by
+   * `klorbMeta.escalation` -- see docs/specs/klorb-server.md) to the webview via the listener
+   * and resolves once a matching `permissionDecision` arrives through
+   * `resolvePermissionDecision()`. Calls are served strictly one at a time: a second concurrent
+   * ask queues behind the first (via `_askBusy`/`_askQueue`) rather than posting a second
+   * `ApprovalPanel` on top of the first, even though the server itself only ever asks one at a
+   * time in practice. The first (non-concurrent) ask posts synchronously, within this call.
    */
-  public async requestPermission(
-    params: RequestPermissionRequest
-  ): Promise<RequestPermissionResponse> {
-    const rejectOption =
-      params.options.find((option) => option.kind === 'reject_once') ??
-      params.options.find((option) => option.kind === 'reject_always') ??
-      params.options[0];
-    if (rejectOption === undefined) {
-      this._log('klorb: permission ask arrived with no options; answering cancelled');
-      return { outcome: { outcome: 'cancelled' } };
+  public requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    return new Promise<RequestPermissionResponse>((resolve) => {
+      const run = (): void => {
+        void this._ask(params).then((decision) => {
+          this._askBusy = false;
+          resolve(permissionResponseFromDecision(decision));
+          this._askQueue.shift()?.();
+        });
+      };
+      if (this._askBusy) {
+        this._askQueue.push(run);
+      } else {
+        this._askBusy = true;
+        run();
+      }
+    });
+  }
+
+  private _ask(params: RequestPermissionRequest): Promise<PermissionDecisionResult> {
+    const requestId = this._nextAskRequestId++;
+    const message = permissionAskMessage(params, requestId);
+    return new Promise<PermissionDecisionResult>((resolve) => {
+      this._pendingAsk = { message, resolve };
+      this._listener.postPermissionAsk(message);
+    });
+  }
+
+  /** Resolves the outstanding ask named `requestId`, if any -- called when the webview posts
+   * back a `permissionDecision`. A decision naming a stale/unknown `requestId` (e.g. a
+   * duplicate post after a reload race) is logged and ignored rather than resolving the wrong
+   * ask. */
+  public resolvePermissionDecision(requestId: number, decision: PermissionDecisionResult): void {
+    if (this._pendingAsk === undefined || this._pendingAsk.message.requestId !== requestId) {
+      this._log(`klorb: ignoring permission decision for unknown request ${requestId}`);
+      return;
     }
-    this._log(
-      `klorb: auto-rejecting permission ask "${params.toolCall.title ?? ''}" ` +
-        `with option "${rejectOption.name}" (interactive approvals not implemented yet)`
-    );
-    return { outcome: { outcome: 'selected', optionId: rejectOption.optionId } };
+    const { resolve } = this._pendingAsk;
+    this._pendingAsk = undefined;
+    resolve(decision);
+  }
+
+  /** Re-posts the currently outstanding ask, if any, to the webview -- called when the webview
+   * is recreated (e.g. after a reload) while an ask from before the reload is still awaiting an
+   * answer, so the fresh webview instance can render it instead of leaving it stuck invisible. */
+  public repostPendingAsk(): void {
+    if (this._pendingAsk !== undefined) {
+      this._listener.postPermissionAsk(this._pendingAsk.message);
+    }
+  }
+
+  public async extMethod(
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    if (method === '_klorb/raiseToolCallLimit') {
+      const message = typeof params.message === 'string' ? params.message : '';
+      const approved = await this._raiseToolCallLimit(message);
+      return { approved };
+    }
+    throw this._requestError.methodNotFound(method);
   }
 
   public readTextFile(): Promise<ReadTextFileResponse> {

@@ -1,10 +1,13 @@
 // © Copyright 2026 Aaron Kimball
 import { describe, expect, it } from 'vitest';
 
+import type { PermissionAskMessage } from 'shared/webviewMessages';
 import {
+  appendInteraction,
   appendPrompt,
   applyExpandAllToolCalls,
   applyHostMessage,
+  applyPendingAsk,
   applyToolCallExpandedToggle,
   applyTurnFlag,
   type HistoryEntry,
@@ -254,6 +257,66 @@ describe('applyToolCallExpandedToggle', () => {
 
     expect((entries[0] as ToolCallHistoryEntry).expanded).toBe(false);
     expect((entries[1] as ToolCallHistoryEntry).expanded).toBe(true);
+  });
+});
+
+describe('appendInteraction', () => {
+  const ask: PermissionAskMessage = {
+    type: 'permissionAsk',
+    requestId: 1,
+    title: 'Run: ls',
+    options: [{ id: 'allow:once', name: 'Allow once', kind: 'allow_once' }],
+    klorbMeta: {
+      resourceDescription: 'run shell command: ls',
+      itemCommandText: 'ls',
+      headerKind: 'Run command',
+    },
+  };
+
+  it('appends a compact record with the header, description, command, and decision', () => {
+    const entries = appendInteraction([], ask, 'Allow once');
+    expect(entries).toEqual([
+      {
+        kind: 'interaction',
+        text: 'Permission requested: Run command\nrun shell command: ls\nls\nDecision: Allow once',
+        streaming: false,
+      },
+    ]);
+  });
+
+  it('uses the "Privilege escalation" header when klorbMeta.escalation is set', () => {
+    const escalationAsk: PermissionAskMessage = {
+      ...ask,
+      klorbMeta: { escalation: { description: 'Escalate to homedir scope' } },
+    };
+    const entries = appendInteraction([], escalationAsk, 'Deny');
+    expect(entries).toEqual([
+      {
+        kind: 'interaction',
+        text: 'Privilege escalation\nDecision: Deny',
+        streaming: false,
+      },
+    ]);
+  });
+});
+
+describe('applyPendingAsk', () => {
+  const ask: PermissionAskMessage = {
+    type: 'permissionAsk',
+    requestId: 1,
+    title: 'Run: ls',
+    options: [],
+    klorbMeta: {},
+  };
+
+  it('sets the pending ask on permissionAsk and clears it on sessionReset', () => {
+    expect(applyPendingAsk(undefined, ask)).toEqual(ask);
+    expect(applyPendingAsk(ask, { type: 'sessionReset' })).toBeUndefined();
+  });
+
+  it('leaves the pending ask alone for unrelated messages', () => {
+    expect(applyPendingAsk(ask, { type: 'agentChunk', text: 'x' })).toEqual(ask);
+    expect(applyPendingAsk(undefined, { type: 'turnStarted' })).toBeUndefined();
   });
 });
 

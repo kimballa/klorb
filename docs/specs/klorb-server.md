@@ -235,7 +235,7 @@ short-circuits before ever calling back, exactly as it does for the TUI.
   synthesized id titled `fallback_title` (the ask's own `resource_description`/`description`)
   when the stack is empty.
 * **Permission-ask options** (`klorb.server.update_mapping.permission_ask_options`, pure —
-  built from `PermissionAskContext.resource` alone): up to five fixed options, id encoding
+  built from `PermissionAskContext.resource` alone): up to eight fixed options, id encoding
   `<action>:<scope>` —
 
   | `optionId` | `kind` | Name | Always offered? |
@@ -243,33 +243,41 @@ short-circuits before ever calling back, exactly as it does for the TUI.
   | `allow:once` | `allow_once` | "Allow once" | yes |
   | `deny:once` | `reject_once` | "Deny" | yes |
   | `allow:session` | `allow_always` | "Allow for this session" | yes |
+  | `deny:session` | `reject_always` | "Deny for this session" | yes |
   | `allow:workspace` | `allow_always` | "Always allow (workspace)" | only if `resource.is_persistable` |
   | `allow:homedir` | `allow_always` | "Always allow (home config)" | only if `resource.is_persistable` |
+  | `deny:workspace` | `reject_always` | "Always deny (workspace)" | only if `resource.is_persistable` |
+  | `deny:homedir` | `reject_always` | "Always deny (home config)" | only if `resource.is_persistable` |
 
   A `StructuralResource` item (`resource.is_persistable` is `False` — see
-  docs/specs/permissions.md) offers only the first three: it names no filesystem path, command
-  pattern, skill, or domain a workspace/homedir grant could be recorded against. This is a
-  narrower surface than the TUI's own 2D grid (no persistent-scope `Deny`, no free-text "Other"
-  row as a selectable option) — a client wanting the free-text redirect instead sets
-  `_meta.klorb.otherText` on its response (below), and persistent-scope denial isn't offered at
-  this checkpoint. Every option's own `_meta.klorb.scope` carries its `optionId`'s scope token,
-  so a client can style/group options without parsing ids itself.
+  docs/specs/permissions.md) offers only the always-on four: it names no filesystem path, command
+  pattern, skill, or domain a workspace/homedir grant could be recorded against. This mirrors the
+  TUI's own 2D grid one-for-one on the allow/deny axis (the only remaining gap is the TUI's
+  free-text "Other" row, which isn't a selectable `PermissionOption` here — a client wanting that
+  redirect instead sets `_meta.klorb.otherText` on its response, below). Every option's own
+  `_meta.klorb.scope` carries its `optionId`'s scope token, so a client can style/group options
+  (e.g. an allow/deny-by-scope grid) without parsing ids itself.
 * **Escalation options** (`klorb.server.update_mapping.escalate_privileges_options`, fixed,
   no per-context data): exactly `allow:once` (`allow_once`, "Approve for this session") and
   `deny:once` (`reject_once`, "Deny") — an `EscalatePrivileges` grant is always session-scoped
   and revokes when the session ends, so there is no persistent-scope option to offer at all.
 * **`_meta.klorb` on a permission-ask request**
-  (`klorb.server.update_mapping.permission_ask_meta`): always `resourceDescription`. For a
-  `BashTool` ask (`PermissionAskContext.bash_context` set): `commandText` (the full compound
-  command), `itemCommandText` (this item's own statement — see
+  (`klorb.server.update_mapping.permission_ask_meta`): always `resourceDescription` and
+  `headerKind` — the same "Run command"/`resource.header_kind()` short noun phrase
+  `PermissionAskPanel.header_text()` uses for its own `"Permission requested: <kind>"` header, so
+  a client can render an equivalent header without reimplementing `header_kind()`'s per-resource
+  dispatch itself. For a `BashTool` ask (`PermissionAskContext.bash_context` set): `commandText`
+  (the full compound command), `itemCommandText` (this item's own statement — see
   docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md),
   `itemIndex`/`itemTotal` (0-based, this item's position within its `sibling_items` batch —
   mirroring `AskUserQuestionsItemContext.index`/`.total`'s own convention), `grantPatterns`
   (`list[list[str]]`, the `commandRules` pattern a persistent grant would cover — the risk
   classifier's own `suggested_pattern` when it offered one, else the same deterministic
   literal-argv patterns `CommandResource.grant_preview()` computes; omitted entirely for a
-  non-`CommandResource` bash item, e.g. a redirect or structural item), and `riskLevel` (the
-  classifier's 0–10 `risk_score`, omitted when classification didn't run or failed).
+  non-`CommandResource` bash item, e.g. a redirect or structural item), `riskLevel` (the
+  classifier's 0–10 `risk_score`, omitted when classification didn't run or failed), and
+  `riskRationale` (the classifier's one-sentence plain-English explanation for that score,
+  `ItemRiskAssessment.rationale`, present exactly when `riskLevel` is).
 * **`_meta.klorb` on an escalation request**
   (`klorb.server.update_mapping.escalate_privileges_meta`): `escalation.scope`/
   `escalation.description`, so the client can render this as its own distinct flow (e.g. a
@@ -385,10 +393,9 @@ e.g. with `allow:session`, to let the command run:
   specially — the klorb VS Code plugin's own approval panels (option grid, command preview,
   free-text "other", escalation styling) land in `plan-016-006`; this checkpoint only emits the
   `session/request_permission` request itself (see "Permission asks and escalation" above).
-* No persistent-scope `Deny` option, and no free-text "Other" row as a selectable
-  `PermissionOption` — a client wants the free-text redirect via `_meta.klorb.otherText` on its
-  response instead (see "Permission asks and escalation" above); a genuinely first-class
-  persistent-deny option may be revisited if a real client needs one.
+* No free-text "Other" row as a selectable `PermissionOption` — a client wants the free-text
+  redirect via `_meta.klorb.otherText` on its response instead (see "Permission asks and
+  escalation" above).
 * `AskUserQuestions` calls still fail closed: no `on_ask_user_questions` callback is wired
   through `TurnBridge` yet. Lands in `plan-016-007` (`_klorb/askUserQuestions`).
 * No session modes (`session/set_mode`), model/thinking config options, session naming/

@@ -254,20 +254,20 @@ and is erased outright in 001, with no compatibility shim; the stub plugin's gre
 is replaced in 002 — between those two checkpoints the plugin still builds and runs, but its
 send button surfaces a protocol error in the panel until 002 lands.
 
-| Increment | Side | Delivers |
-| --- | --- | --- |
-| [plan-016-001-python-acp-server-core](plan-016-001-python-acp-server-core.md) | server | `AcpServer` replaces `JsonlServer`: initialize / new-session / prompt with streamed response+thinking, cancel; stream-pair abstraction; CLI rewire |
-| [plan-016-002-vscode-acp-client-foundation](plan-016-002-vscode-acp-client-foundation.md) | client | ACP SDK + vscode-elements + React 19 foundation; streaming chat replaces greet; mock-agent test harness |
-| [plan-016-003-python-tool-call-updates](plan-016-003-python-tool-call-updates.md) | server | `tool_call`/`tool_call_update` session updates: kinds, locations, diff content, failure states |
-| [plan-016-004-vscode-tool-call-rendering](plan-016-004-vscode-tool-call-rendering.md) | client | Tool-call chips with running animation, expandable detail, open-file / open-diff editor integration |
-| [plan-016-005-python-permission-asks](plan-016-005-python-permission-asks.md) | server | `session/request_permission` with the allow/deny × scope option grid, bash multi-item asks, risk-classifier grants, `EscalatePrivileges`, `_klorb/raiseToolCallLimit` |
-| [plan-016-006-vscode-approval-panels](plan-016-006-vscode-approval-panels.md) | client | Approval panel above the input: option grid, command preview + expand, free-text "other", escalation + limit prompts |
-| [plan-016-007-ask-user-questions-end-to-end](plan-016-007-ask-user-questions-end-to-end.md) | both | `_klorb/askUserQuestions` ext method and the questions panel |
-| [plan-016-008-python-session-controls](plan-016-008-python-session-controls.md) | server | Session modes (permission framework), model/thinking config options, session naming + token-usage updates, `_klorb/sessionStats`, workspace trust, skills reload |
-| [plan-016-009-vscode-session-controls](plan-016-009-vscode-session-controls.md) | client | Status row, model/thinking pickers, permission-mode badge, new-session command, stats display, trust bridging |
-| [plan-016-010-python-task-plan-updates](plan-016-010-python-task-plan-updates.md) | server | Chainlink → ACP `plan` session updates with `_meta.klorb` issue detail |
-| [plan-016-011-vscode-task-panel](plan-016-011-vscode-task-panel.md) | client | Collapsible top-docked task panel rendering plan updates |
-| [plan-016-012-queued-messages-and-interrupt-polish](plan-016-012-queued-messages-and-interrupt-polish.md) | both | `_klorb/enqueueMessage` mid-turn queueing, queued-message rendering, abort/interrupt polish, error surfaces |
+| # | Increment | Side | Delivers |
+| --- | --- | --- | --- |
+| 1 | [plan-016-001-python-acp-server-core](../archive/plan-016-001-python-acp-server-core.md) | server | `AcpServer` replaces `JsonlServer`: initialize / new-session / prompt with streamed response+thinking, cancel; stream-pair abstraction; CLI rewire |
+| 2 | [plan-016-002-vscode-acp-client-foundation](../archive/plan-016-002-vscode-acp-client-foundation.md) | client | ACP SDK + vscode-elements + React 19 foundation; streaming chat replaces greet; mock-agent test harness |
+| 3 | [plan-016-003-python-tool-call-updates](../archive/plan-016-003-python-tool-call-updates.md) | server | `tool_call`/`tool_call_update` session updates: kinds, locations, diff content, failure states |
+| 4 | [plan-016-004-vscode-tool-call-rendering](../archive/plan-016-004-vscode-tool-call-rendering.md) | client | Tool-call chips with running animation, expandable detail, open-file / open-diff editor integration |
+| 5 | [plan-016-005-python-permission-asks](../archive/plan-016-005-python-permission-asks.md) | server | `session/request_permission` with the allow/deny × scope option grid, bash multi-item asks, risk-classifier grants, `EscalatePrivileges`, `_klorb/raiseToolCallLimit` |
+| 6 | [plan-016-006-vscode-approval-panels](../archive/plan-016-006-vscode-approval-panels.md) | client | Approval panel above the input: option grid, command preview + expand, free-text "other", escalation + limit prompts |
+| 7 | [plan-016-007-ask-user-questions-end-to-end](plan-016-007-ask-user-questions-end-to-end.md) | both | `_klorb/askUserQuestions` ext method and the questions panel |
+| 8 | [plan-016-008-python-session-controls](plan-016-008-python-session-controls.md) | server | Session modes (permission framework), model/thinking config options, session naming + token-usage updates, `_klorb/sessionStats`, workspace trust, skills reload |
+| 9 | [plan-016-009-vscode-session-controls](plan-016-009-vscode-session-controls.md) | client | Status row, model/thinking pickers, permission-mode badge, new-session command, stats display, trust bridging |
+| 10 | [plan-016-010-python-task-plan-updates](plan-016-010-python-task-plan-updates.md) | server | Chainlink → ACP `plan` session updates with `_meta.klorb` issue detail |
+| 11 | [plan-016-011-vscode-task-panel](plan-016-011-vscode-task-panel.md) | client | Collapsible top-docked task panel rendering plan updates |
+| 12 | [plan-016-012-queued-messages-and-interrupt-polish](plan-016-012-queued-messages-and-interrupt-polish.md) | both | `_klorb/enqueueMessage` mid-turn queueing, queued-message rendering, abort/interrupt polish, error surfaces |
 
 Every increment also: updates the relevant spec(s) (`docs/specs/klorb-server.md`,
 `docs/specs/vscode-plugin.md` — current-state documents, rewritten as the feature lands, per
@@ -345,7 +345,7 @@ section is your operating procedure. Follow it step by step.
     and report the outcome honestly, including anything that didn't work.
  4. When the increment is complete and merged, `git mv` its plan document to
     `docs/plans/archive/`. The overview document stays in place until the final increment
-    (012) archives it too.
+    (012) archives it too. Update the link to the increment md file in the `Increments` table.
 
 ## Decisions taken (flagging for review)
 

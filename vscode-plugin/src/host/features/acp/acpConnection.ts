@@ -6,7 +6,12 @@ import type { ClientSideConnection, InitializeResponse } from '@agentclientproto
 
 import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerProcess';
 
-import { KlorbAcpClient, type LogFn, type SessionUpdateListener } from './klorbAcpClient';
+import {
+  KlorbAcpClient,
+  type LogFn,
+  type RaiseToolCallLimitFn,
+  type SessionUpdateListener,
+} from './klorbAcpClient';
 
 /** How long `start()` waits for the `initialize` reply before concluding the spawned binary
  * doesn't speak ACP at all (e.g. an older klorb that ignores the request without answering). */
@@ -41,7 +46,9 @@ export class AcpConnection {
   private readonly _listener: SessionUpdateListener;
   private readonly _log: LogFn;
   private readonly _initializeTimeoutMs: number;
+  private readonly _raiseToolCallLimit: RaiseToolCallLimitFn;
   private _connection: ClientSideConnection | undefined;
+  private _client: KlorbAcpClient | undefined;
   private _sessionId: string | undefined;
   private _inflightReject: ((err: Error) => void) | undefined;
 
@@ -49,12 +56,14 @@ export class AcpConnection {
     serverProcess: KlorbServerProcess,
     listener: SessionUpdateListener,
     log: LogFn = (message: string) => console.log(message),
-    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS
+    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS,
+    raiseToolCallLimit: RaiseToolCallLimitFn = () => Promise.resolve(false)
   ) {
     this._serverProcess = serverProcess;
     this._listener = listener;
     this._log = log;
     this._initializeTimeoutMs = initializeTimeoutMs;
+    this._raiseToolCallLimit = raiseToolCallLimit;
   }
 
   /** True once the handshake completed and a live session id is held. */
@@ -64,6 +73,14 @@ export class AcpConnection {
 
   public get sessionId(): string | undefined {
     return this._sessionId;
+  }
+
+  /** The live `KlorbAcpClient` handling requests from the current connection, or `undefined`
+   * before `start()` completes / after `stop()` -- lets `KlorbSessionViewProvider` forward a
+   * `permissionDecision` webview message, or trigger `repostPendingAsk()` after the webview is
+   * recreated, without this class exposing the underlying `Client` interface itself. */
+  public get client(): KlorbAcpClient | undefined {
+    return this._client;
   }
 
   /**
@@ -85,7 +102,13 @@ export class AcpConnection {
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
     );
-    const client = new KlorbAcpClient(this._listener, acp.RequestError, this._log);
+    const client = new KlorbAcpClient(
+      this._listener,
+      acp.RequestError,
+      this._log,
+      this._raiseToolCallLimit
+    );
+    this._client = client;
     const connection = new acp.ClientSideConnection(() => client, stream);
     this._connection = connection;
     void connection.closed.then(() => {
@@ -101,7 +124,7 @@ export class AcpConnection {
         this._raceClosed(
           connection.initialize({
             protocolVersion: acp.PROTOCOL_VERSION,
-            clientCapabilities: {},
+            clientCapabilities: { _meta: { klorb: { raiseToolCallLimit: true } } },
           }),
           connection
         ),
@@ -192,6 +215,7 @@ export class AcpConnection {
     const reject = this._inflightReject;
     this._inflightReject = undefined;
     this._connection = undefined;
+    this._client = undefined;
     this._sessionId = undefined;
     reject?.(new Error('klorb server restarted'));
     this._serverProcess.stop();
@@ -203,6 +227,7 @@ export class AcpConnection {
     const reject = this._inflightReject;
     this._inflightReject = undefined;
     this._connection = undefined;
+    this._client = undefined;
     this._sessionId = undefined;
     reject?.(new Error('klorb server exited unexpectedly; run "Klorb: Restart Server"'));
     this._serverProcess.stop();

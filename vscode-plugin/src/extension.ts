@@ -8,6 +8,14 @@ import { AcpConnection, errorMessage } from 'host/features/acp';
 import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
 import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
 
+/** Answers the `_klorb/raiseToolCallLimit` ext method with a native modal warning -- a rare
+ * safety interstitial, so it reads with appropriate weight as a blocking VS Code dialog rather
+ * than another webview panel. */
+async function raiseToolCallLimitModal(message: string): Promise<boolean> {
+  const choice = await vscode.window.showWarningMessage(message, { modal: true }, 'Continue');
+  return choice === 'Continue';
+}
+
 /** The real `vscode`-backed `EditorIntegrationVsCode` -- the one place `EditorIntegration`'s
  * VS Code calls are actually made, so `editorIntegration.ts` itself never needs a real `vscode`
  * value import (see that module's own doc comment). */
@@ -59,7 +67,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const editorIntegration = new EditorIntegration(realEditorIntegrationVsCode());
   context.subscriptions.push(editorIntegration);
   const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration);
-  const connection = new AcpConnection(serverProcess, provider, log);
+  const connection = new AcpConnection(
+    serverProcess,
+    provider,
+    log,
+    undefined,
+    raiseToolCallLimitModal
+  );
   provider.setConnection(connection);
   context.subscriptions.push({ dispose: () => connection.stop() });
 

@@ -99,6 +99,31 @@ export interface ToolCallUpdatedMessage {
   locations?: ToolCallLocation[];
 }
 
+/** One selectable option in a permission-ask option grid, flattened from an ACP
+ * `PermissionOption`: `scope` is the option's own `_meta.klorb.scope` token (see
+ * docs/specs/klorb-server.md's permission-ask options table), omitted when the server didn't
+ * attach one (e.g. a peer ACP agent that isn't klorb). */
+export interface PermissionAskOption {
+  id: string;
+  name: string;
+  kind: string;
+  scope?: string;
+}
+
+/** A permission ask (or an `EscalatePrivileges` ask, distinguished by `klorbMeta.escalation`)
+ * the server is waiting on an answer for -- mounts the `ApprovalPanel` in the interaction area
+ * until a matching `permissionDecision` resolves it. `klorbMeta` is the request's `_meta.klorb`
+ * payload verbatim (see docs/specs/klorb-server.md's "Permission asks and escalation" section):
+ * `resourceDescription`, and for a bash ask `commandText`/`itemCommandText`/`itemIndex`/
+ * `itemTotal`/`grantPatterns`/`riskLevel`, or for an escalation ask `escalation`. */
+export interface PermissionAskMessage {
+  type: 'permissionAsk';
+  requestId: number;
+  title: string;
+  options: PermissionAskOption[];
+  klorbMeta: Record<string, unknown>;
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -108,7 +133,8 @@ export type HostMessage =
   | TurnErrorMessage
   | SessionResetMessage
   | ToolCallStartedMessage
-  | ToolCallUpdatedMessage;
+  | ToolCallUpdatedMessage
+  | PermissionAskMessage;
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
@@ -136,9 +162,23 @@ export interface OpenDiffMessage {
   path: string;
 }
 
+/** The user's decision on a `permissionAsk`, echoed back to the host: `optionId` selects one
+ * of the ask's own options (redirecting to free text via `otherText` mirrors the TUI's "Other"
+ * row -- see docs/specs/klorb-server.md's decision-mapping section), or `cancelled` for
+ * Escape/no answer (deny-once). A proper discriminated union (rather than one interface with
+ * optional fields) so a consumer can narrow on `'cancelled' in message` without a runtime
+ * guard of its own. */
+export type PermissionDecisionMessage =
+  | { type: 'permissionDecision'; requestId: number; cancelled: true }
+  | { type: 'permissionDecision'; requestId: number; optionId: string; otherText?: string };
+
 /** Every message the webview may post to the extension host. */
 export type WebviewMessage =
-  SubmitPromptMessage | CancelTurnMessage | OpenLocationMessage | OpenDiffMessage;
+  | SubmitPromptMessage
+  | CancelTurnMessage
+  | OpenLocationMessage
+  | OpenDiffMessage
+  | PermissionDecisionMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
 interface FieldSpec {
@@ -254,6 +294,56 @@ function parseToolCallUpdated(record: Record<string, unknown>): ToolCallUpdatedM
   return record as unknown as ToolCallUpdatedMessage;
 }
 
+function isPermissionAskOption(value: unknown): value is PermissionAskOption {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === 'string' &&
+    typeof v.name === 'string' &&
+    typeof v.kind === 'string' &&
+    (v.scope === undefined || typeof v.scope === 'string')
+  );
+}
+
+function parsePermissionAsk(record: Record<string, unknown>): PermissionAskMessage | undefined {
+  if (
+    typeof record.requestId === 'number' &&
+    typeof record.title === 'string' &&
+    Array.isArray(record.options) &&
+    record.options.every(isPermissionAskOption) &&
+    typeof record.klorbMeta === 'object' &&
+    record.klorbMeta !== null
+  ) {
+    return record as unknown as PermissionAskMessage;
+  }
+  return undefined;
+}
+
+function parsePermissionDecision(
+  record: Record<string, unknown>
+): PermissionDecisionMessage | undefined {
+  if (typeof record.requestId !== 'number') {
+    return undefined;
+  }
+  if (record.cancelled === true) {
+    return { type: 'permissionDecision', requestId: record.requestId, cancelled: true };
+  }
+  if (
+    typeof record.optionId === 'string' &&
+    (record.otherText === undefined || typeof record.otherText === 'string')
+  ) {
+    return {
+      type: 'permissionDecision',
+      requestId: record.requestId,
+      optionId: record.optionId,
+      ...(typeof record.otherText === 'string' ? { otherText: record.otherText } : {}),
+    };
+  }
+  return undefined;
+}
+
 function parseOpenLocation(record: Record<string, unknown>): OpenLocationMessage | undefined {
   if (
     typeof record.path === 'string' &&
@@ -288,6 +378,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseToolCallStarted(record);
     case 'toolCallUpdated':
       return parseToolCallUpdated(record);
+    case 'permissionAsk':
+      return parsePermissionAsk(record);
     default:
       return undefined;
   }
@@ -309,6 +401,8 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parseOpenLocation(record);
     case 'openDiff':
       return parseOpenDiff(record);
+    case 'permissionDecision':
+      return parsePermissionDecision(record);
     default:
       return undefined;
   }
