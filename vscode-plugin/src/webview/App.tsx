@@ -19,11 +19,14 @@ import {
   applyExpandAllToolCalls,
   applyHostMessage,
   applyPendingInteraction,
+  applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
   type HistoryEntry,
   type PendingInteraction,
+  type TaskListSnapshot,
 } from 'webview/features/history';
+import { TaskPanel } from 'webview/features/tasks';
 
 /** The status row's data, without the message envelope's `type` discriminant -- see
  * `shared/webviewMessages.ts`'s `StatusUpdateMessage` for field semantics. */
@@ -34,6 +37,8 @@ interface AppProps {
   initialEntries: HistoryEntry[];
   initialPendingInteraction?: PendingInteraction;
   initialStatus?: StatusSnapshot;
+  initialTaskList?: TaskListSnapshot;
+  initialTaskPanelVisible?: boolean;
 }
 
 /**
@@ -50,6 +55,8 @@ export default function App({
   initialEntries,
   initialPendingInteraction,
   initialStatus,
+  initialTaskList,
+  initialTaskPanelVisible,
 }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
@@ -58,12 +65,23 @@ export default function App({
     initialPendingInteraction
   );
   const [status, setStatus] = useState<StatusSnapshot>(initialStatus ?? {});
+  const [taskList, setTaskList] = useState<TaskListSnapshot | undefined>(initialTaskList);
+  const [taskPanelVisible, setTaskPanelVisible] = useState(initialTaskPanelVisible ?? true);
   const historyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    vscode.setState({ entries, pendingInteraction, status });
+    vscode.setState({ entries, pendingInteraction, status, taskList, taskPanelVisible });
+  }, [entries, pendingInteraction, status, taskList, taskPanelVisible, vscode]);
+
+  useEffect(() => {
+    // Deliberately not keyed on taskList/taskPanelVisible: those live in the same persisted
+    // state but don't belong in the history scroll's own trigger set -- a taskListUpdate can
+    // arrive several times per turn (once per TodoCreate/TodoUpdate/TodoNext call), and
+    // scrolling on every one of those fights the browser's own attempt to keep a focused element
+    // elsewhere on the page (e.g. the task panel's own <summary>) in view, which visibly reads as
+    // the history freezing until focus moves away.
     historyRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
-  }, [entries, pendingInteraction, status, vscode]);
+  }, [entries, pendingInteraction, status]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent<unknown>): void {
@@ -74,16 +92,24 @@ export default function App({
       setEntries((prev) => applyHostMessage(prev, message, expandAllToolCalls));
       setInFlight((prev) => applyTurnFlag(prev, message));
       setPendingInteraction((prev) => applyPendingInteraction(prev, message));
+      setTaskList((prev) => applyTaskListUpdate(prev, message));
       if (message.type === 'statusUpdate') {
         // The host always posts the complete currently-known snapshot (never a delta), so a
         // wholesale replace -- not a merge -- is correct here (see `StatusUpdateMessage`'s
         // own doc comment).
         setStatus(message);
       }
+      if (message.type === 'toggleTaskPanel') {
+        toggleTaskPanelVisible();
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [expandAllToolCalls]);
+
+  function toggleTaskPanelVisible(): void {
+    setTaskPanelVisible((prev) => !prev);
+  }
 
   function pickModel(): void {
     vscode.postMessage({ type: 'pickModel' });
@@ -184,6 +210,9 @@ export default function App({
   return (
     <VsCodeApiProvider vscode={vscode}>
       <div className="title">{sessionTitleText(status)}</div>
+      {taskPanelVisible ? (
+        <TaskPanel taskList={taskList} onToggleVisibility={toggleTaskPanelVisible} />
+      ) : null}
       <HistoryView
         entries={entries}
         historyRef={historyRef}
@@ -207,6 +236,7 @@ export default function App({
       />
       <StatusRow
         {...status}
+        taskPanelVisible={taskPanelVisible}
         onPickModel={pickModel}
         onPickThinking={pickThinking}
         onCyclePermissionMode={cyclePermissionMode}
@@ -214,6 +244,7 @@ export default function App({
         onShowSessionStats={showSessionStats}
         onNewSession={newSession}
         onReloadSkills={reloadSkills}
+        onToggleTaskPanel={toggleTaskPanelVisible}
       />
     </VsCodeApiProvider>
   );

@@ -8,6 +8,7 @@ import StatusRow from 'webview/components/StatusRow';
 afterEach(cleanup);
 
 const NOOP = {
+  taskPanelVisible: true,
   onPickModel: () => undefined,
   onPickThinking: () => undefined,
   onCyclePermissionMode: () => undefined,
@@ -15,6 +16,7 @@ const NOOP = {
   onShowSessionStats: () => undefined,
   onNewSession: () => undefined,
   onReloadSkills: () => undefined,
+  onToggleTaskPanel: () => undefined,
 };
 
 describe('StatusRow', () => {

@@ -3,6 +3,8 @@ import type {
   CreateTerminalResponse,
   NewSessionResponse,
   PermissionOption,
+  Plan,
+  PlanEntry,
   ReadTextFileResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -21,6 +23,9 @@ import type {
   PermissionAskOption,
   QuestionAskMessage,
   QuestionAskOption,
+  TaskInfo,
+  TaskListSummary,
+  TaskListUpdateMessage,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
@@ -74,6 +79,9 @@ export interface SessionUpdateListener {
   onModeChanged(modeId: string): void;
   /** The session's title changed (`session_info_update`'s `title` field). */
   onSessionTitleChanged(title: string | null): void;
+  /** The session's chainlink-backed task list changed (`plan`). Replaces the task panel's
+   * snapshot wholesale -- the server always sends every task on each update, never a delta. */
+  onTaskListUpdate(message: TaskListUpdateMessage): void;
   /** The turn that just finished used `usedTokens` of `maxTokens`, and the session has
    * generated `outputTokens` in total (`_klorb/usage`, sent once per turn). */
   onUsageUpdate(usedTokens: number, maxTokens: number | null, outputTokens: number): void;
@@ -245,6 +253,60 @@ function klorbMetaOf(meta: { [key: string]: unknown } | null | undefined): Recor
   return meta.klorb as Record<string, unknown>;
 }
 
+/** Flattens one ACP `PlanEntry` into a `TaskInfo`, preferring its own `_meta.klorb` detail
+ * (`issueId`/`openBlockerCount`/`closed`/`isCurrentTask` -- see docs/specs/klorb-server.md's
+ * "Chainlink task-plan updates" section) when the server attached it, else deriving
+ * `closed`/`isCurrentTask` from `status` alone and reporting no `issueId`/`blocked` at all --
+ * the degraded path for a stock (non-klorb) ACP agent's plain `PlanEntry`. */
+function taskInfoFromEntry(entry: PlanEntry): TaskInfo {
+  const meta = klorbMetaOf(entry._meta);
+  const issueId = typeof meta.issueId === 'number' ? meta.issueId : undefined;
+  const openBlockerCount =
+    typeof meta.openBlockerCount === 'number' ? meta.openBlockerCount : undefined;
+  const closed = typeof meta.closed === 'boolean' ? meta.closed : entry.status === 'completed';
+  const isCurrentTask =
+    typeof meta.isCurrentTask === 'boolean' ? meta.isCurrentTask : entry.status === 'in_progress';
+  return {
+    ...(issueId !== undefined ? { issueId } : {}),
+    text: entry.content,
+    priority: entry.priority,
+    status: entry.status,
+    blocked: openBlockerCount !== undefined && openBlockerCount > 0,
+    isCurrentTask,
+    closed,
+  };
+}
+
+/** Builds the update-level `TaskListSummary`, preferring the `plan` update's own `_meta.klorb`
+ * counts when present, else deriving them by counting `tasks` -- the same degrade a stock ACP
+ * agent's plan (no `_meta.klorb` at all) falls back to. */
+function taskListSummary(meta: Record<string, unknown>, tasks: TaskInfo[]): TaskListSummary {
+  return {
+    openCount:
+      typeof meta.openCount === 'number'
+        ? meta.openCount
+        : tasks.filter((task) => !task.closed).length,
+    closedCount:
+      typeof meta.closedCount === 'number'
+        ? meta.closedCount
+        : tasks.filter((task) => task.closed).length,
+    blockedCount:
+      typeof meta.blockedCount === 'number'
+        ? meta.blockedCount
+        : tasks.filter((task) => task.blocked).length,
+    currentTaskId: typeof meta.currentTaskId === 'number' ? meta.currentTaskId : null,
+  };
+}
+
+function taskListUpdateMessage(update: Plan): TaskListUpdateMessage {
+  const tasks = update.entries.map(taskInfoFromEntry);
+  return {
+    type: 'taskListUpdate',
+    summary: taskListSummary(klorbMetaOf(update._meta), tasks),
+    tasks,
+  };
+}
+
 function toPermissionAskOption(option: PermissionOption): PermissionAskOption {
   const scope = klorbMetaOf(option._meta).scope;
   return {
@@ -414,6 +476,9 @@ export class KlorbAcpClient {
         if (update.title !== undefined) {
           this._listener.onSessionTitleChanged(update.title);
         }
+        break;
+      case 'plan':
+        this._listener.onTaskListUpdate(taskListUpdateMessage(update));
         break;
       default:
         this._log(`klorb: ignoring unhandled session update: ${update.sessionUpdate}`);

@@ -7,6 +7,7 @@ import {
   type HistoryEntry,
   type PendingInteraction,
   type SessionStatsHistoryEntry,
+  type TaskListSnapshot,
   type TextHistoryEntry,
   type ToolCallHistoryEntry,
   appendInteraction,
@@ -15,8 +16,10 @@ import {
   applyExpandAllToolCalls,
   applyHostMessage,
   applyPendingInteraction,
+  applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
+  isHistoryEntry,
 } from './historyModel';
 import { type DiffRow, renderDiffLines } from './renderDiffLines';
 
@@ -27,6 +30,7 @@ export {
   type HistoryViewProps,
   type PendingInteraction,
   type SessionStatsHistoryEntry,
+  type TaskListSnapshot,
   type TextHistoryEntry,
   type ToolCallHistoryEntry,
   appendInteraction,
@@ -35,8 +39,10 @@ export {
   applyExpandAllToolCalls,
   applyHostMessage,
   applyPendingInteraction,
+  applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
+  isHistoryEntry,
   renderDiffLines,
   HistoryView,
   SessionStatsCard,

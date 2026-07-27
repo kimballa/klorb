@@ -51,6 +51,10 @@
         "title": "Klorb: Restart Server"
       },
       {
+        "command": "klorb.toggleTaskPanel",
+        "title": "Klorb: Toggle Task Panel"
+      },
+      {
         "command": "klorb.selectModel",
         "title": "Klorb: Select Model"
       },
@@ -101,12 +105,13 @@
   },
   "scripts": {
     "typecheck": "tsgo -p ./ && tsgo -p tsconfig.webview.json",
+    "copy:codicons": "mkdir -p out/media && cp node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf out/media/",
     "build:extension": "esbuild src/extension.ts --tsconfig=tsconfig.json --bundle --sourcemap --outfile=out/extension.js --format=cjs --platform=node --target=es2022 --external:vscode",
     "build:webview": "esbuild src/webview/main.tsx --tsconfig=tsconfig.webview.json --bundle --sourcemap --define:process.env.NODE_ENV=\\\"development\\\" --outfile=out/webview/main.js --format=iife --platform=browser --target=es2022",
-    "compile": "npm run typecheck && npm run build:extension && npm run build:webview",
+    "compile": "npm run typecheck && npm run copy:codicons && npm run build:extension && npm run build:webview",
     "build:extension:prod": "esbuild src/extension.ts --tsconfig=tsconfig.json --bundle --minify --sourcemap=linked --sources-content=false --legal-comments=linked --outfile=out/extension.js --format=cjs --platform=node --target=es2022 --external:vscode",
     "build:webview:prod": "esbuild src/webview/main.tsx --tsconfig=tsconfig.webview.json --bundle --minify --sourcemap=linked --sources-content=false --legal-comments=linked --define:process.env.NODE_ENV=\\\"production\\\" --outfile=out/webview/main.js --format=iife --platform=browser --target=es2022",
-    "compile:prod": "npm run typecheck && npm run build:extension:prod && npm run build:webview:prod",
+    "compile:prod": "npm run typecheck && npm run copy:codicons && npm run build:extension:prod && npm run build:webview:prod",
     "watch": "tsgo -w -p ./",
     "lint": "eslint src test",
     "test": "vitest run",
@@ -115,6 +120,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
     "@vscode-elements/elements": "^2.5.1",
+    "@vscode/codicons": "^0.0.45",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0"

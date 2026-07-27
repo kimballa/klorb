@@ -199,6 +199,50 @@ export interface SessionStatsMessage {
   totalCost: number;
 }
 
+/** One task in a `taskListUpdate`, flattened from an ACP `PlanEntry`: `priority`/`status` are
+ * left as plain strings (mirroring `ToolCallStartedMessage`'s `kind`) so a value this client
+ * doesn't recognize yet still round-trips instead of failing to parse. `issueId` is present only
+ * when the server attached its own `_meta.klorb` detail (klorb's own server always does; a
+ * stock ACP agent's plain `PlanEntry` carries no id at all -- see docs/specs/klorb-server.md's
+ * "Chainlink task-plan updates" section); `blocked`/`isCurrentTask`/`closed` fall back to a
+ * best-effort guess derived from `status` alone when that detail is absent. */
+export interface TaskInfo {
+  issueId?: number;
+  text: string;
+  priority: string;
+  status: string;
+  blocked: boolean;
+  isCurrentTask: boolean;
+  closed: boolean;
+}
+
+/** The task list's coalesced counts, from a `plan` update's own update-level `_meta.klorb` (or
+ * derived from `tasks` when that detail is absent -- see `TaskInfo`). `currentTaskId` is `null`
+ * when no task is in progress, or when the server didn't say which one is. */
+export interface TaskListSummary {
+  openCount: number;
+  closedCount: number;
+  blockedCount: number;
+  currentTaskId: number | null;
+}
+
+/** The session's chainlink-backed task list, replaced wholesale on every ACP `plan` update (see
+ * docs/specs/klorb-server.md's "Chainlink task-plan updates" section) -- the task panel's data
+ * source, mirroring `StatusUpdateMessage`'s own "always the complete snapshot" convention: the
+ * server sends every task on each update, never a delta. */
+export interface TaskListUpdateMessage {
+  type: 'taskListUpdate';
+  summary: TaskListSummary;
+  tasks: TaskInfo[];
+}
+
+/** The user ran **Klorb: Toggle Task Panel** (or clicked its own header pin control): flip
+ * whether the task panel is shown at all, independent of its own expanded/collapsed disclosure
+ * state (which the webview keeps un-persisted, native `<details>` state). */
+export interface ToggleTaskPanelMessage {
+  type: 'toggleTaskPanel';
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -212,7 +256,9 @@ export type HostMessage =
   | PermissionAskMessage
   | QuestionAskMessage
   | StatusUpdateMessage
-  | SessionStatsMessage;
+  | SessionStatsMessage
+  | TaskListUpdateMessage
+  | ToggleTaskPanelMessage;
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
@@ -300,6 +346,17 @@ export interface ReloadSkillsMessage {
   type: 'reloadSkills';
 }
 
+/** The webview's top-level `ErrorBoundary` (`src/webview/components/ErrorBoundary.tsx`) caught
+ * an uncaught render error -- the webview's own JS console (VS Code's "Developer: Open Webview
+ * Developer Tools") always has the full detail first, but a webview crash is otherwise invisible
+ * anywhere the "Klorb" output channel is concerned, so `ErrorBoundary` reports it here too, and
+ * `KlorbSessionViewProvider` logs it to that channel. */
+export interface WebviewErrorMessage {
+  type: 'webviewError';
+  message: string;
+  stack?: string;
+}
+
 /** Every message the webview may post to the extension host. */
 export type WebviewMessage =
   | SubmitPromptMessage
@@ -314,7 +371,8 @@ export type WebviewMessage =
   | SetPermissionModeMessage
   | ShowSessionStatsMessage
   | NewSessionMessage
-  | ReloadSkillsMessage;
+  | ReloadSkillsMessage
+  | WebviewErrorMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
 interface FieldSpec {
@@ -328,7 +386,7 @@ const HOST_FIELD_SPECS: readonly FieldSpec[] = [
   { field: 'message', types: ['turnError'] },
 ];
 
-const HOST_BARE_TYPES: readonly string[] = ['turnStarted', 'sessionReset'];
+const HOST_BARE_TYPES: readonly string[] = ['turnStarted', 'sessionReset', 'toggleTaskPanel'];
 
 const WEBVIEW_FIELD_SPECS: readonly FieldSpec[] = [{ field: 'text', types: ['submitPrompt'] }];
 
@@ -591,6 +649,46 @@ function parseSessionStats(record: Record<string, unknown>): SessionStatsMessage
   return record as unknown as SessionStatsMessage;
 }
 
+function isTaskInfo(value: unknown): value is TaskInfo {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    (v.issueId === undefined || typeof v.issueId === 'number') &&
+    typeof v.text === 'string' &&
+    typeof v.priority === 'string' &&
+    typeof v.status === 'string' &&
+    typeof v.blocked === 'boolean' &&
+    typeof v.isCurrentTask === 'boolean' &&
+    typeof v.closed === 'boolean'
+  );
+}
+
+function isTaskListSummary(value: unknown): value is TaskListSummary {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.openCount === 'number' &&
+    typeof v.closedCount === 'number' &&
+    typeof v.blockedCount === 'number' &&
+    (v.currentTaskId === null || typeof v.currentTaskId === 'number')
+  );
+}
+
+function parseTaskListUpdate(record: Record<string, unknown>): TaskListUpdateMessage | undefined {
+  if (
+    !isTaskListSummary(record.summary) ||
+    !Array.isArray(record.tasks) ||
+    !record.tasks.every(isTaskInfo)
+  ) {
+    return undefined;
+  }
+  return record as unknown as TaskListUpdateMessage;
+}
+
 function parseOpenLocation(record: Record<string, unknown>): OpenLocationMessage | undefined {
   if (
     typeof record.path === 'string' &&
@@ -606,6 +704,16 @@ function parseOpenDiff(record: Record<string, unknown>): OpenDiffMessage | undef
     return record as unknown as OpenDiffMessage;
   }
   return undefined;
+}
+
+function parseWebviewError(record: Record<string, unknown>): WebviewErrorMessage | undefined {
+  if (
+    typeof record.message !== 'string' ||
+    (record.stack !== undefined && typeof record.stack !== 'string')
+  ) {
+    return undefined;
+  }
+  return record as unknown as WebviewErrorMessage;
 }
 
 /** Narrows an untyped `postMessage` payload to a `HostMessage`, or `undefined` if it isn't one.
@@ -633,6 +741,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseStatusUpdate(record);
     case 'sessionStats':
       return parseSessionStats(record);
+    case 'taskListUpdate':
+      return parseTaskListUpdate(record);
     default:
       return undefined;
   }
@@ -658,6 +768,8 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parsePermissionDecision(record);
     case 'questionAnswer':
       return parseQuestionAnswer(record);
+    case 'webviewError':
+      return parseWebviewError(record);
     default:
       return undefined;
   }

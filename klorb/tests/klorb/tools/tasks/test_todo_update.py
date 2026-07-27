@@ -61,6 +61,31 @@ def test_close_does_not_write_a_changelog_file(tmp_path: Path) -> None:
 
 
 @requires_chainlink
+def test_close_clears_cur_chainlink_task_id_when_it_is_the_tracked_task(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    created = TodoCreateTool(context).apply({"title": "Task"})
+    context.session.set_chainlink_task(created["id"])
+
+    TodoUpdateTool(context).apply({"id": created["id"], "close": True})
+
+    assert context.session.cur_chainlink_task_id is None
+
+
+@requires_chainlink
+def test_close_leaves_cur_chainlink_task_id_alone_for_a_different_task(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    tracked = TodoCreateTool(context).apply({"title": "Tracked"})
+    other = TodoCreateTool(context).apply({"title": "Other"})
+    context.session.set_chainlink_task(tracked["id"])
+
+    TodoUpdateTool(context).apply({"id": other["id"], "close": True})
+
+    assert context.session.cur_chainlink_task_id == tracked["id"]
+
+
+@requires_chainlink
 def test_reopen_a_closed_issue(tmp_path: Path) -> None:
     context = _context(tmp_path)
     created = TodoCreateTool(context).apply({"title": "Task"})

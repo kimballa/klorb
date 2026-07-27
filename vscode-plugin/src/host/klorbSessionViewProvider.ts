@@ -5,6 +5,7 @@ import type { EditorIntegration } from 'host/editorIntegration';
 import {
   errorMessage,
   type AcpConnection,
+  type LogFn,
   type SessionInfo,
   type SessionUpdateListener,
 } from 'host/features/acp';
@@ -14,6 +15,7 @@ import {
   type HostMessage,
   type PermissionAskMessage,
   type QuestionAskMessage,
+  type TaskListUpdateMessage,
   type ToolCallStartedMessage,
   type ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
@@ -33,7 +35,10 @@ import {
  * `openDiff` to the shared `EditorIntegration`. `resolveWebviewView()` also re-posts any
  * interaction still awaiting an answer -- the live `KlorbAcpClient` behind `AcpConnection`
  * outlives a webview reload, so its pending interaction just needs to be shown again to the
- * fresh webview instance.
+ * fresh webview instance. A `webviewError` message (the webview's `ErrorBoundary` reporting an
+ * uncaught render error) is logged via `_log`, so a webview-side crash lands in the same "Klorb"
+ * output channel as everything else this extension logs, rather than only being visible in the
+ * webview's own (easy-to-miss) JS console.
  */
 export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, SessionUpdateListener {
   public static readonly viewType = 'klorb.sessionView';
@@ -44,7 +49,8 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
 
   public constructor(
     private readonly _extensionUri: vscode.Uri,
-    private readonly _editorIntegration: EditorIntegration
+    private readonly _editorIntegration: EditorIntegration,
+    private readonly _log: LogFn = (message: string) => console.error(message)
   ) {}
 
   /** Wires the connection this provider drives. Set once during activation — the provider
@@ -74,7 +80,13 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     };
     webviewView.webview.html = this._getHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message: unknown) => {
-      void this._handleMessage(message);
+      this._handleMessage(message).catch((err: unknown) => {
+        // _handleMessage's own case bodies (_runTurn, EditorIntegration calls, ...) already
+        // catch what they can meaningfully report; this is the backstop for anything that
+        // still throws past them, so it lands in the "Klorb" output channel instead of an
+        // anonymous unhandled-rejection warning with no klorb-specific context at all.
+        this._log(`klorb: error handling webview message: ${errorMessage(err)}`);
+      });
     });
     this._connection?.client?.repostPendingInteraction();
     this._sessionControls?.postSnapshot();
@@ -116,6 +128,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
 
   public onUsageUpdate(usedTokens: number, maxTokens: number | null, outputTokens: number): void {
     this._sessionControls?.applyUsageUpdate(usedTokens, maxTokens, outputTokens);
+  }
+
+  public onTaskListUpdate(message: TaskListUpdateMessage): void {
+    this.postHostMessage(message);
   }
 
   /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
@@ -208,6 +224,11 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       case 'reloadSkills':
         await vscode.commands.executeCommand('klorb.reloadSkills');
         break;
+      case 'webviewError':
+        this._log(
+          `klorb: webview crashed: ${parsed.message}${parsed.stack !== undefined ? `\n${parsed.stack}` : ''}`
+        );
+        break;
     }
   }
 
@@ -253,13 +274,20 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css')
     );
+    // Copied from @vscode/codicons at build time (npm run copy:codicons, chained into
+    // `compile`/`compile:prod`), not vendored/committed -- see docs/specs/vscode-plugin.md's
+    // "Component library" section.
+    const codiconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'out', 'media', 'codicon.css')
+    );
     const nonce = getNonce();
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+    content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource}; font-src ${webview.cspSource};">
+  <link id="vscode-codicon-stylesheet" rel="stylesheet" href="${codiconUri}">
   <link rel="stylesheet" href="${styleUri}">
   <title>Klorb session</title>
 </head>

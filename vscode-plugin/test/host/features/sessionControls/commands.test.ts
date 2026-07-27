@@ -30,6 +30,7 @@ const NOOP_LISTENER: SessionUpdateListener = {
   onModeChanged: () => undefined,
   onSessionTitleChanged: () => undefined,
   onUsageUpdate: () => undefined,
+  onTaskListUpdate: () => undefined,
 };
 
 interface FakeVsCode extends CommandsVsCode {

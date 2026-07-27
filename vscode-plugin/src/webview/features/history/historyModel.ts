@@ -5,6 +5,7 @@ import type {
   QuestionAskMessage,
   SessionStatsCounts,
   SessionStatsToolRow,
+  TaskListUpdateMessage,
   ToolCallDiff,
   ToolCallLocation,
   ToolCallStartedMessage,
@@ -128,7 +129,39 @@ function appendChunk(
 
 function finishStreaming(entries: readonly HistoryEntry[]): HistoryEntry[] {
   return entries.map((entry) =>
-    'streaming' in entry && entry.streaming ? { ...entry, streaming: false } : entry
+    // `entry` is typed as `HistoryEntry` (always an object) at compile time, but `entries`
+    // ultimately traces back to `vscode.getState()` (see `isHistoryEntry()` below) -- a boundary
+    // this codebase can't fully police at compile time -- so a non-object slipping through
+    // (the `in` operator throws on one) is guarded against defensively here too.
+    typeof entry === 'object' && entry !== null && 'streaming' in entry && entry.streaming
+      ? { ...entry, streaming: false }
+      : entry
+  );
+}
+
+/** Every `HistoryEntry.kind` value, across all three subtypes -- the set `isHistoryEntry()`
+ * checks a candidate's own `kind` against. */
+const HISTORY_ENTRY_KINDS: ReadonlySet<string> = new Set([
+  'prompt',
+  'response',
+  'thinking',
+  'error',
+  'notice',
+  'interaction',
+  'toolCall',
+  'sessionStats',
+]);
+
+/** Quickly check that `value` at least *looks* like a `HistoryEntry` (a non-null
+ * object with a recognized `kind`) -- used to sanitize `vscode.getState()`'s persisted
+ * `entries` before trusting them as `initialEntries` (see `main.tsx`).
+ */
+export function isHistoryEntry(value: unknown): value is HistoryEntry {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { kind?: unknown }).kind === 'string' &&
+    HISTORY_ENTRY_KINDS.has((value as { kind: string }).kind)
   );
 }
 
@@ -250,6 +283,37 @@ export function applyHostMessage(
           totalCost: message.totalCost,
         },
       ];
+    case 'taskListUpdate':
+    case 'toggleTaskPanel':
+      // Tracked separately by `App`'s own `taskList`/`taskPanelVisible` state, not as a
+      // history entry -- the TaskPanel renders from that state instead.
+      return [...entries];
+  }
+}
+
+/** The task panel's data, without the message envelope's `type` discriminant -- see
+ * `shared/webviewMessages.ts`'s `TaskListUpdateMessage` for field semantics. */
+export type TaskListSnapshot = Omit<TaskListUpdateMessage, 'type'>;
+
+/**
+ * Tracks the task panel's snapshot, from the same message stream: `taskListUpdate` replaces it
+ * wholesale (the server always sends every task on each update, never a delta -- see
+ * `TaskListUpdateMessage`'s own doc comment), `sessionReset` clears it (a fresh session may not
+ * get an initial plan snapshot at all -- see docs/specs/klorb-server.md's "Chainlink task-plan
+ * updates" section -- so a stale prior session's tasks must not linger), every other message
+ * leaves it unchanged.
+ */
+export function applyTaskListUpdate(
+  taskList: TaskListSnapshot | undefined,
+  message: HostMessage
+): TaskListSnapshot | undefined {
+  switch (message.type) {
+    case 'taskListUpdate':
+      return { summary: message.summary, tasks: message.tasks };
+    case 'sessionReset':
+      return undefined;
+    default:
+      return taskList;
   }
 }
 

@@ -35,6 +35,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onSessionTitleChanged: (title) => box.sessionControls?.applySessionTitleChanged(title),
     onUsageUpdate: (usedTokens, maxTokens, outputTokens) =>
       box.sessionControls?.applyUsageUpdate(usedTokens, maxTokens, outputTokens),
+    onTaskListUpdate: () => undefined,
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   const sessionControls = new SessionControls(

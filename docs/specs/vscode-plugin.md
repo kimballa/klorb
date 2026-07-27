@@ -123,8 +123,9 @@ together for this extension specifically.
   updates into `ToolCallStartedMessage`/`ToolCallUpdatedMessage` (`onToolCallStarted`/
   `onToolCallUpdated` — see "Tool-call rendering and editor integration" below), dispatches
   `current_mode_update`/`session_info_update` to `onModeChanged`/`onSessionTitleChanged` (the
-  latter only when the update carries a `title` field at all), and logs (rather than errors on)
-  any other update kind, since later increments add handling for `plan` etc. `extNotification()`
+  latter only when the update carries a `title` field at all), flattens `plan` into a
+  `TaskListUpdateMessage` (`onTaskListUpdate` — see "Task panel" below), and logs (rather than
+  errors on) any other update kind. `extNotification()`
   dispatches `_klorb/usage` to `onUsageUpdate(usedTokens, maxTokens)` (logging and ignoring a
   malformed payload) and logs-and-ignores any other extension notification, per ACP's own
   extensibility rules. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension
@@ -140,7 +141,10 @@ together for this extension specifically.
   `vscode.WebviewViewProvider` and `SessionUpdateListener`. `resolveWebviewView()` enables
   scripts, restricts `localResourceRoots` to the extension's own install directory, sets the
   webview's HTML, and registers `onDidReceiveMessage` to parse and dispatch `WebviewMessage`s
-  (see "Webview message protocol" below). `onAgentText`/`onThoughtText` (the
+  (see "Webview message protocol" below) -- a rejection from that dispatch (`_handleMessage()`,
+  `async`) is caught and logged via `_log` rather than left to become an anonymous
+  unhandled-rejection warning, since `onDidReceiveMessage`'s callback itself can't be `async`
+  and return a promise VS Code would await/reject on. `onAgentText`/`onThoughtText` (the
   `SessionUpdateListener` methods `AcpConnection` calls as chunks stream in) post `agentChunk`/
   `thoughtChunk` host messages; `onToolCallStarted`/`onToolCallUpdated` post the flattened
   `toolCallStarted`/`toolCallUpdated` messages as-is, and `onToolCallUpdated` additionally
@@ -193,7 +197,18 @@ together for this extension specifically.
   contents }` keeps the mount div itself out of the flex layout so `.title`/`#history`/
   `.input-row` lay out as if they were direct children of `<body>`. `#history` is a flex column
   (the only element with `overflow-y: auto`, so a scrollbar appears there once its content
-  overflows the panel).
+  overflows the panel). The page's `Content-Security-Policy` meta tag sets `default-src 'none'`
+  (nothing loads unless a more specific directive allows it), `style-src`/`script-src` scoped to
+  `webview.cspSource`/the per-load nonce, `connect-src ${webview.cspSource}` (so Chrome DevTools'
+  own background fetch of `out/webview/main.js.map` -- when a developer opens **Developer: Open
+  Webview Developer Tools** to inspect a crash -- isn't blocked by the `default-src 'none'`
+  fallback, which would otherwise leave the console showing only minified bundle positions with
+  no source-mapped file/line), and `font-src ${webview.cspSource}` (so the codicon web font's own
+  `@font-face` fetch isn't blocked either — see "Component library" below). A `<link
+  id="vscode-codicon-stylesheet">` for the build-generated `out/media/codicon.css` is emitted
+  before `main.css`'s own `<link>` — `<vscode-icon>` looks for that exact element id to find the
+  font stylesheet, and
+  renders an empty glyph (silently, with only a console warning) if it isn't there.
 
 ### Webview UI structure
 
@@ -201,16 +216,47 @@ together for this extension specifically.
   "Build" below) and loaded as a plain classic `<script>`. It imports the
   `@vscode-elements/elements` custom-element modules used by the panel (registering
   `<vscode-textarea>`/`<vscode-button>` with the browser), calls `acquireVsCodeApi()` exactly
-  once, reads any persisted `SessionState` via `vscode.getState()`, and mounts `<App vscode=
-  {vscode} initialEntries={state.entries} />` into `#root` with `react-dom/client`'s
-  `createRoot()`. Calling `acquireVsCodeApi()` a second time anywhere throws and silently
-  aborts whatever called it — the VS Code webview API only allows one call per page load —
-  which is why the single `vscode` value from that one call is threaded through as a prop
-  rather than re-acquired (see `docs/adrs/call-acquirevscodeapi-exactly-once-per-webview-page.md`).
+  once, reads any persisted `SessionState` via `webview/sessionState.ts`'s `readPersistedState()`,
+  and mounts `<ErrorBoundary vscode={vscode}><App vscode={vscode} initialEntries={state.entries}
+  .../></ErrorBoundary>` into `#root` with `react-dom/client`'s `createRoot()`. Calling
+  `acquireVsCodeApi()` a second time anywhere throws and silently aborts whatever called it — the
+  VS Code webview API only allows one call per page load — which is why the single `vscode` value
+  from that one call is threaded through as a prop rather than re-acquired (see
+  `docs/adrs/call-acquirevscodeapi-exactly-once-per-webview-page.md`).
+* `vscode-plugin/src/webview/sessionState.ts`'s `readPersistedState()` reads `vscode.getState()`
+  and sanitizes it before trusting it as `SessionState`: `entries` is filtered through
+  `isHistoryEntry()` (`webview/features/history`'s `HistoryEntry` type guard — a non-null object
+  with a recognized `kind`), dropping anything else. This logic lives in its own module rather
+  than inline in `main.tsx` specifically so it's unit-testable — `main.tsx` self-executes `main()`
+  at module scope, so importing it for a test would run it. Unlike the host↔webview message
+  channel (`parseHostMessage`/`parseWebviewMessage`), persisted webview state was never
+  runtime-validated before this, and it can outlive the extension version that wrote it (observed
+  surviving a `.vsix` reinstall): a stale `entries` array holding a bare non-object value from an
+  incompatible older build reached `historyModel.ts`'s `finishStreaming()` unchecked, whose own
+  `'streaming' in entry` check throws a `TypeError` on a non-object — crashing the whole webview
+  blank the moment any turn ended. `finishStreaming()` itself also grew a defensive `typeof`/`null`
+  guard as a second layer, so a value that somehow still isn't an object (any future field this
+  sanitization doesn't cover) degrades to being left alone rather than thrown on. Only `entries`
+  gets this treatment; `pendingInteraction`/`status`/`taskList`/`taskPanelVisible` are trusted as
+  before, since none of them are indexed into by shape the way a `HistoryEntry[]` reducer is.
+* `vscode-plugin/src/webview/components/ErrorBoundary.tsx`'s `ErrorBoundary` is a class component
+  (React error boundaries must be classes) wrapping the whole `<App>` tree: `getDerivedStateFromError()`
+  swaps its render to a plain-text `.webview-crash` fallback ("Klorb panel crashed: `<message>`",
+  with a pointer to **Developer: Open Webview Developer Tools** and the "Klorb" output channel)
+  instead of leaving the whole webview blank — React unmounts everything below the nearest error
+  boundary (or the whole root, with none) the instant a render throws. `componentDidCatch()`
+  additionally posts a `webviewError` message (`{type: 'webviewError', message: string, stack?:
+  string}`), which `KlorbSessionViewProvider._handleMessage()` logs via its own `LogFn` to the
+  "Klorb" output channel — the webview runs in its own sandboxed `vscode-webview://` document
+  with its own separate JS console, so an uncaught render exception there otherwise never reaches
+  anywhere the extension's own logging goes. An error boundary only catches render-phase/lifecycle
+  errors, not ones thrown from an event handler or async callback, so this is a backstop for a
+  crashing render, not a catch-all.
 * `vscode-plugin/src/webview/App.tsx`'s `App` component is the panel's layout shell, top to
   bottom: the title (`.title`, `sessionTitleText()` — the active session's `sessionTitle`, or
   `New session…` until one arrives, with an `(Untrusted)` suffix appended whenever
-  `workspaceTrusted === false`, TUI header parity), `HistoryView`, an `#interaction-area` div
+  `workspaceTrusted === false`, TUI header parity), `TaskPanel` (see "Task panel" below),
+  `HistoryView`, an `#interaction-area` div
   that mounts `ApprovalPanel` while a permission ask is outstanding or `QuestionPanel` while an
   `AskUserQuestions` question is outstanding, `PromptInput`, and `StatusRow` (see "Status row
   and session controls" below). It owns all interactive state: `entries` (a `HistoryEntry[]`,
@@ -218,14 +264,18 @@ together for this extension specifically.
   `inFlight` (whether a turn is currently running), `expandAllToolCalls` (the global "expand all
   tool calls" toggle — see `features/history` below), `pendingInteraction` (a `PermissionAskMessage
   | QuestionAskMessage | undefined`, seeded from `initialPendingInteraction` — see "Approval and
-  question panels" below), and `status` (a `StatusSnapshot`, seeded from `initialStatus` — see
-  "Status row and session controls" below). A `window` `message` listener (subscribed for the
+  question panels" below), `status` (a `StatusSnapshot`, seeded from `initialStatus` — see
+  "Status row and session controls" below), `taskList` (a `TaskListSnapshot | undefined`, seeded
+  from `initialTaskList` — see "Task panel" below), and `taskPanelVisible` (a `boolean`, seeded
+  from `initialTaskPanelVisible ?? true` — see "Task panel" below). A `window` `message` listener
+  (subscribed for the
   panel's lifetime via a `useEffect` keyed on `expandAllToolCalls`, so a newly-started tool call
   always sees the current toggle state) parses each incoming payload with `parseHostMessage()`
-  and applies it to `entries`/`inFlight`/`pendingInteraction` via the pure functions in the
-  `features/history` feature, and replaces `status` wholesale with a `statusUpdate` message's
+  and applies it to `entries`/`inFlight`/`pendingInteraction`/`taskList` via the pure functions in
+  the `features/history` feature, replaces `status` wholesale with a `statusUpdate` message's
   own fields (never merged — the host always posts the complete currently-known snapshot, see
-  "Status row and session controls" below). Submitting a prompt appends a `'prompt'` entry
+  "Status row and session controls" below), and flips `taskPanelVisible` on a `toggleTaskPanel`
+  message. Submitting a prompt appends a `'prompt'` entry
   optimistically, sets `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up
   confirms or corrects it), and posts `{type: 'submitPrompt', text}`. Toggling the global
   tool-call expand mode flips `expandAllToolCalls` and applies it to every existing tool-call
@@ -237,11 +287,19 @@ together for this extension specifically.
   `QuestionPanel` as `onAnswer`) is the parallel handler, appending an `appendQuestionInteraction()`
   record and posting `{type: 'questionAnswer', ...}`; `pickModel()`/`cyclePermissionMode()`
   (passed to `StatusRow` as `onPickModel`/`onCyclePermissionMode`) post `{type: 'pickModel'}`/
-  `{type: 'cyclePermissionMode'}`. A separate `useEffect` keyed on
-  `entries`/`pendingInteraction`/`status` calls `vscode.setState({entries, pendingInteraction,
-  status})` (so history, an unanswered interaction, and the status snapshot all survive
-  `retainContextWhenHidden`'s context teardown/rebuild) and scrolls the history's last child
-  into view. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
+  `{type: 'cyclePermissionMode'}`; `toggleTaskPanelVisible()` (passed to `TaskPanel` as
+  `onToggleVisibility`, and also invoked directly on an incoming `toggleTaskPanel` message) flips
+  `taskPanelVisible`. A separate `useEffect` keyed on
+  `entries`/`pendingInteraction`/`status`/`taskList`/`taskPanelVisible` calls `vscode.setState({
+  entries, pendingInteraction, status, taskList, taskPanelVisible})` (so history, an unanswered
+  interaction, the status snapshot, and the task panel's data/visibility all survive
+  `retainContextWhenHidden`'s context teardown/rebuild). A third `useEffect`, keyed only on
+  `entries`/`pendingInteraction`/`status` (deliberately *not* `taskList`/`taskPanelVisible`),
+  scrolls the history's last child into view -- a `taskListUpdate` can arrive several times per
+  turn (once per `TodoCreate`/`TodoUpdate`/`TodoNext` call), and scrolling on every one of those
+  fights the browser's own attempt to keep a focused element elsewhere on the page (e.g. the task
+  panel's own `<summary>`) in view, which visibly reads as the history freezing until focus moves
+  away. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
   below) so any descendant can reach `vscode` via `useVsCodeApi()` without it being threaded
   through as an explicit prop down every intermediate component.
 * `vscode-plugin/src/webview/components/VsCodeApiProvider.tsx` and `vscode-plugin/src/webview/
@@ -543,10 +601,16 @@ increment this landed in.
   reproduced in plain CSS here since this is a bare `<button>` not the custom element) reading
   `^`, opening a `<vscode-context-menu>` listing every session command the row doesn't already
   expose as its own chip — Set Model, Set Thinking, Set Permission Mode, Session Stats, New
-  Session, Reload Skills. Picking an item dispatches to the same handler its own chip would use
+  Session, Reload Skills, and a task-panel item labeled by its current visibility ("Hide Task
+  Panel"/"Show Task Panel", see `menuItems()` — this last one is the only recovery path once
+  the task panel's own header pin has hidden it, since `TaskPanel` itself renders nothing at all
+  while hidden). Picking an item dispatches to the same handler its own chip would use
   for the first two (`onPickModel`/`onPickThinking`), a dedicated `onSetPermissionMode` for the
-  third (distinct from the badge's own `onCyclePermissionMode`, see below), or posts one of
-  `showSessionStats`/`newSession`/`reloadSkills` (webview → host) for the last three. The popup
+  third (distinct from the badge's own `onCyclePermissionMode`, see below), posts one of
+  `showSessionStats`/`newSession`/`reloadSkills` (webview → host) for the next three, or calls
+  `onToggleTaskPanel` for the last one -- `App`'s own `toggleTaskPanelVisible()`, flipping local
+  `taskPanelVisible` state directly with no host round trip at all, the same function the task
+  panel's own pin already calls (see "Task panel" above). The popup
   is positioned with an inline `position: fixed` plus `top`/`left` computed from the chevron
   button's own `getBoundingClientRect()` (set imperatively in `openMenu()`, not through a CSS
   rule): `vscode-context-menu`'s own shadow-DOM styles set `:host { position: relative }`, which
@@ -671,7 +735,11 @@ increment this landed in.
   `vscode.workspace.onDidGrantWorkspaceTrust` subscription re-invokes `offerIfNeeded()` once VS
   Code's own trust is later granted, which is what lets the offer eventually happen in that
   case. An `_offered` flag (not a re-checkable predicate) guarantees at most one prompt per
-  activation regardless of how many times `offerIfNeeded()` is called.
+  activation regardless of how many times `offerIfNeeded()` is called. Every call site invokes
+  `offerIfNeeded()` fire-and-forget (`void`), so a failure inside it (most plausibly
+  `trustWorkspace()`'s ACP round trip) is caught internally and logged via its own `LogFn`
+  (defaulting to `console.error`, following the same pattern as `AcpConnection`/`KlorbAcpClient`)
+  rather than becoming an unhandled promise rejection with no klorb-specific context at all.
 * **OpenRouter API key storage** (`src/host/apiKeyStorage.ts`'s `ApiKeyManager`) stores the key
   in VS Code's OS-keychain-backed `vscode.ExtensionContext.secrets` (`SecretStorage`), keyed
   `klorb.openRouterApiKey`. `resolve()` — called from `extension.ts`'s `readServerOptions()`,
@@ -682,6 +750,96 @@ increment this landed in.
   `showInputBox({password: true})` and stores the value, or deletes the stored secret on an
   empty submission; `clearApiKeyCommand()` (`klorb.clearOpenRouterApiKey`) deletes it
   explicitly.
+
+### Task panel
+
+A collapsible strip docked at the top of the sidebar, above `HistoryView`, rendering
+[[klorb-server]]'s chainlink-backed `plan` `session/update`s -- the tall-narrow adaptation of the
+TUI's Ctrl+T right-hand sidebar. Unlike the TUI, the panel has **no client-side chainlink access
+of its own**: the server's `plan` snapshot is the only source of task data, so the panel can only
+ever show what the server last sent, never fetch or refresh independently.
+
+* **Flattening** (`KlorbAcpClient.sessionUpdate()`'s `'plan'` case, `src/host/features/acp/
+  klorbAcpClient.ts`) maps an ACP `plan` update onto a `TaskListUpdateMessage`: `taskInfoFromEntry()`
+  flattens each `PlanEntry`, preferring its own `_meta.klorb` detail (`issueId`,
+  `openBlockerCount`, `closed`, `isCurrentTask` — see [[klorb-server]]'s "Chainlink task-plan
+  updates" section) when present; `taskListSummary()` does the same for the update-level
+  `_meta.klorb` counts (`openCount`/`closedCount`/`blockedCount`/`currentTaskId`). Both fall back
+  to deriving the same fields from `status`/`tasks` alone when that `_meta.klorb` detail is
+  absent — the degraded path for a stock (non-klorb) ACP agent's plain `PlanEntry`/`Plan`, which
+  reports every status correctly but no `issueId` and no blocked-ness at all (there being nothing
+  in the standard schema to derive it from). klorb's own server always attaches the detail, so
+  this degrade path only matters against a non-klorb peer.
+* **`TaskListUpdateMessage`** (`src/shared/webviewMessages.ts`) is `{type: 'taskListUpdate',
+  summary: TaskListSummary, tasks: TaskInfo[]}` — `TaskListSummary` is `{openCount, closedCount,
+  blockedCount, currentTaskId: number | null}`; `TaskInfo` is `{issueId?: number, text: string,
+  priority: string, status: string, blocked: boolean, isCurrentTask: boolean, closed: boolean}`
+  (`priority`/`status` are plain strings, mirroring `ToolCallStartedMessage.kind`, so a value
+  this client doesn't recognize yet still round-trips). `KlorbSessionViewProvider.
+  onTaskListUpdate()` (the `SessionUpdateListener` method `KlorbAcpClient` calls) posts the
+  message to the webview as-is.
+* **Webview model** (`webview/features/history/historyModel.ts`'s `TaskListSnapshot`/
+  `applyTaskListUpdate()`, exported through that feature's barrel alongside the history-entry
+  reducers even though the task list isn't a history entry — the same shared-reducer home
+  `applyPendingInteraction()` already uses for non-entry panel state): `App`'s `taskList` state
+  (a `TaskListSnapshot | undefined`) is replaced wholesale on every `taskListUpdate` message —
+  the server always sends every task, never a delta — and cleared on `sessionReset`, since a
+  fresh session may not send an initial plan snapshot at all (see [[klorb-server]]'s
+  `_maybe_send_initial_plan_snapshot` gate) and a stale prior session's tasks must not linger.
+  `App` persists `taskList` via `vscode.setState()` alongside `entries`/`pendingInteraction`/
+  `status`, and threads it through `main.tsx` as `initialTaskList`.
+* **`TaskPanel`** (`src/webview/components/TaskPanel.tsx`, a top-level component, not part of the
+  `history` feature) renders nothing at all while `taskList` is `undefined` (no plan update has
+  arrived yet — no dead chrome). Once one has arrived, it's a plain `<details>`/`<summary>`
+  disclosure (the same hand-rolled pattern the thinking block and the approval panel's "Show full
+  command" already use), collapsed by default:
+  * The `<summary>` is always visible regardless of collapsed state, left to right: a
+    `.task-panel-chevron` `chevron-right` `vscode-icon` (see below), a `checklist` `vscode-icon`,
+    a one-line summary built from the snapshot's counts (`"Tasks: <openCount> open[ ·
+    <blockedCount> blocked][ · #<currentTaskId> – <title>]"`, the bracketed clauses only present
+    when there's something to report, `"Tasks: none"` for a plan update with zero entries), and a
+    `pin` `vscode-icon` that hides the whole panel (see below). `TaskPanelSummaryText` renders the
+    leading `"Tasks: <n> open"` clause in its own `<span>`, bold (`.task-panel-summary-headline`,
+    `font-weight: 600`) whenever `openCount !== 0`; the trailing blocked-count/current-task
+    clauses stay normal weight in the same `<span>`'s sibling text -- rendering this as a real
+    JSX fragment rather than one plain string is what makes the mixed weight possible.
+    `currentTaskLabel()` builds the `"#<id> – <title>"` clause by looking up `currentTaskId` in
+    `tasks` and splitting its own `text` (already formatted `"#<id> <title>"` server-side — see
+    [[klorb-server]]'s "Chainlink task-plan updates" section) on the first space, rather than
+    re-deriving the title; it falls back to the bare `"#<id>"` if `currentTaskId` names no entry
+    in `tasks` at all (defensive against a server inconsistency). The summary text itself never
+    wraps and ellipsizes instead (`.task-panel-summary-text`'s `overflow: hidden; text-overflow:
+    ellipsis; white-space: nowrap`, plus `min-width: 0` -- a flex item's default `min-width: auto`
+    otherwise overrides `text-overflow` and lets the row grow instead of truncating). Click/Enter
+    on the `<summary>` toggles the disclosure open/closed for free (native `<details>` behavior);
+    this open/closed state is **not** persisted, mirroring the history's own "expand all tool
+    calls" toggle. The chevron itself is a fixed `chevron-right` glyph that CSS rotates 90° (to
+    point down) once the panel is open (`.task-panel[open] > .task-panel-summary
+    .task-panel-chevron`), rather than swapping to a different icon name — it's what actually
+    signals expand/collapse state at all, since `.task-panel-summary`'s own `display: flex`
+    (needed for the chevron/icon/text/pin row layout) suppresses the native `<details>` marker
+    triangle as a side effect.
+  * Expanded, the body is a `max-height: 40vh`, independently-scrolling list (`.task-panel-list`)
+    of every task in the order the server sent them: the current task gets a leading `★`, a closed
+    task is dimmed and struck through (`.task-row-closed`), and a blocked task gets a dim
+    `" (blocked)"` suffix — the TUI sidebar's exact visual grammar, restyled. Every row reserves
+    a fixed-width `.task-star` column regardless of whether it's actually starred (an empty
+    `<span>` when not), so a starred row's title isn't indented relative to every other row's.
+    Keyed by `issueId` when known, else by index (a stock-ACP-agent plan reports no `issueId` at
+    all).
+* **Visibility toggle.** The panel's shown/hidden state (distinct from the disclosure's own
+  expanded/collapsed state above) is `App`'s `taskPanelVisible` boolean, persisted the same way as
+  `taskList`, threaded through `main.tsx` as `initialTaskPanelVisible`, and defaulting to `true`.
+  The **Klorb: Toggle Task Panel** command (`klorb.toggleTaskPanel`, registered directly in
+  `extension.ts` alongside `klorb.newSession`/`klorb.restartServer`, since it needs no
+  `SessionControls`/ACP round trip at all) posts a bare `{type: 'toggleTaskPanel'}` host message,
+  which `App` flips its own state on; clicking `TaskPanel`'s own header pin icon calls the exact
+  same toggle handler directly (`event.preventDefault()` on the icon's click first, so hiding the
+  panel doesn't also toggle the `<summary>`'s own disclosure open). When hidden, `TaskPanel` isn't
+  rendered at all (including its own pin), so once hidden, the status row's `StatusMenu` (see
+  "Status row and session controls" below) is the only UI element left to bring it back -- its
+  own task-panel item calls `toggleTaskPanelVisible()` directly too, with no host round trip,
+  and its label reflects current visibility so picking it always reads as the right action.
 
 ### Webview message protocol
 
@@ -700,7 +858,9 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   ("Approval and question panels" above) answering a `questionAsk`, and `{type: 'pickModel'}`/
   `{type: 'pickThinking'}`/`{type: 'cyclePermissionMode'}`/`{type: 'showSessionStats'}`/
   `{type: 'newSession'}`/`{type: 'reloadSkills'}` ("Status row and session controls" above, the
-  status row's chips and its `StatusMenu` popup).
+  status row's chips and its `StatusMenu` popup), and `WebviewErrorMessage`
+  (`{type: 'webviewError', message: string, stack?: string}`, "Webview UI structure" above's
+  `ErrorBoundary`).
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
   string}`, `{type: 'thoughtChunk', text: string}`, `{type: 'turnEnded', stopReason: string}`,
   `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`,
@@ -720,7 +880,8 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
   agent does, `PermissionAskMessage` ("Approval and question panels" above),
   `QuestionAskMessage` ("Approval and question panels" above), `StatusUpdateMessage`, and
-  `SessionStatsMessage` (both "Status row and session controls" above).
+  `SessionStatsMessage` (both "Status row and session controls" above), and
+  `TaskListUpdateMessage`/`{type: 'toggleTaskPanel'}` (both "Task panel" above).
 * `parseHostMessage()`/`parseWebviewMessage()` are the type guards each side runs on every
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
   and `MessageEvent.data` (webview side) are untyped `unknown`. The richer message types above
@@ -832,6 +993,33 @@ element the library ships) rather than hand-written per element as they're adopt
 `docs/adrs/use-vscode-elements-for-webview-controls.md` for why this library over the
 alternatives.
 
+`<vscode-icon>` renders a [Codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html)
+glyph via a `codicon codicon-<name>` class and the `codicon` web font — that font is not built
+into `@vscode-elements/elements` itself (`vscode-icon.js`'s `_getStylesheetConfig()` looks for a
+page-level `<link id="vscode-codicon-stylesheet">` and warns, rendering an empty glyph, if it
+can't find one). `codicon.css`/`codicon.ttf` are not committed to the repo: the `copy:codicons`
+npm script (`mkdir -p out/media && cp node_modules/@vscode/codicons/dist/{codicon.css,codicon.ttf}
+out/media/`, chained into `compile`/`compile:prod` ahead of both esbuild steps) copies them out of
+the `@vscode/codicons` package into `out/media/` at build time, the same generated, git-ignored
+location `out/extension.js`/`out/webview/main.js` already live in.
+`KlorbSessionViewProvider._getHtml()` links `out/media/codicon.css` with that exact `id` before
+`main.css`'s own `<link>` (`main.css` itself stays hand-maintained and committed under the source
+`media/` directory, which this build step never touches). The CSP's `font-src
+${webview.cspSource}` directive is what lets `codicon.css`'s own relative `@font-face { src:
+url("./codicon.ttf...") }` load at all (`default-src 'none'` doesn't cover fonts by itself). This
+deliberately does *not* follow `types/global.d.ts`'s "vendor a copy into the repo" precedent —
+that file is a hand-adjustable, dev/typecheck-only artifact never shipped in the package at all
+(`.vscodeignore` excludes `types/**`), whereas `codicon.css`/`.ttf` are unmodified binary/generated
+assets that ship as-is inside the `.vsix`; committing a copy would drift from the version actually
+pinned in `package.json` and bloat the repo's history on every codicon update, so deriving them at
+build time from the pinned package is the better fit here. `@vscode/codicons` is a `dependencies`
+entry (not `devDependencies`), matching `react`/`react-dom`/`react-markdown`/
+`@vscode-elements/elements`'s own placement: this project's `dependencies` list is "whatever's
+content ends up in the shipped output" (those four are esbuild-inlined into the bundle rather
+than resolved from `node_modules` at runtime, but their code still ships), not narrowly "resolved
+via `require()`/`import()` at runtime" — `@vscode/codicons`' files ship into the `.vsix` the same
+way, just via a copy step instead of a bundler.
+
 Markdown responses render via `react-markdown`, chosen over `marked` + `innerHTML` because it
 renders to React elements without `dangerouslySetInnerHTML` — relevant since the rendered text
 is model-generated and the webview runs under a CSP-locked `vscode-webview://` origin.
@@ -878,7 +1066,8 @@ of two.
 * `test` runs `vitest run` over `test/` (see "Test tree" above for how it resolves the same
   rooted aliases as application code).
 * `typecheck` runs `tsgo` against both tsconfigs (see "Build" above for why `tsgo`, not `tsc`).
-* `compile` runs `typecheck` then both `esbuild` bundles (`build:extension`, `build:webview`).
+* `compile` runs `typecheck`, then `copy:codicons` (see "Component library" above), then both
+  `esbuild` bundles (`build:extension`, `build:webview`).
 * `install` (not present in `klorb/Makefile`, since the Python side has no editor-installation
   step) runs `compile`, packages the result into a `.vsix` with `@vscode/vsce`, and installs
   it into the local VS Code with `code --install-extension` — the interop step needed to
@@ -969,10 +1158,20 @@ time a connection is started (at activation and on `klorb.restartServer`):
 9. Run **Klorb: Set OpenRouter API Key**, paste a key, then run **Klorb: Restart Server** and
    confirm the child still authenticates; run **Klorb: Clear OpenRouter API Key** and confirm a
    subsequent restart falls back to the inherited environment.
+10. In a workspace with a chainlink task database (or ask the agent to create a few todos with
+    `TodoCreate`), confirm the task panel appears docked above the history, collapsed to a
+    one-line "Tasks: N open · ..." summary. Click it to expand the list; confirm the current task
+    is starred, closing an issue (`TodoUpdate`) dims and strikes it through, and a blocked issue
+    shows its "(blocked)" suffix — all live, without restarting the session. Click its header's
+    pin icon to hide it, then open the status row's `^` menu and confirm its task-panel item now
+    reads "Show Task Panel"; pick it and confirm the panel reappears (this is the only way back
+    once the pin has hidden it) and the item now reads "Hide Task Panel" again. Run **Klorb:
+    Toggle Task Panel** from the command palette as a third way to flip the same state; confirm
+    the panel's shown/hidden state (not its expand/collapse state) survives hiding and re-showing
+    the auxiliary bar.
 
 ## Out of scope
 
-* No task panel yet — chainlink-backed plan updates land in `plan-016-011`.
 * No mid-turn message queueing — a second `submitPrompt` while a turn is in flight is rejected
   by `AcpConnection.prompt()` (mirroring [[klorb-server]]'s own one-prompt-at-a-time rule), not
   queued client-side. Lands in `plan-016-012`.

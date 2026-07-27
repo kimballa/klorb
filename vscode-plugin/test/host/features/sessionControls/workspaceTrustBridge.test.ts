@@ -102,4 +102,17 @@ describe('WorkspaceTrustBridge', () => {
 
     expect(vs.infoMessages).toHaveLength(1);
   });
+
+  it('logs, rather than throws, when trustWorkspace() fails', async () => {
+    const vs = makeFakeVsCode(true);
+    vs.choice = 'Trust';
+    const sessionControls = fakeSessionControls(false);
+    sessionControls.trustWorkspace.mockRejectedValueOnce(new Error('ext method failed'));
+    const logs: string[] = [];
+    const bridge = new WorkspaceTrustBridge(vs, sessionControls, (message) => logs.push(message));
+
+    await expect(bridge.offerIfNeeded()).resolves.toBeUndefined();
+
+    expect(logs).toEqual([expect.stringContaining('ext method failed')]);
+  });
 });

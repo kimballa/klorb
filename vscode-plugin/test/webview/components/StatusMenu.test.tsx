@@ -3,18 +3,20 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import StatusMenu, { type StatusMenuProps } from 'webview/components/StatusMenu';
+import StatusMenu, { menuItems, type StatusMenuProps } from 'webview/components/StatusMenu';
 
 afterEach(cleanup);
 
 function mountStatusMenu(overrides: Partial<StatusMenuProps> = {}): StatusMenuProps {
   const callbacks: StatusMenuProps = {
+    taskPanelVisible: true,
     onPickModel: vi.fn(),
     onPickThinking: vi.fn(),
     onSetPermissionMode: vi.fn(),
     onShowSessionStats: vi.fn(),
     onNewSession: vi.fn(),
     onReloadSkills: vi.fn(),
+    onToggleTaskPanel: vi.fn(),
     ...overrides,
   };
   render(<StatusMenu {...callbacks} />);
@@ -69,5 +71,23 @@ describe('StatusMenu', () => {
 
     selectMenuItem('reloadSkills');
     expect(callbacks.onReloadSkills).toHaveBeenCalledOnce();
+
+    selectMenuItem('toggleTaskPanel');
+    expect(callbacks.onToggleTaskPanel).toHaveBeenCalledOnce();
+  });
+
+  it('labels the task-panel item by its current visibility, so it can bring a hidden panel back', () => {
+    // menuItems() is tested directly, rather than through the rendered <vscode-context-menu>'s
+    // own `data` property: React serializes a non-primitive JSX prop on an unregistered custom
+    // element (there's no real @vscode-elements/elements definition loaded under jsdom, only
+    // main.tsx registers it for the real webview) down to a plain `Array.prototype.toString()`
+    // attribute string ("[object Object],[object Object]"), not a readable property, so there's
+    // nothing structured to inspect on the DOM node itself here.
+    expect(menuItems(true).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
+      'Hide Task Panel'
+    );
+    expect(menuItems(false).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
+      'Show Task Panel'
+    );
   });
 });

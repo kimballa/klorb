@@ -8,25 +8,43 @@ import { type JSX, useRef } from 'react';
 const MENU_GAP_PX = 4;
 
 export interface StatusMenuProps {
+  taskPanelVisible: boolean;
   onPickModel(): void;
   onPickThinking(): void;
   onSetPermissionMode(): void;
   onShowSessionStats(): void;
   onNewSession(): void;
   onReloadSkills(): void;
+  onToggleTaskPanel(): void;
 }
 
 type StatusMenuAction =
-  'model' | 'thinking' | 'permissionMode' | 'sessionStats' | 'newSession' | 'reloadSkills';
+  | 'model'
+  | 'thinking'
+  | 'permissionMode'
+  | 'sessionStats'
+  | 'newSession'
+  | 'reloadSkills'
+  | 'toggleTaskPanel';
 
-const MENU_ITEMS: { label: string; value: StatusMenuAction }[] = [
-  { label: 'Set Model…', value: 'model' },
-  { label: 'Set Thinking…', value: 'thinking' },
-  { label: 'Set Permission Mode', value: 'permissionMode' },
-  { label: 'Session Stats', value: 'sessionStats' },
-  { label: 'New Session', value: 'newSession' },
-  { label: 'Reload Skills', value: 'reloadSkills' },
-];
+/** The task-panel item's own label reflects current visibility -- it's the only way to bring
+ * the panel back once its own header pin has hidden it (see `TaskPanel.tsx`'s `onToggleVisibility`
+ * and docs/specs/vscode-plugin.md's "Task panel" section), so it reads as an action name rather
+ * than a static, state-blind "Toggle Task Panel". */
+export function menuItems(taskPanelVisible: boolean): { label: string; value: StatusMenuAction }[] {
+  return [
+    { label: 'Set Model…', value: 'model' },
+    { label: 'Set Thinking…', value: 'thinking' },
+    { label: 'Set Permission Mode', value: 'permissionMode' },
+    { label: 'Session Stats', value: 'sessionStats' },
+    { label: 'New Session', value: 'newSession' },
+    { label: 'Reload Skills', value: 'reloadSkills' },
+    {
+      label: taskPanelVisible ? 'Hide Task Panel' : 'Show Task Panel',
+      value: 'toggleTaskPanel',
+    },
+  ];
+}
 
 /**
  * The status row's leading chevron button: pops open a `vscode-context-menu` above the row (it
@@ -44,12 +62,14 @@ const MENU_ITEMS: { label: string; value: StatusMenuAction }[] = [
  * element's internal visibility.
  */
 export default function StatusMenu({
+  taskPanelVisible,
   onPickModel,
   onPickThinking,
   onSetPermissionMode,
   onShowSessionStats,
   onNewSession,
   onReloadSkills,
+  onToggleTaskPanel,
 }: StatusMenuProps): JSX.Element {
   const menuRef = useRef<VscodeContextMenu>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -87,6 +107,9 @@ export default function StatusMenu({
       case 'reloadSkills':
         onReloadSkills();
         break;
+      case 'toggleTaskPanel':
+        onToggleTaskPanel();
+        break;
     }
   }
 
@@ -98,12 +121,12 @@ export default function StatusMenu({
         className="status-menu-button"
         aria-label="Klorb session commands"
         onClick={openMenu}>
-        ^
+        <vscode-icon name="chevron-up" />
       </button>
       <vscode-context-menu
         ref={menuRef}
         className="status-menu-popup"
-        data={MENU_ITEMS}
+        data={menuItems(taskPanelVisible)}
         onvsc-context-menu-select={handleSelect}
       />
     </>

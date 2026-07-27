@@ -30,6 +30,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onModeChanged: (modeId) => events.push(`modeChanged:${modeId}`),
     onSessionTitleChanged: (title) => events.push(`titleChanged:${title ?? ''}`),
     onUsageUpdate: (usedTokens) => events.push(`usage:${usedTokens}`),
+    onTaskListUpdate: () => undefined,
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   return { agent, connection, events };
@@ -222,6 +223,7 @@ describe('AcpConnection', () => {
       onModeChanged: () => undefined,
       onSessionTitleChanged: () => undefined,
       onUsageUpdate: () => undefined,
+      onTaskListUpdate: () => undefined,
     };
     const connection = new AcpConnection(
       serverProcess,

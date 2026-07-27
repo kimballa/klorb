@@ -2,7 +2,7 @@
 // © Copyright 2026 Aaron Kimball
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { act } from 'react';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from 'webview/App';
 import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
@@ -28,6 +28,15 @@ function postHostMessage(data: unknown): void {
   act(() => {
     window.dispatchEvent(new MessageEvent('message', { data }));
   });
+}
+
+/** The task panel's summary line text -- a direct `querySelector`/`textContent` read (rather
+ * than `screen.getByText`) since the summary's bold "Tasks: N open" clause is a nested `<span>`
+ * whose own direct text-node children don't include the rest of the line (and vice versa),
+ * which is exactly the shape Testing Library's default text matcher can't match against the
+ * full combined string -- see `TaskPanel.test.tsx`'s own `summaryLine()` helper. */
+function taskPanelSummaryText(container: HTMLElement): string | null {
+  return container.querySelector('.task-panel-summary-text')?.textContent ?? null;
 }
 
 function promptTextarea(container: HTMLElement): Element {
@@ -56,12 +65,18 @@ function typeAndSubmit(container: HTMLElement, text: string): void {
   fireEvent.keyDown(textarea, { key: 'Enter' });
 }
 
+const scrollIntoView = vi.fn();
+
 beforeAll(() => {
   // jsdom doesn't implement scrollIntoView, which App calls after each entries change.
-  window.HTMLElement.prototype.scrollIntoView = () => undefined;
+  window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
   // Tells React this environment supports act(), silencing its warning when state updates
   // (like the message-event handler below) happen outside a render/event call React tracks.
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+beforeEach(() => {
+  scrollIntoView.mockClear();
 });
 
 afterEach(cleanup);
@@ -345,6 +360,166 @@ describe('App', () => {
     postHostMessage({ type: 'statusUpdate', permissionMode: 'auto' });
     expect(screen.queryByText('gpt-5')).toBeNull();
     expect(screen.getAllByText('...')).toHaveLength(2);
+  });
+
+  it('restores the task panel from initialTaskList (the vscode.setState round-trip)', () => {
+    const { vscode } = makeVsCode();
+    const { container } = render(
+      <App
+        vscode={vscode}
+        initialEntries={[]}
+        initialTaskList={{
+          summary: { openCount: 1, closedCount: 0, blockedCount: 0, currentTaskId: 12 },
+          tasks: [
+            {
+              issueId: 12,
+              text: '#12 Fix the bug',
+              priority: 'high',
+              status: 'in_progress',
+              blocked: false,
+              isCurrentTask: true,
+              closed: false,
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(taskPanelSummaryText(container)).toBe('Tasks: 1 open · #12 – Fix the bug');
+  });
+
+  it('renders a taskListUpdate in the task panel and clears it on sessionReset', () => {
+    const { vscode } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'taskListUpdate',
+      summary: { openCount: 1, closedCount: 0, blockedCount: 0, currentTaskId: 12 },
+      tasks: [
+        {
+          issueId: 12,
+          text: '#12 Fix the bug',
+          priority: 'high',
+          status: 'in_progress',
+          blocked: false,
+          isCurrentTask: true,
+          closed: false,
+        },
+      ],
+    });
+
+    expect(taskPanelSummaryText(container)).toBe('Tasks: 1 open · #12 – Fix the bug');
+
+    postHostMessage({ type: 'sessionReset' });
+
+    expect(taskPanelSummaryText(container)).toBeNull();
+  });
+
+  it('hides the task panel on toggleTaskPanel and shows it again on a second toggle', () => {
+    const { vscode } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'taskListUpdate',
+      summary: { openCount: 1, closedCount: 0, blockedCount: 0, currentTaskId: null },
+      tasks: [
+        {
+          text: 'Investigate',
+          priority: 'medium',
+          status: 'pending',
+          blocked: false,
+          isCurrentTask: false,
+          closed: false,
+        },
+      ],
+    });
+    expect(taskPanelSummaryText(container)).toBe('Tasks: 1 open');
+
+    postHostMessage({ type: 'toggleTaskPanel' });
+    expect(taskPanelSummaryText(container)).toBeNull();
+
+    postHostMessage({ type: 'toggleTaskPanel' });
+    expect(taskPanelSummaryText(container)).toBe('Tasks: 1 open');
+  });
+
+  it('brings the task panel back via the status menu after its own pin hides it', () => {
+    // The task panel's own header pin (TaskPanel.tsx) hides it with no UI of its own left to
+    // bring it back -- the status row's StatusMenu is the recovery path, entirely client-side
+    // (no round trip to the host), unlike the menu's other items.
+    const { vscode, posted } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({
+      type: 'taskListUpdate',
+      summary: { openCount: 1, closedCount: 0, blockedCount: 0, currentTaskId: null },
+      tasks: [
+        {
+          text: 'Investigate',
+          priority: 'medium',
+          status: 'pending',
+          blocked: false,
+          isCurrentTask: false,
+          closed: false,
+        },
+      ],
+    });
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    const pin = container.querySelector('.task-panel-pin') as Element;
+    fireEvent.click(pin);
+    expect(taskPanelSummaryText(container)).toBeNull();
+
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    const menu = container.querySelector('vscode-context-menu') as Element;
+    fireEvent(
+      menu,
+      new CustomEvent('vsc-context-menu-select', {
+        detail: {
+          value: 'toggleTaskPanel',
+          label: '',
+          keybinding: '',
+          separator: false,
+          tabindex: 0,
+        },
+      })
+    );
+
+    expect(taskPanelSummaryText(container)).toBe('Tasks: 1 open');
+    expect(posted).not.toContainEqual(expect.objectContaining({ type: 'toggleTaskPanel' }));
+  });
+
+  it('does not scroll the history on a taskListUpdate that leaves entries unchanged', () => {
+    // Regression test: taskListUpdate/toggleTaskPanel used to share one useEffect with the
+    // scrollIntoView call, so a taskListUpdate (which can arrive several times per turn, once
+    // per TodoCreate/TodoUpdate/TodoNext call) re-scrolled the history on every one of them --
+    // fighting the browser's own attempt to keep a focused element elsewhere on the page (e.g.
+    // the task panel's own <summary>) in view, which visibly read as the history freezing until
+    // focus moved away. Scrolling should only follow an actual entries/pendingInteraction/status
+    // change now.
+    const { vscode } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+    scrollIntoView.mockClear();
+
+    postHostMessage({
+      type: 'taskListUpdate',
+      summary: { openCount: 1, closedCount: 0, blockedCount: 0, currentTaskId: null },
+      tasks: [
+        {
+          text: 'Investigate',
+          priority: 'medium',
+          status: 'pending',
+          blocked: false,
+          isCurrentTask: false,
+          closed: false,
+        },
+      ],
+    });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    postHostMessage({ type: 'toggleTaskPanel' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    postHostMessage({ type: 'agentChunk', text: 'hi' });
+    expect(scrollIntoView).toHaveBeenCalledOnce();
   });
 
   it('clears the history on sessionReset', () => {

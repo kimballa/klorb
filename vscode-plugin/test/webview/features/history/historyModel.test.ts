@@ -9,8 +9,10 @@ import {
   applyExpandAllToolCalls,
   applyHostMessage,
   applyPendingInteraction,
+  applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
+  isHistoryEntry,
   type HistoryEntry,
   type ToolCallHistoryEntry,
 } from 'webview/features/history';
@@ -55,6 +57,21 @@ describe('applyHostMessage', () => {
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
     entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'end_turn' });
     expect(entries).toEqual([{ kind: 'response', text: 'partial', streaming: false }]);
+  });
+
+  it('does not throw on turnEnded when a malformed non-object entry is present', () => {
+    // A defensive regression test: `vscode.getState()`'s persisted `entries` isn't runtime-
+    // validated the way host<->webview messages are, and a stale/incompatible shape from an old
+    // build has been observed to leave a bare string in the array. `finishStreaming()`'s
+    // `'streaming' in entry` check would throw a TypeError on a non-object without its own
+    // `typeof`/`null` guard.
+    const entries = ['not a real entry'] as unknown as HistoryEntry[];
+    expect(() =>
+      applyHostMessage(entries, { type: 'turnEnded', stopReason: 'end_turn' })
+    ).not.toThrow();
+    expect(applyHostMessage(entries, { type: 'turnEnded', stopReason: 'end_turn' })).toEqual([
+      'not a real entry',
+    ]);
   });
 
   it('appends a notice for a non-end_turn stop reason', () => {
@@ -389,6 +406,45 @@ describe('applyPendingInteraction', () => {
   });
 });
 
+describe('applyTaskListUpdate', () => {
+  const task = {
+    issueId: 12,
+    text: '#12 Fix the bug',
+    priority: 'high',
+    status: 'in_progress',
+    blocked: false,
+    isCurrentTask: true,
+    closed: false,
+  };
+  const snapshot = {
+    summary: { openCount: 1, closedCount: 0, blockedCount: 0, currentTaskId: 12 },
+    tasks: [task],
+  };
+
+  it('replaces the snapshot wholesale on taskListUpdate', () => {
+    const first = applyTaskListUpdate(undefined, { type: 'taskListUpdate', ...snapshot });
+    expect(first).toEqual(snapshot);
+
+    const replacement = {
+      summary: { openCount: 0, closedCount: 1, blockedCount: 0, currentTaskId: null },
+      tasks: [{ ...task, status: 'completed', isCurrentTask: false, closed: true }],
+    };
+    const second = applyTaskListUpdate(first, { type: 'taskListUpdate', ...replacement });
+    expect(second).toEqual(replacement);
+  });
+
+  it('clears the snapshot on sessionReset', () => {
+    const withSnapshot = applyTaskListUpdate(undefined, { type: 'taskListUpdate', ...snapshot });
+    expect(applyTaskListUpdate(withSnapshot, { type: 'sessionReset' })).toBeUndefined();
+  });
+
+  it('leaves the snapshot alone for unrelated messages', () => {
+    const withSnapshot = applyTaskListUpdate(undefined, { type: 'taskListUpdate', ...snapshot });
+    expect(applyTaskListUpdate(withSnapshot, { type: 'agentChunk', text: 'x' })).toEqual(snapshot);
+    expect(applyTaskListUpdate(undefined, { type: 'turnStarted' })).toBeUndefined();
+  });
+});
+
 describe('applyTurnFlag', () => {
   it('raises on turnStarted and clears on turnEnded/turnError/sessionReset', () => {
     expect(applyTurnFlag(false, { type: 'turnStarted' })).toBe(true);
@@ -400,5 +456,25 @@ describe('applyTurnFlag', () => {
   it('leaves the flag alone for streamed chunks', () => {
     expect(applyTurnFlag(true, { type: 'agentChunk', text: 'x' })).toBe(true);
     expect(applyTurnFlag(false, { type: 'thoughtChunk', text: 'x' })).toBe(false);
+  });
+});
+
+describe('isHistoryEntry', () => {
+  it('accepts an object with a recognized kind, for every subtype', () => {
+    expect(isHistoryEntry({ kind: 'prompt', text: 'hi', streaming: false })).toBe(true);
+    expect(isHistoryEntry({ kind: 'toolCall', callId: 'c1' })).toBe(true);
+    expect(isHistoryEntry({ kind: 'sessionStats' })).toBe(true);
+  });
+
+  it('rejects a bare primitive (the shape a stale/incompatible persisted state can hold)', () => {
+    expect(isHistoryEntry('not a real entry')).toBe(false);
+    expect(isHistoryEntry(42)).toBe(false);
+    expect(isHistoryEntry(null)).toBe(false);
+    expect(isHistoryEntry(undefined)).toBe(false);
+  });
+
+  it('rejects an object with no kind, or an unrecognized one', () => {
+    expect(isHistoryEntry({})).toBe(false);
+    expect(isHistoryEntry({ kind: 'somethingElse' })).toBe(false);
   });
 });

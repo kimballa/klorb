@@ -25,6 +25,105 @@ body {
   text-overflow: ellipsis;
 }
 
+.webview-crash {
+  padding: 12px;
+  color: var(--vscode-errorForeground);
+}
+
+.webview-crash-stacktrace {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.task-panel {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.task-panel-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+/* A fixed chevron glyph, rotated (not swapped to a different icon) to point down once the
+   parent <details> is open -- see TaskPanel.tsx's own doc comment for why this replaces the
+   native <details> marker instead of just hiding it. */
+.task-panel-chevron {
+  flex: 0 0 auto;
+  transition: transform 0.1s ease;
+}
+
+.task-panel[open] > .task-panel-summary .task-panel-chevron {
+  transform: rotate(90deg);
+}
+
+.task-panel-icon {
+  flex: 0 0 auto;
+}
+
+.task-panel-summary-text {
+  flex: 1 1 auto;
+  /* A flex item's default min-width is `auto` (its content's intrinsic width), which overrides
+     `overflow`/`text-overflow` and lets the row grow instead of truncating; min-width: 0 opts
+     back into normal shrink-and-truncate behavior. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-panel-summary-headline {
+  font-weight: 600;
+}
+
+.task-panel-pin {
+  flex: 0 0 auto;
+  cursor: pointer;
+  transform: rotate(-45deg);
+}
+
+.task-panel-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.task-row-closed {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+/* A fixed-width column, always present (even empty) -- so a starred row's title starts at the
+   same column as every other row's, rather than the star's own width shifting it over. */
+.task-star {
+  flex: 0 0 1.2em;
+  color: var(--vscode-textLink-foreground);
+}
+
+.task-text {
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-blocked {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
 #history {
   flex: 1 1 auto;
   overflow-y: auto;

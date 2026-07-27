@@ -345,7 +345,9 @@ class SessionCoreMixin(SessionBase):
 
     def set_chainlink_task(self, task_id: int | None) -> None:
         """Set `cur_chainlink_task_id` -- the only way a caller (`klorb.tools.tasks.todo_next.
-        TodoNextTool`) should change it, rather than assigning the attribute directly."""
+        TodoNextTool` picking a new one, or `klorb.tools.tasks.todo_update.TodoUpdateTool`
+        clearing it when the tracked task itself is closed) should change it, rather than
+        assigning the attribute directly."""
         self.cur_chainlink_task_id = task_id
 
     def enqueue_queued_message(self, queued_msg: QueuedMessage) -> None:

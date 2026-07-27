@@ -6,6 +6,7 @@ import { KlorbAcpClient, type SessionUpdateListener } from 'host/features/acp';
 import type {
   PermissionAskMessage,
   QuestionAskMessage,
+  TaskListUpdateMessage,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
@@ -21,6 +22,7 @@ function makeListener(): {
   modeChanges: string[];
   titleChanges: (string | null)[];
   usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[];
+  taskListUpdates: TaskListUpdateMessage[];
 } {
   const agentText: string[] = [];
   const thoughtText: string[] = [];
@@ -31,6 +33,7 @@ function makeListener(): {
   const modeChanges: string[] = [];
   const titleChanges: (string | null)[] = [];
   const usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[] = [];
+  const taskListUpdates: TaskListUpdateMessage[] = [];
   return {
     agentText,
     thoughtText,
@@ -41,6 +44,7 @@ function makeListener(): {
     modeChanges,
     titleChanges,
     usageUpdates,
+    taskListUpdates,
     listener: {
       onAgentText: (text: string) => agentText.push(text),
       onThoughtText: (text: string) => thoughtText.push(text),
@@ -53,6 +57,7 @@ function makeListener(): {
       onSessionTitleChanged: (title: string | null) => titleChanges.push(title),
       onUsageUpdate: (usedTokens: number, maxTokens: number | null, outputTokens: number) =>
         usageUpdates.push({ usedTokens, maxTokens, outputTokens }),
+      onTaskListUpdate: (message: TaskListUpdateMessage) => taskListUpdates.push(message),
     },
   };
 }
@@ -112,6 +117,151 @@ describe('KlorbAcpClient', () => {
     });
 
     expect(titleChanges).toEqual(['Fix the bug', null]);
+  });
+
+  describe('plan', () => {
+    it("flattens a plan update using each entry's own _meta.klorb detail", async () => {
+      const { listener, taskListUpdates } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      await client.sessionUpdate({
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'plan',
+          entries: [
+            {
+              content: '#12 Fix the bug',
+              priority: 'high',
+              status: 'in_progress',
+              _meta: {
+                klorb: {
+                  issueId: 12,
+                  openBlockerCount: 0,
+                  blockedBy: [],
+                  closed: false,
+                  isCurrentTask: true,
+                },
+              },
+            },
+            {
+              content: '#13 Write docs',
+              priority: 'medium',
+              status: 'pending',
+              _meta: {
+                klorb: {
+                  issueId: 13,
+                  openBlockerCount: 1,
+                  blockedBy: [12],
+                  closed: false,
+                  isCurrentTask: false,
+                },
+              },
+            },
+            {
+              content: '#11 Old task',
+              priority: 'low',
+              status: 'completed',
+              _meta: {
+                klorb: {
+                  issueId: 11,
+                  openBlockerCount: 0,
+                  blockedBy: [],
+                  closed: true,
+                  isCurrentTask: false,
+                },
+              },
+            },
+          ],
+          _meta: { klorb: { openCount: 2, closedCount: 1, blockedCount: 1, currentTaskId: 12 } },
+        },
+      });
+
+      expect(taskListUpdates).toEqual([
+        {
+          type: 'taskListUpdate',
+          summary: { openCount: 2, closedCount: 1, blockedCount: 1, currentTaskId: 12 },
+          tasks: [
+            {
+              issueId: 12,
+              text: '#12 Fix the bug',
+              priority: 'high',
+              status: 'in_progress',
+              blocked: false,
+              isCurrentTask: true,
+              closed: false,
+            },
+            {
+              issueId: 13,
+              text: '#13 Write docs',
+              priority: 'medium',
+              status: 'pending',
+              blocked: true,
+              isCurrentTask: false,
+              closed: false,
+            },
+            {
+              issueId: 11,
+              text: '#11 Old task',
+              priority: 'low',
+              status: 'completed',
+              blocked: false,
+              isCurrentTask: false,
+              closed: true,
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('degrades to status-derived detail for a stock ACP agent plan with no _meta.klorb', async () => {
+      const { listener, taskListUpdates } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      await client.sessionUpdate({
+        sessionId: 's1',
+        update: {
+          sessionUpdate: 'plan',
+          entries: [
+            { content: 'Investigate the crash', priority: 'high', status: 'in_progress' },
+            { content: 'Ship the fix', priority: 'medium', status: 'pending' },
+            { content: 'Backport', priority: 'low', status: 'completed' },
+          ],
+        },
+      });
+
+      expect(taskListUpdates).toEqual([
+        {
+          type: 'taskListUpdate',
+          summary: { openCount: 2, closedCount: 1, blockedCount: 0, currentTaskId: null },
+          tasks: [
+            {
+              text: 'Investigate the crash',
+              priority: 'high',
+              status: 'in_progress',
+              blocked: false,
+              isCurrentTask: true,
+              closed: false,
+            },
+            {
+              text: 'Ship the fix',
+              priority: 'medium',
+              status: 'pending',
+              blocked: false,
+              isCurrentTask: false,
+              closed: false,
+            },
+            {
+              text: 'Backport',
+              priority: 'low',
+              status: 'completed',
+              blocked: false,
+              isCurrentTask: false,
+              closed: true,
+            },
+          ],
+        },
+      ]);
+    });
   });
 
   describe('extNotification', () => {

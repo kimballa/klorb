@@ -120,7 +120,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const serverProcess = new KlorbServerProcess();
   const editorIntegration = new EditorIntegration(realEditorIntegrationVsCode());
   context.subscriptions.push(editorIntegration);
-  const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration);
+  const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration, log);
   const apiKeyManager = new ApiKeyManager(realApiKeyVsCode(context));
   const connection = new AcpConnection(
     serverProcess,
@@ -138,7 +138,8 @@ export function activate(context: vscode.ExtensionContext): void {
   provider.setSessionControls(sessionControls);
   const workspaceTrustBridge = new WorkspaceTrustBridge(
     realWorkspaceTrustVsCode(),
-    sessionControls
+    sessionControls,
+    log
   );
   context.subscriptions.push({ dispose: () => workspaceTrustBridge.dispose() });
   context.subscriptions.push({ dispose: () => connection.stop() });
@@ -170,6 +171,12 @@ export function activate(context: vscode.ExtensionContext): void {
         .catch((err: unknown) => {
           void vscode.window.showErrorMessage(`Klorb: ${errorMessage(err)}`);
         });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('klorb.toggleTaskPanel', () => {
+      provider.postHostMessage({ type: 'toggleTaskPanel' });
     })
   );
 

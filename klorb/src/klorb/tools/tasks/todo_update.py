@@ -108,6 +108,13 @@ class TodoUpdateTool(Tool):
             client.comment(issue_id, args["add_comment"])
         if args.get("close"):
             client.close_issue(issue_id)
+            session = self.context.session
+            if session is not None and session.cur_chainlink_task_id == issue_id:
+                # Closing the session's own tracked task must clear it immediately -- otherwise
+                # it keeps reporting as the current task (to the plan-update snapshot, and to
+                # TodoNext's standing interjection) until the model happens to call TodoNext
+                # again, which may never happen once the last task is done.
+                session.set_chainlink_task(None)
         if args.get("reopen"):
             client.reopen_issue(issue_id)
 

@@ -88,6 +88,35 @@ describe('parseHostMessage', () => {
         cachePercent: 0,
         totalCost: 0,
       },
+      {
+        type: 'taskListUpdate',
+        summary: { openCount: 2, closedCount: 1, blockedCount: 1, currentTaskId: 12 },
+        tasks: [
+          {
+            issueId: 12,
+            text: '#12 Fix the bug',
+            priority: 'high',
+            status: 'in_progress',
+            blocked: false,
+            isCurrentTask: true,
+            closed: false,
+          },
+          {
+            text: 'Untitled',
+            priority: 'medium',
+            status: 'pending',
+            blocked: true,
+            isCurrentTask: false,
+            closed: false,
+          },
+        ],
+      },
+      {
+        type: 'taskListUpdate',
+        summary: { openCount: 0, closedCount: 0, blockedCount: 0, currentTaskId: null },
+        tasks: [],
+      },
+      { type: 'toggleTaskPanel' },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -201,6 +230,29 @@ describe('parseHostMessage', () => {
         totalCost: 0,
       })
     ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'taskListUpdate',
+        summary: { openCount: 0, closedCount: 0, blockedCount: 0, currentTaskId: null },
+        // tasks missing
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'taskListUpdate',
+        summary: { openCount: 0, closedCount: 0, blockedCount: 0, currentTaskId: 'not-a-number' },
+        tasks: [],
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'taskListUpdate',
+        summary: { openCount: 0, closedCount: 0, blockedCount: 0, currentTaskId: null },
+        tasks: [
+          { text: 'x', priority: 'low', status: 'pending', blocked: false, isCurrentTask: false },
+        ],
+      })
+    ).toBeUndefined();
   });
 });
 
@@ -225,6 +277,8 @@ describe('parseWebviewMessage', () => {
       { type: 'showSessionStats' },
       { type: 'newSession' },
       { type: 'reloadSkills' },
+      { type: 'webviewError', message: 'boom' },
+      { type: 'webviewError', message: 'boom', stack: 'at App (App.tsx:1:1)' },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);
@@ -247,5 +301,9 @@ describe('parseWebviewMessage', () => {
     ).toBeUndefined();
     expect(parseWebviewMessage({ type: 'questionAnswer', requestId: 1 })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'questionAnswer', selectedOptionIndex: 0 })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'webviewError' })).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'webviewError', message: 'boom', stack: 7 })
+    ).toBeUndefined();
   });
 });

@@ -170,7 +170,11 @@ All four tools live in `klorb.tools.tasks`, category `"TASKS"`:
   `issue update`; `depends_on`/`drop_dependency` → `issue block`/`issue unblock` per id;
   `add_comment` → `issue comment`; `close`/`reopen` → `issue close --no-changelog`/`issue
   reopen`, applied last (so a comment added in the same call lands before the issue closes).
-  Returns the updated issue's full `issue show` detail.
+  Closing the issue that's also `Session.cur_chainlink_task_id` clears it
+  (`Session.set_chainlink_task(None)`) as part of the same call — a closed issue can never be
+  left tracked as the current task, which would otherwise linger until the model happened to
+  call `TodoNext` again (never, if it was the last task). Returns the updated issue's full
+  `issue show` detail.
 
 None of the four apply any `ProcessConfig`-driven permission gate (unlike, say,
 `tools.memory.readPermission`) — chainlink's SQLite file lives under the workspace's own
@@ -189,9 +193,10 @@ than every subagent scoping issues to its own, narrower `id`.
 
 `Session.cur_chainlink_task_id: int | None` (default `None`) tracks the issue id `TodoNext` most
 recently picked (or re-returned). Written only through `Session.set_chainlink_task(task_id)` —
-`TodoNext` is the only caller — never assigned directly by a `Tool`; read directly (a plain
-public attribute, like `active_cancel_event`) by `TodoCreate`'s `blocks_current_issue` handling
-and the standing interjection provider.
+`TodoNext` picking a new one, or `TodoUpdate` clearing it to `None` when the tracked issue itself
+is closed — never assigned directly to the attribute by a `Tool`; read directly (a plain public
+attribute, like `active_cancel_event`) by `TodoCreate`'s `blocks_current_issue` handling and the
+standing interjection provider.
 
 Both round-trip through `last-session.json`
 (`klorb.workspace.last_session.LastSessionState.root_id`/`cur_chainlink_task_id`, additive
