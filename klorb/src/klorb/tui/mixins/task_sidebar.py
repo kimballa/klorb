@@ -10,6 +10,7 @@ from klorb.process_config import persist_task_sidebar
 from klorb.session import ToolCallEvent
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import (
+    TASK_TOOL_NAMES,
     ChainlinkClient,
     ChainlinkError,
     chainlink_available,
@@ -20,12 +21,6 @@ from klorb.tui.constants import TASK_SIDEBAR_ID
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 
 logger = logging.getLogger(__name__)
-
-_TASK_TOOL_NAMES = frozenset({"TodoList", "TodoNext", "TodoCreate", "TodoUpdate"})
-"""`ToolCallEvent.name` values that can change the chainlink task list or the session's current
-tracked task -- `PromptSubmissionMixin.handle_tool_call` calls
-`_maybe_refresh_task_sidebar_after_tool_call` for every finished tool call, and this is what it
-checks before bothering to refresh."""
 
 
 class TaskSidebarMixin(ReplAppBase):
@@ -47,7 +42,7 @@ class TaskSidebarMixin(ReplAppBase):
         """Refresh the task sidebar after a finished tool call that could have changed what it
         shows, but only while it's actually visible -- called from `PromptSubmissionMixin.
         handle_tool_call` for every finished tool call in a turn."""
-        if self._task_sidebar_shown and event.name in _TASK_TOOL_NAMES:
+        if self._task_sidebar_shown and event.name in TASK_TOOL_NAMES:
             self._refresh_task_sidebar()
 
     @work(thread=True)

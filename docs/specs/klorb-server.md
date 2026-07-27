@@ -32,8 +32,10 @@ how the session operates the same way the TUI's own commands do.
 * `initialize` negotiates the protocol version (klorb always replies with `acp.PROTOCOL_VERSION`,
   the SDK's own current value) and exchanges capabilities. klorb's `agentCapabilities._meta`
   carries `{"klorb": {"sessionConfig": true, "sessionStats": true, "trustWorkspace": true,
-  "reloadSkills": true}}` — grown by later increments as more `_klorb/*` extension methods are
-  added (see "Extension methods" below).
+  "reloadSkills": true, "taskMeta": <chainlink binary discoverable>}}` — grown by later
+  increments as more `_klorb/*` extension methods are added (see "Extension methods" below).
+  `taskMeta` doesn't gate an extension method the way the others do; see "Chainlink task-plan
+  updates" below for what it actually means.
 * `session/new` builds a fresh `Session` for the given `cwd`, tearing down any existing one
   first — see "Single top-level session" below. `mcpServers` is accepted but never acted on
   (klorb has no MCP support). The response's `modes` field advertises the session's permission
@@ -60,11 +62,13 @@ how the session operates the same way the TUI's own commands do.
 ### Extension methods
 
 `agentCapabilities._meta.klorb` is `{"sessionConfig": true, "sessionStats": true,
-"trustWorkspace": true, "reloadSkills": true}` — the *agent*-advertised extension methods below,
-all client → server. Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize gets the
-standard `-32601` method-not-found error; every unrecognized `_klorb/*` *notification* is
-silently ignored, per ACP's own extensibility rules. Later increments grow this section as they
-land.
+"trustWorkspace": true, "reloadSkills": true, "taskMeta": <chainlink discoverable>}` —
+`sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills` name the *agent*-advertised
+extension methods below, all client → server; `taskMeta` is not an extension method (see
+"Chainlink task-plan updates" below). Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize
+gets the standard `-32601` method-not-found error; every unrecognized `_klorb/*` *notification*
+is silently ignored, per ACP's own extensibility rules. Later increments grow this section as
+they land.
 
 * **`_klorb/getSessionConfig`** — reads the session's model/thinking config. Params:
   `{sessionId: string}`. Result: `{model: {current: string, available: [{id: string, name:
@@ -178,6 +182,45 @@ it's ordered relative to them like any other fire-and-forget callback for that t
 new`'s `_meta.klorb.title` additionally reports the session's name at the moment `session/new`
 returns (always `null` today — see "Single top-level session": every session this server builds
 is fresh, never restored).
+
+## Chainlink task-plan updates
+
+The session's chainlink-backed task list (docs/specs/chainlink-task-tracking.md) rides ACP's
+standard `plan` `session/update`, so a stock ACP client sees a sensible plan even without
+klorb's own `_meta` detail; the klorb VS Code plugin's task panel (`plan-016-011`) renders the
+richer view from that same detail.
+
+* **Mapping** (`klorb.server.plan_updates.build_plan_update(issues, cur_task_id)`, pure): one
+  `PlanEntry` per issue, in the same order `issues` was given (already fetched and sorted by
+  `klorb.tools.tasks.common.fetch_and_sort_issues` — this function never re-sorts).
+  * `content` — `"#<id> <title>"`, the same row format the TUI's `TaskSidebar` uses.
+  * `priority` — chainlink's four-level `PRIORITY_ORDER` collapses onto ACP's three-level
+    `PlanEntryPriority` via a fixed dict: `critical`/`high` → `"high"`, `medium` → `"medium"`,
+    `low` → `"low"`.
+  * `status` — a closed issue is `"completed"`; an open issue whose id is `cur_task_id` is
+    `"in_progress"`; every other open issue is `"pending"`. Blocked-ness is not a distinct ACP
+    status — it rides in `_meta` instead (below).
+  * Per-entry `_meta.klorb` — `{issueId, openBlockerCount, blockedBy, closed, isCurrentTask}`.
+  * Update-level `_meta.klorb` — `{openCount, closedCount, blockedCount, currentTaskId}`, so a
+    client can render a collapsed one-line summary ("3 open · 1 blocked · task #12 in progress")
+    without walking every entry.
+* **Refresh triggers** (`TurnBridge`/`KlorbAcpAgent`), mirroring the TUI task sidebar's own
+  refresh policy (`klorb.tui.mixins.task_sidebar.TaskSidebarMixin`) minus its "only while
+  visible" gate — the server can't see panel visibility, and one notification per mutation is
+  cheap:
+  * After any finished tool call whose name is in `klorb.tools.tasks.common.TASK_TOOL_NAMES`
+    (`TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate`), `TurnBridge.on_tool_call` calls
+    `TurnBridge.fetch_plan_update()` — a fresh `ChainlinkClient`/`fetch_and_sort_issues(
+    include_closed=True)` fetch, on the same worker thread `on_tool_call` itself already runs
+    on — and enqueues the result onto the turn's ordered outbound queue, right after that call's
+    own `tool_call_update`.
+  * Once per `session/new`, `KlorbAcpAgent._maybe_send_initial_plan_snapshot` sends one plan
+    snapshot, but only if `klorb.tools.tasks.common.chainlink_db_exists(workspace.path)` is
+    already true — never triggers `chainlink init`'s scaffolding just to report an empty plan.
+    Runs off the event loop (`asyncio.to_thread`), since chainlink shells out synchronously.
+  * Either trigger is silently skipped (no `session/update` sent, reason logged at `debug`) if
+    chainlink is unavailable or `ChainlinkClient`/`fetch_and_sort_issues` raises
+    `ChainlinkError`/`ValueError` — a turn is never failed by a plan-refresh failure.
 
 ## How it works
 
@@ -565,7 +608,6 @@ e.g. with `allow:session`, to let the command run:
 * No free-text "Other" row as a selectable `PermissionOption` — a client wants the free-text
   redirect via `_meta.klorb.otherText` on its response instead (see "Permission asks and
   escalation" above).
-* No chainlink task-plan (`session/update` → `plan`) updates. Lands in `plan-016-010`.
 * No mid-turn message queueing (`_klorb/enqueueMessage`) — a second `session/prompt` while one
   is in flight is a JSON-RPC error, not queued. Lands in `plan-016-012`.
 * No websocket (or other non-stdio) transport — `ServerStreams.from_stdio()` is the only

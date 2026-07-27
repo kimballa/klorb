@@ -221,6 +221,13 @@ once it's done and verified.
 (open and closed, current task starred) — see docs/specs/terminal-repl.md's "Task sidebar"
 bullet and `klorb.tui.widgets.task_sidebar.TaskSidebar`.
 
+`fetch_and_sort_issues()` has a second consumer besides the TUI sidebar: the ACP server maps its
+result onto a standard ACP `plan` session update after every `Todo*` tool call and once per
+`session/new` (when a chainlink database already exists for the workspace) — see
+docs/specs/klorb-server.md's "Chainlink task-plan updates" section. `TASK_TOOL_NAMES` (the tool
+names that can change the list) and `chainlink_db_exists()` (the "is there already a database"
+check) live in `klorb.tools.tasks.common` precisely so both consumers share them.
+
 ## Configuration
 
 No new `klorb-config.json` keys. Whether `TASKS` tools are offered at all is determined purely

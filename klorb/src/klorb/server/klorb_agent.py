@@ -3,6 +3,7 @@
 owns the single live `Session`, and dispatches `session/new`/`session/prompt`/`session/cancel`.
 See docs/specs/klorb-server.md."""
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, cast
@@ -41,6 +42,7 @@ from klorb.session import Session
 from klorb.session.constants import PermissionFramework
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill.catalog import get_skill_catalog_registry
+from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
 from klorb.workspace import TrustManager, Workspace
 
 logger = logging.getLogger(__name__)
@@ -125,6 +127,7 @@ class KlorbAcpAgent(acp.Agent):
                 "sessionStats": True,
                 "trustWorkspace": True,
                 "reloadSkills": True,
+                "taskMeta": chainlink_available(),
             }}),
         )
 
@@ -161,6 +164,7 @@ class KlorbAcpAgent(acp.Agent):
             raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),
             ask_user_questions_capable=self._client_supports("askUserQuestions"))
         logger.debug("session/new created ACP session %s for cwd=%s", self._acp_session_id, cwd)
+        await self._maybe_send_initial_plan_snapshot(workspace.path)
         return acp.NewSessionResponse(
             session_id=self._acp_session_id,
             modes=session_mode_state(session.config.permission_framework),
@@ -169,6 +173,25 @@ class KlorbAcpAgent(acp.Agent):
                 "title": session.name,
             }},
         )
+
+    async def _maybe_send_initial_plan_snapshot(self, workspace_path: Path) -> None:
+        """Send one `plan` `session/update` for the just-built session's chainlink issues, but
+        only if a `.chainlink/issues.db` already exists for `workspace_path` -- never triggers
+        `chainlink init`'s scaffolding just to report an empty plan. A no-op if chainlink isn't
+        available at all, or the fetch fails (`TurnBridge.fetch_plan_update` returns `None`).
+        Runs the fetch off the event loop (`asyncio.to_thread`) since chainlink shells out
+        synchronously -- see docs/specs/klorb-server.md's "Chainlink task-plan updates"
+        section."""
+        if not (chainlink_available() and chainlink_db_exists(workspace_path)):
+            return
+        assert self._turn_bridge is not None
+        assert self._acp_session_id is not None
+        plan_update = await asyncio.to_thread(self._turn_bridge.fetch_plan_update)
+        if plan_update is not None:
+            logger.debug(
+                "session/new sending initial plan snapshot for ACP session %s", self._acp_session_id)
+            await self._require_client().session_update(
+                session_id=self._acp_session_id, update=plan_update)
 
     async def prompt(
         self, prompt: list[_PromptContentBlock], session_id: str, **kwargs: Any,

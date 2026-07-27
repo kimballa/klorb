@@ -265,7 +265,7 @@ send button surfaces a protocol error in the panel until 002 lands.
 | 7 | [plan-016-007-ask-user-questions-end-to-end](../archive/plan-016-007-ask-user-questions-end-to-end.md) | both | `_klorb/askUserQuestions` ext method and the questions panel |
 | 8 | [plan-016-008-python-session-controls](../archive/plan-016-008-python-session-controls.md) | server | Session modes (permission framework), model/thinking config options, session naming + token-usage updates, `_klorb/sessionStats`, workspace trust, skills reload |
 | 9 | [plan-016-009-vscode-session-controls](../archive/plan-016-009-vscode-session-controls.md) | client | Status row, model/thinking pickers, permission-mode badge, new-session command, stats display, trust bridging |
-| 10 | [plan-016-010-python-task-plan-updates](plan-016-010-python-task-plan-updates.md) | server | Chainlink → ACP `plan` session updates with `_meta.klorb` issue detail |
+| 10 | [plan-016-010-python-task-plan-updates](../archive/plan-016-010-python-task-plan-updates.md) | server | Chainlink → ACP `plan` session updates with `_meta.klorb` issue detail |
 | 11 | [plan-016-011-vscode-task-panel](plan-016-011-vscode-task-panel.md) | client | Collapsible top-docked task panel rendering plan updates |
 | 12 | [plan-016-012-queued-messages-and-interrupt-polish](plan-016-012-queued-messages-and-interrupt-polish.md) | both | `_klorb/enqueueMessage` mid-turn queueing, queued-message rendering, abort/interrupt polish, error surfaces |
 

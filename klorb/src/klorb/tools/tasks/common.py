@@ -35,6 +35,12 @@ PRIORITY_ORDER: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 
 first, so `critical` (weight 0) comes before `low` (weight 3). Also the canonical set of valid
 priority strings, checked by `validate_priority`."""
 
+TASK_TOOL_NAMES: frozenset[str] = frozenset({"TodoList", "TodoNext", "TodoCreate", "TodoUpdate"})
+"""Every klorb tool name that can change the chainlink task list or the session's current
+tracked task -- shared by the TUI's task sidebar refresh
+(`klorb.tui.mixins.task_sidebar.TaskSidebarMixin`) and the ACP server's `plan` session-update
+refresh trigger (`klorb.server.turn_bridge.TurnBridge`), so both consult the same set of names."""
+
 _CHAINLINK_DB_RELPATH = Path(".chainlink") / "issues.db"
 _GITIGNORE_ENTRY = ".chainlink/"
 
@@ -94,6 +100,15 @@ def chainlink_available() -> bool:
     registered for a session at all, and by `ChainlinkClient.__init__` to fail fast with a
     clear message instead of a bare "file not found" from `subprocess.run`."""
     return _discover_binary() is not None
+
+
+def chainlink_db_exists(workspace_root: Path) -> bool:
+    """Whether `.chainlink/issues.db` already exists under `workspace_root`, without
+    constructing a `ChainlinkClient` (which would run `chainlink init`'s scaffolding as a side
+    effect of `_ensure_setup()` if it didn't exist yet). Used by the ACP server to decide
+    whether a session's initial `plan` update is worth fetching at all -- see
+    docs/specs/klorb-server.md's "Chainlink task-plan updates" section."""
+    return (workspace_root / _CHAINLINK_DB_RELPATH).exists()
 
 
 class ChainlinkError(RuntimeError):

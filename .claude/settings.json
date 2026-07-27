@@ -35,7 +35,9 @@
       "Bash(npx vitest *)",
       "Bash(npm run *)",
       "Bash(npm test *)",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "Bash(which chainlink *)",
+      "Read(//home/aaron/.cargo/bin/**)"
     ]
   },
   "hooks": {

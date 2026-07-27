@@ -20,6 +20,7 @@ from klorb.permissions.risk_classifier import (
     resolve_item_risk_assessment,
 )
 from klorb.process_config import ProcessConfig
+from klorb.server.plan_updates import build_plan_update
 from klorb.server.update_mapping import (
     ask_user_questions_answer_from_result,
     ask_user_questions_ext_params,
@@ -46,6 +47,8 @@ from klorb.session.events import (
     ToolCallStartedEvent,
 )
 from klorb.session_naming import SessionName
+from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.tasks.common import TASK_TOOL_NAMES, ChainlinkClient, ChainlinkError, fetch_and_sort_issues
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +107,11 @@ class TurnBridge:
     `_klorb/usage` notification carrying the session's resulting token tally. `on_session_name_
     changed` enqueues a `session_info_update` (title) the same way `on_chunk`/`on_thinking_chunk`
     do, ordered relative to them like any other fire-and-forget callback.
+
+    `on_tool_call` additionally enqueues a `plan` update (`fetch_plan_update()`) after any
+    finished call to a chainlink task tool (`TASK_TOOL_NAMES`), mirroring the TUI task sidebar's
+    own refresh trigger -- see docs/specs/klorb-server.md's "Chainlink task-plan updates"
+    section.
     """
 
     def __init__(
@@ -117,6 +125,25 @@ class TurnBridge:
         self._process_config = process_config
         self._raise_tool_call_limit_capable = raise_tool_call_limit_capable
         self._ask_user_questions_capable = ask_user_questions_capable
+
+    def fetch_plan_update(self) -> acp.schema.AgentPlanUpdate | None:
+        """Fetch `self._session`'s chainlink issues and build the ACP `plan` update to send, or
+        `None` if chainlink is unavailable or the fetch fails -- see docs/specs/klorb-server.md's
+        "Chainlink task-plan updates" section. Runs synchronously (chainlink shells out), so the
+        caller must already be off the event loop: `run_turn()`'s `on_tool_call` callback (itself
+        on `Session.send_turn()`'s worker thread), and `KlorbAcpAgent.new_session()`'s initial
+        snapshot (only after it has confirmed a chainlink database already exists, so this never
+        triggers `chainlink init`'s scaffolding as a side effect)."""
+        context = ToolSetupContext(
+            process_config=self._process_config, session_config=self._session.config,
+            session=self._session)
+        try:
+            client = ChainlinkClient(context)
+            issues = fetch_and_sort_issues(client, include_closed=True)
+        except (ChainlinkError, ValueError):
+            logger.debug("Failed to fetch chainlink issues for a plan update.", exc_info=True)
+            return None
+        return build_plan_update(issues, self._session.cur_chainlink_task_id)
 
     async def run_turn(self, prompt_text: str) -> str:
         """Send `prompt_text` as one turn of `self._session`'s conversation, streaming the
@@ -158,6 +185,10 @@ class TurnBridge:
                 call_id_stack.remove(event.call_id)
             enqueue(tool_call_finished_update(
                 event, self._session.tool_registry, self._session.config.workspace.path))
+            if event.name in TASK_TOOL_NAMES:
+                plan_update = self.fetch_plan_update()
+                if plan_update is not None:
+                    enqueue(plan_update)
 
         def linked_call_id() -> str | None:
             return call_id_stack[-1] if call_id_stack else None

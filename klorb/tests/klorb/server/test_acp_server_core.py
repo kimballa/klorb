@@ -18,6 +18,7 @@ from server.acp_harness import AcpHarness, build_acp_harness
 from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
 from klorb.message import Message
 from klorb.process_config import ProcessConfig
+from klorb.tools.tasks.common import chainlink_available
 from klorb.workspace import TrustManager
 
 
@@ -61,6 +62,7 @@ async def test_initialize_echoes_protocol_version_and_klorb_meta(
     assert response.agent_capabilities is not None
     assert response.agent_capabilities.field_meta == {"klorb": {
         "sessionConfig": True, "sessionStats": True, "trustWorkspace": True, "reloadSkills": True,
+        "taskMeta": chainlink_available(),
     }}
 
 

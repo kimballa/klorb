@@ -141,6 +141,14 @@
 * Integrate with `chainlink`'s `blocked_by_open` field, once merged. Then we don't have to look
   up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
+* Ability to use vision models and incorporate screenshots / png+bmp files as prompt input.
+
+* Add more system interjections:
+  * If the agent does *not* have a plan, after a while, start harrassing it to write down some
+    objectives for itself via TodoWrite and use TodoNext to start focusing on task-oriented work.
+  * Start adding system interjections mentioning how many turns the agent has taken, or how
+    many tool calls (vs total tool call budget / limit) it has performed.
+
 ### Plan 013: WebFetch
 
 * Third-party malware blocklisting: query external threat lists and auto-deny requests to
@@ -192,9 +200,14 @@
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
 
+* TUI needs a fuzzy-finder so you can `@-mention` files in the workspace and have it autocomplete.
+
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
     compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
+  * This can actually be an onWorkspaceTrust hook, executed within the Session.
+    * ... we need to define a whole bunch of hookable moments, here.
+  * This can then send a msg / AskUserQuestion to the user, in either TUI or VSCode.
 * Improve Workspace trust msg:
   * When querying about workspace trust, list any workspace skills auto-allowed by config.
 
@@ -217,3 +230,6 @@
   at which point it gains a vertical scrollbar. This needs to account for hard newlines
   (inserted with shift+enter) as well as text wrapping.
   [show the code sample from ee-web's assembly instructions height calculator.]
+
+* fzf fuzzy finder for @-mentioning files in the project
+* ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
