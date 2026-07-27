@@ -134,6 +134,14 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this.postHostMessage(message);
   }
 
+  public onMessageQueued(text: string): void {
+    this.postHostMessage({ type: 'messageQueued', text });
+  }
+
+  public onQueuedMessageSent(text: string): void {
+    this.postHostMessage({ type: 'queuedMessageSent', text });
+  }
+
   /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
   public postHostMessage(message: HostMessage): void {
     void this._view?.webview.postMessage(message);
@@ -176,8 +184,14 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       case 'submitPrompt':
         await this._runTurn(parsed.text);
         break;
+      case 'enqueueMessage':
+        await this._enqueueMessage(parsed.text);
+        break;
       case 'cancelTurn':
         this._connection?.cancel();
+        break;
+      case 'restartServer':
+        await vscode.commands.executeCommand('klorb.restartServer');
         break;
       case 'openLocation':
         await this._editorIntegration.openLocation(parsed.path, parsed.line);
@@ -247,6 +261,36 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     try {
       const stopReason = await connection.prompt(text);
       this.postHostMessage({ type: 'turnEnded', stopReason });
+    } catch (err) {
+      // A rejection that also left the connection not-ready means the `klorb server` child
+      // itself was lost (crashed, or killed/restarted) out from under this turn, not an
+      // ordinary turn failure -- surface a distinct entry with a "Restart Server" action
+      // instead of a plain error the user has no obvious next step for.
+      if (!connection.isReady) {
+        this.postHostMessage({ type: 'serverLost', message: errorMessage(err) });
+      } else {
+        this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
+      }
+    }
+  }
+
+  /** Queues `text` into the currently in-flight turn (`_klorb/enqueueMessage`) -- called for a
+   * `submitPrompt` the webview posted while a turn was already running and the connected
+   * server advertised the capability (see `PromptInput`'s `enqueueMessageCapable` prop). A
+   * capability-absent or not-ready connection surfaces a `turnError` rather than silently
+   * dropping the message -- the webview only posts this when it believes the capability is
+   * present, so reaching here otherwise means the connection state changed underneath it. */
+  private async _enqueueMessage(text: string): Promise<void> {
+    const connection = this._connection;
+    if (connection === undefined || !connection.isReady || !connection.enqueueMessageCapable) {
+      this.postHostMessage({
+        type: 'turnError',
+        message: 'klorb server does not support queuing a message into the running turn.',
+      });
+      return;
+    }
+    try {
+      await connection.enqueueMessage(text);
     } catch (err) {
       this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
     }

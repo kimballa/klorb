@@ -17,9 +17,20 @@ import type {
  * one blocking ask outstanding at a time (see `applyPendingInteraction`). */
 export type PendingInteraction = PermissionAskMessage | QuestionAskMessage;
 
-/** What kind of content a plain-text history entry holds. */
+/** What kind of content a plain-text history entry holds. `queuedMessage` is a submitted-while-
+ * a-turn-was-already-running prompt, rendered in italic "Queued message" styling until its
+ * matching `queuedMessageSent` message flips it to `'prompt'` (see `appendQueuedMessage`/
+ * `applyQueuedMessageSent`). `serverError` is a `turnError`-like entry for a lost server
+ * process, rendered with an additional "Restart Server" action. */
 export type HistoryEntryKind =
-  'prompt' | 'response' | 'thinking' | 'error' | 'notice' | 'interaction';
+  | 'prompt'
+  | 'response'
+  | 'thinking'
+  | 'error'
+  | 'notice'
+  | 'interaction'
+  | 'queuedMessage'
+  | 'serverError';
 
 /** One plain-text entry in the panel's history scroll. `streaming` marks an entry still
  * receiving chunks; the next chunk of the same kind extends it instead of appending a new
@@ -65,6 +76,60 @@ export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry | SessionStat
 /** Appends the user's submitted prompt as a finished (non-streaming) entry. */
 export function appendPrompt(entries: readonly HistoryEntry[], text: string): HistoryEntry[] {
   return [...entries, { kind: 'prompt', text, streaming: false }];
+}
+
+/** Appends a message the server just confirmed queuing into the running turn
+ * (`messageQueued`) -- rendered in italic "Queued message" styling until `applyQueuedMessageSent`
+ * flips it to a regular prompt, mirroring the TUI's `_queue_prompt`/`handle_enqueue_message`. */
+export function appendQueuedMessage(
+  entries: readonly HistoryEntry[],
+  text: string
+): HistoryEntry[] {
+  return [...entries, { kind: 'queuedMessage', text, streaming: false }];
+}
+
+/** Flips the oldest still-`queuedMessage` entry whose text matches `text` to a regular
+ * `'prompt'` entry, confirming delivery (`queuedMessageSent`) -- mirrors the TUI's
+ * `handle_send_queued_message`, which removes the italic block once its message is drained.
+ * Correlation is by order + text (the first matching entry wins), matching the server's own
+ * single-queue reality (see `QueuedMessageSentMessage`'s doc comment) -- a no-op if no
+ * `queuedMessage` entry matches, e.g. a stale/duplicate notification. */
+export function applyQueuedMessageSent(
+  entries: readonly HistoryEntry[],
+  text: string
+): HistoryEntry[] {
+  const index = entries.findIndex((entry) => entry.kind === 'queuedMessage' && entry.text === text);
+  const entry = index === -1 ? undefined : entries[index];
+  if (entry === undefined || entry.kind !== 'queuedMessage') {
+    return [...entries];
+  }
+  const updated: HistoryEntry = { ...entry, kind: 'prompt' };
+  return [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
+}
+
+/** Mirrors the TUI's `_handle_aborted_response` decision table for a cancelled turn: appends an
+ * "(interrupted)" marker onto whichever entry (response or thinking) was still streaming when
+ * the turn was cancelled, or a standalone notice if neither was -- e.g. the turn was cancelled
+ * between tool-call rounds, before the next round's text had started streaming. */
+export function applyInterruptedMarker(entries: readonly HistoryEntry[]): HistoryEntry[] {
+  const last = entries[entries.length - 1];
+  if (last !== undefined && last.kind === 'response' && last.streaming) {
+    const updated: HistoryEntry = {
+      ...last,
+      text: `${last.text}\n\n*(interrupted)*`,
+      streaming: false,
+    };
+    return [...entries.slice(0, -1), updated];
+  }
+  if (last !== undefined && last.kind === 'thinking' && last.streaming) {
+    const updated: HistoryEntry = {
+      ...last,
+      text: `${last.text}\n\n(interrupted)`,
+      streaming: false,
+    };
+    return [...entries.slice(0, -1), updated];
+  }
+  return [...finishStreaming(entries), { kind: 'notice', text: '(interrupted)', streaming: false }];
 }
 
 function metaString(klorbMeta: Record<string, unknown>, key: string): string | undefined {
@@ -148,6 +213,8 @@ const HISTORY_ENTRY_KINDS: ReadonlySet<string> = new Set([
   'error',
   'notice',
   'interaction',
+  'queuedMessage',
+  'serverError',
   'toolCall',
   'sessionStats',
 ]);
@@ -241,12 +308,14 @@ export function applyHostMessage(
     case 'thoughtChunk':
       return appendChunk(entries, 'thinking', message.text);
     case 'turnEnded': {
-      const finished = finishStreaming(entries);
       if (message.stopReason === 'end_turn') {
-        return finished;
+        return finishStreaming(entries);
+      }
+      if (message.stopReason === 'cancelled') {
+        return applyInterruptedMarker(entries);
       }
       return [
-        ...finished,
+        ...finishStreaming(entries),
         { kind: 'notice', text: `Turn ended: ${message.stopReason}`, streaming: false },
       ];
     }
@@ -255,6 +324,15 @@ export function applyHostMessage(
         ...finishStreaming(entries),
         { kind: 'error', text: message.message, streaming: false },
       ];
+    case 'serverLost':
+      return [
+        ...finishStreaming(entries),
+        { kind: 'serverError', text: message.message, streaming: false },
+      ];
+    case 'messageQueued':
+      return appendQueuedMessage(entries, message.text);
+    case 'queuedMessageSent':
+      return applyQueuedMessageSent(entries, message.text);
     case 'sessionReset':
       return [];
     case 'toolCallStarted':
@@ -367,7 +445,8 @@ export function applyToolCallExpandedToggle(
 
 /**
  * Tracks whether a turn is in flight, from the same message stream: `turnStarted` raises the
- * flag; `turnEnded`/`turnError`/`sessionReset` clear it; other messages leave it unchanged.
+ * flag; `turnEnded`/`turnError`/`serverLost`/`sessionReset` clear it; other messages leave it
+ * unchanged.
  */
 export function applyTurnFlag(inFlight: boolean, message: HostMessage): boolean {
   switch (message.type) {
@@ -375,9 +454,26 @@ export function applyTurnFlag(inFlight: boolean, message: HostMessage): boolean 
       return true;
     case 'turnEnded':
     case 'turnError':
+    case 'serverLost':
     case 'sessionReset':
       return false;
     default:
       return inFlight;
   }
+}
+
+/** Whether a scrolling container showing `scrollTop`/`scrollHeight`/`clientHeight` is close
+ * enough to its bottom edge to count as "pinned" -- i.e. whether new content arriving should
+ * follow the view to the bottom, or leave it alone because the user has scrolled up to reread
+ * earlier output. Mirrors `klorb.tui.formatting.pinned_to_bottom`'s TUI-side role: cheap to
+ * evaluate on every `scroll` event, read elsewhere (not recomputed) before applying new
+ * content. `thresholdPx` tolerates sub-pixel/rounding slop so a viewport that's *visually*
+ * at the bottom (but not stored as exactly 0 by the browser) still counts as pinned. */
+export function isScrollPinnedToBottom(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+  thresholdPx = 24
+): boolean {
+  return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }

@@ -38,6 +38,34 @@ export interface TurnErrorMessage {
   message: string;
 }
 
+/** The current turn failed because the `klorb server` child process itself was lost (crashed,
+ * or was killed/restarted out from under the in-flight turn) -- distinct from an ordinary
+ * `TurnErrorMessage` so the history can offer a "Restart Server" action alongside the error
+ * text instead of just reporting the failure. */
+export interface ServerLostMessage {
+  type: 'serverLost';
+  message: string;
+}
+
+/** A message the user submitted while a turn was already in flight was queued into the running
+ * turn (`_klorb/enqueueMessage`), not rejected -- render it in italic "Queued message" styling
+ * until the matching `QueuedMessageSentMessage` arrives. */
+export interface MessageQueuedMessage {
+  type: 'messageQueued';
+  text: string;
+}
+
+/** A previously-queued message (see `MessageQueuedMessage`) was actually delivered -- either
+ * folded into a tool-response envelope mid-turn, or redelivered as the next turn once the
+ * current one ended (see docs/specs/klorb-server.md's `_klorb/enqueueMessage` section).
+ * Correlates with its `MessageQueuedMessage` by order + text (the single-queue reality: the
+ * server never has more than one message queued ahead of another with a stable id to match
+ * against). */
+export interface QueuedMessageSentMessage {
+  type: 'queuedMessageSent';
+  text: string;
+}
+
 /** The conversation was reset (a fresh session replaced the old one); clear the history. */
 export interface SessionResetMessage {
   type: 'sessionReset';
@@ -170,6 +198,12 @@ export interface StatusUpdateMessage {
   outputTokens?: number;
   sessionTitle?: string | null;
   workspaceTrusted?: boolean;
+  /** Whether the connected server advertised `_klorb/enqueueMessage` at `initialize()` -- known
+   * once per connection (set alongside the rest of `session/new`'s state, see
+   * `SessionControls.applySessionInfo`), not per-session. Determines whether the prompt input
+   * stays enabled during a turn (mid-turn submit queues into the running turn) or falls back to
+   * 002's disabled-while-in-flight behavior. */
+  enqueueMessageCapable?: boolean;
 }
 
 /** An ordered label -> numeric-value map, rendered as a right-aligned two-column table row per
@@ -250,6 +284,9 @@ export type HostMessage =
   | ThoughtChunkMessage
   | TurnEndedMessage
   | TurnErrorMessage
+  | ServerLostMessage
+  | MessageQueuedMessage
+  | QueuedMessageSentMessage
   | SessionResetMessage
   | ToolCallStartedMessage
   | ToolCallUpdatedMessage
@@ -266,9 +303,23 @@ export interface SubmitPromptMessage {
   text: string;
 }
 
+/** The user submitted a prompt while a turn was already in flight, and the connected server
+ * advertises `_klorb/enqueueMessage`: queue it into the running turn instead of rejecting it
+ * (see `SubmitPromptMessage` for the not-in-flight case). */
+export interface EnqueueMessageMessage {
+  type: 'enqueueMessage';
+  text: string;
+}
+
 /** The user asked to cancel the in-flight turn (Stop button or Escape). */
 export interface CancelTurnMessage {
   type: 'cancelTurn';
+}
+
+/** The user clicked a `ServerLostMessage` entry's "Restart Server" action -- same as running
+ * **Klorb: Restart Server** from the command palette. */
+export interface RestartServerMessage {
+  type: 'restartServer';
 }
 
 /** The user clicked a tool-call location link: open that file (at `line`, if given) in the
@@ -360,7 +411,9 @@ export interface WebviewErrorMessage {
 /** Every message the webview may post to the extension host. */
 export type WebviewMessage =
   | SubmitPromptMessage
+  | EnqueueMessageMessage
   | CancelTurnMessage
+  | RestartServerMessage
   | OpenLocationMessage
   | OpenDiffMessage
   | PermissionDecisionMessage
@@ -381,17 +434,20 @@ interface FieldSpec {
 }
 
 const HOST_FIELD_SPECS: readonly FieldSpec[] = [
-  { field: 'text', types: ['agentChunk', 'thoughtChunk'] },
+  { field: 'text', types: ['agentChunk', 'thoughtChunk', 'messageQueued', 'queuedMessageSent'] },
   { field: 'stopReason', types: ['turnEnded'] },
-  { field: 'message', types: ['turnError'] },
+  { field: 'message', types: ['turnError', 'serverLost'] },
 ];
 
 const HOST_BARE_TYPES: readonly string[] = ['turnStarted', 'sessionReset', 'toggleTaskPanel'];
 
-const WEBVIEW_FIELD_SPECS: readonly FieldSpec[] = [{ field: 'text', types: ['submitPrompt'] }];
+const WEBVIEW_FIELD_SPECS: readonly FieldSpec[] = [
+  { field: 'text', types: ['submitPrompt', 'enqueueMessage'] },
+];
 
 const WEBVIEW_BARE_TYPES: readonly string[] = [
   'cancelTurn',
+  'restartServer',
   'pickModel',
   'pickThinking',
   'cyclePermissionMode',
@@ -611,7 +667,9 @@ function parseStatusUpdate(record: Record<string, unknown>): StatusUpdateMessage
     (record.sessionTitle !== undefined &&
       record.sessionTitle !== null &&
       typeof record.sessionTitle !== 'string') ||
-    (record.workspaceTrusted !== undefined && typeof record.workspaceTrusted !== 'boolean')
+    (record.workspaceTrusted !== undefined && typeof record.workspaceTrusted !== 'boolean') ||
+    (record.enqueueMessageCapable !== undefined &&
+      typeof record.enqueueMessageCapable !== 'boolean')
   ) {
     return undefined;
   }

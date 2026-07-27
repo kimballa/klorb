@@ -535,4 +535,70 @@ describe('App', () => {
     postHostMessage({ type: 'sessionReset' });
     expect(screen.queryByText('old prompt')).toBeNull();
   });
+
+  it(
+    'keeps the input enabled and posts enqueueMessage for a mid-turn submit when the ' +
+      'server advertises the capability',
+    () => {
+      const { vscode, posted } = makeVsCode();
+      const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+      postHostMessage({ type: 'statusUpdate', enqueueMessageCapable: true });
+
+      typeAndSubmit(container, 'long task');
+      expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+
+      typeAndSubmit(container, 'also check the tests');
+
+      expect(posted).toContainEqual({ type: 'enqueueMessage', text: 'also check the tests' });
+      expect(posted).not.toContainEqual({ type: 'submitPrompt', text: 'also check the tests' });
+    }
+  );
+
+  it('falls back to a disabled input for a mid-turn submit without the capability', () => {
+    const { vscode, posted } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    typeAndSubmit(container, 'long task');
+    expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
+
+    // The textarea is disabled, so a second Enter (even if fired anyway) submits nothing new.
+    typeAndSubmit(container, 'also check the tests');
+    expect(posted).toEqual([{ type: 'submitPrompt', text: 'long task' }]);
+  });
+
+  it('renders a messageQueued entry in queued styling and flips it on queuedMessageSent', () => {
+    const { vscode } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({ type: 'messageQueued', text: 'also check the tests' });
+    expect(screen.getByText('Queued message')).toBeTruthy();
+    expect(screen.getByText('also check the tests')).toBeTruthy();
+
+    postHostMessage({ type: 'queuedMessageSent', text: 'also check the tests' });
+    expect(screen.queryByText('Queued message')).toBeNull();
+    expect(screen.getByText('also check the tests')).toBeTruthy();
+  });
+
+  it('renders an (interrupted) marker on a streaming response for a cancelled turn', () => {
+    const { vscode } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    typeAndSubmit(container, 'long task');
+    postHostMessage({ type: 'agentChunk', text: 'partial reply' });
+    postHostMessage({ type: 'turnEnded', stopReason: 'cancelled' });
+
+    expect(screen.getByText(/partial reply/)).toBeTruthy();
+    expect(screen.getByText(/\(interrupted\)/)).toBeTruthy();
+  });
+
+  it('renders a serverLost entry with a Restart Server action that posts restartServer', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({ type: 'serverLost', message: 'klorb server exited unexpectedly' });
+    expect(screen.getByText('klorb server exited unexpectedly')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Restart Server'));
+    expect(posted).toContainEqual({ type: 'restartServer' });
+  });
 });

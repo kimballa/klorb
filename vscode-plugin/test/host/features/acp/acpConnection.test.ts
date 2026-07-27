@@ -13,12 +13,16 @@ interface Harness {
   agent: MockAgent;
   connection: AcpConnection;
   events: string[];
+  messagesQueued: string[];
+  queuedMessagesSent: string[];
 }
 
 function makeHarness(agent: MockAgent = new MockAgent()): Harness {
   const { child } = createMockAgentChild(agent);
   const serverProcess = new KlorbServerProcess(() => child);
   const events: string[] = [];
+  const messagesQueued: string[] = [];
+  const queuedMessagesSent: string[] = [];
   const listener: SessionUpdateListener = {
     onAgentText: (text: string) => events.push(`agent:${text}`),
     onThoughtText: (text: string) => events.push(`thought:${text}`),
@@ -26,14 +30,17 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onToolCallUpdated: (message) => events.push(`toolCallUpdated:${message.callId}`),
     postPermissionAsk: (message) => events.push(`permissionAsk:${message.requestId}`),
     postQuestionAsk: (message) => events.push(`questionAsk:${message.requestId}`),
-    onSessionInfo: (info) => events.push(`sessionInfo:${info.modeId ?? ''}`),
+    onSessionInfo: (info) =>
+      events.push(`sessionInfo:${info.modeId ?? ''}:${info.enqueueMessageCapable}`),
     onModeChanged: (modeId) => events.push(`modeChanged:${modeId}`),
     onSessionTitleChanged: (title) => events.push(`titleChanged:${title ?? ''}`),
     onUsageUpdate: (usedTokens) => events.push(`usage:${usedTokens}`),
     onTaskListUpdate: () => undefined,
+    onMessageQueued: (text) => messagesQueued.push(text),
+    onQueuedMessageSent: (text) => queuedMessagesSent.push(text),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
-  return { agent, connection, events };
+  return { agent, connection, events, messagesQueued, queuedMessagesSent };
 }
 
 describe('errorMessage', () => {
@@ -80,7 +87,37 @@ describe('AcpConnection', () => {
 
     await connection.start(OPTIONS, '/work');
 
-    expect(events).toContain('sessionInfo:ask');
+    expect(events).toContain('sessionInfo:ask:false');
+  });
+
+  it('threads the initialize()-negotiated enqueueMessage capability through onSessionInfo', async () => {
+    const agent = new MockAgent();
+    agent.onInitialize = async () => ({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: { _meta: { klorb: { enqueueMessage: true } } },
+    });
+    const { connection, events } = makeHarness(agent);
+
+    await connection.start(OPTIONS, '/work');
+
+    expect(connection.enqueueMessageCapable).toBe(true);
+    expect(events).toContain('sessionInfo::true');
+  });
+
+  it('enqueueMessage() sends _klorb/enqueueMessage with the text', async () => {
+    const agent = new MockAgent();
+    agent.onExtMethod = async () => ({ queued: true });
+    const { connection } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+
+    await connection.enqueueMessage('also check the tests');
+
+    expect(agent.receivedExtMethods).toEqual([
+      {
+        method: '_klorb/enqueueMessage',
+        params: { sessionId: 'sess-1', text: 'also check the tests' },
+      },
+    ]);
   });
 
   it('setSessionMode() sends session/set_mode for the live session', async () => {
@@ -140,7 +177,12 @@ describe('AcpConnection', () => {
     await connection.start(OPTIONS, '/work');
 
     await connection.prompt('hi');
-    expect(events).toEqual(['sessionInfo:', 'thought:pondering', 'agent:Hello', 'agent: world']);
+    expect(events).toEqual([
+      'sessionInfo::false',
+      'thought:pondering',
+      'agent:Hello',
+      'agent: world',
+    ]);
   });
 
   it('sends session/cancel for the live session on cancel()', async () => {
@@ -224,6 +266,8 @@ describe('AcpConnection', () => {
       onSessionTitleChanged: () => undefined,
       onUsageUpdate: () => undefined,
       onTaskListUpdate: () => undefined,
+      onMessageQueued: () => undefined,
+      onQueuedMessageSent: () => undefined,
     };
     const connection = new AcpConnection(
       serverProcess,

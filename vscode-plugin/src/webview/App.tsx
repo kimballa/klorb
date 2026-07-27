@@ -7,7 +7,7 @@ import {
   type StatusUpdateMessage,
 } from 'shared/webviewMessages';
 import ApprovalPanel, { type ApprovalDecision } from 'webview/components/ApprovalPanel';
-import PromptInput from 'webview/components/PromptInput';
+import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
 import QuestionPanel, { type QuestionPanelAnswer } from 'webview/components/QuestionPanel';
 import StatusRow from 'webview/components/StatusRow';
 import VsCodeApiProvider, { type VsCodeApi } from 'webview/components/VsCodeApiProvider';
@@ -22,6 +22,7 @@ import {
   applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
+  isScrollPinnedToBottom,
   type HistoryEntry,
   type PendingInteraction,
   type TaskListSnapshot,
@@ -68,10 +69,35 @@ export default function App({
   const [taskList, setTaskList] = useState<TaskListSnapshot | undefined>(initialTaskList);
   const [taskPanelVisible, setTaskPanelVisible] = useState(initialTaskPanelVisible ?? true);
   const historyRef = useRef<HTMLDivElement>(null);
+  const promptInputRef = useRef<PromptInputHandle>(null);
+  // Whether the history scroll was at (or near) its bottom edge the last time the user
+  // scrolled it -- a ref, not state, since it's read (not rendered) by the autoscroll effect
+  // below and must reflect the *latest* scroll position without triggering its own re-render.
+  // Mirrors the TUI's `_history_pinned_to_bottom` (see `isScrollPinnedToBottom`).
+  const pinnedToBottomRef = useRef(true);
 
   useEffect(() => {
     vscode.setState({ entries, pendingInteraction, status, taskList, taskPanelVisible });
   }, [entries, pendingInteraction, status, taskList, taskPanelVisible, vscode]);
+
+  useEffect(() => {
+    const history = historyRef.current;
+    if (history === null) {
+      return;
+    }
+    function onScroll(): void {
+      if (history === null) {
+        return;
+      }
+      pinnedToBottomRef.current = isScrollPinnedToBottom(
+        history.scrollTop,
+        history.scrollHeight,
+        history.clientHeight
+      );
+    }
+    history.addEventListener('scroll', onScroll);
+    return () => history.removeEventListener('scroll', onScroll);
+  }, []);
 
   useEffect(() => {
     // Deliberately not keyed on taskList/taskPanelVisible: those live in the same persisted
@@ -79,9 +105,31 @@ export default function App({
     // arrive several times per turn (once per TodoCreate/TodoUpdate/TodoNext call), and
     // scrolling on every one of those fights the browser's own attempt to keep a focused element
     // elsewhere on the page (e.g. the task panel's own <summary>) in view, which visibly reads as
-    // the history freezing until focus moves away.
-    historyRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
+    // the history freezing until focus moves away. Only follows new content to the bottom while
+    // the user hasn't scrolled away from it (see `pinnedToBottomRef`), mirroring the TUI's own
+    // `_scroll_if_pinned`.
+    if (pinnedToBottomRef.current) {
+      historyRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
+    }
   }, [entries, pendingInteraction, status]);
+
+  useEffect(() => {
+    // Reclaims focus for the prompt input once a turn is no longer running -- mirrors the
+    // TUI's `_finish_turn()`, which always hands focus back to its input box once a turn
+    // (successful, errored, or cancelled) is done.
+    if (!inFlight) {
+      promptInputRef.current?.focus();
+    }
+  }, [inFlight]);
+
+  useEffect(() => {
+    // Reclaims focus once an approval/question panel resolves (pendingInteraction clears),
+    // whether or not the turn that raised it is still running -- so the user can keep typing
+    // (or queue a message) without an extra click.
+    if (pendingInteraction === undefined) {
+      promptInputRef.current?.focus();
+    }
+  }, [pendingInteraction]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent<unknown>): void {
@@ -140,6 +188,14 @@ export default function App({
   }
 
   function submit(text: string): void {
+    if (inFlight) {
+      // Mid-turn submit: queues into the running turn (`_klorb/enqueueMessage`) rather than
+      // starting a new one. The history entry itself is created from the host's own
+      // `messageQueued` echo (see `historyModel.ts`'s `appendQueuedMessage`), not optimistically
+      // here, since the server -- not the webview -- is what actually accepted the message.
+      vscode.postMessage({ type: 'enqueueMessage', text });
+      return;
+    }
     setEntries((prev) => appendPrompt(prev, text));
     // Raised optimistically; the host's turnStarted/turnError follow-up confirms or clears it.
     setInFlight(true);
@@ -148,6 +204,10 @@ export default function App({
 
   function cancel(): void {
     vscode.postMessage({ type: 'cancelTurn' });
+  }
+
+  function restartServer(): void {
+    vscode.postMessage({ type: 'restartServer' });
   }
 
   function toggleExpandAllToolCalls(): void {
@@ -219,6 +279,7 @@ export default function App({
         expandAllToolCalls={expandAllToolCalls}
         onToggleExpandAllToolCalls={toggleExpandAllToolCalls}
         onToggleToolCallExpanded={toggleToolCallExpanded}
+        onRestartServer={restartServer}
       />
       <div id="interaction-area">
         {pendingInteraction?.type === 'permissionAsk' ? (
@@ -228,8 +289,10 @@ export default function App({
         ) : null}
       </div>
       <PromptInput
+        ref={promptInputRef}
         inFlight={inFlight}
         muted={pendingInteraction !== undefined}
+        enqueueMessageCapable={status.enqueueMessageCapable}
         onSubmit={submit}
         onCancel={cancel}
         onCyclePermissionMode={cyclePermissionMode}

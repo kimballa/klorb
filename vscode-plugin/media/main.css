@@ -196,6 +196,28 @@ body {
   white-space: pre-wrap;
 }
 
+/* A lost-server-process entry gets the same error styling plus a little breathing room above
+   its "Restart Server" button. */
+.entry-server-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* A message submitted mid-turn (queued into the running turn) keeps the prompt bubble's shape
+   but reads as provisional until `queuedMessageSent` flips it to a regular `.bubble-prompt`. */
+.bubble-queued {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.queued-prompt-header {
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
 .entry-notice {
   color: var(--vscode-descriptionForeground);
   font-style: italic;

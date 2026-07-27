@@ -41,12 +41,19 @@ export type RequestErrorClass = (typeof import('@agentclientprotocol/sdk'))['Req
  * `modes.currentModeId` and `_meta.klorb.workspace`/`.title`) -- see
  * `sessionInfoFromResponse()`. A field is `undefined` when the response didn't carry it (e.g.
  * a peer ACP agent that doesn't advertise `modes` at all); `title` is additionally `null` for
- * "no title yet", distinct from `undefined` for "the response didn't say". */
+ * "no title yet", distinct from `undefined` for "the response didn't say".
+ *
+ * `enqueueMessageCapable` is not part of `session/new`'s own response -- it's the connection's
+ * `initialize()`-negotiated `agentCapabilities._meta.klorb.enqueueMessage` flag, threaded
+ * through here by `AcpConnection` (which keeps it for the connection's whole lifetime, since
+ * capabilities don't change per session) so `SessionControls`/`StatusRow` learn it the same way
+ * they learn everything else about the session's starting state. */
 export interface SessionInfo {
   modeId: string | undefined;
   workspacePath: string | undefined;
   workspaceTrusted: boolean | undefined;
   title: string | null | undefined;
+  enqueueMessageCapable: boolean;
 }
 
 /** Receives the streamed text, tool-call activity, and control-plane state the agent produces
@@ -85,12 +92,23 @@ export interface SessionUpdateListener {
   /** The turn that just finished used `usedTokens` of `maxTokens`, and the session has
    * generated `outputTokens` in total (`_klorb/usage`, sent once per turn). */
   onUsageUpdate(usedTokens: number, maxTokens: number | null, outputTokens: number): void;
+  /** A message submitted while a turn was in flight was accepted into the running turn
+   * (`_klorb/messageQueued`) -- render it in italic "Queued message" styling. */
+  onMessageQueued(text: string): void;
+  /** A previously-queued message was actually delivered (`_klorb/queuedMessageSent`) -- flip
+   * its rendering from queued to a regular delivered prompt. */
+  onQueuedMessageSent(text: string): void;
 }
 
 /** Extracts `SessionInfo` from a `session/new` response's `modes.currentModeId` and
  * `_meta.klorb.workspace`/`.title` -- see docs/specs/klorb-server.md's "Wire protocol" and
- * "Session naming and token usage" sections. */
-export function sessionInfoFromResponse(session: NewSessionResponse): SessionInfo {
+ * "Session naming and token usage" sections. `enqueueMessageCapable` isn't part of the
+ * response itself; the caller (`AcpConnection`) threads through the connection's own
+ * `initialize()`-negotiated value (see `SessionInfo`'s own doc comment). */
+export function sessionInfoFromResponse(
+  session: NewSessionResponse,
+  enqueueMessageCapable: boolean
+): SessionInfo {
   const meta = klorbMetaOf(session._meta);
   const workspace =
     typeof meta.workspace === 'object' && meta.workspace !== null
@@ -102,6 +120,7 @@ export function sessionInfoFromResponse(session: NewSessionResponse): SessionInf
     workspacePath: typeof workspace?.path === 'string' ? workspace.path : undefined,
     workspaceTrusted: typeof workspace?.trusted === 'boolean' ? workspace.trusted : undefined,
     title: title === null ? null : typeof title === 'string' ? title : undefined,
+    enqueueMessageCapable,
   };
 }
 
@@ -500,6 +519,19 @@ export class KlorbAcpClient {
         this._listener.onUsageUpdate(usedTokens, maxTokens ?? null, outputTokens);
       } else {
         this._log(`klorb: malformed _klorb/usage params: ${JSON.stringify(params)}`);
+      }
+      return;
+    }
+    if (method === '_klorb/messageQueued' || method === '_klorb/queuedMessageSent') {
+      const text = params.text;
+      if (typeof text !== 'string') {
+        this._log(`klorb: malformed ${method} params: ${JSON.stringify(params)}`);
+        return;
+      }
+      if (method === '_klorb/messageQueued') {
+        this._listener.onMessageQueued(text);
+      } else {
+        this._listener.onQueuedMessageSent(text);
       }
       return;
     }

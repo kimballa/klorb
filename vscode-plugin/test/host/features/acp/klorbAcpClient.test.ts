@@ -23,6 +23,8 @@ function makeListener(): {
   titleChanges: (string | null)[];
   usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[];
   taskListUpdates: TaskListUpdateMessage[];
+  messagesQueued: string[];
+  queuedMessagesSent: string[];
 } {
   const agentText: string[] = [];
   const thoughtText: string[] = [];
@@ -34,6 +36,8 @@ function makeListener(): {
   const titleChanges: (string | null)[] = [];
   const usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[] = [];
   const taskListUpdates: TaskListUpdateMessage[] = [];
+  const messagesQueued: string[] = [];
+  const queuedMessagesSent: string[] = [];
   return {
     agentText,
     thoughtText,
@@ -45,6 +49,8 @@ function makeListener(): {
     titleChanges,
     usageUpdates,
     taskListUpdates,
+    messagesQueued,
+    queuedMessagesSent,
     listener: {
       onAgentText: (text: string) => agentText.push(text),
       onThoughtText: (text: string) => thoughtText.push(text),
@@ -58,6 +64,8 @@ function makeListener(): {
       onUsageUpdate: (usedTokens: number, maxTokens: number | null, outputTokens: number) =>
         usageUpdates.push({ usedTokens, maxTokens, outputTokens }),
       onTaskListUpdate: (message: TaskListUpdateMessage) => taskListUpdates.push(message),
+      onMessageQueued: (text: string) => messagesQueued.push(text),
+      onQueuedMessageSent: (text: string) => queuedMessagesSent.push(text),
     },
   };
 }
@@ -294,6 +302,35 @@ describe('KlorbAcpClient', () => {
       await client.extNotification('_klorb/usage', { usedTokens: 'not a number' });
 
       expect(usageUpdates).toEqual([]);
+      expect(logs.some((line) => line.includes('malformed'))).toBe(true);
+    });
+
+    it('dispatches _klorb/messageQueued to onMessageQueued', async () => {
+      const { listener, messagesQueued } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      await client.extNotification('_klorb/messageQueued', { sessionId: 's1', text: 'hi' });
+
+      expect(messagesQueued).toEqual(['hi']);
+    });
+
+    it('dispatches _klorb/queuedMessageSent to onQueuedMessageSent', async () => {
+      const { listener, queuedMessagesSent } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      await client.extNotification('_klorb/queuedMessageSent', { sessionId: 's1', text: 'hi' });
+
+      expect(queuedMessagesSent).toEqual(['hi']);
+    });
+
+    it('logs and ignores malformed _klorb/messageQueued params', async () => {
+      const { listener, messagesQueued } = makeListener();
+      const logs: string[] = [];
+      const client = new KlorbAcpClient(listener, RequestError, (msg: string) => logs.push(msg));
+
+      await client.extNotification('_klorb/messageQueued', { sessionId: 's1' });
+
+      expect(messagesQueued).toEqual([]);
       expect(logs.some((line) => line.includes('malformed'))).toBe(true);
     });
 

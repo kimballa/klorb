@@ -42,6 +42,7 @@ export interface StatusSnapshot {
   outputTokens?: number;
   sessionTitle?: string | null;
   workspaceTrusted?: boolean;
+  enqueueMessageCapable?: boolean;
 }
 
 export type StatusListener = (status: StatusSnapshot) => void;
@@ -155,6 +156,7 @@ export class SessionControls {
       permissionMode: info.modeId,
       workspaceTrusted: info.workspaceTrusted,
       sessionTitle: info.title ?? null,
+      enqueueMessageCapable: info.enqueueMessageCapable,
       usedTokens: undefined,
       maxTokens: undefined,
       outputTokens: undefined,

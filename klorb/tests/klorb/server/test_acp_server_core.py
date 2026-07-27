@@ -62,7 +62,7 @@ async def test_initialize_echoes_protocol_version_and_klorb_meta(
     assert response.agent_capabilities is not None
     assert response.agent_capabilities.field_meta == {"klorb": {
         "sessionConfig": True, "sessionStats": True, "trustWorkspace": True, "reloadSkills": True,
-        "taskMeta": chainlink_available(),
+        "enqueueMessage": True, "taskMeta": chainlink_available(),
     }}
 
 

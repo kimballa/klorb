@@ -40,6 +40,7 @@ from klorb.server.turn_bridge import TurnBridge
 from klorb.server.update_mapping import parse_session_config_update, session_config_json, session_mode_state
 from klorb.session import Session
 from klorb.session.constants import PermissionFramework
+from klorb.session.events import QueuedMessage
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
@@ -127,6 +128,7 @@ class KlorbAcpAgent(acp.Agent):
                 "sessionStats": True,
                 "trustWorkspace": True,
                 "reloadSkills": True,
+                "enqueueMessage": True,
                 "taskMeta": chainlink_available(),
             }}),
         )
@@ -340,6 +342,23 @@ class KlorbAcpAgent(acp.Agent):
             self._acp_session_id, len(catalogs.canonical))
         return {"skillCount": len(catalogs.canonical)}
 
+    def _ext_enqueue_message(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Queue `params["text"]` as a `QueuedMessage` for delivery into the running turn --
+        see `_klorb/enqueueMessage` in docs/specs/klorb-server.md. Only valid while a
+        `session/prompt` is in flight for this session; a client with nothing running should
+        send an ordinary `session/prompt` instead."""
+        self._require_session_id(params)
+        if not self._turn_in_flight:
+            raise acp.RequestError(-32000, "No prompt is in progress for this session")
+        text = params.get("text")
+        if not isinstance(text, str):
+            raise acp.RequestError.invalid_params({"reason": "text is required"})
+        assert self._session is not None
+        self._session.enqueue_queued_message(QueuedMessage(message_text=text))
+        logger.debug(
+            "_klorb/enqueueMessage queued a message for ACP session %s", self._acp_session_id)
+        return {"queued": True}
+
     def _ext_trust_workspace(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
@@ -404,6 +423,8 @@ class KlorbAcpAgent(acp.Agent):
             return self._ext_reload_skills(params)
         if method == "klorb/trustWorkspace":
             return self._ext_trust_workspace(params)
+        if method == "klorb/enqueueMessage":
+            return self._ext_enqueue_message(params)
         raise acp.RequestError.method_not_found(f"_{method}")
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:

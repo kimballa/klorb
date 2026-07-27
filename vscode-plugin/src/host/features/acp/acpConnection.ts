@@ -34,6 +34,18 @@ export function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/** Reads one boolean flag from `initResult.agentCapabilities._meta.klorb`, `false` if the
+ * server's `initialize()` reply carried no such flag at all (an older/non-klorb server, or one
+ * that hasn't grown this capability yet). */
+function klorbAgentCapability(initResult: InitializeResponse, flag: string): boolean {
+  const meta = initResult.agentCapabilities?._meta;
+  const klorb =
+    meta != null && typeof meta.klorb === 'object' && meta.klorb !== null
+      ? (meta.klorb as Record<string, unknown>)
+      : undefined;
+  return klorb?.[flag] === true;
+}
+
 /**
  * Owns the ACP client-side connection to the `klorb server` child process: spawning the child
  * (through `KlorbServerProcess`), performing the `initialize` + `session/new` handshake over
@@ -52,6 +64,10 @@ export class AcpConnection {
   private _client: KlorbAcpClient | undefined;
   private _sessionId: string | undefined;
   private _inflightReject: ((err: Error) => void) | undefined;
+  /** Whether the connected server advertised `agentCapabilities._meta.klorb.enqueueMessage`
+   * at `initialize()` -- set once per `start()` call and threaded into every `newSession()`'s
+   * `SessionInfo`, since it's a property of the connection/server, not of any one session. */
+  private _enqueueMessageCapable = false;
 
   public constructor(
     serverProcess: KlorbServerProcess,
@@ -149,6 +165,7 @@ export class AcpConnection {
           'extension) so the two match, then run "Klorb: Restart Server".'
       );
     }
+    this._enqueueMessageCapable = klorbAgentCapability(initResult, 'enqueueMessage');
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
     await this.newSession(cwd);
   }
@@ -162,7 +179,7 @@ export class AcpConnection {
     const session = await this._raceClosed(connection.newSession({ cwd, mcpServers: [] }));
     this._sessionId = session.sessionId;
     this._log(`klorb: session created: ${session.sessionId}`);
-    this._listener.onSessionInfo(sessionInfoFromResponse(session));
+    this._listener.onSessionInfo(sessionInfoFromResponse(session, this._enqueueMessageCapable));
   }
 
   /** Changes the session's permission-framework mode (`session/set_mode`). The server also
@@ -181,6 +198,20 @@ export class AcpConnection {
   ): Promise<Record<string, unknown>> {
     const { connection, sessionId } = this._requireReady();
     return this._raceClosed(connection.extMethod(method, { sessionId, ...params }));
+  }
+
+  /** Whether the connected server advertised `_klorb/enqueueMessage` -- gates whether a
+   * mid-turn submit can call `enqueueMessage()` below at all (see `PromptInput`'s
+   * `enqueueMessageCapable` prop). */
+  public get enqueueMessageCapable(): boolean {
+    return this._enqueueMessageCapable;
+  }
+
+  /** Queues `text` into the currently in-flight turn (`_klorb/enqueueMessage`) -- valid only
+   * while a prompt is in flight for this session; the server errors otherwise (see
+   * docs/specs/klorb-server.md). */
+  public async enqueueMessage(text: string): Promise<void> {
+    await this.extMethod('_klorb/enqueueMessage', { text });
   }
 
   private _requireReady(): { connection: ClientSideConnection; sessionId: string } {
@@ -248,6 +279,7 @@ export class AcpConnection {
     this._connection = undefined;
     this._client = undefined;
     this._sessionId = undefined;
+    this._enqueueMessageCapable = false;
     reject?.(new Error('klorb server restarted'));
     this._serverProcess.stop();
   }
@@ -260,6 +292,7 @@ export class AcpConnection {
     this._connection = undefined;
     this._client = undefined;
     this._sessionId = undefined;
+    this._enqueueMessageCapable = false;
     reject?.(new Error('klorb server exited unexpectedly; run "Klorb: Restart Server"'));
     this._serverProcess.stop();
   }

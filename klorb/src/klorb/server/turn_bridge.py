@@ -9,7 +9,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import acp
 from acp.schema import SessionInfoUpdate
@@ -43,6 +43,7 @@ from klorb.session.events import (
     EscalatePrivilegesDecision,
     PermissionAskContext,
     PermissionDecision,
+    QueuedMessage,
     ToolCallEvent,
     ToolCallStartedEvent,
 )
@@ -73,7 +74,29 @@ capability gate): unlike a blocking ext *request*, an unrecognized ext *notifica
 silently ignored per ACP's own extensibility rules, so there's no wire cost to a client that
 doesn't understand it."""
 
+_MESSAGE_QUEUED_EXT_NOTIFICATION = "klorb/messageQueued"
+"""The `_klorb/messageQueued` extension notification name, sent (unconditionally, like
+`_klorb/usage`) whenever `Session.enqueue_queued_message` accepts a message into the running
+turn -- see `_klorb/enqueueMessage` in docs/specs/klorb-server.md."""
+
+_QUEUED_MESSAGE_SENT_EXT_NOTIFICATION = "klorb/queuedMessageSent"
+"""The `_klorb/queuedMessageSent` extension notification name, sent once a previously-queued
+message has actually been delivered (folded into a tool-response envelope, or redelivered as
+the next turn at turn-end) -- the client's cue to flip that message's rendering from queued to
+delivered."""
+
 _AskResultT = TypeVar("_AskResultT")
+
+
+class _ExtNotificationItem(NamedTuple):
+    """One `_klorb/*` extension notification riding the same ordered outbound queue as a
+    `session/update` -- `pump()` tells the two apart by type so `_klorb/messageQueued`/
+    `_klorb/queuedMessageSent` stay correctly interleaved with the session updates around
+    them, exactly like every other fire-and-forget callback (see docs/specs/klorb-server.md's
+    "Threading bridge" section)."""
+
+    method: str
+    params: dict[str, Any]
 
 
 class TurnBridge:
@@ -112,6 +135,22 @@ class TurnBridge:
     finished call to a chainlink task tool (`TASK_TOOL_NAMES`), mirroring the TUI task sidebar's
     own refresh trigger -- see docs/specs/klorb-server.md's "Chainlink task-plan updates"
     section.
+
+    `on_enqueue_message` enqueues `_klorb/messageQueued` onto the same ordered queue as every
+    other update, and `on_send_queued_message`'s mid-turn firing (from `Session.
+    _run_tool_calls()`'s own drain, delivering a message into the running turn as a
+    `UserInterjectionPayload`) enqueues `_klorb/queuedMessageSent` the same way. Once a
+    `Session.send_turn()` call returns (successfully, aborted, or raising), `run_turn()` drains
+    any message still queued at that point (`Session.drain_queued_messages()`, called with no
+    `callbacks` -- this iteration's own pump task has already stopped, so there is nothing left
+    to enqueue onto) and sends `_klorb/queuedMessageSent` for each directly, then folds them into
+    one more `send_turn()` call for the same ACP `session/prompt` request -- mirroring the TUI's
+    `_finish_turn()`, which redelivers a still-queued message as the next turn regardless of how
+    the current one ended. The loop repeats until a `send_turn()` call ends with nothing left
+    queued; the JSON-RPC response `KlorbAcpAgent.prompt()` builds reflects the *last* turn in the
+    chain, and an exception from that last turn propagates after the loop (not the exception, if
+    any, of an earlier turn in the chain whose queued message triggered a successful follow-on
+    turn).
     """
 
     def __init__(
@@ -148,161 +187,206 @@ class TurnBridge:
     async def run_turn(self, prompt_text: str) -> str:
         """Send `prompt_text` as one turn of `self._session`'s conversation, streaming the
         reply and any reasoning text out as ACP `session/update` notifications. Returns the
-        model's final response text; propagates whatever `Session.send_turn()` raises
-        (including `klorb.api_provider.ResponseAborted` on a cancelled turn), after the pump
-        task has fully drained and a `_klorb/usage` notification carrying the turn's resulting
-        token tally has gone out -- unconditionally, whether the turn succeeded, aborted, or
-        raised.
+        final response text of the *last* turn in the chain (see class docstring for the
+        turn-end redelivery loop); propagates whatever that last turn's `Session.send_turn()`
+        call raised (including `klorb.api_provider.ResponseAborted` on a cancelled turn), after
+        every pump task has fully drained and a `_klorb/usage` notification carrying the
+        session's resulting token tally has gone out -- unconditionally, whichever way the last
+        turn in the chain ended.
         """
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Any] = asyncio.Queue()
-        call_id_stack: list[str] = []
-        sibling_batch_index: dict[int, int] = {}
+        text_to_send = prompt_text
+        response_text = ""
+        pending_error: Exception | None = None
+        while True:
+            queue: asyncio.Queue[Any] = asyncio.Queue()
+            call_id_stack: list[str] = []
+            sibling_batch_index: dict[int, int] = {}
 
-        def enqueue(update: Any) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, update)
+            def enqueue(update: Any) -> None:
+                loop.call_soon_threadsafe(queue.put_nowait, update)
 
-        def on_chunk(delta_text: str) -> None:
-            enqueue(acp.update_agent_message_text(delta_text))
+            def on_chunk(delta_text: str) -> None:
+                enqueue(acp.update_agent_message_text(delta_text))
 
-        def on_thinking_chunk(delta_text: str) -> None:
-            enqueue(acp.update_agent_thought_text(delta_text))
+            def on_thinking_chunk(delta_text: str) -> None:
+                enqueue(acp.update_agent_thought_text(delta_text))
 
-        def on_session_name_changed(session_name: SessionName | None) -> None:
-            enqueue(SessionInfoUpdate(
-                session_update="session_info_update",
-                title=session_name.title if session_name is not None else None))
+            def on_session_name_changed(session_name: SessionName | None) -> None:
+                enqueue(SessionInfoUpdate(
+                    session_update="session_info_update",
+                    title=session_name.title if session_name is not None else None))
 
-        def on_tool_call_started(event: ToolCallStartedEvent) -> None:
-            call_id_stack.append(event.call_id)
-            enqueue(tool_call_started_update(
-                event, self._session.tool_registry, self._session.config.workspace.path))
+            def on_enqueue_message(queued_msg: QueuedMessage) -> None:
+                enqueue(_ExtNotificationItem(_MESSAGE_QUEUED_EXT_NOTIFICATION, {
+                    "sessionId": self._session_id, "text": queued_msg.message_text}))
 
-        def on_tool_call(event: ToolCallEvent) -> None:
-            if call_id_stack and call_id_stack[-1] == event.call_id:
-                call_id_stack.pop()
-            elif event.call_id in call_id_stack:
-                call_id_stack.remove(event.call_id)
-            enqueue(tool_call_finished_update(
-                event, self._session.tool_registry, self._session.config.workspace.path))
-            if event.name in TASK_TOOL_NAMES:
-                plan_update = self.fetch_plan_update()
-                if plan_update is not None:
-                    enqueue(plan_update)
+            def on_send_queued_message(queued_msg: QueuedMessage) -> None:
+                enqueue(_ExtNotificationItem(_QUEUED_MESSAGE_SENT_EXT_NOTIFICATION, {
+                    "sessionId": self._session_id, "text": queued_msg.message_text}))
 
-        def linked_call_id() -> str | None:
-            return call_id_stack[-1] if call_id_stack else None
+            def on_tool_call_started(event: ToolCallStartedEvent) -> None:
+                call_id_stack.append(event.call_id)
+                enqueue(tool_call_started_update(
+                    event, self._session.tool_registry, self._session.config.workspace.path))
 
-        async def run_blocking_ask(
-            build_coro: Callable[[], Awaitable[_AskResultT]],
-        ) -> _AskResultT:
-            """Await `queue.join()` (draining every `session/update` enqueued so far) before
-            running `build_coro()`, so a blocking ask never overtakes the updates that led to
-            it -- see docs/specs/klorb-server.md's "Threading bridge" section."""
-            await queue.join()
-            return await build_coro()
+            def on_tool_call(event: ToolCallEvent) -> None:
+                if call_id_stack and call_id_stack[-1] == event.call_id:
+                    call_id_stack.pop()
+                elif event.call_id in call_id_stack:
+                    call_id_stack.remove(event.call_id)
+                enqueue(tool_call_finished_update(
+                    event, self._session.tool_registry, self._session.config.workspace.path))
+                if event.name in TASK_TOOL_NAMES:
+                    plan_update = self.fetch_plan_update()
+                    if plan_update is not None:
+                        enqueue(plan_update)
 
-        def call_blocking(build_coro: Callable[[], Awaitable[_AskResultT]]) -> _AskResultT:
-            """Run `run_blocking_ask(build_coro)` on the event loop from the worker thread
-            running `Session.send_turn()`, parking the worker thread until it resolves."""
-            future = asyncio.run_coroutine_threadsafe(run_blocking_ask(build_coro), loop)
-            return future.result()
+            def linked_call_id() -> str | None:
+                return call_id_stack[-1] if call_id_stack else None
 
-        def on_permission_ask(ctx: PermissionAskContext) -> PermissionDecision:
-            risk: ItemRiskAssessment | None = resolve_item_risk_assessment(
-                ctx, session=self._session, process_config=self._process_config)
-            # Keyed by the first sibling item's own identity, not `id(ctx.sibling_items)`: pydantic
-            # re-wraps `sibling_items` into a fresh list on every `PermissionAskContext`
-            # construction (one per item in the batch), so the *list* object's id differs across
-            # calls even though the `PermissionAskItem` objects inside it -- plain objects, never
-            # copied by pydantic -- stay identical.
-            batch_key = id(ctx.sibling_items[0]) if ctx.sibling_items else id(ctx)
-            item_index = sibling_batch_index.get(batch_key, 0)
-            sibling_batch_index[batch_key] = item_index + 1
-            item_total = len(ctx.sibling_items) if ctx.sibling_items is not None else 1
-            options = permission_ask_options(ctx.resource)
-            meta = permission_ask_meta(ctx, risk, item_index, item_total, self._session.config)
-            tool_call = permission_ask_tool_call_update(linked_call_id(), ctx.resource_description)
+            async def run_blocking_ask(
+                build_coro: Callable[[], Awaitable[_AskResultT]],
+            ) -> _AskResultT:
+                """Await `queue.join()` (draining every `session/update` enqueued so far) before
+                running `build_coro()`, so a blocking ask never overtakes the updates that led to
+                it -- see docs/specs/klorb-server.md's "Threading bridge" section."""
+                await queue.join()
+                return await build_coro()
 
-            async def _ask() -> acp.RequestPermissionResponse:
-                return await self._client.request_permission(
-                    options=options, session_id=self._session_id, tool_call=tool_call, klorb=meta)
+            def call_blocking(build_coro: Callable[[], Awaitable[_AskResultT]]) -> _AskResultT:
+                """Run `run_blocking_ask(build_coro)` on the event loop from the worker thread
+                running `Session.send_turn()`, parking the worker thread until it resolves."""
+                future = asyncio.run_coroutine_threadsafe(run_blocking_ask(build_coro), loop)
+                return future.result()
 
-            response = call_blocking(_ask)
-            grant_patterns = permission_decision_grant_patterns(ctx.resource, risk)
-            decision = permission_decision_from_outcome(response.outcome, grant_patterns)
-            record_decision_history(ctx, decision, session=self._session, process_config=self._process_config)
-            return decision
+            def on_permission_ask(ctx: PermissionAskContext) -> PermissionDecision:
+                risk: ItemRiskAssessment | None = resolve_item_risk_assessment(
+                    ctx, session=self._session, process_config=self._process_config)
+                # Keyed by the first sibling item's own identity, not `id(ctx.sibling_items)`:
+                # pydantic re-wraps `sibling_items` into a fresh list on every
+                # `PermissionAskContext` construction (one per item in the batch), so the *list*
+                # object's id differs across calls even though the `PermissionAskItem` objects
+                # inside it -- plain objects, never copied by pydantic -- stay identical.
+                batch_key = id(ctx.sibling_items[0]) if ctx.sibling_items else id(ctx)
+                item_index = sibling_batch_index.get(batch_key, 0)
+                sibling_batch_index[batch_key] = item_index + 1
+                item_total = len(ctx.sibling_items) if ctx.sibling_items is not None else 1
+                options = permission_ask_options(ctx.resource)
+                meta = permission_ask_meta(ctx, risk, item_index, item_total, self._session.config)
+                tool_call = permission_ask_tool_call_update(linked_call_id(), ctx.resource_description)
 
-        def on_escalate_privileges(ctx: EscalatePrivilegesContext) -> EscalatePrivilegesDecision:
-            options = escalate_privileges_options()
-            meta = escalate_privileges_meta(ctx)
-            tool_call = permission_ask_tool_call_update(linked_call_id(), ctx.description)
+                async def _ask() -> acp.RequestPermissionResponse:
+                    return await self._client.request_permission(
+                        options=options, session_id=self._session_id, tool_call=tool_call,
+                        klorb=meta)
 
-            async def _ask() -> acp.RequestPermissionResponse:
-                return await self._client.request_permission(
-                    options=options, session_id=self._session_id, tool_call=tool_call, klorb=meta)
+                response = call_blocking(_ask)
+                grant_patterns = permission_decision_grant_patterns(ctx.resource, risk)
+                decision = permission_decision_from_outcome(response.outcome, grant_patterns)
+                record_decision_history(
+                    ctx, decision, session=self._session, process_config=self._process_config)
+                return decision
 
-            response = call_blocking(_ask)
-            return escalate_privileges_decision_from_outcome(response.outcome)
+            def on_escalate_privileges(ctx: EscalatePrivilegesContext) -> EscalatePrivilegesDecision:
+                options = escalate_privileges_options()
+                meta = escalate_privileges_meta(ctx)
+                tool_call = permission_ask_tool_call_update(linked_call_id(), ctx.description)
 
-        def on_ask_user_questions(ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
-            if not self._ask_user_questions_capable:
-                logger.debug(
-                    "Client did not advertise _klorb/askUserQuestions; declining question %d/%d "
-                    "closed for ACP session %s", ctx.index + 1, ctx.total, self._session_id)
-                return AskUserQuestionsAnswer(cancelled=True)
+                async def _ask() -> acp.RequestPermissionResponse:
+                    return await self._client.request_permission(
+                        options=options, session_id=self._session_id, tool_call=tool_call,
+                        klorb=meta)
 
-            params = ask_user_questions_ext_params(ctx, self._session_id)
+                response = call_blocking(_ask)
+                return escalate_privileges_decision_from_outcome(response.outcome)
 
-            async def _ask() -> dict[str, Any]:
-                return await self._client.ext_method(_ASK_USER_QUESTIONS_EXT_METHOD, params)
+            def on_ask_user_questions(ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
+                if not self._ask_user_questions_capable:
+                    logger.debug(
+                        "Client did not advertise _klorb/askUserQuestions; declining question "
+                        "%d/%d closed for ACP session %s", ctx.index + 1, ctx.total,
+                        self._session_id)
+                    return AskUserQuestionsAnswer(cancelled=True)
 
-            result = call_blocking(_ask)
-            return ask_user_questions_answer_from_result(ctx, result)
+                params = ask_user_questions_ext_params(ctx, self._session_id)
 
-        def on_tool_call_limit_reached(message: str) -> bool:
-            if not self._raise_tool_call_limit_capable:
-                logger.debug(
-                    "Client did not advertise _klorb/raiseToolCallLimit; failing the tool-call "
-                    "limit closed for ACP session %s", self._session_id)
-                return False
+                async def _ask() -> dict[str, Any]:
+                    return await self._client.ext_method(_ASK_USER_QUESTIONS_EXT_METHOD, params)
 
-            async def _ask() -> dict[str, Any]:
-                return await self._client.ext_method(
-                    _RAISE_TOOL_CALL_LIMIT_EXT_METHOD,
-                    {"sessionId": self._session_id, "message": message})
+                result = call_blocking(_ask)
+                return ask_user_questions_answer_from_result(ctx, result)
 
-            result = call_blocking(_ask)
-            return bool(result.get("approved", False))
+            def on_tool_call_limit_reached(message: str) -> bool:
+                if not self._raise_tool_call_limit_capable:
+                    logger.debug(
+                        "Client did not advertise _klorb/raiseToolCallLimit; failing the "
+                        "tool-call limit closed for ACP session %s", self._session_id)
+                    return False
 
-        cancel_event = threading.Event()
-        handlers = TurnEventHandlers(
-            on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
-            on_tool_call_started=on_tool_call_started, on_tool_call=on_tool_call,
-            on_permission_ask=on_permission_ask, on_escalate_privileges=on_escalate_privileges,
-            on_ask_user_questions=on_ask_user_questions,
-            on_tool_call_limit_reached=on_tool_call_limit_reached,
-            on_session_name_changed=on_session_name_changed, cancel_event=cancel_event)
+                async def _ask() -> dict[str, Any]:
+                    return await self._client.ext_method(
+                        _RAISE_TOOL_CALL_LIMIT_EXT_METHOD,
+                        {"sessionId": self._session_id, "message": message})
 
-        async def pump() -> None:
-            while True:
-                update = await queue.get()
-                if update is _SENTINEL:
+                result = call_blocking(_ask)
+                return bool(result.get("approved", False))
+
+            cancel_event = threading.Event()
+            handlers = TurnEventHandlers(
+                on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
+                on_tool_call_started=on_tool_call_started, on_tool_call=on_tool_call,
+                on_permission_ask=on_permission_ask, on_escalate_privileges=on_escalate_privileges,
+                on_ask_user_questions=on_ask_user_questions,
+                on_tool_call_limit_reached=on_tool_call_limit_reached,
+                on_session_name_changed=on_session_name_changed,
+                on_enqueue_message=on_enqueue_message,
+                on_send_queued_message=on_send_queued_message, cancel_event=cancel_event)
+
+            async def pump() -> None:
+                while True:
+                    item = await queue.get()
+                    if item is _SENTINEL:
+                        queue.task_done()
+                        return
+                    if isinstance(item, _ExtNotificationItem):
+                        await self._client.ext_notification(item.method, item.params)
+                    else:
+                        await self._client.session_update(session_id=self._session_id, update=item)
                     queue.task_done()
-                    return
-                await self._client.session_update(session_id=self._session_id, update=update)
-                queue.task_done()
 
-        pump_task = asyncio.create_task(pump())
-        try:
-            return await asyncio.to_thread(self._session.send_turn, prompt_text, handlers)
-        finally:
-            enqueue(_SENTINEL)
-            await pump_task
-            await self._client.ext_notification(_USAGE_EXT_NOTIFICATION, {
-                "sessionId": self._session_id,
-                "usedTokens": self._session.total_tokens_used(),
-                "maxTokens": self._session.max_context_window(),
-                "outputTokens": self._session.total_output_tokens_used(),
-            })
+            pump_task = asyncio.create_task(pump())
+            try:
+                response_text = await asyncio.to_thread(
+                    self._session.send_turn, text_to_send, handlers)
+                pending_error = None
+            except Exception as exc:
+                pending_error = exc
+                response_text = ""
+            finally:
+                enqueue(_SENTINEL)
+                await pump_task
+
+            # `callbacks` is omitted (not this iteration's `handlers`): this drain runs after
+            # this iteration's pump task has already stopped, so `handlers.on_send_queued_message`
+            # would enqueue onto a queue nothing is draining anymore. The `_klorb/
+            # queuedMessageSent` notification for each drained message is sent directly instead,
+            # right here on the event loop -- safe because nothing else is queued for this
+            # iteration by this point, and the next iteration's own queue doesn't exist yet.
+            drained = self._session.drain_queued_messages()
+            if not drained:
+                break
+            for queued_msg in drained:
+                await self._client.ext_notification(_QUEUED_MESSAGE_SENT_EXT_NOTIFICATION, {
+                    "sessionId": self._session_id, "text": queued_msg.message_text})
+            text_to_send = "\n\n".join(queued_msg.message_text for queued_msg in drained)
+
+        await self._client.ext_notification(_USAGE_EXT_NOTIFICATION, {
+            "sessionId": self._session_id,
+            "usedTokens": self._session.total_tokens_used(),
+            "maxTokens": self._session.max_context_window(),
+            "outputTokens": self._session.total_output_tokens_used(),
+        })
+        if pending_error is not None:
+            raise pending_error
+        return response_text

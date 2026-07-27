@@ -6,13 +6,17 @@ import {
   appendInteraction,
   appendPrompt,
   appendQuestionInteraction,
+  appendQueuedMessage,
   applyExpandAllToolCalls,
   applyHostMessage,
+  applyInterruptedMarker,
   applyPendingInteraction,
+  applyQueuedMessageSent,
   applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
   isHistoryEntry,
+  isScrollPinnedToBottom,
   type HistoryEntry,
   type ToolCallHistoryEntry,
 } from 'webview/features/history';
@@ -74,13 +78,22 @@ describe('applyHostMessage', () => {
     ]);
   });
 
-  it('appends a notice for a non-end_turn stop reason', () => {
+  it('appends a notice for a non-end_turn, non-cancelled stop reason', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
+    entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'refusal' });
+    expect(entries).toEqual([
+      { kind: 'response', text: 'partial', streaming: false },
+      { kind: 'notice', text: 'Turn ended: refusal', streaming: false },
+    ]);
+  });
+
+  it('marks a still-streaming response entry (interrupted) for a cancelled stop reason', () => {
     let entries: HistoryEntry[] = [];
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
     entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'cancelled' });
     expect(entries).toEqual([
-      { kind: 'response', text: 'partial', streaming: false },
-      { kind: 'notice', text: 'Turn ended: cancelled', streaming: false },
+      { kind: 'response', text: 'partial\n\n*(interrupted)*', streaming: false },
     ]);
   });
 
@@ -446,16 +459,118 @@ describe('applyTaskListUpdate', () => {
 });
 
 describe('applyTurnFlag', () => {
-  it('raises on turnStarted and clears on turnEnded/turnError/sessionReset', () => {
+  it('raises on turnStarted and clears on turnEnded/turnError/serverLost/sessionReset', () => {
     expect(applyTurnFlag(false, { type: 'turnStarted' })).toBe(true);
     expect(applyTurnFlag(true, { type: 'turnEnded', stopReason: 'end_turn' })).toBe(false);
     expect(applyTurnFlag(true, { type: 'turnError', message: 'x' })).toBe(false);
+    expect(applyTurnFlag(true, { type: 'serverLost', message: 'x' })).toBe(false);
     expect(applyTurnFlag(true, { type: 'sessionReset' })).toBe(false);
   });
 
   it('leaves the flag alone for streamed chunks', () => {
     expect(applyTurnFlag(true, { type: 'agentChunk', text: 'x' })).toBe(true);
     expect(applyTurnFlag(false, { type: 'thoughtChunk', text: 'x' })).toBe(false);
+  });
+});
+
+describe('queued messages', () => {
+  it('appendQueuedMessage appends a queuedMessage entry', () => {
+    const entries = appendQueuedMessage([], 'also check the tests');
+    expect(entries).toEqual([
+      { kind: 'queuedMessage', text: 'also check the tests', streaming: false },
+    ]);
+  });
+
+  it('applyQueuedMessageSent flips the oldest matching queuedMessage entry to a prompt', () => {
+    let entries: HistoryEntry[] = [
+      { kind: 'response', text: 'earlier reply', streaming: false },
+      { kind: 'queuedMessage', text: 'first queued', streaming: false },
+      { kind: 'queuedMessage', text: 'second queued', streaming: false },
+    ];
+    entries = applyQueuedMessageSent(entries, 'first queued');
+    expect(entries).toEqual([
+      { kind: 'response', text: 'earlier reply', streaming: false },
+      { kind: 'prompt', text: 'first queued', streaming: false },
+      { kind: 'queuedMessage', text: 'second queued', streaming: false },
+    ]);
+  });
+
+  it('applyQueuedMessageSent is a no-op when nothing matches (stale/duplicate notification)', () => {
+    const entries: HistoryEntry[] = [
+      { kind: 'queuedMessage', text: 'first queued', streaming: false },
+    ];
+    expect(applyQueuedMessageSent(entries, 'never queued')).toEqual(entries);
+  });
+
+  it('applyHostMessage dispatches messageQueued/queuedMessageSent through the same reducers', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, { type: 'messageQueued', text: 'hi' });
+    expect(entries).toEqual([{ kind: 'queuedMessage', text: 'hi', streaming: false }]);
+    entries = applyHostMessage(entries, { type: 'queuedMessageSent', text: 'hi' });
+    expect(entries).toEqual([{ kind: 'prompt', text: 'hi', streaming: false }]);
+  });
+});
+
+describe('applyInterruptedMarker', () => {
+  it('appends the marker to a still-streaming response entry and stops it streaming', () => {
+    const entries: HistoryEntry[] = [{ kind: 'response', text: 'partial', streaming: true }];
+    expect(applyInterruptedMarker(entries)).toEqual([
+      { kind: 'response', text: 'partial\n\n*(interrupted)*', streaming: false },
+    ]);
+  });
+
+  it('appends the marker to a still-streaming thinking entry and stops it streaming', () => {
+    const entries: HistoryEntry[] = [{ kind: 'thinking', text: 'pondering', streaming: true }];
+    expect(applyInterruptedMarker(entries)).toEqual([
+      { kind: 'thinking', text: 'pondering\n\n(interrupted)', streaming: false },
+    ]);
+  });
+
+  it('appends a standalone notice when nothing was streaming (e.g. cancelled between rounds)', () => {
+    const entries: HistoryEntry[] = [
+      {
+        kind: 'toolCall',
+        callId: 'c1',
+        status: 'completed',
+        title: 'Read foo.py',
+        toolKind: 'read',
+        locations: [],
+        expanded: false,
+      },
+    ];
+    expect(applyInterruptedMarker(entries)).toEqual([
+      ...entries,
+      { kind: 'notice', text: '(interrupted)', streaming: false },
+    ]);
+  });
+
+  it('appends a standalone notice for an already-finished trailing entry', () => {
+    const entries: HistoryEntry[] = [{ kind: 'response', text: 'done', streaming: false }];
+    expect(applyInterruptedMarker(entries)).toEqual([
+      { kind: 'response', text: 'done', streaming: false },
+      { kind: 'notice', text: '(interrupted)', streaming: false },
+    ]);
+  });
+});
+
+describe('serverLost', () => {
+  it('applyHostMessage appends a serverError entry', () => {
+    const entries = applyHostMessage([], { type: 'serverLost', message: 'child exited' });
+    expect(entries).toEqual([{ kind: 'serverError', text: 'child exited', streaming: false }]);
+  });
+});
+
+describe('isScrollPinnedToBottom', () => {
+  it('is pinned when the viewport shows its bottom edge exactly', () => {
+    expect(isScrollPinnedToBottom(400, 500, 100)).toBe(true);
+  });
+
+  it('is pinned within the default threshold of the bottom edge', () => {
+    expect(isScrollPinnedToBottom(390, 500, 100)).toBe(true);
+  });
+
+  it('is not pinned once scrolled meaningfully away from the bottom edge', () => {
+    expect(isScrollPinnedToBottom(200, 500, 100)).toBe(false);
   });
 });
 

@@ -1,15 +1,35 @@
 // © Copyright 2026 Aaron Kimball
 import type { VscodeTextarea } from '@vscode-elements/elements';
-import { type JSX, type SyntheticEvent, type KeyboardEvent, useRef, useState } from 'react';
+import {
+  type JSX,
+  type SyntheticEvent,
+  type KeyboardEvent,
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 
 import { classifyEnterKey } from 'webview/keyHandling';
 
+/** Imperative handle exposed via `ref`, so `App` can reclaim focus after a turn ends or an
+ * interaction panel resolves (see `docs/specs/vscode-plugin.md`'s input-discipline sweep). */
+export interface PromptInputHandle {
+  focus(): void;
+}
+
 interface PromptInputProps {
-  /** True while a prompt turn is running: the input is disabled and Stop replaces Send. */
+  /** True while a prompt turn is running: disables the input unless `enqueueMessageCapable`,
+   * in which case it stays enabled so the user can queue a message into the running turn. */
   inFlight: boolean;
   /** True while an `ApprovalPanel` (or other interaction-area panel) is active: visually mutes
    * the already-disabled input row, mirroring the TUI's interaction-mode treatment. */
   muted?: boolean;
+  /** Whether the connected server advertised `_klorb/enqueueMessage`: when true, the input
+   * stays enabled during a turn and a mid-turn submit calls `onSubmit` the same as an
+   * idle-turn one (the caller distinguishes by its own `inFlight` state) instead of the input
+   * simply being disabled. */
+  enqueueMessageCapable?: boolean;
   onSubmit(text: string): void;
   onCancel(): void;
   onCyclePermissionMode(): void;
@@ -24,22 +44,34 @@ function targetValue(event: SyntheticEvent | KeyboardEvent<HTMLElement>): string
 
 /**
  * The multi-line prompt input row: Enter submits, Shift/Ctrl+Enter inserts a newline
- * (`classifyEnterKey`), and while a turn is in flight the textarea is disabled and a Stop
- * button (or Escape with focus anywhere in the row) cancels the turn.
+ * (`classifyEnterKey`). While a turn is in flight, the textarea is disabled and a Stop button
+ * (or Escape with focus anywhere in the row) cancels the turn -- unless `enqueueMessageCapable`,
+ * in which case the textarea stays enabled (with both Send and Stop available) so a mid-turn
+ * submit queues into the running turn instead. Exposes an imperative `focus()` via `ref` (see
+ * `PromptInputHandle`) so `App` can reclaim focus after a turn ends or an interaction resolves.
  */
-export default function PromptInput({
-  inFlight,
-  muted = false,
-  onSubmit,
-  onCancel,
-  onCyclePermissionMode,
-}: PromptInputProps): JSX.Element {
+const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function PromptInput(
+  {
+    inFlight,
+    muted = false,
+    enqueueMessageCapable = false,
+    onSubmit,
+    onCancel,
+    onCyclePermissionMode,
+  },
+  ref
+): JSX.Element {
   const [draft, setDraft] = useState('');
   const textareaRef = useRef<VscodeTextarea>(null);
+  const disabled = inFlight && !enqueueMessageCapable;
+
+  useImperativeHandle(ref, () => ({
+    focus: () => textareaRef.current?.focus(),
+  }));
 
   function submit(): void {
     const text = draft.trim();
-    if (text.length === 0 || inFlight) {
+    if (text.length === 0 || disabled) {
       return;
     }
     // Clearing the underlying element directly, not just React's `value` prop, guarantees the
@@ -83,18 +115,21 @@ export default function PromptInput({
         rows={2}
         placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
         value={draft}
-        disabled={inFlight}
+        disabled={disabled}
         onInput={(event: SyntheticEvent) => setDraft(targetValue(event))}
       />
+      {!inFlight || enqueueMessageCapable ? (
+        <vscode-button id="submit-button" onClick={() => submit()}>
+          Send
+        </vscode-button>
+      ) : null}
       {inFlight ? (
         <vscode-button id="stop-button" onClick={() => onCancel()}>
           Stop
         </vscode-button>
-      ) : (
-        <vscode-button id="submit-button" onClick={() => submit()}>
-          Send
-        </vscode-button>
-      )}
+      ) : null}
     </div>
   );
-}
+});
+
+export default PromptInput;
