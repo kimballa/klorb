@@ -7,9 +7,6 @@
 
 * Project dir names in ~/.local/share/klorb/ should be `<basename>-<uuid>`, not the other way around.
 
-* Grep tool MUST cut off each line at a max line length so that we don't accidentally dump a million
-  tokens into the context if something stupid gets grep'd like a minified sourcemap.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment

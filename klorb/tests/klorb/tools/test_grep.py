@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.grep."""
 
+import json
 import threading
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.grep import GrepTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -20,16 +22,37 @@ def _context(
     *,
     max_results: int = 500,
     context_lines: int = 2,
+    max_line_length: int = 500,
+    spill_bytes: int = 32 * 1024,
     read_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(grep_max_results=max_results, grep_context_lines=context_lines),
+        process_config=ProcessConfig(
+            grep_max_results=max_results, grep_context_lines=context_lines,
+            grep_max_line_length=max_line_length, grep_spill_bytes=spill_bytes),
         session_config=SessionConfig(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(),
             write_dirs=DirRules(),
         ),
     )
+
+
+def _context_with_session(
+    workspace_root: Path,
+    *,
+    spill_bytes: int = 32 * 1024,
+) -> tuple[Session, ToolSetupContext]:
+    """A `ToolSetupContext` backed by a real `Session` (`GrepTool`'s spill needs one to track its
+    tmpdir in `Session.tool_state` — see `klorb.tools.util.spill.SpillDir`). Caller must
+    `session.close()` when done, same as `test_grep_is_interrupted_by_the_turn_cancel_event`."""
+    session_config = SessionConfig(
+        workspace=Workspace(path=workspace_root), read_dirs=DirRules(), write_dirs=DirRules())
+    session = Session(config=session_config)
+    context = ToolSetupContext(
+        process_config=ProcessConfig(grep_spill_bytes=spill_bytes),
+        session_config=session_config, session=session)
+    return session, context
 
 
 def _make_tree(root: Path) -> None:
@@ -494,6 +517,97 @@ def test_gitignore_flag_in_list_files_mode(tmp_path: Path) -> None:
     assert {Path(f).name for f in result["files"]} == {"top.py"}
     assert result["gitignored_hidden"] is True
     assert "use_gitignore=false" in result["note"]
+
+
+# --- maxLineLength / spillBytes tests ---
+
+
+def test_long_line_is_truncated_with_suffix(tmp_path: Path) -> None:
+    long_line = "MATCH" + ("x" * 100)
+    (tmp_path / "long.txt").write_text(long_line + "\nshort\n")
+
+    result = GrepTool(_context(tmp_path, max_line_length=20)).apply(
+        {"path": "", "queries": ["MATCH"]})
+
+    line = result["files"][0]["lines"][0]
+    assert line.endswith("[truncated...]")
+    # The line's non-suffix portion is capped at max_line_length characters.
+    assert len(line) - len("[truncated...]") == 20
+
+
+def test_short_line_is_not_truncated(tmp_path: Path) -> None:
+    (tmp_path / "short.txt").write_text("MATCH short line\n")
+
+    result = GrepTool(_context(tmp_path, max_line_length=500)).apply(
+        {"path": "", "queries": ["MATCH"]})
+
+    parsed = _parse_lines(result["files"][0])
+    assert parsed[0][1] == "MATCH short line"
+
+
+def test_files_payload_spills_to_a_file_when_over_spill_bytes(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    try:
+        result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
+
+        assert "files" not in result
+        data_file = Path(result["results_data_file"])
+        assert data_file.is_file()
+        spilled = json.loads(data_file.read_text(encoding="utf-8"))
+        assert {Path(entry["filename"]).name for entry in spilled} == {
+            "top.py", "nested.py", "notes.txt"}
+    finally:
+        session.close()
+
+
+def test_spilled_tmpdir_is_granted_read_access(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    try:
+        result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
+
+        data_file = Path(result["results_data_file"])
+        assert any(
+            data_file.is_relative_to(allowed)
+            for allowed in context.session_config.read_dirs.allow)
+    finally:
+        session.close()
+
+
+def test_multiple_spills_in_one_session_reuse_the_same_tmpdir(tmp_path: Path) -> None:
+    """The shared `SpillDir` mechanism (`klorb.tools.util.spill`, also used by `WebFetchTool`)
+    reuses one tmpdir per session rather than minting a fresh directory per spill."""
+    _make_tree(tmp_path)
+    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    try:
+        tool = GrepTool(context)
+        first = tool.apply({"path": "", "queries": ["hello"]})
+        second = tool.apply({"path": "", "queries": ["hello"]})
+
+        first_file = Path(first["results_data_file"])
+        second_file = Path(second["results_data_file"])
+        assert first_file.parent == second_file.parent
+        assert first_file != second_file
+    finally:
+        session.close()
+
+
+def test_spill_without_a_session_raises_business_logic_tool_call_error(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    with pytest.raises(ToolCallError):
+        GrepTool(_context(tmp_path, spill_bytes=1)).apply({"path": "", "queries": ["hello"]})
+
+
+def test_small_files_payload_is_returned_inline(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = GrepTool(_context(tmp_path, spill_bytes=32 * 1024)).apply(
+        {"path": "", "queries": ["hello"]})
+
+    assert "results_data_file" not in result
+    assert isinstance(result["files"], list)
 
 
 def test_explicit_single_file_ignores_gitignore_filtering(tmp_path: Path) -> None:

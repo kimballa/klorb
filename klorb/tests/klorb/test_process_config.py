@@ -14,7 +14,9 @@ from klorb.permissions.directory_access import DirectoryAccessTable
 from klorb.process_config import (
     DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS,
     DEFAULT_FIND_FILE_MAX_RESULTS,
+    DEFAULT_GREP_MAX_LINE_LENGTH,
     DEFAULT_GREP_MAX_RESULTS,
+    DEFAULT_GREP_SPILL_BYTES,
     DEFAULT_PROMPT_INPUT_MAX_LINES,
     DEFAULT_READ_FILE_MAX_LINES,
     DEFAULT_SHELL_COMMAND,
@@ -70,6 +72,8 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
     assert process_config.edit_file_drift_search_radius == DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     assert process_config.grep_max_results == DEFAULT_GREP_MAX_RESULTS
+    assert process_config.grep_max_line_length == DEFAULT_GREP_MAX_LINE_LENGTH
+    assert process_config.grep_spill_bytes == DEFAULT_GREP_SPILL_BYTES
     assert process_config.find_file_max_results == DEFAULT_FIND_FILE_MAX_RESULTS
     assert process_config.openrouter_base_url == OPENROUTER_BASE_URL
     assert process_config.shell_command == DEFAULT_SHELL_COMMAND
@@ -150,6 +154,8 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
             "tools.readFile.maxLines": 500,
             "tools.editFile.driftSearchRadius": 5,
             "tools.grep.maxResults": 50,
+            "tools.grep.maxLineLength": 200,
+            "tools.grep.spillBytes": 4096,
             "tools.findFile.maxResults": 75,
             "providers.openrouter.baseUrl": "https://gateway.example.com/v1",
             "shell.command": "/bin/zsh",
@@ -164,6 +170,8 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.read_file_max_lines == 500
     assert process_config.edit_file_drift_search_radius == 5
     assert process_config.grep_max_results == 50
+    assert process_config.grep_max_line_length == 200
+    assert process_config.grep_spill_bytes == 4096
     assert process_config.find_file_max_results == 75
     assert process_config.openrouter_base_url == "https://gateway.example.com/v1"
     assert process_config.shell_command == "/bin/zsh"

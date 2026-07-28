@@ -362,9 +362,25 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   carries its own number, a file's merged context windows are concatenated into one flat `lines`
   list with no `start_line`/`end_line` wrapper, and a break between windows shows up only as a jump
   in the embedded line numbers (see the ADR
-  `grep-search-tools-share-dense-line-core.md`). `summary()` names the queries, root, and match
-  count; `detail_view()` caps `files` to its first 20 entries (adding a `files_omitted` count),
-  since a full result can span up to `grep_max_results` matching lines across that many files.
+  `grep-search-tools-share-dense-line-core.md`). A line longer than
+  `context.process_config.grep_max_line_length` (default
+  `process_config.DEFAULT_GREP_MAX_LINE_LENGTH`, 500) characters is truncated with a trailing
+  `"[truncated...]"` suffix, guarding against a single pathologically long line (a minified
+  sourcemap, a one-line JSON blob) dumping an outsized chunk of text into the model's context.
+  If the JSON serialization of `files` would exceed `context.process_config.grep_spill_bytes`
+  (default `process_config.DEFAULT_GREP_SPILL_BYTES`, 32768) bytes, `GrepTool` writes it to a
+  file in this session's spill tmpdir instead and reports `results_data_file` (the file's path)
+  in place of `files`, via `klorb.tools.util.spill.SpillDir` — the same session-scoped tmpdir
+  mechanism `WebFetchTool` (`klorb.tools.web.spill`) uses for its own oversized response bodies,
+  so a session calling either tool repeatedly reuses one tmpdir instead of accumulating one per
+  call; the tmpdir is granted `readDirs` access the same way `BashTool` grants its own spilled
+  `stdout`/`stderr` directories (see docs/specs/bash-tool-and-command-permissions.md's
+  "stdout/stderr capture" section). `GrepTool` must be constructed with a live `Session` for a
+  spill to succeed — a `ToolSetupContext` without one raises `ToolCallError` if a spill is
+  needed. `summary()` names the queries,
+  root, and match count; `detail_view()` caps `files` to its first 20 entries (adding a
+  `files_omitted` count) when present, since a full result can span up to `grep_max_results`
+  matching lines across that many files.
 * `klorb.tools.find_file.FindFileTool` (`klorb/src/klorb/tools/find_file.py`), name `FindFile`.
   Recursively searches the directory tree rooted at `dirname` (optional; omitted or `""` means the whole project
   root) for files whose bare name matches a glob `pattern` (e.g. `"*.py"` or `"*_context*"`;

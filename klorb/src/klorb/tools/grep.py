@@ -3,15 +3,20 @@
 strings or regular expressions, returning each match with surrounding context lines."""
 
 import fnmatch
+import json
 import logging
+import os
+import secrets
 from pathlib import Path
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import (
+    SpillDir,
     compile_queries,
     context_lines_for_matches,
     match_line_indices,
@@ -26,6 +31,17 @@ logger = logging.getLogger(__name__)
 _GITIGNORE_HIDDEN_NOTE = (
     "Some files were skipped without being searched because a .gitignore rule excludes them. "
     "Re-call Grep with use_gitignore=false to search gitignored files too.")
+
+_TRUNCATION_SUFFIX = "[truncated...]"
+
+
+def _truncate_line(line: str, max_length: int) -> str:
+    """Truncate `line` to `max_length` characters, appending `_TRUNCATION_SUFFIX` if it was cut —
+    guards against a single pathologically long line (a minified sourcemap, a one-line JSON blob)
+    dumping an outsized chunk of text into the model's context."""
+    if len(line) <= max_length:
+        return line
+    return line[:max_length] + _TRUNCATION_SUFFIX
 
 
 class GrepTool(InterruptibleTool):
@@ -48,12 +64,25 @@ class GrepTool(InterruptibleTool):
     A file that can't be decoded as UTF-8 text, or can't be opened at all, is skipped silently
     (treated as binary) rather than raising — matches are only ever reported from files
     readable as text, matching common `grep -I` behavior.
+
+    Each reported line is truncated to `context.process_config.grep_max_line_length` characters
+    (with a `"[truncated...]"` suffix) to guard against a single pathologically long line — a
+    minified sourcemap, a one-line JSON blob — dumping an outsized chunk of text into the
+    model's context. If the JSON serialization of the entire `result["files"]` value would
+    exceed `context.process_config.grep_spill_bytes`, it's written to a file in this session's
+    spill tmpdir instead and the result carries `results_data_file` in place of `files` — the
+    same `klorb.tools.util.spill.SpillDir` mechanism `WebFetchTool` uses for its own response
+    bodies, so a session that calls Grep repeatedly reuses one tmpdir rather than accumulating
+    one per call. See `_spill_files_if_needed`.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
         self._max_results = context.process_config.grep_max_results
         self._context_lines = context.process_config.grep_context_lines
+        self._max_line_length = context.process_config.grep_max_line_length
+        self._spill_bytes = context.process_config.grep_spill_bytes
+        self._spill_dir = SpillDir("Grep")
 
     def name(self) -> str:
         return "Grep"
@@ -89,7 +118,12 @@ class GrepTool(InterruptibleTool):
             "re-call with use_gitignore=false to search gitignored files too. "
             "Use outputStyle to control the level of detail: \"ListFiles\" returns just "
             "deduplicated filenames, \"Matches\" returns only the hit lines (default), and "
-            "\"FullContext\" returns hit lines plus surrounding context."
+            "\"FullContext\" returns hit lines plus surrounding context. "
+            "Each reported line is truncated to "
+            f"{self._max_line_length} characters (marked with a trailing "
+            f"'{_TRUNCATION_SUFFIX}'). If the 'files' result would be very large, it's "
+            "written to a file instead and the result carries 'results_data_file' (a path "
+            "you can ReadFile) in place of 'files'."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -225,13 +259,15 @@ class GrepTool(InterruptibleTool):
                     elif output_style == "Matches":
                         files.append({
                             "filename": str(single_file),
-                            "lines": matches_only(all_lines, matched_indices),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in matches_only(all_lines, matched_indices)],
                         })
                     else:  # FullContext
                         files.append({
                             "filename": str(single_file),
-                            "lines": context_lines_for_matches(
-                                all_lines, matched_indices, self._context_lines),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in context_lines_for_matches(
+                                          all_lines, matched_indices, self._context_lines)],
                         })
                     match_count += len(matched_indices)
         else:
@@ -278,13 +314,15 @@ class GrepTool(InterruptibleTool):
                     elif output_style == "Matches":
                         files.append({
                             "filename": str(file_path),
-                            "lines": matches_only(all_lines, matched_indices),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in matches_only(all_lines, matched_indices)],
                         })
                     else:  # FullContext
                         files.append({
                             "filename": str(file_path),
-                            "lines": context_lines_for_matches(
-                                all_lines, matched_indices, self._context_lines),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in context_lines_for_matches(
+                                          all_lines, matched_indices, self._context_lines)],
                         })
                     match_count += len(matched_indices)
                     if truncated:
@@ -328,7 +366,34 @@ class GrepTool(InterruptibleTool):
             }
         if gitignored_hidden:
             result["note"] = _GITIGNORE_HIDDEN_NOTE
+        self._spill_files_if_needed(result)
         return result
+
+    def _spill_files_if_needed(self, result: dict[str, Any]) -> None:
+        """Replace `result["files"]` with a `results_data_file` path if its JSON serialization
+        exceeds `self._spill_bytes`, so a search matching many files/lines can't dump an
+        outsized payload straight into the model's context. Exactly one of `files`/
+        `results_data_file` is present in the returned result. Writes into this session's
+        shared `Grep` spill tmpdir (`self._spill_dir`), reused across every call in the same
+        session rather than a fresh directory per spill — see `klorb.tools.util.spill.SpillDir`.
+        Raises `ToolCallError` if this `GrepTool` wasn't constructed with a live `Session`
+        (`self.context.session`), since the tmpdir is tracked in `Session.tool_state`.
+        """
+        encoded = json.dumps(result["files"]).encode("utf-8")
+        if len(encoded) <= self._spill_bytes:
+            return
+        session = self.context.session
+        if session is None:
+            raise ToolCallError("No session available for spill.", category="business_logic")
+
+        tmp_dir = self._spill_dir.get_or_create(session)
+        file_path = tmp_dir / f"grep-results-{secrets.token_hex(4)}.json"
+        logger.debug("Grep spilling %d-byte files payload to %s", len(encoded), file_path)
+        file_path.write_bytes(encoded)
+        os.chmod(file_path, 0o600)
+        self._spill_dir.grant_read_access(session, tmp_dir)
+        del result["files"]
+        result["results_data_file"] = str(file_path)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")

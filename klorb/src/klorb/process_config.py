@@ -51,6 +51,21 @@ each side of a match); the canonical source of this value — `klorb.tools.grep`
 of its own, it reads `ProcessConfig.grep_context_lines` via `ToolSetupContext` at construction
 time instead."""
 
+DEFAULT_GREP_MAX_LINE_LENGTH = 500
+"""`GrepTool`'s per-line character cap default — a reported line longer than this is truncated
+(with a `"[truncated...]"` suffix) so a single pathologically-formatted line (a minified
+sourcemap, a one-line JSON blob) can't dump an outsized chunk of text into the model's context;
+the canonical source of this value — `klorb.tools.grep` has no constant of its own, it reads
+`ProcessConfig.grep_max_line_length` via `ToolSetupContext` at construction time instead."""
+
+DEFAULT_GREP_SPILL_BYTES = 32 * 1024
+"""Byte threshold on the JSON-serialized size of `GrepTool`'s `files` result value above which
+it's spilled to a file (reporting `results_data_file` instead of `files` in the result) rather
+than returned inline — mirrors `DEFAULT_BASH_SPILL_BYTES`'s rationale for `BashTool`'s
+`stdout`/`stderr`. The canonical source of this value — `klorb.tools.grep` has no constant of
+its own, it reads `ProcessConfig.grep_spill_bytes` via `ToolSetupContext` at construction time
+instead."""
+
 DEFAULT_FIND_FILE_MAX_RESULTS = 100
 """`FindFileTool`'s per-call match cap default; the canonical source of this value —
 `klorb.tools.find_file` has no constant of its own, it reads
@@ -251,6 +266,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "tools.grep.maxResults": "grep_max_results",
     "tools.grep.contextLines": "grep_context_lines",
+    "tools.grep.maxLineLength": "grep_max_line_length",
+    "tools.grep.spillBytes": "grep_spill_bytes",
     "tools.findFile.maxResults": "find_file_max_results",
     "tools.scratchpad.contextLines": "scratchpad_context_lines",
     "tools.memory.readPermission": "memory_read_permission",
@@ -313,6 +330,13 @@ class ProcessConfig(BaseModel):
     grep_context_lines: int = DEFAULT_GREP_CONTEXT_LINES
     """Number of lines of surrounding context `GrepTool` shows on each side of a matching
     line — see `klorb.tools.grep`."""
+    grep_max_line_length: int = DEFAULT_GREP_MAX_LINE_LENGTH
+    """Maximum character length of a single reported line before `GrepTool` truncates it (with
+    a `"[truncated...]"` suffix) — see `klorb.tools.grep`."""
+    grep_spill_bytes: int = DEFAULT_GREP_SPILL_BYTES
+    """JSON-serialized byte threshold above which `GrepTool` spills its `files` result value to
+    a file (reporting `results_data_file` instead) rather than returning it inline — see
+    `klorb.tools.grep`."""
     find_file_max_results: int = DEFAULT_FIND_FILE_MAX_RESULTS
     scratchpad_context_lines: int = DEFAULT_SCRATCHPAD_CONTEXT_LINES
     """Number of lines of surrounding context `SearchScratchpadTool` shows on each side of a
