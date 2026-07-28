@@ -31,7 +31,7 @@ export default function PanelHeader({
           title="New session"
           aria-label="New session"
           onClick={onNewSession}>
-          <vscode-icon name="comment-add" />
+          <vscode-icon name="chat-sparkle" />
         </button>
         <button
           type="button"
@@ -39,7 +39,7 @@ export default function PanelHeader({
           title="Session history"
           aria-label="Session history"
           onClick={onBrowseSessions}>
-          <vscode-icon name="watch" />
+          <vscode-icon name="history" />
         </button>
       </div>
     </div>

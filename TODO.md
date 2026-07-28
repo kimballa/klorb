@@ -237,6 +237,8 @@
 
 ### Feature backlog
 
+* Get rid of the "Expand all tool-calls" button.
+
 * The prompt textbox should start as one line tall and expand to be up to ten lines tall
   at which point it gains a vertical scrollbar. This needs to account for hard newlines
   (inserted with shift+enter) as well as text wrapping.
