@@ -8,7 +8,7 @@ stdio — for driving klorb from another program (an IDE extension, a supervisor
 harness) rather than a terminal. It's reachable as a CLI subcommand (`klorb server --config
 PATH`), where `--config` is the only flag of its own today. See
 [the ACP-not-bespoke-JSONL ADR](../adrs/speak-acp-not-bespoke-jsonl-from-klorb-server.md) for
-why ACP, and the [plan 016 overview](../plans/ready/plan-016-acp-client-server.md) for the
+why ACP, and the [plan 016 overview](../plans/archive/plan-016-acp-client-server.md) for the
 full architecture this checkpoint is the first increment of (protocol mapping, threading model,
 extensibility rules, the increments still to come).
 
@@ -18,10 +18,11 @@ streamed response, thinking text, and tool-call activity, `session/cancel`,
 `EscalatePrivileges` request, `_klorb/askUserQuestions` for `AskUserQuestions`, session modes
 (`session/set_mode`) for the permission framework, model/thinking session config
 (`_klorb/getSessionConfig`/`_klorb/setSessionConfig`), session naming and token-usage updates,
-and `_klorb/sessionStats`/`_klorb/trustWorkspace`/`_klorb/reloadSkills` — a prompt against a
-plain-conversation model, one that calls tools, one whose tools need interactive approval, or
-one that asks the user structured questions, is fully usable end to end, and a client can steer
-how the session operates the same way the TUI's own commands do.
+`_klorb/sessionStats`/`_klorb/trustWorkspace`/`_klorb/reloadSkills`, and `_klorb/enqueueMessage`
+for queuing a message into an in-flight turn — a prompt against a plain-conversation model, one
+that calls tools, one whose tools need interactive approval, or one that asks the user structured
+questions, is fully usable end to end, and a client can steer how the session operates the same
+way the TUI's own commands do.
 
 ## Wire protocol
 
@@ -32,10 +33,10 @@ how the session operates the same way the TUI's own commands do.
 * `initialize` negotiates the protocol version (klorb always replies with `acp.PROTOCOL_VERSION`,
   the SDK's own current value) and exchanges capabilities. klorb's `agentCapabilities._meta`
   carries `{"klorb": {"sessionConfig": true, "sessionStats": true, "trustWorkspace": true,
-  "reloadSkills": true, "taskMeta": <chainlink binary discoverable>}}` — grown by later
-  increments as more `_klorb/*` extension methods are added (see "Extension methods" below).
-  `taskMeta` doesn't gate an extension method the way the others do; see "Chainlink task-plan
-  updates" below for what it actually means.
+  "reloadSkills": true, "enqueueMessage": true, "taskMeta": <chainlink binary discoverable>}}` —
+  grown by later increments as more `_klorb/*` extension methods are added (see "Extension
+  methods" below). `taskMeta` doesn't gate an extension method the way the others do; see
+  "Chainlink task-plan updates" below for what it actually means.
 * `session/new` builds a fresh `Session` for the given `cwd`, tearing down any existing one
   first — see "Single top-level session" below. `mcpServers` is accepted but never acted on
   (klorb has no MCP support). The response's `modes` field advertises the session's permission
@@ -53,8 +54,9 @@ how the session operates the same way the TUI's own commands do.
   the same `threading.Event` mechanism Escape uses in the TUI. A no-op if the named session
   isn't the live one, or no turn is in flight.
 * Exactly one `session/prompt` may be in flight at a time: a second one while a turn is running
-  gets a JSON-RPC error rather than being queued — mid-turn message delivery is a future
-  increment's `_klorb/enqueueMessage` extension method, not silent queueing here.
+  still gets a JSON-RPC error rather than being queued — a client with a message to add to the
+  running turn sends `_klorb/enqueueMessage` instead (see "Extension methods" and "Queued
+  messages" below), not a second `session/prompt`.
 * A `session/prompt`/`session/cancel` naming a `sessionId` that isn't the current live session
   gets a JSON-RPC `invalid params` error.
 * EOF on stdin (the client disconnects) closes any live session and exits `0`.
@@ -62,13 +64,13 @@ how the session operates the same way the TUI's own commands do.
 ### Extension methods
 
 `agentCapabilities._meta.klorb` is `{"sessionConfig": true, "sessionStats": true,
-"trustWorkspace": true, "reloadSkills": true, "taskMeta": <chainlink discoverable>}` —
-`sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills` name the *agent*-advertised
-extension methods below, all client → server; `taskMeta` is not an extension method (see
-"Chainlink task-plan updates" below). Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize
-gets the standard `-32601` method-not-found error; every unrecognized `_klorb/*` *notification*
-is silently ignored, per ACP's own extensibility rules. Later increments grow this section as
-they land.
+"trustWorkspace": true, "reloadSkills": true, "enqueueMessage": true, "taskMeta": <chainlink
+discoverable>}` — `sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills`/`enqueueMessage`
+name the *agent*-advertised extension methods below, all client → server; `taskMeta` is not an
+extension method (see "Chainlink task-plan updates" below). Every `_klorb/*` request
+`KlorbAcpAgent` doesn't recognize gets the standard `-32601` method-not-found error; every
+unrecognized `_klorb/*` *notification* is silently ignored, per ACP's own extensibility rules.
+Later increments grow this section as they land.
 
 * **`_klorb/getSessionConfig`** — reads the session's model/thinking config. Params:
   `{sessionId: string}`. Result: `{model: {current: string, available: [{id: string, name:
@@ -100,6 +102,13 @@ they land.
 * **`_klorb/reloadSkills`** — rebuilds the process-wide skill catalog from a fresh disk scan
   against the session's workspace, mirroring the TUI's "Reload skills" command
   (`ReplApp.reload_skills`). Params: `{sessionId: string}`. Result: `{skillCount: int}`.
+* **`_klorb/enqueueMessage`** — queues `text` into the currently in-flight turn, mirroring the
+  TUI's queue-while-a-turn-is-running behavior (see "Queued messages" below). Params:
+  `{sessionId: string, text: string}`. Result: `{queued: true}`. Valid only while a
+  `session/prompt` is in flight for this session — a JSON-RPC error (code `-32000`) otherwise; a
+  client with nothing running should send an ordinary `session/prompt`, not this. Always
+  supported (no client capability gates it; it's the client that must check the server's own
+  `enqueueMessage` advertisement before calling).
 
 One *client*-advertised extension method exists, called server → client:
 
@@ -125,7 +134,7 @@ One *client*-advertised extension method exists, called server → client:
   wire traffic at all — the tool reports the batch as declined, same as the TUI's Escape, instead
   of hanging a headless client.
 
-One extension *notification* exists, server → client, sent unconditionally (no capability gate
+Three extension *notifications* exist, server → client, sent unconditionally (no capability gate
 — an unrecognized notification is just ignored, unlike a request, so there's no wire cost to a
 client that doesn't understand it):
 
@@ -135,6 +144,17 @@ client that doesn't understand it):
   `Session.total_tokens_used()`/`Session.max_context_window()`/
   `Session.total_output_tokens_used()`, the same numbers the TUI status bar shows. Per-chunk
   emission is deliberately avoided (chatty, and the TUI itself only refreshes per turn).
+* **`_klorb/messageQueued`** — sent whenever `Session.enqueue_queued_message` accepts a message
+  into the running turn (a `_klorb/enqueueMessage` call, or — see "Queued messages" below — a
+  message still queued when a chained turn ends and gets redelivered as the next one). Params:
+  `{sessionId: string, text: string}`. The client's cue to render the message in italic "queued"
+  styling.
+* **`_klorb/queuedMessageSent`** — sent once a previously-queued message has actually been
+  delivered: folded into a tool-response envelope mid-turn, or redelivered as the next turn at
+  turn end. Params: `{sessionId: string, text: string}`. The client's cue to flip that message's
+  rendering from queued to delivered — correlated with its `_klorb/messageQueued` counterpart by
+  order + text, matching the single-queue reality (`Session` never has more than one message
+  queued ahead of another with a stable id to match against).
 
 ## Session modes
 
@@ -285,33 +305,38 @@ richer view from that same detail.
 * `klorb.server.turn_bridge.TurnBridge` is the sync/async bridge one `Session` instance keeps
   for its whole lifetime: `run_turn(prompt_text) -> str` (async) runs `Session.send_turn()` on a
   worker thread via `asyncio.to_thread()`, keeping the event loop free to service concurrent
-  ACP requests (`session/cancel`) while a turn is in flight. It wires `on_chunk` →
-  `acp.update_agent_message_text()`, `on_thinking_chunk` → `acp.update_agent_thought_text()`,
-  `on_session_name_changed` → a `SessionInfoUpdate` (see "Session naming and token usage" above),
-  and `on_tool_call_started`/`on_tool_call` → `klorb.server.update_mapping.
+  ACP requests (`session/cancel`) while a turn is in flight. Each `Session.send_turn()` call
+  (there may be more than one per `run_turn()` invocation — see "Queued messages" above) gets a
+  fresh queue, `cancel_event`, and set of handlers: `on_chunk` → `acp.update_agent_message_text()`,
+  `on_thinking_chunk` → `acp.update_agent_thought_text()`, `on_session_name_changed` → a
+  `SessionInfoUpdate` (see "Session naming and token usage" above), `on_enqueue_message`/
+  `on_send_queued_message` → `_klorb/messageQueued`/`_klorb/queuedMessageSent` (see "Queued
+  messages" above), and `on_tool_call_started`/`on_tool_call` → `klorb.server.update_mapping.
   tool_call_started_update()`/`tool_call_finished_update()` (passing this turn's
   `Session.tool_registry`/`Session.config.workspace.path` through — see "Tool-call update
-  mapping" below), plus a fresh `threading.Event` per turn as `cancel_event` — later increments
-  add handlers to this one class rather than new plumbing. `on_tool_call_started`/`on_tool_call`
-  additionally push/pop `event.call_id` on a per-turn stack, so a same-turn permission/escalation
-  ask can link itself to whichever call is currently in flight — see "Permission asks and
-  escalation" below. **Ordering guarantee:** every callback fires on the worker thread and is
-  enqueued onto one `asyncio.Queue` via `loop.call_soon_threadsafe`; a single pump task awaits
-  each `session/update` send in exactly the order the callbacks fired. One queue and one pump
-  task per turn is what makes this an actual guarantee rather than an accident of scheduling —
-  independently-scheduled coroutines wouldn't preserve order. `run_turn()` always drains and
-  stops the pump task in a `finally`, whether `send_turn()` succeeds, raises `klorb.api_provider.
-  ResponseAborted` (a cancelled turn), or raises anything else — the exception always propagates
-  to the caller only after the pump has fully drained, so no queued update is ever lost or
-  reordered around it; once drained, the `_klorb/usage` notification for the turn goes out (see
-  "Session naming and token usage" above), strictly after every `session/update` the turn
-  produced. `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached`
-  are blocking asks rather than fire-and-forget notifications: each builds its
-  `session/request_permission`/`_klorb/raiseToolCallLimit` round trip as a coroutine and runs it
-  via `asyncio.run_coroutine_threadsafe(...).result()`, first `await`ing `queue.join()` inside
-  that coroutine so every `session/update` already enqueued has actually been sent before the
-  ask goes out on the wire — the same ordering guarantee, extended to asks, so a permission
-  prompt never overtakes the `tool_call` update that explains what it's about.
+  mapping" below) — later increments add handlers to this one class rather than new plumbing.
+  `on_tool_call_started`/`on_tool_call` additionally push/pop `event.call_id` on a per-turn
+  stack, so a same-turn permission/escalation ask can link itself to whichever call is currently
+  in flight — see "Permission asks and escalation" below. **Ordering guarantee:** every callback
+  fires on the worker thread and is enqueued onto that iteration's own `asyncio.Queue` via
+  `loop.call_soon_threadsafe`; a single pump task awaits each `session/update`/ext-notification
+  send in exactly the order the callbacks fired (a small `_ExtNotificationItem` tag on the queue
+  item is what lets the pump tell an ext notification apart from an ordinary `session/update`).
+  One queue and one pump task per iteration is what makes this an actual guarantee rather than an
+  accident of scheduling — independently-scheduled coroutines wouldn't preserve order. Each
+  iteration always drains and stops its own pump task in a `finally`, whether that iteration's
+  `send_turn()` succeeds, raises `klorb.api_provider.ResponseAborted` (a cancelled turn), or
+  raises anything else — the exception is held, not re-raised immediately, so the queued-message
+  drain that follows always runs; once the whole chain of iterations ends (nothing left queued),
+  the `_klorb/usage` notification goes out once, and only then does the last iteration's held
+  exception (if any) propagate to `KlorbAcpAgent.prompt()`. `on_permission_ask`/
+  `on_escalate_privileges`/`on_tool_call_limit_reached` are blocking asks rather than
+  fire-and-forget notifications: each builds its `session/request_permission`/
+  `_klorb/raiseToolCallLimit` round trip as a coroutine and runs it via
+  `asyncio.run_coroutine_threadsafe(...).result()`, first `await`ing `queue.join()` inside that
+  coroutine so every `session/update` already enqueued has actually been sent before the ask goes
+  out on the wire — the same ordering guarantee, extended to asks, so a permission prompt never
+  overtakes the `tool_call` update that explains what it's about.
 
 ### Tool-call update mapping
 
@@ -544,6 +569,47 @@ unexpected call fails loudly instead of silently returning nothing. `ext_notific
 one exception: an unrecognized extension *notification* is ignored, per ACP's own extensibility
 rules. Subagent child sessions are explicitly future work — see the plan overview.
 
+### Queued messages
+
+`_klorb/enqueueMessage` (see "Extension methods" above) is the ACP surface for klorb's
+`user_interjections` capability (see docs/specs/session-and-turns.md's `user_interjections`
+bullet): a message submitted while a turn is already in flight is queued into that turn instead
+of being rejected, mirroring the TUI's queue-while-a-turn-is-running behavior
+(`klorb.tui.mixins.prompt_submission._queue_prompt`).
+
+* **Ext method** (`KlorbAcpAgent._ext_enqueue_message`): validates a turn is in flight for the
+  named session (JSON-RPC error otherwise), then calls `Session.enqueue_queued_message(
+  QueuedMessage(message_text=text))` — the same call the TUI makes from its own Enter-while-a-
+  turn-is-running handler. `Session.enqueue_queued_message`'s own `on_enqueue_message` hook fires
+  synchronously as a side effect, which `TurnBridge.run_turn()` wires to a `_klorb/messageQueued`
+  notification on the turn's ordered outbound queue (see "How it works" below) — ordered
+  relative to whatever `session/update`s were already queued for that turn, like any other
+  fire-and-forget callback.
+* **Mid-turn delivery.** If a tool-call round is still in flight when the message is queued,
+  `Session._run_tool_calls()`'s own per-round drain (see docs/specs/session-and-turns.md) picks
+  it up before that round's first tool-response envelope is built, attaching it as a
+  `UserInterjectionPayload` — the model sees it inline with that round's tool results, in the
+  same turn. `TurnBridge`'s `on_send_queued_message` hook fires here too (on `Session.
+  send_turn()`'s own worker thread, mid-turn), enqueuing `_klorb/queuedMessageSent` right after
+  the drain, ordered the same way.
+* **Turn-end redelivery.** A message still queued when `Session.send_turn()` returns (no
+  tool-call round ever drained it — e.g. it was queued during the final round's text streaming)
+  is *not* silently dropped: `TurnBridge.run_turn()` drains it itself
+  (`Session.drain_queued_messages()`, called with no explicit `callbacks` — `on_send_queued_
+  message` isn't invoked for this drain, since this iteration's own pump task has already
+  stopped by this point and enqueuing onto it would just be lost; the `_klorb/queuedMessageSent`
+  notification for each drained message is instead sent directly, synchronously, right there on
+  the event loop) and, if any were queued, folds them (joined with a blank line each, in typed
+  order) into one more `Session.send_turn()` call — mirroring the TUI's `_finish_turn()`, which
+  redelivers a still-queued message as a brand-new turn regardless of whether the one that just
+  ended succeeded, was cancelled, or raised. `run_turn()` loops this way until a `send_turn()`
+  call ends with nothing left queued, all inside the *same* `session/prompt` request: the client
+  never sees a second `session/prompt`/response round trip for the redelivered turn, only more
+  `session/update`/`_klorb/*` notifications for the same session before the original request
+  finally resolves. The JSON-RPC response reflects the *last* turn in the chain (its `stopReason`
+  on success or cancellation; its exception, if it raised, propagating as the request's error) —
+  not necessarily the first turn's own outcome.
+  
 ### CLI wiring
 
 `klorb.cli.run_server_cli(argv)` parses `klorb server`'s own flags (`--config`), resolves it
@@ -613,8 +679,6 @@ e.g. with `allow:session`, to let the command run:
 * No free-text "Other" row as a selectable `PermissionOption` — a client wants the free-text
   redirect via `_meta.klorb.otherText` on its response instead (see "Permission asks and
   escalation" above).
-* No mid-turn message queueing (`_klorb/enqueueMessage`) — a second `session/prompt` while one
-  is in flight is a JSON-RPC error, not queued. Lands in `plan-016-012`.
 * No websocket (or other non-stdio) transport — `ServerStreams.from_stdio()` is the only
   factory today, though `AcpServer` itself doesn't know or care which one built its streams.
 * No multiple concurrent top-level sessions, and no subagent child sessions.
