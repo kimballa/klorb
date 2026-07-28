@@ -11,9 +11,6 @@ export interface HistoryViewProps {
   entries: HistoryEntry[];
   /** Ref to the scrolling container, so the owner can keep the newest entry in view. */
   historyRef: RefObject<HTMLDivElement | null>;
-  /** Whether the global "expand all tool calls" toggle is currently on. */
-  expandAllToolCalls: boolean;
-  onToggleExpandAllToolCalls(): void;
   onToggleToolCallExpanded(callId: string): void;
   /** Restarts the `klorb server` child process -- wired to a `'serverError'` entry's "Restart
    * Server" action (see `docs/specs/vscode-plugin.md`'s interrupt-polish section). */
@@ -89,31 +86,19 @@ function renderEntry(
 
 /** The append-only history scroll: prompts as right-aligned bubbles, responses as rendered
  * markdown, thinking as a collapsed-by-default disclosure that streams while open, and tool
- * calls as `ToolCallChip`s. A small fixed header above the scrolling entries holds the global
- * "expand all tool calls" toggle (mirrors the TUI's Ctrl+O — see `historyModel.ts`'s
- * `applyExpandAllToolCalls`); `historyRef` still points at the scrolling entries container
- * itself, not this wrapping fragment, so the owner's scroll-into-view logic is unaffected. */
+ * calls as `ToolCallChip`s. `historyRef` points at the scrolling entries container so the
+ * owner's scroll-into-view logic is unaffected. */
 export default function HistoryView({
   entries,
   historyRef,
-  expandAllToolCalls,
-  onToggleExpandAllToolCalls,
   onToggleToolCallExpanded,
   onRestartServer,
 }: HistoryViewProps): JSX.Element {
   return (
-    <>
-      <div className="history-header">
-        <vscode-button id="toggle-tool-call-detail" secondary onClick={onToggleExpandAllToolCalls}>
-          {expandAllToolCalls ? 'Collapse all tool calls' : 'Expand all tool calls'}
-        </vscode-button>
-      </div>
-      {/* Entries only ever append here, never reorder or remove, so an index key is stable. */}
-      <div id="history" ref={historyRef}>
-        {entries.map((entry, index) =>
-          renderEntry(entry, index, onToggleToolCallExpanded, onRestartServer)
-        )}
-      </div>
-    </>
+    <div id="history" ref={historyRef}>
+      {entries.map((entry, index) =>
+        renderEntry(entry, index, onToggleToolCallExpanded, onRestartServer)
+      )}
+    </div>
   );
 }

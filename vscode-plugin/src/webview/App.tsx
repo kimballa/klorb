@@ -17,7 +17,6 @@ import {
   appendInteraction,
   appendPrompt,
   appendQuestionInteraction,
-  applyExpandAllToolCalls,
   applyHostMessage,
   applyPendingInteraction,
   applyTaskListUpdate,
@@ -62,7 +61,6 @@ export default function App({
 }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
-  const [expandAllToolCalls, setExpandAllToolCalls] = useState(false);
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | undefined>(
     initialPendingInteraction
   );
@@ -138,7 +136,7 @@ export default function App({
       if (message === undefined) {
         return;
       }
-      setEntries((prev) => applyHostMessage(prev, message, expandAllToolCalls));
+      setEntries((prev) => applyHostMessage(prev, message));
       setInFlight((prev) => applyTurnFlag(prev, message));
       setPendingInteraction((prev) => applyPendingInteraction(prev, message));
       setTaskList((prev) => applyTaskListUpdate(prev, message));
@@ -154,7 +152,7 @@ export default function App({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [expandAllToolCalls]);
+  }, []);
 
   function toggleTaskPanelVisible(): void {
     setTaskPanelVisible((prev) => !prev);
@@ -215,14 +213,6 @@ export default function App({
 
   function restartServer(): void {
     vscode.postMessage({ type: 'restartServer' });
-  }
-
-  function toggleExpandAllToolCalls(): void {
-    setExpandAllToolCalls((prev) => {
-      const next = !prev;
-      setEntries((prevEntries) => applyExpandAllToolCalls(prevEntries, next));
-      return next;
-    });
   }
 
   function toggleToolCallExpanded(callId: string): void {
@@ -287,8 +277,6 @@ export default function App({
       <HistoryView
         entries={entries}
         historyRef={historyRef}
-        expandAllToolCalls={expandAllToolCalls}
-        onToggleExpandAllToolCalls={toggleExpandAllToolCalls}
         onToggleToolCallExpanded={toggleToolCallExpanded}
         onRestartServer={restartServer}
       />

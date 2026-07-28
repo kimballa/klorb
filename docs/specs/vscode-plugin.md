@@ -284,17 +284,14 @@ together for this extension specifically.
   that mounts `ApprovalPanel` while a permission ask is outstanding or `QuestionPanel` while an
   `AskUserQuestions` question is outstanding, `PromptInput`, and `StatusRow` (see "Status row
   and session controls" below). It owns all interactive state: `entries` (a `HistoryEntry[]`,
-  seeded from `initialEntries`),
-  `inFlight` (whether a turn is currently running), `expandAllToolCalls` (the global "expand all
-  tool calls" toggle — see `features/history` below), `pendingInteraction` (a `PermissionAskMessage
+  seeded from `initialEntries`), `inFlight` (whether a turn is currently running),
+  `pendingInteraction` (a `PermissionAskMessage
   | QuestionAskMessage | undefined`, seeded from `initialPendingInteraction` — see "Approval and
   question panels" below), `status` (a `StatusSnapshot`, seeded from `initialStatus` — see
   "Status row and session controls" below), `taskList` (a `TaskListSnapshot | undefined`, seeded
   from `initialTaskList` — see "Task panel" below), and `taskPanelVisible` (a `boolean`, seeded
   from `initialTaskPanelVisible ?? true` — see "Task panel" below). A `window` `message` listener
-  (subscribed for the
-  panel's lifetime via a `useEffect` keyed on `expandAllToolCalls`, so a newly-started tool call
-  always sees the current toggle state) parses each incoming payload with `parseHostMessage()`
+  parses each incoming payload with `parseHostMessage()`
   and applies it to `entries`/`inFlight`/`pendingInteraction`/`taskList` via the pure functions in
   the `features/history` feature, replaces `status` wholesale with a `statusUpdate` message's
   own fields (never merged — the host always posts the complete currently-known snapshot, see
@@ -305,12 +302,10 @@ together for this extension specifically.
   instead posts `{type: 'enqueueMessage', text}` with no optimistic entry of its own — the
   queued-message history entry comes from the host's own `messageQueued` echo instead, since
   it's the server, not the webview, that actually accepted the message (see "Queued messages"
-  below). Toggling the global
-  tool-call expand mode flips `expandAllToolCalls` and applies it to every existing tool-call
-  entry at once (`applyExpandAllToolCalls`); toggling one chip's own chevron flips just that
-  entry (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`, which
-  also receives `onRestartServer` (posts `{type: 'restartServer'}`, wired to a `'serverError'`
-  entry's action button — see "Queued messages and interrupt polish" below).
+  below). Toggling one chip's own chevron flips that
+  entry's `expanded` flag (`applyToolCallExpandedToggle`) — the handler is passed down to
+  `HistoryView`, which also receives `onRestartServer` (posts `{type: 'restartServer'}`, wired to
+  a `'serverError'` entry's action button — see "Queued messages and interrupt polish" below).
   `handleApprovalDecision()` (passed to `ApprovalPanel` as `onDecision`) appends an
   `appendInteraction()` record, clears `pendingInteraction`, and posts `{type:
   'permissionDecision', ...}` back to the host; `handleQuestionAnswer()` (passed to
@@ -372,34 +367,30 @@ together for this extension specifically.
     `appendQuestionInteraction(entries, ask, answerText)` is the same record for an answered
     `QuestionAskMessage`: `"Question <index+1> of <total> · <header>"`, the question text, and
     `"Answer: <answerText>"`.
-  * `applyHostMessage(entries, message, expandAllToolCalls = false)` is the `HostMessage`
+  * `applyHostMessage(entries, message)` is the `HostMessage`
     reducer: `agentChunk`/`thoughtChunk` extend the trailing streaming entry of the matching
     kind, or start a new one if the last entry is a different kind (or not currently streaming)
     — so thinking and response phases interleave correctly across a turn. `turnEnded` finalizes
     every streaming entry's `streaming` flag and, for any `stopReason` other than `"end_turn"`,
     appends a `'notice'` entry naming the reason. `turnError` finalizes streaming entries and
     appends an `'error'` entry. `sessionReset` clears the list. `toolCallStarted` appends a new
-    `'toolCall'` entry with `status: 'in_progress'` and `expanded` seeded from
-    `expandAllToolCalls`. `toolCallUpdated` mutates the matching `callId`'s entry in place
-    (status/title/content/diff/locations), or appends a new entry (also seeded from
-    `expandAllToolCalls`) if no `toolCallStarted` for that `callId` was ever seen — the fallback
-    for a call that failed before `on_tool_call_started` could fire (e.g. malformed arguments).
+    `'toolCall'` entry with `status: 'in_progress'` and `expanded` set to `false`.
+    `toolCallUpdated` mutates the matching `callId`'s entry in place
+    (status/title/content/diff/locations), or appends a new entry if no `toolCallStarted` for
+    that `callId` was ever seen — the fallback for a call that failed before
+    `on_tool_call_started` could fire (e.g. malformed arguments).
   * `applyTurnFlag(inFlight, message)` is the parallel reducer for the `inFlight` boolean:
     `turnStarted` raises it, `turnEnded`/`turnError`/`sessionReset` clear it, every other
     message leaves it unchanged.
-  * `applyExpandAllToolCalls(entries, expand)` sets every `'toolCall'` entry's `expanded` flag to
-    `expand` at once — the reducer behind the global toggle, mirroring the TUI's Ctrl+O
-    (`klorb.tui.mixins.key_actions.action_toggle_tool_call_detail`), which flips every
-    `ToolCallStatic` in the history together. `applyToolCallExpandedToggle(entries, callId)`
-    flips just the one named entry (a chip's own chevron), independently of the global mode.
+  * `applyToolCallExpandedToggle(entries, callId)` flips a single `toolCall` entry's `expanded`
+    flag (a chip's own chevron), leaving every other entry untouched.
   * `applyPendingInteraction(pendingInteraction, message)` is the parallel reducer for `App`'s
     `pendingInteraction` state: a `permissionAsk` or `questionAsk` message replaces it (the
     server never sends a concurrent second one, of either kind), `sessionReset` clears it, every
     other message leaves it unchanged. A resolved decision/answer clears `pendingInteraction`
     through `App`'s own `handleApprovalDecision()`/`handleQuestionAnswer()`, not through this
     reducer.
-  * `HistoryView` renders a small fixed header (the global "expand all tool calls"
-    `<vscode-button>`) above the scrolling `HistoryEntry[]` list: `'prompt'` entries as a
+  * `HistoryView` renders the scrolling `HistoryEntry[]` list: `'prompt'` entries as a
     right-aligned `.bubble` (index-keyed — safe here specifically because entries only ever
     append, never reorder or get removed or inserted in the middle, the one case React's own
     docs call out as fine for index keys); `'response'` entries through `react-markdown`;

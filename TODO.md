@@ -236,9 +236,13 @@
 
 ### Bugs
 
+* When the plugin loads, it looks like it's restoring a session (the HistoryView has the whole
+  history) but it did not actually reload the session in the acp server.
+
 ### Feature backlog
 
-* Get rid of the "Expand all tool-calls" button.
+* The "tool call limit reached" promtp shouldn't be a modal messagebox, it should be a panel
+  UserAsk within the main plugin area.
 
 * The prompt textbox should start as one line tall and expand to be up to ten lines tall
   at which point it gains a vertical scrollbar. This needs to account for hard newlines

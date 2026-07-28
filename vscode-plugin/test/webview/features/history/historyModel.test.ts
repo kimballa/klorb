@@ -7,7 +7,6 @@ import {
   appendPrompt,
   appendQuestionInteraction,
   appendQueuedMessage,
-  applyExpandAllToolCalls,
   applyHostMessage,
   applyInterruptedMarker,
   applyPendingInteraction,
@@ -189,22 +188,6 @@ describe('applyHostMessage tool calls', () => {
     ]);
   });
 
-  it('seeds a new tool call entry expanded when the global mode is on', () => {
-    let entries: HistoryEntry[] = [];
-    entries = applyHostMessage(
-      entries,
-      {
-        type: 'toolCallStarted',
-        callId: 'call-1',
-        title: 'Read foo.py',
-        kind: 'read',
-        locations: [],
-      },
-      true
-    );
-    expect((entries[0] as ToolCallHistoryEntry).expanded).toBe(true);
-  });
-
   it('mutates the matching entry in place on toolCallUpdated, preserving order', () => {
     let entries: HistoryEntry[] = [];
     entries = appendPrompt(entries, 'edit the file');
@@ -271,33 +254,6 @@ describe('applyHostMessage tool calls', () => {
     });
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'after' });
     expect(entries.map((entry) => entry.kind)).toEqual(['response', 'toolCall', 'response']);
-  });
-});
-
-describe('applyExpandAllToolCalls', () => {
-  it('flips every tool call entry to the given mode, leaving other entries untouched', () => {
-    let entries: HistoryEntry[] = [];
-    entries = appendPrompt(entries, 'question');
-    entries = applyHostMessage(entries, {
-      type: 'toolCallStarted',
-      callId: 'call-1',
-      title: 'Read',
-      kind: 'read',
-      locations: [],
-    });
-    entries = applyHostMessage(entries, {
-      type: 'toolCallStarted',
-      callId: 'call-2',
-      title: 'Grep',
-      kind: 'search',
-      locations: [],
-    });
-
-    entries = applyExpandAllToolCalls(entries, true);
-
-    expect(entries[0]!.kind).toBe('prompt');
-    expect((entries[1] as ToolCallHistoryEntry).expanded).toBe(true);
-    expect((entries[2] as ToolCallHistoryEntry).expanded).toBe(true);
   });
 });
 

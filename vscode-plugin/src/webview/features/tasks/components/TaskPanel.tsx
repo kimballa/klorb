@@ -79,8 +79,8 @@ const EMPTY_TASK_LIST: TaskInfo[] = [];
  * backed task list -- the tall-narrow adaptation of the TUI's Ctrl+T right-hand sidebar (see
  * docs/specs/vscode-plugin.md). A plain `<details>`/`<summary>` disclosure (mirroring the
  * thinking block/approval "Show full command" elsewhere in this panel) gives click/Enter
- * expand-collapse for free; its own open/closed state is not persisted (mirroring the history's
- * "expand all tool calls" toggle), unlike the panel's own shown/hidden state, which `App` tracks
+ * expand-collapse for free; its own open/closed state is not persisted, unlike the panel's own
+ * shown/hidden state, which `App` tracks
  * and persists. The leading `.task-panel-chevron` icon (a fixed `chevron-right` glyph, rotated
  * 90° via `.task-panel[open]` CSS rather than swapped to a different icon name) is what actually
  * signals expand/collapse state, since the native `<details>` marker triangle is suppressed by

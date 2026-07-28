@@ -264,14 +264,6 @@ body {
   padding-left: 8px;
 }
 
-.history-header {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: flex-end;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
-}
-
 .tool-call {
   align-self: stretch;
   border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);

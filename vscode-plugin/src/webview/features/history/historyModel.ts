@@ -42,11 +42,8 @@ export interface TextHistoryEntry {
   streaming: boolean;
 }
 
-/** A tool-call chip entry: `expanded` starts at whatever the global "expand all tool calls"
- * mode was when the call started, and can then also be flipped individually (its own chevron)
- * or in bulk (the global toggle re-applies to every tool-call entry at once) -- mirrors the
- * TUI's Ctrl+O, which flips every `ToolCallStatic` in the history at once (see
- * `klorb.tui.mixins.key_actions.action_toggle_tool_call_detail`). */
+/** A tool-call chip entry: `expanded` defaults to `false` and can be flipped individually
+ * (its own chevron). */
 export interface ToolCallHistoryEntry {
   kind: 'toolCall';
   callId: string;
@@ -235,8 +232,7 @@ export function isHistoryEntry(value: unknown): value is HistoryEntry {
 
 function appendToolCallStarted(
   entries: readonly HistoryEntry[],
-  message: ToolCallStartedMessage,
-  expandAllToolCalls: boolean
+  message: ToolCallStartedMessage
 ): HistoryEntry[] {
   const entry: ToolCallHistoryEntry = {
     kind: 'toolCall',
@@ -245,7 +241,7 @@ function appendToolCallStarted(
     title: message.title,
     toolKind: message.kind,
     locations: message.locations,
-    expanded: expandAllToolCalls,
+    expanded: false,
   };
   return [...entries, entry];
 }
@@ -255,8 +251,7 @@ function appendToolCallStarted(
  * malformed-arguments call that failed before `on_tool_call_started` could fire). */
 function applyToolCallUpdated(
   entries: readonly HistoryEntry[],
-  message: ToolCallUpdatedMessage,
-  expandAllToolCalls: boolean
+  message: ToolCallUpdatedMessage
 ): HistoryEntry[] {
   const index = entries.findIndex(
     (entry) => entry.kind === 'toolCall' && entry.callId === message.callId
@@ -272,7 +267,7 @@ function applyToolCallUpdated(
       locations: message.locations ?? [],
       contentText: message.contentText,
       diff: message.diff,
-      expanded: expandAllToolCalls,
+      expanded: false,
     };
     return [...entries, entry];
   }
@@ -292,14 +287,11 @@ function applyToolCallUpdated(
  * Applies one host→webview message to the history entry list, returning the new list (the
  * input is never mutated). Streamed chunks extend the trailing streaming entry of the same
  * kind or start a new one — so a response arriving after thinking (or vice versa) starts its
- * own entry, and interleaved phases stay in order. `expandAllToolCalls` seeds a newly-started
- * tool-call entry's initial expanded state (see `ToolCallHistoryEntry`); it's ignored by every
- * other message.
+ * own entry, and interleaved phases stay in order.
  */
 export function applyHostMessage(
   entries: readonly HistoryEntry[],
-  message: HostMessage,
-  expandAllToolCalls = false
+  message: HostMessage
 ): HistoryEntry[] {
   switch (message.type) {
     case 'turnStarted':
@@ -337,9 +329,9 @@ export function applyHostMessage(
     case 'sessionReset':
       return [];
     case 'toolCallStarted':
-      return appendToolCallStarted(entries, message, expandAllToolCalls);
+      return appendToolCallStarted(entries, message);
     case 'toolCallUpdated':
-      return applyToolCallUpdated(entries, message, expandAllToolCalls);
+      return applyToolCallUpdated(entries, message);
     case 'permissionAsk':
     case 'questionAsk':
       // Tracked separately by `applyPendingInteraction`, not as a history entry -- the
@@ -441,17 +433,6 @@ export function applyPendingInteraction(
     default:
       return pendingInteraction;
   }
-}
-
-/** Flips every `toolCall` entry's `expanded` flag to `expand` at once -- the global "expand
- * all tool calls" toggle, mirroring the TUI's Ctrl+O (see `ToolCallHistoryEntry`). */
-export function applyExpandAllToolCalls(
-  entries: readonly HistoryEntry[],
-  expand: boolean
-): HistoryEntry[] {
-  return entries.map((entry) =>
-    entry.kind === 'toolCall' ? { ...entry, expanded: expand } : entry
-  );
 }
 
 /** Flips one `toolCall` entry's `expanded` flag (its own chevron), leaving every other entry
