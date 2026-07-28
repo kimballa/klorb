@@ -22,7 +22,12 @@ question (`_klorb/askUserQuestions`) renders in the same interaction area as a `
 header chip, "Question N of M" caption, an option list, and a free-text "Other…" row — Escape
 cancelling the whole question batch, not just the current question; the tool-call-limit
 extension ask (`_klorb/raiseToolCallLimit`) instead surfaces as a native modal warning. A Stop
-button (or Escape while a turn is in flight) sends `session/cancel`.
+button (or Escape while a turn is in flight) sends `session/cancel`; a cancelled turn's
+still-streaming response/thinking entry gets an "(interrupted)" marker rather than just quietly
+stopping. Submitting while a turn is already running — when the server advertises
+`_klorb/enqueueMessage` — queues the message into the running turn instead of being rejected,
+rendered in italic "Queued message" styling until the server confirms delivery; without that
+capability the input stays disabled for the turn's duration, as it always has.
 Shift+Enter (or Ctrl+Enter) inserts a newline in the prompt box instead of submitting.
 Activation spawns one `klorb server` process and creates one ACP session, shared by the whole
 extension; **Klorb: Restart Server** kills and respawns the child and re-initializes the ACP
@@ -94,13 +99,22 @@ together for this extension specifically.
   matches `acp.PROTOCOL_VERSION`; a mismatch or a hung/failed handshake — bounded by a 10-second
   timeout — throws a readable error naming `klorb.serverPath` as the likely fix, covering an old
   pre-ACP klorb binary), advertising `clientCapabilities._meta.klorb.raiseToolCallLimit = true`
-  (see [[klorb-server]]'s extension-methods section), and then `newSession(cwd)`, storing the
-  returned `sessionId` and forwarding the response's `modes`/`_meta.klorb.workspace`/`.title`
-  to the listener as a `SessionInfo` via `onSessionInfo()` (`sessionInfoFromResponse()`, see
-  "Status row and session controls" below). `prompt(text)` sends `session/prompt` with one
-  `TextContentBlock` and resolves with the ACP `stopReason`; only one prompt may be in flight at
-  a time (matching [[klorb-server]]'s own one-prompt-at-a-time rule), so a second call while one
-  is running rejects immediately rather than queuing. `cancel()` sends `session/cancel` as a
+  (see [[klorb-server]]'s extension-methods section), records whether the server's own reply
+  advertised `agentCapabilities._meta.klorb.enqueueMessage` into a private
+  `_enqueueMessageCapable` flag (`klorbAgentCapability()`, a small pure reader over the raw
+  `InitializeResponse`), and then `newSession(cwd)`, storing the returned `sessionId` and
+  forwarding the response's `modes`/`_meta.klorb.workspace`/`.title` plus that capability flag
+  to the listener as a `SessionInfo` via `onSessionInfo()` (`sessionInfoFromResponse(session,
+  this._enqueueMessageCapable)`, see "Status row and session controls" below and "Queued
+  messages and interrupt polish" above — the flag is a connection-lifetime property, re-supplied
+  to every `newSession()` call rather than re-derived per session, and reset to `false` in
+  `stop()`/`_handleClosed()`). `prompt(text)` sends `session/prompt` with one `TextContentBlock`
+  and resolves with the ACP `stopReason`; only one prompt may be in flight at a time (matching
+  [[klorb-server]]'s own one-prompt-at-a-time rule), so a second call while one is running
+  rejects immediately rather than queuing -- a client with a message to add to the running turn
+  calls `enqueueMessage(text)` instead (`extMethod('_klorb/enqueueMessage', {text})`; gated by
+  the `enqueueMessageCapable` getter before the caller ever tries, see "Queued messages and
+  interrupt polish" above). `cancel()` sends `session/cancel` as a
   fire-and-forget notification — the in-flight `prompt()` call still resolves normally once the
   server winds the turn down and replies with `stopReason: "cancelled"`. `setSessionMode(modeId)`
   sends `session/set_mode`; `extMethod(method, params)` calls a `_klorb/*` extension method
@@ -127,7 +141,9 @@ together for this extension specifically.
   `TaskListUpdateMessage` (`onTaskListUpdate` — see "Task panel" below), and logs (rather than
   errors on) any other update kind. `extNotification()`
   dispatches `_klorb/usage` to `onUsageUpdate(usedTokens, maxTokens)` (logging and ignoring a
-  malformed payload) and logs-and-ignores any other extension notification, per ACP's own
+  malformed payload), `_klorb/messageQueued`/`_klorb/queuedMessageSent` to `onMessageQueued(text)`/
+  `onQueuedMessageSent(text)` (same malformed-payload handling; see "Queued messages and
+  interrupt polish" above), and logs-and-ignores any other extension notification, per ACP's own
   extensibility rules. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension
   method are covered in "Approval panel" below. `readTextFile()`/`writeTextFile()`/
   `createTerminal()` throw the SDK's
@@ -153,16 +169,24 @@ together for this extension specifically.
   once flattened into the webview message. `onSessionInfo`/`onModeChanged`/
   `onSessionTitleChanged`/`onUsageUpdate` (see "Status row and session controls" below) each
   delegate straight to the matching `SessionControls.apply*()` method, set via
-  `setSessionControls()` the same way `setConnection()` wires the connection. `_runTurn(text)`
+  `setSessionControls()` the same way `setConnection()` wires the connection.
+  `onMessageQueued`/`onQueuedMessageSent` (see "Queued messages and interrupt polish" above)
+  post the matching `messageQueued`/`queuedMessageSent` host messages verbatim. `_runTurn(text)`
   — invoked for a `submitPrompt` message — posts `turnStarted`, awaits `AcpConnection.prompt
-  (text)`, and posts either `turnEnded {stopReason}` or (on rejection) `turnError {message}`; a
-  `cancelTurn` message calls `AcpConnection.cancel()` directly, with no reply of its own (the
-  in-flight prompt's own `turnEnded`/`turnError` follow-up is the confirmation);
-  `openLocation`/`openDiff` messages are routed to `EditorIntegration.openLocation()`/
-  `openDiff()`; a `permissionDecision` message is routed to `AcpConnection.client?.
-  resolvePermissionDecision()` (see "Approval panel" below); `pickModel`/`cyclePermissionMode`
-  messages execute the `klorb.selectModel`/`klorb.cyclePermissionMode` commands, so a status
-  row click drives the same code path as its command-palette equivalent.
+  (text)`, and posts either `turnEnded {stopReason}` or, on rejection, `serverLost {message}`
+  when `connection.isReady` is now `false` (the child process itself was lost mid-turn) or
+  `turnError {message}` otherwise (see "Queued messages and interrupt polish" above); `
+  _enqueueMessage(text)` — invoked for an `enqueueMessage` message — checks `connection.isReady`
+  and `connection.enqueueMessageCapable` before calling `AcpConnection.enqueueMessage(text)`,
+  posting a `turnError` on either failure; a `cancelTurn` message calls `AcpConnection.cancel()`
+  directly, with no reply of its own (the in-flight prompt's own `turnEnded`/`turnError`/
+  `serverLost` follow-up is the confirmation); a `restartServer` message executes the
+  `klorb.restartServer` command; `openLocation`/`openDiff` messages are routed to
+  `EditorIntegration.openLocation()`/`openDiff()`; a `permissionDecision` message is routed to
+  `AcpConnection.client?.resolvePermissionDecision()` (see "Approval panel" below);
+  `pickModel`/`cyclePermissionMode` messages execute the `klorb.selectModel`/
+  `klorb.cyclePermissionMode` commands, so a status row click drives the same code path as its
+  command-palette equivalent.
   `postPermissionAsk()` (the `SessionUpdateListener` method `KlorbAcpClient` calls to post an
   ask) posts the `permissionAsk` host message and, if the view is hidden at that moment, shows a
   "Klorb needs your approval" notification with a "Show Klorb" action
@@ -275,12 +299,18 @@ together for this extension specifically.
   the `features/history` feature, replaces `status` wholesale with a `statusUpdate` message's
   own fields (never merged — the host always posts the complete currently-known snapshot, see
   "Status row and session controls" below), and flips `taskPanelVisible` on a `toggleTaskPanel`
-  message. Submitting a prompt appends a `'prompt'` entry
-  optimistically, sets `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up
-  confirms or corrects it), and posts `{type: 'submitPrompt', text}`. Toggling the global
+  message. Submitting a prompt while idle appends a `'prompt'` entry optimistically, sets
+  `inFlight` to `true` (the host's own `turnStarted`/`turnError` follow-up confirms or corrects
+  it), and posts `{type: 'submitPrompt', text}`; submitting while a turn is already in flight
+  instead posts `{type: 'enqueueMessage', text}` with no optimistic entry of its own — the
+  queued-message history entry comes from the host's own `messageQueued` echo instead, since
+  it's the server, not the webview, that actually accepted the message (see "Queued messages"
+  below). Toggling the global
   tool-call expand mode flips `expandAllToolCalls` and applies it to every existing tool-call
   entry at once (`applyExpandAllToolCalls`); toggling one chip's own chevron flips just that
-  entry (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`.
+  entry (`applyToolCallExpandedToggle`) — both handlers are passed down to `HistoryView`, which
+  also receives `onRestartServer` (posts `{type: 'restartServer'}`, wired to a `'serverError'`
+  entry's action button — see "Queued messages and interrupt polish" below).
   `handleApprovalDecision()` (passed to `ApprovalPanel` as `onDecision`) appends an
   `appendInteraction()` record, clears `pendingInteraction`, and posts `{type:
   'permissionDecision', ...}` back to the host; `handleQuestionAnswer()` (passed to
@@ -299,9 +329,17 @@ together for this extension specifically.
   turn (once per `TodoCreate`/`TodoUpdate`/`TodoNext` call), and scrolling on every one of those
   fights the browser's own attempt to keep a focused element elsewhere on the page (e.g. the task
   panel's own `<summary>`) in view, which visibly reads as the history freezing until focus moves
-  away. `App`'s returned tree is wrapped in `<VsCodeApiProvider vscode={vscode}>` (see
-  below) so any descendant can reach `vscode` via `useVsCodeApi()` without it being threaded
-  through as an explicit prop down every intermediate component.
+  away -- but only actually scrolls while `pinnedToBottomRef` (a ref, not state, updated by a
+  `scroll` listener on the history container via `isScrollPinnedToBottom()`, mirroring the TUI's
+  `_history_pinned_to_bottom`/`pinned_to_bottom()`) reads `true`, so a user who's scrolled up to
+  reread earlier output isn't yanked back to the bottom by new content arriving. Two more
+  `useEffect`s reclaim focus for `PromptInput` (via its own imperative `focus()`, exposed through
+  a `ref`/`PromptInputHandle` — see its own bullet below): one keyed on `inFlight`, firing once a
+  turn is no longer running; one keyed on `pendingInteraction`, firing once an approval/question
+  panel resolves — mirroring the TUI's `_finish_turn()`, which always hands focus back to its
+  input box once a turn is done. `App`'s returned tree is wrapped in `<VsCodeApiProvider
+  vscode={vscode}>` (see below) so any descendant can reach `vscode` via `useVsCodeApi()` without
+  it being threaded through as an explicit prop down every intermediate component.
 * `vscode-plugin/src/webview/components/VsCodeApiProvider.tsx` and `vscode-plugin/src/webview/
   hooks/useVsCodeApi.ts` are the top-level (not feature-specific) pieces that distribute the
   `vscode` object: `VsCodeApiProvider` wraps a React context around the single `vscode` value
@@ -371,16 +409,18 @@ together for this extension specifically.
     entries as a `ToolCallChip`; `'sessionStats'` entries as a `SessionStatsCard` (see "Status
     row and session controls" below).
 * `vscode-plugin/src/webview/components/PromptInput.tsx` renders the `<vscode-textarea>` +
-  `<vscode-button>` input row: disabled (and the button replaced by a Stop button) while
-  `inFlight` is true, and additionally styled with the `.input-row-muted` CSS class (dimmed
+  `<vscode-button>` input row: disabled while `inFlight` is true, unless `enqueueMessageCapable`
+  (see "Queued messages and interrupt polish" below for that prop and the Send/Stop button
+  logic it drives), and additionally styled with the `.input-row-muted` CSS class (dimmed
   opacity) while its `muted` prop is set — `App` passes `muted={pendingInteraction !==
   undefined}`, since a permission ask or question ask always arrives mid-turn (`inFlight` is
   already true), so `muted` layers the TUI's interaction-mode visual treatment on top of the
-  already-disabled input rather than changing whether it's disabled. Its own `onKeyDown` handles
-  Shift+Tab (calls `onCyclePermissionMode`, `preventDefault`ed so it doesn't fall through to the
-  browser's default tab-order navigation — mirroring the TUI's own Shift+Tab), Escape (calls
-  `onCancel` when `inFlight`), and Enter, delegating the submit-vs-newline decision to
-  `keyHandling.ts`'s `classifyEnterKey()`.
+  already-disabled (or, when capable, still-enabled) input rather than changing whether it's
+  disabled. Its own `onKeyDown` handles Shift+Tab (calls `onCyclePermissionMode`,
+  `preventDefault`ed so it doesn't fall through to the browser's default tab-order navigation —
+  mirroring the TUI's own Shift+Tab), Escape (calls `onCancel` when `inFlight`, regardless of
+  `enqueueMessageCapable` — cancelling the turn is always available while one is running), and
+  Enter, delegating the submit-vs-newline decision to `keyHandling.ts`'s `classifyEnterKey()`.
 * `vscode-plugin/src/webview/keyHandling.ts`'s `classifyEnterKey(shiftKey, ctrlKey)` returns
   `'newline'` if either modifier is held and `'submit'` otherwise. Pulling this one decision out
   as a standalone function is what makes it reachable from
@@ -558,6 +598,80 @@ webview panel (see below).
   (`.entry-interaction`) in the history scroll once the panel unmounts.
   `appendQuestionInteraction(entries, ask, answerText)` (called from `App`'s
   `handleQuestionAnswer()`) is the same record for an answered question.
+
+### Queued messages and interrupt polish
+
+A prompt submitted while a turn is already running is queued into it, not rejected, when the
+server advertises [[klorb-server]]'s `_klorb/enqueueMessage`; a cancelled or errored turn (or a
+lost server process) gets a distinct, TUI-parity history treatment rather than just quietly
+stopping.
+
+* **Capability plumbing.** `AcpConnection` records whether the server's `initialize()` reply
+  advertised `agentCapabilities._meta.klorb.enqueueMessage` (`klorbAgentCapability()`, a small
+  pure reader over the raw response) into a private `_enqueueMessageCapable` flag — a property
+  of the *connection*, not any one session, so it's threaded into every `newSession()`'s
+  `SessionInfo` (`sessionInfoFromResponse(session, this._enqueueMessageCapable)`) rather than
+  re-derived per session. `SessionControls.applySessionInfo()` folds it into the running
+  `StatusSnapshot` as `enqueueMessageCapable`, so it reaches the webview the same way every other
+  piece of session-starting state does (a `statusUpdate` message), and `App` passes
+  `status.enqueueMessageCapable` straight through to `PromptInput`.
+* **`PromptInput`'s `enqueueMessageCapable` prop** (`src/webview/components/PromptInput.tsx`)
+  changes what "disabled while `inFlight`" means: `disabled = inFlight && !enqueueMessageCapable`.
+  When capable, the textarea stays enabled during a turn and both a "Send" and a "Stop" button
+  render (Send posts through the same `onSubmit` `App` already wires to the enqueue-vs-submit
+  branch below); without it, only "Stop" renders and the textarea disables, exactly as before
+  this increment. The component now forwards a `ref` typed `PromptInputHandle` (`{focus():
+  void}`, via `forwardRef`/`useImperativeHandle`) so `App` can reclaim focus imperatively (see
+  its own bullet above) — calling `.focus()` on the `<vscode-textarea>` custom element relies on
+  its shadow root's `delegatesFocus: true` to land the browser's actual focus on the inner
+  `<textarea>`, not just the host element.
+* **Webview → host `enqueueMessage`** (`{type: 'enqueueMessage', text: string}`,
+  `shared/webviewMessages.ts`): `App`'s `submit()` posts this instead of `submitPrompt` whenever
+  `inFlight` is already `true`, with no optimistic history append of its own (see the `App.tsx`
+  bullet above for why). `KlorbSessionViewProvider._enqueueMessage()` checks `connection.isReady`
+  and `connection.enqueueMessageCapable` (both should already hold, since the webview only posts
+  this when it believes the capability is present — reaching here otherwise means the connection
+  state changed underneath it) before calling `AcpConnection.enqueueMessage(text)` (`extMethod(
+  '_klorb/enqueueMessage', {text})`), surfacing a `turnError` instead of silently dropping the
+  message on either failure.
+* **Host → webview `messageQueued`/`queuedMessageSent`** (`{type: 'messageQueued', text: string}`
+  / `{type: 'queuedMessageSent', text: string}`): `KlorbAcpClient.extNotification()` dispatches
+  the matching `_klorb/*` ext notifications (see [[klorb-server]]) to `SessionUpdateListener.
+  onMessageQueued()`/`onQueuedMessageSent()`, which `KlorbSessionViewProvider` posts verbatim.
+  `historyModel.ts`'s `appendQueuedMessage(entries, text)` appends a `'queuedMessage'`-kind
+  entry (rendered as a `.bubble-queued` — the ordinary prompt bubble, italicized, with a small
+  "Queued message" header line above it); `applyQueuedMessageSent(entries, text)` flips the
+  *oldest* still-`'queuedMessage'` entry whose text matches to a regular `'prompt'` entry,
+  confirming delivery — correlation is by order + text, matching the server's own single-queue
+  reality (there's no stable id to match against instead). A `queuedMessageSent` with no
+  matching entry (a stale/duplicate notification) is a no-op.
+* **Interrupted-turn marker** (`historyModel.ts`'s `applyInterruptedMarker(entries)`, a pure
+  function ported from the TUI's `_handle_aborted_response` decision table): `applyHostMessage()`
+  calls it for a `turnEnded` whose `stopReason` is `"cancelled"` specifically (any other non-
+  `"end_turn"` reason still gets the older generic `"Turn ended: <reason>"` notice). It appends
+  `"\n\n*(interrupted)*"`/`"\n\n(interrupted)"` to whichever of the trailing `'response'`/
+  `'thinking'` entry was still `streaming` when the turn ended (finalizing it in the same step),
+  or — if neither was (e.g. cancelled between tool-call rounds, before the next round's text had
+  started streaming) — appends a standalone `'notice'` entry reading `"(interrupted)"`.
+* **Lost-server-process entries.** `KlorbSessionViewProvider._runTurn()`'s `catch` block checks
+  `connection.isReady` after a rejected `prompt()` call: still ready means an ordinary turn
+  failure (`turnError`, unchanged); no longer ready means the `klorb server` child itself was
+  lost (crashed, or killed/restarted) out from under the turn, posted as a distinct `{type:
+  'serverLost', message}` instead. `historyModel.ts` renders this as a `'serverError'`-kind entry
+  (`applyHostMessage()`'s `serverLost` case, also finalizing streaming and clearing `inFlight`
+  the same way `turnError` does); `HistoryView`'s `renderEntry()` gives it the same
+  `.entry-error` styling as a plain error plus a "Restart Server" `<vscode-button>` (`
+  onRestartServer`, threaded down from `App`'s own `restartServer()`, which posts `{type:
+  'restartServer'}`). `KlorbSessionViewProvider` maps that webview message straight to the
+  `klorb.restartServer` command, the same one the command palette entry runs.
+* **Sweep pass.** Beyond the focus-reclaiming `useEffect`s and the pinned-to-bottom autoscroll
+  gating (both described in the `App.tsx` bullet above), `sessionReset` clearing every model
+  slot (`entries`, `pendingInteraction`, `taskList`, `inFlight`) was already correct going into
+  this increment via each slot's own reducer; `status` is likewise always correct by the time a
+  `sessionReset` message arrives, since `SessionControls.applySessionInfo()` — invoked
+  synchronously inside the `connection.newSession()`/`connection.start()` call that precedes
+  every `sessionReset` post — already resets it to the fresh session's real starting values (not
+  stale ones) over the ordinary `statusUpdate` channel.
 
 ### Status row and session controls
 
@@ -851,19 +965,25 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
 `docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md`).
 
 * Webview → host (`WebviewMessage`): `{type: 'submitPrompt', text: string}` (once per submitted
-  prompt), `{type: 'cancelTurn'}` (Stop button or Escape while a turn is running),
-  `{type: 'openLocation', path: string, line?: number}` (a tool-call title link),
-  `{type: 'openDiff', callId: string, path: string}` ("Open diff"), `PermissionDecisionMessage`
-  ("Approval and question panels" above) answering a `permissionAsk`, `QuestionAnswerMessage`
-  ("Approval and question panels" above) answering a `questionAsk`, and `{type: 'pickModel'}`/
-  `{type: 'pickThinking'}`/`{type: 'cyclePermissionMode'}`/`{type: 'showSessionStats'}`/
-  `{type: 'newSession'}`/`{type: 'reloadSkills'}` ("Status row and session controls" above, the
-  status row's chips and its `StatusMenu` popup), and `WebviewErrorMessage`
+  prompt while idle), `{type: 'enqueueMessage', text: string}` (a mid-turn submit, "Queued
+  messages and interrupt polish" above), `{type: 'cancelTurn'}` (Stop button or Escape while a
+  turn is running), `{type: 'restartServer'}` (a `'serverError'` entry's action button, "Queued
+  messages and interrupt polish" above), `{type: 'openLocation', path: string, line?: number}`
+  (a tool-call title link), `{type: 'openDiff', callId: string, path: string}` ("Open diff"),
+  `PermissionDecisionMessage` ("Approval and question panels" above) answering a
+  `permissionAsk`, `QuestionAnswerMessage` ("Approval and question panels" above) answering a
+  `questionAsk`, and `{type: 'pickModel'}`/`{type: 'pickThinking'}`/
+  `{type: 'cyclePermissionMode'}`/`{type: 'showSessionStats'}`/`{type: 'newSession'}`/
+  `{type: 'reloadSkills'}` ("Status row and session controls" above, the status row's chips and
+  its `StatusMenu` popup), and `WebviewErrorMessage`
   (`{type: 'webviewError', message: string, stack?: string}`, "Webview UI structure" above's
   `ErrorBoundary`).
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
   string}`, `{type: 'thoughtChunk', text: string}`, `{type: 'turnEnded', stopReason: string}`,
-  `{type: 'turnError', message: string}`, `{type: 'sessionReset'}`,
+  `{type: 'turnError', message: string}`, `{type: 'serverLost', message: string}` (a lost
+  server process mid-turn, "Queued messages and interrupt polish" above),
+  `{type: 'messageQueued', text: string}`/`{type: 'queuedMessageSent', text: string}` (both
+  "Queued messages and interrupt polish" above), `{type: 'sessionReset'}`,
   `{type: 'toolCallStarted', callId, title, kind, locations}`, and
   `{type: 'toolCallUpdated', callId, status, title?, contentText?, diff?, locations?}` — `kind`/
   `status` are plain strings (mirroring `turnEnded`'s own loosely-typed `stopReason`) so a value
@@ -1113,7 +1233,8 @@ time a connection is started (at activation and on `klorb.restartServer`):
    `Cmd+Option+B`), then select the Klorb icon in the auxiliary bar.
 3. Type a prompt and press Enter. Thinking (if the configured model streams it) and the
    response render live in the history; press Stop (or Escape) mid-stream to cancel and observe
-   the turn end with a "Turn ended: cancelled" notice.
+   the streaming response/thinking block get an italic "(interrupted)" marker appended rather
+   than just stopping.
 4. Run **Klorb: New Session** from the command palette to clear the panel and start a fresh
    ACP session without restarting the child process; run **Klorb: Restart Server** to kill and
    respawn `klorb server` itself (e.g. after changing `klorb.serverPath`).
@@ -1169,12 +1290,19 @@ time a connection is started (at activation and on `klorb.restartServer`):
     Toggle Task Panel** from the command palette as a third way to flip the same state; confirm
     the panel's shown/hidden state (not its expand/collapse state) survives hiding and re-showing
     the auxiliary bar.
+11. Against a klorb server build that advertises `_klorb/enqueueMessage` (any current build
+    does), start a slow prompt (e.g. one that calls `Bash` with a multi-second command under
+    `[auto]` mode) and, while it's running, type a second message and press Enter. Confirm the
+    input stays enabled (not disabled) and both Send and Stop are visible; confirm the new
+    message renders in italic "Queued message" styling, then flips to regular prompt styling once
+    the server confirms delivery. Confirm the prompt's own textarea regains keyboard focus once
+    the turn ends, without clicking it. Kill the `klorb server` child process directly (e.g. from
+    a terminal, `kill` its pid) while a turn is running; confirm the resulting history entry
+    reads distinctly from an ordinary error and offers a "Restart Server" button, and that
+    clicking it runs **Klorb: Restart Server**.
 
 ## Out of scope
 
-* No mid-turn message queueing — a second `submitPrompt` while a turn is in flight is rejected
-  by `AcpConnection.prompt()` (mirroring [[klorb-server]]'s own one-prompt-at-a-time rule), not
-  queued client-side. Lands in `plan-016-012`.
 * No persistence beyond `vscode.getState()`'s in-memory-while-the-window-is-open lifetime —
   nothing is written to disk, and history (including the status snapshot) is lost on
   `klorb.restartServer`, `klorb.newSession`, or a full window reload.
