@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+# © Copyright 2026 Aaron Kimball
+"""Validate that one or more files (or stdin) contain well-formed JSON.
+
+Usage: jsonlint FILE [FILE ...]
+       jsonlint -             # read from stdin
+       cat foo.json | jsonlint
+
+Exits 0 if every input parses as valid JSON, printing nothing. Exits 1 if any
+input fails to parse: that file's `json.JSONDecodeError` (line/column included)
+is printed to stderr, and checking continues with the remaining files.
+"""
+
+import argparse
+import json
+import sys
+from typing import TextIO
+
+
+def check(name: str, stream: TextIO) -> bool:
+    """Parse `stream` as JSON, printing a `JSONDecodeError` to stderr if malformed.
+
+    Returns True if `stream` parsed successfully, False otherwise.
+    """
+    try:
+        json.load(stream)
+    except json.JSONDecodeError as exc:
+        print(f"{name}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="jsonlint",
+        description="Validate that one or more files (or stdin) contain well-formed JSON.")
+    parser.add_argument(
+        "files", nargs="*", metavar="FILE",
+        help="JSON file(s) to validate. Use '-' (or pass no FILE at all) to read stdin.")
+    args = parser.parse_args()
+
+    filenames = args.files or ["-"]
+
+    all_ok = True
+    for filename in filenames:
+        if filename == "-":
+            all_ok = check("<stdin>", sys.stdin) and all_ok
+            continue
+        try:
+            with open(filename, encoding="utf-8") as f:
+                all_ok = check(filename, f) and all_ok
+        except OSError as exc:
+            print(f"{filename}: {exc}", file=sys.stderr)
+            all_ok = False
+
+    return 0 if all_ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
