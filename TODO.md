@@ -240,7 +240,9 @@
 ### Bugs
 
 * Clicking the "new session" button should immediately interrupt the current turn in flight
-  and dispose of the connection to the model.
+  and dispose of the connection to the model. (If there was already an agent turn in progress,
+  it keeps generating tokens and streaming them from the acp server to the acp client even after
+  the 'new session' has begun.)
 
 * If we **can't** restore the previous session (or are configured not to), AcpConnection.start()
   needs to be able to send a `sessionReset` message to the webview to clear out its now-stale
@@ -269,8 +271,7 @@
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
 
-
-Bug with uncaught exception in ACP Server when the provider returns an error:
+**Bug with uncaught exception in ACP Server when the provider returns an error:**
 
 ```plain
 [server] 2026-07-28 01:15:06 - ERROR:klorb.session.mixins.turns:Turn failed for moonshotai/kimi-k3: Provider returned error (messages=96, total_chars=1568007)
