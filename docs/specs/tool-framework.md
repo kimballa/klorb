@@ -368,11 +368,16 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `"[truncated...]"` suffix, guarding against a single pathologically long line (a minified
   sourcemap, a one-line JSON blob) dumping an outsized chunk of text into the model's context.
   If the JSON serialization of `files` would exceed `context.process_config.grep_spill_bytes`
-  (default `process_config.DEFAULT_GREP_SPILL_BYTES`, 32768) bytes, `GrepTool` writes it to a file
-  in a fresh per-call tmpdir instead and reports `results_data_file` (the file's path) in place of
-  `files`, granting the tmpdir read access the same way `BashTool` does for its own spilled
-  `stdout`/`stderr` (see docs/specs/bash-tool-and-command-permissions.md's "stdout/stderr
-  capture" section). `summary()` names the queries,
+  (default `process_config.DEFAULT_GREP_SPILL_BYTES`, 32768) bytes, `GrepTool` writes it to a
+  file in this session's spill tmpdir instead and reports `results_data_file` (the file's path)
+  in place of `files`, via `klorb.tools.util.spill.SpillDir` — the same session-scoped tmpdir
+  mechanism `WebFetchTool` (`klorb.tools.web.spill`) uses for its own oversized response bodies,
+  so a session calling either tool repeatedly reuses one tmpdir instead of accumulating one per
+  call; the tmpdir is granted `readDirs` access the same way `BashTool` grants its own spilled
+  `stdout`/`stderr` directories (see docs/specs/bash-tool-and-command-permissions.md's
+  "stdout/stderr capture" section). `GrepTool` must be constructed with a live `Session` for a
+  spill to succeed — a `ToolSetupContext` without one raises `ToolCallError` if a spill is
+  needed. `summary()` names the queries,
   root, and match count; `detail_view()` caps `files` to its first 20 entries (adding a
   `files_omitted` count) when present, since a full result can span up to `grep_max_results`
   matching lines across that many files.

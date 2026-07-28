@@ -36,6 +36,12 @@ re-exporting it here is cycle-free for the same reason.
 `diff_lines.py` (`build_diff_hunks`, `DiffHunk`, `DiffLine`) is the structured diff mechanic
 `EditFileCore`/`CreateFileCore` use to populate a result's `diff` field -- also cycle-free, since
 it depends on nothing but the stdlib `difflib` and Pydantic.
+
+`spill.py` (`SpillDir`) is the session-scoped tmpdir mechanic behind spilling an oversized tool
+result to disk instead of returning it inline — shared by `GrepTool`'s `files` payload and
+`klorb.tools.web.spill` (`WebFetchTool`'s response bodies). Like `walk_readable_tree`, it takes
+a `Session` (only for type-checking, via `TYPE_CHECKING`, not a runtime import), so re-exporting
+it here is cycle-free for the same reason `dir_walk.py` is.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
@@ -59,6 +65,7 @@ from klorb.tools.util.search_core import (
     validate_output_style,
     validate_queries,
 )
+from klorb.tools.util.spill import SpillDir
 
 __all__ = [
     "CreateFileCore",
@@ -70,6 +77,7 @@ __all__ = [
     "LineRangeEdit",
     "READ_PREVIEW_MAX_LINES",
     "ReadFileCore",
+    "SpillDir",
     "VALID_OUTPUT_STYLES",
     "build_diff_hunks",
     "compile_queries",

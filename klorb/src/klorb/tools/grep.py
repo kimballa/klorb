@@ -2,22 +2,21 @@
 """A Tool that recursively searches a directory tree for lines matching any of several literal
 strings or regular expressions, returning each match with surrounding context lines."""
 
-import atexit
 import fnmatch
 import json
 import logging
 import os
-import shutil
-import tempfile
+import secrets
 from pathlib import Path
 from typing import Any
 
-from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import (
+    SpillDir,
     compile_queries,
     context_lines_for_matches,
     match_line_indices,
@@ -34,11 +33,6 @@ _GITIGNORE_HIDDEN_NOTE = (
     "Re-call Grep with use_gitignore=false to search gitignored files too.")
 
 _TRUNCATION_SUFFIX = "[truncated...]"
-
-_TMP_DIR_PREFIX = "klorb-grep-"
-"""Prefix for the per-call spill tmpdir `GrepTool` creates when `result["files"]`'s JSON
-serialization exceeds `grep_spill_bytes` — mirrors `klorb.tools.bash._TMP_DIR_PREFIX`'s
-pattern."""
 
 
 def _truncate_line(line: str, max_length: int) -> str:
@@ -75,9 +69,11 @@ class GrepTool(InterruptibleTool):
     (with a `"[truncated...]"` suffix) to guard against a single pathologically long line — a
     minified sourcemap, a one-line JSON blob — dumping an outsized chunk of text into the
     model's context. If the JSON serialization of the entire `result["files"]` value would
-    exceed `context.process_config.grep_spill_bytes`, it's written to a file instead and the
-    result carries `results_data_file` in place of `files`, mirroring `BashTool`'s
-    `stdout`/`stdout_file` spill contract — see `_spill_files_if_needed`.
+    exceed `context.process_config.grep_spill_bytes`, it's written to a file in this session's
+    spill tmpdir instead and the result carries `results_data_file` in place of `files` — the
+    same `klorb.tools.util.spill.SpillDir` mechanism `WebFetchTool` uses for its own response
+    bodies, so a session that calls Grep repeatedly reuses one tmpdir rather than accumulating
+    one per call. See `_spill_files_if_needed`.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -86,6 +82,7 @@ class GrepTool(InterruptibleTool):
         self._context_lines = context.process_config.grep_context_lines
         self._max_line_length = context.process_config.grep_max_line_length
         self._spill_bytes = context.process_config.grep_spill_bytes
+        self._spill_dir = SpillDir("Grep")
 
     def name(self) -> str:
         return "Grep"
@@ -375,36 +372,28 @@ class GrepTool(InterruptibleTool):
     def _spill_files_if_needed(self, result: dict[str, Any]) -> None:
         """Replace `result["files"]` with a `results_data_file` path if its JSON serialization
         exceeds `self._spill_bytes`, so a search matching many files/lines can't dump an
-        outsized payload straight into the model's context. Mirrors `BashTool`'s
-        `stdout`/`stdout_file` spill contract: exactly one of `files`/`results_data_file` is
-        present in the returned result.
+        outsized payload straight into the model's context. Exactly one of `files`/
+        `results_data_file` is present in the returned result. Writes into this session's
+        shared `Grep` spill tmpdir (`self._spill_dir`), reused across every call in the same
+        session rather than a fresh directory per spill — see `klorb.tools.util.spill.SpillDir`.
+        Raises `ToolCallError` if this `GrepTool` wasn't constructed with a live `Session`
+        (`self.context.session`), since the tmpdir is tracked in `Session.tool_state`.
         """
         encoded = json.dumps(result["files"]).encode("utf-8")
         if len(encoded) <= self._spill_bytes:
             return
-        tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
-        logger.debug("Grep spilling %d-byte files payload to tmpdir %s", len(encoded), tmp_dir)
-        atexit.register(shutil.rmtree, tmp_dir, ignore_errors=True)
-        file_path = tmp_dir / "grep-results.json"
+        session = self.context.session
+        if session is None:
+            raise ToolCallError("No session available for spill.", category="business_logic")
+
+        tmp_dir = self._spill_dir.get_or_create(session)
+        file_path = tmp_dir / f"grep-results-{secrets.token_hex(4)}.json"
+        logger.debug("Grep spilling %d-byte files payload to %s", len(encoded), file_path)
         file_path.write_bytes(encoded)
         os.chmod(file_path, 0o600)
-        self._grant_tmp_dir_read_access(tmp_dir)
+        self._spill_dir.grant_read_access(session, tmp_dir)
         del result["files"]
         result["results_data_file"] = str(file_path)
-
-    def _grant_tmp_dir_read_access(self, tmp_dir: Path) -> None:
-        """Auto-grant read access to `tmp_dir` (this one spill's own directory, a fresh
-        `mkdtemp()` per call) so a follow-up `ReadFile`/`Grep` call against `results_data_file`
-        doesn't itself hit an "ask". Appends to the live `session_config.read_dirs.allow`
-        (reassigning the whole `DirRules`, never mutating its list in place, per `DirRules`'s
-        documented contract) — this is automatic harness bookkeeping for the harness's own
-        scratch output, not a user-confirmed grant, so it bypasses `klorb.permissions.grant`'s
-        interactive-grant flow entirely (there is no ask being answered here). Mirrors
-        `BashTool._grant_tmp_dir_read_access`.
-        """
-        read_dirs = self.context.session_config.read_dirs
-        self.context.session_config.read_dirs = DirRules(
-            deny=list(read_dirs.deny), ask=list(read_dirs.ask), allow=[*read_dirs.allow, tmp_dir])
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")

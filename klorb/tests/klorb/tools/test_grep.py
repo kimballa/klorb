@@ -11,6 +11,7 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.grep import GrepTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -35,6 +36,23 @@ def _context(
             write_dirs=DirRules(),
         ),
     )
+
+
+def _context_with_session(
+    workspace_root: Path,
+    *,
+    spill_bytes: int = 32 * 1024,
+) -> tuple[Session, ToolSetupContext]:
+    """A `ToolSetupContext` backed by a real `Session` (`GrepTool`'s spill needs one to track its
+    tmpdir in `Session.tool_state` — see `klorb.tools.util.spill.SpillDir`). Caller must
+    `session.close()` when done, same as `test_grep_is_interrupted_by_the_turn_cancel_event`."""
+    session_config = SessionConfig(
+        workspace=Workspace(path=workspace_root), read_dirs=DirRules(), write_dirs=DirRules())
+    session = Session(config=session_config)
+    context = ToolSetupContext(
+        process_config=ProcessConfig(grep_spill_bytes=spill_bytes),
+        session_config=session_config, session=session)
+    return session, context
 
 
 def _make_tree(root: Path) -> None:
@@ -529,27 +547,57 @@ def test_short_line_is_not_truncated(tmp_path: Path) -> None:
 
 def test_files_payload_spills_to_a_file_when_over_spill_bytes(tmp_path: Path) -> None:
     _make_tree(tmp_path)
+    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    try:
+        result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
 
-    result = GrepTool(_context(tmp_path, spill_bytes=1)).apply(
-        {"path": "", "queries": ["hello"]})
-
-    assert "files" not in result
-    data_file = Path(result["results_data_file"])
-    assert data_file.is_file()
-    spilled = json.loads(data_file.read_text(encoding="utf-8"))
-    assert {Path(entry["filename"]).name for entry in spilled} == {
-        "top.py", "nested.py", "notes.txt"}
+        assert "files" not in result
+        data_file = Path(result["results_data_file"])
+        assert data_file.is_file()
+        spilled = json.loads(data_file.read_text(encoding="utf-8"))
+        assert {Path(entry["filename"]).name for entry in spilled} == {
+            "top.py", "nested.py", "notes.txt"}
+    finally:
+        session.close()
 
 
 def test_spilled_tmpdir_is_granted_read_access(tmp_path: Path) -> None:
     _make_tree(tmp_path)
-    context = _context(tmp_path, spill_bytes=1)
+    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    try:
+        result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
 
-    result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
+        data_file = Path(result["results_data_file"])
+        assert any(
+            data_file.is_relative_to(allowed)
+            for allowed in context.session_config.read_dirs.allow)
+    finally:
+        session.close()
 
-    data_file = Path(result["results_data_file"])
-    assert any(
-        data_file.is_relative_to(allowed) for allowed in context.session_config.read_dirs.allow)
+
+def test_multiple_spills_in_one_session_reuse_the_same_tmpdir(tmp_path: Path) -> None:
+    """The shared `SpillDir` mechanism (`klorb.tools.util.spill`, also used by `WebFetchTool`)
+    reuses one tmpdir per session rather than minting a fresh directory per spill."""
+    _make_tree(tmp_path)
+    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    try:
+        tool = GrepTool(context)
+        first = tool.apply({"path": "", "queries": ["hello"]})
+        second = tool.apply({"path": "", "queries": ["hello"]})
+
+        first_file = Path(first["results_data_file"])
+        second_file = Path(second["results_data_file"])
+        assert first_file.parent == second_file.parent
+        assert first_file != second_file
+    finally:
+        session.close()
+
+
+def test_spill_without_a_session_raises_business_logic_tool_call_error(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    with pytest.raises(ToolCallError):
+        GrepTool(_context(tmp_path, spill_bytes=1)).apply({"path": "", "queries": ["hello"]})
 
 
 def test_small_files_payload_is_returned_inline(tmp_path: Path) -> None:
