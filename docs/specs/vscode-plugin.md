@@ -1042,11 +1042,25 @@ all, not just type-checked):
   the host config, though the webview tsconfig doesn't import the SDK itself. It also includes
   `vscode-plugin/types/*.d.ts` — the vendored vscode-elements JSX declarations (see "Component
   library" below) — so `<vscode-button>` etc. type-check as JSX intrinsics.
-  `esbuild src/webview/main.tsx --bundle --format=iife --platform=browser` (the `build:webview`
-  npm script) bundles `src/webview/main.tsx` into one self-contained `out/webview/main.js` with
-  React, `react-dom/client`, `react-markdown`, and `@vscode-elements/elements` all inlined
-  alongside the plugin's own webview code. The `--define:process.env.NODE_ENV=\"development\"`
-  flag and the choice to skip `--minify` are unchanged from the original stub (see
+  `build-webview.mjs` (invoked by the `build:webview`/`build:webview:prod` npm scripts as `node
+  build-webview.mjs`/`node build-webview.mjs --prod`) bundles `src/webview/main.tsx` into one
+  self-contained `out/webview/main.js` with React, `react-dom/client`, `react-markdown`, and
+  `@vscode-elements/elements` all inlined alongside the plugin's own webview code, the same
+  `--bundle --tsconfig=tsconfig.webview.json --format=iife --platform=browser --target=es2022`
+  options a direct `esbuild` CLI invocation would use. It calls esbuild's JS API rather than its
+  CLI specifically so it can register `esbuild-plugin-babel` as a plugin (the CLI has no
+  plugin-registration mechanism): every `.ts`/`.tsx` file under `src/webview/**`/`src/shared/**`
+  is routed through `@babel/preset-typescript` → `@babel/preset-react` (`runtime: 'automatic'`)
+  → `babel-plugin-react-compiler` (`target: '19'`) before esbuild ever bundles it, so components
+  get the compiler's automatic `useMemo`/`useCallback`-equivalent memoization
+  (`useMemoCache`-backed) without being hand-written throughout — see
+  `docs/adrs/run-react-compiler-through-babel-esbuild-plugin.md` for why this needed a Babel
+  pass at all and why the plugin's `filter` matches only those two source directories rather than
+  every file esbuild loads (avoiding running the same presets over inlined `node_modules`
+  dependency source). `--define:process.env.NODE_ENV` (`"development"` unminified for
+  `build:webview`, `"production"` minified with `--sourcemap=linked
+  --sources-content=false --legal-comments=linked` for `build:webview:prod`) and the choice to
+  otherwise skip `--minify` in the dev build are unchanged from the original stub (see
   `docs/adrs/use-react-for-the-webview-ui.md`); `docs/adrs/bundle-webview-script-with-esbuild-not-es-modules.md`
   explains why the output loads as a plain `<script nonce="...">` rather than
   `<script type="module">`. `src/webview/tsconfig.json` and `test/webview/tsconfig.json` are
@@ -1157,8 +1171,10 @@ of two.
   separate `node_modules` copy at runtime, so from `vsce`/`npm ci`'s point of view they still
   need to be present wherever `install` (below) runs its build, i.e. wherever `install_deps` or
   `install_dev_deps` ran. `devDependencies` covers everything build/lint/test-only (`typescript`,
-  `@typescript/native-preview` (`tsgo`), `esbuild`, `eslint` and its plugins, `vitest`, `jsdom`,
-  `@testing-library/react`, ...).
+  `@typescript/native-preview` (`tsgo`), `esbuild`, `esbuild-plugin-babel`,
+  `babel-plugin-react-compiler`, `@babel/core`/`@babel/preset-typescript`/`@babel/preset-react`
+  (the webview build's Babel pipeline — see "Build" above), `eslint` and its plugins, `vitest`,
+  `jsdom`, `@testing-library/react`, ...).
 * `lint` runs `eslint` (flat config in `eslint.config.mjs`) over `src/` and `test/`:
   `typescript-eslint`'s recommended rules; `eslint-plugin-import-x` (the actively-maintained,
   flat-config-native fork of the classic `eslint-plugin-import`) with its `recommended` and
@@ -1178,17 +1194,20 @@ of two.
   rooted aliases as application code).
 * `typecheck` runs `tsgo` against both tsconfigs (see "Build" above for why `tsgo`, not `tsc`).
 * `compile` runs `typecheck`, then `copy:codicons` (see "Component library" above), then both
-  `esbuild` bundles (`build:extension`, `build:webview`).
+  bundles: `build:extension` (a direct `esbuild` CLI invocation) and `build:webview`
+  (`build-webview.mjs`, esbuild's JS API plus the `esbuild-plugin-babel`/React Compiler pass —
+  see "Build" above).
 * `install` (not present in `klorb/Makefile`, since the Python side has no editor-installation
   step) runs `compile`, packages the result into a `.vsix` with `@vscode/vsce`, and installs
   it into the local VS Code with `code --install-extension` — the interop step needed to
   actually try the extension out, as opposed to just linting/testing it. This is the
   *development* build: unminified, `NODE_ENV=development` (so React's own dev-only warnings
   surface real bugs during testing), full sourcemaps.
-* `dist` runs `compile:prod` (the `:prod` `esbuild` scripts — `--minify`,
-  `--define:process.env.NODE_ENV=\"production\"` for the webview bundle,
-  `--sourcemap=linked --sources-content=false`, `--legal-comments=linked`) and packages the
-  result the same way `install` does, but doesn't also install it into the local VS Code — it
+* `dist` runs `compile:prod` — `build:extension:prod`'s `esbuild` CLI flags
+  (`--minify --sourcemap=linked --sources-content=false --legal-comments=linked`) and
+  `build:webview:prod`'s `node build-webview.mjs --prod` equivalents of the same options — and
+  packages the result the same way `install` does, but doesn't also install it into the local VS
+  Code — it
   produces the artifact meant for actual distribution (`vsce publish`, or handing the `.vsix` to
   someone else), not another local dev-loop iteration. See
   `docs/adrs/production-vsix-build-is-minified-and-drops-node-modules.md`.
