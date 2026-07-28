@@ -244,3 +244,5 @@
 
 * fzf fuzzy finder for @-mentioning files in the project
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
+* need to pull in the `history` file (append-only prompt-recall log) from the session dir.
+  (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
