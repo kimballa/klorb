@@ -195,7 +195,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('klorb.newSession', () => {
-      provider.restart();
       const cwd = sessionCwd();
       void connection
         .newSession(cwd)

@@ -235,6 +235,8 @@
   prior sessions that are no longer in-context. This needs to match the actual session (if
   any) being reloaded, on startup.
 
+* When a model was doing work, the "tokens up/down" meter in the bottom status bar disappeared.
+
 ### Feature backlog
 
 * Get rid of the "Expand all tool-calls" button.
