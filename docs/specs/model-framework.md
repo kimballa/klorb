@@ -131,11 +131,12 @@ OpenRouter's public models listing.
   * `find_by_capability(capability: str) -> Model | None` — the first registered model (by
     name, for a deterministic pick) whose `klorb_capabilities()` reports `capability`
     truthily, or `None` if none does. See `klorb.permissions.risk_classifier`'s use below.
-* klorb ships seven built-in models as `klorb.resources/models/*.json`:
+* klorb ships nine built-in models as `klorb.resources/models/*.json`:
   `openai/gpt-5-nano` (klorb's default model, `klorb.openrouter.DEFAULT_MODEL`),
-  `z-ai/glm-5.2`, `anthropic/claude-sonnet-5`, `qwen/qwen3-coder-next` (Qwen's
-  coding-agent-focused model), `moonshotai/kimi-k2.7-code` (Moonshot AI's coding-focused
-  Kimi K2 release), `xiaomi/mimo-v2.5` (Xiaomi's omnimodal agentic model), and
+  `z-ai/glm-5.2`, `anthropic/claude-sonnet-5`, `qwen/qwen3.7-plus`,
+  `moonshotai/kimi-k2.7-code` (Moonshot AI's coding-focused Kimi K2 release),
+  `moonshotai/kimi-k3`, `xiaomi/mimo-v2.5` (Xiaomi's omnimodal agentic model),
+  `xiaomi/mimo-v2.5-pro` (the same release's higher-tier variant, family `"mimo-pro"`), and
   `openai/gpt-oss-120b:nitro` (OpenAI's open-weight reasoning model, the only built-in
   model declaring `klorb_capabilities.BASH_SAFETY_EVAL`).
 * `klorb.tui.commands.model_commands.ModelCommandProvider`

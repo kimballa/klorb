@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+# © Copyright 2026 Aaron Kimball
+"""Validate that one or more files (or stdin) contain well-formed JSON.
+
+Usage: jsonlint [-v | -q] [-x] FILE [FILE ...]
+       jsonlint -             # read from stdin
+       cat foo.json | jsonlint
+
+Exits 0 if every input parses as valid JSON, printing nothing. Exits 1 if any
+input fails to parse: that file's `json.JSONDecodeError` (line/column included)
+is printed to stderr, and checking continues with the remaining files unless
+--stop-on-error is given. --verbose prints "Checking <file>" to stdout before
+each file is checked; --quiet suppresses all stdout/stderr, leaving only the
+exit status, and cannot be combined with --verbose.
+"""
+
+import argparse
+import json
+import sys
+from typing import TextIO
+
+
+def check(name: str, stream: TextIO, *, quiet: bool) -> bool:
+    """Parse `stream` as JSON, printing a `JSONDecodeError` to stderr if malformed
+    and `quiet` is False.
+
+    Returns True if `stream` parsed successfully, False otherwise.
+    """
+    try:
+        json.load(stream)
+    except json.JSONDecodeError as exc:
+        if not quiet:
+            print(f"{name}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="jsonlint",
+        description="Validate that one or more files (or stdin) contain well-formed JSON.")
+    parser.add_argument(
+        "files", nargs="*", metavar="FILE",
+        help="JSON file(s) to validate. Use '-' (or pass no FILE at all) to read stdin.")
+    parser.add_argument(
+        "-x", "--stop-on-error", action="store_true",
+        help="Stop as soon as one file fails to parse, instead of checking the rest.")
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Print 'Checking <file>' to stdout before checking each file.")
+    output_group.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="Suppress all stdout/stderr; only the exit status reports success or failure.")
+    args = parser.parse_args()
+
+    filenames = args.files or ["-"]
+
+    all_ok = True
+    for filename in filenames:
+        if args.verbose:
+            print(f"Checking {filename}")
+
+        if filename == "-":
+            ok = check("<stdin>", sys.stdin, quiet=args.quiet)
+        else:
+            try:
+                with open(filename, encoding="utf-8") as f:
+                    ok = check(filename, f, quiet=args.quiet)
+            except OSError as exc:
+                if not args.quiet:
+                    print(f"{filename}: {exc}", file=sys.stderr)
+                ok = False
+
+        all_ok = ok and all_ok
+        if not ok and args.stop_on_error:
+            break
+
+    return 0 if all_ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
