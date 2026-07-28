@@ -11,7 +11,6 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.tui.app import ReplApp
 from klorb.workspace import TrustManager
-from klorb.workspace.last_session import last_session_path, write_last_session
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +22,15 @@ def _handle_repl_crash(app: ReplApp, crash_tee: CrashLogTee) -> None:
 
     Prints a pointer to the crash log file `crash_tee` captured (see `CrashLogTee`), or a
     fallback line if the file couldn't be opened. Then, if the crashed session's workspace is
-    trusted, also saves its state via `klorb.workspace.last_session.write_last_session` — the
-    same mechanism `ReplApp._quit_after_maybe_saving` uses for a normal, user-confirmed quit —
-    since there's no modal to confirm through once the app has already crashed and the
-    conversation would otherwise just be lost. Uses `app._session`, the app's live session at
-    crash time, rather than whatever `Session` `run_repl()` was originally called with, since
-    `/clear` (and workspace-trust changes) can replace or mutate it over the app's lifetime.
+    trusted, also persists its state (`Session.persist_state()` -- a no-op if untrusted, per
+    that method's own gate) since there's no modal to confirm through once the app has already
+    crashed and the conversation would otherwise just be lost. Uses `app._session`, the app's
+    live session at crash time, rather than whatever `Session` `run_repl()` was originally
+    called with, since `/clear` (and workspace-trust changes) can replace or mutate it over the
+    app's lifetime. Deliberately calls `persist_state()`, not `close()`: the process is about to
+    exit uncleanly, so `session.lock` is left held rather than released -- see
+    `KeyActionsMixin._collect_hang_diagnostics`, which makes the same choice for the force-exit
+    path.
     """
     log_path = crash_tee.opened_log_path()
     if log_path is not None:
@@ -40,21 +42,12 @@ def _handle_repl_crash(app: ReplApp, crash_tee: CrashLogTee) -> None:
     if not live_session.config.workspace.trusted:
         return
     try:
-        write_last_session(
-            live_session.config.workspace, live_session.config, live_session.messages,
-            statistics=live_session.statistics,
-            session_id=live_session.id,
-            root_id=live_session.root_id,
-            session_name=live_session.name,
-            cur_chainlink_task_id=live_session.cur_chainlink_task_id)
+        live_session.persist_state()
     except OSError:
         logger.warning("Could not save session state on crash.", exc_info=True)
         print("klorb crashed; could not save session state.", file=sys.stderr)
     else:
-        print(
-            f"klorb crashed; session state saved to "
-            f"{last_session_path(live_session.config.workspace)}",
-            file=sys.stderr)
+        print("klorb crashed; session state saved.", file=sys.stderr)
 
 
 def run_repl(

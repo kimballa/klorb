@@ -3,6 +3,7 @@ import type {
   HostMessage,
   PermissionAskMessage,
   QuestionAskMessage,
+  SessionReplayEntry,
   SessionStatsCounts,
   SessionStatsToolRow,
   TaskListUpdateMessage,
@@ -366,7 +367,30 @@ export function applyHostMessage(
       // Tracked separately by `App`'s own `taskList`/`taskPanelVisible` state, not as a
       // history entry -- the TaskPanel renders from that state instead.
       return [...entries];
+    case 'sessionReplay':
+      return applySessionReplay(message.entries);
   }
+}
+
+/** Converts one wire-format `SessionReplayEntry` (`shared/webviewMessages.ts`) into this
+ * feature's own `HistoryEntry` -- the two shapes are field-for-field identical except
+ * `SessionReplayToolCallEntry.contentText`, which allows `null` (JSON's "no value" — the server
+ * sends it when a replayed tool call never got a matching response) where
+ * `ToolCallHistoryEntry.contentText` only allows `undefined`. */
+function sessionReplayEntryToHistoryEntry(entry: SessionReplayEntry): HistoryEntry {
+  if (entry.kind === 'toolCall') {
+    return { ...entry, contentText: entry.contentText ?? undefined };
+  }
+  return entry;
+}
+
+/** Replaces the history wholesale with a previously saved session's conversation
+ * (`sessionReplay`) -- sent once after a successful `session/load`. Applied over whatever
+ * cached history the webview's own `sessionState` persistence already restored
+ * (stale-while-revalidate), so a resume always ends up showing the server's own record of the
+ * conversation rather than a possibly-stale local cache. */
+export function applySessionReplay(entries: readonly SessionReplayEntry[]): HistoryEntry[] {
+  return entries.map(sessionReplayEntryToHistoryEntry);
 }
 
 /** The task panel's data, without the message envelope's `type` discriminant -- see

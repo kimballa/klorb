@@ -2,6 +2,7 @@
 """Tests for `klorb.server.update_mapping` -- pure klorb-event-to-ACP-tool-call-update mapping.
 See docs/specs/klorb-server.md's tool-call update mapping section."""
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -10,6 +11,7 @@ import pytest
 from acp.schema import AllowedOutcome, DeniedOutcome
 from fixtures.sample_models import sample_model_registry
 
+from klorb.message import Message, MessageRole, ToolCallRequest
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules, canonicalize_dir
 from klorb.permissions.resource import BashCommandContext, CommandResource, PathResource, StructuralResource
@@ -20,6 +22,7 @@ from klorb.server.update_mapping import (
     TOOL_KIND_MAP,
     TOOL_LOCATION_ARG,
     _diff_text,
+    build_session_replay,
     escalate_privileges_decision_from_outcome,
     escalate_privileges_meta,
     escalate_privileges_options,
@@ -517,3 +520,93 @@ def test_parse_session_config_update_parses_thinking_fields() -> None:
 def test_parse_session_config_update_rejects_an_unrecognized_thinking_effort() -> None:
     with pytest.raises(acp.RequestError):
         parse_session_config_update({"sessionId": "s1", "thinking": {"effort": "extreme"}})
+
+
+def _msg(role: MessageRole, content: str = "", **kwargs: object) -> Message:
+    return Message(
+        content=content, role=role, num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 0), **kwargs)  # type: ignore[arg-type]
+
+
+class TestBuildSessionReplay:
+    def test_text_roles_become_text_entries_in_order(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([
+            _msg("user", "hi there"),
+            _msg("thinking", "pondering..."),
+            _msg("assistant", "hello!"),
+        ])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries == [
+            {"kind": "prompt", "text": "hi there", "streaming": False},
+            {"kind": "thinking", "text": "pondering...", "streaming": False},
+            {"kind": "response", "text": "hello!", "streaming": False},
+        ]
+
+    def test_system_and_tool_defs_messages_are_skipped(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([
+            _msg("system", "you are an agent"),
+            _msg("tool_defs", "[]"),
+            _msg("user", "hi"),
+        ])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries == [{"kind": "prompt", "text": "hi", "streaming": False}]
+
+    def test_successful_tool_call_pairs_with_its_response(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", tool_calls=[
+            ToolCallRequest(id="call-1", name="SampleTool", arguments='{"x": 1}')])
+        tool_response = _msg("tool_response", content="42", tool_call_id="call-1")
+        session.load_messages([tool_use, tool_response])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert len(entries) == 1
+        assert entries[0]["kind"] == "toolCall"
+        assert entries[0]["callId"] == "call-1"
+        assert entries[0]["status"] == "completed"
+        assert entries[0]["contentText"] == "42"
+
+    def test_error_envelope_response_marks_the_call_failed(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", tool_calls=[
+            ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
+        envelope = (
+            '{"is_error": true, "is_retryable": false, "error_category": "business_logic", '
+            '"error_message": "boom"}')
+        tool_response = _msg("tool_response", content=envelope, tool_call_id="call-1")
+        session.load_messages([tool_use, tool_response])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries[0]["status"] == "failed"
+        assert entries[0]["contentText"] == "boom"
+
+    def test_legacy_error_prefix_response_marks_the_call_failed(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", tool_calls=[
+            ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
+        tool_response = _msg("tool_response", content="Error: boom", tool_call_id="call-1")
+        session.load_messages([tool_use, tool_response])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries[0]["status"] == "failed"
+        assert entries[0]["contentText"] == "boom"
+
+    def test_tool_call_with_no_matching_response_has_no_content_text(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", tool_calls=[
+            ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
+        session.load_messages([tool_use])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert len(entries) == 1
+        assert entries[0]["status"] == "completed"
+        assert entries[0]["contentText"] is None

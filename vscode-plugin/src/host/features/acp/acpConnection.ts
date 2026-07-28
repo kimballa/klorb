@@ -2,7 +2,11 @@
 import { Readable, Writable } from 'stream';
 import { StringDecoder } from 'string_decoder';
 
-import type { ClientSideConnection, InitializeResponse } from '@agentclientprotocol/sdk';
+import type {
+  ClientSideConnection,
+  InitializeResponse,
+  SessionInfo as AcpSessionInfo,
+} from '@agentclientprotocol/sdk';
 
 import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerProcess';
 
@@ -102,11 +106,21 @@ export class AcpConnection {
 
   /**
    * Stops any prior child, spawns a fresh `klorb server`, and performs the ACP handshake:
-   * `initialize` (verifying protocol-version compatibility) then `session/new` for `cwd`.
-   * Rejects with a readable error if the binary doesn't complete the handshake — e.g. an
-   * older, pre-ACP klorb.
+   * `initialize` (verifying protocol-version compatibility) then either `session/load` for
+   * `resumeSessionId` (when given -- the `klorb.resumeLatestSession` setting's on-activation
+   * resume, see extension.ts) or `session/new` for `cwd` otherwise. Rejects with a readable
+   * error if the binary doesn't complete the handshake — e.g. an older, pre-ACP klorb.
+   *
+   * A failed `loadSession(cwd, resumeSessionId)` (the saved session is locked by another
+   * process, or no longer exists) falls back to `newSession(cwd)` rather than rejecting `start()`
+   * outright — per docs/specs/session-persistence.md, it's this client's job to start fresh when
+   * a resume fails, not the server's.
    */
-  public async start(options: KlorbServerOptions, cwd: string): Promise<void> {
+  public async start(
+    options: KlorbServerOptions,
+    cwd: string,
+    resumeSessionId?: string
+  ): Promise<void> {
     this.stop();
     const acp = await import('@agentclientprotocol/sdk');
     this._log(`klorb: starting "${options.command} server"`);
@@ -167,6 +181,16 @@ export class AcpConnection {
     }
     this._enqueueMessageCapable = klorbAgentCapability(initResult, 'enqueueMessage');
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
+    if (resumeSessionId !== undefined) {
+      try {
+        await this.loadSession(cwd, resumeSessionId);
+        return;
+      } catch (err) {
+        this._log(
+          `klorb: could not resume session ${resumeSessionId} (${errorMessage(err)}); starting a new one`
+        );
+      }
+    }
     await this.newSession(cwd);
   }
 
@@ -180,6 +204,39 @@ export class AcpConnection {
     this._sessionId = session.sessionId;
     this._log(`klorb: session created: ${session.sessionId}`);
     this._listener.onSessionInfo(sessionInfoFromResponse(session, this._enqueueMessageCapable));
+  }
+
+  /** Loads a previously saved session (`session/load`), replacing the current one -- see
+   * docs/specs/session-persistence.md. Rejects (rather than falling back on its own) if the
+   * server can't restore it, e.g. it's locked by another process or no longer exists; the
+   * caller decides whether to fall back to `newSession()`. On success, the server follows up
+   * with a `_klorb/sessionReplay` extension notification (handled by `KlorbAcpClient.
+   * extNotification`/`SessionUpdateListener.onSessionReplay`) carrying the restored
+   * conversation -- this method itself only updates `sessionId`/`SessionInfo`. */
+  public async loadSession(cwd: string, sessionId: string): Promise<void> {
+    const connection = this._connection;
+    if (connection === undefined) {
+      throw new Error('klorb server connection is not ready');
+    }
+    const session = await this._raceClosed(
+      connection.loadSession({ cwd, mcpServers: [], sessionId })
+    );
+    this._sessionId = sessionId;
+    this._log(`klorb: session loaded: ${sessionId}`);
+    this._listener.onSessionInfo(sessionInfoFromResponse(session, this._enqueueMessageCapable));
+  }
+
+  /** Lists this workspace's saved sessions (`session/list`), most recently touched first. */
+  public async listSessions(cwd: string): Promise<{ id: string; title: string | null }[]> {
+    const connection = this._connection;
+    if (connection === undefined) {
+      throw new Error('klorb server connection is not ready');
+    }
+    const response = await this._raceClosed(connection.unstable_listSessions({ cwd }));
+    return response.sessions.map((session: AcpSessionInfo) => ({
+      id: session.sessionId,
+      title: session.title ?? null,
+    }));
   }
 
   /** Changes the session's permission-framework mode (`session/set_mode`). The server also

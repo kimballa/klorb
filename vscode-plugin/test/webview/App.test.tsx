@@ -350,6 +350,17 @@ describe('App', () => {
     expect(screen.getByText('Fix the bug (Untrusted)')).toBeTruthy();
   });
 
+  it('posts newSession and listRecentSessions from the panel header icons', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    fireEvent.click(screen.getByTitle('New session'));
+    fireEvent.click(screen.getByTitle('Session history'));
+
+    expect(posted).toContainEqual({ type: 'newSession' });
+    expect(posted).toContainEqual({ type: 'listRecentSessions' });
+  });
+
   it('replaces the status snapshot wholesale on each statusUpdate', () => {
     const { vscode } = makeVsCode();
     render(<App vscode={vscode} initialEntries={[]} />);

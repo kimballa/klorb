@@ -6,6 +6,7 @@ import { KlorbAcpClient, type SessionUpdateListener } from 'host/features/acp';
 import type {
   PermissionAskMessage,
   QuestionAskMessage,
+  SessionReplayEntry,
   TaskListUpdateMessage,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
@@ -25,6 +26,7 @@ function makeListener(): {
   taskListUpdates: TaskListUpdateMessage[];
   messagesQueued: string[];
   queuedMessagesSent: string[];
+  sessionReplays: SessionReplayEntry[][];
 } {
   const agentText: string[] = [];
   const thoughtText: string[] = [];
@@ -38,6 +40,7 @@ function makeListener(): {
   const taskListUpdates: TaskListUpdateMessage[] = [];
   const messagesQueued: string[] = [];
   const queuedMessagesSent: string[] = [];
+  const sessionReplays: SessionReplayEntry[][] = [];
   return {
     agentText,
     thoughtText,
@@ -51,6 +54,7 @@ function makeListener(): {
     taskListUpdates,
     messagesQueued,
     queuedMessagesSent,
+    sessionReplays,
     listener: {
       onAgentText: (text: string) => agentText.push(text),
       onThoughtText: (text: string) => thoughtText.push(text),
@@ -66,6 +70,7 @@ function makeListener(): {
       onTaskListUpdate: (message: TaskListUpdateMessage) => taskListUpdates.push(message),
       onMessageQueued: (text: string) => messagesQueued.push(text),
       onQueuedMessageSent: (text: string) => queuedMessagesSent.push(text),
+      onSessionReplay: (entries: SessionReplayEntry[]) => sessionReplays.push(entries),
     },
   };
 }
@@ -321,6 +326,32 @@ describe('KlorbAcpClient', () => {
       await client.extNotification('_klorb/queuedMessageSent', { sessionId: 's1', text: 'hi' });
 
       expect(queuedMessagesSent).toEqual(['hi']);
+    });
+
+    it('dispatches _klorb/sessionReplay to onSessionReplay', async () => {
+      const { listener, sessionReplays } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+      const entries: SessionReplayEntry[] = [
+        { kind: 'prompt', text: 'hi', streaming: false },
+        { kind: 'response', text: 'hello', streaming: false },
+      ];
+
+      await client.extNotification('_klorb/sessionReplay', { sessionId: 's1', entries });
+
+      expect(sessionReplays).toEqual([entries]);
+    });
+
+    it('logs and ignores malformed _klorb/sessionReplay params', async () => {
+      const logs: string[] = [];
+      const { listener, sessionReplays } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, (msg: string) => logs.push(msg));
+
+      await client.extNotification('_klorb/sessionReplay', { sessionId: 's1', entries: 'nope' });
+
+      expect(sessionReplays).toEqual([]);
+      expect(logs).toEqual([
+        'klorb: malformed _klorb/sessionReplay params: {"sessionId":"s1","entries":"nope"}',
+      ]);
     });
 
     it('logs and ignores malformed _klorb/messageQueued params', async () => {

@@ -47,6 +47,7 @@ from klorb.tui.widgets.tool_call_widgets import (
 )
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager
+from klorb.workspace.session_store import RecentSession
 
 
 class ReplAppBase(App[None]):
@@ -112,6 +113,13 @@ class ReplAppBase(App[None]):
     def _submit_prompt(self, prompt_text: str) -> None: ...
 
     def _mount_restored_history(self, messages: list[ChatMessage]) -> None: ...
+
+    def _adopt_restored_session(self, restored: Session) -> None: ...
+
+    def list_recent_sessions(self) -> list[RecentSession]:
+        raise NotImplementedError
+
+    def load_recent_session(self, entry: RecentSession) -> None: ...
 
     def show_notice(self, message: str, *, error: bool = False) -> None: ...
 

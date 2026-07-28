@@ -22,5 +22,6 @@ PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "d
 NEW_SESSION_LABEL = "New session..."
 """Text shown on the `SESSION_NAME_ID` status line before the first-turn session-naming
 classifier call (`klorb.session_naming`) has resolved for the active `Session` -- the initial
-`compose()` value, and what `clear_session()`/`_maybe_restore_last_session()` reset the line
-back to whenever they replace the active `Session` with a fresh one."""
+`compose()` value, and what `clear_session()`/`load_recent_session()` reset the line back to
+whenever they replace the active `Session` with a fresh one (a restored session with an
+already-resolved title sets the line to its title instead -- see `_adopt_restored_session`)."""

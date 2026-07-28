@@ -9,6 +9,11 @@ single owner of the file's I/O; the caller (`klorb.cli.main()`, or a test) is re
 constructing one `TrustManager` per process and threading it to every place that needs it
 (`klorb.process_config.load_process_config`, `klorb.tui.ReplApp`) rather than this module
 reaching for a module-level global — see docs/adrs/thread-trustmanager-explicitly-not-a-global-singleton.md.
+
+`register_project`/`set_trusted` each guard their own load-mutate-save sequence with
+`workspaces.lock` (`TrustManager._workspaces_lock_path()`, `klorb.lockfile.
+acquire_lockfile_with_backoff`), closing the race two *separate klorb processes* (not just two
+`TrustManager` instances in the same process) could otherwise hit writing `projects.json` at once.
 """
 
 import logging
@@ -17,6 +22,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from klorb.lockfile import acquire_lockfile_with_backoff
 from klorb.paths import KLORB_DATA_DIR
 from klorb.permissions.directory_access import find_workspace_root
 from klorb.schema_envelope import read_versioned_json, write_versioned_json
@@ -28,6 +34,7 @@ logger = logging.getLogger(__name__)
 PROJECTS_SCHEMA_NAME = "klorb-projects"
 PROJECTS_SCHEMA_VERSION = "1.0.0"
 PROJECTS_FILENAME = "projects.json"
+WORKSPACES_LOCK_FILENAME = "workspaces.lock"
 
 _PROJECTS_KEY = "projects"
 
@@ -63,6 +70,15 @@ class TrustManager:
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path if path is not None else projects_path()
+
+    def _workspaces_lock_path(self) -> Path:
+        """Where `workspaces.lock` lives for this `TrustManager`: alongside `self._path` (its
+        own `projects.json`), not a fixed `$KLORB_DATA_DIR` location -- so a `TrustManager`
+        constructed with an overridden `path` (every test in this module) locks next to the
+        file it's actually writing, not the developer's real `$KLORB_DATA_DIR`. In production
+        `self._path` is always `projects_path()`, so this resolves to
+        `$KLORB_DATA_DIR/workspaces.lock` exactly as it would with a fixed location."""
+        return self._path.parent / WORKSPACES_LOCK_FILENAME
 
     def _load(self) -> list[ProjectRecord]:
         raw = read_versioned_json(self._path, expected_schema_name=PROJECTS_SCHEMA_NAME)
@@ -127,9 +143,18 @@ class TrustManager:
         """
         canonical_path = path.resolve(strict=False)
         record = ProjectRecord(id=str(uuid.uuid4()), path=canonical_path, trusted=trusted)
-        records = self._load()
-        records.append(record)
-        self._save(records)
+        lock = acquire_lockfile_with_backoff(self._workspaces_lock_path())
+        if lock is None:
+            logger.warning(
+                "Could not acquire workspaces.lock; registering project %s unlocked.",
+                canonical_path)
+        try:
+            records = self._load()
+            records.append(record)
+            self._save(records)
+        finally:
+            if lock is not None:
+                lock.release()
         return Workspace(id=record.id, path=record.path, is_project=True, trusted=trusted)
 
     def set_trusted(self, project_id: str, trusted: bool) -> None:
@@ -138,10 +163,19 @@ class TrustManager:
         `Workspace.id` they already obtained from this same `TrustManager`, so a missing id
         would mean `projects.json` was modified or replaced out from under this process.
         """
-        records = self._load()
-        for index, record in enumerate(records):
-            if record.id == project_id:
-                records[index] = record.model_copy(update={"trusted": trusted})
-                self._save(records)
-                return
-        raise KeyError(f"No project record with id {project_id!r} in {self._path}")
+        lock = acquire_lockfile_with_backoff(self._workspaces_lock_path())
+        if lock is None:
+            logger.warning(
+                "Could not acquire workspaces.lock; updating trust for project %s unlocked.",
+                project_id)
+        try:
+            records = self._load()
+            for index, record in enumerate(records):
+                if record.id == project_id:
+                    records[index] = record.model_copy(update={"trusted": trusted})
+                    self._save(records)
+                    return
+            raise KeyError(f"No project record with id {project_id!r} in {self._path}")
+        finally:
+            if lock is not None:
+                lock.release()

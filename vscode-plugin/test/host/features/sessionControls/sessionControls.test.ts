@@ -38,6 +38,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onTaskListUpdate: () => undefined,
     onMessageQueued: () => undefined,
     onQueuedMessageSent: () => undefined,
+    onSessionReplay: () => undefined,
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   const sessionControls = new SessionControls(

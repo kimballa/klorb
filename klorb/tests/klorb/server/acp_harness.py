@@ -170,5 +170,9 @@ async def build_acp_harness(
         trust_manager=trust_manager)
     server_task = asyncio.create_task(server.run())
     harness_client = HarnessClient()
-    client = acp.connect_to_agent(harness_client, client_writer, client_reader)
+    # `use_unstable_protocol=True`: matches `AcpServer.run()`'s own flag (see its docstring) --
+    # `session/list` is still marked unstable in the ACP SDK's router, gated independently on
+    # each side of the connection.
+    client = acp.connect_to_agent(
+        harness_client, client_writer, client_reader, use_unstable_protocol=True)
     return AcpHarness(client, harness_client, server, server_task, client_writer)

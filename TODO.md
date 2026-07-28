@@ -176,6 +176,17 @@
   increment): either configure/quiet the `acp` package's loggers, or confirm there's a cleaner
   SDK-sanctioned way to avoid it.
 
+### Plan 017: Multiple sessions per workspace
+
+* Surface a "delete this saved session" action (TUI palette command and/or VS Code quickpick
+  item) rather than relying solely on `MAX_RECENT_SESSIONS` pruning to reclaim space.
+* Show a relative recency timestamp ("2 hours ago") in the Load Session picker -- today's design
+  deliberately has no timestamp field on `RecentSession`, only list order; adding one is a
+  backwards-compatible schema bump if wanted later.
+* `docs/specs/klorb-server.md`'s `fork_session`/`resume_session` stubs are unaffected by this
+  plan; a future plan could build genuine session forking on top of this same `sessions/`
+  directory layout.
+
 ## TUI
 
 ### Bugs

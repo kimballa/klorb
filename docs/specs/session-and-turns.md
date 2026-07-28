@@ -309,19 +309,24 @@ config) has one place to live.
   whenever `id`/`root_id` hadn't already diverged (see [[chainlink-task-tracking]] for why
   `root_id`, not `id`, is what `get_chainlink_label()` returns — a renamed `id` with a
   stale `root_id` would otherwise leave every chainlink issue created in the session labeled
-  with its original random nonce forever). `Session.name` is also set to the derived title.
+  with its original random nonce forever). `Session.name` is also set to the derived title. On
+  failure, `id` is left alone (there's no `SessionName.slug` to rename it with), but `name` is
+  still set — to `klorb.session_naming.fallback_session_title(prompt_text)`, a plain word/
+  character-capped truncation of the prompt (up to `MAX_FALLBACK_TITLE_WORDS` words or
+  `MAX_FALLBACK_TITLE_CHARS` characters, whichever comes first, followed by `"..."`) — so a
+  session always ends up with *some* human-readable title, classifier-derived or not.
 * `send_turn()` invokes `TurnEventHandlers.on_session_name_changed`, if given, exactly once —
   with the derived `SessionName` on success, or `None` on failure — right after applying (or
   failing to apply) the rename, so a caller can react. The TUI's reaction
   (`PromptSubmissionMixin._handle_session_name_changed`) renames the session's already-open log
   file to match on success, when session logging is enabled (see [[paths-and-logging]]), and
   updates the `SESSION_NAME_ID` status line (`"Session: <title>"`, between the prompt input and
-  the footer) to the derived title; on failure it shows the session's own random nonce
-  (`session_id_suffix(session.id)`) as its "title" instead, so the line always reflects the
-  actual session id rather than getting stuck on a generic placeholder. A headless one-shot
-  invocation passes no `on_session_name_changed`, so its `Session` still gets renamed but
-  nothing reacts to it, and its session log file (if any) keeps its original name — log-file
-  management is TUI-only regardless of naming (see [[paths-and-logging]]).
+  the footer) to the derived title; on failure the line is set to `Session.name` regardless
+  (already set to the fallback title by `_run_session_naming` above), so it always shows a
+  real title rather than the session's raw id. A headless one-shot invocation passes no
+  `on_session_name_changed`, so its `Session` still gets named but nothing reacts to it, and its
+  session log file (if any) keeps its original name — log-file management is TUI-only
+  regardless of naming (see [[paths-and-logging]]).
 * Naming is attempted at most once per `Session` instance, tracked by `Session.
   session_naming_pending` (a read-only view of `_session_naming_pending`, seeded `False` when a
   `session_name` was already supplied to the constructor — a restored, already-named session —
@@ -329,13 +334,16 @@ config) has one place to live.
   before it even knows whether naming will succeed) — so a failed/timed-out attempt is never
   retried on a later turn within the same `Session`, and a fresh `Session` (a new session, or
   `/clear`) always starts with naming pending again since it's constructed without a
-  `session_name`. Restoring the last saved session (see [[session-persistence]]) passes the
+  `session_name`. Restoring a saved session (see docs/specs/session-persistence.md) passes the
   saved `Session.name` straight into the constructor, carrying it forward instead of
   re-triggering the classifier; the TUI's status line is set to match right after construction:
   `"Session: <title>"` when the save file has one, or `"New session..."` when it doesn't (an
   older save file predating `Session.name`, or a session whose first-prompt naming never
   completed) — in the latter case `session_naming_pending` is `True`, so the classifier still
-  runs on the next prompt submitted to the restored session.
+  runs on the next prompt submitted to the restored session. A session's directory under
+  `sessions/` (see docs/specs/session-persistence.md) is never claimed before this naming step
+  has resolved one way or the other, so a session's on-disk `subdir` is always keyed off its
+  final, post-naming `id`.
 * `classifier.model` / `classifier.timeout` / `classifier.e2eTimeout` (`PROCESS_KEY_MAP`, top
   level — see [[process-and-session-config]]) configure
   `ProcessConfig.session_classifier_model`/`_timeout_seconds`/`_e2e_timeout_seconds`, defaulting

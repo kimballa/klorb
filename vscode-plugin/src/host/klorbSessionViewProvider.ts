@@ -15,6 +15,7 @@ import {
   type HostMessage,
   type PermissionAskMessage,
   type QuestionAskMessage,
+  type SessionReplayEntry,
   type TaskListUpdateMessage,
   type ToolCallStartedMessage,
   type ToolCallUpdatedMessage,
@@ -142,6 +143,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this.postHostMessage({ type: 'queuedMessageSent', text });
   }
 
+  public onSessionReplay(entries: SessionReplayEntry[]): void {
+    this.postHostMessage({ type: 'sessionReplay', entries });
+  }
+
   /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
   public postHostMessage(message: HostMessage): void {
     void this._view?.webview.postMessage(message);
@@ -234,6 +239,9 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
         break;
       case 'newSession':
         await vscode.commands.executeCommand('klorb.newSession');
+        break;
+      case 'listRecentSessions':
+        await vscode.commands.executeCommand('klorb.browseSessions');
         break;
       case 'reloadSkills':
         await vscode.commands.executeCommand('klorb.reloadSkills');

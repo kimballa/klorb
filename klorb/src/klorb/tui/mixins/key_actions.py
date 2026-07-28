@@ -4,7 +4,7 @@
 import time
 from typing import NoReturn
 
-from textual import events, work
+from textual import events
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widget import Widget
@@ -17,12 +17,10 @@ from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID, TASK_SIDEBAR_ID
 from klorb.tui.formatting import random_greeting
-from klorb.tui.panels.confirm_screen import SaveOnQuitScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 from klorb.watchdog import force_exit
-from klorb.workspace.last_session import clear_last_session, write_last_session
 
 CONFIG_MISSING_MESSAGE = (
     f"Klorb configuration file not found. Run `{PALETTE_PREFIX}{INIT_CONFIG_LABEL}` to set up.")
@@ -224,52 +222,17 @@ class KeyActionsMixin(ReplAppBase):
         self._note_ctrl_c_quit_warning()
 
     async def action_quit(self) -> None:
-        """Ctrl+Q (and the built-in "Quit the application" system command): ask whether to
-        save the session state, then exit — see `_quit_after_maybe_saving`.
+        """Ctrl+Q (and the built-in "Quit the application" system command): close the live
+        session and exit. No confirmation prompt — session state is always persisted on quit,
+        unconditionally, via `Session.close()` (which writes a final `session.json` and
+        releases `session.lock` before tearing down any other live per-session resources; a
+        no-op if this session never claimed a directory, e.g. an untrusted workspace) — see
+        docs/specs/session-persistence.md.
 
         Overrides `App.action_quit` (which just calls `self.exit()`) keeping its exact
-        signature (`async def action_quit(self) -> None`) so it stays a valid override;
-        the actual work happens in `_quit_after_maybe_saving`, a `@work()` worker, because
-        awaiting a modal's dismissal (`push_screen_wait`) is only allowed from within an
-        active worker's context. Calling (not awaiting) a `@work()`-decorated method starts
-        the worker and returns immediately, same as `trust_workspace`.
+        signature (`async def action_quit(self) -> None`) so it stays a valid override.
         """
-        self._quit_after_maybe_saving()
-
-    @work()
-    async def _quit_after_maybe_saving(self) -> None:
-        """If the current workspace is trusted and this app has a `TrustManager` (see
-        `workspace_trust_management_enabled`), ask whether to save the session state before
-        quitting via `SaveOnQuitScreen`; "Yes" writes the live `Session`'s config and message
-        history to `last-session.json` (`klorb.workspace.last_session.write_last_session`) so
-        `_maybe_restore_last_session` can pick it back up the next time klorb opens this
-        workspace, "No" quits without saving, and "Cancel" (or Escape) aborts the quit entirely —
-        this method returns without calling `_begin_exit()`, leaving the session running exactly
-        as before. A no-op prompt (skipping straight to `self.exit()`, with nothing to cancel out
-        of) when there's no `TrustManager` or the workspace isn't trusted, since an unresolved or
-        untrusted workspace has no business writing into its per-project data directory, or
-        there's no message history to save.
-        """
-        has_messages = len(self._session.messages) > 0
-        save = False
-        if self._trust_manager is not None and self._session.config.workspace.trusted and has_messages:
-            choice = await self.push_screen_wait(
-                SaveOnQuitScreen("Save session state before quitting?"))
-            if choice == "cancel":
-                return
-            save = choice == "save"
-
-        if save:
-            write_last_session(
-                self._session.config.workspace, self._session.config, self._session.messages,
-                statistics=self._session.statistics,
-                session_id=self._session.id,
-                root_id=self._session.root_id,
-                session_name=self._session.name,
-                cur_chainlink_task_id=self._session.cur_chainlink_task_id)
-        else:
-            clear_last_session(self._session.config.workspace)
-            self._session.close()
+        self._session.close()
         self._begin_exit()
 
     def _begin_exit(self) -> None:
@@ -436,13 +399,12 @@ class KeyActionsMixin(ReplAppBase):
         try:
             workspace = self._session.config.workspace
             if self._trust_manager is not None and workspace.trusted and self._session.messages:
-                write_last_session(
-                    workspace, self._session.config, self._session.messages,
-                    statistics=self._session.statistics,
-                    session_id=self._session.id,
-                    root_id=self._session.root_id,
-                    session_name=self._session.name,
-                    cur_chainlink_task_id=self._session.cur_chainlink_task_id)
+                # `persist_state()`, not `close()`: the process is force-exiting via `os._exit`
+                # right after this, so `session.lock` is deliberately left held -- the OS
+                # reclaims it when this process's file descriptors close regardless, but
+                # releasing it explicitly here would let a concurrently-running process mistake
+                # a wedged-but-not-yet-reaped session for a cleanly closed one.
+                self._session.persist_state()
         except Exception:
             pass
 

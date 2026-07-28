@@ -25,6 +25,9 @@ from acp.schema import (
     McpServerStdio,
     ResourceContentBlock,
     ResumeSessionResponse,
+    SessionCapabilities,
+    SessionInfo,
+    SessionListCapabilities,
     SetSessionModelResponse,
     SetSessionModeResponse,
     SseMcpServer,
@@ -37,14 +40,21 @@ from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config
 from klorb.server.turn_bridge import TurnBridge
-from klorb.server.update_mapping import parse_session_config_update, session_config_json, session_mode_state
+from klorb.server.update_mapping import (
+    build_session_replay,
+    parse_session_config_update,
+    session_config_json,
+    session_mode_state,
+)
 from klorb.session import Session
 from klorb.session.constants import PermissionFramework
 from klorb.session.events import QueuedMessage
+from klorb.session.restore import try_restore_session
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
 from klorb.workspace import TrustManager, Workspace
+from klorb.workspace.session_store import read_sessions_index
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +68,12 @@ _McpServerSpec = HttpMcpServer | SseMcpServer | McpServerStdio
 class KlorbAcpAgent(acp.Agent):
     """Implements the ACP `Agent` protocol on top of a single live `Session`.
 
-    Owns at most one `Session` at a time: `new_session()` tears down (`Session.close()`) and
-    replaces any prior one, the same `/clear` semantics the interactive TUI already has -- see
-    docs/specs/klorb-server.md's "Single top-level session" section. The `ApiProvider`/
-    `ModelRegistry` outlive any one `Session` and are reused across every replacement, mirroring
-    how [[terminal-repl]]'s `/clear` reuses `Session.provider`/`Session.model_registry`.
+    Owns at most one `Session` at a time: `new_session()`/`load_session()` each tear down
+    (`Session.close()`) and replace any prior one, the same `/clear` semantics the interactive
+    TUI already has -- see docs/specs/klorb-server.md's "Single top-level session" section. The
+    `ApiProvider`/`ModelRegistry` outlive any one `Session` and are reused across every
+    replacement, mirroring how [[terminal-repl]]'s `/clear` reuses `Session.provider`/`Session.
+    model_registry`.
 
     The ACP `sessionId` handed back to the client from `new_session()` is snapshotted into
     `self._acp_session_id` and never re-read from the live `Session.id` afterward: `Session.id`
@@ -123,14 +134,17 @@ class KlorbAcpAgent(acp.Agent):
         self._client_capabilities = client_capabilities
         return acp.InitializeResponse(
             protocol_version=acp.PROTOCOL_VERSION,
-            agent_capabilities=AgentCapabilities(field_meta={"klorb": {
-                "sessionConfig": True,
-                "sessionStats": True,
-                "trustWorkspace": True,
-                "reloadSkills": True,
-                "enqueueMessage": True,
-                "taskMeta": chainlink_available(),
-            }}),
+            agent_capabilities=AgentCapabilities(
+                load_session=True,
+                session_capabilities=SessionCapabilities(list=SessionListCapabilities()),
+                field_meta={"klorb": {
+                    "sessionConfig": True,
+                    "sessionStats": True,
+                    "trustWorkspace": True,
+                    "reloadSkills": True,
+                    "enqueueMessage": True,
+                    "taskMeta": chainlink_available(),
+                }}),
         )
 
     def _client_supports(self, flag: str) -> bool:
@@ -198,20 +212,28 @@ class KlorbAcpAgent(acp.Agent):
     async def prompt(
         self, prompt: list[_PromptContentBlock], session_id: str, **kwargs: Any,
     ) -> acp.PromptResponse:
+        """Dispatch one turn, then persist the session's resulting state (`Session.
+        persist_state()` -- a no-op for an untrusted workspace, or if the session never
+        successfully claimed a directory) whether the turn finished normally or was cancelled,
+        so a saved session stays current without requiring an explicit save request. See
+        docs/specs/session-persistence.md."""
         self._validate_session(session_id)
         if self._turn_in_flight:
             raise acp.RequestError(-32000, "A prompt is already in progress for this session")
         prompt_text = _extract_prompt_text(prompt)
         assert self._turn_bridge is not None
+        assert self._session is not None
         self._turn_in_flight = True
         logger.debug("session/prompt dispatching turn for ACP session %s", session_id)
         try:
             await self._turn_bridge.run_turn(prompt_text)
         except ResponseAborted:
             logger.debug("session/prompt turn cancelled for ACP session %s", session_id)
+            self._session.persist_state()
             return acp.PromptResponse(stop_reason="cancelled")
         finally:
             self._turn_in_flight = False
+        self._session.persist_state()
         return acp.PromptResponse(stop_reason="end_turn")
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
@@ -373,26 +395,85 @@ class KlorbAcpAgent(acp.Agent):
             trusted_workspace.path, self._acp_session_id)
         return {"workspace": {"path": str(trusted_workspace.path), "trusted": trusted_workspace.trusted}}
 
+    async def load_session(
+        self, cwd: str, mcp_servers: list[_McpServerSpec], session_id: str, **kwargs: Any,
+    ) -> LoadSessionResponse | None:
+        """Replace the live session (if any) with the one recorded under `session_id` in
+        `cwd`'s workspace `sessions.json`, mirroring `new_session()`'s "replace, don't add"
+        semantics and reply shape. Raises `invalid_params` -- rather than restoring nothing and
+        silently starting fresh -- if `session_id` isn't in the index at all, or its
+        `sessions/<subdir>/` directory is currently locked by another live process or its
+        `session.json` is missing/corrupt (`try_restore_session` returns `None`): per this
+        method's design, it's the *client*'s job to fall back to `session/new` on a failed load,
+        not this server's (see docs/plans/ready/plan-017-multiple-sessions-per-workspace.md's
+        "ACP server changes" section). `mcp_servers` is accepted but never acted on, same as
+        `new_session`."""
+        workspace = self._trust_manager.resolve_workspace(Path(cwd))
+        index = read_sessions_index(workspace)
+        entry = next(
+            (candidate for candidate in index.recent_sessions if candidate.session_id == session_id),
+            None)
+        if entry is None:
+            raise acp.RequestError.invalid_params(
+                {"sessionId": session_id, "reason": "unknown session"})
+        restored = try_restore_session(
+            workspace, entry, provider=self._provider, model_registry=self._model_registry,
+            process_config=self._process_config)
+        if restored is None:
+            raise acp.RequestError.invalid_params(
+                {"sessionId": session_id, "reason": "session is locked or no longer exists"})
+        if self._session is not None:
+            logger.debug("session/load replacing live ACP session %s", self._acp_session_id)
+            self._session.close()
+        self._session = restored
+        self._acp_session_id = restored.id
+        self._turn_bridge = TurnBridge(
+            restored, self._require_client(), self._acp_session_id, self._process_config,
+            raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),
+            ask_user_questions_capable=self._client_supports("askUserQuestions"))
+        logger.debug(
+            "session/load restored ACP session %s (was saved as %s) for cwd=%s",
+            self._acp_session_id, session_id, cwd)
+        entries = build_session_replay(restored, restored.tool_registry, workspace.path)
+        await self._require_client().ext_notification(
+            "klorb/sessionReplay", {"sessionId": self._acp_session_id, "entries": entries})
+        return LoadSessionResponse(
+            modes=session_mode_state(restored.config.permission_framework),
+            field_meta={"klorb": {
+                "workspace": {"path": str(workspace.path), "trusted": workspace.trusted},
+                "title": restored.name,
+            }},
+        )
+
+    async def list_sessions(
+        self, cursor: str | None = None, cwd: str | None = None, **kwargs: Any,
+    ) -> ListSessionsResponse:
+        """Return `cwd`'s workspace's saved sessions (`sessions.json`), most-recently-touched
+        first. `cursor` is accepted but always ignored -- and `next_cursor` always omitted --
+        since the list is small by construction
+        (`klorb.workspace.session_store.MAX_RECENT_SESSIONS`), so everything is returned in one
+        page. Raises `invalid_params` if `cwd` is omitted: unlike `new_session`/`load_session`,
+        ACP allows a client to omit it, but klorb has no process-wide "current workspace" to
+        fall back to outside of one already-live session."""
+        if cwd is None:
+            raise acp.RequestError.invalid_params({"reason": "cwd is required"})
+        workspace = self._trust_manager.resolve_workspace(Path(cwd))
+        index = read_sessions_index(workspace)
+        sessions = [
+            SessionInfo(cwd=str(workspace.path), session_id=entry.session_id, title=entry.title)
+            for entry in index.recent_sessions
+        ]
+        return ListSessionsResponse(sessions=sessions)
+
     # -- Protocol surface not implemented at this checkpoint --
     #
     # `acp.Agent` is a `Protocol`; explicitly subclassing one (as `KlorbAcpAgent` does, for a
     # concrete, type-checked implementation) requires overriding every member, so mypy treats
     # each unimplemented one as abstract. None of these are ever dispatched by a compliant
-    # client: `initialize()` never advertises `loadSession`/auth methods/model selection
-    # (`session/set_model` stays unimplemented -- see `session_config_json`'s docstring for why
-    # model selection rides `_klorb/setSessionConfig` instead)/fork/resume -- rejecting
-    # explicitly here, rather than an inherited no-op returning `None`, is what a client would
-    # see if it tried anyway.
-
-    async def load_session(
-        self, cwd: str, mcp_servers: list[_McpServerSpec], session_id: str, **kwargs: Any,
-    ) -> LoadSessionResponse | None:
-        raise acp.RequestError.method_not_found("session/load")
-
-    async def list_sessions(
-        self, cursor: str | None = None, cwd: str | None = None, **kwargs: Any,
-    ) -> ListSessionsResponse:
-        raise acp.RequestError.method_not_found("session/list")
+    # client: `initialize()` never advertises auth methods/model selection (`session/set_model`
+    # stays unimplemented -- see `session_config_json`'s docstring for why model selection rides
+    # `_klorb/setSessionConfig` instead)/fork/resume -- rejecting explicitly here, rather than an
+    # inherited no-op returning `None`, is what a client would see if it tried anyway.
 
     async def set_session_model(
         self, model_id: str, session_id: str, **kwargs: Any,

@@ -47,6 +47,10 @@
         "title": "Klorb: New Session"
       },
       {
+        "command": "klorb.browseSessions",
+        "title": "Klorb: Browse Recent Sessions"
+      },
+      {
         "command": "klorb.restartServer",
         "title": "Klorb: Restart Server"
       },
@@ -99,6 +103,11 @@
           "type": "string",
           "default": "",
           "description": "Path to an additional klorb-config.json file, passed to `klorb server` as `--config` when non-empty."
+        },
+        "klorb.resumeLatestSession": {
+          "type": "boolean",
+          "default": true,
+          "description": "When opening the Klorb panel, resume the most recently used session for this workspace instead of always starting a new one."
         }
       }
     }

@@ -18,8 +18,10 @@ from server.acp_harness import AcpHarness, build_acp_harness
 from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
 from klorb.message import Message
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.tools.tasks.common import chainlink_available
 from klorb.workspace import TrustManager
+from klorb.workspace.session_store import touch_recent_session, write_session_state
 
 
 def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int = 10) -> ProviderResponse:
@@ -64,6 +66,9 @@ async def test_initialize_echoes_protocol_version_and_klorb_meta(
         "sessionConfig": True, "sessionStats": True, "trustWorkspace": True, "reloadSkills": True,
         "enqueueMessage": True, "taskMeta": chainlink_available(),
     }}
+    assert response.agent_capabilities.load_session is True
+    assert response.agent_capabilities.session_capabilities is not None
+    assert response.agent_capabilities.session_capabilities.list is not None
 
 
 async def test_new_session_returns_the_live_sessions_id(
@@ -93,6 +98,108 @@ async def test_second_new_session_closes_the_first_and_returns_a_different_id(
     first_session.close.assert_called_once()
     assert second_response.session_id != first_response.session_id
     assert harness.server.agent.session is not first_session
+
+
+async def test_list_sessions_returns_saved_sessions_for_workspace(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [])
+    touch_recent_session(workspace, "sess-1", "sess-1", "Saved session")
+
+    harness = await make_harness(provider=MagicMock())
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+
+    response = await harness.client.list_sessions(cwd=str(tmp_path))
+
+    assert len(response.sessions) == 1
+    assert response.sessions[0].session_id == "sess-1"
+    assert response.sessions[0].title == "Saved session"
+
+
+async def test_list_sessions_raises_when_cwd_is_omitted(
+    make_harness: Callable[..., Any],
+) -> None:
+    harness = await make_harness(provider=MagicMock())
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+
+    with pytest.raises(acp.RequestError):
+        await harness.client.list_sessions()
+
+
+async def test_load_session_replaces_the_live_session_and_restores_messages(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    saved_message = Message(
+        content="hi", role="user", num_tokens=1, processing_state="complete",
+        timestamp=datetime.now())
+    write_session_state(
+        workspace, "sess-1", SessionConfig(model="restored/model", workspace=workspace),
+        [saved_message], session_id="sess-1", session_name="Restored")
+    touch_recent_session(workspace, "sess-1", "sess-1", "Restored")
+
+    harness = await make_harness(provider=MagicMock())
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+    await harness.client.new_session(cwd=str(tmp_path), mcp_servers=[])
+    live_before = harness.server.agent.session
+    assert live_before is not None
+
+    response = await harness.client.load_session(
+        cwd=str(tmp_path), mcp_servers=[], session_id="sess-1")
+
+    assert response is not None
+    restored_session = harness.server.agent.session
+    assert restored_session is not None
+    assert restored_session is not live_before
+    assert restored_session.id == "sess-1"
+    assert restored_session.config.model == "restored/model"
+    assert [m.content for m in restored_session.messages] == ["hi"]
+
+    replay_calls = [
+        call for call in harness.harness_client.ext_notification_calls
+        if call[0] == "klorb/sessionReplay"]
+    assert len(replay_calls) == 1
+    _, replay_params = replay_calls[0]
+    assert replay_params["sessionId"] == "sess-1"
+    assert replay_params["entries"] == [{"kind": "prompt", "text": "hi", "streaming": False}]
+
+
+async def test_load_session_raises_for_unknown_session_id(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    trust_manager.register_project(tmp_path, trusted=True)
+    harness = await make_harness(provider=MagicMock())
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+
+    with pytest.raises(acp.RequestError):
+        await harness.client.load_session(cwd=str(tmp_path), mcp_servers=[], session_id="nope")
+
+
+async def test_load_session_raises_when_the_session_is_locked(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    from klorb.lockfile import create_lockfile
+    from klorb.workspace.session_store import session_lock_path
+
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [])
+    touch_recent_session(workspace, "sess-1", "sess-1", "Locked session")
+    lock = create_lockfile(session_lock_path(workspace, "sess-1"))
+    assert lock.try_acquire()
+    try:
+        harness = await make_harness(provider=MagicMock())
+        await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+
+        with pytest.raises(acp.RequestError):
+            await harness.client.load_session(
+                cwd=str(tmp_path), mcp_servers=[], session_id="sess-1")
+    finally:
+        lock.release()
 
 
 async def test_prompt_streams_thinking_then_message_chunks_in_order(

@@ -41,6 +41,7 @@ from klorb.session.events import (
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.core import SessionCoreMixin
 from klorb.session.mixins.permissions import SessionPermissionsMixin
+from klorb.session.mixins.persistence import SessionPersistenceMixin
 from klorb.session.mixins.prompt_setup import SessionPromptSetupMixin
 from klorb.session.mixins.skills import SessionSkillsMixin
 from klorb.session.mixins.tool_execution import SessionToolExecutionMixin
@@ -49,6 +50,7 @@ from klorb.session.mixins.turns import SessionTurnsMixin
 
 class Session(
     SessionCoreMixin,
+    SessionPersistenceMixin,
     SessionPromptSetupMixin,
     SessionSkillsMixin,
     SessionPermissionsMixin,

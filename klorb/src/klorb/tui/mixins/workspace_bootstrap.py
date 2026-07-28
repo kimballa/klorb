@@ -11,6 +11,7 @@ from textual.widgets import Static
 from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config, project_config_path
 from klorb.session import Session
+from klorb.session.restore import try_restore_session
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui._base import ReplAppBase
@@ -21,7 +22,7 @@ from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.workspace import Workspace
 from klorb.workspace.input_history import project_history_path
-from klorb.workspace.last_session import read_last_session
+from klorb.workspace.session_store import RecentSession, read_sessions_index
 from klorb.workspace.workspace_init import (
     write_initial_project_config,
     write_session_defaults_to_project_config,
@@ -31,9 +32,55 @@ logger = logging.getLogger(__name__)
 
 
 class WorkspaceBootstrapMixin(ReplAppBase):
-    """Workspace trust resolution/bootstrapping, last-session restore, and the
+    """Workspace trust resolution/bootstrapping, saved-session restore/load, and the
     "Trust workspace" palette command flow -- see `ReplApp` for how this mixes into the
     concrete app class."""
+
+    def list_recent_sessions(self) -> list[RecentSession]:
+        """Return the live workspace's saved sessions, most recently touched first -- backs the
+        "Load session" palette command (`klorb.tui.commands.session_commands.
+        SessionCommandProvider`). `[]` when this app has no `TrustManager` at all (every saved
+        session lives under a trust-managed workspace's data directory)."""
+        if self._trust_manager is None:
+            return []
+        return read_sessions_index(self._session.config.workspace).recent_sessions
+
+    def load_recent_session(self, entry: RecentSession) -> None:
+        """Replace the active session with the one recorded by `entry` -- the "Load session"
+        picker's selection handler. A no-op if `entry` is already the live session. Closes the
+        outgoing session first (persisting and releasing its own lock, same as `clear_session`),
+        then attempts to lock and rebuild `entry`'s saved state (`try_restore_session`); if that
+        fails (locked by another process, or its `session.json` is missing/corrupt by the time
+        the user picked it), reports why via `show_notice` and leaves the outgoing session
+        closed with a fresh, blank one in its place -- mirroring how a fresh `Session` is what
+        `ReplApp.__init__` would have built anyway had no saved session existed at all.
+        """
+        if entry.session_id == self._session.id:
+            return
+        workspace = self._session.config.workspace
+        provider = self._session.provider
+        model_registry = self._session.model_registry
+        self._session.close()
+        restored = try_restore_session(
+            workspace, entry, provider=provider, model_registry=model_registry,
+            process_config=self._process_config)
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.remove_children()
+        if restored is None:
+            new_config = self._process_config.session.model_copy(update={"workspace": workspace})
+            self._session = Session(
+                new_config, provider=provider, model_registry=model_registry,
+                process_config=self._process_config,
+                tool_registry=ToolRegistry.discover_tools(self._process_config, new_config))
+            self.show_notice(
+                f"Could not load session {entry.title or entry.session_id!r}: it is locked by "
+                "another process or no longer available. Started a new session instead.",
+                error=True)
+            self._update_status_bar()
+            session_name_widget = self.query_one(f"#{SESSION_NAME_ID}", Static)
+            session_name_widget.update(NEW_SESSION_LABEL)
+            return
+        self._adopt_restored_session(restored)
 
     @work()
     async def _run_startup_workspace_and_initial_message(self) -> None:
@@ -80,47 +127,53 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.set_history_store(project_history_path(workspace))
         if workspace.trusted:
-            self._maybe_restore_last_session(workspace)
+            self._maybe_restore_latest_session(workspace)
 
-    def _maybe_restore_last_session(self, workspace: Workspace) -> None:
-        """If a previous interactive session in `workspace` saved its state (see
-        `_quit_after_maybe_saving`), replace the freshly-constructed `Session` with one built
-        from that saved `SessionConfig` and message history, and re-render the history scroll
-        to match — so a trusted workspace picks its conversation back up where the last klorb
-        process left off, instead of starting blank. A no-op if no `last-session.json` exists
-        for `workspace` yet (`read_last_session` returns `None`).
+    def _maybe_restore_latest_session(self, workspace: Workspace) -> None:
+        """If `workspace`'s `sessions.json` has a most-recently-touched entry, and it isn't
+        currently locked by another live process, replace the freshly-constructed `Session`
+        with one built from that saved state, and re-render the history scroll to match — so a
+        trusted workspace picks its conversation back up where the last klorb process left off,
+        instead of starting blank. A no-op if `sessions.json` has no entries yet, or its top
+        entry is locked or its `session.json` is missing/corrupt (`try_restore_session` returns
+        `None`) — the same "start blank instead" fallback the "Load session" picker
+        (`klorb.tui.commands.session_commands.LoadSessionScreen`) uses for the same failure.
 
         Only called for a trusted `workspace` (see caller): an untrusted or unresolved
-        workspace has no saved state of its own to restore, by the same reasoning
-        `_quit_after_maybe_saving` uses to decide whether to write one.
+        workspace has no saved state of its own to restore.
         """
-        state = read_last_session(workspace)
-        if state is None:
+        index = read_sessions_index(workspace)
+        if not index.recent_sessions:
             return
-        restored_config = state.config.model_copy(update={"workspace": workspace})
+        restored = try_restore_session(
+            workspace, index.recent_sessions[0], provider=self._session.provider,
+            model_registry=self._session.model_registry, process_config=self._process_config)
+        if restored is None:
+            return
         self._session.close()
-        self._session = Session(
-            restored_config, provider=self._session.provider,
-            model_registry=self._session.model_registry, process_config=self._process_config,
-            session_id=state.session_id,
-            root_id=state.root_id,
-            session_name=state.session_name,
-            tool_registry=ToolRegistry.discover_tools(self._process_config, restored_config))
-        self._session.set_chainlink_task(state.cur_chainlink_task_id)
-        self._session.load_messages(state.messages)
-        if state.statistics is not None:
-            self._session.load_statistics(state.statistics)
-        self.sub_title = restored_config.model
+        self._adopt_restored_session(restored)
+
+    def _adopt_restored_session(self, restored: Session) -> None:
+        """Replace the live `Session` with `restored` (already loaded via `try_restore_session`,
+        including having adopted its `session.lock`), updating the header/status-line/session-name
+        widgets and re-rendering the history scroll to match. Shared by
+        `_maybe_restore_latest_session` (startup) and `klorb.tui.commands.session_commands.
+        LoadSessionScreen` (an explicit "Load session" pick) — the caller is responsible for
+        closing the outgoing `Session` first, since the two callers do so at different points
+        relative to their own confirmation/lookup flow.
+        """
+        self._session = restored
+        self.sub_title = restored.config.model
         self._update_status_bar()
         session_name_widget = self.query_one(f"#{SESSION_NAME_ID}", Static)
-        if state.session_name is not None:
+        if restored.name is not None:
             # A previously-named session was restored; `Session.__init__` seeds
-            # `session_naming_pending = False` from the `session_name` passed above, so the
+            # `session_naming_pending = False` from the `session_name` passed to it, so the
             # classifier won't re-trigger on the next prompt.
-            session_name_widget.update(f"Session: {state.session_name}")
+            session_name_widget.update(f"Session: {restored.name}")
         else:
             session_name_widget.update(NEW_SESSION_LABEL)
-        self._mount_restored_history(state.messages)
+        self._mount_restored_history(restored.messages)
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:
         """Ask the two workspace-bootstrap questions from docs/specs/projects-and-trust.md for

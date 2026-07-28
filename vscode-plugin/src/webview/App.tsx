@@ -7,6 +7,7 @@ import {
   type StatusUpdateMessage,
 } from 'shared/webviewMessages';
 import ApprovalPanel, { type ApprovalDecision } from 'webview/components/ApprovalPanel';
+import PanelHeader from 'webview/components/PanelHeader';
 import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
 import QuestionPanel, { type QuestionPanelAnswer } from 'webview/components/QuestionPanel';
 import StatusRow from 'webview/components/StatusRow';
@@ -183,6 +184,12 @@ export default function App({
     vscode.postMessage({ type: 'newSession' });
   }
 
+  /** Fetches this workspace's saved sessions and shows them in a native QuickPick
+   * (`klorb.browseSessions`, driven entirely host-side) -- see `PanelHeader`'s stopwatch icon. */
+  function browseSessions(): void {
+    vscode.postMessage({ type: 'listRecentSessions' });
+  }
+
   function reloadSkills(): void {
     vscode.postMessage({ type: 'reloadSkills' });
   }
@@ -269,7 +276,11 @@ export default function App({
 
   return (
     <VsCodeApiProvider vscode={vscode}>
-      <div className="title">{sessionTitleText(status)}</div>
+      <PanelHeader
+        title={sessionTitleText(status)}
+        onNewSession={newSession}
+        onBrowseSessions={browseSessions}
+      />
       {taskPanelVisible ? (
         <TaskPanel taskList={taskList} onToggleVisibility={toggleTaskPanelVisible} />
       ) : null}

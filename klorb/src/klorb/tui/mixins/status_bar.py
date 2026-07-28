@@ -82,10 +82,11 @@ class StatusBarMixin(ReplAppBase):
 
     def _update_session_name_line(self, text: str) -> None:
         """Set the `SESSION_NAME_ID` line to `"Session: <text>"` -- called by
-        `PromptSubmissionMixin._run_session_naming` once the first-turn classifier resolves
-        (`text` is the derived title) or falls back (`text` is the session id's own random
-        nonce slug, via `klorb.session_naming.session_id_suffix`). `clear_session()`/
-        `_maybe_restore_last_session()` instead reset the line directly to `NEW_SESSION_LABEL`
+        `PromptSubmissionMixin._handle_session_name_changed` once the first-turn classifier
+        resolves (`text` is the derived title) or fails (`text` is instead
+        `klorb.session_naming.fallback_session_title`'s derivation, already applied to
+        `Session.name` by `SessionCoreMixin._run_session_naming`). `clear_session()`/
+        `_maybe_restore_latest_session()` instead reset the line directly to `NEW_SESSION_LABEL`
         (no `"Session: "` prefix), matching `compose()`'s own initial value.
         """
         session_name = self.query_one(f"#{SESSION_NAME_ID}", Static)

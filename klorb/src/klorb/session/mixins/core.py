@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from klorb.api_provider import ApiProvider
+from klorb.lockfile import Lockfile
 from klorb.message import Message
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
@@ -27,6 +28,7 @@ from klorb.session.mixins._base import SessionBase
 from klorb.session_naming import (
     SessionName,
     default_naming_model,
+    fallback_session_title,
     generate_session_name,
     rename_session_id,
     thinking_effort_for,
@@ -83,7 +85,7 @@ class SessionCoreMixin(SessionBase):
         repertoire`). A future subagent's `Session` would pass its parent's `root_id` through
         here so both share one identity for anything scoped to "the whole task tree" rather than
         this one `Session` specifically -- see `get_chainlink_label()`. Round-trips through
-        `last-session.json` (`klorb.workspace.last_session.LastSessionState.root_id`) like `id`/
+        `session.json` (`klorb.workspace.session_store.SessionState.root_id`) like `id`/
         `session_name`."""
         self._session_name: str | None = session_name
         self._role = get_role(config.role_name)
@@ -108,7 +110,7 @@ class SessionCoreMixin(SessionBase):
         task, or `None` if none is set (no `TodoNext` call yet, or the last one found nothing
         ready/open). Read by `klorb.tools.tasks.todo_next`'s standing interjection provider on
         every turn, and by `TodoCreate`'s `blocks_current_issue` argument. Round-trips through
-        `last-session.json` (`klorb.workspace.last_session.LastSessionState.
+        `session.json` (`klorb.workspace.session_store.SessionState.
         cur_chainlink_task_id`) like `id`/`session_name`. Written only via `set_chainlink_task()`,
         never assigned directly by a `Tool`. See docs/specs/chainlink-task-tracking.md."""
         self.tool_state: dict[str, Any] = {}
@@ -220,8 +222,22 @@ class SessionCoreMixin(SessionBase):
         """Running tally of message counts, tool-call counts, and per-tool success/failure
         breakdowns, updated incrementally as turns flow through `send_turn()` /
         `_send_and_receive()` / `_run_tool_calls()`. Persisted alongside the session state
-        (see `klorb.workspace.last_session.LastSessionState.statistics`) so a restored session
+        (see `klorb.workspace.session_store.SessionState.statistics`) so a restored session
         continues accumulating from where the previous one left off."""
+        self._session_lock: Lockfile | None = None
+        """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
+        if this session hasn't claimed one yet (or ever will -- an untrusted workspace never
+        claims one). Set by `SessionPersistenceMixin.claim_session_directory`, released and
+        cleared by `SessionPersistenceMixin._finalize_session_persistence` (called from
+        `close()`)."""
+        self._session_subdir: str | None = None
+        """The `sessions/<subdir>/` name this session's state is saved under, or `None` before
+        `claim_session_directory` has run. Distinct from `self.id`: set once, to `self.id`'s
+        value *at claim time*, and never renamed afterward even if `self.id` later changes --
+        see `klorb.workspace.session_store.RecentSession.subdir`."""
+        self._session_claimed = False
+        """Whether this session currently owns a `sessions/<subdir>/` directory (holds its
+        `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
 
     @property
     def role(self) -> Role:
@@ -298,10 +314,13 @@ class SessionCoreMixin(SessionBase):
         """Derive a `SessionName` from `prompt_text` (this session's first submitted prompt) via
         `klorb.session_naming.generate_session_name`, and on success rename this session's `id`
         (via `set_id`, preserving its timestamp prefix and swapping in the derived slug) and set
-        `name` to the derived title. Returns the result (or `None` on failure) for the caller's
-        `TurnEventHandlers.on_session_name_changed` to react to; never raises, matching
-        `generate_session_name`'s own "never raises" contract. Falls back to
-        `DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS`/`_E2E_TIMEOUT_SECONDS` and
+        `name` to the derived title. On failure (the classifier times out, is unavailable, or
+        never returns a valid reply), `name` is instead set to
+        `klorb.session_naming.fallback_session_title(prompt_text)` -- `id` is left alone in that
+        case, since there's no `SessionName.slug` to rename it with. Returns the classifier's
+        result (or `None` on failure) for the caller's `TurnEventHandlers.on_session_name_changed`
+        to react to; never raises, matching `generate_session_name`'s own "never raises" contract.
+        Falls back to `DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS`/`_E2E_TIMEOUT_SECONDS` and
         `default_naming_model(self)` when this session has no `ProcessConfig`
         (`self._process_config is None`)."""
         # Deferred: `klorb.process_config` imports from `klorb.session`, so a module-level
@@ -333,6 +352,8 @@ class SessionCoreMixin(SessionBase):
         if result is not None:
             self.set_id(rename_session_id(self.id, result.slug))
             self.name = result.title
+        else:
+            self.name = fallback_session_title(prompt_text)
         return result
 
     def get_chainlink_label(self) -> str:
@@ -389,7 +410,7 @@ class SessionCoreMixin(SessionBase):
 
     def load_messages(self, messages: list[Message]) -> None:
         """Replace this session's conversation history with `messages` — e.g. restoring a
-        previous interactive session's history from `klorb.workspace.last_session`. Intended
+        previous interactive session's history from `klorb.workspace.session_store`. Intended
         to be called once, immediately after construction, before any `send_turn()`: a
         `role="system"`/`role="tool_defs"` bookkeeping message already present in `messages`
         is left as-is rather than duplicated, since `_ensure_system_message()`/
@@ -402,7 +423,7 @@ class SessionCoreMixin(SessionBase):
 
     def load_statistics(self, statistics: SessionStatistics) -> None:
         """Replace this session's running statistics with `statistics` — e.g. restoring a
-        previous interactive session's counts from `klorb.workspace.last_session`. Intended
+        previous interactive session's counts from `klorb.workspace.session_store`. Intended
         to be called once, immediately after construction (alongside `load_messages()`),
         before any `send_turn()`, so that new increments continue from where the previous
         session left off rather than starting from zero.
@@ -465,18 +486,21 @@ class SessionCoreMixin(SessionBase):
         self._teardown_callbacks[subject] = teardown
 
     def close(self) -> None:
-        """Tear down any live per-session resources registered via `register_teardown` --
-        `BashTool`'s persistent shell, if one is alive, and `self.scratchpad`'s cleanup (see
-        `klorb.tools.scratchpad.common.Scratchpad.cleanup`, registered in `__init__`). Idempotent:
-        calling this when nothing is registered, or calling it twice, is a no-op the second time
-        onward since each teardown callback (e.g. `PersistentShell.kill`, `Scratchpad.cleanup`)
-        is itself safe to call more than once.
+        """Persist a final `session.json` and release `session.lock` (see
+        `SessionPersistenceMixin._finalize_session_persistence`, a no-op if this session never
+        claimed a directory), then tear down any live per-session resources registered via
+        `register_teardown` -- `BashTool`'s persistent shell, if one is alive, and
+        `self.scratchpad`'s cleanup (see `klorb.tools.scratchpad.common.Scratchpad.cleanup`,
+        registered in `__init__`). Idempotent: calling this when nothing is registered, or
+        calling it twice, is a no-op the second time onward since each teardown callback (e.g.
+        `PersistentShell.kill`, `Scratchpad.cleanup`) is itself safe to call more than once.
 
         Callers that replace a `Session` outright (`klorb.tui.ReplApp.clear_session()`) must
         call this on the outgoing `Session` first — nothing else tears it down, and a live
         `subprocess.Popen` handle would otherwise leak for the rest of the klorb process's
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
         """
+        self._finalize_session_persistence()
         for teardown in self._teardown_callbacks.values():
             teardown()
         self._teardown_callbacks.clear()

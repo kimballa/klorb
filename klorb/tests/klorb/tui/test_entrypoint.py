@@ -13,7 +13,7 @@ from klorb.logging_config import CrashLogTee
 from klorb.tui.app import ReplApp
 from klorb.tui.entrypoint import _handle_repl_crash
 from klorb.workspace import TrustManager
-from klorb.workspace.last_session import last_session_path, read_last_session
+from klorb.workspace.session_store import read_session_state, read_sessions_index
 
 
 async def _crash_running_app(app: ReplApp) -> None:
@@ -65,7 +65,9 @@ async def test_handle_repl_crash_saves_session_for_trusted_workspace(
         app._session.load_messages([_sample_message("hi")])
         _handle_repl_crash(app, crash_tee)
 
-    state = read_last_session(workspace)
+    index = read_sessions_index(workspace)
+    assert len(index.recent_sessions) == 1
+    state = read_session_state(workspace, index.recent_sessions[0].subdir)
     assert state is not None
     assert state.config.model == "crash/model"
     assert [m.content for m in state.messages] == ["hi"]
@@ -83,7 +85,7 @@ async def test_handle_repl_crash_skips_save_for_untrusted_workspace(
     async with app.run_test():
         _handle_repl_crash(app, crash_tee)
 
-    assert read_last_session(workspace) is None
+    assert read_sessions_index(workspace).recent_sessions == []
 
 
 async def test_handle_repl_crash_prints_pointer_messages_to_stderr(
@@ -104,4 +106,4 @@ async def test_handle_repl_crash_prints_pointer_messages_to_stderr(
 
     output = stderr.getvalue()
     assert str(log_path) in output
-    assert str(last_session_path(workspace)) in output
+    assert "session state saved" in output

@@ -53,6 +53,25 @@ def _isolate_user_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 
 @pytest.fixture(autouse=True)
+def _isolate_session_persistence_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point every per-project data path (`klorb.workspace.input_history.project_history_dir`,
+    which `klorb.workspace.session_store` and `klorb.workspace.trust_manager.projects_path`'s
+    default both build on) at an empty temp dir, so a `Session` with a `trusted=True` workspace
+    -- common across the test suite, e.g. for exercising permission logic that only applies to a
+    trusted workspace -- can't write real `session.json`/`sessions.json`/`session.lock` files
+    into the developer's own `~/.local/share/klorb/` merely by calling `send_turn()`
+    (`SessionPersistenceMixin.claim_session_directory`). Tests that specifically exercise
+    persistence against a real (if temporary) directory layout construct their own
+    `TrustManager(path=...)` and additionally patch `klorb.workspace.input_history.
+    KLORB_DATA_DIR` themselves (see `tui.conftest._isolated_data_dir`), which simply overrides
+    this default with a different `tmp_path`-rooted location.
+    """
+    isolated = tmp_path / "klorb-session-data-dir"
+    monkeypatch.setattr("klorb.workspace.input_history.KLORB_DATA_DIR", isolated)
+    monkeypatch.setattr("klorb.workspace.trust_manager.KLORB_DATA_DIR", isolated)
+
+
+@pytest.fixture(autouse=True)
 def _reset_skill_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point the internal (packaged) skill tier at an empty temp dir and reset the process-wide
     skill catalog (`klorb.tools.skill.catalog`) before each test, so no test anywhere in the suite

@@ -568,15 +568,18 @@ def persist_session_default(path: Path, on_disk_key: str, value: Any) -> None:
         path, new_contents, schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)
 
 
-def _load_last_session_overrides(cwd: Path) -> dict[str, Any]:
-    """Return config overrides carried over from the previous session's saved state.
+def _load_saved_session_overrides(cwd: Path) -> dict[str, Any]:
+    """Return config overrides carried over from a previously saved session's state.
 
-    Placeholder for the `last-session.json` state file described in TODO.md, which isn't
-    written yet. Always returns no overrides until that feature exists; kept as its own
-    step so its place in the override order (after `--config`, before CLI flags) is settled
-    now rather than requiring every caller to be revisited later.
+    Placeholder: `klorb.workspace.session_store.SessionState` (see
+    docs/specs/session-persistence.md) is never routed through this layering pipeline, so this
+    always returns no overrides. Kept as its own step so its place in the override order (after
+    `--config`, before CLI flags) is settled now rather than requiring every caller to be
+    revisited later, should a restored session's config ever need to flow through here instead
+    of replacing the live `SessionConfig` outright the way `SessionPersistenceMixin`/
+    `klorb.session.restore.try_restore_session` do today.
     """
-    del cwd  # unused until last-session state persistence exists
+    del cwd  # unused until saved-session config layering exists
     return {}
 
 
@@ -812,7 +815,7 @@ def load_process_config(
     if config_flag_path is not None:
         merge_layer(read_versioned_json(
             config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
-    merge_layer(_load_last_session_overrides(cwd))
+    merge_layer(_load_saved_session_overrides(cwd))
 
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
     session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)

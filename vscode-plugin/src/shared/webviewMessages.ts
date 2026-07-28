@@ -277,6 +277,53 @@ export interface ToggleTaskPanelMessage {
   type: 'toggleTaskPanel';
 }
 
+/** One text entry replayed from a previously saved session (see `SessionReplayMessage`) --
+ * matches `webview/features/history/historyModel.ts`'s own `TextHistoryEntry` shape
+ * field-for-field, but is defined independently here (not imported from that webview-only
+ * feature) since `shared/` must stay importable by both the host and webview tsconfigs, and a
+ * feature's internals aren't exported outside its own barrel -- the same reasoning
+ * `ToolCallStartedMessage`/`ToolCallHistoryEntry` are already two distinct-but-similar types
+ * for. Always `streaming: false`: a replay entry is already complete, never a live chunk. */
+export interface SessionReplayTextEntry {
+  kind: 'prompt' | 'response' | 'thinking';
+  text: string;
+  streaming: false;
+}
+
+/** One tool-call entry replayed from a previously saved session -- mirrors
+ * `ToolCallHistoryEntry`'s shape, restricted to the two terminal statuses a restored call can
+ * have (a replayed call was, by definition, not still running when it was saved). */
+export interface SessionReplayToolCallEntry {
+  kind: 'toolCall';
+  callId: string;
+  status: 'completed' | 'failed';
+  title: string;
+  toolKind: string;
+  locations: ToolCallLocation[];
+  contentText?: string | null;
+  expanded: boolean;
+}
+
+export type SessionReplayEntry = SessionReplayTextEntry | SessionReplayToolCallEntry;
+
+/** Replays a previously saved session's conversation into the history scroll -- sent once after
+ * a successful `session/load` (`_klorb/sessionReplay`), both an explicit "Session history" pick
+ * and a resume-latest-on-activation load. The webview applies this over whatever cached history
+ * its own `sessionState` persistence already restored (stale-while-revalidate) -- see
+ * docs/specs/session-persistence.md. */
+export interface SessionReplayMessage {
+  type: 'sessionReplay';
+  entries: SessionReplayEntry[];
+}
+
+/** One saved session, as shown in the "Session history" quickpick -- mirrors
+ * `klorb.workspace.session_store.RecentSession`'s `session_id`/`title` fields (`subdir` is a
+ * server-internal implementation detail the client never needs). */
+export interface RecentSessionSummary {
+  id: string;
+  title: string | null;
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -295,7 +342,8 @@ export type HostMessage =
   | StatusUpdateMessage
   | SessionStatsMessage
   | TaskListUpdateMessage
-  | ToggleTaskPanelMessage;
+  | ToggleTaskPanelMessage
+  | SessionReplayMessage;
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
@@ -397,6 +445,14 @@ export interface ReloadSkillsMessage {
   type: 'reloadSkills';
 }
 
+/** The user clicked the stopwatch ("Session history") icon: fetch this workspace's saved
+ * sessions (`session/list`) and show them in a native `showQuickPick`; picking one loads it
+ * (`session/load`), replacing the live session -- all handled host-side (`klorb.browseSessions`)
+ * in response to this one trigger, the same way `NewSessionMessage` drives `klorb.newSession`. */
+export interface ListRecentSessionsMessage {
+  type: 'listRecentSessions';
+}
+
 /** The webview's top-level `ErrorBoundary` (`src/webview/components/ErrorBoundary.tsx`) caught
  * an uncaught render error -- the webview's own JS console (VS Code's "Developer: Open Webview
  * Developer Tools") always has the full detail first, but a webview crash is otherwise invisible
@@ -425,6 +481,7 @@ export type WebviewMessage =
   | ShowSessionStatsMessage
   | NewSessionMessage
   | ReloadSkillsMessage
+  | ListRecentSessionsMessage
   | WebviewErrorMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
@@ -455,6 +512,7 @@ const WEBVIEW_BARE_TYPES: readonly string[] = [
   'showSessionStats',
   'newSession',
   'reloadSkills',
+  'listRecentSessions',
 ];
 
 function parseMessage(
@@ -747,6 +805,37 @@ function parseTaskListUpdate(record: Record<string, unknown>): TaskListUpdateMes
   return record as unknown as TaskListUpdateMessage;
 }
 
+function isSessionReplayEntry(value: unknown): value is SessionReplayEntry {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  if (v.kind === 'prompt' || v.kind === 'response' || v.kind === 'thinking') {
+    return typeof v.text === 'string' && v.streaming === false;
+  }
+  if (v.kind === 'toolCall') {
+    return (
+      typeof v.callId === 'string' &&
+      (v.status === 'completed' || v.status === 'failed') &&
+      typeof v.title === 'string' &&
+      typeof v.toolKind === 'string' &&
+      Array.isArray(v.locations) &&
+      (v.contentText === undefined ||
+        v.contentText === null ||
+        typeof v.contentText === 'string') &&
+      typeof v.expanded === 'boolean'
+    );
+  }
+  return false;
+}
+
+function parseSessionReplay(record: Record<string, unknown>): SessionReplayMessage | undefined {
+  if (!Array.isArray(record.entries) || !record.entries.every(isSessionReplayEntry)) {
+    return undefined;
+  }
+  return record as unknown as SessionReplayMessage;
+}
+
 function parseOpenLocation(record: Record<string, unknown>): OpenLocationMessage | undefined {
   if (
     typeof record.path === 'string' &&
@@ -801,6 +890,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseSessionStats(record);
     case 'taskListUpdate':
       return parseTaskListUpdate(record);
+    case 'sessionReplay':
+      return parseSessionReplay(record);
     default:
       return undefined;
   }
