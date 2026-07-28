@@ -159,6 +159,8 @@
   "tools.findFile.maxResults": 100,
   "tools.grep.maxResults": 100,
   "tools.grep.contextLines": 2,
+  "tools.grep.maxLineLength": 500,
+  "tools.grep.spillBytes": 32768,
   "tools.logCalls": null,
   "tools.readFile.maxLines": 200,
   "tools.scratchpad.contextLines": 2,

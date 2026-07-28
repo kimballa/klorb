@@ -2,11 +2,17 @@
 """A Tool that recursively searches a directory tree for lines matching any of several literal
 strings or regular expressions, returning each match with surrounding context lines."""
 
+import atexit
 import fnmatch
+import json
 import logging
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
+from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.tools.interruptible_tool import InterruptibleTool
@@ -26,6 +32,22 @@ logger = logging.getLogger(__name__)
 _GITIGNORE_HIDDEN_NOTE = (
     "Some files were skipped without being searched because a .gitignore rule excludes them. "
     "Re-call Grep with use_gitignore=false to search gitignored files too.")
+
+_TRUNCATION_SUFFIX = "[truncated...]"
+
+_TMP_DIR_PREFIX = "klorb-grep-"
+"""Prefix for the per-call spill tmpdir `GrepTool` creates when `result["files"]`'s JSON
+serialization exceeds `grep_spill_bytes` — mirrors `klorb.tools.bash._TMP_DIR_PREFIX`'s
+pattern."""
+
+
+def _truncate_line(line: str, max_length: int) -> str:
+    """Truncate `line` to `max_length` characters, appending `_TRUNCATION_SUFFIX` if it was cut —
+    guards against a single pathologically long line (a minified sourcemap, a one-line JSON blob)
+    dumping an outsized chunk of text into the model's context."""
+    if len(line) <= max_length:
+        return line
+    return line[:max_length] + _TRUNCATION_SUFFIX
 
 
 class GrepTool(InterruptibleTool):
@@ -48,12 +70,22 @@ class GrepTool(InterruptibleTool):
     A file that can't be decoded as UTF-8 text, or can't be opened at all, is skipped silently
     (treated as binary) rather than raising — matches are only ever reported from files
     readable as text, matching common `grep -I` behavior.
+
+    Each reported line is truncated to `context.process_config.grep_max_line_length` characters
+    (with a `"[truncated...]"` suffix) to guard against a single pathologically long line — a
+    minified sourcemap, a one-line JSON blob — dumping an outsized chunk of text into the
+    model's context. If the JSON serialization of the entire `result["files"]` value would
+    exceed `context.process_config.grep_spill_bytes`, it's written to a file instead and the
+    result carries `results_data_file` in place of `files`, mirroring `BashTool`'s
+    `stdout`/`stdout_file` spill contract — see `_spill_files_if_needed`.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
         self._max_results = context.process_config.grep_max_results
         self._context_lines = context.process_config.grep_context_lines
+        self._max_line_length = context.process_config.grep_max_line_length
+        self._spill_bytes = context.process_config.grep_spill_bytes
 
     def name(self) -> str:
         return "Grep"
@@ -89,7 +121,12 @@ class GrepTool(InterruptibleTool):
             "re-call with use_gitignore=false to search gitignored files too. "
             "Use outputStyle to control the level of detail: \"ListFiles\" returns just "
             "deduplicated filenames, \"Matches\" returns only the hit lines (default), and "
-            "\"FullContext\" returns hit lines plus surrounding context."
+            "\"FullContext\" returns hit lines plus surrounding context. "
+            "Each reported line is truncated to "
+            f"{self._max_line_length} characters (marked with a trailing "
+            f"'{_TRUNCATION_SUFFIX}'). If the 'files' result would be very large, it's "
+            "written to a file instead and the result carries 'results_data_file' (a path "
+            "you can ReadFile) in place of 'files'."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -225,13 +262,15 @@ class GrepTool(InterruptibleTool):
                     elif output_style == "Matches":
                         files.append({
                             "filename": str(single_file),
-                            "lines": matches_only(all_lines, matched_indices),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in matches_only(all_lines, matched_indices)],
                         })
                     else:  # FullContext
                         files.append({
                             "filename": str(single_file),
-                            "lines": context_lines_for_matches(
-                                all_lines, matched_indices, self._context_lines),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in context_lines_for_matches(
+                                          all_lines, matched_indices, self._context_lines)],
                         })
                     match_count += len(matched_indices)
         else:
@@ -278,13 +317,15 @@ class GrepTool(InterruptibleTool):
                     elif output_style == "Matches":
                         files.append({
                             "filename": str(file_path),
-                            "lines": matches_only(all_lines, matched_indices),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in matches_only(all_lines, matched_indices)],
                         })
                     else:  # FullContext
                         files.append({
                             "filename": str(file_path),
-                            "lines": context_lines_for_matches(
-                                all_lines, matched_indices, self._context_lines),
+                            "lines": [_truncate_line(line, self._max_line_length)
+                                      for line in context_lines_for_matches(
+                                          all_lines, matched_indices, self._context_lines)],
                         })
                     match_count += len(matched_indices)
                     if truncated:
@@ -328,7 +369,42 @@ class GrepTool(InterruptibleTool):
             }
         if gitignored_hidden:
             result["note"] = _GITIGNORE_HIDDEN_NOTE
+        self._spill_files_if_needed(result)
         return result
+
+    def _spill_files_if_needed(self, result: dict[str, Any]) -> None:
+        """Replace `result["files"]` with a `results_data_file` path if its JSON serialization
+        exceeds `self._spill_bytes`, so a search matching many files/lines can't dump an
+        outsized payload straight into the model's context. Mirrors `BashTool`'s
+        `stdout`/`stdout_file` spill contract: exactly one of `files`/`results_data_file` is
+        present in the returned result.
+        """
+        encoded = json.dumps(result["files"]).encode("utf-8")
+        if len(encoded) <= self._spill_bytes:
+            return
+        tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
+        logger.debug("Grep spilling %d-byte files payload to tmpdir %s", len(encoded), tmp_dir)
+        atexit.register(shutil.rmtree, tmp_dir, ignore_errors=True)
+        file_path = tmp_dir / "grep-results.json"
+        file_path.write_bytes(encoded)
+        os.chmod(file_path, 0o600)
+        self._grant_tmp_dir_read_access(tmp_dir)
+        del result["files"]
+        result["results_data_file"] = str(file_path)
+
+    def _grant_tmp_dir_read_access(self, tmp_dir: Path) -> None:
+        """Auto-grant read access to `tmp_dir` (this one spill's own directory, a fresh
+        `mkdtemp()` per call) so a follow-up `ReadFile`/`Grep` call against `results_data_file`
+        doesn't itself hit an "ask". Appends to the live `session_config.read_dirs.allow`
+        (reassigning the whole `DirRules`, never mutating its list in place, per `DirRules`'s
+        documented contract) — this is automatic harness bookkeeping for the harness's own
+        scratch output, not a user-confirmed grant, so it bypasses `klorb.permissions.grant`'s
+        interactive-grant flow entirely (there is no ask being answered here). Mirrors
+        `BashTool._grant_tmp_dir_read_access`.
+        """
+        read_dirs = self.context.session_config.read_dirs
+        self.context.session_config.read_dirs = DirRules(
+            deny=list(read_dirs.deny), ask=list(read_dirs.ask), allow=[*read_dirs.allow, tmp_dir])
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")

@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.grep."""
 
+import json
 import threading
 from pathlib import Path
 
@@ -20,10 +21,14 @@ def _context(
     *,
     max_results: int = 500,
     context_lines: int = 2,
+    max_line_length: int = 500,
+    spill_bytes: int = 32 * 1024,
     read_dirs: DirRules | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(grep_max_results=max_results, grep_context_lines=context_lines),
+        process_config=ProcessConfig(
+            grep_max_results=max_results, grep_context_lines=context_lines,
+            grep_max_line_length=max_line_length, grep_spill_bytes=spill_bytes),
         session_config=SessionConfig(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(),
@@ -494,6 +499,67 @@ def test_gitignore_flag_in_list_files_mode(tmp_path: Path) -> None:
     assert {Path(f).name for f in result["files"]} == {"top.py"}
     assert result["gitignored_hidden"] is True
     assert "use_gitignore=false" in result["note"]
+
+
+# --- maxLineLength / spillBytes tests ---
+
+
+def test_long_line_is_truncated_with_suffix(tmp_path: Path) -> None:
+    long_line = "MATCH" + ("x" * 100)
+    (tmp_path / "long.txt").write_text(long_line + "\nshort\n")
+
+    result = GrepTool(_context(tmp_path, max_line_length=20)).apply(
+        {"path": "", "queries": ["MATCH"]})
+
+    line = result["files"][0]["lines"][0]
+    assert line.endswith("[truncated...]")
+    # The line's non-suffix portion is capped at max_line_length characters.
+    assert len(line) - len("[truncated...]") == 20
+
+
+def test_short_line_is_not_truncated(tmp_path: Path) -> None:
+    (tmp_path / "short.txt").write_text("MATCH short line\n")
+
+    result = GrepTool(_context(tmp_path, max_line_length=500)).apply(
+        {"path": "", "queries": ["MATCH"]})
+
+    parsed = _parse_lines(result["files"][0])
+    assert parsed[0][1] == "MATCH short line"
+
+
+def test_files_payload_spills_to_a_file_when_over_spill_bytes(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = GrepTool(_context(tmp_path, spill_bytes=1)).apply(
+        {"path": "", "queries": ["hello"]})
+
+    assert "files" not in result
+    data_file = Path(result["results_data_file"])
+    assert data_file.is_file()
+    spilled = json.loads(data_file.read_text(encoding="utf-8"))
+    assert {Path(entry["filename"]).name for entry in spilled} == {
+        "top.py", "nested.py", "notes.txt"}
+
+
+def test_spilled_tmpdir_is_granted_read_access(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+    context = _context(tmp_path, spill_bytes=1)
+
+    result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
+
+    data_file = Path(result["results_data_file"])
+    assert any(
+        data_file.is_relative_to(allowed) for allowed in context.session_config.read_dirs.allow)
+
+
+def test_small_files_payload_is_returned_inline(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = GrepTool(_context(tmp_path, spill_bytes=32 * 1024)).apply(
+        {"path": "", "queries": ["hello"]})
+
+    assert "results_data_file" not in result
+    assert isinstance(result["files"], list)
 
 
 def test_explicit_single_file_ignores_gitignore_filtering(tmp_path: Path) -> None:
