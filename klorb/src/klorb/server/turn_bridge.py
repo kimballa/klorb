@@ -8,6 +8,7 @@ docs/specs/klorb-server.md's "Threading bridge" section."""
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple, TypeVar
 
@@ -67,12 +68,19 @@ _ASK_USER_QUESTIONS_EXT_METHOD = "klorb/askUserQuestions"
 """The `_klorb/askUserQuestions` extension method name, with the leading `_` stripped -- see
 `_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why."""
 
+_USAGE_UPDATE_INTERVAL = 1.0
+"""Minimum seconds between intermediate `_klorb/usage` notifications sent during streaming
+(see `run_turn`'s chunk-throttle logic). Tool-call completions always trigger one
+unconditionally, regardless of this interval."""
+
 _USAGE_EXT_NOTIFICATION = "klorb/usage"
 """The `_klorb/usage` extension notification name, with the leading `_` stripped -- see
 `_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why. Sent unconditionally (no
 capability gate): unlike a blocking ext *request*, an unrecognized ext *notification* is
 silently ignored per ACP's own extensibility rules, so there's no wire cost to a client that
-doesn't understand it."""
+doesn't understand it. Intermediate updates (during streaming, not just at turn-end) let the
+client's status-row token meter stay current -- see `run_turn`'s chunk-throttle and
+tool-call-interval logic."""
 
 _MESSAGE_QUEUED_EXT_NOTIFICATION = "klorb/messageQueued"
 """The `_klorb/messageQueued` extension notification name, sent (unconditionally, like
@@ -127,9 +135,14 @@ class TurnBridge:
 
     `run_turn()` always drains and stops the pump task in a `finally`, whether `send_turn()`
     succeeds, raises `ResponseAborted`, or raises anything else -- and, once drained, sends one
-    `_klorb/usage` notification carrying the session's resulting token tally. `on_session_name_
-    changed` enqueues a `session_info_update` (title) the same way `on_chunk`/`on_thinking_chunk`
-    do, ordered relative to them like any other fire-and-forget callback.
+    `_klorb/usage` notification carrying the session's resulting token tally. Intermediate
+    `_klorb/usage` notifications are also enqueued during streaming: after every `on_tool_call`
+    (so the client's token meter updates as each tool call completes), and on the next
+    `on_chunk` if at least `_USAGE_UPDATE_INTERVAL` seconds have elapsed since the last usage
+    update (so the meter stays current during long streaming phases without one). Both use the
+    same `_build_usage_params()` helper as the turn-end notification, and ride the same ordered
+    queue as every other update. `on_session_name_changed` enqueues a `session_info_update`
+    (title) the same way `on_chunk`/`on_thinking_chunk`
 
     `on_tool_call` additionally enqueues a `plan` update (`fetch_plan_update()`) after any
     finished call to a chainlink task tool (`TASK_TOOL_NAMES`), mirroring the TUI task sidebar's
@@ -184,6 +197,17 @@ class TurnBridge:
             return None
         return build_plan_update(issues, self._session.cur_chainlink_task_id)
 
+    def _build_usage_params(self) -> dict[str, Any]:
+        """Build the params dict for a `_klorb/usage` extension notification from the
+        session's live token tally -- called from the worker thread (where the session's
+        `num_tokens` fields are kept up-to-date by streaming chunks)."""
+        return {
+            "sessionId": self._session_id,
+            "usedTokens": self._session.total_tokens_used(),
+            "maxTokens": self._session.max_context_window(),
+            "outputTokens": self._session.total_output_tokens_used(),
+        }
+
     async def run_turn(self, prompt_text: str) -> str:
         """Send `prompt_text` as one turn of `self._session`'s conversation, streaming the
         reply and any reasoning text out as ACP `session/update` notifications. Returns the
@@ -193,11 +217,18 @@ class TurnBridge:
         every pump task has fully drained and a `_klorb/usage` notification carrying the
         session's resulting token tally has gone out -- unconditionally, whichever way the last
         turn in the chain ended.
+
+        Intermediate `_klorb/usage` notifications are also sent during streaming so the
+        client's status-row token meter stays live: one after every tool-call completion, and
+        one on the next text chunk if at least `_USAGE_UPDATE_INTERVAL` seconds have elapsed
+        since the last usage update. These are enqueued in the same ordered queue as every
+        other update, so they arrive interleaved with the session updates they accompany.
         """
         loop = asyncio.get_running_loop()
         text_to_send = prompt_text
         response_text = ""
         pending_error: Exception | None = None
+        _last_usage_update: float = 0.0
         while True:
             queue: asyncio.Queue[Any] = asyncio.Queue()
             call_id_stack: list[str] = []
@@ -206,8 +237,15 @@ class TurnBridge:
             def enqueue(update: Any) -> None:
                 loop.call_soon_threadsafe(queue.put_nowait, update)
 
+            def enqueue_usage() -> None:
+                nonlocal _last_usage_update
+                enqueue(_ExtNotificationItem(_USAGE_EXT_NOTIFICATION, self._build_usage_params()))
+                _last_usage_update = time.monotonic()
+
             def on_chunk(delta_text: str) -> None:
                 enqueue(acp.update_agent_message_text(delta_text))
+                if time.monotonic() - _last_usage_update > _USAGE_UPDATE_INTERVAL:
+                    enqueue_usage()
 
             def on_thinking_chunk(delta_text: str) -> None:
                 enqueue(acp.update_agent_thought_text(delta_text))
@@ -241,6 +279,7 @@ class TurnBridge:
                     plan_update = self.fetch_plan_update()
                     if plan_update is not None:
                         enqueue(plan_update)
+                enqueue_usage()
 
             def linked_call_id() -> str | None:
                 return call_id_stack[-1] if call_id_stack else None
@@ -381,12 +420,8 @@ class TurnBridge:
                     "sessionId": self._session_id, "text": queued_msg.message_text})
             text_to_send = "\n\n".join(queued_msg.message_text for queued_msg in drained)
 
-        await self._client.ext_notification(_USAGE_EXT_NOTIFICATION, {
-            "sessionId": self._session_id,
-            "usedTokens": self._session.total_tokens_used(),
-            "maxTokens": self._session.max_context_window(),
-            "outputTokens": self._session.total_output_tokens_used(),
-        })
+        await self._client.ext_notification(
+            _USAGE_EXT_NOTIFICATION, self._build_usage_params())
         if pending_error is not None:
             raise pending_error
         return response_text

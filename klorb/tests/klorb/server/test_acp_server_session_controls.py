@@ -221,11 +221,15 @@ async def test_usage_notification_after_turn_matches_total_tokens_used(
         params for method, params in harness.harness_client.ext_notification_calls
         if method == "klorb/usage"
     ]
-    assert len(usage_calls) == 1
-    assert usage_calls[0]["sessionId"] == session_id
-    assert usage_calls[0]["usedTokens"] == session.total_tokens_used()
-    assert usage_calls[0]["maxTokens"] == session.max_context_window()
-    assert usage_calls[0]["outputTokens"] == session.total_output_tokens_used()
+    # At least one usage notification (the turn-end one), possibly more from mid-turn
+    # intermediate updates (tool-call completions, chunk throttling).
+    assert len(usage_calls) >= 1
+    # The last usage notification reflects the session's final token tally.
+    last_usage = usage_calls[-1]
+    assert last_usage["sessionId"] == session_id
+    assert last_usage["usedTokens"] == session.total_tokens_used()
+    assert last_usage["maxTokens"] == session.max_context_window()
+    assert last_usage["outputTokens"] == session.total_output_tokens_used()
 
 
 async def test_session_stats_ext_method_returns_statistics_json(

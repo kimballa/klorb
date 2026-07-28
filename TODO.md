@@ -28,6 +28,11 @@
 
 ### Feature backlog
 
+* Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
+  or start testing anything. Maybe we should notice this condition (only using read-only tools for N
+  tool calls in a row) and force it to deliver a report to the user that enumerates some concrete
+  next steps, or something like that.
+
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
     into role, task, context, constraints, and output format. (maybe ask a
@@ -230,12 +235,6 @@
 ## VSCode plugin
 
 ### Bugs
-
-* The history in the vscode plugin is "too" populated; it includes history items from
-  prior sessions that are no longer in-context. This needs to match the actual session (if
-  any) being reloaded, on startup.
-
-* When a model was doing work, the "tokens up/down" meter in the bottom status bar disappeared.
 
 ### Feature backlog
 

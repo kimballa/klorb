@@ -61,7 +61,9 @@
         ["sleep", "*"],
         ["grep", "-A", "*", "*"],
         ["tail", "*", "*"],
-        ["markdownlint-cli2", "--config", "*", "*"]
+        ["markdownlint-cli2", "--config", "*", "*"],
+        ["git", "log", "--oneline", "--all", "--", "*"],
+        ["git", "log", "**"]
       ]
     },
     "shareEnv": [
