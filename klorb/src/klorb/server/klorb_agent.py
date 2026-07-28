@@ -54,7 +54,7 @@ from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
 from klorb.workspace import TrustManager, Workspace
-from klorb.workspace.session_store import read_sessions_index
+from klorb.workspace.session_store import find_recent_session, read_sessions_index
 
 logger = logging.getLogger(__name__)
 
@@ -410,9 +410,7 @@ class KlorbAcpAgent(acp.Agent):
         `new_session`."""
         workspace = self._trust_manager.resolve_workspace(Path(cwd))
         index = read_sessions_index(workspace)
-        entry = next(
-            (candidate for candidate in index.recent_sessions if candidate.session_id == session_id),
-            None)
+        entry = find_recent_session(index, session_id)
         if entry is None:
             raise acp.RequestError.invalid_params(
                 {"sessionId": session_id, "reason": "unknown session"})

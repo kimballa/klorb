@@ -176,8 +176,16 @@ export function activate(context: vscode.ExtensionContext): void {
         .getConfiguration('klorb')
         .get<boolean>('resumeLatestSession', true);
       const resumeSessionId = resumeLatestSession ? readLastSessionId(context, cwd) : undefined;
+      log(
+        `klorb: startConnection: resumeLatestSession=${resumeLatestSession}, ` +
+          `resumeSessionId=${resumeSessionId ?? '(none recorded)'}`
+      );
       await connection.start(await readServerOptions(apiKeyManager), cwd, resumeSessionId);
       await rememberLastSessionId(context, cwd, connection.sessionId);
+      log(
+        `klorb: startConnection: connected sessionId=${connection.sessionId} ` +
+          `(resume ${resumeSessionId !== undefined && connection.sessionId === resumeSessionId ? 'succeeded' : 'NOT used'})`
+      );
       void workspaceTrustBridge.offerIfNeeded();
     } catch (err) {
       const message = errorMessage(err);

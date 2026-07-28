@@ -56,6 +56,7 @@ def try_restore_session(
         restored_config, provider=provider, model_registry=model_registry,
         process_config=process_config,
         session_id=state.session_id, root_id=state.root_id, session_name=state.session_name,
+        aliases=state.aliases,
         tool_registry=ToolRegistry.discover_tools(process_config, restored_config))
     session.set_chainlink_task(state.cur_chainlink_task_id)
     session.load_messages(state.messages)

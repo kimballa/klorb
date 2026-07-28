@@ -7,6 +7,9 @@
 
 * Project dir names in ~/.local/share/klorb/ should be `<basename>-<uuid>`, not the other way around.
 
+* Grep tool MUST cut off each line at a max line length so that we don't accidentally dump a million
+  tokens into the context if something stupid gets grep'd like a minified sourcemap.
+
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
@@ -236,8 +239,20 @@
 
 ### Bugs
 
-* When the plugin loads, it looks like it's restoring a session (the HistoryView has the whole
-  history) but it did not actually reload the session in the acp server.
+* Clicking the "new session" button should immediately interrupt the current turn in flight
+  and dispose of the connection to the model.
+
+* If we **can't** restore the previous session (or are configured not to), AcpConnection.start()
+  needs to be able to send a `sessionReset` message to the webview to clear out its now-stale
+  HistoryView. (See TODO comment in AcpConnection#start.)
+
+* Summary of bash tool call says: `Bash: <intent> $ <command>` all on one line.
+  * at minimum, put a `<br/>` before the shell command
+  * command should be in monospace, not variable font.
+  * runtime and exit code are not shown after the command completes.
+  * There should also be a "Running" spinner to indicate when it's processing.
+
+* Whatever we're using for markdown formatting in vscode isn't processing `| tables |`
 
 ### Feature backlog
 
@@ -253,3 +268,35 @@
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
+
+
+Bug with uncaught exception in ACP Server when the provider returns an error:
+
+```plain
+[server] 2026-07-28 01:15:06 - ERROR:klorb.session.mixins.turns:Turn failed for moonshotai/kimi-k3: Provider returned error (messages=96, total_chars=1568007)
+[server] 2026-07-28 01:15:06 - ERROR:klorb.session.mixins.turns:Full exception details:
+Traceback (most recent call last):
+  File "/home/aaron/src/klorb/klorb/src/klorb/session/mixins/turns.py", line 325, in _dispatch_turn
+    reply, _ = self._send_and_receive(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/src/klorb/session/mixins/turns.py", line 177, in _send_and_receive
+    result = self._provider.send_prompt(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/src/klorb/openrouter.py", line 306, in send_prompt
+    for chunk in stream:
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/openai/_streaming.py", line 49, in __iter__
+    for item in self._iterator:
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/openai/_streaming.py", line 95, in __stream__
+    raise APIError(
+openai.APIError: Provider returned error
+[server] 2026-07-28 01:15:06 - ERROR:root:Background task failed
+Traceback (most recent call last):
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/task/supervisor.py", line 51, in _on_done
+    task.result()
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/task/dispatcher.py", line 81, in runner
+    result = await self._request_runner(message)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/connection.py", line 237, in _run_request
+    raise err from None
+acp.exceptions.RequestError: Internal error
+```

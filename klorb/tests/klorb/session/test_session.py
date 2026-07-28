@@ -211,6 +211,40 @@ def test_set_id_leaves_root_id_alone_once_diverged() -> None:
     assert session.root_id == "root-id"
 
 
+def test_set_id_records_previous_id_in_aliases() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="pre-rename-id")
+
+    session.set_id("final-id")
+
+    assert session.id == "final-id"
+    assert session.aliases == ["pre-rename-id"]
+
+
+def test_set_id_does_not_duplicate_when_renamed_to_the_same_id() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="stable-id")
+    session.aliases = ["old-id"]
+
+    session.set_id("stable-id")
+
+    assert session.aliases == ["old-id"]
+
+
+def test_aliases_default_to_empty_list() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="id")
+
+    assert session.aliases == []
+
+
+def test_aliases_are_restored_from_constructor() -> None:
+    config = SessionConfig()
+    session = Session(config, provider=MagicMock(), session_id="id", aliases=["a", "b"])
+
+    assert session.aliases == ["a", "b"]
+
+
 def test_set_chainlink_task_defaults_to_none() -> None:
     config = SessionConfig()
     session = Session(config, provider=MagicMock())

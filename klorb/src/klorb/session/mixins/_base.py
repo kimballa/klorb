@@ -105,6 +105,7 @@ class SessionBase:
     _session_lock: Lockfile | None
     _session_subdir: str | None
     _session_claimed: bool
+    aliases: list[str]
 
     def close(self) -> None: ...
 

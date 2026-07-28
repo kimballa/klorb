@@ -17,7 +17,9 @@ from klorb.workspace.session_store import (
     SESSION_STATE_SCHEMA_NAME,
     SESSION_STATE_SCHEMA_VERSION,
     SESSIONS_LIST_SCHEMA_NAME,
+    SESSIONS_LIST_SCHEMA_VERSION,
     RecentSession,
+    find_recent_session,
     read_session_state,
     read_sessions_index,
     session_lock_path,
@@ -97,6 +99,26 @@ class TestSessionState:
             schema_name=SESSION_STATE_SCHEMA_NAME, schema_version=SESSION_STATE_SCHEMA_VERSION)
         assert read_session_state(workspace, "sess-1") is None
 
+    def test_round_trips_aliases(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        write_session_state(
+            workspace, "sess-1", SessionConfig(), [], session_id="final-id",
+            session_name="Fixed auth", aliases=["old-id", "older-id"])
+
+        state = read_session_state(workspace, "sess-1")
+        assert state is not None
+        assert state.session_id == "final-id"
+        assert state.aliases == ["old-id", "older-id"]
+
+    def test_read_returns_empty_aliases_for_old_files(self, tmp_path: Path) -> None:
+        """Old session.json files written by an older klorb version lack an `aliases` field."""
+        workspace = _workspace(tmp_path)
+        write_session_state(workspace, "sess-1", SessionConfig(), [], session_id="old-id")
+
+        state = read_session_state(workspace, "sess-1")
+        assert state is not None
+        assert state.aliases == []
+
     def test_round_trips_session_id_name_and_chainlink_task(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)
         write_session_state(
@@ -141,6 +163,15 @@ class TestRecentSessionsIndex:
         import json
         raw = json.loads(sessions_list_path(workspace).read_text(encoding="utf-8"))
         assert raw["schema"]["name"] == SESSIONS_LIST_SCHEMA_NAME
+
+    def test_touch_persists_aliases(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        touch_recent_session(
+            workspace, "final-id", "2026-07-19-01-50-abcd", "Fix auth",
+            aliases=["2026-07-19-01-50-abcd"])
+
+        index = read_sessions_index(workspace)
+        assert index.recent_sessions[0].aliases == ["2026-07-19-01-50-abcd"]
 
     def test_touch_re_keys_session_id_without_changing_subdir(self, tmp_path: Path) -> None:
         """A session-naming rename changes `session_id` but not `subdir` -- re-touching under
@@ -216,3 +247,51 @@ class TestPruning:
             assert session_state_path(workspace, "sess-0").exists()
         finally:
             lock.release()
+
+
+class TestFindRecentSession:
+    def test_finds_by_current_session_id(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        touch_recent_session(workspace, "current-id", "subdir", "Session")
+
+        index = read_sessions_index(workspace)
+        entry = find_recent_session(index, "current-id")
+        assert entry is not None
+        assert entry.session_id == "current-id"
+
+    def test_finds_by_alias(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        touch_recent_session(
+            workspace, "final-id", "subdir", "Session",
+            aliases=["pre-rename-id"])
+
+        index = read_sessions_index(workspace)
+        entry = find_recent_session(index, "pre-rename-id")
+        assert entry is not None
+        assert entry.session_id == "final-id"
+
+    def test_returns_none_when_not_found(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        touch_recent_session(workspace, "other-id", "subdir", "Session")
+
+        index = read_sessions_index(workspace)
+        assert find_recent_session(index, "no-such-id") is None
+
+    def test_backward_compat_with_old_entries_without_aliases(self, tmp_path: Path) -> None:
+        """Old entries written by a previous klorb version have no `aliases` field."""
+        workspace = _workspace(tmp_path)
+        # Simulate an old entry serialized directly (no aliases field at all)
+        import json
+
+        from klorb.schema_envelope import write_versioned_json
+        write_versioned_json(
+            sessions_list_path(workspace),
+            {"recent_sessions": [
+                json.loads(RecentSession(
+                    session_id="old-id", subdir="old-id", title="Old"
+                ).model_dump_json())]},
+            schema_name=SESSIONS_LIST_SCHEMA_NAME, schema_version=SESSIONS_LIST_SCHEMA_VERSION)
+
+        index = read_sessions_index(workspace)
+        assert find_recent_session(index, "old-id") is not None
+        assert find_recent_session(index, "no-such-id") is None

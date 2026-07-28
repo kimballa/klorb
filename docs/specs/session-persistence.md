@@ -43,12 +43,16 @@ directory. `sessions/` and each `sessions/<subdir>/` are created lazily, exactly
 
 * `SessionsIndexState` (`sessions.json`, schema `"klorb-session-list"`) — `recent_sessions:
   list[RecentSession]`, most-recently-touched first.
-* `RecentSession` — `session_id`, `subdir`, `title`. `subdir` is set once, to the session's
-  *original* `Session.id`, when its directory is first created, and never renamed afterward; it's
-  a saved session's stable identity, independent of `session_id`. `session_id` mirrors the live
-  `Session.id`, which the naming classifier may rename in place (see "Session naming" below) —
-  when that happens, the existing `sessions.json` entry is updated to the new `session_id` rather
-  than duplicated, keyed by matching `subdir`, not the (possibly stale) old `session_id`. `title`
+* `RecentSession` — `session_id`, `subdir`, `title`, `aliases`. `subdir` is set once, to the
+  session's *original* `Session.id`, when its directory is first created, and never renamed
+  afterward; it's a saved session's stable identity, independent of `session_id`. `session_id`
+  mirrors the live `Session.id`, which the naming classifier may rename in place (see "Session
+  naming" below) — when that happens, the existing `sessions.json` entry is updated to the new
+  `session_id` rather than duplicated, keyed by matching `subdir`, not the (possibly stale) old
+  `session_id`. `aliases` lists every prior `session_id` this entry was renamed *from* (oldest
+  first) — so a caller holding a pre-rename id (e.g. a client that recorded the id `session/new`
+  returned before the classifier renamed it) can still resolve the same session via
+  `find_recent_session`. `title`
   mirrors `Session.name`.
 * `SessionState` (`session.json`, schema `"klorb-session"`) — `config` (`SessionConfig`),
   `messages`, `statistics` (`SessionStatistics | None`), `session_id`, `root_id`, `session_name`,
@@ -291,6 +295,9 @@ SDK's own request router gates any method marked `unstable=True` (including `ses
 behind that flag independently of what the agent itself advertises.
 
 * **`session/load`** (`load_session(cwd, mcp_servers, session_id)`) — looks up `session_id` in
+  `sessions.json` via `find_recent_session`, which matches either the entry's current
+  `session_id` or any of its `aliases` (the prior ids it was renamed from — see `Session.aliases`),
+  so a caller holding a pre-rename id still resolves the same session. On failure,
   `cwd`'s workspace `sessions.json`, raising `invalid_params` if it isn't present at all. On a
   hit, calls `try_restore_session`; raising `invalid_params` (`"session is locked or no longer
   exists"`) if that returns `None` — per this method's design, it's the *client*'s job to fall

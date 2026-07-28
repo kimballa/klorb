@@ -77,13 +77,19 @@ class RecentSession(BaseModel):
     or a move. `subdir` is set once, to the session's *original* `Session.id`, when its directory
     is first created (`SessionPersistenceMixin.claim_session_directory`), and never renamed
     afterward -- kept independent of `session_id` so a session's id can change without moving its
-    files. `title` mirrors `Session.name`; `None` only in the narrow window before a title has
-    been assigned (shouldn't normally be observed on disk -- a session's directory isn't created
-    until after that decision is made, see `SessionPersistenceMixin`)."""
+    files. `aliases` mirrors `Session.aliases`: every prior id the session was renamed *from*,
+    so a lookup holding a pre-rename id (e.g. a client that recorded the id `session/new`
+    returned before the classifier renamed it) can still find this entry -- see
+    `find_recent_session`. `title` mirrors `Session.name`; `None` only in the narrow window
+    before a title has been assigned (shouldn't normally be observed on disk -- a session's
+    directory isn't created until after that decision is made, see `SessionPersistenceMixin`)."""
 
     session_id: str
     subdir: str
     title: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    """Every prior `Session.id` this session was renamed from, oldest first. Empty in files
+    written by an older klorb version that predates id aliasing."""
 
 
 class SessionsIndexState(BaseModel):
@@ -115,6 +121,9 @@ class SessionState(BaseModel):
     """The saved session's `Session.cur_chainlink_task_id`, if any (see
     docs/specs/chainlink-task-tracking.md). Absent (`None`) in files written by an older klorb
     version that predates chainlink task tracking."""
+    aliases: list[str] = Field(default_factory=list)
+    """The saved session's `Session.aliases` (every prior id it was renamed from, oldest
+    first). Empty in files written by an older klorb version that predates id aliasing."""
 
 
 def sessions_dir(workspace: Workspace) -> Path:
@@ -202,6 +211,7 @@ def _prune_sessions_index(workspace: Workspace, index: SessionsIndexState) -> No
 
 def touch_recent_session(
     workspace: Workspace, session_id: str, subdir: str, title: str | None,
+    aliases: list[str] | None = None,
 ) -> None:
     """Move (or insert) the `session_id`/`subdir`/`title` entry to the front of `workspace`'s
     `sessions.json`, replacing any existing entry for the same `subdir` -- `subdir`, not
@@ -229,7 +239,8 @@ def touch_recent_session(
         index.recent_sessions = [
             entry for entry in index.recent_sessions if entry.subdir != subdir]
         index.recent_sessions.insert(
-            0, RecentSession(session_id=session_id, subdir=subdir, title=title))
+            0, RecentSession(
+                session_id=session_id, subdir=subdir, title=title, aliases=aliases or []))
         _prune_sessions_index(workspace, index)
         _write_sessions_index(workspace, index)
     finally:
@@ -246,6 +257,7 @@ def write_session_state(
     root_id: str | None = None,
     session_name: str | None = None,
     cur_chainlink_task_id: int | None = None,
+    aliases: list[str] | None = None,
 ) -> None:
     """Save `config` and `messages` to `sessions/<subdir>/session.json`, schema-enveloped per
     docs/specs/persisted-json-schema-versioning.md. Overwrites any previous state for this
@@ -256,7 +268,7 @@ def write_session_state(
     state = SessionState(
         config=config, messages=messages, statistics=statistics,
         session_id=session_id, root_id=root_id, session_name=session_name,
-        cur_chainlink_task_id=cur_chainlink_task_id)
+        cur_chainlink_task_id=cur_chainlink_task_id, aliases=aliases or [])
     write_versioned_json(
         session_state_path(workspace, subdir), state.model_dump(mode="json"),
         schema_name=SESSION_STATE_SCHEMA_NAME, schema_version=SESSION_STATE_SCHEMA_VERSION)
@@ -280,3 +292,16 @@ def read_session_state(workspace: Workspace, subdir: str) -> SessionState | None
             "%s failed to validate as a %s save file; leaving it as-is: %s",
             session_state_path(workspace, subdir), SESSION_STATE_SCHEMA_NAME, exc)
         return None
+
+
+def find_recent_session(index: SessionsIndexState, session_id: str) -> RecentSession | None:
+    """Look up `session_id` in `index`, matching either an entry's current `session_id` or any
+    of its `aliases` (the prior ids a session was renamed from -- see `RecentSession.aliases`),
+    so a caller holding a pre-rename id still resolves the same session. Returns `None` if no
+    entry matches."""
+    return next(
+        (
+            candidate for candidate in index.recent_sessions
+            if candidate.session_id == session_id or session_id in candidate.aliases
+        ),
+        None)

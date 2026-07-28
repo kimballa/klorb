@@ -182,15 +182,22 @@ export class AcpConnection {
     this._enqueueMessageCapable = klorbAgentCapability(initResult, 'enqueueMessage');
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
     if (resumeSessionId !== undefined) {
+      this._log(`klorb: attempting session/load for resumeSessionId=${resumeSessionId}`);
       try {
         await this.loadSession(cwd, resumeSessionId);
+        this._log(`klorb: resume of session ${resumeSessionId} succeeded`);
         return;
       } catch (err) {
         this._log(
           `klorb: could not resume session ${resumeSessionId} (${errorMessage(err)}); starting a new one`
         );
       }
+    } else {
+      this._log('klorb: no resumeSessionId given; starting a new session');
     }
+    // TODO(aaron): Clear the history view; any vscode-restored state is now invalid.
+    // We do this with KlorbSessionViewProvider.postHostMessage({ type: 'sessionReset' })
+    // ... but how do we get a KlorbSessionViewProvider reference from here?
     await this.newSession(cwd);
   }
 

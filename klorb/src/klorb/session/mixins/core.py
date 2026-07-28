@@ -73,6 +73,7 @@ class SessionCoreMixin(SessionBase):
         session_id: str | None = None,
         session_name: str | None = None,
         root_id: str | None = None,
+        aliases: list[str] | None = None,
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
@@ -87,6 +88,13 @@ class SessionCoreMixin(SessionBase):
         this one `Session` specifically -- see `get_chainlink_label()`. Round-trips through
         `session.json` (`klorb.workspace.session_store.SessionState.root_id`) like `id`/
         `session_name`."""
+        self.aliases: list[str] = list(aliases) if aliases is not None else []
+        """Every prior `id` this session was renamed from (oldest first) -- appended to by
+        `set_id`, never assigned directly. Lets a caller holding a pre-rename id (e.g. an ACP
+        client that recorded the id `session/new` returned before the session-naming classifier
+        renamed it) still resolve this session on disk; round-trips through `session.json` and
+        `sessions.json` (`klorb.workspace.session_store.SessionState.aliases`/
+        `RecentSession.aliases`) like `id`/`session_name`."""
         self._session_name: str | None = session_name
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
@@ -303,9 +311,12 @@ class SessionCoreMixin(SessionBase):
         """The only sanctioned way to change `self.id`. If `id == root_id` (this session hasn't
         diverged from its root -- true for every session today, since klorb has no
         subagent-spawning mechanism yet), `root_id` is updated to `new_id` too, keeping both in
-        sync; otherwise only `id` changes. Callers must never assign `self.id`/`self.root_id`
-        directly -- see `get_chainlink_label()` for why `root_id` staying in sync with a renamed
-        `id` matters."""
+        sync; otherwise only `id` changes. The previous `id` is recorded in `self.aliases` so a
+        caller holding it can still resolve this session later. Callers must never assign
+        `self.id`/`self.root_id` directly -- see `get_chainlink_label()` for why `root_id`
+        staying in sync with a renamed `id` matters."""
+        if new_id != self.id and self.id not in self.aliases:
+            self.aliases.append(self.id)
         if self.id == self.root_id:
             self.root_id = new_id
         self.id = new_id
