@@ -117,6 +117,33 @@ describe('parseHostMessage', () => {
         tasks: [],
       },
       { type: 'toggleTaskPanel' },
+      {
+        type: 'sessionReplay',
+        entries: [
+          { kind: 'prompt', text: 'hi', streaming: false },
+          { kind: 'response', text: 'hello', streaming: false },
+          { kind: 'thinking', text: 'pondering...', streaming: false },
+          {
+            kind: 'toolCall',
+            callId: 'call-1',
+            status: 'completed',
+            title: 'Read foo.py',
+            toolKind: 'read',
+            locations: [{ path: '/tmp/foo.py' }],
+            contentText: 'done',
+            expanded: false,
+          },
+          {
+            kind: 'toolCall',
+            callId: 'call-2',
+            status: 'failed',
+            title: 'Mystery',
+            toolKind: 'other',
+            locations: [],
+            expanded: false,
+          },
+        ],
+      },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -253,6 +280,16 @@ describe('parseHostMessage', () => {
         ],
       })
     ).toBeUndefined();
+    expect(parseHostMessage({ type: 'sessionReplay' })).toBeUndefined();
+    expect(
+      parseHostMessage({ type: 'sessionReplay', entries: [{ kind: 'prompt', text: 'hi' }] })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'sessionReplay',
+        entries: [{ kind: 'toolCall', callId: 'c1', status: 'running', title: 'x' }],
+      })
+    ).toBeUndefined();
   });
 });
 
@@ -277,6 +314,7 @@ describe('parseWebviewMessage', () => {
       { type: 'showSessionStats' },
       { type: 'newSession' },
       { type: 'reloadSkills' },
+      { type: 'listRecentSessions' },
       { type: 'webviewError', message: 'boom' },
       { type: 'webviewError', message: 'boom', stack: 'at App (App.tsx:1:1)' },
     ];

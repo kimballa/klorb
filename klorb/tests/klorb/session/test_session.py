@@ -506,7 +506,7 @@ def test_send_turn_runs_naming_classifier_on_first_call_and_renames_id(
     assert session.session_naming_pending is False
 
 
-def test_send_turn_naming_failure_leaves_id_unchanged_and_clears_pending(
+def test_send_turn_naming_failure_leaves_id_unchanged_and_sets_fallback_title(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_provider = MagicMock()
@@ -518,7 +518,7 @@ def test_send_turn_naming_failure_leaves_id_unchanged_and_clears_pending(
     session.send_turn("hi")
 
     assert session.id == "2026-07-21-18-10-old-nonce"
-    assert session.name is None
+    assert session.name == "hi..."
     assert session.session_naming_pending is False
 
 

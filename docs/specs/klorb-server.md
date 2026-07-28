@@ -549,6 +549,26 @@ drives, and the same shape a same-turn bash permission-ask batch already uses fo
   `initialize` — see the extension-methods registry above for the fail-closed behavior when it
   isn't.
 
+### One live session at a time, many saved ones
+
+The server holds exactly **one live `Session` at a time**, matching klorb's current
+singleton-session-per-connection reality — but that one live session can be swapped for any of a
+workspace's previously *saved* sessions. `session/new` and `session/load` both tear down any
+existing live session (`Session.close()`) and replace it — `session/new` with a fresh one,
+`session/load` with one rebuilt from a workspace's `sessions.json` — the same "replace, don't
+add" semantics the TUI's `/clear` and "Load session" picker both follow. `AgentCapabilities.
+load_session` is advertised as `True`, and `session_capabilities.list` is populated, so a
+compliant client may call both `session/load` and `session/list`; see
+docs/specs/session-persistence.md for `KlorbAcpAgent.load_session`/`list_sessions`'s full
+behavior, the `_klorb/sessionReplay` ext notification a successful load sends, and how the VS
+Code plugin drives both. `KlorbAcpAgent` still implements every other protocol method this
+checkpoint doesn't support (`set_session_model` — see "Model and thinking session config"
+above — `authenticate`, `fork_session`, `resume_session`) as an explicit `RequestError.
+method_not_found`, rather than relying on the Protocol base class's inherited no-op, so an
+unexpected call fails loudly instead of silently returning nothing. `ext_notification` is the
+one exception: an unrecognized extension *notification* is ignored, per ACP's own extensibility
+rules. Subagent child sessions are explicitly future work — see the plan overview.
+
 ### Queued messages
 
 `_klorb/enqueueMessage` (see "Extension methods" above) is the ACP surface for klorb's
@@ -589,22 +609,7 @@ of being rejected, mirroring the TUI's queue-while-a-turn-is-running behavior
   finally resolves. The JSON-RPC response reflects the *last* turn in the chain (its `stopReason`
   on success or cancellation; its exception, if it raised, propagating as the request's error) —
   not necessarily the first turn's own outcome.
-
-### Single top-level session
-
-The server supports exactly **one live `Session` at a time**, matching klorb's current
-singleton-session reality. `session/new` tears down any existing session (`Session.close()`)
-and builds a fresh one — the same semantics as the TUI's `/clear`. `loadSession` isn't
-advertised (`AgentCapabilities.load_session` stays at its SDK default of `False`), so a
-compliant client never calls `session/load`; `KlorbAcpAgent` still implements it (and every
-other protocol method this checkpoint doesn't support — `list_sessions`, `set_session_model`
-(see "Model and thinking session config" above), `authenticate`, `fork_session`,
-`resume_session`) as an explicit `RequestError.method_not_found`, rather than relying on the
-Protocol base class's inherited no-op, so an unexpected call fails loudly instead of silently
-returning nothing. `ext_notification` is the one exception: an unrecognized extension
-*notification* is ignored, per ACP's own extensibility rules. Multiple top-level sessions and
-subagent child sessions are explicitly future work — see the plan overview.
-
+  
 ### CLI wiring
 
 `klorb.cli.run_server_cli(argv)` parses `klorb server`'s own flags (`--config`), resolves it

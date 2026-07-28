@@ -36,6 +36,7 @@ from acp.schema import (
 )
 from pydantic import BaseModel, ValidationError
 
+from klorb.message import Message, ToolCallRequest
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import canonicalize_dir
@@ -595,3 +596,85 @@ def parse_session_config_update(params: dict[str, Any]) -> SessionConfigUpdate:
         return SessionConfigUpdate.model_validate(params)
     except ValidationError as exc:
         raise acp.RequestError.invalid_params({"reason": str(exc)}) from exc
+
+
+def _replay_tool_call_entry(
+    call: ToolCallRequest, response: Message | None,
+    tool_registry: ToolRegistry | None, workspace_root: Path,
+) -> dict[str, Any]:
+    """Build one `_klorb/sessionReplay` `toolCall`-kind entry from a restored `role="tool_use"`
+    message's request and its matching `role="tool_response"` message (if any) -- best-effort
+    reversal of `Session._run_tool_calls`'s persisted encoding, the same reasoning
+    `klorb.tui.mixins.rendering.RenderingMixin._render_restored_tool_call` applies for the TUI's
+    own history-scroll restore: a `response.content` that's a JSON `klorb.tools.
+    response_envelope.ToolResponseEnvelope` (`is_error`/`error_message`/`response_body`) is
+    decoded structurally; a pre-envelope save (`"Error: {message}"` or a bare string) falls back
+    to prefix-matching, best-effort. Locations/toolKind/title reuse the same helpers a live
+    `tool_call` update uses, so a replayed call looks the same as it would have live."""
+    try:
+        args = json.loads(call.arguments) if call.arguments else {}
+        if not isinstance(args, dict):
+            args = {}
+    except json.JSONDecodeError:
+        args = {}
+
+    content_text: str | None = None
+    failed = False
+    if response is not None:
+        try:
+            parsed = json.loads(response.content)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and "is_error" in parsed:
+            failed = bool(parsed["is_error"])
+            content_text = (
+                parsed.get("error_message") if failed else parsed.get("response_body")
+            )
+            if content_text is not None and not isinstance(content_text, str):
+                content_text = json.dumps(content_text)
+        elif response.content.startswith("Error: "):
+            failed = True
+            content_text = response.content[len("Error: "):]
+        else:
+            content_text = response.content
+
+    locations = _tool_locations(call.name, args, workspace_root)
+    return {
+        "kind": "toolCall",
+        "callId": call.id,
+        "status": "failed" if failed else "completed",
+        "title": _tool_title(call.name, args, tool_registry),
+        "toolKind": TOOL_KIND_MAP.get(call.name, "other"),
+        "locations": [loc.model_dump(mode="json") for loc in locations] if locations else [],
+        "contentText": content_text,
+        "expanded": False,
+    }
+
+
+def build_session_replay(
+    session: Session, tool_registry: ToolRegistry | None, workspace_root: Path,
+) -> list[dict[str, Any]]:
+    """Build the `entries` payload for a `_klorb/sessionReplay` ext notification (see
+    `KlorbAcpAgent.load_session`): one `HistoryEntry`-shaped dict (matching the webview's own
+    `shared/webviewMessages.ts`-adjacent `HistoryEntry` shape) per restored message, in order.
+    `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching how they're never
+    rendered live either; a `role="tool_response"` is folded into its matching `role="tool_use"`
+    entry (see `_replay_tool_call_entry`) rather than appearing on its own.
+    """
+    entries: list[dict[str, Any]] = []
+    responses_by_call_id = {
+        message.tool_call_id: message for message in session.messages
+        if message.role == "tool_response" and message.tool_call_id is not None
+    }
+    text_kind_by_role = {"user": "prompt", "assistant": "response", "thinking": "thinking"}
+    for message in session.messages:
+        if message.role in text_kind_by_role:
+            entries.append({
+                "kind": text_kind_by_role[message.role], "text": message.content,
+                "streaming": False,
+            })
+        elif message.role == "tool_use":
+            for call in message.tool_calls or []:
+                entries.append(_replay_tool_call_entry(
+                    call, responses_by_call_id.get(call.id), tool_registry, workspace_root))
+    return entries

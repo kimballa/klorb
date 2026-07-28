@@ -21,7 +21,7 @@ from klorb.api_provider import ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.process_config import ProcessConfig
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, SessionConfig
-from klorb.session_naming import SessionName, rename_session_id, session_id_suffix
+from klorb.session_naming import SessionName, rename_session_id
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -841,7 +841,7 @@ async def test_first_submit_triggers_naming_and_renames_session_id_and_status_li
     assert mock_generate_session_name.call_args.args[0] == "please fix the auth bug"
 
 
-async def test_naming_failure_leaves_id_unchanged_and_shows_its_own_nonce_slug() -> None:
+async def test_naming_failure_leaves_id_unchanged_and_shows_the_fallback_title() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
     app = ReplApp(session=_session(mock_provider))
@@ -858,7 +858,7 @@ async def test_naming_failure_leaves_id_unchanged_and_shows_its_own_nonce_slug()
             await pilot.pause()
 
             assert app._session.id == original_id
-            assert _session_name_line(app) == f"Session: {session_id_suffix(original_id)}"
+            assert _session_name_line(app) == "Session: hello..."
 
 
 async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_after() -> None:

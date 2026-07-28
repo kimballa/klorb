@@ -508,6 +508,12 @@ class SessionTurnsMixin(SessionBase):
                 self._current_turn_handlers = None
             if callbacks is not None and callbacks.on_session_name_changed is not None:
                 callbacks.on_session_name_changed(naming_result)
+            # Only now that naming has resolved (classifier success, fallback title, or this
+            # branch didn't run at all because it was already `False`) is it safe to claim a
+            # session-id-specific directory -- see `SessionPersistenceMixin.
+            # claim_session_directory`. A no-op if already claimed (a restored session that
+            # adopted its directory before this call) or the workspace is untrusted.
+            self.claim_session_directory()
         user_message = Message(
             content=prompt,
             role="user",

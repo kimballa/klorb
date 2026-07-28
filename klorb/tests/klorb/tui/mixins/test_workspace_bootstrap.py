@@ -19,6 +19,7 @@ from tui.conftest import (
     _wait_until,
 )
 
+from klorb.lockfile import create_lockfile
 from klorb.message import Message, ToolCallRequest
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, project_config_path
 from klorb.schema_envelope import read_versioned_json
@@ -27,21 +28,39 @@ from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui.app import ReplApp
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
-from klorb.tui.panels.confirm_screen import (
-    CONFIRM_NO_ID,
-    CONFIRM_YES_ID,
-    QUIT_CANCEL_ID,
-    QUIT_DISCARD_ID,
-    QUIT_SAVE_ID,
-    ConfirmScreen,
-    SaveOnQuitScreen,
-)
+from klorb.tui.panels.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, ConfirmScreen
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import ToolCallStatic
 from klorb.workspace import TrustManager, Workspace
-from klorb.workspace.last_session import read_last_session, write_last_session
+from klorb.workspace.session_store import (
+    read_session_state,
+    read_sessions_index,
+    session_lock_path,
+    touch_recent_session,
+    write_session_state,
+)
 from klorb.workspace.workspace_init import write_initial_project_config
+
+
+def _save_session(
+    workspace: Workspace,
+    config: SessionConfig,
+    messages: list[Message],
+    *,
+    session_id: str = "saved-session",
+    session_name: str | None = None,
+    subdir: str | None = None,
+) -> str:
+    """Test helper mirroring what `Session.persist_state()` writes: a `session.json` under
+    `sessions/<subdir>/` plus its `sessions.json` recency entry. Returns `subdir` (defaulting
+    to `session_id` when not given, matching how a freshly claimed session's `subdir` always
+    starts out equal to its `session_id`)."""
+    subdir = subdir or session_id
+    write_session_state(
+        workspace, subdir, config, messages, session_id=session_id, session_name=session_name)
+    touch_recent_session(workspace, session_id, subdir, session_name)
+    return subdir
 
 
 async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -> None:
@@ -351,23 +370,28 @@ async def test_trust_workspace_for_non_project_workspace_skips_config_init_promp
     assert not project_config_path(tmp_path).is_file()
 
 
-async def test_quit_skips_save_prompt_for_untrusted_workspace(tmp_path: Path) -> None:
-    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
-    workspace = trust_manager.register_project(tmp_path, trusted=False)
+async def test_quit_never_pushes_a_modal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Quitting no longer asks whether to save — see docs/specs/session-persistence.md."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
     app = _repl_app_for_workspace(workspace, trust_manager)
+    app._session.load_messages([_sample_message("hi")])
+    app._session.claim_session_directory()
 
     async with app.run_test() as pilot:
         await pilot.pause()
         app.exit = MagicMock()  # type: ignore[method-assign]
+
         await pilot.press("ctrl+q")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(app.screen_stack) == 1  # no ConfirmScreen was ever pushed
+        assert len(app.screen_stack) == 1
         app.exit.assert_called_once()
 
 
-async def test_quit_prompts_and_writes_last_session_on_yes(
+async def test_quit_persists_session_unconditionally_for_trusted_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
@@ -378,107 +402,54 @@ async def test_quit_prompts_and_writes_last_session_on_yes(
     async with app.run_test() as pilot:
         await pilot.pause()
         app._session.load_messages([_sample_message("hi")])
+        app._session.claim_session_directory()
         app.exit = MagicMock()  # type: ignore[method-assign]
 
         await pilot.press("ctrl+q")
-        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
-        assert isinstance(app.screen, SaveOnQuitScreen)
-        await pilot.click(f"#{QUIT_SAVE_ID}")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         app.exit.assert_called_once()
 
-    state = read_last_session(workspace)
+    index = read_sessions_index(workspace)
+    assert len(index.recent_sessions) == 1
+    state = read_session_state(workspace, index.recent_sessions[0].subdir)
     assert state is not None
     assert state.config.model == "save/model"
     assert [m.content for m in state.messages] == ["hi"]
 
 
-async def test_quit_declining_save_prompt_does_not_write_file(
+async def test_quit_releases_the_session_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
     app = _repl_app_for_workspace(workspace, trust_manager)
-    app._session.load_messages([_sample_message("hi")])
 
     async with app.run_test() as pilot:
         await pilot.pause()
+        app._session.load_messages([_sample_message("hi")])
+        app._session.claim_session_directory()
+        subdir = app._session._session_subdir
+        assert subdir is not None
         app.exit = MagicMock()  # type: ignore[method-assign]
 
         await pilot.press("ctrl+q")
-        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
-        await pilot.click(f"#{QUIT_DISCARD_ID}")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        app.exit.assert_called_once()
+    probe = create_lockfile(session_lock_path(workspace, subdir))
+    assert probe.try_acquire()
+    probe.release()
 
-    assert read_last_session(workspace) is None
 
-
-async def test_quit_cancel_button_aborts_the_quit(
+async def test_quit_skips_persisting_a_session_with_no_messages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The `SaveOnQuitScreen`'s "Cancel" button dismisses the modal without quitting or saving —
-    the session keeps running exactly as before."""
-    _isolated_data_dir(tmp_path, monkeypatch)
-    trust_manager = TrustManager(path=tmp_path / "projects.json")
-    workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager)
-    app._session.load_messages([_sample_message("hi")])
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.exit = MagicMock()  # type: ignore[method-assign]
-
-        await pilot.press("ctrl+q")
-        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
-        assert isinstance(app.screen, SaveOnQuitScreen)
-        await pilot.click(f"#{QUIT_CANCEL_ID}")
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert len(app.screen_stack) == 1
-        app.exit.assert_not_called()
-
-    assert read_last_session(workspace) is None
-
-
-async def test_quit_escape_dismisses_the_save_prompt_as_cancel(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Escape on the `SaveOnQuitScreen` is equivalent to clicking "Cancel" — it aborts the quit
-    rather than declining to save (which is what "No" does)."""
-    _isolated_data_dir(tmp_path, monkeypatch)
-    trust_manager = TrustManager(path=tmp_path / "projects.json")
-    workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager)
-    app._session.load_messages([_sample_message("hi")])
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.exit = MagicMock()  # type: ignore[method-assign]
-
-        await pilot.press("ctrl+q")
-        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
-        assert isinstance(app.screen, SaveOnQuitScreen)
-        await pilot.press("escape")
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert len(app.screen_stack) == 1
-        app.exit.assert_not_called()
-
-    assert read_last_session(workspace) is None
-
-
-async def test_quit_skips_save_prompt_with_no_messages(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When there are no messages in the session, the save prompt should be skipped."""
+    """A session that never had a turn submitted (hence never claimed a `sessions/<subdir>/`
+    directory -- see `Session.claim_session_directory`, only ever called from `send_turn()`)
+    has nothing to persist when it's closed on quit."""
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
@@ -492,11 +463,32 @@ async def test_quit_skips_save_prompt_with_no_messages(
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        # No ConfirmScreen was pushed because there are no messages
         assert len(app.screen_stack) == 1
         app.exit.assert_called_once()
 
-    assert read_last_session(workspace) is None
+    assert read_sessions_index(workspace).recent_sessions == []
+
+
+async def test_quit_skips_persisting_for_untrusted_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._session.load_messages([_sample_message("hi")])
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        await pilot.press("ctrl+q")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+        app.exit.assert_called_once()
+
+    assert read_sessions_index(workspace).recent_sessions == []
 
 
 async def test_restores_previous_session_config_and_messages_on_startup(
@@ -505,7 +497,7 @@ async def test_restores_previous_session_config_and_messages_on_startup(
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    write_last_session(
+    _save_session(
         workspace, SessionConfig(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user"),
          _sample_message("earlier reply", "assistant")])
@@ -551,7 +543,7 @@ async def test_restores_tool_call_history_as_a_tool_call_widget(
     tool_response = Message(
         content="42", role="tool_response", num_tokens=1, processing_state="complete",
         timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
-    write_last_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+    _save_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
 
     app = _repl_app_for_workspace(workspace, trust_manager)
     async with app.run_test() as pilot:
@@ -581,7 +573,7 @@ async def test_restores_tool_call_history_from_a_structured_response_envelope(
     tool_response = Message(
         content=envelope_content, role="tool_response", num_tokens=1, processing_state="complete",
         timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
-    write_last_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+    _save_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
 
     app = _repl_app_for_workspace(workspace, trust_manager)
     async with app.run_test() as pilot:
@@ -596,7 +588,7 @@ async def test_restore_restores_session_id_and_name(
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    write_last_session(
+    _save_session(
         workspace,
         SessionConfig(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user")],
@@ -621,8 +613,8 @@ async def test_restore_without_name_keeps_naming_pending(
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    # Write a session without session_name (simulates older save format)
-    write_last_session(
+    # Write a session without session_name (simulates an older save format).
+    _save_session(
         workspace,
         SessionConfig(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user")])
@@ -636,6 +628,3 @@ async def test_restore_without_name_keeps_naming_pending(
 
         session_name_widget = app.query_one(f"#{SESSION_NAME_ID}", Static)
         assert str(session_name_widget.content) == NEW_SESSION_LABEL
-
-
-# --- session persistence: saved on crash exit (run_repl -> _handle_repl_crash) ---

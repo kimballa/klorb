@@ -20,7 +20,7 @@ class SessionStatistics(BaseModel):
 
     Updated incrementally by `Session` as turns flow through `send_turn()` /
     `_send_and_receive()` / `_run_tool_calls()`, and persisted alongside the session state
-    (see `klorb.workspace.last_session.LastSessionState`) so a restored session continues
+    (see `klorb.workspace.session_store.SessionState`) so a restored session continues
     from where the previous one left off rather than re-deriving counts from the message
     history.
     """

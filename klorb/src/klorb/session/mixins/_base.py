@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from klorb.api_provider import ApiProvider
+from klorb.lockfile import Lockfile
 from klorb.message import Message, ToolCallRequest
 from klorb.models.model import CacheMgmtStyle, Model
 from klorb.models.registry import ModelRegistry
@@ -71,6 +72,8 @@ class SessionBase:
 
     config: SessionConfig
     id: str
+    root_id: str
+    cur_chainlink_task_id: int | None
     _session_name: str | None
     _role: Role
     _provider: ApiProvider
@@ -99,6 +102,19 @@ class SessionBase:
     _current_turn_handlers: TurnEventHandlers | None
     scratchpad: Scratchpad
     statistics: SessionStatistics
+    _session_lock: Lockfile | None
+    _session_subdir: str | None
+    _session_claimed: bool
+
+    def close(self) -> None: ...
+
+    def claim_session_directory(self) -> None: ...
+
+    def adopt_claimed_session_directory(self, subdir: str, lock: Lockfile) -> None: ...
+
+    def persist_state(self) -> None: ...
+
+    def _finalize_session_persistence(self) -> None: ...
 
     def active_model(self) -> Model | None:
         raise NotImplementedError

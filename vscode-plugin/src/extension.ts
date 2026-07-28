@@ -112,6 +112,31 @@ function sessionCwd(): string {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
 }
 
+/** `ExtensionContext.globalState` key holding the last-used session id for workspace `cwd` --
+ * scoped per-`cwd` (not a single global key) so a multi-root/multi-window setup remembers each
+ * workspace's own latest session independently. Read at activation (when `klorb.
+ * resumeLatestSession` is enabled) to decide what `AcpConnection.start()`'s `resumeSessionId`
+ * should be; written after every successful `session/new`/`session/load` so it always reflects
+ * the session actually live in this workspace. */
+function lastSessionIdKey(cwd: string): string {
+  return `klorb.lastSessionId:${cwd}`;
+}
+
+function readLastSessionId(context: vscode.ExtensionContext, cwd: string): string | undefined {
+  return context.globalState.get<string>(lastSessionIdKey(cwd));
+}
+
+async function rememberLastSessionId(
+  context: vscode.ExtensionContext,
+  cwd: string,
+  sessionId: string | undefined
+): Promise<void> {
+  if (sessionId === undefined) {
+    return;
+  }
+  await context.globalState.update(lastSessionIdKey(cwd), sessionId);
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('Klorb');
   context.subscriptions.push(outputChannel);
@@ -146,7 +171,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const startConnection = async (): Promise<void> => {
     try {
-      await connection.start(await readServerOptions(apiKeyManager), sessionCwd());
+      const cwd = sessionCwd();
+      const resumeLatestSession = vscode.workspace
+        .getConfiguration('klorb')
+        .get<boolean>('resumeLatestSession', true);
+      const resumeSessionId = resumeLatestSession ? readLastSessionId(context, cwd) : undefined;
+      await connection.start(await readServerOptions(apiKeyManager), cwd, resumeSessionId);
+      await rememberLastSessionId(context, cwd, connection.sessionId);
       void workspaceTrustBridge.offerIfNeeded();
     } catch (err) {
       const message = errorMessage(err);
@@ -165,12 +196,22 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('klorb.newSession', () => {
       provider.restart();
+      const cwd = sessionCwd();
       void connection
-        .newSession(sessionCwd())
-        .then(() => provider.postHostMessage({ type: 'sessionReset' }))
+        .newSession(cwd)
+        .then(() => {
+          provider.postHostMessage({ type: 'sessionReset' });
+          return rememberLastSessionId(context, cwd, connection.sessionId);
+        })
         .catch((err: unknown) => {
           void vscode.window.showErrorMessage(`Klorb: ${errorMessage(err)}`);
         });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('klorb.browseSessions', () => {
+      void browseSessionsCommand(connection, context);
     })
   );
 
@@ -224,6 +265,55 @@ export function activate(context: vscode.ExtensionContext): void {
       apiKeyManager.clearApiKeyCommand()
     )
   );
+}
+
+/** `klorb.browseSessions`: fetches this workspace's saved sessions (`session/list`), shows them
+ * in a native QuickPick (the currently-live one marked `current`), and loads whichever one the
+ * user picks (`session/load`) -- backing both the command palette entry and the webview's
+ * stopwatch ("Session history") icon (see `KlorbSessionViewProvider._handleMessage`'s
+ * `listRecentSessions` case). No `sessionReset` is posted here: unlike `klorb.newSession` (which
+ * has nothing to show until the next turn), a successful load is followed by the server's own
+ * `_klorb/sessionReplay` notification (`KlorbSessionViewProvider.onSessionReplay`), which
+ * replaces the history once it arrives -- posting `sessionReset` here too would risk clearing
+ * that replay if it arrived first, defeating the stale-while-revalidate display docs/specs/
+ * session-persistence.md describes. */
+async function browseSessionsCommand(
+  connection: AcpConnection,
+  context: vscode.ExtensionContext
+): Promise<void> {
+  if (!connection.isReady) {
+    void vscode.window.showErrorMessage('Klorb: server connection is not ready.');
+    return;
+  }
+  const cwd = sessionCwd();
+  let sessions: { id: string; title: string | null }[];
+  try {
+    sessions = await connection.listSessions(cwd);
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Klorb: could not list saved sessions (${errorMessage(err)}).`
+    );
+    return;
+  }
+  if (sessions.length === 0) {
+    void vscode.window.showInformationMessage('Klorb: no saved sessions for this workspace.');
+    return;
+  }
+  const items = sessions.map((session) => ({
+    label: session.title ?? session.id,
+    description: session.id === connection.sessionId ? 'current' : undefined,
+    value: session.id,
+  }));
+  const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Load session' });
+  if (picked === undefined || picked.value === connection.sessionId) {
+    return;
+  }
+  try {
+    await connection.loadSession(cwd, picked.value);
+    await rememberLastSessionId(context, cwd, picked.value);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Klorb: could not load session (${errorMessage(err)}).`);
+  }
 }
 
 export function deactivate(): void {}

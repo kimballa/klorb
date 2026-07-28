@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from klorb.lockfile import create_lockfile
 from klorb.schema_envelope import read_versioned_json
 from klorb.workspace import TrustManager, Workspace
-from klorb.workspace.trust_manager import PROJECTS_SCHEMA_NAME, ProjectRecord
+from klorb.workspace.trust_manager import PROJECTS_SCHEMA_NAME, WORKSPACES_LOCK_FILENAME, ProjectRecord
 
 # --- resolve_workspace ---
 
@@ -141,6 +142,53 @@ def test_set_trusted_leaves_other_records_untouched(tmp_path: Path) -> None:
 def test_set_trusted_raises_key_error_for_unknown_id(tmp_path: Path) -> None:
     manager = TrustManager(path=tmp_path / "projects.json")
     manager.register_project(tmp_path, trusted=False)
+
+    with pytest.raises(KeyError):
+        manager.set_trusted("nonexistent-id", True)
+
+
+# --- workspaces.lock ---
+
+
+def test_register_project_locks_and_releases_workspaces_lock(tmp_path: Path) -> None:
+    manager = TrustManager(path=tmp_path / "projects.json")
+    manager.register_project(tmp_path, trusted=True)
+
+    probe = create_lockfile(tmp_path / WORKSPACES_LOCK_FILENAME)
+    assert probe.try_acquire()
+    probe.release()
+
+
+def test_register_project_proceeds_unlocked_when_the_lock_is_contended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A held `workspaces.lock` doesn't block registration outright -- it's a best-effort
+    contention guard, not a hard requirement (see `TrustManager.register_project`'s docstring
+    reference to this behavior)."""
+    manager = TrustManager(path=tmp_path / "projects.json")
+    holder = create_lockfile(tmp_path / WORKSPACES_LOCK_FILENAME)
+    assert holder.try_acquire()
+    try:
+        monkeypatch.setattr("time.sleep", lambda _seconds: None)
+        workspace = manager.register_project(tmp_path, trusted=True)
+    finally:
+        holder.release()
+
+    assert workspace.id is not None
+    resolved = manager.resolve_workspace(tmp_path)
+    assert resolved.id == workspace.id
+
+
+def test_set_trusted_locks_and_releases_workspaces_lock(tmp_path: Path) -> None:
+    manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = manager.register_project(tmp_path, trusted=False)
+    assert workspace.id is not None
+
+    manager.set_trusted(workspace.id, True)
+
+    probe = create_lockfile(tmp_path / WORKSPACES_LOCK_FILENAME)
+    assert probe.try_acquire()
+    probe.release()
 
     with pytest.raises(KeyError):
         manager.set_trusted("no-such-id", True)

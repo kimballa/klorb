@@ -277,6 +277,46 @@ def thinking_effort_for(session: "Session", model_name: str) -> dict[str, Any] |
     return {"effort": "low"}
 
 
+_FALLBACK_TITLE_WORD_RE = re.compile(r"[a-zA-Z0-9_]+")
+"""Word-token pattern for `fallback_session_title`: runs of letters, digits, and underscores --
+anything else (punctuation, whitespace, emoji) is a separator, never part of a token."""
+
+MAX_FALLBACK_TITLE_WORDS = 6
+MAX_FALLBACK_TITLE_CHARS = 45
+"""Caps for `fallback_session_title`: stop after `MAX_FALLBACK_TITLE_WORDS` tokens or
+`MAX_FALLBACK_TITLE_CHARS` characters, whichever comes first."""
+
+
+def fallback_session_title(prompt_text: str) -> str:
+    """Derive a session title from `prompt_text` (a session's first user prompt) without calling
+    the nano classifier: the first run of `[a-zA-Z0-9_]+` word-tokens in `prompt_text`, joined
+    with single spaces, capped at `MAX_FALLBACK_TITLE_WORDS` tokens or `MAX_FALLBACK_TITLE_CHARS`
+    characters (whichever limit is hit first -- the cutoff always lands on a whole token, never a
+    partial one), followed by a literal `"..."`. Used by
+    `klorb.session.mixins.core.SessionCoreMixin._run_session_naming` when
+    `generate_session_name()` returns `None` (classifier failure/timeout) or is skipped outright
+    -- e.g. a headless one-shot run that opts out of the classifier round trip.
+
+    The `"..."` suffix is unconditional, even when neither cap actually triggered: this fallback
+    is only ever reached when the *real* classifier title is unavailable, so it's a permanent
+    marker of "auto-derived, not classifier-derived," not a truncation indicator specifically.
+    `prompt_text` with no matching tokens at all (e.g. all punctuation or emoji) yields `"..."`
+    alone -- an accepted degenerate case, not specially handled.
+    """
+    words: list[str] = []
+    total_chars = 0
+    for match in _FALLBACK_TITLE_WORD_RE.finditer(prompt_text):
+        if len(words) >= MAX_FALLBACK_TITLE_WORDS:
+            break
+        word = match.group(0)
+        next_total = total_chars + (1 if words else 0) + len(word)
+        if next_total > MAX_FALLBACK_TITLE_CHARS:
+            break
+        words.append(word)
+        total_chars = next_total
+    return f"{' '.join(words)}..."
+
+
 def rename_session_id(old_id: str, slug: str) -> str:
     """`<timestamp-prefix-of-old_id>-<slug>`, where the timestamp prefix is the first 5
     dash-separated fields of `old_id` (`klorb.session.SESSION_ID_TIMESTAMP_FORMAT` is always

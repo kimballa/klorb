@@ -12,6 +12,7 @@ import {
   applyInterruptedMarker,
   applyPendingInteraction,
   applyQueuedMessageSent,
+  applySessionReplay,
   applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
@@ -591,5 +592,62 @@ describe('isHistoryEntry', () => {
   it('rejects an object with no kind, or an unrecognized one', () => {
     expect(isHistoryEntry({})).toBe(false);
     expect(isHistoryEntry({ kind: 'somethingElse' })).toBe(false);
+  });
+});
+
+describe('applySessionReplay', () => {
+  it('replaces the history wholesale with the replayed entries', () => {
+    const existing: HistoryEntry[] = [{ kind: 'notice', text: 'stale cache', streaming: false }];
+    const replayed = applySessionReplay([
+      { kind: 'prompt', text: 'hi', streaming: false },
+      { kind: 'response', text: 'hello', streaming: false },
+    ]);
+
+    expect(replayed).toEqual([
+      { kind: 'prompt', text: 'hi', streaming: false },
+      { kind: 'response', text: 'hello', streaming: false },
+    ]);
+    // The input `existing` array itself is untouched -- applySessionReplay ignores it entirely
+    // and builds a fresh array from the replay payload.
+    expect(existing).toEqual([{ kind: 'notice', text: 'stale cache', streaming: false }]);
+  });
+
+  it('converts a null contentText (no matching response) to undefined for a tool-call entry', () => {
+    const replayed = applySessionReplay([
+      {
+        kind: 'toolCall',
+        callId: 'call-1',
+        status: 'completed',
+        title: 'ReadFile',
+        toolKind: 'read',
+        locations: [],
+        contentText: null,
+        expanded: false,
+      },
+    ]);
+
+    expect(replayed).toEqual([
+      {
+        kind: 'toolCall',
+        callId: 'call-1',
+        status: 'completed',
+        title: 'ReadFile',
+        toolKind: 'read',
+        locations: [],
+        contentText: undefined,
+        expanded: false,
+      },
+    ]);
+  });
+
+  it('is reachable via applyHostMessage for a sessionReplay message', () => {
+    const existing: HistoryEntry[] = [{ kind: 'notice', text: 'stale cache', streaming: false }];
+
+    const result = applyHostMessage(existing, {
+      type: 'sessionReplay',
+      entries: [{ kind: 'prompt', text: 'hi', streaming: false }],
+    });
+
+    expect(result).toEqual([{ kind: 'prompt', text: 'hi', streaming: false }]);
   });
 });

@@ -84,11 +84,18 @@ class AcpServer:
         live session, and return `0`. There is no error condition here that produces a non-zero
         return -- a malformed or unrecognized request becomes a JSON-RPC error reply, handled by
         the SDK's own connection machinery, not a process failure.
+
+        `use_unstable_protocol=True`: `session/list` (`KlorbAcpAgent.list_sessions`) is still
+        marked unstable in the ACP spec/SDK (unlike `session/load`, which is stable) -- the
+        SDK's own request router rejects it with `method_not_found` outright unless this flag is
+        set, regardless of whether the agent implements the method. `session/load` and every
+        other implemented method are unaffected either way.
         """
         logger.debug("klorb ACP server starting")
         try:
             await acp.run_agent(
-                self._agent, input_stream=self._streams.writer, output_stream=self._streams.reader)
+                self._agent, input_stream=self._streams.writer, output_stream=self._streams.reader,
+                use_unstable_protocol=True)
         finally:
             self._agent.close()
         logger.debug("klorb ACP server stopping")

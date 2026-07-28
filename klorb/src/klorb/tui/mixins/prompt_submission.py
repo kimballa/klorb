@@ -15,7 +15,7 @@ from klorb.logging_config import configure_logging, session_log_path
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.session import Session, ToolCallEvent, ToolCallStartedEvent, TurnEventHandlers
 from klorb.session.events import QueuedMessage
-from klorb.session_naming import SessionName, session_id_suffix
+from klorb.session_naming import SessionName
 from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
@@ -547,10 +547,12 @@ class PromptSubmissionMixin(ReplAppBase):
         """React to `Session`'s `on_session_name_changed` callback firing (see `_send_prompt`):
         on success, renames the session log file to match the (already-applied) new
         `self._session.id` when session logging is enabled, and updates the `SESSION_NAME_ID`
-        status line to the derived title. Falls back to showing the session's own random nonce
-        slug (`klorb.session_naming.session_id_suffix`) as the status line text if naming failed
-        (timeout, unavailable classifier, malformed reply -- see `generate_session_name`'s own
-        "never raises, returns `None` on failure" contract).
+        status line to the derived title. If naming failed (timeout, unavailable classifier,
+        malformed reply -- see `generate_session_name`'s own "never raises, returns `None` on
+        failure" contract), `Session._run_session_naming` has already set `self._session.name`
+        to `klorb.session_naming.fallback_session_title`'s word/character-capped derivation from
+        the prompt instead, so the status line always shows *some* title now -- never the raw
+        random nonce slug a naming failure used to leave it showing.
 
         `original_id` is `self._session.id` as captured by `_send_prompt` before
         `Session.send_turn()` ran -- by the time this fires, `Session` has already applied the
@@ -560,8 +562,7 @@ class PromptSubmissionMixin(ReplAppBase):
         handler in this file.
         """
         if result is None:
-            self.call_from_thread(
-                self._update_session_name_line, session_id_suffix(self._session.id))
+            self.call_from_thread(self._update_session_name_line, self._session.name or "")
             return
 
         if self._session_log_enabled:
@@ -692,11 +693,18 @@ class PromptSubmissionMixin(ReplAppBase):
         line between each, in the order they were typed, so queueing "check the tests" then
         "also check lint" while a turn is running reads to the model as one message covering
         both, rather than as two separate turns or a lost second one.
+
+        Also persists the session's current state (`Session.persist_state()` -- a no-op for an
+        untrusted workspace, or if the session never successfully claimed a directory) at the
+        end of every turn, success, error, or interruption alike, so a saved session stays
+        current without requiring an explicit save prompt at quit time. See
+        docs/specs/session-persistence.md.
         """
         self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
+        self._session.persist_state()
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         input_widget.disabled = False
         input_widget.focus()

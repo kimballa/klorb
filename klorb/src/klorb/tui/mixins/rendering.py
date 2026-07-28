@@ -394,7 +394,8 @@ class RenderingMixin(ReplAppBase):
 
     def _mount_restored_history(self, messages: list[ChatMessage]) -> None:
         """Re-render `messages` — a previous session's history, already loaded onto
-        `self._session` by `_maybe_restore_last_session` — into the history scroll, so a
+        `self._session` by `_maybe_restore_latest_session` (or `load_recent_session`) — into the
+        history scroll, so a
         restored conversation reads the same way it would have live: one `Static`/`Markdown`/
         `ToolCallStatic` per user/assistant/thinking/tool-use message, in original order, via
         the same `_mount_response_widget`/`_mount_thinking_widget`/`_mount_tool_call_widget`

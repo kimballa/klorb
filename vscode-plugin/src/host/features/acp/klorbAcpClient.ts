@@ -1,6 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import type {
   CreateTerminalResponse,
+  LoadSessionResponse,
   NewSessionResponse,
   PermissionOption,
   Plan,
@@ -23,6 +24,7 @@ import type {
   PermissionAskOption,
   QuestionAskMessage,
   QuestionAskOption,
+  SessionReplayEntry,
   TaskInfo,
   TaskListSummary,
   TaskListUpdateMessage,
@@ -98,6 +100,9 @@ export interface SessionUpdateListener {
   /** A previously-queued message was actually delivered (`_klorb/queuedMessageSent`) -- flip
    * its rendering from queued to a regular delivered prompt. */
   onQueuedMessageSent(text: string): void;
+  /** A `session/load` just restored a previously saved session's conversation
+   * (`_klorb/sessionReplay`) -- replace the history wholesale with `entries`. */
+  onSessionReplay(entries: SessionReplayEntry[]): void;
 }
 
 /** Extracts `SessionInfo` from a `session/new` response's `modes.currentModeId` and
@@ -106,7 +111,7 @@ export interface SessionUpdateListener {
  * response itself; the caller (`AcpConnection`) threads through the connection's own
  * `initialize()`-negotiated value (see `SessionInfo`'s own doc comment). */
 export function sessionInfoFromResponse(
-  session: NewSessionResponse,
+  session: NewSessionResponse | LoadSessionResponse,
   enqueueMessageCapable: boolean
 ): SessionInfo {
   const meta = klorbMetaOf(session._meta);
@@ -533,6 +538,15 @@ export class KlorbAcpClient {
       } else {
         this._listener.onQueuedMessageSent(text);
       }
+      return;
+    }
+    if (method === '_klorb/sessionReplay') {
+      const entries = params.entries;
+      if (!Array.isArray(entries)) {
+        this._log(`klorb: malformed _klorb/sessionReplay params: ${JSON.stringify(params)}`);
+        return;
+      }
+      this._listener.onSessionReplay(entries as SessionReplayEntry[]);
       return;
     }
     this._log(`klorb: ignoring unrecognized ext notification: ${method}`);
