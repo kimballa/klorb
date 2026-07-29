@@ -123,6 +123,7 @@
     "compile:prod": "npm run typecheck && npm run copy:codicons && npm run build:extension:prod && npm run build:webview:prod",
     "watch": "tsgo -w -p ./",
     "lint": "eslint src test",
+    "lint:fix": "prettier --config .prettierrc.json --cache --cache-location .prettier_cache --write --log-level warn src test types && eslint --fix src test",
     "test": "vitest run",
     "package": "vsce package --out klorb-vscode.vsix"
   },

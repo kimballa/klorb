@@ -9,7 +9,7 @@
 # * `make install` to package the extension as a .vsix and install it into this VS Code
 # * `make dist` to build a minified, production .vsix for distribution (doesn't install it)
 
-COMMANDS=help lint typecheck clean distclean sync_deps \
+COMMANDS=help lint lint_fix typecheck clean distclean sync_deps \
 	install_deps install_dev_deps test compile install dist all
 
 NPM=npm
@@ -18,6 +18,7 @@ NPM=npm
 CODE ?= code
 
 VSIX=klorb-vscode.vsix
+JSONLINT=../bin/jsonlint
 
 all: lint typecheck test
 
@@ -27,6 +28,12 @@ help:
 
 lint:
 	"$(NPM)" run lint
+	find src test -name "*.json" -print0 | xargs -0 --no-run-if-empty $(JSONLINT)
+
+# Check lint, but actively reformat documents and attempt to cure other lint warnings.
+lint_fix:
+	"$(NPM)" run lint:fix
+	find src test -name "*.json" -print0 | xargs -0 --no-run-if-empty $(JSONLINT)
 
 # Type-checks both the extension host code and the webview code without bundling -- see
 # `compile`, which builds on this to also produce the runtime bundles.

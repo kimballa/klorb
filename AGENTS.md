@@ -178,11 +178,13 @@ The Klorb project is organized as a collection of subprojects:
 ### Important SDLC CI/CD commands
 
 *Always* run lint, typecheck, and test through the Makefile. Do not run pyflakes, mypy,
-or pytest directly!
+pytest, prettier, etc. directly!
 
 Here are the officially-sanctioned CI commands:
 
 * use `make lint` for linting.
+  * Within the `vscode-plugin/` dir, use `make lint_fix` to reformat files and attempt to
+    auto-fix issues identified by `eslint`.
 * use `make typecheck` for typechecking.
 * use `make test` to invoke test suites.
 

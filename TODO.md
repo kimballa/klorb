@@ -266,8 +266,6 @@
 
 ### Feature backlog
 
-* Add a `make lint_fix` target to actively fix formatting and lint issues, not just report them.
-
 * The prompt textbox should start as one line tall and expand to be up to ten lines tall
   at which point it gains a vertical scrollbar. This needs to account for hard newlines
   (inserted with shift+enter) as well as text wrapping.
