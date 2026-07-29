@@ -24,7 +24,7 @@
   (['dd', 'if=/dev/zero', 'of=/home/aaron/zeros.bin', 'bs=1', 'count=32'])
   ```
 
-  ... the wildcards are not parsed this way.
+  ... the wildcards are not parsed this way. Or, actually, maybe they should be? Or at least support the wildcard * at the *end* of an argument?
 
 ### Feature backlog
 
