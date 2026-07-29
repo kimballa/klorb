@@ -1,6 +1,8 @@
 // © Copyright 2026 Aaron Kimball
 import type { JSX, RefObject } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkFrontmatter from 'remark-frontmatter';
+import remarkGfm from 'remark-gfm';
 
 import type { HistoryEntry } from '../historyModel';
 
@@ -41,7 +43,7 @@ function renderEntry(
     case 'response':
       return (
         <div className="entry entry-response" key={index}>
-          <ReactMarkdown>{entry.text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkFrontmatter]}>{entry.text}</ReactMarkdown>
         </div>
       );
     case 'thinking':

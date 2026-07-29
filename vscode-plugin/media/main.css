@@ -213,6 +213,20 @@ body {
   font-family: var(--vscode-editor-font-family, monospace);
 }
 
+.entry-response table {
+  border-collapse: collapse;
+}
+
+.entry-response th,
+.entry-response td {
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+  padding: 4px 8px;
+}
+
+.entry-response th {
+  background-color: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+}
+
 .entry-thinking {
   color: var(--vscode-descriptionForeground);
   font-style: italic;
