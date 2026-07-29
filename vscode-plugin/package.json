@@ -136,7 +136,8 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "remark-frontmatter": "^5.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -145,6 +146,8 @@
     "@eslint/js": "^9.17.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",
+    "@types/hast": "^3.0.5",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^26.1.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
@@ -165,6 +168,7 @@
     "eslint-plugin-react-hooks": "^7.1.0",
     "eslint-plugin-testing-library": "^7.16.2",
     "jsdom": "^30.0.1",
+    "mdast-util-to-hast": "^13.2.1",
     "prettier": "^3.9.5",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.18.2",

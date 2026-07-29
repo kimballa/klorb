@@ -1171,11 +1171,18 @@ is model-generated and the webview runs under a CSP-locked `vscode-webview://` o
 `remark-gfm` adds GitHub-flavored table/strikethrough/task-list/autolink parsing (rendered
 `<table>`s are styled by `main.css`'s `.entry-response table/th/td` rules, since they'd otherwise
 inherit no borders from the surrounding theme), and `remark-frontmatter` recognizes a leading
-`---`-delimited YAML block as its own mdast node instead of letting the base parser misread it as
-a thematic break followed by a mangled paragraph. Neither plugin renders the frontmatter block
-itself: `react-markdown` has no component mapping for the `yaml` node type it produces, so a
-model response that opens with frontmatter has that block silently omitted from the rendered
-output rather than dumped as raw text.
+`---`-delimited YAML block as its own mdast `yaml` node instead of letting the base parser
+misread it as a thematic break followed by a mangled paragraph.
+
+`mdast-util-to-hast` drops `yaml`/`toml` nodes by default (no built-in handler renders them), so
+`HistoryView` also passes `remarkRehypeOptions={{ handlers: { yaml: renderYamlFrontmatter } }}` —
+`renderYamlFrontmatter` (`webview/features/history/renderYamlFrontmatter.ts`) parses the block's
+raw text with the `yaml` package and renders the result as a two-column key/value `<table>`
+(`.frontmatter-table`/`.frontmatter-key`/`.frontmatter-value`, styled alongside the GFM table
+rules above): a nested mapping becomes a nested `.frontmatter-table`, and an array value becomes
+a `.frontmatter-array` of stacked `.frontmatter-array-item` `<div>`s (one per element) rather
+than another table, since array elements have no natural column headers. A block that fails to
+parse as YAML is omitted from the rendered output, the same as an unhandled node type would be.
 
 ## Build tooling
 

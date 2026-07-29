@@ -5,10 +5,13 @@ import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 
 import type { HistoryEntry } from '../historyModel';
+import { renderYamlFrontmatter } from '../renderYamlFrontmatter';
 
 import BashToolCallChip from './BashToolCallChip';
 import SessionStatsCard from './SessionStatsCard';
 import ToolCallChip from './ToolCallChip';
+
+const REMARK_REHYPE_OPTIONS = { handlers: { yaml: renderYamlFrontmatter } };
 
 export interface HistoryViewProps {
   entries: HistoryEntry[];
@@ -43,7 +46,11 @@ function renderEntry(
     case 'response':
       return (
         <div className="entry entry-response" key={index}>
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkFrontmatter]}>{entry.text}</ReactMarkdown>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkFrontmatter]}
+            remarkRehypeOptions={REMARK_REHYPE_OPTIONS}>
+            {entry.text}
+          </ReactMarkdown>
         </div>
       );
     case 'thinking':

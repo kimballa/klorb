@@ -223,6 +223,22 @@ body {
   padding: 4px 8px;
 }
 
+/* Frontmatter's key/value table (see renderYamlFrontmatter.ts): the key column stays a
+   fixed-width label even when a nested table/array sits in the value column beside it. */
+.entry-response .frontmatter-key {
+  font-weight: 600;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.entry-response .frontmatter-table {
+  margin: 0;
+}
+
+.entry-response .frontmatter-array-item:not(:last-child) {
+  margin-bottom: 4px;
+}
+
 .entry-response th {
   background-color: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
 }
