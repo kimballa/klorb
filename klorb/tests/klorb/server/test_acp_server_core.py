@@ -199,6 +199,23 @@ async def test_load_session_succeeds_when_lookup_matches_an_alias(
     assert restored_session.config.model == "restored/model"
     assert [m.content for m in restored_session.messages] == ["restored"]
 
+    # The ACP session id must be the alias the client passed, not the internal
+    # (renamed) id -- every subsequent ext request the client sends will use it.
+    assert harness.server.agent._acp_session_id == "2026-07-28-00-58-automatic-mustang"
+
+    replay_calls = [
+        call for call in harness.harness_client.ext_notification_calls
+        if call[0] == "klorb/sessionReplay"]
+    assert len(replay_calls) == 1
+    _, replay_params = replay_calls[0]
+    assert replay_params["sessionId"] == "2026-07-28-00-58-automatic-mustang"
+
+    # An ext method call using the alias must succeed (not raise "invalid params").
+    config = await harness.client.ext_method(
+        "klorb/getSessionConfig",
+        {"sessionId": "2026-07-28-00-58-automatic-mustang"})
+    assert config["model"]["current"] == "restored/model"
+
 
 async def test_load_session_raises_for_unknown_session_id(
     make_harness: Callable[..., Any], tmp_path: Path,

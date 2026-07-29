@@ -442,14 +442,20 @@ class KlorbAcpAgent(acp.Agent):
             logger.debug("session/load replacing live ACP session %s", self._acp_session_id)
             self._session.close()
         self._session = restored
-        self._acp_session_id = restored.id
+        # Use the *client's* session_id (the parameter) as the stable ACP handle, not
+        # restored.id: the client may be loading by alias (a pre-rename id the naming
+        # classifier changed), and it will keep addressing every subsequent
+        # prompt/cancel/ext request to the id it passed here.  new_session() does the
+        # same thing (snapshot session.id at creation), but load_session's caller may
+        # have an older id that still resolves via find_recent_session's alias lookup.
+        self._acp_session_id = session_id
         self._turn_bridge = TurnBridge(
             restored, self._require_client(), self._acp_session_id, self._process_config,
             raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),
             ask_user_questions_capable=self._client_supports("askUserQuestions"))
         logger.debug(
-            "session/load restored ACP session %s (was saved as %s) for cwd=%s",
-            self._acp_session_id, session_id, cwd)
+            "session/load restored ACP session %s (internal id=%s) for cwd=%s",
+            self._acp_session_id, restored.id, cwd)
         entries = build_session_replay(restored, restored.tool_registry, workspace.path)
         await self._require_client().ext_notification(
             "klorb/sessionReplay", {"sessionId": self._acp_session_id, "entries": entries})
