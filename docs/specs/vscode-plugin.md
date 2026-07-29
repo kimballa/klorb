@@ -122,7 +122,17 @@ together for this extension specifically.
   low-level wire calls `SessionControls` builds its typed control-plane surface on top of.
   `stop()` kills the child and rejects any in-flight `prompt()` with a restart-style error; the
   same rejection fires automatically if the connection closes out from under an in-flight
-  prompt (child crash, unexpected EOF). `errorMessage()` (exported alongside the class) renders
+  prompt (child crash, unexpected EOF). `newSession(cwd)`/`loadSession(cwd, sessionId)` each
+  interrupt an in-flight turn first (`_interruptInFlightTurn()`): they send `session/cancel` for
+  the session being replaced (so the provider's own streaming request is actually torn down, not
+  just the client's wait for it) and immediately reject that turn's `prompt()` promise rather
+  than waiting for the server's eventual response, so clicking "New session" (or loading a saved
+  one) while a turn is running doesn't leave the old turn's tokens streaming into the new
+  session's view. `_interruptInFlightTurn()` also bumps a `turnGeneration` counter (exposed via
+  the `turnGeneration` getter, also bumped by `stop()`/`_handleClosed()`) that
+  `KlorbSessionViewProvider._runTurn()` compares before and after its own `prompt()` call, so it
+  can tell a superseded turn's settled promise apart from a live one and skip posting
+  `turnEnded`/`turnError`/`serverLost` for it. `errorMessage()` (exported alongside the class) renders
   both real `Error` instances and the SDK's plain `{code, message}` JSON-RPC rejection objects
   as a readable string, since ACP request failures reject with the latter shape, not an
   `Error`. The `client` getter exposes the live `KlorbAcpClient` (`undefined` before `start()`
@@ -131,7 +141,14 @@ together for this extension specifically.
   view is recreated (see "Approval panel" below).
 * `vscode-plugin/src/host/features/acp/klorbAcpClient.ts`'s `KlorbAcpClient` implements the ACP
   SDK's `Client` interface: the handler for requests/notifications the server sends back over
-  the connection.
+  the connection. Its constructor takes an optional `currentSessionId` getter (`AcpConnection`
+  wires `() => this._sessionId`); `sessionUpdate()`/`extNotification()` each drop anything
+  tagged with a `sessionId` other than that getter's current value (logging it and returning),
+  rather than forwarding it to the listener -- this is what stops a turn `AcpConnection.
+  newSession()`/`loadSession()` already interrupted from streaming stale `session/update`s into
+  the new session's view during the window before the server's own turn actually winds down. No
+  filtering happens when the getter is omitted (every existing test constructing this class
+  directly, without an `AcpConnection`, relies on that default).
   `sessionUpdate()` dispatches `agent_message_chunk`/`agent_thought_chunk` text content to a
   `SessionUpdateListener` (`onAgentText`/`onThoughtText`), flattens `tool_call`/`tool_call_update`
   updates into `ToolCallStartedMessage`/`ToolCallUpdatedMessage` (`onToolCallStarted`/

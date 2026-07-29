@@ -66,6 +66,12 @@ export class AcpConnection {
   private _client: KlorbAcpClient | undefined;
   private _sessionId: string | undefined;
   private _inflightReject: ((err: Error) => void) | undefined;
+  /** Bumped every time an in-flight turn is interrupted by `newSession()`/`loadSession()`
+   * replacing the live session -- lets a caller that captured this value before calling
+   * `prompt()` tell that turn's own result apart from a stale one whose session was replaced
+   * meanwhile, regardless of whether the replacement's `session/new`/`session/load` round
+   * trip settles before or after the interrupted `prompt()` promise does. */
+  private _turnGeneration = 0;
   /** Whether the connected server advertised `agentCapabilities._meta.klorb.enqueueMessage`
    * at `initialize()` -- set once per `start()` call and threaded into every `newSession()`'s
    * `SessionInfo`, since it's a property of the connection/server, not of any one session. */
@@ -90,6 +96,11 @@ export class AcpConnection {
 
   public get sessionId(): string | undefined {
     return this._sessionId;
+  }
+
+  /** See `_turnGeneration`'s own doc comment. */
+  public get turnGeneration(): number {
+    return this._turnGeneration;
   }
 
   /** The live `KlorbAcpClient` handling requests from the current connection, or `undefined`
@@ -129,7 +140,12 @@ export class AcpConnection {
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
     );
-    const client = new KlorbAcpClient(this._listener, acp.RequestError, this._log);
+    const client = new KlorbAcpClient(
+      this._listener,
+      acp.RequestError,
+      this._log,
+      () => this._sessionId
+    );
     this._client = client;
     const connection = new acp.ClientSideConnection(() => client, stream);
     this._connection = connection;
@@ -192,12 +208,17 @@ export class AcpConnection {
     await this.newSession(cwd);
   }
 
-  /** Creates a fresh conversation session for `cwd`, replacing the current one. */
+  /** Creates a fresh conversation session for `cwd`, replacing the current one. If a turn is
+   * in flight for the session being replaced, interrupts it first (`_interruptInFlightTurn()`)
+   * so its `prompt()` caller sees an immediate rejection and any further `session/update`s it
+   * produces are dropped by `KlorbAcpClient` once this session is live, rather than bleeding
+   * into the new session's view. */
   public async newSession(cwd: string): Promise<void> {
     const connection = this._connection;
     if (connection === undefined) {
       throw new Error('klorb server connection is not ready');
     }
+    this._interruptInFlightTurn('turn interrupted: a new session replaced this one');
     const session = await this._raceClosed(connection.newSession({ cwd, mcpServers: [] }));
     this._sessionId = session.sessionId;
     this._log(`klorb: session created: ${session.sessionId}`);
@@ -216,6 +237,7 @@ export class AcpConnection {
     if (connection === undefined) {
       throw new Error('klorb server connection is not ready');
     }
+    this._interruptInFlightTurn('turn interrupted: a loaded session replaced this one');
     const session = await this._raceClosed(
       connection.loadSession({ cwd, mcpServers: [], sessionId })
     );
@@ -329,6 +351,7 @@ export class AcpConnection {
     if (this._connection !== undefined) {
       this._log('klorb: stopping server connection');
     }
+    this._turnGeneration += 1;
     const reject = this._inflightReject;
     this._inflightReject = undefined;
     this._connection = undefined;
@@ -342,6 +365,7 @@ export class AcpConnection {
   /** Tears down connection state after the wire closed underneath us (child crashed or its
    * stdout ended), rejecting any in-flight prompt so it doesn't hang forever. */
   private _handleClosed(): void {
+    this._turnGeneration += 1;
     const reject = this._inflightReject;
     this._inflightReject = undefined;
     this._connection = undefined;
@@ -350,6 +374,22 @@ export class AcpConnection {
     this._enqueueMessageCapable = false;
     reject?.(new Error('klorb server exited unexpectedly; run "Klorb: Restart Server"'));
     this._serverProcess.stop();
+  }
+
+  /** Bumps `_turnGeneration` and, if a turn is in flight, cancels it server-side (`cancel()` --
+   * so the provider's actual streaming request is torn down, not just the client-side wait for
+   * it) and rejects its `prompt()` promise immediately rather than waiting for the server's
+   * eventual response. Shared by `newSession()`/`loadSession()`, both of which are about to
+   * replace `_sessionId` out from under whatever turn was running against it. */
+  private _interruptInFlightTurn(rejectionMessage: string): void {
+    this._turnGeneration += 1;
+    const reject = this._inflightReject;
+    if (reject === undefined) {
+      return;
+    }
+    this._inflightReject = undefined;
+    this.cancel();
+    reject(new Error(rejectionMessage));
   }
 
   /** Forwards the child's stderr -- where klorb's Python `logging` output goes -- to `_log`

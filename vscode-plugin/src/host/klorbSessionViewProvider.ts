@@ -279,11 +279,22 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       });
       return;
     }
+    const turnGeneration = connection.turnGeneration;
     this.postHostMessage({ type: 'turnStarted' });
     try {
       const stopReason = await connection.prompt(text);
+      // A `newSession()`/`loadSession()` call while this turn was in flight interrupts it
+      // (`AcpConnection._interruptInFlightTurn()`) and bumps `turnGeneration` -- when that's
+      // what settled this `prompt()`, the result belongs to a session this provider has
+      // already moved on from, so it must not post a `turnEnded` over the new session's view.
+      if (connection.turnGeneration !== turnGeneration) {
+        return;
+      }
       this.postHostMessage({ type: 'turnEnded', stopReason });
     } catch (err) {
+      if (connection.turnGeneration !== turnGeneration) {
+        return;
+      }
       // A rejection that also left the connection not-ready means the `klorb server` child
       // itself was lost (crashed, or killed/restarted) out from under this turn, not an
       // ordinary turn failure -- surface a distinct entry with a "Restart Server" action

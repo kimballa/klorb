@@ -246,11 +246,6 @@
 
 ### Bugs
 
-* Clicking the "new session" button should immediately interrupt the current turn in flight
-  and dispose of the connection to the model. (If there was already an agent turn in progress,
-  it keeps generating tokens and streaming them from the acp server to the acp client even after
-  the 'new session' has begun.)
-
 * If we **can't** restore the previous session (or are configured not to), AcpConnection.start()
   needs to be able to send a `sessionReset` message to the webview to clear out its now-stale
   HistoryView. (See TODO comment in AcpConnection#start.)

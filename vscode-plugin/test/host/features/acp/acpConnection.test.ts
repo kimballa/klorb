@@ -289,6 +289,52 @@ describe('AcpConnection', () => {
     await vi.waitFor(() => expect(logs).toContain('DEBUG three'));
   });
 
+  it('newSession() interrupts an in-flight prompt, cancelling the old session', async () => {
+    const agent = new MockAgent();
+    agent.onPrompt = () => new Promise<acp.PromptResponse>(() => undefined);
+    const { connection } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+    const generationBefore = connection.turnGeneration;
+
+    const turn = connection.prompt('long task');
+    await vi.waitFor(() => expect(agent.receivedPrompts).toHaveLength(1));
+
+    agent.sessionIdToIssue = 'sess-2';
+    await connection.newSession('/other');
+
+    await expect(turn).rejects.toThrow('interrupted');
+    expect(agent.receivedCancels).toEqual([{ sessionId: 'sess-1' }]);
+    expect(connection.sessionId).toBe('sess-2');
+    expect(connection.turnGeneration).toBe(generationBefore + 1);
+  });
+
+  it('drops a stale session/update sent for a turn newSession() already superseded', async () => {
+    const agent = new MockAgent();
+    let finishPrompt: (() => void) | undefined;
+    agent.onPrompt = (_params, _conn) =>
+      new Promise<acp.PromptResponse>((resolve) => {
+        finishPrompt = () => resolve({ stopReason: 'cancelled' });
+      });
+    const { connection, events } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+
+    const turn = connection.prompt('long task');
+    await vi.waitFor(() => expect(agent.receivedPrompts).toHaveLength(1));
+
+    agent.sessionIdToIssue = 'sess-2';
+    await connection.newSession('/other');
+    await expect(turn).rejects.toThrow('interrupted');
+
+    events.length = 0;
+    await agent.sendUpdate('sess-1', {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'stale' },
+    });
+    expect(events).toEqual([]);
+
+    finishPrompt?.();
+  });
+
   it('stop() rejects an in-flight prompt with a restart-style error', async () => {
     const agent = new MockAgent();
     agent.onPrompt = () => new Promise<acp.PromptResponse>(() => undefined);

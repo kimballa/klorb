@@ -830,4 +830,68 @@ describe('KlorbAcpClient', () => {
     expect(() => client.writeTextFile()).toThrow(RequestError);
     expect(() => client.createTerminal()).toThrow(RequestError);
   });
+
+  describe('stale-session filtering', () => {
+    it('drops a session/update for a session other than currentSessionId()', async () => {
+      const { listener, agentText } = makeListener();
+      const client = new KlorbAcpClient(
+        listener,
+        RequestError,
+        () => undefined,
+        () => 'sess-2'
+      );
+
+      await client.sessionUpdate({
+        sessionId: 'sess-1',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'stale' } },
+      });
+
+      expect(agentText).toEqual([]);
+    });
+
+    it('forwards a session/update matching currentSessionId()', async () => {
+      const { listener, agentText } = makeListener();
+      const client = new KlorbAcpClient(
+        listener,
+        RequestError,
+        () => undefined,
+        () => 'sess-1'
+      );
+
+      await client.sessionUpdate({
+        sessionId: 'sess-1',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'fresh' } },
+      });
+
+      expect(agentText).toEqual(['fresh']);
+    });
+
+    it('drops a _klorb/* ext notification for a session other than currentSessionId()', async () => {
+      const { listener, messagesQueued } = makeListener();
+      const client = new KlorbAcpClient(
+        listener,
+        RequestError,
+        () => undefined,
+        () => 'sess-2'
+      );
+
+      await client.extNotification('_klorb/messageQueued', { sessionId: 'sess-1', text: 'stale' });
+
+      expect(messagesQueued).toEqual([]);
+    });
+
+    it('forwards a _klorb/* ext notification matching currentSessionId()', async () => {
+      const { listener, messagesQueued } = makeListener();
+      const client = new KlorbAcpClient(
+        listener,
+        RequestError,
+        () => undefined,
+        () => 'sess-1'
+      );
+
+      await client.extNotification('_klorb/messageQueued', { sessionId: 'sess-1', text: 'fresh' });
+
+      expect(messagesQueued).toEqual(['fresh']);
+    });
+  });
 });

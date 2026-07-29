@@ -441,12 +441,16 @@ export type LogFn = (message: string) => void;
  * since the server only ever has one blocking ask outstanding at a time regardless of kind.
  * `_klorb/raiseToolCallLimit` is also routed through the same pending-interaction queue, posting
  * a `toolCallLimitAsk` to the webview. The fs/terminal methods fail with JSON-RPC
- * method-not-found since the client never advertises those capabilities.
+ * method-not-found since the client never advertises those capabilities. `sessionUpdate()`/
+ * `extNotification()` drop anything tagged for a session other than `currentSessionId()`'s
+ * current value, so a turn `AcpConnection` has already superseded (a new/loaded session
+ * replacing it) can't keep streaming into the wrong conversation.
  */
 export class KlorbAcpClient {
   private readonly _listener: SessionUpdateListener;
   private readonly _requestError: RequestErrorClass;
   private readonly _log: LogFn;
+  private readonly _currentSessionId: (() => string | undefined) | undefined;
   private _nextRequestId = 1;
   private _interactionBusy = false;
   private _interactionQueue: Array<() => void> = [];
@@ -471,14 +475,29 @@ export class KlorbAcpClient {
   public constructor(
     listener: SessionUpdateListener,
     requestError: RequestErrorClass,
-    log: LogFn = (message: string) => console.warn(message)
+    log: LogFn = (message: string) => console.warn(message),
+    currentSessionId?: () => string | undefined
   ) {
     this._listener = listener;
     this._requestError = requestError;
     this._log = log;
+    this._currentSessionId = currentSessionId;
+  }
+
+  /** Whether `sessionId` is the live session per `_currentSessionId` -- `true` when no such
+   * getter was supplied (tests exercising this client without a wired `AcpConnection`), so a
+   * `session/update`/ext notification tagged for a session that was just replaced (e.g. a
+   * turn interrupted by `AcpConnection.newSession()`, still streaming in) is dropped instead
+   * of reaching the listener/webview for the wrong conversation. */
+  private _isLiveSession(sessionId: string): boolean {
+    return this._currentSessionId === undefined || sessionId === this._currentSessionId();
   }
 
   public async sessionUpdate(params: SessionNotification): Promise<void> {
+    if (!this._isLiveSession(params.sessionId)) {
+      this._log(`klorb: ignoring session/update for stale session ${params.sessionId}`);
+      return;
+    }
     const update = params.update;
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
@@ -522,6 +541,10 @@ export class KlorbAcpClient {
    * turn (see docs/specs/klorb-server.md's extension-methods section). An unrecognized
    * extension notification is logged and ignored, per ACP's own extensibility rules. */
   public async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    if (typeof params.sessionId === 'string' && !this._isLiveSession(params.sessionId)) {
+      this._log(`klorb: ignoring ${method} for stale session ${params.sessionId}`);
+      return;
+    }
     if (method === '_klorb/usage') {
       const { usedTokens, maxTokens, outputTokens } = params;
       if (
