@@ -148,6 +148,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this.postHostMessage({ type: 'sessionReplay', entries });
   }
 
+  public onSessionReset(): void {
+    this.postHostMessage({ type: 'sessionReset' });
+  }
+
   /** Posts a typed host→webview message. A no-op when the view hasn't been resolved yet. */
   public postHostMessage(message: HostMessage): void {
     void this._view?.webview.postMessage(message);

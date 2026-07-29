@@ -40,6 +40,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onMessageQueued: (text) => messagesQueued.push(text),
     onQueuedMessageSent: (text) => queuedMessagesSent.push(text),
     onSessionReplay: () => undefined,
+    onSessionReset: () => events.push('sessionReset'),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
   return { agent, connection, events, messagesQueued, queuedMessagesSent };
@@ -74,6 +75,23 @@ describe('AcpConnection', () => {
     expect(agent.receivedNewSessions).toHaveLength(1);
     expect(agent.receivedNewSessions[0]!.cwd).toBe('/work');
     expect(agent.receivedNewSessions[0]!.mcpServers).toEqual([]);
+  });
+
+  it('fires onSessionReset before newSession() when no resume was requested', async () => {
+    const { connection, events } = makeHarness();
+    await connection.start(OPTIONS, '/work');
+
+    expect(events).toContain('sessionReset');
+    expect(events.indexOf('sessionReset')).toBeLessThan(events.indexOf('sessionInfo::false'));
+  });
+
+  it('fires onSessionReset and falls back to newSession() when session/load fails', async () => {
+    const { agent, connection, events } = makeHarness();
+    await connection.start(OPTIONS, '/work', 'stale-session-id');
+
+    expect(connection.sessionId).toBe('sess-1');
+    expect(agent.receivedNewSessions).toHaveLength(1);
+    expect(events).toContain('sessionReset');
   });
 
   it('forwards session/new response state via onSessionInfo', async () => {
@@ -180,6 +198,7 @@ describe('AcpConnection', () => {
 
     await connection.prompt('hi');
     expect(events).toEqual([
+      'sessionReset',
       'sessionInfo::false',
       'thought:pondering',
       'agent:Hello',
@@ -272,6 +291,7 @@ describe('AcpConnection', () => {
       onMessageQueued: () => undefined,
       onQueuedMessageSent: () => undefined,
       onSessionReplay: () => undefined,
+      onSessionReset: () => undefined,
     };
     const connection = new AcpConnection(
       serverProcess,

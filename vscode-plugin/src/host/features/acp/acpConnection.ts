@@ -202,9 +202,7 @@ export class AcpConnection {
     } else {
       this._log('klorb: no resumeSessionId given; starting a new session');
     }
-    // TODO(aaron): Clear the history view; any vscode-restored state is now invalid.
-    // We do this with KlorbSessionViewProvider.postHostMessage({ type: 'sessionReset' })
-    // ... but how do we get a KlorbSessionViewProvider reference from here?
+    this._listener.onSessionReset();
     await this.newSession(cwd);
   }
 

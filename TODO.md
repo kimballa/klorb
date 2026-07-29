@@ -246,10 +246,6 @@
 
 ### Bugs
 
-* If we **can't** restore the previous session (or are configured not to), AcpConnection.start()
-  needs to be able to send a `sessionReset` message to the webview to clear out its now-stale
-  HistoryView. (See TODO comment in AcpConnection#start.)
-
 * Summary of bash tool call says: `Bash: <intent> $ <command>` all on one line.
   * at minimum, put a `<br/>` before the shell command
   * command should be in monospace, not variable font.

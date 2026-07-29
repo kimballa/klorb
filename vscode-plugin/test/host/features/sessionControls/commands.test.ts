@@ -35,6 +35,7 @@ const NOOP_LISTENER: SessionUpdateListener = {
   onMessageQueued: () => undefined,
   onQueuedMessageSent: () => undefined,
   onSessionReplay: () => undefined,
+  onSessionReset: () => undefined,
 };
 
 interface FakeVsCode extends CommandsVsCode {
