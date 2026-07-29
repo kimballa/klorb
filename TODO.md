@@ -256,6 +256,14 @@
   * In general the "Send" and "Stop" buttons are too big. they need to be less obtrusive.
 
 * fzf fuzzy finder for @-mentioning files in the project
+  * use Fuse.js for the fuzzy-matching
+  * to discover/iterate over files in the first place, use the 'ignore' lib to toss out
+    gitignore'd files. (Unless vscode has its own ability to deliver to us a list of
+    'all the files in the workspace'?)
+  * The TUI should have this too. But use the `textual.fuzzy` package already in there.
+  * The Session backend should preprocess scripts and if anything matches `@<a-real-file>`,
+    it should add a system interjection naming that file and suggesting the agent use
+    ReadFile on it.
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
