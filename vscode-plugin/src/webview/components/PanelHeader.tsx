@@ -28,18 +28,18 @@ export default function PanelHeader({
         <button
           type="button"
           className="panel-header-icon-button"
-          title="New session"
-          aria-label="New session"
-          onClick={onNewSession}>
-          <vscode-icon name="chat-sparkle" />
-        </button>
-        <button
-          type="button"
-          className="panel-header-icon-button"
           title="Session history"
           aria-label="Session history"
           onClick={onBrowseSessions}>
           <vscode-icon name="history" />
+        </button>
+        <button
+          type="button"
+          className="panel-header-icon-button"
+          title="New session"
+          aria-label="New session"
+          onClick={onNewSession}>
+          <vscode-icon name="chat-sparkle" />
         </button>
       </div>
     </div>
