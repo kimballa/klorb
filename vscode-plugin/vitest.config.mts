@@ -16,4 +16,7 @@ export default defineConfig({
     jsx: 'automatic',
     jsxImportSource: 'react',
   },
+  test: {
+    setupFiles: ['./test/setup.ts'],
+  },
 });

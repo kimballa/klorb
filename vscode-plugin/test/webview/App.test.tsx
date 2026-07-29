@@ -7,6 +7,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import App from 'webview/App';
 import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
 
+vi.mock('@chenglou/pretext', () => ({
+  prepare: vi.fn(() => ({})),
+  layout: vi.fn((_: unknown, __: number, lineHeight: number) => ({
+    lineCount: 1,
+    height: lineHeight,
+  })),
+}));
+
 interface FakeVsCode {
   vscode: VsCodeApi;
   posted: unknown[];

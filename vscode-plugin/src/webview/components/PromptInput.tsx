@@ -1,16 +1,21 @@
 // © Copyright 2026 Aaron Kimball
+import { type PreparedText, prepare, layout } from '@chenglou/pretext';
 import type { VscodeTextarea } from '@vscode-elements/elements';
 import {
   type JSX,
   type SyntheticEvent,
   type KeyboardEvent,
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
 } from 'react';
 
 import { classifyEnterKey } from 'webview/keyHandling';
+
+const MIN_ROWS = 1;
+const MAX_ROWS = 10;
 
 /** Imperative handle exposed via `ref`, so `App` can reclaim focus after a turn ends or an
  * interaction panel resolves (see `docs/specs/vscode-plugin.md`'s input-discipline sweep). */
@@ -62,12 +67,70 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   ref
 ): JSX.Element {
   const [draft, setDraft] = useState('');
+  const [rows, setRows] = useState(MIN_ROWS);
   const textareaRef = useRef<VscodeTextarea>(null);
+  const preparedRef = useRef<PreparedText | null>(null);
+  const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
   const disabled = inFlight && !enqueueMessageCapable;
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
   }));
+
+  /** Read and cache font metrics from the inner textarea element. */
+  function readMetrics(): { font: string; lineHeight: number } | null {
+    if (metricsRef.current) return metricsRef.current;
+    const wrapped = textareaRef.current?.wrappedElement;
+    if (!wrapped) return null;
+    const cs = getComputedStyle(wrapped);
+    const fontSize = parseFloat(cs.fontSize);
+    const lineHeightRaw = cs.lineHeight;
+    const lineHeight =
+      lineHeightRaw === 'normal' || isNaN(parseFloat(lineHeightRaw))
+        ? Math.round(fontSize * 1.2)
+        : parseFloat(lineHeightRaw);
+    metricsRef.current = {
+      font: `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`,
+      lineHeight,
+    };
+    return metricsRef.current;
+  }
+
+  /** Recompute the visible row count for the given text using pretext. */
+  function computeRows(text: string): void {
+    const wrapped = textareaRef.current?.wrappedElement;
+    const metrics = readMetrics();
+    if (!wrapped || !metrics) return;
+    const cs = getComputedStyle(wrapped);
+    const maxWidth =
+      wrapped.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    if (maxWidth <= 0) return;
+    const prepared = prepare(text, metrics.font, { whiteSpace: 'pre-wrap' });
+    preparedRef.current = prepared;
+    const { lineCount } = layout(prepared, maxWidth, metrics.lineHeight);
+    setRows(Math.max(MIN_ROWS, Math.min(lineCount, MAX_ROWS)));
+  }
+
+  // Recompute rows when the textarea width changes (e.g. sidebar resize).
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      const metrics = readMetrics();
+      const wrapped = textareaRef.current?.wrappedElement;
+      if (!metrics || !preparedRef.current || !wrapped) return;
+      const cs = getComputedStyle(wrapped);
+      const maxWidth =
+        wrapped.clientWidth -
+        (parseFloat(cs.paddingLeft) || 0) -
+        (parseFloat(cs.paddingRight) || 0);
+      if (maxWidth <= 0) return;
+      const { lineCount } = layout(preparedRef.current, maxWidth, metrics.lineHeight);
+      setRows(Math.max(MIN_ROWS, Math.min(lineCount, MAX_ROWS)));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   function submit(): void {
     const text = draft.trim();
@@ -81,6 +144,8 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
       textareaRef.current.value = '';
     }
     setDraft('');
+    setRows(MIN_ROWS);
+    preparedRef.current = null;
     onSubmit(text);
   }
 
@@ -112,11 +177,16 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
       <vscode-textarea
         ref={textareaRef}
         id="prompt-input"
-        rows={2}
+        rows={rows}
+        resize="none"
         placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
         value={draft}
         disabled={disabled}
-        onInput={(event: SyntheticEvent) => setDraft(targetValue(event))}
+        onInput={(event: SyntheticEvent) => {
+          const value = targetValue(event);
+          setDraft(value);
+          computeRows(value);
+        }}
       />
       {!inFlight || enqueueMessageCapable ? (
         <vscode-button id="submit-button" onClick={() => submit()}>

@@ -28,6 +28,9 @@
 
 ### Feature backlog
 
+* When the agent uses TodoUpdate with `"close": true`, the response should tell the agent
+  that it is required to run `TodoNext` to get its next task.
+
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
   or start testing anything. Maybe we should notice this condition (only using read-only tools for N
   tool calls in a row) and force it to deliver a report to the user that enumerates some concrete
@@ -265,11 +268,6 @@
 * Whatever we're using for markdown formatting in vscode isn't processing `| tables |`
 
 ### Feature backlog
-
-* The prompt textbox should start as one line tall and expand to be up to ten lines tall
-  at which point it gains a vertical scrollbar. This needs to account for hard newlines
-  (inserted with shift+enter) as well as text wrapping.
-  [show the code sample from ee-web's assembly instructions height calculator.]
 
 * fzf fuzzy finder for @-mentioning files in the project
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)

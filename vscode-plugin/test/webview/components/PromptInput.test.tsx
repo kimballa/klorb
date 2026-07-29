@@ -6,6 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
 
+vi.mock('@chenglou/pretext', () => ({
+  prepare: vi.fn(() => ({})),
+  layout: vi.fn((_: unknown, __: number, lineHeight: number) => ({
+    lineCount: 1,
+    height: lineHeight,
+  })),
+}));
+
 const NOOP = { onCancel: () => undefined, onCyclePermissionMode: () => undefined };
 
 function promptTextarea(container: HTMLElement): HTMLElement & { value: string } {
