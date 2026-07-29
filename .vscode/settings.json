@@ -48,6 +48,12 @@
   "[typescriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
   "makefile.makefilePath": "klorb/Makefile",
   "prettier.configPath": "vscode-plugin/.prettierrc.json",
   "prettier.documentSelectors": [
