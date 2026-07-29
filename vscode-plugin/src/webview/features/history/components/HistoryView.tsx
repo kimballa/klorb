@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 
 import type { HistoryEntry } from '../historyModel';
 
+import BashToolCallChip from './BashToolCallChip';
 import SessionStatsCard from './SessionStatsCard';
 import ToolCallChip from './ToolCallChip';
 
@@ -78,6 +79,11 @@ function renderEntry(
         </div>
       );
     case 'toolCall':
+      if (entry.bashMeta !== undefined) {
+        return (
+          <BashToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />
+        );
+      }
       return <ToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />;
     case 'sessionStats':
       return <SessionStatsCard entry={entry} key={index} />;

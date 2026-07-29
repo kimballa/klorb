@@ -18,6 +18,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 import type {
+  BashToolMeta,
   DiffHunk,
   DiffHunkLine,
   PermissionAskMessage,
@@ -232,13 +233,46 @@ function toDiffMessage(content: Extract<ToolCallContent, { type: 'diff' }>): Too
   };
 }
 
+/** Extract `_meta.klorb.bash` from an ACP update's `_meta`, returning `undefined` when absent
+ * or malformed -- the client doesn't assume every agent is klorb. */
+function parseBashMeta(
+  meta: { [key: string]: unknown } | null | undefined
+): BashToolMeta | undefined {
+  const klorb = klorbMetaOf(meta);
+  const bash = klorb.bash;
+  if (
+    bash == null ||
+    typeof bash !== 'object' ||
+    typeof (bash as Record<string, unknown>).command !== 'string'
+  ) {
+    return undefined;
+  }
+  const b = bash as Record<string, unknown>;
+  const result: BashToolMeta = { command: b.command as string };
+  if (typeof b.intent === 'string') {
+    result.intent = b.intent;
+  }
+  if (typeof b.success === 'boolean') {
+    result.success = b.success;
+  }
+  if (typeof b.exitStatus === 'number') {
+    result.exitStatus = b.exitStatus;
+  }
+  if (typeof b.runtime === 'number') {
+    result.runtime = b.runtime;
+  }
+  return result;
+}
+
 function toolCallStartedMessage(update: ToolCall): ToolCallStartedMessage {
+  const bashMeta = parseBashMeta(update._meta);
   return {
     type: 'toolCallStarted',
     callId: update.toolCallId,
     title: update.title,
     kind: update.kind ?? 'other',
     locations: (update.locations ?? []).map(toLocationMessage),
+    ...(bashMeta !== undefined ? { bashMeta } : {}),
   };
 }
 
@@ -273,6 +307,10 @@ function toolCallUpdatedMessage(update: ToolCallUpdate): ToolCallUpdatedMessage 
     ) {
       message.contentText = textBlock.content.text;
     }
+  }
+  const bashMeta = parseBashMeta(update._meta);
+  if (bashMeta !== undefined) {
+    message.bashMeta = bashMeta;
   }
   return message;
 }

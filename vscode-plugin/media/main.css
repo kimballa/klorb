@@ -310,6 +310,47 @@ button.tool-call-title {
   cursor: pointer;
 }
 
+.bash-tool-call .tool-call-header {
+  align-items: flex-start;
+}
+
+.bash-tool-call-title {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bash-tool-call-intent {
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+.bash-tool-call-command {
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  cursor: default;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+button.bash-tool-call-command {
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.bash-tool-call-result {
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+}
+
 .tool-call-failed {
   border-color: var(--vscode-errorForeground);
 }

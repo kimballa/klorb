@@ -246,15 +246,14 @@
 
 ### Bugs
 
-* Summary of bash tool call says: `Bash: <intent> $ <command>` all on one line.
-  * at minimum, put a `<br/>` before the shell command
-  * command should be in monospace, not variable font.
-  * runtime and exit code are not shown after the command completes.
-  * There should also be a "Running" spinner to indicate when it's processing.
+* For Bash tool calls, runtime and exit code are not shown after the command completes.
 
 * Whatever we're using for markdown formatting in vscode isn't processing `| tables |`
 
 ### Feature backlog
+
+* "Send" button should be disabled if the prompt is empty.
+  * In general the "Send" and "Stop" buttons are too big. they need to be less obtrusive.
 
 * fzf fuzzy finder for @-mentioning files in the project
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)

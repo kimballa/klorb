@@ -1,5 +1,6 @@
 // © Copyright 2026 Aaron Kimball
 import type {
+  BashToolMeta,
   HostMessage,
   PermissionAskMessage,
   QuestionAskMessage,
@@ -56,6 +57,7 @@ export interface ToolCallHistoryEntry {
   locations: ToolCallLocation[];
   contentText?: string;
   diff?: ToolCallDiff;
+  bashMeta?: BashToolMeta;
   expanded: boolean;
 }
 
@@ -256,6 +258,7 @@ function appendToolCallStarted(
     title: message.title,
     toolKind: message.kind,
     locations: message.locations,
+    bashMeta: message.bashMeta,
     expanded: false,
   };
   return [...entries, entry];
@@ -282,6 +285,7 @@ function applyToolCallUpdated(
       locations: message.locations ?? [],
       contentText: message.contentText,
       diff: message.diff,
+      bashMeta: message.bashMeta,
       expanded: false,
     };
     return [...entries, entry];
@@ -294,6 +298,7 @@ function applyToolCallUpdated(
     locations: message.locations ?? previous.locations,
     contentText: message.contentText ?? previous.contentText,
     diff: message.diff ?? previous.diff,
+    bashMeta: message.bashMeta ?? previous.bashMeta,
   };
   return [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
 }

@@ -167,6 +167,18 @@ def _tool_locations(
     return [ToolCallLocation(path=path)]
 
 
+def _bash_meta_start(args: dict[str, Any]) -> dict[str, str] | None:
+    """Return `_meta.klorb.bash` for a just-started `Bash` call, or `None` for other tools."""
+    command = args.get("command")
+    if not isinstance(command, str):
+        return None
+    intent = args.get("intent")
+    meta: dict[str, str] = {"command": command}
+    if isinstance(intent, str) and intent:
+        meta["intent"] = intent
+    return meta
+
+
 def tool_call_started_update(
     event: ToolCallStartedEvent, tool_registry: ToolRegistry | None, workspace_root: Path,
 ) -> ToolCallStart:
@@ -176,9 +188,13 @@ def tool_call_started_update(
     title = _tool_title(event.name, event.args, tool_registry)
     kind = TOOL_KIND_MAP.get(event.name, "other")
     locations = _tool_locations(event.name, event.args, workspace_root)
-    return acp.start_tool_call(
+    bash_meta = _bash_meta_start(event.args)
+    result = acp.start_tool_call(
         event.call_id, title, kind=kind, status="in_progress", locations=locations,
         raw_input=event.args)
+    if bash_meta is not None:
+        result.field_meta = {"klorb": {"bash": bash_meta}}
+    return result
 
 
 def _diff_text(hunks: list[DiffHunk]) -> tuple[str | None, str]:
@@ -272,6 +288,26 @@ def _json_safe_result(result: Any) -> Any:
     return result
 
 
+def _bash_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
+    """Return `_meta.klorb.bash` for a finished `Bash` call's result, or `None` for other
+    tools or when the result is not a dict (e.g. an error before `apply()` returned)."""
+    if event.name != "Bash" or not isinstance(event.result, dict):
+        return None
+    meta: dict[str, Any] = {}
+    if event.error is not None:
+        meta["success"] = False
+    elif "success" in event.result:
+        meta["success"] = bool(event.result["success"])
+    if "exit_status" in event.result and event.result["exit_status"] is not None:
+        meta["exitStatus"] = event.result["exit_status"]
+    if "runtime" in event.result:
+        try:
+            meta["runtime"] = round(float(event.result["runtime"]), 2)
+        except (TypeError, ValueError):
+            pass
+    return meta if meta else None
+
+
 def tool_call_finished_update(
     event: ToolCallEvent, tool_registry: ToolRegistry | None, workspace_root: Path,
 ) -> ToolCallProgress:
@@ -285,9 +321,13 @@ def tool_call_finished_update(
     content = (
         _failure_content(event) if event.error is not None
         else _success_content(event, tool_registry, workspace_root))
-    return acp.update_tool_call(
+    bash_meta = _bash_meta_finish(event)
+    result = acp.update_tool_call(
         event.call_id, status=status, content=content,
         raw_output=_json_safe_result(event.result))
+    if bash_meta is not None:
+        result.field_meta = {"klorb": {"bash": bash_meta}}
+    return result
 
 
 _PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (
@@ -598,6 +638,37 @@ def parse_session_config_update(params: dict[str, Any]) -> SessionConfigUpdate:
         raise acp.RequestError.invalid_params({"reason": str(exc)}) from exc
 
 
+def _replay_bash_meta(
+    call: ToolCallRequest, args: dict[str, Any],
+    parsed: dict[str, Any] | None, failed: bool,
+) -> dict[str, Any] | None:
+    """Build `bashMeta` for a replayed tool-call entry from the restored call/response pair."""
+    if call.name != "Bash":
+        return None
+    meta: dict[str, Any] = {}
+    command = args.get("command")
+    if isinstance(command, str):
+        meta["command"] = command
+    intent = args.get("intent")
+    if isinstance(intent, str) and intent:
+        meta["intent"] = intent
+    if parsed is not None and "response_body" in parsed:
+        body = parsed["response_body"]
+        if isinstance(body, dict):
+            if failed:
+                meta["success"] = False
+            elif "success" in body:
+                meta["success"] = bool(body["success"])
+            if body.get("exit_status") is not None:
+                meta["exitStatus"] = body["exit_status"]
+            if "runtime" in body:
+                try:
+                    meta["runtime"] = round(float(body["runtime"]), 2)
+                except (TypeError, ValueError):
+                    pass
+    return meta if meta else None
+
+
 def _replay_tool_call_entry(
     call: ToolCallRequest, response: Message | None,
     tool_registry: ToolRegistry | None, workspace_root: Path,
@@ -620,12 +691,14 @@ def _replay_tool_call_entry(
 
     content_text: str | None = None
     failed = False
+    parsed: dict[str, Any] | None = None
     if response is not None:
         try:
-            parsed = json.loads(response.content)
+            parsed_raw = json.loads(response.content)
         except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, dict) and "is_error" in parsed:
+            parsed_raw = None
+        parsed = parsed_raw if isinstance(parsed_raw, dict) else None
+        if parsed is not None and "is_error" in parsed:
             failed = bool(parsed["is_error"])
             content_text = (
                 parsed.get("error_message") if failed else parsed.get("response_body")
@@ -639,7 +712,7 @@ def _replay_tool_call_entry(
             content_text = response.content
 
     locations = _tool_locations(call.name, args, workspace_root)
-    return {
+    entry: dict[str, Any] = {
         "kind": "toolCall",
         "callId": call.id,
         "status": "failed" if failed else "completed",
@@ -649,6 +722,10 @@ def _replay_tool_call_entry(
         "contentText": content_text,
         "expanded": False,
     }
+    bash_meta = _replay_bash_meta(call, args, parsed if isinstance(parsed, dict) else None, failed)
+    if bash_meta is not None:
+        entry["bashMeta"] = bash_meta
+    return entry
 
 
 def build_session_replay(

@@ -103,6 +103,22 @@ export interface ToolCallDiff {
   hunks?: DiffHunk[];
 }
 
+/** Structured metadata for a Bash tool call, carried in `_meta.klorb.bash` on ACP
+ * `tool_call`/`tool_call_update` updates so the webview can render the call's intent,
+ * command, and result fields independently instead of parsing a flat title string. */
+export interface BashToolMeta {
+  /** The shell command the agent asked to run. */
+  command: string;
+  /** The agent's description of why it's running this command (omit when absent). */
+  intent?: string;
+  /** Whether the command succeeded (omit when not yet finished). */
+  success?: boolean;
+  /** The process exit code (omit when not yet finished, or when the process timed out). */
+  exitStatus?: number;
+  /** Wall-clock runtime in seconds (omit when not yet finished). */
+  runtime?: number;
+}
+
 /** A tool call was just started (ACP `tool_call` update): `kind` and `status` are left as
  * plain strings (mirroring `TurnEndedMessage.stopReason`) rather than a literal union, so an
  * ACP `ToolKind`/`ToolCallStatus` value this client doesn't recognize yet still round-trips
@@ -113,6 +129,7 @@ export interface ToolCallStartedMessage {
   title: string;
   kind: string;
   locations: ToolCallLocation[];
+  bashMeta?: BashToolMeta;
 }
 
 /** A tool call finished or otherwise changed (ACP `tool_call_update`); mutates the matching
@@ -125,6 +142,7 @@ export interface ToolCallUpdatedMessage {
   contentText?: string;
   diff?: ToolCallDiff;
   locations?: ToolCallLocation[];
+  bashMeta?: BashToolMeta;
 }
 
 /** One selectable option in a permission-ask option grid, flattened from an ACP
@@ -311,6 +329,7 @@ export interface SessionReplayToolCallEntry {
   toolKind: string;
   locations: ToolCallLocation[];
   contentText?: string | null;
+  bashMeta?: BashToolMeta;
   expanded: boolean;
 }
 
