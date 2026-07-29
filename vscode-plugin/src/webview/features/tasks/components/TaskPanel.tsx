@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { useRef, type JSX, type MouseEvent, type RefObject } from 'react';
+import { useState, type JSX, type MouseEvent, type ToggleEvent } from 'react';
 
 import type { TaskInfo } from 'shared/webviewMessages';
 import type { TaskListSnapshot } from 'webview/features/history';
@@ -93,7 +93,7 @@ export default function TaskPanel({
   taskList,
   onToggleVisibility,
 }: TaskPanelProps): JSX.Element | null {
-  const detailRef: RefObject<HTMLDetailsElement | null> = useRef(null);
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
 
   function hidePanel(event: MouseEvent): void {
     // Cancels <summary>'s own default click action (toggling the parent <details>), so hiding
@@ -102,9 +102,12 @@ export default function TaskPanel({
     onToggleVisibility();
   }
 
+  function onToggleDetails(event: ToggleEvent<HTMLDetailsElement>): void {
+    setDetailsOpen(event.currentTarget.open);
+  }
+
   const tasks: TaskInfo[] = taskList?.tasks || EMPTY_TASK_LIST;
   const hasTasks: boolean = !!(tasks?.length > 0);
-  const detailsOpen: boolean = !!detailRef.current?.open; // true if <details> is expanded.
 
   function onClickSummary(event: MouseEvent): void {
     if (!hasTasks && !detailsOpen) {
@@ -124,7 +127,7 @@ export default function TaskPanel({
   }
 
   return (
-    <details className="task-panel" ref={detailRef}>
+    <details className="task-panel" onToggle={onToggleDetails}>
       <summary className="task-panel-summary" onClick={onClickSummary} title={summaryTitle}>
         {hasTasks && <vscode-icon className="task-panel-chevron" name="chevron-right" />}
         <vscode-icon className="task-panel-icon" name="checklist" />

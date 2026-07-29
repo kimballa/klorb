@@ -28,7 +28,7 @@ export default tseslint.config(
     },
   },
   {
-    ...reactHooks.configs['recommended-latest'],
+    ...reactHooks.configs.flat['recommended-latest'],
     files: ['src/webview/**/*.tsx'],
   },
   {
