@@ -267,34 +267,3 @@
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
-
-**Bug with uncaught exception in ACP Server when the provider returns an error:**
-
-```plain
-[server] 2026-07-28 01:15:06 - ERROR:klorb.session.mixins.turns:Turn failed for moonshotai/kimi-k3: Provider returned error (messages=96, total_chars=1568007)
-[server] 2026-07-28 01:15:06 - ERROR:klorb.session.mixins.turns:Full exception details:
-Traceback (most recent call last):
-  File "/home/aaron/src/klorb/klorb/src/klorb/session/mixins/turns.py", line 325, in _dispatch_turn
-    reply, _ = self._send_and_receive(
-               ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/aaron/src/klorb/klorb/src/klorb/session/mixins/turns.py", line 177, in _send_and_receive
-    result = self._provider.send_prompt(
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/aaron/src/klorb/klorb/src/klorb/openrouter.py", line 306, in send_prompt
-    for chunk in stream:
-  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/openai/_streaming.py", line 49, in __iter__
-    for item in self._iterator:
-  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/openai/_streaming.py", line 95, in __stream__
-    raise APIError(
-openai.APIError: Provider returned error
-[server] 2026-07-28 01:15:06 - ERROR:root:Background task failed
-Traceback (most recent call last):
-  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/task/supervisor.py", line 51, in _on_done
-    task.result()
-  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/task/dispatcher.py", line 81, in runner
-    result = await self._request_runner(message)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/connection.py", line 237, in _run_request
-    raise err from None
-acp.exceptions.RequestError: Internal error
-```

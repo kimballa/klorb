@@ -361,6 +361,27 @@ async def test_cancel_aborts_the_turn_and_keeps_it_in_history(
     assert assistant_message.processing_state == "aborted"
 
 
+async def test_provider_error_is_handled_gracefully(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = RuntimeError("Provider returned error")
+
+    harness = await make_harness(provider=mock_provider)
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+    session_response = await harness.client.new_session(cwd=str(tmp_path), mcp_servers=[])
+
+    response = await harness.client.prompt(
+        session_id=session_response.session_id, prompt=[acp.text_block("hello")])
+
+    assert response.stop_reason == "refusal"
+    session = harness.server.agent.session
+    assert session is not None
+    user_message = next(m for m in session.messages if m.role == "user")
+    assert user_message.processing_state == "error"
+    assert user_message.last_error is not None
+
+
 async def test_prompt_with_wrong_session_id_is_a_json_rpc_error(
     make_harness: Callable[..., Any], tmp_path: Path,
 ) -> None:

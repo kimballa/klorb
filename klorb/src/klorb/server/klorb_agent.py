@@ -47,7 +47,7 @@ from klorb.server.update_mapping import (
     session_mode_state,
 )
 from klorb.session import Session
-from klorb.session.constants import PermissionFramework
+from klorb.session.constants import PermissionFramework, ToolCallLimitExceeded
 from klorb.session.events import QueuedMessage
 from klorb.session.restore import try_restore_session
 from klorb.tools.registry import ToolRegistry
@@ -231,6 +231,24 @@ class KlorbAcpAgent(acp.Agent):
             logger.debug("session/prompt turn cancelled for ACP session %s", session_id)
             self._session.persist_state()
             return acp.PromptResponse(stop_reason="cancelled")
+        except ToolCallLimitExceeded:
+            raise
+        except Exception as exc:
+            logger.error(
+                "session/prompt turn failed for ACP session %s: %s", session_id, exc,
+                exc_info=True,
+            )
+            try:
+                await self._require_client().session_update(
+                    session_id=session_id,
+                    update=acp.update_agent_message_text(
+                        f"\n\n[Provider error: {exc}]"))
+            except Exception:
+                logger.debug(
+                    "Failed to send provider-error update to ACP client for session %s",
+                    session_id, exc_info=True)
+            self._session.persist_state()
+            return acp.PromptResponse(stop_reason="refusal")
         finally:
             self._turn_in_flight = False
         self._session.persist_state()
