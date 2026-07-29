@@ -70,6 +70,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const [rows, setRows] = useState(MIN_ROWS);
   const textareaRef = useRef<VscodeTextarea>(null);
   const preparedRef = useRef<PreparedText | null>(null);
+  const trailingNewlinesRef = useRef(0);
   const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
   const disabled = inFlight && !enqueueMessageCapable;
 
@@ -107,8 +108,12 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     if (maxWidth <= 0) return;
     const prepared = prepare(text, metrics.font, { whiteSpace: 'pre-wrap' });
     preparedRef.current = prepared;
+    // pretext's layout counts content lines; a trailing newline creates a visual
+    // empty line the textarea displays but pretext doesn't measure, so add it.
+    const trailingNewlines = text.endsWith('\n') ? 1 : 0;
+    trailingNewlinesRef.current = trailingNewlines;
     const { lineCount } = layout(prepared, maxWidth, metrics.lineHeight);
-    setRows(Math.max(MIN_ROWS, Math.min(lineCount, MAX_ROWS)));
+    setRows(Math.max(MIN_ROWS, Math.min(lineCount + trailingNewlines, MAX_ROWS)));
   }
 
   // Recompute rows when the textarea width changes (e.g. sidebar resize).
@@ -126,7 +131,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         (parseFloat(cs.paddingRight) || 0);
       if (maxWidth <= 0) return;
       const { lineCount } = layout(preparedRef.current, maxWidth, metrics.lineHeight);
-      setRows(Math.max(MIN_ROWS, Math.min(lineCount, MAX_ROWS)));
+      setRows(Math.max(MIN_ROWS, Math.min(lineCount + trailingNewlinesRef.current, MAX_ROWS)));
     });
     observer.observe(el);
     return () => observer.disconnect();

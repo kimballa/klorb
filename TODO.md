@@ -276,3 +276,41 @@
 
 * "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
   or `<table>`, not just a bunch of text.
+
+
+Bug: Restoring a session which had a non-default model fails:
+
+```plain
+[server] 2026-07-29 00:50:25 - DEBUG:klorb.session.restore:Restored session 2026-07-29-00-46-fix-auto-resize-promptinput (subdir=2026-07-29-00-46-fix-auto-resize-promptinput) for workspace /home/aaron/src/klorb.
+[server] 2026-07-29 00:50:25 - DEBUG:klorb.server.klorb_agent:session/load restored ACP session 2026-07-29-00-46-fix-auto-resize-promptinput (was saved as 2026-07-29-00-46-classy-copperhead) for cwd=/home/aaron/src/klorb
+klorb: session loaded: 2026-07-29-00-46-classy-copperhead
+klorb: resume of session 2026-07-29-00-46-classy-copperhead succeeded
+klorb: failed to fetch session config: Invalid params
+[server] 2026-07-29 00:50:25 - ERROR:root:Background task failed
+Traceback (most recent call last):
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/task/supervisor.py", line 51, in _on_done
+    task.result()
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/task/dispatcher.py", line 81, in runner
+    result = await self._request_runner(message)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/connection.py", line 205, in _run_request
+    result = await self._handler(method, message.get("params"), False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/router.py", line 168, in __call__
+    return await ext_handler(method[1:], payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/venv/lib/python3.12/site-packages/acp/agent/router.py", line 73, in _handle_extension_request
+    return await ext(name, payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/src/klorb/server/klorb_agent.py", line 514, in ext_method
+    return self._ext_get_session_config(params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aaron/src/klorb/klorb/src/klorb/server/klorb_agent.py", line 349, in _ext_get_session_config
+    self._require_session_id(params)
+  File "/home/aaron/src/klorb/klorb/src/klorb/server/klorb_agent.py", line 345, in _require_session_id
+    self._validate_session(session_id)
+  File "/home/aaron/src/klorb/klorb/src/klorb/server/klorb_agent.py", line 276, in _validate_session
+    raise acp.RequestError.invalid_params({"sessionId": session_id, "reason": "unknown session"})
+acp.exceptions.RequestError: Invalid params
+klorb: startConnection: connected sessionId=2026-07-29-00-46-classy-copperhead (resume succeeded)
+```
