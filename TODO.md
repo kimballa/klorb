@@ -185,9 +185,16 @@
 
 * Surface a "delete this saved session" action (TUI palette command and/or VS Code quickpick
   item) rather than relying solely on `MAX_RECENT_SESSIONS` pruning to reclaim space.
-* Show a relative recency timestamp ("2 hours ago") in the Load Session picker -- today's design
-  deliberately has no timestamp field on `RecentSession`, only list order; adding one is a
-  backwards-compatible schema bump if wanted later.
+* Show a relative recency timestamp ("2 hours ago") in the Load Session picker (shown when
+  you click the "Session History" button) -- today's design deliberately has no timestamp field on
+  `RecentSession`, only list order; adding one is backwards-compatible.
+  * Add a lastModifiedTimestamp field to Session, stored in the session.json, and also stored in
+    the RecentSession model. The field is serialized as an ISO-8601 datetime in both places.
+    If this timestamp is provided, then the quickpick shows a relative age for the entry,
+    like `<session_title> (2 hours ago)`. The relative age should be approximate: `just now` if
+    it's less than 2 minutes old. `<n> minutes ago` within the last hour, `<n> hours ago` if
+    it's within the last 24 hours, `<n> day(s) ago`, `last week`, `last month`, then a
+    month-and-year format for older: `April, 2025`.
 * `docs/specs/klorb-server.md`'s `fork_session`/`resume_session` stubs are unaffected by this
   plan; a future plan could build genuine session forking on top of this same `sessions/`
   directory layout.
@@ -236,6 +243,10 @@
 
 ### Bugs
 
+* When you change the model, and then create a new session, the new session should also keep
+  the same model choice; that choice should have updated the ProcessConfig's "default session",
+  which should have then applied to the subsequent new session.
+
 * Clicking the "new session" button should immediately interrupt the current turn in flight
   and dispose of the connection to the model. (If there was already an agent turn in progress,
   it keeps generating tokens and streaming them from the acp server to the acp client even after
@@ -255,8 +266,7 @@
 
 ### Feature backlog
 
-* The "tool call limit reached" promtp shouldn't be a modal messagebox, it should be a panel
-  UserAsk within the main plugin area.
+* Add a `make lint_fix` target to actively fix formatting and lint issues, not just report them.
 
 * The prompt textbox should start as one line tall and expand to be up to ten lines tall
   at which point it gains a vertical scrollbar. This needs to account for hard newlines

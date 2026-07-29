@@ -8,6 +8,7 @@ import type {
   QuestionAskMessage,
   SessionReplayEntry,
   TaskListUpdateMessage,
+  ToolCallLimitAskMessage,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
@@ -20,6 +21,7 @@ function makeListener(): {
   toolCallsUpdated: ToolCallUpdatedMessage[];
   permissionAsks: PermissionAskMessage[];
   questionAsks: QuestionAskMessage[];
+  toolCallLimitAsks: ToolCallLimitAskMessage[];
   modeChanges: string[];
   titleChanges: (string | null)[];
   usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[];
@@ -34,6 +36,7 @@ function makeListener(): {
   const toolCallsUpdated: ToolCallUpdatedMessage[] = [];
   const permissionAsks: PermissionAskMessage[] = [];
   const questionAsks: QuestionAskMessage[] = [];
+  const toolCallLimitAsks: ToolCallLimitAskMessage[] = [];
   const modeChanges: string[] = [];
   const titleChanges: (string | null)[] = [];
   const usageUpdates: { usedTokens: number; maxTokens: number | null; outputTokens: number }[] = [];
@@ -48,6 +51,7 @@ function makeListener(): {
     toolCallsUpdated,
     permissionAsks,
     questionAsks,
+    toolCallLimitAsks,
     modeChanges,
     titleChanges,
     usageUpdates,
@@ -62,6 +66,7 @@ function makeListener(): {
       onToolCallUpdated: (message: ToolCallUpdatedMessage) => toolCallsUpdated.push(message),
       postPermissionAsk: (message: PermissionAskMessage) => permissionAsks.push(message),
       postQuestionAsk: (message: QuestionAskMessage) => questionAsks.push(message),
+      postToolCallLimitAsk: (message: ToolCallLimitAskMessage) => toolCallLimitAsks.push(message),
       onSessionInfo: () => undefined,
       onModeChanged: (modeId: string) => modeChanges.push(modeId),
       onSessionTitleChanged: (title: string | null) => titleChanges.push(title),
@@ -514,49 +519,41 @@ describe('KlorbAcpClient', () => {
   });
 
   describe('extMethod', () => {
-    it('returns approved from the injected raiseToolCallLimit function', async () => {
-      const { listener } = makeListener();
-      const client = new KlorbAcpClient(
-        listener,
-        RequestError,
-        () => undefined,
-        () => Promise.resolve(true)
-      );
+    it('posts a toolCallLimitAsk and resolves with approved when the decision is approved', async () => {
+      const { listener, toolCallLimitAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
 
-      const result = await client.extMethod('_klorb/raiseToolCallLimit', {
+      const resultPromise = client.extMethod('_klorb/raiseToolCallLimit', {
         sessionId: 's1',
         message: 'Cap reached',
       });
 
+      // The ask should have been posted to the listener
+      expect(toolCallLimitAsks).toHaveLength(1);
+      expect(toolCallLimitAsks[0]!.message).toBe('Cap reached');
+      expect(toolCallLimitAsks[0]!.type).toBe('toolCallLimitAsk');
+
+      // Resolve the decision
+      client.resolveToolCallLimitDecision(toolCallLimitAsks[0]!.requestId, { approved: true });
+
+      const result = await resultPromise;
       expect(result).toEqual({ approved: true });
     });
 
-    it('returns denied (false) when the injected raiseToolCallLimit function declines', async () => {
-      const { listener } = makeListener();
-      const client = new KlorbAcpClient(
-        listener,
-        RequestError,
-        () => undefined,
-        () => Promise.resolve(false)
-      );
-
-      const result = await client.extMethod('_klorb/raiseToolCallLimit', {
-        sessionId: 's1',
-        message: 'Cap reached',
-      });
-
-      expect(result).toEqual({ approved: false });
-    });
-
-    it('defaults to denied (false) when no raiseToolCallLimit function is injected', async () => {
-      const { listener } = makeListener();
+    it('posts a toolCallLimitAsk and resolves with denied when the decision is cancelled', async () => {
+      const { listener, toolCallLimitAsks } = makeListener();
       const client = new KlorbAcpClient(listener, RequestError, () => undefined);
 
-      const result = await client.extMethod('_klorb/raiseToolCallLimit', {
+      const resultPromise = client.extMethod('_klorb/raiseToolCallLimit', {
         sessionId: 's1',
         message: 'Cap reached',
       });
 
+      expect(toolCallLimitAsks).toHaveLength(1);
+
+      client.resolveToolCallLimitDecision(toolCallLimitAsks[0]!.requestId, { cancelled: true });
+
+      const result = await resultPromise;
       expect(result).toEqual({ approved: false });
     });
 

@@ -26,6 +26,7 @@ const NOOP_LISTENER: SessionUpdateListener = {
   onToolCallUpdated: () => undefined,
   postPermissionAsk: () => undefined,
   postQuestionAsk: () => undefined,
+  postToolCallLimitAsk: () => undefined,
   onSessionInfo: () => undefined,
   onModeChanged: () => undefined,
   onSessionTitleChanged: () => undefined,

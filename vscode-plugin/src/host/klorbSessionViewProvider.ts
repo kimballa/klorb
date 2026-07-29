@@ -17,6 +17,7 @@ import {
   type QuestionAskMessage,
   type SessionReplayEntry,
   type TaskListUpdateMessage,
+  type ToolCallLimitAskMessage,
   type ToolCallStartedMessage,
   type ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
@@ -167,9 +168,16 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this._notifyIfHidden('Klorb has a question for you');
   }
 
+  /** Posts a `toolCallLimitAsk` to the panel; if the Klorb view is hidden when it arrives, also
+   * shows a VS Code notification, mirroring `postPermissionAsk()`. */
+  public postToolCallLimitAsk(message: ToolCallLimitAskMessage): void {
+    this.postHostMessage(message);
+    this._notifyIfHidden('Klorb needs your decision: Tool call limit reached');
+  }
+
   /** Shows a "Show Klorb" notification if the view is currently hidden -- shared by
-   * `postPermissionAsk()`/`postQuestionAsk()` so neither kind of interaction can sit invisible
-   * forever while the auxiliary bar is closed. */
+   * `postPermissionAsk()`/`postQuestionAsk()`/`postToolCallLimitAsk()` so no kind of
+   * interaction can sit invisible forever while the auxiliary bar is closed. */
   private _notifyIfHidden(title: string): void {
     if (this._view !== undefined && !this._view.visible) {
       void vscode.window.showInformationMessage(title, 'Show Klorb').then((choice) => {
@@ -220,6 +228,12 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
             : 'otherText' in parsed
               ? { otherText: parsed.otherText }
               : { selectedOptionIndex: parsed.selectedOptionIndex }
+        );
+        break;
+      case 'toolCallLimitDecision':
+        this._connection?.client?.resolveToolCallLimitDecision(
+          parsed.requestId,
+          'approved' in parsed ? { approved: true } : { cancelled: true }
         );
         break;
       case 'pickModel':

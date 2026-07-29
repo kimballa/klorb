@@ -5,7 +5,7 @@ export {
   type LogFn,
   type PermissionDecisionResult,
   type QuestionAnswerResult,
-  type RaiseToolCallLimitFn,
   type SessionInfo,
   type SessionUpdateListener,
+  type ToolCallLimitDecisionResult,
 } from './klorbAcpClient';

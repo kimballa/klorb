@@ -8,15 +8,18 @@ import type {
   SessionStatsToolRow,
   TaskListUpdateMessage,
   ToolCallDiff,
+  ToolCallLimitAskMessage,
   ToolCallLocation,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
 } from 'shared/webviewMessages';
 
-/** The single interaction the server may be waiting on an answer for -- a permission ask or a
- * `_klorb/askUserQuestions` question, tracked in one slot since the server never has more than
- * one blocking ask outstanding at a time (see `applyPendingInteraction`). */
-export type PendingInteraction = PermissionAskMessage | QuestionAskMessage;
+/** The single interaction the server may be waiting on an answer for -- a permission ask, a
+ * `_klorb/askUserQuestions` question, or a `_klorb/raiseToolCallLimit` ask, tracked in one slot
+ * since the server never has more than one blocking ask outstanding at a time
+ * (see `applyPendingInteraction`). */
+export type PendingInteraction =
+  PermissionAskMessage | QuestionAskMessage | ToolCallLimitAskMessage;
 
 /** What kind of content a plain-text history entry holds. `queuedMessage` is a submitted-while-
  * a-turn-was-already-running prompt, rendered in italic "Queued message" styling until its
@@ -178,6 +181,18 @@ export function appendQuestionInteraction(
   return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
 }
 
+/** Appends a compact permanent record of an answered `toolCallLimitAsk` -- the
+ * `appendInteraction()` equivalent for a `_klorb/raiseToolCallLimit` ask, recording the
+ * server's limit-reached message and the user's decision. */
+export function appendToolCallLimitInteraction(
+  entries: readonly HistoryEntry[],
+  ask: ToolCallLimitAskMessage,
+  answerText: string
+): HistoryEntry[] {
+  const lines = ['Tool call limit reached', ask.message, `Decision: ${answerText}`];
+  return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
+}
+
 function appendChunk(
   entries: readonly HistoryEntry[],
   kind: 'response' | 'thinking',
@@ -334,9 +349,11 @@ export function applyHostMessage(
       return applyToolCallUpdated(entries, message);
     case 'permissionAsk':
     case 'questionAsk':
+    case 'toolCallLimitAsk':
       // Tracked separately by `applyPendingInteraction`, not as a history entry -- the
-      // ApprovalPanel/QuestionPanel mounts from that state instead, and an `appendInteraction()`/
-      // `appendQuestionInteraction()` record lands here only once the ask is answered.
+      // ApprovalPanel/QuestionPanel/ToolCallLimitPanel mounts from that state instead, and an
+      // `appendInteraction()`/`appendQuestionInteraction()`/`appendToolCallLimitInteraction()`
+      // record lands here only once the ask is answered.
       return [...entries];
     case 'statusUpdate':
       // Tracked separately by `App`'s own `status` state, not as a history entry -- the
@@ -427,6 +444,7 @@ export function applyPendingInteraction(
   switch (message.type) {
     case 'permissionAsk':
     case 'questionAsk':
+    case 'toolCallLimitAsk':
       return message;
     case 'sessionReset':
       return undefined;

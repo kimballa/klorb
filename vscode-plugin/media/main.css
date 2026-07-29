@@ -576,6 +576,37 @@ button.tool-call-title {
   font-size: 0.85em;
 }
 
+.tool-call-limit-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-editorWarning-foreground, #cca700);
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--vscode-sideBar-background) 92%, white 8%);
+}
+
+.tool-call-limit-header {
+  font-weight: 600;
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.tool-call-limit-message {
+  word-break: break-word;
+}
+
+.tool-call-limit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tool-call-limit-hint {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+}
+
 .input-row-muted {
   opacity: 0.6;
 }

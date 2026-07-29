@@ -11,12 +11,16 @@ import PanelHeader from 'webview/components/PanelHeader';
 import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
 import QuestionPanel, { type QuestionPanelAnswer } from 'webview/components/QuestionPanel';
 import StatusRow from 'webview/components/StatusRow';
+import ToolCallLimitPanel, {
+  type ToolCallLimitDecision,
+} from 'webview/components/ToolCallLimitPanel';
 import VsCodeApiProvider, { type VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import {
   HistoryView,
   appendInteraction,
   appendPrompt,
   appendQuestionInteraction,
+  appendToolCallLimitInteraction,
   applyHostMessage,
   applyPendingInteraction,
   applyTaskListUpdate,
@@ -264,6 +268,21 @@ export default function App({
     );
   }
 
+  function handleToolCallLimitDecision(decision: ToolCallLimitDecision): void {
+    if (pendingInteraction === undefined || pendingInteraction.type !== 'toolCallLimitAsk') {
+      return;
+    }
+    const ask = pendingInteraction;
+    const answerText = 'approved' in decision ? 'Continue' : '(denied)';
+    setEntries((prev) => appendToolCallLimitInteraction(prev, ask, answerText));
+    setPendingInteraction(undefined);
+    vscode.postMessage(
+      'approved' in decision
+        ? { type: 'toolCallLimitDecision', requestId: ask.requestId, approved: true }
+        : { type: 'toolCallLimitDecision', requestId: ask.requestId, cancelled: true }
+    );
+  }
+
   return (
     <VsCodeApiProvider vscode={vscode}>
       <PanelHeader
@@ -285,6 +304,8 @@ export default function App({
           <ApprovalPanel ask={pendingInteraction} onDecision={handleApprovalDecision} />
         ) : pendingInteraction?.type === 'questionAsk' ? (
           <QuestionPanel ask={pendingInteraction} onAnswer={handleQuestionAnswer} />
+        ) : pendingInteraction?.type === 'toolCallLimitAsk' ? (
+          <ToolCallLimitPanel ask={pendingInteraction} onDecision={handleToolCallLimitDecision} />
         ) : null}
       </div>
       <PromptInput

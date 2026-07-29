@@ -29,6 +29,7 @@ import type {
   TaskListSummary,
   TaskListUpdateMessage,
   ToolCallDiff,
+  ToolCallLimitAskMessage,
   ToolCallLocation,
   ToolCallStartedMessage,
   ToolCallUpdatedMessage,
@@ -79,6 +80,11 @@ export interface SessionUpdateListener {
    * Fire-and-forget: the eventual answer arrives back through
    * `KlorbAcpClient.resolveQuestionAnswer()`, not this call's return value. */
   postQuestionAsk(message: QuestionAskMessage): void;
+  /** Posts a `_klorb/raiseToolCallLimit` ask to the webview, or re-posts an already-outstanding
+   * one after a webview reload (see `KlorbAcpClient.repostPendingInteraction()`).
+   * Fire-and-forget: the eventual decision arrives back through
+   * `KlorbAcpClient.resolveToolCallLimitDecision()`, not this call's return value. */
+  postToolCallLimitAsk(message: ToolCallLimitAskMessage): void;
   /** `session/new`'s response just built (or replaced) the session -- its starting
    * permission mode, workspace trust state, and title, so the status row (and workspace
    * trust bridging) reflect the true starting state instead of guessing. */
@@ -135,9 +141,9 @@ export function sessionInfoFromResponse(
 export type PermissionDecisionResult =
   { cancelled: true } | { optionId: string; otherText?: string };
 
-/** Answers the `_klorb/raiseToolCallLimit` ext method's modal prompt; `true` doubles the
- * reached tool-call cap and lets the call proceed, mirroring the TUI's own confirmation. */
-export type RaiseToolCallLimitFn = (message: string) => Promise<boolean>;
+/** The user's decision on a `toolCallLimitAsk`, normalized from a `toolCallLimitDecision` webview
+ * message into the shape `KlorbAcpClient` needs to build the ext method's result. */
+export type ToolCallLimitDecisionResult = { approved: true } | { cancelled: true };
 
 function toLocationMessage(location: AcpToolCallLocation): ToolCallLocation {
   return location.line != null
@@ -433,15 +439,14 @@ export type LogFn = (message: string) => void;
  * `_klorb/askUserQuestions` handling posts a `questionAsk`, both through the listener and both
  * sharing one "pending interaction" slot/queue (see `_pendingInteraction`/`_enqueueInteraction`)
  * since the server only ever has one blocking ask outstanding at a time regardless of kind.
- * `extMethod()` additionally answers `_klorb/raiseToolCallLimit` via the injected
- * `RaiseToolCallLimitFn`. The fs/terminal methods fail with JSON-RPC method-not-found since the
- * client never advertises those capabilities.
+ * `_klorb/raiseToolCallLimit` is also routed through the same pending-interaction queue, posting
+ * a `toolCallLimitAsk` to the webview. The fs/terminal methods fail with JSON-RPC
+ * method-not-found since the client never advertises those capabilities.
  */
 export class KlorbAcpClient {
   private readonly _listener: SessionUpdateListener;
   private readonly _requestError: RequestErrorClass;
   private readonly _log: LogFn;
-  private readonly _raiseToolCallLimit: RaiseToolCallLimitFn;
   private _nextRequestId = 1;
   private _interactionBusy = false;
   private _interactionQueue: Array<() => void> = [];
@@ -456,18 +461,21 @@ export class KlorbAcpClient {
         message: QuestionAskMessage;
         resolve: (answer: QuestionAnswerResult) => void;
       }
+    | {
+        kind: 'toolCallLimit';
+        message: ToolCallLimitAskMessage;
+        resolve: (decision: ToolCallLimitDecisionResult) => void;
+      }
     | undefined;
 
   public constructor(
     listener: SessionUpdateListener,
     requestError: RequestErrorClass,
-    log: LogFn = (message: string) => console.warn(message),
-    raiseToolCallLimit: RaiseToolCallLimitFn = () => Promise.resolve(false)
+    log: LogFn = (message: string) => console.warn(message)
   ) {
     this._listener = listener;
     this._requestError = requestError;
     this._log = log;
-    this._raiseToolCallLimit = raiseToolCallLimit;
   }
 
   public async sessionUpdate(params: SessionNotification): Promise<void> {
@@ -611,24 +619,44 @@ export class KlorbAcpClient {
     this._pendingInteraction.resolve(answer);
   }
 
-  /** Re-posts the currently outstanding interaction (a permission ask or a question ask), if
-   * any, to the webview -- called when the webview is recreated (e.g. after a reload) while an
-   * interaction from before the reload is still awaiting an answer, so the fresh webview
-   * instance can render it instead of leaving it stuck invisible. */
+  /** Resolves the outstanding ask named `requestId`, if any -- called when the webview posts
+   * back a `toolCallLimitDecision`. A decision naming a stale/unknown `requestId` is logged and
+   * ignored, mirroring `resolvePermissionDecision()`. */
+  public resolveToolCallLimitDecision(
+    requestId: number,
+    decision: ToolCallLimitDecisionResult
+  ): void {
+    if (
+      this._pendingInteraction === undefined ||
+      this._pendingInteraction.kind !== 'toolCallLimit' ||
+      this._pendingInteraction.message.requestId !== requestId
+    ) {
+      this._log(`klorb: ignoring tool call limit decision for unknown request ${requestId}`);
+      return;
+    }
+    this._pendingInteraction.resolve(decision);
+  }
+
+  /** Re-posts the currently outstanding interaction (a permission ask, a question ask, or a
+   * tool-call-limit ask), if any, to the webview -- called when the webview is recreated
+   * (e.g. after a reload) while an interaction from before the reload is still awaiting an
+   * answer, so the fresh webview instance can render it instead of leaving it stuck invisible. */
   public repostPendingInteraction(): void {
     if (this._pendingInteraction === undefined) {
       return;
     }
     if (this._pendingInteraction.kind === 'permission') {
       this._listener.postPermissionAsk(this._pendingInteraction.message);
-    } else {
+    } else if (this._pendingInteraction.kind === 'question') {
       this._listener.postQuestionAsk(this._pendingInteraction.message);
+    } else {
+      this._listener.postToolCallLimitAsk(this._pendingInteraction.message);
     }
   }
 
   /** Runs `run` immediately if no interaction is outstanding, else queues it behind the current
-   * one -- the shared serialization a permission ask and a question ask both go through, so at
-   * most one is ever posted to the webview at a time. */
+   * one -- the shared serialization a permission ask, a question ask, and a tool-call-limit ask
+   * all go through, so at most one is ever posted to the webview at a time. */
   private _enqueueInteraction(run: () => void): void {
     if (this._interactionBusy) {
       this._interactionQueue.push(run);
@@ -651,14 +679,34 @@ export class KlorbAcpClient {
     params: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
     if (method === '_klorb/raiseToolCallLimit') {
-      const message = typeof params.message === 'string' ? params.message : '';
-      const approved = await this._raiseToolCallLimit(message);
-      return { approved };
+      return this._raiseToolCallLimit(params);
     }
     if (method === '_klorb/askUserQuestions') {
       return this._askUserQuestions(params);
     }
     throw this._requestError.methodNotFound(method);
+  }
+
+  private _raiseToolCallLimit(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const message = typeof params.message === 'string' ? params.message : '';
+    return new Promise<Record<string, unknown>>((resolve) => {
+      this._enqueueInteraction(() => {
+        const askMessage: ToolCallLimitAskMessage = {
+          type: 'toolCallLimitAsk',
+          requestId: this._nextRequestId++,
+          message,
+        };
+        this._pendingInteraction = {
+          kind: 'toolCallLimit',
+          message: askMessage,
+          resolve: (decision) => {
+            this._finishInteraction();
+            resolve({ approved: 'approved' in decision });
+          },
+        };
+        this._listener.postToolCallLimitAsk(askMessage);
+      });
+    });
   }
 
   private _askUserQuestions(params: Record<string, unknown>): Promise<Record<string, unknown>> {

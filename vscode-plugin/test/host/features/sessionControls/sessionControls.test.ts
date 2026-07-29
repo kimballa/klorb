@@ -30,6 +30,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onToolCallUpdated: () => undefined,
     postPermissionAsk: () => undefined,
     postQuestionAsk: () => undefined,
+    postToolCallLimitAsk: () => undefined,
     onSessionInfo: (info) => box.sessionControls?.applySessionInfo(info),
     onModeChanged: (modeId) => box.sessionControls?.applyModeChanged(modeId),
     onSessionTitleChanged: (title) => box.sessionControls?.applySessionTitleChanged(title),

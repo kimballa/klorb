@@ -30,6 +30,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onToolCallUpdated: (message) => events.push(`toolCallUpdated:${message.callId}`),
     postPermissionAsk: (message) => events.push(`permissionAsk:${message.requestId}`),
     postQuestionAsk: (message) => events.push(`questionAsk:${message.requestId}`),
+    postToolCallLimitAsk: (message) => events.push(`toolCallLimitAsk:${message.requestId}`),
     onSessionInfo: (info) =>
       events.push(`sessionInfo:${info.modeId ?? ''}:${info.enqueueMessageCapable}`),
     onModeChanged: (modeId) => events.push(`modeChanged:${modeId}`),
@@ -262,6 +263,7 @@ describe('AcpConnection', () => {
       onToolCallUpdated: () => undefined,
       postPermissionAsk: () => undefined,
       postQuestionAsk: () => undefined,
+      postToolCallLimitAsk: () => undefined,
       onSessionInfo: () => undefined,
       onModeChanged: () => undefined,
       onSessionTitleChanged: () => undefined,

@@ -14,7 +14,6 @@ import {
   KlorbAcpClient,
   sessionInfoFromResponse,
   type LogFn,
-  type RaiseToolCallLimitFn,
   type SessionUpdateListener,
 } from './klorbAcpClient';
 
@@ -63,7 +62,6 @@ export class AcpConnection {
   private readonly _listener: SessionUpdateListener;
   private readonly _log: LogFn;
   private readonly _initializeTimeoutMs: number;
-  private readonly _raiseToolCallLimit: RaiseToolCallLimitFn;
   private _connection: ClientSideConnection | undefined;
   private _client: KlorbAcpClient | undefined;
   private _sessionId: string | undefined;
@@ -77,14 +75,12 @@ export class AcpConnection {
     serverProcess: KlorbServerProcess,
     listener: SessionUpdateListener,
     log: LogFn = (message: string) => console.log(message),
-    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS,
-    raiseToolCallLimit: RaiseToolCallLimitFn = () => Promise.resolve(false)
+    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS
   ) {
     this._serverProcess = serverProcess;
     this._listener = listener;
     this._log = log;
     this._initializeTimeoutMs = initializeTimeoutMs;
-    this._raiseToolCallLimit = raiseToolCallLimit;
   }
 
   /** True once the handshake completed and a live session id is held. */
@@ -133,12 +129,7 @@ export class AcpConnection {
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
     );
-    const client = new KlorbAcpClient(
-      this._listener,
-      acp.RequestError,
-      this._log,
-      this._raiseToolCallLimit
-    );
+    const client = new KlorbAcpClient(this._listener, acp.RequestError, this._log);
     this._client = client;
     const connection = new acp.ClientSideConnection(() => client, stream);
     this._connection = connection;

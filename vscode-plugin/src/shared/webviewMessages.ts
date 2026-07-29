@@ -174,6 +174,16 @@ export interface QuestionAskMessage {
   total: number;
 }
 
+/** A `_klorb/raiseToolCallLimit` ext request the server is waiting on an answer for -- mounts
+ * the `ToolCallLimitPanel` in the interaction area until a matching
+ * `toolCallLimitDecision` resolves it. The server doubles the tool-call cap on `approved`
+ * and stops the turn on denial. */
+export interface ToolCallLimitAskMessage {
+  type: 'toolCallLimitAsk';
+  requestId: number;
+  message: string;
+}
+
 /** A thinking-effort level, mirroring `klorb.session.constants.ThinkingEffort`. */
 export type ThinkingEffort = 'low' | 'medium' | 'high';
 
@@ -339,6 +349,7 @@ export type HostMessage =
   | ToolCallUpdatedMessage
   | PermissionAskMessage
   | QuestionAskMessage
+  | ToolCallLimitAskMessage
   | StatusUpdateMessage
   | SessionStatsMessage
   | TaskListUpdateMessage
@@ -404,6 +415,12 @@ export type QuestionAnswerMessage =
   | { type: 'questionAnswer'; requestId: number; cancelled: true }
   | { type: 'questionAnswer'; requestId: number; selectedOptionIndex: number }
   | { type: 'questionAnswer'; requestId: number; otherText: string };
+
+/** The user's decision on a `toolCallLimitAsk`, echoed back to the host: `approved` lets the
+ * server double the tool-call cap and continue, `cancelled` stops the turn (deny-once). */
+export type ToolCallLimitDecisionMessage =
+  | { type: 'toolCallLimitDecision'; requestId: number; approved: true }
+  | { type: 'toolCallLimitDecision'; requestId: number; cancelled: true };
 
 /** The user clicked the status row's model chip: show the model picker. */
 export interface PickModelMessage {
@@ -474,6 +491,7 @@ export type WebviewMessage =
   | OpenDiffMessage
   | PermissionDecisionMessage
   | QuestionAnswerMessage
+  | ToolCallLimitDecisionMessage
   | PickModelMessage
   | PickThinkingMessage
   | CyclePermissionModeMessage
@@ -660,6 +678,15 @@ function parseQuestionAsk(record: Record<string, unknown>): QuestionAskMessage |
     typeof record.total === 'number'
   ) {
     return record as unknown as QuestionAskMessage;
+  }
+  return undefined;
+}
+
+function parseToolCallLimitAsk(
+  record: Record<string, unknown>
+): ToolCallLimitAskMessage | undefined {
+  if (typeof record.requestId === 'number' && typeof record.message === 'string') {
+    return { type: 'toolCallLimitAsk', requestId: record.requestId, message: record.message };
   }
   return undefined;
 }
@@ -853,6 +880,21 @@ function parseOpenDiff(record: Record<string, unknown>): OpenDiffMessage | undef
   return undefined;
 }
 
+function parseToolCallLimitDecision(
+  record: Record<string, unknown>
+): ToolCallLimitDecisionMessage | undefined {
+  if (typeof record.requestId !== 'number') {
+    return undefined;
+  }
+  if (record.approved === true) {
+    return { type: 'toolCallLimitDecision', requestId: record.requestId, approved: true };
+  }
+  if (record.cancelled === true) {
+    return { type: 'toolCallLimitDecision', requestId: record.requestId, cancelled: true };
+  }
+  return undefined;
+}
+
 function parseWebviewError(record: Record<string, unknown>): WebviewErrorMessage | undefined {
   if (
     typeof record.message !== 'string' ||
@@ -884,6 +926,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parsePermissionAsk(record);
     case 'questionAsk':
       return parseQuestionAsk(record);
+    case 'toolCallLimitAsk':
+      return parseToolCallLimitAsk(record);
     case 'statusUpdate':
       return parseStatusUpdate(record);
     case 'sessionStats':
@@ -917,6 +961,8 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parsePermissionDecision(record);
     case 'questionAnswer':
       return parseQuestionAnswer(record);
+    case 'toolCallLimitDecision':
+      return parseToolCallLimitDecision(record);
     case 'webviewError':
       return parseWebviewError(record);
     default:
