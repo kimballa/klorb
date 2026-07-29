@@ -38,7 +38,7 @@ from klorb.api_provider import ApiProvider, ResponseAborted
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import concat_dir_rules
-from klorb.process_config import ProcessConfig, load_process_config
+from klorb.process_config import ProcessConfig, load_process_config, persist_session_default, user_config_path
 from klorb.server.turn_bridge import TurnBridge
 from klorb.server.update_mapping import (
     build_session_replay,
@@ -356,11 +356,17 @@ class KlorbAcpAgent(acp.Agent):
         update = parse_session_config_update(params)
         if update.model is not None:
             self._session.config.model = update.model
+            self._process_config.session.model = update.model
+            persist_session_default(user_config_path(), "model", update.model)
         if update.thinking is not None:
             if update.thinking.enabled is not None:
                 self._session.config.thinking_enabled = update.thinking.enabled
+                self._process_config.session.thinking_enabled = update.thinking.enabled
+                persist_session_default(user_config_path(), "thinking.enabled", update.thinking.enabled)
             if update.thinking.effort is not None:
                 self._session.config.thinking_effort = update.thinking.effort
+                self._process_config.session.thinking_effort = update.thinking.effort
+                persist_session_default(user_config_path(), "thinking.effort", update.thinking.effort)
         logger.debug(
             "_klorb/setSessionConfig applied for ACP session %s: %r", self._acp_session_id, update)
         return session_config_json(self._session, self._model_registry)

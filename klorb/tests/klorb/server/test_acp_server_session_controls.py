@@ -46,6 +46,13 @@ def _plain_provider(**reply_kwargs: Any) -> MagicMock:
     return provider
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point `user_config_path()` at a temp location so `persist_session_default` calls in
+    `_ext_set_session_config` never touch the developer's real config file."""
+    monkeypatch.setattr("klorb.server.klorb_agent.user_config_path", lambda: tmp_path / "klorb-config.json")
+
+
 @pytest.fixture
 async def make_harness(tmp_path: Path):
     """Factory fixture: `await make_harness(provider=...)` returns a running `AcpHarness`
@@ -154,6 +161,36 @@ async def test_set_session_config_mutates_model_and_thinking(
     assert session.config.thinking_effort == "low"
     assert result["model"]["current"] == "some/other-model"
     assert result["thinking"] == {"enabled": False, "effort": "low"}
+
+
+async def test_set_session_config_propagates_to_process_config_and_new_session(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    """`_klorb/setSessionConfig` updates the process-level default (`process_config.session`)
+    so that a subsequent `session/new` inherits the user's chosen model/thinking settings."""
+    harness = await make_harness(provider=MagicMock())
+    session_id = await _new_session(harness, tmp_path)
+
+    await harness.client.ext_method("klorb/setSessionConfig", {
+        "sessionId": session_id, "model": "sticky/model",
+        "thinking": {"enabled": True, "effort": "medium"},
+    })
+
+    process_session = harness.server.agent._process_config.session
+    assert process_session.model == "sticky/model"
+    assert process_session.thinking_enabled is True
+    assert process_session.thinking_effort == "medium"
+
+    session_id_2 = await _new_session(harness, tmp_path)
+    session_2 = harness.server.agent.session
+    assert session_2 is not None
+    assert session_2.config.model == "sticky/model"
+    assert session_2.config.thinking_enabled is True
+    assert session_2.config.thinking_effort == "medium"
+
+    result = await harness.client.ext_method("klorb/getSessionConfig", {"sessionId": session_id_2})
+    assert result["model"]["current"] == "sticky/model"
+    assert result["thinking"] == {"enabled": True, "effort": "medium"}
 
 
 async def test_set_session_config_with_invalid_effort_is_a_json_rpc_error(

@@ -246,10 +246,6 @@
 
 ### Bugs
 
-* When you change the model, and then create a new session, the new session should also keep
-  the same model choice; that choice should have updated the ProcessConfig's "default session",
-  which should have then applied to the subsequent new session.
-
 * Clicking the "new session" button should immediately interrupt the current turn in flight
   and dispose of the connection to the model. (If there was already an agent turn in progress,
   it keeps generating tokens and streaming them from the acp server to the acp client even after
