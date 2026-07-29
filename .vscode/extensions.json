@@ -7,6 +7,6 @@
         "ms-python.vscode-pylance",
         "davidanson.vscode-markdownlint",
         "caelrith.loglens-vscode",
-        "aaronkimball.klorb-vscode"
+        "kimballa.klorb-vscode"
     ]
 }

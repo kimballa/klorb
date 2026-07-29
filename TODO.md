@@ -277,3 +277,6 @@
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
+
+* "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
+  or `<table>`, not just a bunch of text.
