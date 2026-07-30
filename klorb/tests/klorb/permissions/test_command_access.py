@@ -1,11 +1,19 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.command_access: CommandRules/CommandPermissionsTable token-
 pattern matching and deny/ask/allow precedence. See
-docs/specs/bash-tool-and-command-permissions.md and
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+docs/specs/bash-tool-and-command-permissions.md,
+docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md,
+and docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md.
 """
 
-from klorb.permissions.command_access import CommandPermissionsTable, CommandRules, pattern_matches_argv
+import shlex
+
+from klorb.permissions.command_access import (
+    CommandPermissionsTable,
+    CommandRules,
+    _token_matches_literal,
+    pattern_matches_argv,
+)
 
 
 def _table(**kwargs: list[list[str]]) -> CommandPermissionsTable:
@@ -177,6 +185,158 @@ def _rejects(pattern: list[str], *argvs: list[str]) -> None:
         assert not pattern_matches_argv(pattern, argv), f"expected {pattern} to reject {argv}"
         assert _table(allow=[pattern]).evaluate(argv) is None, (
             f"table verdict for {pattern} on {argv} should be None")
+
+
+# --- embedded-glob tokens: a literal token that embeds `*` characters without being exactly ----
+# `"*"` or `"**"` -- see docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md. The
+# risk classifier sometimes proposes exactly this shape (`["dd", "of=*", ...]`) to generalize the
+# value half of a `--flag=value`/`key=value` argument while keeping the flag name literal.
+
+
+def test_embedded_glob_token_matches_suffix_after_literal_prefix() -> None:
+    """`"of=*"` occupies exactly one argv position, same arity as a bare `*`, but the candidate
+    token there must start with the literal `of=` prefix -- the `*` only stands in for what comes
+    after it, including nothing at all."""
+    pattern = ["dd", "of=*"]
+    _admits(
+        pattern,
+        ["dd", "of=/tmp/x"],
+        ["dd", "of=/home/aaron/zeros.bin"],
+        ["dd", "of="],  # `*` matches zero characters too
+    )
+    _rejects(
+        pattern,
+        ["dd"],  # no token at all for `of=*` to consume
+        ["dd", "if=/tmp/x"],  # wrong prefix entirely
+        ["dd", "iof=/tmp/x"],  # prefix must match from the start of the token, not a substring
+        ["dd", "of=/tmp/x", "extra"],  # still exactly one token, no more
+    )
+
+
+def test_embedded_glob_token_still_consumes_exactly_one_argv_position() -> None:
+    """An embedded glob never spans a space into a second candidate token the way `**` does --
+    it's a single-token glob, not a second unbounded-match mechanism."""
+    pattern = ["cmd", "--path=*", "--done"]
+    _admits(pattern, ["cmd", "--path=/a/b", "--done"])
+    _rejects(
+        pattern,
+        ["cmd", "--path=/a", "b", "--done"],  # the value can't spill into its own extra token
+        ["cmd", "--done"],  # `--path=*` still needs a token of its own
+    )
+
+
+def test_embedded_glob_reproduces_the_reported_dd_command() -> None:
+    """The exact shape reported against the risk classifier: it proposed
+    `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` for a `dd if=/dev/zero
+    of=/home/aaron/zeros.bin bs=1 count=32` invocation, and the matcher rejected it outright before
+    embedded-glob support existed."""
+    pattern = ["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]
+    _admits(
+        pattern,
+        ["dd", "if=/dev/zero", "of=/home/aaron/zeros.bin", "bs=1", "count=32"],
+        ["dd", "if=/dev/zero", "of=/tmp/out", "bs=1", "count=1"],
+    )
+    _rejects(
+        pattern,
+        ["dd", "if=/dev/random", "of=/tmp/out", "bs=1", "count=1"],  # if= must stay literal
+        ["dd", "if=/dev/zero", "of=/tmp/out", "bs=2", "count=1"],  # bs=1 must stay literal
+    )
+
+
+def test_embedded_glob_with_a_star_at_each_end() -> None:
+    """A `*` at the start, middle, and end of the same token all resolve independently."""
+    pattern = ["find", "*.tar.*"]
+    _admits(pattern, ["find", "backup.tar.gz"], ["find", "a.tar.bz2"], ["find", ".tar."])
+    _rejects(pattern, ["find", "backup.zip"], ["find", "tar.gz"])
+
+
+def test_embedded_glob_escapes_other_regex_metacharacters() -> None:
+    """Only `*` is a wildcard inside an embedded-glob token -- `.`, `[`, `]`, `+`, etc. in the
+    pattern are literal characters to match verbatim, not regex syntax, so a token like
+    `file[1].txt*` doesn't accidentally start matching arbitrary single characters via `.` or a
+    character class via `[1]`."""
+    pattern = ["cat", "file[1].txt*"]
+    _admits(pattern, ["cat", "file[1].txt"], ["cat", "file[1].txt.bak"])
+    _rejects(
+        pattern,
+        ["cat", "fileX1Y.txtZ"],  # `.` and `[1]` must match literally, not as regex metachars
+        ["cat", "file2.txt"],
+    )
+
+
+def test_literal_question_mark_inside_a_non_star_token_is_not_a_wildcard() -> None:
+    """`OPTIONAL_TOKEN` semantics only apply to a rule token that IS exactly `"?"`; a `"?"`
+    embedded inside a larger literal token (with no `*` anywhere in it) is just a literal
+    character, requiring an exact match -- this grammar never grew glob meaning for `?` or `[...]`
+    the way `fnmatch` would, only for `*` (see
+    docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md)."""
+    pattern = ["echo", "really?"]
+    _admits(pattern, ["echo", "really?"])
+    _rejects(pattern, ["echo", "really1"], ["echo", "reallyX"], ["echo", "really"])
+
+
+def test_embedded_glob_argv0_is_not_privileged() -> None:
+    """Embedded-glob tokens behave the same in argv0 position as anywhere else at the matcher
+    level -- `_has_unsafe_wildcard_argv0` (klorb.permissions.risk_classifier) is what refuses to
+    treat this shape as a safe *suggestion*, but the matcher itself matches it uniformly."""
+    _admits(["py*", "test"], ["python3", "test"], ["pypy", "test"])
+    _rejects(["py*", "test"], ["ruby", "test"], ["python3", "run"])
+
+
+def test_embedded_glob_matches_shlex_parsed_quoted_argument_forms() -> None:
+    """The risk classifier's `suggested_pattern` is matched against argv produced by
+    `klorb.permissions.shell_parse`'s tokenizer, which -- like `shlex` -- folds a quoted value
+    (whether the whole token is quoted or just part of it) into one argv entry with the quotes
+    stripped and any embedded space preserved. `"--arg=*"` must match that single entry regardless
+    of which of these equivalent shell spellings produced it."""
+    pattern = ["prog", "--arg=*"]
+    unquoted = shlex.split("prog --arg=foo")
+    assert unquoted == ["prog", "--arg=foo"]
+    assert pattern_matches_argv(pattern, unquoted)
+
+    partially_quoted = shlex.split('prog --arg="foo bar"')
+    assert partially_quoted == ["prog", "--arg=foo bar"]
+    assert pattern_matches_argv(pattern, partially_quoted)
+
+    fully_quoted = shlex.split('prog "--arg=foo bar"')
+    assert fully_quoted == ["prog", "--arg=foo bar"]
+    assert pattern_matches_argv(pattern, fully_quoted)
+
+    assert _table(allow=[pattern]).evaluate(unquoted) == "allow"
+    assert _table(allow=[pattern]).evaluate(partially_quoted) == "allow"
+    assert _table(allow=[pattern]).evaluate(fully_quoted) == "allow"
+
+
+def test_embedded_glob_rejects_shlex_parsed_argument_with_wrong_prefix() -> None:
+    """The prefix before the `*` must still match exactly, even once shlex has folded a quoted
+    value into a single token."""
+    pattern = ["prog", "--arg=*"]
+    argv = shlex.split('prog --other="foo bar"')
+    assert argv == ["prog", "--other=foo bar"]
+    assert not pattern_matches_argv(pattern, argv)
+    assert _table(allow=[pattern]).evaluate(argv) is None
+
+
+def test_token_matches_literal_plain_equality_when_no_star_present() -> None:
+    """A token with no `*` at all is the ordinary literal branch: exact equality, unaffected by
+    embedded-glob support."""
+    assert _token_matches_literal("foo", "foo")
+    assert not _token_matches_literal("foo", "bar")
+    assert not _token_matches_literal("foo", "foo ")
+
+
+def test_token_matches_literal_embedded_glob_shapes() -> None:
+    """Direct unit coverage of `_token_matches_literal` itself, isolated from
+    `pattern_matches_argv`'s positional/backtracking plumbing."""
+    assert _token_matches_literal("--arg=*", "--arg=foo")
+    assert _token_matches_literal("--arg=*", "--arg=")
+    assert not _token_matches_literal("--arg=*", "-arg=foo")
+    assert _token_matches_literal("*.py", "module.py")
+    assert _token_matches_literal("*.py", ".py")
+    assert not _token_matches_literal("*.py", "module.pyc")
+    assert _token_matches_literal("a*b*c", "aXbYc")
+    assert _token_matches_literal("a*b*c", "abc")
+    assert not _token_matches_literal("a*b*c", "acb")
 
 
 def test_consecutive_single_stars_require_exact_arity() -> None:

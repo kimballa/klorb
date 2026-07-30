@@ -104,11 +104,12 @@ field, on-disk `commandRules` (nested under `sessionDefaults`, concatenated acro
 exactly like `readDirs`/`writeDirs` — see docs/specs/permissions.md and
 docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md).
 `CommandPermissionsTable(PermissionsTable[list[str]])` matches a rule against a candidate argv
-positionally: each rule token is either a literal (exact match at that position), `"*"`
-(`WILDCARD_TOKEN`, matching exactly one arbitrary token — always, at any position, never
-special-cased by position), `"?"` (`OPTIONAL_TOKEN`, matching zero-or-one arbitrary token — also
-always, at any position), or `"**"` (`UNBOUNDED_TOKEN`, matching any number of arbitrary tokens,
-including zero, at any position). See
+positionally: each rule token is either a literal (exact match at that position), a literal that
+embeds a `*` character (an embedded-glob token, matching any run of characters — including none —
+within the single candidate token at that position, see below), `"*"` (`WILDCARD_TOKEN`, matching
+exactly one arbitrary token — always, at any position, never special-cased by position), `"?"`
+(`OPTIONAL_TOKEN`, matching zero-or-one arbitrary token — also always, at any position), or `"**"`
+(`UNBOUNDED_TOKEN`, matching any number of arbitrary tokens, including zero, at any position). See
 docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
 for the reasoning behind giving "exactly one," "zero-or-one," and "unbounded" three distinct
 symbols instead of overloading one of them by position.
@@ -124,6 +125,14 @@ symbols instead of overloading one of them by position.
 | `["git", "**", "status", "**"]` | `git status`, `git -C dir status -s`, ... — `**` on both sides |
 | `["git", "?", "status"]` | `git status` (zero) or `git --no-pager status` (one) — not two or more |
 | `["foo", "--bar", "--baz"]` | exactly `foo --bar --baz`, nothing more or less |
+| `["dd", "of=*"]` | `dd of=/tmp/x`, `dd of=/home/aaron/zeros.bin`, ... — one token, `of=` literal, anything after it |
+
+An embedded-glob token (a literal containing `*` without being exactly `"*"` or `"**"`) still
+occupies exactly one argv position, same as `WILDCARD_TOKEN` — it's a value-level generalization
+of a `--flag=value`/`key=value`-shaped argument, not a second way to span multiple candidate
+tokens: `"of=*"` never matches across a space the way `UNBOUNDED_TOKEN` does. See
+`klorb.permissions.command_access._token_matches_literal` and
+docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md.
 
 A candidate argv with no matching rule in any list evaluates to `None` from
 `PermissionsTable.evaluate()`; `BashTool` normalizes that to `"ask"` (never a permissive
@@ -219,8 +228,8 @@ describes — as more risky than the command would otherwise look on its own, an
 mismatch explicitly in the rationale rather than just describing the command.
 
 For each item, it returns a `risk_score` (0-10), a one-sentence plain-English `rationale`, and a
-`suggested_pattern` (the same `*`/`?`/`**` token grammar `CommandPermissionsTable` matches
-against) that replaces `klorb.permissions.command_grant.compute_command_grant_patterns()`'s
+`suggested_pattern` (the same `*`/`?`/`**`/embedded-glob token grammar `CommandPermissionsTable`
+matches against) that replaces `klorb.permissions.command_grant.compute_command_grant_patterns()`'s
 literal-argv fallback as the pattern a persistent-scope grant actually records, when a report is
 available. A `suggested_pattern` is only trusted after it's been tested against the very command
 it was proposed for: `classify_command_risk` runs each `"command"`-kind item's pattern through
