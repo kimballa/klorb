@@ -23,6 +23,25 @@ export interface PromptInputHandle {
   focus(): void;
 }
 
+/** Right-facing filled triangle for the Send button; codicons has no equivalent play glyph. */
+function PlayIcon(): JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M4 2L14 8L4 14V2Z" />
+    </svg>
+  );
+}
+
+/** Filled square for the Stop button; codicons' "stop" glyph is actually an error/circle-X
+ * icon, not a square, so this is drawn directly instead of using `vscode-button`'s `icon` prop. */
+function StopIcon(): JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <rect x="3" y="3" width="10" height="10" />
+    </svg>
+  );
+}
+
 interface PromptInputProps {
   /** True while a prompt turn is running: disables the input unless `enqueueMessageCapable`,
    * in which case it stays enabled so the user can queue a message into the running turn. */
@@ -194,13 +213,24 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         }}
       />
       {!inFlight || enqueueMessageCapable ? (
-        <vscode-button id="submit-button" onClick={() => submit()}>
-          Send
+        <vscode-button
+          id="submit-button"
+          iconOnly
+          title="Send"
+          aria-label="Send"
+          disabled={draft.trim().length === 0}
+          onClick={() => submit()}>
+          <PlayIcon />
         </vscode-button>
       ) : null}
       {inFlight ? (
-        <vscode-button id="stop-button" onClick={() => onCancel()}>
-          Stop
+        <vscode-button
+          id="stop-button"
+          iconOnly
+          title="Stop"
+          aria-label="Stop"
+          onClick={() => onCancel()}>
+          <StopIcon />
         </vscode-button>
       ) : null}
     </div>

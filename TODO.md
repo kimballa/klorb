@@ -243,9 +243,6 @@
 
 ### Feature backlog
 
-* "Send" button should be disabled if the prompt is empty.
-  * In general the "Send" and "Stop" buttons are too big. they need to be less obtrusive.
-
 * fzf fuzzy finder for @-mentioning files in the project
   * use Fuse.js for the fuzzy-matching
   * to discover/iterate over files in the first place, use the 'ignore' lib to toss out
