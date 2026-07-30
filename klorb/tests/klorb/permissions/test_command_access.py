@@ -3,7 +3,7 @@
 pattern matching and deny/ask/allow precedence. See
 docs/specs/bash-tool-and-command-permissions.md,
 docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md,
-and docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md.
+and docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 """
 
 import shlex
@@ -187,13 +187,15 @@ def _rejects(pattern: list[str], *argvs: list[str]) -> None:
             f"table verdict for {pattern} on {argv} should be None")
 
 
-# --- embedded-glob tokens: a literal token that embeds `*` characters without being exactly ----
-# `"*"` or `"**"` -- see docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md. The
-# risk classifier sometimes proposes exactly this shape (`["dd", "of=*", ...]`) to generalize the
-# value half of a `--flag=value`/`key=value` argument while keeping the flag name literal.
+# --- suffix-wildcard tokens: a literal token ending in a trailing `*` without being exactly -----
+# `"*"` or `"**"` -- see docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+# The risk classifier sometimes proposes exactly this shape (`["dd", "of=*", ...]`) to generalize
+# the value half of a `--flag=value`/`key=value` argument while keeping the flag name literal. Only
+# a token's own *last* character carries wildcard meaning -- a `*` anywhere else in the same token
+# is just a literal asterisk.
 
 
-def test_embedded_glob_token_matches_suffix_after_literal_prefix() -> None:
+def test_suffix_wildcard_token_matches_anything_after_literal_prefix() -> None:
     """`"of=*"` occupies exactly one argv position, same arity as a bare `*`, but the candidate
     token there must start with the literal `of=` prefix -- the `*` only stands in for what comes
     after it, including nothing at all."""
@@ -213,9 +215,9 @@ def test_embedded_glob_token_matches_suffix_after_literal_prefix() -> None:
     )
 
 
-def test_embedded_glob_token_still_consumes_exactly_one_argv_position() -> None:
-    """An embedded glob never spans a space into a second candidate token the way `**` does --
-    it's a single-token glob, not a second unbounded-match mechanism."""
+def test_suffix_wildcard_token_still_consumes_exactly_one_argv_position() -> None:
+    """A suffix wildcard never spans a space into a second candidate token the way `**` does --
+    it's a single-token prefix check, not a second unbounded-match mechanism."""
     pattern = ["cmd", "--path=*", "--done"]
     _admits(pattern, ["cmd", "--path=/a/b", "--done"])
     _rejects(
@@ -225,11 +227,11 @@ def test_embedded_glob_token_still_consumes_exactly_one_argv_position() -> None:
     )
 
 
-def test_embedded_glob_reproduces_the_reported_dd_command() -> None:
+def test_suffix_wildcard_reproduces_the_reported_dd_command() -> None:
     """The exact shape reported against the risk classifier: it proposed
     `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` for a `dd if=/dev/zero
     of=/home/aaron/zeros.bin bs=1 count=32` invocation, and the matcher rejected it outright before
-    embedded-glob support existed."""
+    suffix-wildcard support existed."""
     pattern = ["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]
     _admits(
         pattern,
@@ -243,47 +245,47 @@ def test_embedded_glob_reproduces_the_reported_dd_command() -> None:
     )
 
 
-def test_embedded_glob_with_a_star_at_each_end() -> None:
-    """A `*` at the start, middle, and end of the same token all resolve independently."""
-    pattern = ["find", "*.tar.*"]
-    _admits(pattern, ["find", "backup.tar.gz"], ["find", "a.tar.bz2"], ["find", ".tar."])
-    _rejects(pattern, ["find", "backup.zip"], ["find", "tar.gz"])
+def test_star_not_in_trailing_position_is_a_literal_character() -> None:
+    """Only a token's own trailing `*` is a wildcard -- a `*` anywhere earlier in the same token
+    is just a literal asterisk character, matched verbatim, never a glob."""
+    pattern = ["find", "*.tar"]  # leading `*`, no trailing `*`: a plain literal token
+    _admits(pattern, ["find", "*.tar"])
+    _rejects(pattern, ["find", "backup.tar"], ["find", "a.tar"])
+
+    pattern_mid_star = ["cmd", "a*b"]  # `*` in the middle, no trailing `*`: also a plain literal
+    _admits(pattern_mid_star, ["cmd", "a*b"])
+    _rejects(pattern_mid_star, ["cmd", "aXb"], ["cmd", "ab"])
 
 
-def test_embedded_glob_escapes_other_regex_metacharacters() -> None:
-    """Only `*` is a wildcard inside an embedded-glob token -- `.`, `[`, `]`, `+`, etc. in the
-    pattern are literal characters to match verbatim, not regex syntax, so a token like
-    `file[1].txt*` doesn't accidentally start matching arbitrary single characters via `.` or a
-    character class via `[1]`."""
-    pattern = ["cat", "file[1].txt*"]
-    _admits(pattern, ["cat", "file[1].txt"], ["cat", "file[1].txt.bak"])
-    _rejects(
-        pattern,
-        ["cat", "fileX1Y.txtZ"],  # `.` and `[1]` must match literally, not as regex metachars
-        ["cat", "file2.txt"],
-    )
+def test_suffix_wildcard_with_a_literal_star_earlier_in_the_same_token() -> None:
+    """A token can have a literal `*` earlier and a wildcard `*` as its last character at once --
+    only the trailing one is special; the earlier one is still just a literal character that must
+    appear verbatim in the matched prefix."""
+    pattern = ["cmd", "a*b*"]
+    _admits(pattern, ["cmd", "a*b"], ["cmd", "a*bc"], ["cmd", "a*bxyz"])
+    _rejects(pattern, ["cmd", "aXb"], ["cmd", "ab"], ["cmd", "a*"])
 
 
-def test_literal_question_mark_inside_a_non_star_token_is_not_a_wildcard() -> None:
+def test_literal_question_mark_inside_a_token_is_not_a_wildcard() -> None:
     """`OPTIONAL_TOKEN` semantics only apply to a rule token that IS exactly `"?"`; a `"?"`
-    embedded inside a larger literal token (with no `*` anywhere in it) is just a literal
-    character, requiring an exact match -- this grammar never grew glob meaning for `?` or `[...]`
-    the way `fnmatch` would, only for `*` (see
-    docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md)."""
+    embedded inside a larger literal token is just a literal character, requiring an exact
+    match -- this grammar never grew glob meaning for `?` or `[...]` the way `fnmatch` would, only
+    for a token's own trailing `*` (see
+    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md)."""
     pattern = ["echo", "really?"]
     _admits(pattern, ["echo", "really?"])
     _rejects(pattern, ["echo", "really1"], ["echo", "reallyX"], ["echo", "really"])
 
 
-def test_embedded_glob_argv0_is_not_privileged() -> None:
-    """Embedded-glob tokens behave the same in argv0 position as anywhere else at the matcher
+def test_suffix_wildcard_argv0_is_not_privileged() -> None:
+    """Suffix-wildcard tokens behave the same in argv0 position as anywhere else at the matcher
     level -- `_has_unsafe_wildcard_argv0` (klorb.permissions.risk_classifier) is what refuses to
     treat this shape as a safe *suggestion*, but the matcher itself matches it uniformly."""
     _admits(["py*", "test"], ["python3", "test"], ["pypy", "test"])
     _rejects(["py*", "test"], ["ruby", "test"], ["python3", "run"])
 
 
-def test_embedded_glob_matches_shlex_parsed_quoted_argument_forms() -> None:
+def test_suffix_wildcard_matches_shlex_parsed_quoted_argument_forms() -> None:
     """The risk classifier's `suggested_pattern` is matched against argv produced by
     `klorb.permissions.shell_parse`'s tokenizer, which -- like `shlex` -- folds a quoted value
     (whether the whole token is quoted or just part of it) into one argv entry with the quotes
@@ -307,7 +309,7 @@ def test_embedded_glob_matches_shlex_parsed_quoted_argument_forms() -> None:
     assert _table(allow=[pattern]).evaluate(fully_quoted) == "allow"
 
 
-def test_embedded_glob_rejects_shlex_parsed_argument_with_wrong_prefix() -> None:
+def test_suffix_wildcard_rejects_shlex_parsed_argument_with_wrong_prefix() -> None:
     """The prefix before the `*` must still match exactly, even once shlex has folded a quoted
     value into a single token."""
     pattern = ["prog", "--arg=*"]
@@ -317,26 +319,25 @@ def test_embedded_glob_rejects_shlex_parsed_argument_with_wrong_prefix() -> None
     assert _table(allow=[pattern]).evaluate(argv) is None
 
 
-def test_token_matches_literal_plain_equality_when_no_star_present() -> None:
-    """A token with no `*` at all is the ordinary literal branch: exact equality, unaffected by
-    embedded-glob support."""
+def test_token_matches_literal_plain_equality_when_no_trailing_star_present() -> None:
+    """A token with no trailing `*` at all is the ordinary literal branch: exact equality,
+    unaffected by suffix-wildcard support -- including a token that merely contains `*`
+    somewhere other than its last character."""
     assert _token_matches_literal("foo", "foo")
     assert not _token_matches_literal("foo", "bar")
     assert not _token_matches_literal("foo", "foo ")
+    assert _token_matches_literal("a*b", "a*b")
+    assert not _token_matches_literal("a*b", "aXb")
 
 
-def test_token_matches_literal_embedded_glob_shapes() -> None:
+def test_token_matches_literal_suffix_wildcard_shapes() -> None:
     """Direct unit coverage of `_token_matches_literal` itself, isolated from
     `pattern_matches_argv`'s positional/backtracking plumbing."""
     assert _token_matches_literal("--arg=*", "--arg=foo")
     assert _token_matches_literal("--arg=*", "--arg=")
     assert not _token_matches_literal("--arg=*", "-arg=foo")
-    assert _token_matches_literal("*.py", "module.py")
-    assert _token_matches_literal("*.py", ".py")
-    assert not _token_matches_literal("*.py", "module.pyc")
-    assert _token_matches_literal("a*b*c", "aXbYc")
-    assert _token_matches_literal("a*b*c", "abc")
-    assert not _token_matches_literal("a*b*c", "acb")
+    assert _token_matches_literal("a*b*", "a*bc")  # only the trailing `*` is a wildcard
+    assert not _token_matches_literal("a*b*", "aXbc")
 
 
 def test_consecutive_single_stars_require_exact_arity() -> None:

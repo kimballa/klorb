@@ -11,8 +11,6 @@ walking the resulting AST). `CommandPermissionsTable` only ever sees already-tok
 `Path` candidates.
 """
 
-import re
-
 from pydantic import BaseModel, Field
 
 from klorb.permissions.table import PermissionsTable
@@ -22,10 +20,9 @@ WILDCARD_TOKEN = "*"
 regardless of position (including a rule's own last token); see
 `CommandPermissionsTable._matches` and
 docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
-A literal token that merely *embeds* one or more `"*"` characters without being exactly `"*"` (or
-exactly `"**"`, `UNBOUNDED_TOKEN`) is a distinct case, an embedded-glob token — see
-`_token_matches_literal` and
-docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md.
+A literal token that ends with a trailing `"*"` without being exactly `"*"` (or exactly `"**"`,
+`UNBOUNDED_TOKEN`) is a distinct case, a suffix-wildcard literal — see `_token_matches_literal`
+and docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 """
 
 OPTIONAL_TOKEN = "?"
@@ -47,20 +44,20 @@ def _token_matches_literal(pattern_token: str, candidate_token: str) -> bool:
     """Whether a rule token that is *not* one of the three whole-token wildcards (`WILDCARD_TOKEN`,
     `OPTIONAL_TOKEN`, `UNBOUNDED_TOKEN`) matches a single candidate token, exactly one-for-one.
 
-    A `pattern_token` with no `"*"` in it at all is an ordinary literal: exact string equality. A
-    `pattern_token` that embeds one or more `"*"` characters (`"--arg=*"`, `"*.py"`) is an
-    embedded-glob token: each `"*"` matches any run of characters (including none) within the
-    single candidate token, the same way a shell glob's `*` matches within one path segment --
-    never expanding to match across multiple candidate tokens the way `UNBOUNDED_TOKEN` does. This
-    only ever runs on tokens already ruled out as the exact strings `"*"`/`"?"`/`"**"` by
-    `pattern_matches_argv`'s caller, so a bare `"*"` here can only mean an embedded glob with
-    literal characters around it.
+    Only a `pattern_token`'s own trailing `"*"` ever carries wildcard meaning, and only when it
+    isn't the token's entire content (a bare `"*"` is `WILDCARD_TOKEN`, already intercepted by
+    `pattern_matches_argv`'s caller before this function ever runs): `"--arg=*"` requires the
+    candidate token to start with the literal `"--arg="` prefix, and accepts anything (including
+    nothing) after it. A `"*"` anywhere else in `pattern_token` -- not its last character -- is
+    just a literal asterisk to match verbatim, not a wildcard: `"a*b"` matches only the literal
+    candidate token `"a*b"`. This is a deliberately narrow, single-suffix-wildcard grammar (a
+    plain string-prefix check, not a general glob/regex) -- see
+    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md for why a wildcard anywhere in
+    a token (not just trailing) was rejected as unnecessarily permissive.
     """
-    if "*" not in pattern_token:
-        return pattern_token == candidate_token
-    segments = pattern_token.split("*")
-    regex = ".*".join(re.escape(segment) for segment in segments)
-    return re.fullmatch(regex, candidate_token) is not None
+    if pattern_token.endswith(WILDCARD_TOKEN) and len(pattern_token) > 1:
+        return candidate_token.startswith(pattern_token[:-1])
+    return pattern_token == candidate_token
 
 
 def pattern_matches_argv(pattern: list[str], argv: list[str]) -> bool:
@@ -137,21 +134,23 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
         """Positional token match, backtracking where `OPTIONAL_TOKEN` (`"?"`) or
         `UNBOUNDED_TOKEN` (`"**"`) is involved:
 
-        * A literal token with no `"*"` in it must equal the candidate token at that position
-          exactly.
-        * A literal token that embeds one or more `"*"` characters without being exactly `"*"`
-          (`WILDCARD_TOKEN`) or `"**"` (`UNBOUNDED_TOKEN`) is an embedded-glob token: it still
-          consumes exactly one candidate token at that position (never zero, never more), but that
-          token must match the glob rather than equal it verbatim — each `"*"` inside the pattern
-          token matches any run of characters (including none) within the single candidate token.
-          `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` matches
+        * A literal token with no trailing `"*"` must equal the candidate token at that position
+          exactly — this includes a `"*"` occurring anywhere *except* as the token's last
+          character, which is just a literal asterisk, not a wildcard: `"a*b"` matches only the
+          literal candidate token `"a*b"`.
+        * A literal token that *ends* with `"*"` without being exactly `"*"` (`WILDCARD_TOKEN`) or
+          `"**"` (`UNBOUNDED_TOKEN`) is a suffix-wildcard literal: it still consumes exactly one
+          candidate token at that position (never zero, never more), but that token only has to
+          start with the pattern token's own prefix (everything before the trailing `"*"`), not
+          equal it verbatim. `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` matches
           `["dd", "if=/dev/zero", "of=/home/aaron/zeros.bin", "bs=1", "count=32"]`: `"of=*"` and
           `"count=*"` each still occupy exactly one argv position, they just accept any suffix
-          after their literal `=` prefix rather than requiring an exact match. This is a single-
-          token glob, not a shell glob expansion or a second way to span multiple candidate
-          tokens — `"of=*"` never matches across a space the way `UNBOUNDED_TOKEN` spans multiple
-          argv entries; see `_token_matches_literal` and
-          docs/adrs/command-rule-tokens-support-embedded-glob-wildcards.md.
+          (including none) after their literal prefix rather than requiring an exact match. This is
+          a plain string-prefix check on a single token, not a shell glob expansion or a second way
+          to span multiple candidate tokens — `"of=*"` never matches across a space the way
+          `UNBOUNDED_TOKEN` spans multiple argv entries, and a `"*"` earlier in the same token
+          (not its last character) still isn't a wildcard; see `_token_matches_literal` and
+          docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
         * `WILDCARD_TOKEN` (`"*"`) matches exactly one arbitrary candidate token at that
           position, always — including when it's the rule's last token: `["foo", "*"]` matches
           `["foo", "bar"]` but not `["foo"]` (zero extra tokens) or `["foo", "bar", "baz"]` (two
