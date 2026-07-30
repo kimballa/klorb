@@ -1061,8 +1061,9 @@ all, not just type-checked):
   library" below) — so `<vscode-button>` etc. type-check as JSX intrinsics.
   `build-webview.mjs` (invoked by the `build:webview`/`build:webview:prod` npm scripts as `node
   build-webview.mjs`/`node build-webview.mjs --prod`) bundles `src/webview/main.tsx` into one
-  self-contained `out/webview/main.js` with React, `react-dom/client`, `react-markdown`, and
-  `@vscode-elements/elements` all inlined alongside the plugin's own webview code, the same
+  self-contained `out/webview/main.js` with the webview's runtime dependencies (React,
+  `react-markdown` and its remark plugins, `@vscode-elements/elements`, ...) all inlined
+  alongside the plugin's own webview code, the same
   `--bundle --tsconfig=tsconfig.webview.json --format=iife --platform=browser --target=es2022`
   options a direct `esbuild` CLI invocation would use. It calls esbuild's JS API rather than its
   CLI specifically so it can register `esbuild-plugin-babel` as a plugin (the CLI has no
@@ -1155,16 +1156,33 @@ that file is a hand-adjustable, dev/typecheck-only artifact never shipped in the
 assets that ship as-is inside the `.vsix`; committing a copy would drift from the version actually
 pinned in `package.json` and bloat the repo's history on every codicon update, so deriving them at
 build time from the pinned package is the better fit here. `@vscode/codicons` is a `dependencies`
-entry (not `devDependencies`), matching `react`/`react-dom`/`react-markdown`/
-`@vscode-elements/elements`'s own placement: this project's `dependencies` list is "whatever's
-content ends up in the shipped output" (those four are esbuild-inlined into the bundle rather
-than resolved from `node_modules` at runtime, but their code still ships), not narrowly "resolved
-via `require()`/`import()` at runtime" — `@vscode/codicons`' files ship into the `.vsix` the same
-way, just via a copy step instead of a bundler.
+entry (not `devDependencies`), matching the other webview runtime packages' (React,
+`react-markdown`, `@vscode-elements/elements`, ...) own placement: this project's
+`dependencies` list is "whatever's content ends up in the shipped output" (those are
+esbuild-inlined into the bundle rather than resolved from `node_modules` at runtime, but their
+code still ships), not narrowly "resolved via `require()`/`import()` at runtime" —
+`@vscode/codicons`' files ship into the `.vsix` the same way, just via a copy step instead of a
+bundler.
 
 Markdown responses render via `react-markdown`, chosen over `marked` + `innerHTML` because it
 renders to React elements without `dangerouslySetInnerHTML` — relevant since the rendered text
 is model-generated and the webview runs under a CSP-locked `vscode-webview://` origin.
+`HistoryView`'s `<ReactMarkdown>` passes `remarkPlugins={[remarkGfm, remarkFrontmatter]}`:
+`remark-gfm` adds GitHub-flavored table/strikethrough/task-list/autolink parsing (rendered
+`<table>`s are styled by `main.css`'s `.entry-response table/th/td` rules, since they'd otherwise
+inherit no borders from the surrounding theme), and `remark-frontmatter` recognizes a leading
+`---`-delimited YAML block as its own mdast `yaml` node instead of letting the base parser
+misread it as a thematic break followed by a mangled paragraph.
+
+`mdast-util-to-hast` drops `yaml`/`toml` nodes by default (no built-in handler renders them), so
+`HistoryView` also passes `remarkRehypeOptions={{ handlers: { yaml: renderYamlFrontmatter } }}` —
+`renderYamlFrontmatter` (`webview/features/history/renderYamlFrontmatter.ts`) parses the block's
+raw text with the `yaml` package and renders the result as a two-column key/value `<table>`
+(`.frontmatter-table`/`.frontmatter-key`/`.frontmatter-value`, styled alongside the GFM table
+rules above): a nested mapping becomes a nested `.frontmatter-table`, and an array value becomes
+a `.frontmatter-array` of stacked `.frontmatter-array-item` `<div>`s (one per element) rather
+than another table, since array elements have no natural column headers. A block that fails to
+parse as YAML is omitted from the rendered output, the same as an unhandled node type would be.
 
 ## Build tooling
 
@@ -1181,9 +1199,10 @@ of two.
   pinned in `package-lock.json`, matching `klorb/Makefile`'s split between a runtime-only
   install and one that also brings in lint/typecheck/test tooling. `package.json`'s
   `dependencies` are `@agentclientprotocol/sdk` (the extension host `require()`s/`import()`s it
-  at runtime, unlike the bundled webview deps — the plugin's first true runtime dependency),
-  `@vscode-elements/elements`, `react`, `react-dom`, and `react-markdown` — the last four are
-  runtime dependencies of the *webview*, not the host, but `esbuild` inlines them into
+  at runtime, unlike the bundled webview deps — the plugin's first true runtime dependency) and
+  the webview's own runtime packages (`@vscode-elements/elements`, `react`, `react-markdown` and
+  its remark plugins, ...) — the latter are runtime dependencies of the *webview*, not the host,
+  but `esbuild` inlines them into
   `out/webview/main.js` at build time rather than the packaged extension `require()`-ing a
   separate `node_modules` copy at runtime, so from `vsce`/`npm ci`'s point of view they still
   need to be present wherever `install` (below) runs its build, i.e. wherever `install_deps` or

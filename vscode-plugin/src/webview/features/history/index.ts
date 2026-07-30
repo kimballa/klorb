@@ -27,6 +27,7 @@ import {
   isScrollPinnedToBottom,
 } from './historyModel';
 import { type DiffRow, renderDiffLines } from './renderDiffLines';
+import { renderYamlFrontmatter } from './renderYamlFrontmatter';
 
 export {
   type DiffRow,
@@ -54,6 +55,7 @@ export {
   isHistoryEntry,
   isScrollPinnedToBottom,
   renderDiffLines,
+  renderYamlFrontmatter,
   HistoryView,
   SessionStatsCard,
 };
