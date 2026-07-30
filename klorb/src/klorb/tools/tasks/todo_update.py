@@ -38,7 +38,9 @@ class TodoUpdateTool(Tool):
     every other argument is optional and independently applied: title/description/priority
     changes, adding/dropping dependencies, adding a comment, and closing/reopening, in that
     order (close/reopen last, so a comment added in the same call lands before the issue closes).
-    See docs/specs/chainlink-task-tracking.md.
+    Closing the issue (`close=True`) adds a `required_next_tool_call` field to the returned
+    detail, telling the model it must call `TodoNext` next. See
+    docs/specs/chainlink-task-tracking.md.
     """
 
     def name(self) -> str:
@@ -121,7 +123,12 @@ class TodoUpdateTool(Tool):
         fields = _changed_fields(args)
         logger.debug(
             "TodoUpdate applied to issue #%d: %s", issue_id, ", ".join(fields) or "no changes")
-        return client.show_issue(issue_id)
+        result = client.show_issue(issue_id)
+        if args.get("close"):
+            result["required_next_tool_call"] = (
+                "TodoNext -- you must call this now to get your next task."
+            )
+        return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         issue_id = args.get("id", "?")

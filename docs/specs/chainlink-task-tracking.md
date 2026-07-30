@@ -174,7 +174,9 @@ All four tools live in `klorb.tools.tasks`, category `"TASKS"`:
   (`Session.set_chainlink_task(None)`) as part of the same call — a closed issue can never be
   left tracked as the current task, which would otherwise linger until the model happened to
   call `TodoNext` again (never, if it was the last task). Returns the updated issue's full
-  `issue show` detail.
+  `issue show` detail; when `close=True`, that detail also carries a `required_next_tool_call`
+  field naming `TodoNext`, so the model is told directly in the tool result — not just via the
+  standing interjection — that it must call `TodoNext` next.
 
 None of the four apply any `ProcessConfig`-driven permission gate (unlike, say,
 `tools.memory.readPermission`) — chainlink's SQLite file lives under the workspace's own
