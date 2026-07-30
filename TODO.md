@@ -248,8 +248,6 @@
 
 * For Bash tool calls, runtime and exit code are not shown after the command completes.
 
-* Whatever we're using for markdown formatting in vscode isn't processing `| tables |`
-
 ### Feature backlog
 
 * "Send" button should be disabled if the prompt is empty.
