@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 
+import acp
 import pytest
 from textual.logging import TextualHandler
 
@@ -157,6 +158,76 @@ def test_configure_logging_leaves_third_party_loggers_at_default_when_klorb_log_
     assert logging.getLogger("httpcore").level == logging.WARNING
     assert logging.getLogger("httpx").level == logging.WARNING
     assert logging.getLogger("openai").level == logging.INFO
+
+
+def _acp_task_error_record(exc: BaseException) -> logging.LogRecord:
+    """Build the `LogRecord` `acp.connection.Connection._on_task_error` would emit for `exc` via
+    `logging.exception("Background task failed", exc_info=exc)` against the root logger."""
+    return logging.LogRecord(
+        "root", logging.ERROR, __file__, 1, "Background task failed", None, (type(exc), exc, None))
+
+
+def test_configure_logging_installs_acp_background_task_error_filter_once() -> None:
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    filters = [
+        f for f in logging.getLogger().filters
+        if isinstance(f, logging_config.AcpBackgroundTaskErrorFilter)]
+    assert len(filters) == 1
+
+
+def test_acp_background_task_error_filter_suppresses_a_request_error(
+        caplog: pytest.LogCaptureFixture) -> None:
+    exc = acp.RequestError.invalid_params({"reason": "unknown session"})
+    record = _acp_task_error_record(exc)
+    request_error_filter = logging_config.AcpBackgroundTaskErrorFilter()
+
+    with caplog.at_level(logging.INFO, logger="klorb.logging_config"):
+        passed = request_error_filter.filter(record)
+
+    assert passed is False
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.INFO
+    assert "Invalid params" in caplog.records[0].getMessage()
+
+
+def test_acp_background_task_error_filter_uses_warning_for_application_error_codes(
+        caplog: pytest.LogCaptureFixture) -> None:
+    exc = acp.RequestError(-32000, "A prompt is already in progress for this session")
+    record = _acp_task_error_record(exc)
+    request_error_filter = logging_config.AcpBackgroundTaskErrorFilter()
+
+    with caplog.at_level(logging.INFO, logger="klorb.logging_config"):
+        request_error_filter.filter(record)
+
+    assert caplog.records[0].levelno == logging.WARNING
+
+
+def test_acp_background_task_error_filter_leaves_internal_error_untouched() -> None:
+    exc = acp.RequestError.internal_error({"details": "boom"})
+    record = _acp_task_error_record(exc)
+    request_error_filter = logging_config.AcpBackgroundTaskErrorFilter()
+
+    assert request_error_filter.filter(record) is True
+
+
+def test_acp_background_task_error_filter_ignores_unrelated_messages() -> None:
+    record = logging.LogRecord(
+        "root", logging.ERROR, __file__, 1, "Some other failure", None, None)
+    request_error_filter = logging_config.AcpBackgroundTaskErrorFilter()
+
+    assert request_error_filter.filter(record) is True
+
+
+def test_acp_background_task_error_filter_ignores_non_root_loggers() -> None:
+    exc = acp.RequestError.invalid_params()
+    record = logging.LogRecord(
+        "klorb.somewhere", logging.ERROR, __file__, 1, "Background task failed", None,
+        (type(exc), exc, None))
+    request_error_filter = logging_config.AcpBackgroundTaskErrorFilter()
+
+    assert request_error_filter.filter(record) is True
 
 
 def test_prune_session_logs_no_op_on_empty_dir(tmp_path: Path) -> None:

@@ -14,6 +14,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TextIO
 
+import acp
 from textual._context import active_app
 from textual.logging import TextualHandler
 from textual.message import Message
@@ -202,6 +203,46 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(payload)
 
 
+class AcpBackgroundTaskErrorFilter(logging.Filter):
+    """Suppresses the `agent-client-protocol` SDK's own full-traceback log for a `RequestError`
+    that was already reported to the client as a JSON-RPC error reply, replacing it with one
+    concise line on klorb's own logger.
+
+    `acp.connection.Connection._run_request` re-raises every caught `RequestError` after sending
+    its JSON-RPC error reply on the wire, and the SDK's `TaskSupervisor` logs that re-raise via
+    `logging.exception("Background task failed", ...)` against the root logger -- so an expected,
+    already-handled client-facing error (an unknown `sessionId`, a second concurrent prompt, an
+    unsupported content block, ...) prints a full traceback exactly like a genuine bug would.
+    `acp.run_agent()` builds its `Connection` internally with no seam to swap in a different
+    task-error handler, so this filter matches the SDK's own hardcoded message instead. See
+    docs/adrs/quiet-acp-request-error-tracebacks-with-a-logging-filter.md.
+
+    `RequestError.internal_error()` is left alone (the record passes through unfiltered): the SDK
+    raises that specific code when it caught some other, non-`RequestError` exception, so it does
+    reflect a genuine bug worth its traceback.
+    """
+
+    _MESSAGE = "Background task failed"
+    _INTERNAL_ERROR_CODE = acp.RequestError.internal_error().code
+    _STANDARD_PROTOCOL_ERROR_CODES = frozenset({
+        acp.RequestError.parse_error().code,
+        acp.RequestError.invalid_request().code,
+        acp.RequestError.method_not_found("").code,
+        acp.RequestError.invalid_params().code,
+    })
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "root" or record.getMessage() != self._MESSAGE:
+            return True
+        exc = record.exc_info[1] if record.exc_info else None
+        if not isinstance(exc, acp.RequestError) or exc.code == self._INTERNAL_ERROR_CODE:
+            return True
+        level = logging.INFO if exc.code in self._STANDARD_PROTOCOL_ERROR_CODES else logging.WARNING
+        detail = f" {exc.data!r}" if exc.data is not None else ""
+        logger.log(level, "ACP request rejected: [%d] %s%s", exc.code, exc, detail)
+        return False
+
+
 def configure_minimal_logging(is_server: bool = False) -> None:
     """Install a bare-bones stderr text handler as a stopgap until `configure_logging()` runs.
 
@@ -252,6 +293,10 @@ def configure_logging(
     `_THIRD_PARTY_LOG_LEVELS` (`httpcore`, `httpx`, `openai`) are set to their own default level
     from that mapping, or to the resolved klorb level when that's more terse (a higher numeric
     value) than their default.
+
+    Also installs `AcpBackgroundTaskErrorFilter` on the root logger (idempotent across repeated
+    calls) so the ACP SDK's own full-traceback log for an already-handled `RequestError` is
+    replaced with one concise line instead.
     """
     console_handler: logging.Handler = TextualHandler() if repl_mode else logging.StreamHandler()
     console_handler.setFormatter(logging.Formatter(
@@ -277,6 +322,13 @@ def configure_logging(
     logging.basicConfig(level=root_level, handlers=handlers, force=True)
     for logger_name, default_level in _THIRD_PARTY_LOG_LEVELS.items():
         logging.getLogger(logger_name).setLevel(max(default_level, root_level))
+
+    root_logger = logging.getLogger()
+    # basicConfig(force=True) replaces handlers but leaves filters alone; guard against adding a
+    # second copy on a later configure_logging() call (e.g. the TUI's /clear, or repeated calls
+    # in tests).
+    if not any(isinstance(f, AcpBackgroundTaskErrorFilter) for f in root_logger.filters):
+        root_logger.addFilter(AcpBackgroundTaskErrorFilter())
 
 
 def crash_log_path(workspace_root: Path) -> Path:

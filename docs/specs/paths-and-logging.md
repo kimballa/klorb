@@ -76,6 +76,18 @@ paths or calling `logging.basicConfig` itself.
       instead when `root_level` is more terse (a higher numeric value) than that default, so a
       terser `KLORB_LOG_LEVEL` also quiets these noisy third-party loggers rather than leaving
       them at their normally-chattier defaults.
+    * Installs `AcpBackgroundTaskErrorFilter` on the root logger (idempotent — a repeated
+      `configure_logging()` call, e.g. the TUI's `/clear`, does not add a second copy). The
+      `agent-client-protocol` SDK logs every `RequestError` it re-raises after already sending
+      the JSON-RPC error reply on the wire — including expected, already-handled rejections like
+      an unknown `sessionId` or a second concurrent prompt — as a full traceback via
+      `logging.exception("Background task failed", ...)` against the root logger, with no
+      SDK-exposed seam to change that. The filter matches that exact message and, for any
+      `RequestError` other than `RequestError.internal_error()` (the SDK's catch-all for a
+      *non*-`RequestError` exception, which does reflect a real bug), replaces it with one line
+      on klorb's own logger — `INFO` for a standard JSON-RPC protocol code, `WARNING` for an
+      application-level one — and suppresses the original record. See [the ACP request-error
+      logging ADR](../adrs/quiet-acp-request-error-tracebacks-with-a-logging-filter.md).
   * `prune_session_logs(logs_dir, *, keep_path, max_files=DEFAULT_MAX_SESSION_LOG_FILES,
     max_bytes=DEFAULT_MAX_SESSION_LOG_BYTES) -> None`, which deletes the oldest `*.log` files
     in `logs_dir` so that, once the new log file `keep_path` is opened, the directory holds at
