@@ -39,6 +39,17 @@ Rule of thumb: if it's a normal-looking action button, start with `vscode-button
 deviation from its default box model needs its own justification, the same way `IconButton`'s
 doc comment explains why it exists instead of just using `vscode-button` with `iconOnly`.
 
+Hand-rolling isn't a one-way door, and it isn't scoped to buttons: whenever a new piece of
+hand-rolled HTML/CSS would render out identical or near-identical to something already
+hand-rolled elsewhere, don't add another copy -- extract the existing pattern into a shared
+component under `webview/components/` and point both call sites at it. `IconButton` is the
+worked example: `PanelHeader`'s and `StatusMenu`'s icon buttons were two separately hand-rolled
+18x18 `<button>`s with their own near-duplicate CSS classes before being unified. Unlike a
+duplicated pure function, duplicated markup/CSS tends to drift silently (`.panel-header-icon-button`
+and `.status-menu-button` had already picked up different `color`/`border` treatment despite being
+"the same kind of thing"), so two hand-rolled occurrences of the same control is reason enough to
+consolidate -- don't wait for a third.
+
 ## 2. Icon: codicon or custom SVG
 
 Prefer a [codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html) via
@@ -85,12 +96,20 @@ is: **would this component make sense imported from a feature it isn't already p
 
 * If yes, it belongs in the top-level `webview/components/` (no feature folder) -- imported
   directly by path (`webview/components/IconButton`), since there's no barrel at that level.
-  `VsCodeApiProvider`, `ErrorBoundary`, `PanelHeader`, `PromptInput`, `StatusRow`/`StatusMenu`,
-  `ApprovalPanel`/`QuestionPanel`, `IconButton`/`klorbIcons`, and `TaskPanel` all live here.
-  `TaskPanel` in particular renders task data but is explicitly a top-level component "not part of
-  the `history` feature" (`docs/specs/vscode-plugin.md`), since it's docked chrome rather than a
-  rendered history entry -- rendering *some* feature's data isn't by itself a reason to nest a
-  component under that feature.
+  `VsCodeApiProvider`, `ErrorBoundary`, `PanelHeader`, `PromptInput`, and `IconButton`/
+  `klorbIcons` are the unambiguous cases: nothing about any of them is tied to one feature's own
+  data model.
+
+  `ApprovalPanel`/`QuestionPanel`, `StatusRow`/`StatusMenu`, and `TaskPanel` live in
+  `webview/components/` today too, but are less clear-cut and shouldn't be read as settled
+  precedent -- each renders enough of its own dedicated state that it arguably deserves its own
+  `features/<name>/` folder and may get moved there someday (`TaskPanel` in particular is a
+  reasonable candidate for `features/tasks/components/TaskPanel.tsx`, given it already has its
+  own `TaskListSnapshot` data model). `docs/specs/vscode-plugin.md` documents `TaskPanel` as a
+  top-level component specifically because it isn't part of the `history` feature, not because
+  top-level is its ideal permanent home -- rendering *some* feature's data isn't by itself
+  disqualifying for top-level placement, but a component with a whole dedicated data
+  model/reducer of its own is a signal pointing the other way, toward carving out a new feature.
 * If no -- it only ever renders one feature's own model types and has no reason to exist without
   it -- it belongs under that feature's own `components/` folder, e.g.
   `webview/features/history/components/HistoryView.tsx`/`ToolCallChip.tsx`/
@@ -104,8 +123,12 @@ is: **would this component make sense imported from a feature it isn't already p
 
 - [ ] Does a `@vscode-elements/elements` custom element already do this? Use it before reaching
       for plain HTML or a hand-rolled component.
-- [ ] If hand-rolling a button: does its target size/shape actually deviate from what
-      `vscode-button` offers, or is this control secretly just a CTA action?
+- [ ] If hand-rolling any control (button or otherwise): does its target size/shape/behavior
+      actually deviate from what an existing vscode-elements element or component offers, or
+      could an existing one already do the job?
+- [ ] Is another part of the codebase already hand-rolling something identical or
+      near-identical to what you're about to add? If so, roll both into one shared component
+      under `webview/components/` instead of adding a second (or third) copy.
 - [ ] If it needs an icon: does a codicon exist, and have you actually checked its `.svg` (or its
       canonical alias in `mapping.json`) rather than assuming the name matches the shape you want?
 - [ ] If it's a custom SVG icon: does it use `fill="currentColor"` with no explicit `color`, and
