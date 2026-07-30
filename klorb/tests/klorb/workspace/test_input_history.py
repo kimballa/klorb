@@ -68,13 +68,13 @@ def test_unescape_keeps_unrecognized_escape_verbatim() -> None:
 def test_project_history_dir_uses_registered_uuid_and_basename(tmp_path: Path) -> None:
     workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
     assert project_history_dir(workspace) == (
-        input_history_module.KLORB_DATA_DIR / "projects" / "abcd-1234-foobar")
+        input_history_module.KLORB_DATA_DIR / "projects" / "foobar-abcd-1234")
 
 
 def test_project_history_path_appends_history_filename(tmp_path: Path) -> None:
     workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
     assert project_history_path(workspace) == (
-        input_history_module.KLORB_DATA_DIR / "projects" / "abcd-1234-foobar" / "history")
+        input_history_module.KLORB_DATA_DIR / "projects" / "foobar-abcd-1234" / "history")
 
 
 def test_project_history_dir_uses_stable_hash_for_unregistered_workspace(tmp_path: Path) -> None:
@@ -85,7 +85,7 @@ def test_project_history_dir_uses_stable_hash_for_unregistered_workspace(tmp_pat
     dir_a = project_history_dir(workspace)
     dir_b = project_history_dir(Workspace(path=path, is_project=False, trusted=False))
     assert dir_a == dir_b
-    assert dir_a.name.endswith("-unreg-project")
+    assert dir_a.name.startswith("unreg-project-")
 
     other = project_history_dir(Workspace(path=tmp_path / "other-project"))
     assert other != dir_a

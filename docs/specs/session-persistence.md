@@ -20,7 +20,7 @@ one shared path every caller (TUI, ACP server) uses to rebuild a `Session` from 
 ### Where things live
 
 ```text
-$KLORB_DATA_DIR/projects/<token>-<basename>/
+$KLORB_DATA_DIR/projects/<basename>-<token>/
 ├── history                       # unchanged: append-only prompt-recall log
 ├── workspace.lock                # guards read-modify-write of sessions.json
 └── sessions/
@@ -33,11 +33,12 @@ $KLORB_DATA_DIR/projects/<token>-<basename>/
 `sessions/` lives in the same per-project directory as the prompt-input history file
 (`klorb.workspace.input_history.project_history_dir`), under `$KLORB_DATA_DIR`, not inside the
 workspace itself — the same reasoning docs/adrs/store-last-session-under-klorb-data-dir-not-
-workspace.md gives for the single-slot `last-session.json` design this replaces. `<token>` is the
-registered project's uuid, or a stable hash of the canonical workspace path for an
-unregistered-but-trusted workspace, so both kinds of trusted workspace get one consistent parent
-directory. `sessions/` and each `sessions/<subdir>/` are created lazily, exactly like
-`project_history_dir` itself — nothing is written for an untrusted or unresolved workspace.
+workspace.md gives for the single-slot `last-session.json` design this replaces. `<basename>` is
+the last path element of the workspace's path, and `<token>` is the registered project's uuid, or
+a stable hash of the canonical workspace path for an unregistered-but-trusted workspace, so both
+kinds of trusted workspace get one consistent parent directory. `sessions/` and each
+`sessions/<subdir>/` are created lazily, exactly like `project_history_dir` itself — nothing is
+written for an untrusted or unresolved workspace.
 
 `klorb.workspace.session_store` defines the on-disk shapes:
 

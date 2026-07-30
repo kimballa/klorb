@@ -9,7 +9,7 @@ workspace itself -- the same reasoning docs/adrs/store-last-session-under-klorb-
 workspace.md gives for the single-slot design this module replaces:
 
 ```text
-$KLORB_DATA_DIR/projects/<token>-<basename>/
+$KLORB_DATA_DIR/projects/<basename>-<token>/
 ├── history                       # unchanged: append-only prompt-recall log
 ├── workspace.lock                # guards read-modify-write of sessions.json
 └── sessions/

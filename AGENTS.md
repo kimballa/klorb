@@ -50,6 +50,10 @@ identifiers. See `docs/specs/process-and-session-config.md`'s "On-disk key namin
 Various bugs or  planned tasks are enumerated in `/TODO.md`. New follow-up tasks may be added there,
 but if a task is **completed**, do not mark it complete -- remove it entirely!
 
+Before declaring your own task complete, check whether `/TODO.md` already has a bullet describing
+it (the task you were asked to do may have started life as a TODO item). If it does, remove that
+bullet entirely as part of finishing the task -- don't leave a stale entry for work that's done.
+
 ## subprojects
 
 The Klorb project is organized as a collection of subprojects:
