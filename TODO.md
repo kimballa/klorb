@@ -5,8 +5,6 @@
 
 ### Bugs
 
-* Project dir names in ~/.local/share/klorb/ should be `<basename>-<uuid>`, not the other way around.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
@@ -257,7 +255,7 @@
     ReadFile on it.
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
-  (`$KLORB_DATA_DIR/projects/<token>-<basename>/history`)
+  (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
 
 * "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
   or `<table>`, not just a bunch of text.

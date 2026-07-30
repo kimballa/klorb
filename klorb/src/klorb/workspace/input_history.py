@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """File-backed persistence for the prompt-input history (the up/down-arrow recall list),
-keyed per project under `$KLORB_DATA_DIR/projects/<id-or-hash>-<basename>/history`.
+keyed per project under `$KLORB_DATA_DIR/projects/<basename>-<id-or-hash>/history`.
 
 Each registered project (`klorb.workspace.Workspace.id` from `projects.json`) gets one
 per-project directory; an unregistered workspace (one the user declined to open as a
@@ -50,12 +50,12 @@ def _project_token(workspace: Workspace) -> str:
 
 def project_history_dir(workspace: Workspace) -> Path:
     """The per-project directory holding (at least) that project's `history` file:
-    `$KLORB_DATA_DIR/projects/<token>-<basename>`, where `<token>` is the project uuid (or a
-    stable path-hash for an unregistered workspace) and `<basename>` is the last path
-    element of `workspace.path` — e.g. a workspace at `/home/aaron/src/foobar` registered
-    with uuid `abcd-1234` maps to `…/projects/abcd-1234-foobar`."""
+    `$KLORB_DATA_DIR/projects/<basename>-<token>`, where `<basename>` is the last path
+    element of `workspace.path` and `<token>` is the project uuid (or a stable path-hash for
+    an unregistered workspace) — e.g. a workspace at `/home/aaron/src/foobar` registered
+    with uuid `abcd-1234` maps to `…/projects/foobar-abcd-1234`."""
     basename = workspace.path.name or "workspace"
-    return KLORB_DATA_DIR / PROJECTS_DIR_NAME / f"{_project_token(workspace)}-{basename}"
+    return KLORB_DATA_DIR / PROJECTS_DIR_NAME / f"{basename}-{_project_token(workspace)}"
 
 
 def project_history_path(workspace: Workspace) -> Path:
