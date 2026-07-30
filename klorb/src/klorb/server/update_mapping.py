@@ -290,10 +290,15 @@ def _json_safe_result(result: Any) -> Any:
 
 def _bash_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
     """Return `_meta.klorb.bash` for a finished `Bash` call's result, or `None` for other
-    tools or when the result is not a dict (e.g. an error before `apply()` returned)."""
+    tools or when the result is not a dict (e.g. an error before `apply()` returned).
+    Re-includes `command`/`intent` (see `_bash_meta_start`) because the webview client treats
+    `command` as the required field that marks a `_meta.klorb.bash` payload as present at all."""
     if event.name != "Bash" or not isinstance(event.result, dict):
         return None
-    meta: dict[str, Any] = {}
+    bash_meta = _bash_meta_start(event.args)
+    if bash_meta is None:
+        return None
+    meta: dict[str, Any] = dict(bash_meta)
     if event.error is not None:
         meta["success"] = False
     elif "success" in event.result:

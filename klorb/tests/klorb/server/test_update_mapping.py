@@ -227,6 +227,26 @@ def test_finished_update_falls_back_to_detail_view_for_a_non_diff_tool(tmp_path:
     assert "foo.txt" in block.content.text
 
 
+def test_finished_update_bash_meta_carries_command_alongside_result_fields(tmp_path: Path) -> None:
+    """`command` must survive onto the finish update's `_meta.klorb.bash`, not just the start
+    update's -- the webview client (`parseBashMeta`) treats a missing `command` string as an
+    absent payload and discards `success`/`exitStatus`/`runtime` along with it."""
+    registry = _registry(tmp_path)
+    args = {"command": "echo hi", "intent": "say hi"}
+    result = {"success": True, "exit_status": 0, "runtime": 1.234, "stdout": "hi\n"}
+    event = ToolCallEvent(call_id="1", name="Bash", args=args, result=result, error=None)
+
+    update = tool_call_finished_update(event, registry, tmp_path)
+
+    assert update.field_meta is not None
+    bash_meta = update.field_meta["klorb"]["bash"]
+    assert bash_meta["command"] == "echo hi"
+    assert bash_meta["intent"] == "say hi"
+    assert bash_meta["success"] is True
+    assert bash_meta["exitStatus"] == 0
+    assert bash_meta["runtime"] == 1.23
+
+
 def test_finished_update_reports_failure_text_and_status(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     event = ToolCallEvent(

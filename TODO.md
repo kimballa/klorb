@@ -244,10 +244,6 @@
 
 ## VSCode plugin
 
-### Bugs
-
-* For Bash tool calls, runtime and exit code are not shown after the command completes.
-
 ### Feature backlog
 
 * "Send" button should be disabled if the prompt is empty.
