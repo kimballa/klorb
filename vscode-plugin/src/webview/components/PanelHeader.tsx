@@ -1,6 +1,8 @@
 // © Copyright 2026 Aaron Kimball
 import type { JSX } from 'react';
 
+import IconButton from 'webview/components/IconButton';
+
 export interface PanelHeaderProps {
   title: string;
   onNewSession(): void;
@@ -25,22 +27,12 @@ export default function PanelHeader({
     <div className="panel-header">
       <div className="title">{title}</div>
       <div className="panel-header-actions">
-        <button
-          type="button"
-          className="panel-header-icon-button"
-          title="Session history"
-          aria-label="Session history"
-          onClick={onBrowseSessions}>
+        <IconButton title="Session history" onClick={onBrowseSessions}>
           <vscode-icon name="history" />
-        </button>
-        <button
-          type="button"
-          className="panel-header-icon-button"
-          title="New session"
-          aria-label="New session"
-          onClick={onNewSession}>
+        </IconButton>
+        <IconButton title="New session" onClick={onNewSession}>
           <vscode-icon name="chat-sparkle" />
-        </button>
+        </IconButton>
       </div>
     </div>
   );

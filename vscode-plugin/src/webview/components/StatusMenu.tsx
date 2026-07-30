@@ -3,6 +3,8 @@ import type { VscodeContextMenu } from '@vscode-elements/elements';
 import type { VscContextMenuSelectEvent } from '@vscode-elements/elements/dist/vscode-context-menu/vscode-context-menu';
 import { type JSX, useRef } from 'react';
 
+import IconButton from 'webview/components/IconButton';
+
 /** Gap, in pixels, left between the chevron button's top edge and the popup menu's bottom
  * edge when it opens upward above it. */
 const MENU_GAP_PX = 4;
@@ -115,14 +117,13 @@ export default function StatusMenu({
 
   return (
     <>
-      <button
+      <IconButton
         ref={buttonRef}
-        type="button"
-        className="status-menu-button"
-        aria-label="Klorb session commands"
+        variant="filled"
+        title="Klorb session commands"
         onClick={openMenu}>
         <vscode-icon name="chevron-up" />
-      </button>
+      </IconButton>
       <vscode-context-menu
         ref={menuRef}
         className="status-menu-popup"

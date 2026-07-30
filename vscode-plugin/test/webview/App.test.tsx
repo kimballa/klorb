@@ -132,7 +132,7 @@ describe('App', () => {
     typeAndSubmit(container, 'long task');
 
     expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText('Stop')).toBeTruthy();
+    expect(screen.getByTitle('Stop')).toBeTruthy();
   });
 
   it('posts cancelTurn when Stop is clicked', () => {
@@ -140,7 +140,7 @@ describe('App', () => {
     const { container } = render(<App vscode={vscode} initialEntries={[]} />);
 
     typeAndSubmit(container, 'long task');
-    fireEvent.click(screen.getByText('Stop'));
+    fireEvent.click(screen.getByTitle('Stop'));
 
     expect(posted).toContainEqual({ type: 'cancelTurn' });
   });
@@ -153,7 +153,7 @@ describe('App', () => {
     postHostMessage({ type: 'turnEnded', stopReason: 'end_turn' });
 
     expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText('Send')).toBeTruthy();
+    expect(screen.getByTitle('Send')).toBeTruthy();
   });
 
   it('shows a turnError as an error entry and re-enables the input', () => {

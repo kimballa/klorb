@@ -39,7 +39,7 @@ body {
   gap: 2px;
 }
 
-.panel-header-icon-button {
+.icon-button {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -48,17 +48,40 @@ body {
   width: 18px;
   height: 18px;
   padding: 0;
-  margin-left: 5px;
-  margin-right: 5px;
   border: none;
   border-radius: 3px;
-  background: transparent;
-  color: var(--vscode-foreground);
   cursor: pointer;
 }
 
-.panel-header-icon-button:hover {
+/* vscode-icon sets its own `color` from `--vscode-icon-foreground` rather than inheriting one,
+   so a codicon placed inside an icon-button needs this override to pick up the button's own
+   foreground color instead. */
+.icon-button vscode-icon {
+  color: inherit;
+}
+
+.icon-button-toolbar {
+  background: transparent;
+  color: var(--vscode-foreground);
+}
+
+.icon-button-toolbar:hover {
   background-color: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.icon-button-filled {
+  border: 1px solid var(--vscode-button-border, transparent);
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.icon-button-filled:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.panel-header-actions .icon-button {
+  margin-left: 5px;
+  margin-right: 5px;
 }
 
 .webview-crash {
@@ -721,28 +744,6 @@ button.status-chip:hover {
 .status-permission-badge-flash {
   color: var(--vscode-textLink-foreground);
   transition: color 0.2s ease-out;
-}
-
-.status-menu-button {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 3px;
-  background-color: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  font: inherit;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.status-menu-button:hover {
-  background-color: var(--vscode-button-hoverBackground);
 }
 
 /* Positioned with `position: fixed` (set inline by StatusMenu.tsx, alongside `top`/`left`

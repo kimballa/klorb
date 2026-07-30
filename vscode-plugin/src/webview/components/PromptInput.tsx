@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react';
 
+import { PlayMediaIcon, StopMediaIcon } from 'webview/components/klorbIcons';
 import { classifyEnterKey } from 'webview/keyHandling';
 
 const MIN_ROWS = 1;
@@ -194,13 +195,24 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         }}
       />
       {!inFlight || enqueueMessageCapable ? (
-        <vscode-button id="submit-button" onClick={() => submit()}>
-          Send
+        <vscode-button
+          id="submit-button"
+          iconOnly
+          title="Send"
+          aria-label="Send"
+          disabled={draft.trim().length === 0}
+          onClick={() => submit()}>
+          <PlayMediaIcon />
         </vscode-button>
       ) : null}
       {inFlight ? (
-        <vscode-button id="stop-button" onClick={() => onCancel()}>
-          Stop
+        <vscode-button
+          id="stop-button"
+          iconOnly
+          title="Stop"
+          aria-label="Stop"
+          onClick={() => onCancel()}>
+          <StopMediaIcon />
         </vscode-button>
       ) : null}
     </div>

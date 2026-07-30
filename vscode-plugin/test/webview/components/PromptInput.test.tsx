@@ -38,8 +38,8 @@ describe('PromptInput', () => {
     const { container } = render(<PromptInput inFlight onSubmit={() => undefined} {...NOOP} />);
 
     expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
-    expect(screen.queryByText('Send')).toBeNull();
-    expect(screen.getByText('Stop')).toBeTruthy();
+    expect(screen.queryByTitle('Send')).toBeNull();
+    expect(screen.getByTitle('Stop')).toBeTruthy();
   });
 
   it('keeps the textarea enabled and shows both Send and Stop when enqueueMessageCapable', () => {
@@ -48,8 +48,20 @@ describe('PromptInput', () => {
     );
 
     expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText('Send')).toBeTruthy();
-    expect(screen.getByText('Stop')).toBeTruthy();
+    expect(screen.getByTitle('Send')).toBeTruthy();
+    expect(screen.getByTitle('Stop')).toBeTruthy();
+  });
+
+  it('disables Send while the draft is empty, and enables it once text is typed', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    expect(screen.getByTitle('Send').hasAttribute('disabled')).toBe(true);
+
+    typeText(container, 'hello');
+
+    expect(screen.getByTitle('Send').hasAttribute('disabled')).toBe(false);
   });
 
   it('calls onSubmit with the trimmed text on Send while enqueueMessageCapable mid-turn', () => {
@@ -59,7 +71,7 @@ describe('PromptInput', () => {
     );
 
     typeText(container, '  also check the tests  ');
-    fireEvent.click(screen.getByText('Send'));
+    fireEvent.click(screen.getByTitle('Send'));
 
     expect(onSubmit).toHaveBeenCalledWith('also check the tests');
   });
@@ -69,7 +81,7 @@ describe('PromptInput', () => {
     const { container } = render(<PromptInput inFlight={false} onSubmit={onSubmit} {...NOOP} />);
 
     typeText(container, '   ');
-    fireEvent.click(screen.getByText('Send'));
+    fireEvent.click(screen.getByTitle('Send'));
 
     expect(onSubmit).not.toHaveBeenCalled();
   });
