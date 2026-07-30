@@ -86,6 +86,26 @@ def test_close_leaves_cur_chainlink_task_id_alone_for_a_different_task(tmp_path:
 
 
 @requires_chainlink
+def test_close_reports_required_next_tool_call(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    created = TodoCreateTool(context).apply({"title": "Task"})
+
+    result = TodoUpdateTool(context).apply({"id": created["id"], "close": True})
+
+    assert "TodoNext" in result["required_next_tool_call"]
+
+
+@requires_chainlink
+def test_required_next_tool_call_absent_when_not_closing(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    created = TodoCreateTool(context).apply({"title": "Task"})
+
+    result = TodoUpdateTool(context).apply({"id": created["id"], "new_priority": "high"})
+
+    assert "required_next_tool_call" not in result
+
+
+@requires_chainlink
 def test_reopen_a_closed_issue(tmp_path: Path) -> None:
     context = _context(tmp_path)
     created = TodoCreateTool(context).apply({"title": "Task"})

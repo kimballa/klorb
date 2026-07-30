@@ -28,9 +28,6 @@
 
 ### Feature backlog
 
-* When the agent uses TodoUpdate with `"close": true`, the response should tell the agent
-  that it is required to run `TodoNext` to get its next task.
-
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
   or start testing anything. Maybe we should notice this condition (only using read-only tools for N
   tool calls in a row) and force it to deliver a report to the user that enumerates some concrete
