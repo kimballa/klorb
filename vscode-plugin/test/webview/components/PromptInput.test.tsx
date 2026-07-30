@@ -53,7 +53,9 @@ describe('PromptInput', () => {
   });
 
   it('disables Send while the draft is empty, and enables it once text is typed', () => {
-    const { container } = render(<PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />);
+    const { container } = render(
+      <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
+    );
 
     expect(screen.getByTitle('Send').hasAttribute('disabled')).toBe(true);
 

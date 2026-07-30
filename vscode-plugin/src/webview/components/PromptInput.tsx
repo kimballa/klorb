@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react';
 
+import { PlayMediaIcon, StopMediaIcon } from 'webview/components/klorbIcons';
 import { classifyEnterKey } from 'webview/keyHandling';
 
 const MIN_ROWS = 1;
@@ -21,25 +22,6 @@ const MAX_ROWS = 10;
  * interaction panel resolves (see `docs/specs/vscode-plugin.md`'s input-discipline sweep). */
 export interface PromptInputHandle {
   focus(): void;
-}
-
-/** Right-facing filled triangle for the Send button; codicons has no equivalent play glyph. */
-function PlayIcon(): JSX.Element {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M4 2L14 8L4 14V2Z" />
-    </svg>
-  );
-}
-
-/** Filled square for the Stop button; codicons' "stop" glyph is actually an error/circle-X
- * icon, not a square, so this is drawn directly instead of using `vscode-button`'s `icon` prop. */
-function StopIcon(): JSX.Element {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <rect x="3" y="3" width="10" height="10" />
-    </svg>
-  );
 }
 
 interface PromptInputProps {
@@ -220,7 +202,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           aria-label="Send"
           disabled={draft.trim().length === 0}
           onClick={() => submit()}>
-          <PlayIcon />
+          <PlayMediaIcon />
         </vscode-button>
       ) : null}
       {inFlight ? (
@@ -230,7 +212,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           title="Stop"
           aria-label="Stop"
           onClick={() => onCancel()}>
-          <StopIcon />
+          <StopMediaIcon />
         </vscode-button>
       ) : null}
     </div>
