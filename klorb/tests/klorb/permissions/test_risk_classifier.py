@@ -134,6 +134,8 @@ def test_classify_command_risk_discards_a_suggested_pattern_that_does_not_match_
     ["**", "--version"],
     ["**", "status"],
     ["*", "--version", "*"],
+    ["py*", "test"],
+    ["py*", "--version"],  # suffix-wildcard argv0 gets no version/help exception
 ])
 def test_has_unsafe_wildcard_argv0_true_for_wildcard_program_name(pattern: list[str]) -> None:
     assert _has_unsafe_wildcard_argv0(pattern) is True
@@ -145,6 +147,8 @@ def test_has_unsafe_wildcard_argv0_true_for_wildcard_program_name(pattern: list[
     ["*", "--version"],
     ["*", "--help"],
     ["*", "-h"],
+    ["dd", "of=*"],  # suffix wildcard elsewhere in the pattern doesn't touch argv0 safety
+    ["*.sh", "run"],  # leading `*` with no trailing `*` is a plain literal, not a wildcard at all
     [],
 ])
 def test_has_unsafe_wildcard_argv0_false_for_literal_or_version_help_argv0(pattern: list[str]) -> None:
@@ -190,6 +194,52 @@ def test_classify_command_risk_keeps_a_wildcard_argv0_version_query() -> None:
 
     assert report is not None
     assert report.items[0].suggested_pattern == ["*", "--version"]
+
+
+def test_classify_command_risk_keeps_a_suffix_wildcard_suggested_pattern() -> None:
+    """The reported shape from the bash risk classifier bug (see
+    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md): the classifier
+    proposes `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` for a `dd if=/dev/zero
+    of=/home/aaron/zeros.bin bs=1 count=32` command, generalizing just the value half of `of=`/
+    `count=`. Now that `pattern_matches_argv` understands trailing suffix-wildcard tokens, this
+    pattern actually matches the command it was proposed for and is kept rather than discarded."""
+    argv = ["dd", "if=/dev/zero", "of=/home/aaron/zeros.bin", "bs=1", "count=32"]
+    items = [_command_item(argv)]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 4, "overall_rationale": "writes zeros to a file",
+        "items": [{
+            "item_id": "item-0", "risk_score": 4, "rationale": "writes zeros to a file",
+            "suggested_pattern": ["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        " ".join(argv), items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == ["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]
+
+
+def test_classify_command_risk_discards_a_suffix_wildcard_argv0_pattern() -> None:
+    """A suffix-wildcard argv0 (`["py*", "test"]`) matches the candidate argv, so it survives the
+    argv-match check, but `_has_unsafe_wildcard_argv0` still rejects it -- it generalizes the
+    program name itself, exactly like a whole-token wildcard argv0 would."""
+    items = [_command_item(["python3", "test"])]
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply(json.dumps({
+        "overall_risk_score": 2, "overall_rationale": "runs the test suite",
+        "items": [{
+            "item_id": "item-0", "risk_score": 2, "rationale": "runs the test suite",
+            "suggested_pattern": ["py*", "test"],
+        }],
+    }))
+
+    report = classify_command_risk(
+        "python3 test", items, api_provider=provider, model="m", timeout=5.0)
+
+    assert report is not None
+    assert report.items[0].suggested_pattern == []
 
 
 def test_classify_command_risk_leaves_a_structural_items_pattern_untouched() -> None:

@@ -14,16 +14,6 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
-* Risk classifier should not propose wildcards *within* an argument:
-
-  ```text
-  Bash risk classifier suggested a pattern (['dd', 'if=/dev/zero', 'of=*', 'bs=1', 'count=32'])
-  that does not match the command argv it was for
-  (['dd', 'if=/dev/zero', 'of=/home/aaron/zeros.bin', 'bs=1', 'count=32'])
-  ```
-
-  ... the wildcards are not parsed this way. Or, actually, maybe they should be? Or at least support the wildcard * at the *end* of an argument?
-
 ### Feature backlog
 
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions

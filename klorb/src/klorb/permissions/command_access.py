@@ -20,6 +20,9 @@ WILDCARD_TOKEN = "*"
 regardless of position (including a rule's own last token); see
 `CommandPermissionsTable._matches` and
 docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+A literal token that ends with a trailing `"*"` without being exactly `"*"` (or exactly `"**"`,
+`UNBOUNDED_TOKEN`) is a distinct case, a suffix-wildcard literal — see `_token_matches_literal`
+and docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 """
 
 OPTIONAL_TOKEN = "?"
@@ -35,6 +38,26 @@ zero — at any position in a rule, not just as the last token; see
 `CommandPermissionsTable._matches` and
 docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
 """
+
+
+def _token_matches_literal(pattern_token: str, candidate_token: str) -> bool:
+    """Whether a rule token that is *not* one of the three whole-token wildcards (`WILDCARD_TOKEN`,
+    `OPTIONAL_TOKEN`, `UNBOUNDED_TOKEN`) matches a single candidate token, exactly one-for-one.
+
+    Only a `pattern_token`'s own trailing `"*"` ever carries wildcard meaning, and only when it
+    isn't the token's entire content (a bare `"*"` is `WILDCARD_TOKEN`, already intercepted by
+    `pattern_matches_argv`'s caller before this function ever runs): `"--arg=*"` requires the
+    candidate token to start with the literal `"--arg="` prefix, and accepts anything (including
+    nothing) after it. A `"*"` anywhere else in `pattern_token` -- not its last character -- is
+    just a literal asterisk to match verbatim, not a wildcard: `"a*b"` matches only the literal
+    candidate token `"a*b"`. This is a deliberately narrow, single-suffix-wildcard grammar (a
+    plain string-prefix check, not a general glob/regex) -- see
+    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md for why a wildcard anywhere in
+    a token (not just trailing) was rejected as unnecessarily permissive.
+    """
+    if pattern_token.endswith(WILDCARD_TOKEN) and len(pattern_token) > 1:
+        return candidate_token.startswith(pattern_token[:-1])
+    return pattern_token == candidate_token
 
 
 def pattern_matches_argv(pattern: list[str], argv: list[str]) -> bool:
@@ -71,7 +94,8 @@ def pattern_matches_argv(pattern: list[str], argv: list[str]) -> bool:
                     and match_from(rule_index, candidate_index + 1))
             else:
                 result = (
-                    candidate_index < len(argv) and argv[candidate_index] == token
+                    candidate_index < len(argv)
+                    and _token_matches_literal(token, argv[candidate_index])
                     and match_from(rule_index + 1, candidate_index + 1))
 
         memo[key] = result
@@ -110,7 +134,23 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
         """Positional token match, backtracking where `OPTIONAL_TOKEN` (`"?"`) or
         `UNBOUNDED_TOKEN` (`"**"`) is involved:
 
-        * A literal token must equal the candidate token at that position exactly.
+        * A literal token with no trailing `"*"` must equal the candidate token at that position
+          exactly — this includes a `"*"` occurring anywhere *except* as the token's last
+          character, which is just a literal asterisk, not a wildcard: `"a*b"` matches only the
+          literal candidate token `"a*b"`.
+        * A literal token that *ends* with `"*"` without being exactly `"*"` (`WILDCARD_TOKEN`) or
+          `"**"` (`UNBOUNDED_TOKEN`) is a suffix-wildcard literal: it still consumes exactly one
+          candidate token at that position (never zero, never more), but that token only has to
+          start with the pattern token's own prefix (everything before the trailing `"*"`), not
+          equal it verbatim. `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` matches
+          `["dd", "if=/dev/zero", "of=/home/aaron/zeros.bin", "bs=1", "count=32"]`: `"of=*"` and
+          `"count=*"` each still occupy exactly one argv position, they just accept any suffix
+          (including none) after their literal prefix rather than requiring an exact match. This is
+          a plain string-prefix check on a single token, not a shell glob expansion or a second way
+          to span multiple candidate tokens — `"of=*"` never matches across a space the way
+          `UNBOUNDED_TOKEN` spans multiple argv entries, and a `"*"` earlier in the same token
+          (not its last character) still isn't a wildcard; see `_token_matches_literal` and
+          docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
         * `WILDCARD_TOKEN` (`"*"`) matches exactly one arbitrary candidate token at that
           position, always — including when it's the rule's last token: `["foo", "*"]` matches
           `["foo", "bar"]` but not `["foo"]` (zero extra tokens) or `["foo", "bar", "baz"]` (two

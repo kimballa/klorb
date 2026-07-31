@@ -190,15 +190,33 @@ For every item whose `kind` is `"command"`, propose a `suggested_pattern`: a lis
 using the exact grammar below (argv0 first) -- not a shell glob, not a regex, only these three
 special tokens plus literals:
 
-* A literal token must equal the candidate token at that exact position.
-* `"*"` matches exactly one arbitrary token at that position, always -- never zero, never two.
+* A literal token with no *trailing* `*` must equal the candidate token at that exact position.
+  A `*` anywhere in a token except as its very last character is just a literal asterisk to
+  match verbatim, never a wildcard.
+* A literal token that *ends* with `*` (and isn't just `*` on its own) is a suffix-wildcard
+  literal: it still occupies exactly one argv position (never zero, never two), but that
+  position's candidate token only has to start with the pattern token's own prefix (everything
+  before the trailing `*`), not equal it verbatim. Use this to generalize just the *value* half
+  of a `--flag=value` or `key=value` style argument while keeping the flag/key name itself
+  literal, instead of replacing the whole token with a bare `*` (which would also accept a
+  completely different flag in that position). This is a plain "starts with" check, not a
+  general glob -- a `*` earlier in the token is not a second wildcard, so `--arg=*value` still
+  means "starts with the literal `--arg=*value`," not "starts with `--arg=`, ends with `value`."
+* `"*"` on its own (the whole token, nothing else) matches exactly one arbitrary token at that
+  position, always -- never zero, never two.
 * `"?"` matches zero or one arbitrary token at that position.
 * `"**"` matches any number of arbitrary tokens (including zero) at that position, and may
   appear anywhere in the pattern, not just at the end.
 
 Examples: `["foo", "*"]` matches `foo bar` but not `foo` or `foo bar baz`. `["git", "**",
 "status", "**"]` matches `git status`, `git -C dir status -s`, etc. `["git", "?", "status"]`
-matches `git status` or `git --no-pager status` but not `git --a --b status`.
+matches `git status` or `git --no-pager status` but not `git --a --b status`. `["dd",
+"if=/dev/zero", "of=*", "bs=1", "count=*"]` matches `dd if=/dev/zero of=/home/aaron/zeros.bin
+bs=1 count=32`, generalizing the output path and count while keeping every flag name and the
+input source literal -- prefer this suffix-wildcard form over `["dd", "if=/dev/zero", "*",
+"bs=1", "*"]`, which would also accept an unrelated flag (or even a differently-shaped argument)
+in either wildcarded position instead of just a varying value after the same `of=`/`count=`
+prefix.
 
 Always propose the LEAST permissive generalization consistent with what's actually safe to
 repeat: generalize a file path, commit message, or other varying argument before generalizing a
@@ -207,10 +225,13 @@ position -- keep those literal in the pattern.
 
 The FIRST token (argv0, the program name) must almost always be a literal -- the program itself
 determines what the command does, so a wildcard there means "any program at all" and is never a
-safe thing to generalize. The one exception is a pattern that merely asks any program to print its
-version or help and exit, i.e. exactly `["*", "--version"]` or `["*", "--help"]` (or `-h`/`-V`).
-Anything else with a wildcard argv0 -- e.g. `["*", "-c", "*"]`, `["**", "status"]` -- is invalid
-and will be rejected; keep the program name literal instead. For an item whose `kind` is not `"command"`
+safe thing to generalize. This includes a suffix-wildcard argv0 like `["py*", "test"]` -- it
+still means "any program whose name starts with this prefix," not a safe generalization. The one
+exception is a pattern that merely asks any program to print its version or help and exit, i.e.
+exactly `["*", "--version"]` or `["*", "--help"]` (or `-h`/`-V`) -- the whole-token `*`, not a
+suffix wildcard. Anything else with a wildcard argv0 -- e.g. `["*", "-c", "*"]`, `["**",
+"status"]`, `["py*", "test"]` -- is invalid and will be rejected; keep the program name literal
+instead. For an item whose `kind` is not `"command"`
 (`"redirect"`/`"structural"`), `suggested_pattern` has no real use downstream; return an empty
 list for it.
 
@@ -405,12 +426,19 @@ def _has_unsafe_wildcard_argv0(pattern: list[str]) -> bool:
     *is* what decides what happens. The one defensible exception is asking an arbitrary program for
     its version or help and nothing else: a pattern of exactly `["*", <version/help flag>]` (see
     `_SAFE_WILDCARD_ARGV0_FLAGS`). Everything else with a wildcard argv0 — `["*", "-c", "*"]`,
-    `["**", "status"]`, `["?", "run"]` — is unsafe, so a persistent grant is never built from it.
+    `["**", "status"]`, `["?", "run"]`, or a suffix-wildcard argv0 like `["py*", "test"]` (see
+    `klorb.permissions.command_access._token_matches_literal`) — is unsafe, so a persistent grant
+    is never built from it. A `*` elsewhere in argv0 (not its last character) is just a literal
+    character there, not a wildcard, so it doesn't trip this check.
     """
-    if not pattern or pattern[0] not in _WILDCARD_TOKENS:
+    if not pattern:
+        return False
+    argv0 = pattern[0]
+    has_suffix_wildcard = argv0.endswith("*") and len(argv0) > 1
+    if argv0 not in _WILDCARD_TOKENS and not has_suffix_wildcard:
         return False
     return not (
-        len(pattern) == 2 and pattern[0] == "*" and pattern[1] in _SAFE_WILDCARD_ARGV0_FLAGS)
+        len(pattern) == 2 and argv0 == "*" and pattern[1] in _SAFE_WILDCARD_ARGV0_FLAGS)
 
 
 def _discard_unsafe_wildcard_argv0_patterns(

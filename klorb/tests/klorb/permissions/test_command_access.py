@@ -1,11 +1,19 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.command_access: CommandRules/CommandPermissionsTable token-
 pattern matching and deny/ask/allow precedence. See
-docs/specs/bash-tool-and-command-permissions.md and
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+docs/specs/bash-tool-and-command-permissions.md,
+docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md,
+and docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 """
 
-from klorb.permissions.command_access import CommandPermissionsTable, CommandRules, pattern_matches_argv
+import shlex
+
+from klorb.permissions.command_access import (
+    CommandPermissionsTable,
+    CommandRules,
+    _token_matches_literal,
+    pattern_matches_argv,
+)
 
 
 def _table(**kwargs: list[list[str]]) -> CommandPermissionsTable:
@@ -177,6 +185,159 @@ def _rejects(pattern: list[str], *argvs: list[str]) -> None:
         assert not pattern_matches_argv(pattern, argv), f"expected {pattern} to reject {argv}"
         assert _table(allow=[pattern]).evaluate(argv) is None, (
             f"table verdict for {pattern} on {argv} should be None")
+
+
+# --- suffix-wildcard tokens: a literal token ending in a trailing `*` without being exactly -----
+# `"*"` or `"**"` -- see docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+# The risk classifier sometimes proposes exactly this shape (`["dd", "of=*", ...]`) to generalize
+# the value half of a `--flag=value`/`key=value` argument while keeping the flag name literal. Only
+# a token's own *last* character carries wildcard meaning -- a `*` anywhere else in the same token
+# is just a literal asterisk.
+
+
+def test_suffix_wildcard_token_matches_anything_after_literal_prefix() -> None:
+    """`"of=*"` occupies exactly one argv position, same arity as a bare `*`, but the candidate
+    token there must start with the literal `of=` prefix -- the `*` only stands in for what comes
+    after it, including nothing at all."""
+    pattern = ["dd", "of=*"]
+    _admits(
+        pattern,
+        ["dd", "of=/tmp/x"],
+        ["dd", "of=/home/aaron/zeros.bin"],
+        ["dd", "of="],  # `*` matches zero characters too
+    )
+    _rejects(
+        pattern,
+        ["dd"],  # no token at all for `of=*` to consume
+        ["dd", "if=/tmp/x"],  # wrong prefix entirely
+        ["dd", "iof=/tmp/x"],  # prefix must match from the start of the token, not a substring
+        ["dd", "of=/tmp/x", "extra"],  # still exactly one token, no more
+    )
+
+
+def test_suffix_wildcard_token_still_consumes_exactly_one_argv_position() -> None:
+    """A suffix wildcard never spans a space into a second candidate token the way `**` does --
+    it's a single-token prefix check, not a second unbounded-match mechanism."""
+    pattern = ["cmd", "--path=*", "--done"]
+    _admits(pattern, ["cmd", "--path=/a/b", "--done"])
+    _rejects(
+        pattern,
+        ["cmd", "--path=/a", "b", "--done"],  # the value can't spill into its own extra token
+        ["cmd", "--done"],  # `--path=*` still needs a token of its own
+    )
+
+
+def test_suffix_wildcard_reproduces_the_reported_dd_command() -> None:
+    """The exact shape reported against the risk classifier: it proposed
+    `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` for a `dd if=/dev/zero
+    of=/home/aaron/zeros.bin bs=1 count=32` invocation, and the matcher rejected it outright before
+    suffix-wildcard support existed."""
+    pattern = ["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]
+    _admits(
+        pattern,
+        ["dd", "if=/dev/zero", "of=/home/aaron/zeros.bin", "bs=1", "count=32"],
+        ["dd", "if=/dev/zero", "of=/tmp/out", "bs=1", "count=1"],
+    )
+    _rejects(
+        pattern,
+        ["dd", "if=/dev/random", "of=/tmp/out", "bs=1", "count=1"],  # if= must stay literal
+        ["dd", "if=/dev/zero", "of=/tmp/out", "bs=2", "count=1"],  # bs=1 must stay literal
+    )
+
+
+def test_star_not_in_trailing_position_is_a_literal_character() -> None:
+    """Only a token's own trailing `*` is a wildcard -- a `*` anywhere earlier in the same token
+    is just a literal asterisk character, matched verbatim, never a glob."""
+    pattern = ["find", "*.tar"]  # leading `*`, no trailing `*`: a plain literal token
+    _admits(pattern, ["find", "*.tar"])
+    _rejects(pattern, ["find", "backup.tar"], ["find", "a.tar"])
+
+    pattern_mid_star = ["cmd", "a*b"]  # `*` in the middle, no trailing `*`: also a plain literal
+    _admits(pattern_mid_star, ["cmd", "a*b"])
+    _rejects(pattern_mid_star, ["cmd", "aXb"], ["cmd", "ab"])
+
+
+def test_suffix_wildcard_with_a_literal_star_earlier_in_the_same_token() -> None:
+    """A token can have a literal `*` earlier and a wildcard `*` as its last character at once --
+    only the trailing one is special; the earlier one is still just a literal character that must
+    appear verbatim in the matched prefix."""
+    pattern = ["cmd", "a*b*"]
+    _admits(pattern, ["cmd", "a*b"], ["cmd", "a*bc"], ["cmd", "a*bxyz"])
+    _rejects(pattern, ["cmd", "aXb"], ["cmd", "ab"], ["cmd", "a*"])
+
+
+def test_literal_question_mark_inside_a_token_is_not_a_wildcard() -> None:
+    """`OPTIONAL_TOKEN` semantics only apply to a rule token that IS exactly `"?"`; a `"?"`
+    embedded inside a larger literal token is just a literal character, requiring an exact
+    match -- this grammar never grew glob meaning for `?` or `[...]` the way `fnmatch` would, only
+    for a token's own trailing `*` (see
+    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md)."""
+    pattern = ["echo", "really?"]
+    _admits(pattern, ["echo", "really?"])
+    _rejects(pattern, ["echo", "really1"], ["echo", "reallyX"], ["echo", "really"])
+
+
+def test_suffix_wildcard_argv0_is_not_privileged() -> None:
+    """Suffix-wildcard tokens behave the same in argv0 position as anywhere else at the matcher
+    level -- `_has_unsafe_wildcard_argv0` (klorb.permissions.risk_classifier) is what refuses to
+    treat this shape as a safe *suggestion*, but the matcher itself matches it uniformly."""
+    _admits(["py*", "test"], ["python3", "test"], ["pypy", "test"])
+    _rejects(["py*", "test"], ["ruby", "test"], ["python3", "run"])
+
+
+def test_suffix_wildcard_matches_shlex_parsed_quoted_argument_forms() -> None:
+    """The risk classifier's `suggested_pattern` is matched against argv produced by
+    `klorb.permissions.shell_parse`'s tokenizer, which -- like `shlex` -- folds a quoted value
+    (whether the whole token is quoted or just part of it) into one argv entry with the quotes
+    stripped and any embedded space preserved. `"--arg=*"` must match that single entry regardless
+    of which of these equivalent shell spellings produced it."""
+    pattern = ["prog", "--arg=*"]
+    unquoted = shlex.split("prog --arg=foo")
+    assert unquoted == ["prog", "--arg=foo"]
+    assert pattern_matches_argv(pattern, unquoted)
+
+    partially_quoted = shlex.split('prog --arg="foo bar"')
+    assert partially_quoted == ["prog", "--arg=foo bar"]
+    assert pattern_matches_argv(pattern, partially_quoted)
+
+    fully_quoted = shlex.split('prog "--arg=foo bar"')
+    assert fully_quoted == ["prog", "--arg=foo bar"]
+    assert pattern_matches_argv(pattern, fully_quoted)
+
+    assert _table(allow=[pattern]).evaluate(unquoted) == "allow"
+    assert _table(allow=[pattern]).evaluate(partially_quoted) == "allow"
+    assert _table(allow=[pattern]).evaluate(fully_quoted) == "allow"
+
+
+def test_suffix_wildcard_rejects_shlex_parsed_argument_with_wrong_prefix() -> None:
+    """The prefix before the `*` must still match exactly, even once shlex has folded a quoted
+    value into a single token."""
+    pattern = ["prog", "--arg=*"]
+    argv = shlex.split('prog --other="foo bar"')
+    assert argv == ["prog", "--other=foo bar"]
+    assert not pattern_matches_argv(pattern, argv)
+    assert _table(allow=[pattern]).evaluate(argv) is None
+
+
+def test_token_matches_literal_plain_equality_when_no_trailing_star_present() -> None:
+    """A token with no trailing `*` at all is the ordinary literal branch: exact equality,
+    unaffected by suffix-wildcard support -- including a token that merely contains `*`
+    somewhere other than its last character."""
+    assert _token_matches_literal("foo", "foo")
+    assert not _token_matches_literal("foo", "bar")
+    assert not _token_matches_literal("foo", "foo ")
+    assert _token_matches_literal("a*b", "a*b")
+    assert not _token_matches_literal("a*b", "aXb")
+
+
+def test_token_matches_literal_suffix_wildcard_shapes() -> None:
+    """Direct unit coverage of `_token_matches_literal` itself, isolated from
+    `pattern_matches_argv`'s positional/backtracking plumbing."""
+    assert _token_matches_literal("--arg=*", "--arg=foo")
+    assert _token_matches_literal("--arg=*", "--arg=")
+    assert not _token_matches_literal("--arg=*", "-arg=foo")
+    assert _token_matches_literal("a*b*", "a*bc")  # only the trailing `*` is a wildcard
+    assert not _token_matches_literal("a*b*", "aXbc")
 
 
 def test_consecutive_single_stars_require_exact_arity() -> None:
