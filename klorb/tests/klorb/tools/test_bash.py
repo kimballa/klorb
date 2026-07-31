@@ -7,6 +7,7 @@ docs/specs/bash-tool-and-command-permissions.md.
 
 import json
 import os
+import socket
 import threading
 import time
 from datetime import datetime
@@ -21,12 +22,19 @@ from klorb.api_provider import ProviderResponse
 from klorb.message import Message, ToolCallRequest
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.resource import BashCommandContext, StructuralResource
+from klorb.permissions.resource import (
+    BashCommandContext,
+    DomainResource,
+    PermissionOverride,
+    StructuralResource,
+)
+from klorb.permissions.shell_parse import parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
-from klorb.tools.bash import BashTool, build_bash_env
+from klorb.tools.bash import BashTool, _network_command_domains, build_bash_env
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -85,7 +93,9 @@ def _context(
     write_dirs: DirRules | None = None,
     read_files: FileRules | None = None,
     write_files: FileRules | None = None,
+    bash_domain_rules: DomainRules | None = None,
     process_config: ProcessConfig | None = None,
+    permission_override: PermissionOverride | None = None,
     with_session: bool = True,
 ) -> ToolSetupContext:
     session_config = SessionConfig(
@@ -93,17 +103,28 @@ def _context(
         read_dirs=read_dirs or DirRules(allow=[workspace_root]),
         write_dirs=write_dirs or DirRules(allow=[workspace_root]),
         read_files=read_files or FileRules(), write_files=write_files or FileRules(),
-        command_rules=command_rules or CommandRules())
+        command_rules=command_rules or CommandRules(),
+        bash_domain_rules=bash_domain_rules or DomainRules())
     session = Session(config=session_config) if with_session else None
     if session is not None:
         _live_sessions.append(session)
     return ToolSetupContext(
-        process_config=process_config or ProcessConfig(), session_config=session_config, session=session)
+        process_config=process_config or ProcessConfig(), session_config=session_config,
+        session=session, permission_override=permission_override)
 
 
 def _apply(tool: BashTool, command: str, **extra: Any) -> Any:
     extra.setdefault("intent", "test intent")
     return tool.apply({"command": command, "shell_lifetime": "command", **extra})
+
+
+def _classify_command(tool: BashTool, command: str, intent: str = "test intent") -> Any:
+    """Classify `command` without executing it -- `BashTool._classify()` alone, the same seam
+    `apply()` itself checks before ever running a subprocess -- so a test asserting an "allow"
+    verdict doesn't need a real, reachable network target (or even `curl` installed) to prove the
+    classification decision was correct."""
+    analysis = parse_command(command, tool._shfmt_command)
+    return tool._classify(analysis, command, intent)
 
 
 # --- permission classification ---
@@ -318,6 +339,137 @@ def test_omitted_shell_lifetime_runs_command_scoped(
     assert result["success"] is True
     assert result["stdout"].strip() == "hi"
     assert "terminal_alive" not in result
+
+
+# --- network-command domain scanning (bashDomains, Component 3) ---
+
+
+def test_network_command_domains_recognizes_urls_and_bare_hosts() -> None:
+    clients = frozenset({"curl", "pip", "git", "cargo"})
+    assert _network_command_domains(["curl", "https://pypi.org/simple/"], clients) == ["pypi.org"]
+    assert _network_command_domains(
+        ["pip", "install", "--index-url", "https://mirror.example.com/simple", "requests"],
+        clients) == ["mirror.example.com"]
+    assert _network_command_domains(["git", "clone", "https://github.com/foo/bar.git"], clients) == [
+        "github.com"]
+
+
+def test_network_command_domains_ignores_package_names_and_local_subcommands() -> None:
+    """A bare package name/version specifier must never be mistaken for a domain (it would make
+    ordinary `pip install`/`cargo add` calls ask for no reason), and `git`/`cargo` subcommands
+    that never touch the network (status/build with no new dependency) aren't scanned at all."""
+    clients = frozenset({"pip", "git", "cargo"})
+    assert _network_command_domains(["pip", "install", "requests==2.28.1"], clients) == []
+    assert _network_command_domains(["git", "status"], clients) == []
+    assert _network_command_domains(["cargo", "build"], clients) == []
+
+
+def test_network_command_domains_ignores_unrecognized_argv0() -> None:
+    assert _network_command_domains(["ls", "https://pypi.org/"], frozenset({"curl"})) == []
+
+
+def test_curl_to_default_allowed_bash_domain_proceeds(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        bash_domain_rules=DomainRules(allow=["pypi.org"]))
+    verdict, ask_items = _classify_command(BashTool(context), "curl https://pypi.org/simple/")
+    assert verdict == "allow"
+    assert ask_items == []
+
+
+def test_curl_to_unknown_bash_domain_asks_with_bash_rule_set(tmp_path: Path) -> None:
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]))
+    tool = BashTool(context)
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, "curl https://unknown.example/")
+
+    domain_items = [
+        item for item in exc_info.value.items if isinstance(item.resource, DomainResource)]
+    assert len(domain_items) == 1
+    resource = domain_items[0].resource
+    assert isinstance(resource, DomainResource)
+    assert resource.rule_set == "bash"
+    assert resource.domain == "unknown.example"
+
+
+def test_pip_install_with_denied_index_url_denies_outright(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["pip", "**"]]),
+        bash_domain_rules=DomainRules(deny=["denied.example"]))
+    tool = BashTool(context)
+    with pytest.raises(PermissionError):
+        _apply(tool, "pip install --index-url https://denied.example/simple pkg")
+
+
+def test_non_literal_network_target_still_escalates_via_existing_forced_ask_path(
+    tmp_path: Path,
+) -> None:
+    """A non-literal argument on a recognized network command (`curl "$URL"`) already escalates
+    to "ask" via the existing non-literal-token ForcedAskReason path -- Component 3 only adds a
+    *more specific* domain-typed ask for the literal case, it doesn't change this one."""
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]))
+    tool = BashTool(context)
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(tool, 'curl "$URL"')
+
+    assert any(isinstance(item.resource, StructuralResource) for item in exc_info.value.items)
+    assert not any(isinstance(item.resource, DomainResource) for item in exc_info.value.items)
+
+
+def test_retried_call_with_domain_override_proceeds_without_reasking(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        permission_override=PermissionOverride(domains=frozenset({"unknown.example"})))
+    verdict, ask_items = _classify_command(BashTool(context), "curl https://unknown.example/")
+    assert verdict == "allow"
+    assert ask_items == []
+
+
+def test_curl_to_localhost_asks_by_default_then_proceeds_once_granted(tmp_path: Path) -> None:
+    """`bashDomains` ships with no loopback/RFC1918 allowances (unlike `webDomains`) -- see
+    `SessionConfig.bash_domain_rules`'s own docstring -- so `localhost` is an ordinary "ask", not
+    a hardcoded deny, and granting it is exactly this same ask/allow mechanism."""
+    asking_context = _context(tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]))
+    with pytest.raises(MultiPermissionAskRequired) as exc_info:
+        _apply(BashTool(asking_context), "curl http://localhost:3000/")
+    domain_items = [
+        item for item in exc_info.value.items if isinstance(item.resource, DomainResource)]
+    assert len(domain_items) == 1
+    resource = domain_items[0].resource
+    assert isinstance(resource, DomainResource)
+    assert resource.domain == "localhost"
+
+    granted_context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        bash_domain_rules=DomainRules(allow=["localhost"]))
+    verdict, ask_items = _classify_command(BashTool(granted_context), "curl http://localhost:3000/")
+    assert verdict == "allow"
+    assert ask_items == []
+
+
+def test_network_scanning_skipped_entirely_when_network_disabled(tmp_path: Path) -> None:
+    process_config = ProcessConfig(bash_network_enabled=False)
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        process_config=process_config)
+    # No ask for the (otherwise unrecognized) domain -- with networking disabled, Bash keeps
+    # today's --unshare-net-denies-everything behavior, so there's nothing for a domain ask to
+    # gate.
+    verdict, ask_items = _classify_command(BashTool(context), "curl https://unknown.example/")
+    assert verdict == "allow"
+    assert ask_items == []
+
+
+def test_web_domains_and_bash_domains_are_independent(tmp_path: Path) -> None:
+    """A domain granted in bashDomains must have no effect on WebFetchTool's webDomains
+    evaluation, and vice versa -- the two tables are genuinely independent, not two views onto
+    one shared table."""
+    session_config = SessionConfig(
+        workspace=Workspace(path=tmp_path, trusted=True),
+        bash_domain_rules=DomainRules(allow=["example.com"]))
+    assert session_config.web_domain_rules.allow == []
+    session_config.web_domain_rules = DomainRules(allow=["other.example"])
+    assert session_config.bash_domain_rules.allow == ["example.com"]
 
 
 # --- execution ---
@@ -948,3 +1100,118 @@ def test_persistent_sandbox_refuses_to_rebuild_over_live_background_jobs(
     assert result["terminal_alive"] is True
     assert "shell_lifetime" in result["failure_reason"]
     assert _persistent_shell(context) is shell  # same shell, still alive, command never ran
+
+
+# --- sandboxed network egress (opt-in; needs a real, working bwrap and internet access) ---
+
+
+requires_bwrap_and_internet = requires_bwrap
+"""Alias documenting *why* these particular `requires_bwrap` tests are opt-in: unlike the rest of
+the sandboxed-execution section, they also need real outbound internet access to pypi.org (the
+same live target the plan's own testing-strategy section names), since the whole point is
+proving a real HTTPS request reaches the real internet through the real relay stub + `ProxyBackend`
+running inside a real `bwrap` sandbox -- nothing about them is mockable without losing exactly
+what they're meant to catch."""
+
+
+@requires_bwrap_and_internet
+def test_sandboxed_curl_reaches_allowed_domain_through_http_connect_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default env vars (`HTTP_PROXY`/`HTTPS_PROXY`, an HTTP CONNECT proxy) are what `curl`
+    picks up with no extra flags -- proving this path works, not just `ALL_PROXY`/SOCKS5, is what
+    lets `pip`/`npm`/etc. (no built-in SOCKS support without an optional dependency) work too."""
+    _use_real_sandbox(monkeypatch)
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        bash_domain_rules=DomainRules(allow=["pypi.org"]))
+    result = _apply(BashTool(context), (
+        "curl --silent --max-time 10 -o /dev/null -w '%{http_code}' https://pypi.org/"))
+    assert result["success"] is True
+    assert result["stdout"].strip() == "200"
+    assert result["blocked_domains"] == []
+
+
+@requires_bwrap_and_internet
+def test_sandboxed_curl_reaches_allowed_domain_through_socks5_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_real_sandbox(monkeypatch)
+    # bashDomains must allow both the real target (pypi.org) and the explicit --proxy address
+    # itself (127.0.0.1) -- Component 3's scanner has no notion of "this argument names the
+    # proxy, not the request target", so it correctly flags both as literal domains this command
+    # names.
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        bash_domain_rules=DomainRules(allow=["pypi.org", "127.0.0.1"]))
+    result = _apply(BashTool(context), (
+        "curl --silent --max-time 10 --proxy socks5h://127.0.0.1:10800 "
+        "-o /dev/null -w '%{http_code}' https://pypi.org/"))
+    assert result["success"] is True
+    assert result["stdout"].strip() == "200"
+
+
+@requires_bwrap
+def test_sandboxed_curl_to_denied_domain_fails_fast_and_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The proxy itself is the last line of defense for a domain the static pre-flight scanner
+    didn't (and structurally can't) catch -- one read from a config file, per the plan's "Fail
+    closed, fast, and observably" section -- and it fails fast (bounded wall-clock time, not the
+    full `tools.bash.timeout`) and reports the refusal via `blocked_domains`, never a generic
+    connection failure with no explanation. `curl --config <file>` (not a literal URL argument)
+    is used specifically so Component 3's own scanner has nothing to flag ahead of time -- this
+    test is about the proxy's own runtime enforcement, not the pre-flight ask. No real
+    reachability to 169.254.169.254 is needed: the proxy refuses before ever attempting to dial
+    out."""
+    _use_real_sandbox(monkeypatch)
+    config_file = tmp_path / "curl.cfg"
+    # https:// (not http://): a plain-http target would make curl send an ordinary forward-proxy
+    # request to HTTP_PROXY rather than a CONNECT -- this proxy only implements CONNECT tunnel
+    # semantics (see klorb.sandbox.network's module docstring and the plan's "Why both protocols"
+    # section), so the domain-evaluation step this test is about only runs for a CONNECT.
+    config_file.write_text('url = "https://169.254.169.254/latest/meta-data/"\n')
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        bash_domain_rules=DomainRules(deny=["169.254.*"]))
+    start = time.time()
+    result = _apply(BashTool(context), f"curl --silent --max-time 20 --config {config_file}")
+    elapsed = time.time() - start
+    assert result["success"] is False
+    assert result["blocked_domains"] == ["169.254.169.254"]
+    assert elapsed < 15.0
+
+
+@requires_bwrap
+def test_sandboxed_curl_to_localhost_succeeds_once_granted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user can grant a sandboxed command loopback access (e.g. Cypress against a co-developed
+    dev server) through the ordinary ask/grant flow -- no hardcoded exception, just an ordinary
+    `bashDomains.allow` entry. Verified against a real local TCP server bound on the *host's* own
+    loopback, reached from inside the sandbox's own private loopback via the proxy's real
+    `connect()` out on the host side (`ProxyBackend._connect`) -- this is the actual mechanism
+    that makes klorb's own loopback reachable at all, not the sandbox's namespace-local one."""
+    _use_real_sandbox(monkeypatch)
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def serve_once() -> None:
+        conn, _addr = server.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+        conn.close()
+
+    threading.Thread(target=serve_once, daemon=True).start()
+
+    context = _context(
+        tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
+        bash_domain_rules=DomainRules(allow=["127.0.0.1"]))
+    result = _apply(
+        BashTool(context),
+        f"curl --silent --max-time 10 -p --proxy socks5h://127.0.0.1:10800 http://127.0.0.1:{port}/")
+    server.close()
+    assert result["success"] is True
+    assert "OK" in result["stdout"]

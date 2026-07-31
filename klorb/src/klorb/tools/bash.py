@@ -16,6 +16,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,7 +27,14 @@ from typing import IO, Any, Callable, Literal
 
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
-from klorb.permissions.resource import BashCommandContext, CommandResource, PathResource, StructuralResource
+from klorb.permissions.domain_access import evaluate_domain, parse_domain
+from klorb.permissions.resource import (
+    BashCommandContext,
+    CommandResource,
+    DomainResource,
+    PathResource,
+    StructuralResource,
+)
 from klorb.permissions.shell_parse import BashCommandAnalysis, RedirectTarget, parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, Verdict
 from klorb.permissions.workspace import resolve_and_evaluate_read, resolve_and_evaluate_write
@@ -39,6 +47,7 @@ from klorb.sandbox import (
     detect_bwrap_unavailable_reason,
     path_dirs_from_env,
 )
+from klorb.sandbox.network import SandboxNetworking, start_sandbox_networking
 from klorb.session import SessionConfig
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
@@ -180,10 +189,12 @@ class PersistentShell:
     def __init__(
         self, argv: list[str], env: dict[str, str], cwd: str,
         sandbox_snapshot: "frozenset[Path] | None" = None,
+        networking: SandboxNetworking | None = None,
+        pass_fds: tuple[int, ...] = (),
     ) -> None:
         self.process = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=env, cwd=cwd, start_new_session=True, text=True, bufsize=1)
+            env=env, cwd=cwd, start_new_session=True, text=True, bufsize=1, pass_fds=pass_fds)
         self.cwd: str | None = cwd
         self.sandbox_snapshot = sandbox_snapshot
         """The `klorb.sandbox.allowed_dir_snapshot()` this shell's live `bwrap` mount namespace
@@ -193,6 +204,13 @@ class PersistentShell:
         interactive grant added an `allow`) the sandbox is stale and must be rebuilt to see the
         new directory — see docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md. `None`
         skips that check entirely (nothing to go stale without a mount namespace)."""
+        self.networking = networking
+        """This shell's live `klorb.sandbox.network.SandboxNetworking` (the network-egress proxy
+        backend + relay-stub wiring — see `BashTool._start_sandbox_networking`), or `None` when
+        the shell is unsandboxed or `tools.bash.network.enabled` is `False`. Closed exactly once,
+        in `_mark_dead()`, whichever path (`kill()` or an EOF-detected death in `_run_raw`)
+        actually flips `alive` to `False` first — a fresh one is created for every reconcile-on-
+        grow rebuild (`BashTool._rebuild_persistent_shell`), same as `sandbox_snapshot`."""
         self.alive = True
         self._queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
         assert self.process.stdout is not None
@@ -415,6 +433,8 @@ class PersistentShell:
         if not self.alive:
             return
         self.alive = False
+        if self.networking is not None:
+            self.networking.close()
         if self.process.stdin is not None:
             try:
                 self.process.stdin.close()
@@ -581,6 +601,97 @@ def _spill(path: Path, spill_bytes: int) -> tuple[str | None, str | None]:
     return None, str(path)
 
 
+_GIT_NETWORK_SUBCOMMANDS = frozenset({"clone", "pull", "push", "fetch", "ls-remote"})
+_GO_NETWORK_SUBCOMMANDS = frozenset({"get", "install"})
+_CARGO_NETWORK_SUBCOMMANDS = frozenset({"add", "install", "build"})
+"""Which subcommand(s) of `git`/`go`/`cargo` actually reach the network — these three, unlike
+every other entry `tools.bash.network.recognizedClients` names, are used constantly for purely
+local operations (`git status`, `go build` against an already-vendored module cache, `cargo
+build` with no new dependency), so scanning every invocation's arguments for a domain would be
+noisy and pointless. See `_bash_network_scan_targets`."""
+
+_BARE_HOST_RE = re.compile(
+    r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?::\d+)?$")
+"""Matches a schemeless `host[:port]` token whose final label is alphabetic (a plausible TLD) —
+deliberately conservative, so a bare package name/version specifier (`requests`, `requests==2.28.1`,
+a subcommand like `install`) is never mistaken for a domain: none of those end in a dotted,
+letters-only label. A real domain missed by this heuristic (or a schemeless SCP-style git remote,
+`user@host:path`, which this doesn't attempt to parse) is still caught at connection time by
+`klorb.sandbox.network.ProxyBackend`'s own `bash_domain_rules` check — this scanner exists to ask
+*early*, not to be the only enforcement point. See `_extract_literal_domain`."""
+
+
+def _extract_literal_domain(token: str) -> str | None:
+    """Return the domain `token` names, or `None` if it doesn't look like one at all -- tried as
+    a full URL first (`scheme://host/...`), then, for a schemeless token, as a bare `host[:port]`
+    wrapped in a synthetic `https://` scheme purely so `parse_domain`'s `urlparse`-based
+    extraction has a netloc to find (the synthesized scheme is never itself meaningful). The bare
+    form is gated on `_BARE_HOST_RE` first, so a non-URL-shaped argument (a package name, a flag
+    value, a version specifier) is never wrapped and misread as a domain."""
+    if "://" in token:
+        try:
+            return parse_domain(token)
+        except ValueError:
+            return None
+    host_part = token.split("/", 1)[0]
+    if not _BARE_HOST_RE.match(host_part):
+        return None
+    try:
+        return parse_domain(f"https://{token}")
+    except ValueError:
+        return None
+
+
+def _bash_network_scan_targets(argv: list[str]) -> list[str] | None:
+    """The slice of `argv` (excluding `argv0`) Component 3 should actually scan for a literal
+    domain, or `None` if this particular invocation of a recognized network client isn't
+    network-shaped at all -- only `git`/`go`/`cargo` are subcommand-gated (see
+    `_GIT_NETWORK_SUBCOMMANDS` and friends); every other recognized client has every non-flag
+    argument scanned, since virtually any of them could be a URL for that kind of tool."""
+    argv0 = argv[0]
+    if argv0 == "git":
+        if len(argv) < 2 or argv[1] not in _GIT_NETWORK_SUBCOMMANDS:
+            return None
+        return argv[2:]
+    if argv0 == "go":
+        if len(argv) >= 2 and argv[1] in _GO_NETWORK_SUBCOMMANDS:
+            return argv[2:]
+        if len(argv) >= 3 and argv[1] == "mod" and argv[2] == "download":
+            return argv[3:]
+        return None
+    if argv0 == "cargo":
+        if len(argv) < 2 or argv[1] not in _CARGO_NETWORK_SUBCOMMANDS:
+            return None
+        return argv[2:]
+    return argv[1:]
+
+
+def _network_command_domains(argv: list[str], recognized_clients: frozenset[str]) -> list[str]:
+    """Every distinct literal domain Component 3 finds in `argv`, in first-seen order, or `[]` if
+    `argv0` isn't a recognized network client (`tools.bash.network.recognizedClients`) or none of
+    its scanned arguments look like a domain at all. A `--flag=value` token is scanned both as a
+    whole (in case the value itself is the whole token, e.g. a bare positional URL) and by its
+    `value` half, so `--index-url=https://mirror.example.com/simple` is caught the same as a
+    space-separated `--index-url https://mirror.example.com/simple` would be."""
+    if not argv or argv[0] not in recognized_clients:
+        return []
+    targets = _bash_network_scan_targets(argv)
+    if not targets:
+        return []
+    domains: list[str] = []
+    for token in targets:
+        if not token:
+            continue
+        candidates = [] if token.startswith("-") else [token]
+        if "=" in token:
+            candidates.append(token.split("=", 1)[1])
+        for candidate in candidates:
+            domain = _extract_literal_domain(candidate)
+            if domain is not None and domain not in domains:
+                domains.append(domain)
+    return domains
+
+
 class BashTool(InterruptibleTool):
     """Runs a single shell command string on the model's behalf.
 
@@ -626,6 +737,9 @@ class BashTool(InterruptibleTool):
         self._timeout_seconds = context.process_config.bash_timeout_seconds
         self._spill_bytes = context.process_config.bash_spill_bytes
         self._shfmt_command = context.process_config.shfmt_command
+        self._network_enabled = context.process_config.bash_network_enabled
+        self._network_recognized_clients = frozenset(
+            context.process_config.bash_network_recognized_clients)
 
     def name(self) -> str:
         return "Bash"
@@ -778,7 +892,17 @@ class BashTool(InterruptibleTool):
         `override.reasons` drops it rather than turning it into another `PermissionAskItem`.
         Redirection targets don't need an analogous check here — they're `Path`s, already covered
         by `override.paths` inside `evaluate_write`/`resolve_and_evaluate_read` themselves (see
-        `_evaluate_redirect`).
+        `_evaluate_redirect`). A network-command's own extracted domain(s) (see below) are
+        likewise checked against `override.domains`.
+
+        When `tools.bash.network.enabled`, every simple command whose `argv0` is a recognized
+        network client (`_network_command_domains`) contributes one more independent check per
+        literal domain its arguments name — evaluated against `bash_domain_rules` exactly like
+        `klorb.sandbox.network.ProxyBackend` evaluates the same table at connection time, so an
+        `"ask"` here is the *same* decision the proxy would otherwise have to fail closed on.
+        This is additional to, never instead of, that simple command's own `CommandPermissionsTable`
+        verdict above — the same "on top of, not instead of" relationship `IMPLICIT_READ_COMMANDS`
+        already has with a bare `cat`/`less` invocation's `readDirs` check.
         """
         command_table = CommandPermissionsTable(self.context.session_config.command_rules)
         override = self.context.permission_override
@@ -799,6 +923,25 @@ class BashTool(InterruptibleTool):
                     bash_context=BashCommandContext(
                         command_text=command, is_compound=is_compound,
                         item_command_text=simple_command.source_text, intent=intent)))
+
+        if self._network_enabled:
+            for simple_command in analysis.simple_commands:
+                domains = _network_command_domains(
+                    simple_command.argv, self._network_recognized_clients)
+                for domain in domains:
+                    if override is not None and domain in override.domains:
+                        continue
+                    domain_verdict = evaluate_domain(
+                        self.context.session_config.bash_domain_rules, domain)
+                    if domain_verdict == "deny":
+                        denied = True
+                    elif domain_verdict == "ask":
+                        ask_items.append(PermissionAskItem(
+                            f"Bash network access to {domain}",
+                            resource=DomainResource(url=f"https://{domain}", rule_set="bash"),
+                            bash_context=BashCommandContext(
+                                command_text=command, is_compound=is_compound,
+                                item_command_text=simple_command.source_text, intent=intent)))
 
         for forced_reason in analysis.forced_ask_reasons:
             if override is not None and forced_reason.reason in override.reasons:
@@ -854,24 +997,71 @@ class BashTool(InterruptibleTool):
 
     def _bwrap_prefix(self, env: dict[str, str], home: Path) -> list[str]:
         """The `bwrap ... --` argv prefix for this session, to prepend to a shell invocation.
-        Only meaningful when `bwrap_available()`; callers gate on that themselves."""
+        Only meaningful when `bwrap_available()`; callers gate on that themselves.
+
+        `path_dirs` always includes the klorb process's own Python interpreter directory
+        (`sys.executable`'s parent), on top of the ordinary `PATH`-derived top-up binds — so the
+        in-sandbox network-egress relay stub (`klorb.sandbox.network`, launched with this same
+        interpreter — see `_start_sandbox_networking`) is always reachable inside the sandbox
+        regardless of whether that interpreter's own directory happens to be on `PATH`."""
+        interpreter_dir = Path(sys.executable).resolve().parent
         return build_bwrap_argv(
             workspace_root=self.context.session_config.workspace.path.resolve(),
             home=home, env=env, dirs=self._compute_sandbox_dirs(home),
-            path_dirs=path_dirs_from_env())
+            path_dirs=[*path_dirs_from_env(), interpreter_dir])
+
+    def _start_sandbox_networking(self) -> SandboxNetworking | None:
+        """Stand up this invocation's network-egress proxy (`klorb.sandbox.network.
+        ProxyBackend` + relay-stub wiring) if `tools.bash.network.enabled` allows it, else
+        `None` — `_execute`/`_spawn_persistent_shell` fold `None` into "sandboxed with no
+        network at all", exactly today's `--unshare-net`-denies-everything behavior. Only ever
+        called once `bwrap_available()` is already known `True`; there is nothing for a network
+        proxy to gate when the command isn't sandboxed at all (the unsandboxed fallback already
+        has unrestricted network access)."""
+        if not self._network_enabled:
+            return None
+        return start_sandbox_networking(self.context.session_config, sys.executable)
 
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()
         env = build_bash_env(self.context.session_config, self._bash_command)
         home = env.get("HOME", str(Path.home()))
         rcfile = str(Path(home) / ".bashrc")
-        full_command = f"unset PS1; unset PS2; {command}"
+        sandboxed = bwrap_available()
+        # Only meaningful when actually sandboxed: the unsandboxed fallback already has
+        # unrestricted network access, so there is nothing for a proxy to gate there.
+        networking = self._start_sandbox_networking() if sandboxed else None
+        bootstrap_script = networking.bootstrap_script if networking is not None else ""
+        full_command = f"unset PS1; unset PS2; {bootstrap_script}{command}"
         inner_argv = [self._bash_command, "--rcfile", rcfile, "-i", "-c", full_command]
         # bwrap wraps the same inner invocation when a sandbox can actually be created here;
         # otherwise the command runs unsandboxed (with a one-time notice — see
         # _maybe_sandbox_notice), permission classification unaffected either way.
-        argv = self._bwrap_prefix(env, Path(home)) + inner_argv if bwrap_available() else inner_argv
+        if sandboxed:
+            sandbox_env = dict(env)
+            if networking is not None:
+                sandbox_env.update(networking.env_vars)
+            argv = self._bwrap_prefix(sandbox_env, Path(home)) + inner_argv
+        else:
+            argv = inner_argv
+        pass_fds = () if networking is None else (networking.sandbox_fd,)
 
+        try:
+            return self._execute_inner(
+                command, argv, env, home, workspace_root, pass_fds, networking)
+        finally:
+            if networking is not None:
+                networking.close()
+
+    def _execute_inner(
+        self, command: str, argv: list[str], env: dict[str, str], home: str,
+        workspace_root: Path, pass_fds: tuple[int, ...], networking: SandboxNetworking | None,
+    ) -> dict[str, Any]:
+        """The body of `_execute()` proper, split out so `_execute()` itself can wrap it in a
+        `try`/`finally` that unconditionally closes `networking` (if any) on every exit path —
+        including the `FileNotFoundError`/`ValueError` raise below, which a `finally` on this
+        method's own body alone wouldn't reach cleanly given the nested `with open(...)` block
+        it raises out of."""
         tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
         # Registered immediately after creation, before anything else can raise, so this
         # directory is always swept on process exit even if klorb dies mid-command.
@@ -903,7 +1093,7 @@ class BashTool(InterruptibleTool):
                 # process group leader (pgid == pid), which the timeout-kill path below relies on.
                 process = subprocess.Popen(
                     argv, stdin=subprocess.DEVNULL, stdout=stdout_f, stderr=stderr_f,
-                    env=env, cwd=str(workspace_root), start_new_session=True)
+                    env=env, cwd=str(workspace_root), start_new_session=True, pass_fds=pass_fds)
             except FileNotFoundError as exc:
                 # stdout_f/stderr_f are still open here (this `with` block's __exit__ hasn't run
                 # yet). Safe on POSIX regardless: unlink() only removes a directory entry, not the
@@ -912,6 +1102,13 @@ class BashTool(InterruptibleTool):
                 # closes them moments later, as this exception propagates out of the `with`.
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 raise ValueError(f"{self._bash_command!r} not found; cannot run command") from exc
+
+            # The sandboxed process now has its own fork-inherited copy of the control-channel
+            # fd; this process's own copy is no longer needed, and must be released for
+            # ProxyBackend's recv_fds() to ever see EOF once the sandboxed process actually dies
+            # (a lingering open copy here would keep the control channel looking "live" forever).
+            if networking is not None:
+                networking.release_sandbox_fd()
 
             timed_out = False
             cancelled = False
@@ -982,7 +1179,7 @@ class BashTool(InterruptibleTool):
             "Bash command finished: exit_status=%s success=%s runtime=%.2fs",
             exit_status, success, runtime)
 
-        result = {
+        result: dict[str, Any] = {
             "command": command,
             "exit_status": exit_status,
             "success": success,
@@ -992,6 +1189,7 @@ class BashTool(InterruptibleTool):
             "stdout_file": stdout_file,
             "stderr_file": stderr_file,
             "runtime": runtime,
+            "blocked_domains": networking.recorder.domains if networking is not None else [],
         }
         if sandbox_notice is not None:
             result["sandbox_notice"] = sandbox_notice
@@ -1026,15 +1224,30 @@ class BashTool(InterruptibleTool):
         # is fixed for the life of the process, so a persistent shell can't recompute it per
         # command -- see reconcile-on-grow in _execute_persistent). The snapshot records the
         # allowed-dir set this sandbox was launched with, so that reconcile can detect a later
-        # grant that widened it. Unsandboxed hosts get argv=[bash] and snapshot=None.
+        # grant that widened it. Unsandboxed hosts get argv=[bash], snapshot=None, networking=None.
         if bwrap_available():
-            argv = self._bwrap_prefix(env, Path(home)) + [self._bash_command]
+            networking = self._start_sandbox_networking()
+            sandbox_env = dict(env)
+            if networking is not None:
+                sandbox_env.update(networking.env_vars)
+            argv = self._bwrap_prefix(sandbox_env, Path(home)) + [self._bash_command]
             snapshot: frozenset[Path] | None = allowed_dir_snapshot(
                 self._compute_sandbox_dirs(Path(home)))
+            pass_fds = () if networking is None else (networking.sandbox_fd,)
         else:
             argv = [self._bash_command]
             snapshot = None
-        shell = PersistentShell(argv, env, str(workspace_root), sandbox_snapshot=snapshot)
+            networking = None
+            pass_fds = ()
+        shell = PersistentShell(
+            argv, env, str(workspace_root), sandbox_snapshot=snapshot, networking=networking,
+            pass_fds=pass_fds)
+        if networking is not None:
+            # The shell process now has its own fork-inherited copy of the control-channel fd --
+            # see the matching comment in _execute_inner for why this process's own copy must be
+            # released for ProxyBackend to ever see EOF once this persistent shell dies.
+            networking.release_sandbox_fd()
+            shell.run_command(networking.bootstrap_script, self._timeout_seconds)
         # PS1='x' satisfies the `[ -z "$PS1" ] && return` guard most real .bashrc files start
         # with (see PersistentShell's docstring and docs/adrs/bash-env-uses-clearenv-plus-
         # shareenv-setenv-plus-forced-rcfile.md) without ever printing a prompt -- this shell was
@@ -1101,6 +1314,11 @@ class BashTool(InterruptibleTool):
         session.register_teardown(_TEARDOWN_SUBJECT, shell.kill)
 
         sandbox_notice = self._maybe_sandbox_notice()
+        if shell.networking is not None:
+            # This shell's ProxyBackend/recorder outlive any one command, so the recorder is
+            # reset immediately before each command runs -- otherwise this response could report
+            # a prior command's blocked domains instead of (or alongside) its own.
+            shell.networking.recorder.reset()
 
         start = time.monotonic()
         result = shell.run_command(command, self._timeout_seconds, self._active_cancel_event())
@@ -1148,6 +1366,7 @@ class BashTool(InterruptibleTool):
             "terminal_alive": result.terminal_alive,
             "terminal_cwd": result.terminal_cwd,
             "sandbox_rebuilt": sandbox_rebuilt,
+            "blocked_domains": shell.networking.recorder.domains if shell.networking else [],
         }
         if sandbox_notice is not None:
             response["sandbox_notice"] = sandbox_notice
@@ -1207,6 +1426,7 @@ class BashTool(InterruptibleTool):
             "terminal_alive": True,
             "terminal_cwd": shell.cwd,
             "sandbox_rebuilt": False,
+            "blocked_domains": [],
         }
 
     def _finalize_persistent_output(

@@ -10,6 +10,13 @@ filesystem policy); `compute_sandbox_dirs()` derives the read-only/read-write/ma
 sets it binds. `BashTool` falls back to unsandboxed execution whenever `bwrap_available()`
 reports `False` (a missing binary, or a kernel/container policy that forbids unprivileged user
 namespaces — common inside Docker/cloud-agent environments); see `klorb.tools.bash`.
+
+This package's `network` submodule (`klorb.sandbox.network`) owns the live-socket/thread side of
+a sandboxed command's network egress — the domain-screening proxy backend a sandboxed shell's
+`HTTP_PROXY`/`ALL_PROXY` env vars point at (see `klorb.tools.bash.build_bash_env`). It stays a
+separate module from this one deliberately: everything in this `__init__` is pure `bwrap` argv/
+dir-set construction with no I/O of its own, while `network` owns sockets, threads, and the
+in-sandbox relay stub's lifecycle.
 """
 
 import logging
@@ -355,7 +362,8 @@ def build_bwrap_argv(
     Shape (see docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and the
     plan it came from):
 
-    * Namespaces: `--unshare-net` (no network until a proxy exists), `--unshare-ipc`,
+    * Namespaces: `--unshare-net` (its own private network namespace — see
+      `klorb.sandbox.network` for the one path across it, a domain-gated proxy), `--unshare-ipc`,
       `--unshare-pid`, `--unshare-uts` (needed for `--hostname`), `--unshare-cgroup`, plus
       `--unshare-user`/`--disable-userns` (defense-in-depth against nested-userns escapes; the
       user namespace uses an identity uid/gid map, so files the command creates in the binds are

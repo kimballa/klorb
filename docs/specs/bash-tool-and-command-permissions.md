@@ -138,6 +138,8 @@ default — no command runs merely because nothing explicitly denied it).
   `evaluate_write()` (the same check `EditFile` uses), a `"read"` target through
   `resolve_and_evaluate_read()` (the same check `ReadFile` uses).
 * One `"ask"` contribution per `forced_ask_reasons` entry.
+* Every literal domain a recognized network client's arguments name (`curl`, `pip`, `git clone`,
+  ...), against `bash_domain_rules` — see "Network egress (domain-gated proxy)" below.
 
 A single `"deny"` anywhere short-circuits the whole command: `BashTool.apply()` raises a plain
 `PermissionError` immediately, with no further items collected. Otherwise, every individual
@@ -515,7 +517,8 @@ When it can, `klorb.sandbox.build_bwrap_argv()` assembles the `bwrap ... --` arg
 tools use (`klorb.sandbox.compute_sandbox_dirs` — one source of truth, not a second parallel
 filesystem policy):
 
-* Namespaces `--unshare-net` (all network denied until a proxy exists), `--unshare-ipc`,
+* Namespaces `--unshare-net` (its own private network namespace — see "Network egress
+  (domain-gated proxy)" below for the one path across it), `--unshare-ipc`,
   `--unshare-pid`, `--unshare-uts`, `--unshare-cgroup`, plus `--unshare-user`/`--disable-userns`
   with an identity uid/gid map so files the command creates in the binds stay owned by the real
   user — the explicit `--unshare-user` is required by `--disable-userns` on real `bwrap`, contrary
@@ -585,6 +588,101 @@ created then. A `BashTool` built from a `ToolSetupContext` with no real `Session
 caller that constructs one directly, without going through `Session`) has no `tool_state` to
 dedupe against, so it shows the notice on every call instead of silently dropping it.
 
+### Network egress (domain-gated proxy)
+
+`--unshare-net` still denies a sandboxed command every network path except one: a domain-gated
+SOCKS5 + HTTP CONNECT proxy (`klorb.sandbox.network`), governed by `SessionConfig.
+bash_domain_rules` (on-disk `bashDomains`) — the same `deny`/`ask`/`allow` `DomainAccessTable`
+shape `WebFetch`'s `web_domain_rules` (on-disk `webDomains`) uses, but a genuinely separate table.
+The two are kept apart rather than shared because `WebFetch` runs inside klorb's own trust
+boundary (its shipped defaults include `localhost`/RFC1918 ranges, harmless for a fetch klorb
+itself makes) while a sandboxed `Bash` command is not implicitly trusted with klorb's own network
+position: `bashDomains` ships with no loopback/LAN allowances at all — `readFiles`-deny-style
+defaults, not a hardcoded restriction — so a user who has a real reason to grant one (e.g.
+Cypress/Playwright instrumenting a co-developed dev server) does so through the ordinary ask/grant
+flow, the same way any other domain is granted. `bashDomains.deny` ships with `169.254.*` (the
+link-local/cloud-metadata range, including `169.254.169.254`) as a sensible default, not a
+non-overridable rule. `DomainResource.rule_set` (`"web"` default, `"bash"` for this table) is what
+lets one `PermissionAskItem`/grant-preview/grant-persist implementation serve both tables, keyed
+on which one the ask actually came from (`klorb.permissions.domain_grant`).
+
+**Architecture.** Every live sandbox — a one-shot command's own `bwrap` invocation, or a
+persistent shell's — gets a fresh `klorb.sandbox.network.SandboxNetworking`: a host-side
+`ProxyBackend` listening on one end of a `socket.socketpair()` created before `bwrap` launches,
+and a small, dependency-free relay stub (run with klorb's own Python interpreter, reached inside
+the sandbox via a `path_dirs` top-up bind — see `BashTool._bwrap_prefix`) launched as the first
+step of the sandboxed shell's life. Bubblewrap brings up the sandbox's own private loopback even
+under `--unshare-net`, but it's a different `lo` than the host's — the relay stub listens on two
+fixed ports there (one behaving as a SOCKS5 front door, one as an HTTP CONNECT front door — two
+listeners rather than sniffing one shared port, since `curl`/`git`/`wget` speak SOCKS5 natively
+but `pip`/`npm`/etc. only gain SOCKS support through an optional dependency that may not be
+installed, while an HTTP CONNECT proxy is understood universally with no extra dependency) and,
+on `accept()`, hands each connection's raw fd across the `socketpair()` via `socket.send_fds`/
+`recv_fds` (stdlib since Python 3.9) — a passed fd keeps operating against the network namespace
+it was actually created in regardless of which process holds it afterward, so the host-side
+`ProxyBackend` just wraps the received fd as an ordinary connected socket and dials out for real.
+The relay stub never parses SOCKS5/HTTP bytes itself; all real protocol handling and the
+`bash_domain_rules` evaluation live once, host-side, in `ProxyBackend`. A quoted heredoc writes
+the relay stub's source into the sandbox's own tmpfs and a POSIX FIFO gates the sandboxed shell's
+first real command until the relay stub signals both listeners are actually bound — no fixed
+sleep, no race. The relay's background job is `disown`ed (a real one-shot invocation runs `bash
+-i`, which would otherwise announce it on stderr) but stays in the sandbox's own process group, so
+it dies with the rest of the sandbox on `SIGKILL` teardown and is invisible to `jobs -p` — the
+same probe `_reconcile_sandbox`'s reconcile-on-grow check uses to decide whether a live persistent
+shell has real background work it must not silently kill.
+
+`ProxyBackend` evaluates the target hostname a SOCKS5/HTTP CONNECT request names against
+`evaluate_domain(bash_domain_rules, domain)` — read fresh on every connection, never cached, so a
+mid-session grant is honored by the very next connection with no sandbox rebuild needed (unlike a
+directory grant, whose *mount* namespace really is fixed at launch — see "Sandbox reconcile-on-
+grow" above). `"allow"` resolves and connects out for real (DNS happens host-side — the sandbox
+has no resolver of its own, only loopback — matching `socks5h://`'s resolution-deferred contract)
+and relays bytes bidirectionally; `"deny"` and unresolved `"ask"` both refuse immediately (SOCKS5
+`0x02`/HTTP `403`) rather than hang waiting for a live confirmation that doesn't exist in v1 (see
+"Can the proxy ask live, mid-connection?" in the plan this section is drawn from — a real
+architectural departure from every other klorb ask, deliberately deferred). Every refusal is
+recorded and surfaced back on the `Bash` response as `blocked_domains: list[str]`, reset per
+command for a reused persistent shell, so the model sees *why* a connection failed instead of a
+generic `curl: (7) Failed to connect` and can explain the block or retry once the domain is
+granted.
+
+`build_bash_env()`'s dict is supplemented, only for an actually-sandboxed, network-enabled
+invocation (never the unsandboxed fallback, which already has unrestricted network access), with
+`HTTP_PROXY`/`HTTPS_PROXY` (the HTTP CONNECT listener) and `ALL_PROXY` (`socks5h://`, the SOCKS5
+listener), lowercase forms included, and `NO_PROXY`/`no_proxy` forced empty so an inherited value
+can't punch a bypass hole — so `curl`/`wget`/`pip`/`npm`/`git`/etc. reach the proxy automatically,
+no flags the model has to remember. **Known limitation:** the HTTP CONNECT listener only
+understands `CONNECT` — a plain `http://` target makes a real client send an ordinary
+forward-proxy request instead (only `https://` triggers `CONNECT`), which this proxy doesn't
+implement; narrow in practice since registry/API traffic is HTTPS-only today, and `ALL_PROXY`'s
+SOCKS5 listener has no such restriction.
+
+**Pre-flight scanning (`BashTool._classify`, Component 3).** Independently of the proxy's own
+runtime enforcement, `_classify` recognizes a `tools.bash.network.recognizedClients` argv0
+(`curl`, `wget`, `pip`, `npm`, a `git clone`/`pull`/`push`/`fetch`/`ls-remote`, a `go get`/
+`install`/`mod download`, a `cargo add`/`install`/`build`, ...) and extracts every literal
+argument that parses as a URL or a bare, dotted `host[:port]` token (deliberately conservative —
+a bare package name or version specifier like `requests==2.28.1` is never mistaken for a domain,
+so an ordinary `pip install requests` never asks for a reason the model can't see in its own
+command). Each extracted domain is evaluated against `bash_domain_rules` exactly like the proxy
+would, contributing its own `DomainResource(rule_set="bash")`-typed `PermissionAskItem` — the
+*same* ask `WebFetch` already produces, rendered identically by `PermissionAskPanel`/ACP with no
+new UI — or short-circuiting the whole command on `"deny"`. This mirrors how
+`IMPLICIT_READ_COMMANDS` already gives a bare `cat`/`less` the same `readDirs` protection a real
+`ReadFile` gets, on top of (never instead of) `CommandRules`'s own check. A domain the scanner
+can't see (assembled at runtime, read from a config file, reached via a redirect) is still caught
+by the proxy itself at connection time — the scanner exists to ask *early* for the common case, it
+is not the only enforcement point. `ssh`/`scp`/`rsync` are deliberately excluded: none speaks
+HTTP(S), none has a literal HTTP(S) URL argument to extract, and no non-HTTP(S) egress path exists
+for them to reach even if they were recognized. A retried call's `PermissionOverride.domains`
+(shared with `WebFetch`'s own once-scoped grants — scoped to one retried call's own resources
+either way, so there's no cross-tool ambiguity) lets an already-approved domain through without
+re-asking.
+
+`tools.bash.network.enabled` (default `true`) is a full escape hatch — `false` skips standing up
+the proxy/relay and the scanner both, reverting to `--unshare-net`-denies-everything exactly as
+before this feature existed.
+
 ## Configuration
 
 ```json
@@ -596,7 +694,12 @@ dedupe against, so it shows the notice on every call instead of silently droppin
       "allow": [["git", "**"], ["ls", "**"], ["cat", "**"]]
     },
     "shareEnv": ["NVM_DIR", "PYENV_ROOT"],
-    "setEnv": {"CI": "true"}
+    "setEnv": {"CI": "true"},
+    "bashDomains": {
+      "deny": ["169.254.*"],
+      "ask": [],
+      "allow": ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org"]
+    }
   },
   "tools.bash.command": "/bin/bash",
   "tools.bash.timeout": 120.0,
@@ -607,19 +710,27 @@ dedupe against, so it shows the notice on every call instead of silently droppin
   "tools.bash.riskClassifier.timeout": 5.0,
   "tools.bash.riskClassifier.e2eTimeout": 10.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
-  "tools.bash.riskClassifier.historySize": 20
+  "tools.bash.riskClassifier.historySize": 20,
+  "tools.bash.network.enabled": true,
+  "tools.bash.network.recognizedClients": [
+    "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
+    "go", "cargo", "mvn", "nc", "ncat", "telnet", "http", "https"
+  ]
 }
 ```
 
-`commandRules`/`shareEnv` merge by concatenation across config layers; `setEnv` merges key-by-key
-(a later layer's value for a key replaces an earlier layer's) — see
+`commandRules`/`shareEnv`/`bashDomains` merge by concatenation across config layers; `setEnv`
+merges key-by-key (a later layer's value for a key replaces an earlier layer's);
+`tools.bash.network.recognizedClients` is an ordinary top-level `tools.bash.*` key, so a later
+layer's value replaces an earlier layer's outright rather than concatenating — see
 docs/specs/process-and-session-config.md's "On-disk key naming" section for the full merge-mode
-taxonomy this adds a third example of alongside `readDirs`/`writeDirs`.
+taxonomy this adds further examples of alongside `readDirs`/`writeDirs`.
 
 ## Out of scope
 
-* Network egress permissioning (`TODO.md`'s "website access" item) — `bwrap --unshare-net` denies
-  all network access unconditionally today; no domain-allowlist/proxy mechanism is designed yet.
+* A live, mid-connection interactive ask for sandboxed network egress, and the other
+  network-egress follow-ups logged under "Plan 018: Bash network egress" in `TODO.md` — see
+  "Network egress (domain-gated proxy)" above for what's already covered.
 * Growing a live persistent sandbox's mounts *in place* (rather than rebuilding it) via a
   privileged in-namespace mount helper — rejected as contradicting `--cap-drop ALL`; see
   docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md.

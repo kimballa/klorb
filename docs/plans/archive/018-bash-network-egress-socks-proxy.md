@@ -1,9 +1,5 @@
 # Plan: Domain-gated network egress for sandboxed Bash via a local SOCKS/HTTP proxy
 
-> **Draft.** This plan describes a design for review, not a built feature. Nothing under
-> `docs/plans/drafting/` should be treated as implemented, and nothing else should depend on it,
-> until it's promoted to `ready/` and then archived.
-
 ## Summary
 
 Today `BashTool`'s `bwrap` sandbox (docs/specs/bash-tool-and-command-permissions.md's

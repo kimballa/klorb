@@ -88,12 +88,24 @@ class SessionConfig(BaseModel):
     matched by exact `(namespace, name)` identity — see `klorb.permissions.skill_access` and
     docs/specs/skills.md. Lives on `SessionConfig` like `command_rules`, so the interactive "ask"
     flow can approve a skill for the rest of the session."""
-    domain_rules: DomainRules = Field(default_factory=DomainRules)
-    """`domains`-config-driven allow/ask/deny rules `WebFetch` consults before any network call,
-    matched by exact domain, wildcard prefix (``*.example.com``), or wildcard suffix
+    web_domain_rules: DomainRules = Field(default_factory=DomainRules)
+    """`webDomains`-config-driven allow/ask/deny rules `WebFetch` consults before any network
+    call, matched by exact domain, wildcard prefix (``*.example.com``), or wildcard suffix
     (``172.16.*`` for IP addresses) — see `klorb.permissions.domain_access`. Lives on
     `SessionConfig` like `command_rules`, so the interactive "ask" flow can approve a domain
-    for the rest of the session."""
+    for the rest of the session. `WebFetch` runs inside klorb's own trust boundary, so this
+    table's shipped defaults are broad (localhost, RFC1918 ranges); `bash_domain_rules` is the
+    independent, conservative-by-default counterpart for sandboxed `Bash` network egress — see
+    that field's own docstring for why the two are not shared."""
+    bash_domain_rules: DomainRules = Field(default_factory=DomainRules)
+    """`bashDomains`-config-driven allow/ask/deny rules the sandboxed `Bash` network-egress proxy
+    (`klorb.sandbox.network.ProxyBackend`) and `BashTool._classify`'s pre-flight scanner consult
+    before letting a sandboxed command reach a domain — same matching semantics as
+    `web_domain_rules`, but a genuinely separate table: a `Bash` command runs inside an
+    `--unshare-net` sandbox with no implicit trust in klorb's own network position, so this table
+    ships with none of `web_domain_rules`'s loopback/RFC1918 allowances by default. A user who
+    needs a sandboxed command to reach `localhost`/the LAN (e.g. Cypress against a co-developed
+    dev server) grants it here through the ordinary ask/grant flow, not a hardcoded exception."""
     share_env: list[str] = Field(default_factory=list)
     """Names of environment variables `BashTool` passes through from the klorb process's own
     environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see

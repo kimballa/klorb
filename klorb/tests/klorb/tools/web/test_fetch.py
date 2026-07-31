@@ -24,7 +24,7 @@ def _context(
     """Build a minimal ToolSetupContext for testing WebFetchTool."""
     session_config = SessionConfig()
     if domain_rules is not None:
-        session_config.domain_rules = domain_rules
+        session_config.web_domain_rules = domain_rules
     if workspace_root is not None:
         session_config.workspace = Workspace(path=workspace_root)
     return ToolSetupContext(
