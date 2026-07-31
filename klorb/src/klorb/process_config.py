@@ -58,6 +58,13 @@ sourcemap, a one-line JSON blob) can't dump an outsized chunk of text into the m
 the canonical source of this value — `klorb.tools.grep` has no constant of its own, it reads
 `ProcessConfig.grep_max_line_length` via `ToolSetupContext` at construction time instead."""
 
+DEFAULT_READ_FILE_MAX_LINE_LENGTH = 500
+"""`ReadFileCore`'s per-line character cap default — a line longer than this is wrapped (not
+truncated) at `max_line_length` characters, with each wrapped segment counting toward the
+`read_file_max_lines` page-size limit. The canonical source of this value — `ReadFileCore` has
+no constant of its own, it reads `ProcessConfig.read_file_max_line_length` via `ToolSetupContext`
+at construction time instead."""
+
 DEFAULT_GREP_SPILL_BYTES = 32 * 1024
 """Byte threshold on the JSON-serialized size of `GrepTool`'s `files` result value above which
 it's spilled to a file (reporting `results_data_file` instead of `files` in the result) rather
@@ -296,6 +303,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "thinking.tokenBudgets": "thinking_token_budgets",
     "terminal.input.maxLines": "prompt_input_max_lines",
     "tools.readFile.maxLines": "read_file_max_lines",
+    "tools.readFile.maxLineLength": "read_file_max_line_length",
     "tools.@mention.maxLines": "mention_max_lines",
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "tools.grep.maxResults": "grep_max_results",
@@ -363,6 +371,9 @@ class ProcessConfig(BaseModel):
     prompt_input_max_lines: int = DEFAULT_PROMPT_INPUT_MAX_LINES
     thinking_token_budgets: dict[ThinkingEffort, int] = dict(THINKING_EFFORT_TOKEN_BUDGETS)
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
+    read_file_max_line_length: int = DEFAULT_READ_FILE_MAX_LINE_LENGTH
+    """Maximum character length of a single line before `ReadFileCore` wraps it — see
+    `klorb.tools.util.read_file_core`."""
     mention_max_lines: int = DEFAULT_MENTION_MAX_LINES
     """Per-file line cap for `@mention` file inlining in user prompts -- see
     `klorb.session.mixins.mentions` and docs/specs/at-mention-file-inlining.md."""

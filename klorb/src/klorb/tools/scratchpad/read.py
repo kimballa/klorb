@@ -29,7 +29,10 @@ class ReadScratchpadTool(Tool):
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
-        self.read_file_core = ReadFileCore(context.process_config.read_file_max_lines)
+        self.read_file_core = ReadFileCore(
+            context.process_config.read_file_max_lines,
+            context.process_config.read_file_max_line_length,
+        )
 
     def name(self) -> str:
         return "ReadScratchpad"

@@ -66,19 +66,30 @@ class ReadFileCore:
     shared mechanic behind `ReadFileTool`, `ReadScratchpadTool`, `ReadMemoryTool`, and
     `ReadSkillFileTool`.
 
+    Lines longer than `max_line_length` are wrapped (not truncated) at that character width,
+    with each wrapped segment counting toward the `max_lines` page-size limit. Wrapped
+    continuation lines repeat the same line number prefix so `parse_numbered_content()` can
+    round-trip the output.
+
     Reads go through `open_resource()`, which handles both a real filesystem `Path` and any other
     `importlib.resources` `Traversable` (a packaged resource that may have no filesystem path at
     all — e.g. `ReadSkillFileTool` reading an `internal`-tier skill file from a zip/wheel-installed
     klorb, see docs/specs/skills.md). A subclass may override `open_resource()` to obtain the
     handle differently."""
 
-    def __init__(self, max_lines: int) -> None:
+    def __init__(self, max_lines: int, max_line_length: int) -> None:
         self._max_lines = max_lines
+        self._max_line_length = max_line_length
 
     @property
     def max_lines(self) -> int:
         """Return the per-call line cap this core was constructed with."""
         return self._max_lines
+
+    @property
+    def max_line_length(self) -> int:
+        """Return the per-line character cap this core was constructed with."""
+        return self._max_line_length
 
     def parameter_properties(self) -> dict[str, Any]:
         """Return the `start_line`/`end_line` JSON-schema properties shared by `ReadFileTool`
@@ -118,6 +129,10 @@ class ReadFileCore:
         call to continue reading where this one left off, so a caller paging through a large
         file doesn't have to compute `end_line + 1` itself. `args`' `start_line`/`end_line` are
         validated (raising `ValueError`) before `path` is opened via `open_resource()`.
+
+        Lines longer than `max_line_length` are wrapped at that width, with each wrapped segment
+        counting toward the `max_lines` page-size limit. An unlisted `wrap_width` arg in `args`
+        overrides the default wrap width when set to a positive number.
         """
         start_line = args.get("start_line")
         end_line = args.get("end_line")
@@ -140,18 +155,72 @@ class ReadFileCore:
             all_lines = file.read().splitlines()
         total_lines = len(all_lines)
 
+        # An unlisted wrap_width arg overrides the default max_line_length.
+        wrap_width = self._max_line_length
+        raw_wrap_width = args.get("wrap_width")
+        if raw_wrap_width is not None:
+            try:
+                parsed = int(raw_wrap_width)
+            except (ValueError, TypeError):
+                parsed = 0
+            if parsed > 0:
+                wrap_width = parsed
+
         requested_end = end_line if end_line is not None else effective_start + self._max_lines - 1
         capped_end = min(requested_end, effective_start + self._max_lines - 1, total_lines)
 
+        # Select the raw lines for the requested range.  We may not use all of them if
+        # wrapping pushes us past the max_lines budget.
         if capped_end >= effective_start:
             selected_lines = all_lines[effective_start - 1:capped_end]
         else:
             selected_lines = []
-        content = "\n".join(f"{effective_start + i}|{line}" for i, line in enumerate(selected_lines))
-        returned_end = effective_start + len(selected_lines) - \
-            1 if selected_lines else effective_start - 1
 
-        truncated = returned_end < total_lines
+        # Build output lines, wrapping long lines and counting toward max_lines.
+        output_segments: list[str] = []
+        lines_emitted = 0
+        truncated = False
+        truncation_cause: str | None = None
+        last_line_number = effective_start - 1
+        first_line_of_read = True
+
+        for i, line in enumerate(selected_lines):
+            lineno = effective_start + i
+            wrapped = _wrap_line(line, lineno, wrap_width)
+            remaining_budget = self._max_lines - lines_emitted
+
+            if len(wrapped) <= remaining_budget:
+                output_segments.extend(wrapped)
+                lines_emitted += len(wrapped)
+                last_line_number = lineno
+                first_line_of_read = False
+            else:
+                # This line's wrapped segments don't all fit in the remaining budget.
+                output_segments.extend(wrapped[:remaining_budget])
+                lines_emitted += remaining_budget
+                truncated = True
+                last_line_number = lineno
+                if first_line_of_read:
+                    # The first requested line alone exceeds the entire budget at this
+                    # wrap_width. A ridiculously long line.  Suggest doubling wrap_width
+                    # so the caller can retry with a wider wrap, or skip to the next line.
+                    truncation_cause = (
+                        f"The response ended in the middle of the first requested line. "
+                        f"Resume with start_line={lineno}, wrap_width={wrap_width * 2} to "
+                        "re-read starting from that line to read the whole line, or use "
+                        f"start_line={lineno + 1} to just advance to the next line.")
+                else:
+                    truncation_cause = (
+                        f"The response ended mid-line. Resume with start_line={lineno} to "
+                        "re-read starting from that line to read the whole line.")
+                break
+
+        if not truncated:
+            truncated = last_line_number < total_lines
+
+        content = "\n".join(output_segments)
+        returned_end = last_line_number
+
         result: dict[str, Any] = {
             "start_line": effective_start,
             "end_line": returned_end,
@@ -160,5 +229,23 @@ class ReadFileCore:
             "content": content,
         }
         if truncated:
-            result["next_start_line"] = returned_end + 1
+            if truncation_cause is None:
+                result["next_start_line"] = returned_end + 1
+            else:
+                result["next_start_line"] = returned_end
+                result["truncation_cause"] = truncation_cause
         return result
+
+
+def _wrap_line(line: str, lineno: int, wrap_width: int) -> list[str]:
+    """Split `line` into segments of at most `wrap_width` characters, each prefixed with
+    `"{lineno}|"`.  A line that fits within `wrap_width` is returned as a single-element list."""
+    prefix = f"{lineno}|"
+    if len(line) <= wrap_width:
+        return [f"{prefix}{line}"]
+    segments: list[str] = []
+    offset = 0
+    while offset < len(line):
+        segments.append(f"{prefix}{line[offset:offset + wrap_width]}")
+        offset += wrap_width
+    return segments

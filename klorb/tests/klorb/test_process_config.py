@@ -18,6 +18,7 @@ from klorb.process_config import (
     DEFAULT_GREP_MAX_RESULTS,
     DEFAULT_GREP_SPILL_BYTES,
     DEFAULT_PROMPT_INPUT_MAX_LINES,
+    DEFAULT_READ_FILE_MAX_LINE_LENGTH,
     DEFAULT_READ_FILE_MAX_LINES,
     DEFAULT_SHELL_COMMAND,
     PROCESS_KEY_MAP,
@@ -70,6 +71,7 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.prompt_input_max_lines == DEFAULT_PROMPT_INPUT_MAX_LINES
     assert process_config.thinking_token_budgets == THINKING_EFFORT_TOKEN_BUDGETS
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
+    assert process_config.read_file_max_line_length == DEFAULT_READ_FILE_MAX_LINE_LENGTH
     assert process_config.edit_file_drift_search_radius == DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     assert process_config.grep_max_results == DEFAULT_GREP_MAX_RESULTS
     assert process_config.grep_max_line_length == DEFAULT_GREP_MAX_LINE_LENGTH
@@ -152,6 +154,7 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
             "terminal.input.maxLines": 20,
             "thinking.tokenBudgets": {"low": 1_000, "medium": 2_000, "high": 3_000},
             "tools.readFile.maxLines": 500,
+            "tools.readFile.maxLineLength": 250,
             "tools.editFile.driftSearchRadius": 5,
             "tools.grep.maxResults": 50,
             "tools.grep.maxLineLength": 200,
@@ -168,6 +171,7 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.prompt_input_max_lines == 20
     assert process_config.thinking_token_budgets == {"low": 1_000, "medium": 2_000, "high": 3_000}
     assert process_config.read_file_max_lines == 500
+    assert process_config.read_file_max_line_length == 250
     assert process_config.edit_file_drift_search_radius == 5
     assert process_config.grep_max_results == 50
     assert process_config.grep_max_line_length == 200

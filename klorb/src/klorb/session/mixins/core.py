@@ -109,7 +109,9 @@ class SessionCoreMixin(SessionBase):
         docs/adrs/session-applies-its-own-permission-grants.md."""
         self._mention_read_file_core = self._create_mention_read_file_core(
             process_config.mention_max_lines
-            if process_config is not None else self._default_mention_max_lines()
+            if process_config is not None else self._default_mention_max_lines(),
+            process_config.read_file_max_line_length
+            if process_config is not None else self._default_mention_max_line_length(),
         )
         self._thinking_token_budgets = (
             process_config.thinking_token_budgets if process_config is not None
@@ -253,12 +255,12 @@ class SessionCoreMixin(SessionBase):
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
 
     @staticmethod
-    def _create_mention_read_file_core(max_lines: int) -> "ReadFileCore":
+    def _create_mention_read_file_core(max_lines: int, max_line_length: int) -> "ReadFileCore":
         """Construct a `ReadFileCore` for @mention file inlining, deferring the import to avoid
         a circular dependency through `klorb.tools.util` → `klorb.tools.setup_context` →
         `klorb.process_config` → `klorb.session`."""
         from klorb.tools.util.read_file_core import ReadFileCore
-        return ReadFileCore(max_lines)
+        return ReadFileCore(max_lines, max_line_length)
 
     @staticmethod
     def _default_mention_max_lines() -> int:
@@ -267,6 +269,13 @@ class SessionCoreMixin(SessionBase):
         `klorb.session`, so a module-level import here would be circular."""
         from klorb.process_config import DEFAULT_MENTION_MAX_LINES
         return DEFAULT_MENTION_MAX_LINES
+
+    @staticmethod
+    def _default_mention_max_line_length() -> int:
+        """`DEFAULT_READ_FILE_MAX_LINE_LENGTH`, imported lazily to avoid the same circular
+        dependency `_create_mention_read_file_core` avoids."""
+        from klorb.process_config import DEFAULT_READ_FILE_MAX_LINE_LENGTH
+        return DEFAULT_READ_FILE_MAX_LINE_LENGTH
 
     @property
     def role(self) -> Role:

@@ -31,7 +31,10 @@ class ReadFileTool(Tool):
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
-        self.read_file_core = ReadFileCore(context.process_config.read_file_max_lines)
+        self.read_file_core = ReadFileCore(
+            context.process_config.read_file_max_lines,
+            context.process_config.read_file_max_line_length,
+        )
 
     def name(self) -> str:
         return "ReadFile"
@@ -43,6 +46,7 @@ class ReadFileTool(Tool):
         return True
 
     def description(self) -> str:
+        max_line_len = self.read_file_core.max_line_length
         return (
             f"Reads a text file and returns up to {self.read_file_core.max_lines} of its "
             "lines, each prefixed with its 1-indexed line number followed by '|' (e.g. "
@@ -50,6 +54,9 @@ class ReadFileTool(Tool):
             "is not part of the file's actual content. When quoting a line's content back to "
             "another tool (e.g. EditFile), use the text after the '|' only, never the line "
             "number or the '|' itself.\n"
+            f"Lines longer than {max_line_len} characters are wrapped at that width, with "
+            "each wrapped segment counting toward the per-call line limit. Wrapped "
+            "continuation lines repeat the same line number prefix.\n"
             "Use start_line and end_line to page through files "
             "larger than the per-call limit. "
             "When the response contains `\"truncated\": true`, the included `next_start_line` "

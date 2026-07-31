@@ -141,7 +141,7 @@ class TestResolveAtMentions:
 
     @pytest.fixture
     def core(self) -> ReadFileCore:
-        return ReadFileCore(max_lines=200)
+        return ReadFileCore(max_lines=200, max_line_length=500)
 
     def test_no_mentions_returns_none(self, core: ReadFileCore, tmp_path: Path) -> None:
         assert resolve_at_mentions("hello world", core, tmp_path) is None
@@ -227,7 +227,7 @@ class TestResolveAtMentions:
 
     def test_truncation(self, core: ReadFileCore, tmp_path: Path) -> None:
         """Files larger than max_lines are marked as truncated."""
-        small_core = ReadFileCore(max_lines=3)
+        small_core = ReadFileCore(max_lines=3, max_line_length=500)
         lines = "\n".join(f"line {i}" for i in range(1, 6))
         (tmp_path / "big.txt").write_text(lines)
         fragments = resolve_at_mentions("@big.txt", small_core, tmp_path)

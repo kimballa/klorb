@@ -33,7 +33,9 @@
 
 ### Feature backlog
 
-* Implement plan 19: enforce line wrapping in ReadFile tools.
+* If the agent calls TodoUpdate on a todo item that is `open`, the update is not a "close" operation,
+  and the agent does not currently *have* a TODO item assigned, it activates the specified item as
+  the active work item.
 
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
   or start testing anything. Maybe we should notice this condition (only using read-only tools for N
