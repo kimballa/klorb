@@ -97,7 +97,7 @@ def maybe_activate_task(
     set_current_task(session, context, task["id"])
     logger.debug("Auto-activated task #%d as the session's current tracked task.", task["id"])
     return (
-        f"#{task['id']} is now your current tracked task, as if TodoNext had returned it. "
+        f'Task #{task["id"]} ("{task.get("title", "")}") is now your current tracked task. '
         "Comment on it as you make progress and close it (TodoUpdate close) once it's done "
         "and verified, then call TodoNext for what's next."
     )

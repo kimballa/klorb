@@ -40,7 +40,7 @@ def _next_task_note(next_result: dict[str, Any]) -> str:
     TodoUpdate folds into its own result after closing an issue -- see `TodoUpdateTool.apply()`."""
     task = next_result.get("task")
     if task is not None:
-        return f'#{task["id"]} "{task.get("title", "")}" is now your current tracked task.'
+        return f'Task #{task["id"]} ("{task.get("title", "")}") is now your current tracked task.'
     if next_result.get("project_complete"):
         return "Every task is done -- there's nothing left to track."
     return "No task is ready right now (everything remaining is blocked); you have no current tracked task."
