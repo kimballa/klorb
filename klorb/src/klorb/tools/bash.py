@@ -1069,8 +1069,7 @@ class BashTool(InterruptibleTool):
             # Whichever call site removes `tmp_dir` first -- the early return below on a missing
             # executable, or the end-of-command cleanup further down -- unregisters the atexit
             # backstop so it doesn't `shutil.rmtree` an already-gone directory again at process
-            # exit. Left registered (never called) when `tmp_dir` is kept alive instead, for the
-            # model to read its spilled stdout/stderr back later.
+            # exit.
             atexit.unregister(cleanup_tmp_dir)
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

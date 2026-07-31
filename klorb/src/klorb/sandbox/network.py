@@ -78,11 +78,7 @@ from `_HANDSHAKE_TIMEOUT_SECONDS`, which bounds reading the client's own request
 
 _ACCEPT_THREAD_JOIN_TIMEOUT_SECONDS = 0.25
 """How long `ProxyBackend.close()` waits for the accept-loop thread to actually exit before
-giving up on it -- long enough for `_accept_loop`'s blocked `recv_fds()` call to unblock and
-return once the control socket closes underneath it (near-instant in practice), short enough
-that a caller's own teardown (a test, `Session.close()`) never meaningfully stalls on it. The
-thread is a daemon, so a caller that hits this timeout still returns rather than hanging --
-the thread just keeps running in the background until it notices the closed socket."""
+giving up on it."""
 
 _RECV_CHUNK_BYTES = 65536
 
@@ -375,11 +371,7 @@ class ProxyBackend:
     def close(self) -> None:
         """Close the host-side control-channel socket, so `_accept_loop`'s next `recv_fds()`
         call returns EOF and the accept thread exits, then wait up to
-        `_ACCEPT_THREAD_JOIN_TIMEOUT_SECONDS` for that exit to actually happen -- so the thread's
-        own teardown (its "stopping accept loop" log line included) has already landed by the
-        time this call returns, instead of racing whatever the caller does next (a test's own
-        teardown, process shutdown). Safe to call more than once, and a no-op join if `start()`
-        was never called."""
+        `_ACCEPT_THREAD_JOIN_TIMEOUT_SECONDS` for that exit to actually happen."""
         try:
             self._control_sock.close()
         except OSError:

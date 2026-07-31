@@ -60,9 +60,7 @@ class SpillDir:
             # Whichever path runs first -- `session.close()`'s eager teardown, or the interpreter
             # actually reaching this atexit callback -- unregisters the atexit registration so the
             # other path (if it still runs later) doesn't call `_cleanup()`, and so log, a second
-            # time. A closure private to this one `tmpdir_path` (rather than the bound `_cleanup`
-            # method directly), so unregistering it can never also remove a different tmpdir's own
-            # atexit registration on a `SpillDir` instance reused across sessions.
+            # time.
             atexit.unregister(cleanup_once)
             self._cleanup(tmpdir_path)
 

@@ -164,6 +164,11 @@ The Klorb project is organized as a collection of subprojects:
   calls, which should stay reserved for what a user actually needs to see.
 * Default to no comment; add one only when the WHY is genuinely non-obvious. Keep it to a
   sentence or two.
+  * You have repeatedly failed to hold to this in practice, writing multi-sentence comments and
+    docstrings where one clause would do. That history is not license to keep doing it, and
+    lengthy comments already sitting in the codebase are not a template to match — they are
+    exactly the mistake this rule exists to stop you from repeating. Judge each new comment
+    against the rule above, not against the longest nearby example.
   * Don't narrate what a method *isn't* doing, alternatives it doesn't take, or where else a
     concern is handled instead ("this doesn't do X because Y handles it in Z" style asides).
     State what the code does, not a tour of the design space around it.
