@@ -429,6 +429,8 @@ together for this extension specifically.
   mirroring the TUI's own Shift+Tab), Escape (calls `onCancel` when `inFlight`, regardless of
   `enqueueMessageCapable` — cancelling the turn is always available while one is running), and
   Enter, delegating the submit-vs-newline decision to `keyHandling.ts`'s `classifyEnterKey()`.
+  While the `@`-mention file finder is open, it additionally claims ArrowUp/ArrowDown/Enter/Tab/
+  Escape for finder navigation ahead of this handling (see "File finder (`@`-mention)" below).
 * `vscode-plugin/src/webview/keyHandling.ts`'s `classifyEnterKey(shiftKey, ctrlKey)` returns
   `'newline'` if either modifier is held and `'submit'` otherwise. Pulling this one decision out
   as a standalone function is what makes it reachable from
@@ -606,6 +608,91 @@ webview panel (see below).
   (`.entry-interaction`) in the history scroll once the panel unmounts.
   `appendQuestionInteraction(entries, ask, answerText)` (called from `App`'s
   `handleQuestionAnswer()`) is the same record for an answered question.
+
+### File finder (`@`-mention)
+
+Typing `@` into the prompt input (at the start of the text, or after whitespace) opens a popup
+listing up to 6 fuzzy-matching workspace files, mirroring the `ApprovalPanel`/`QuestionPanel`
+family's "docked panel above the prompt input" look but driven entirely by local textarea state,
+not the ACP interaction protocol those two share.
+
+* **Workspace enumeration** (`vscode-plugin/src/host/features/fileSearch/fileSearch.ts`).
+  `FileSearch.listWorkspaceFiles()` lists every file under the first workspace folder via
+  `vscode.workspace.findFiles('**/*', ...)` (respecting VS Code's own `files.exclude` setting),
+  then filters the result against every `.gitignore` in the workspace — `findFiles()` does *not*
+  honor `.gitignore` on its own. Each nested `.gitignore`'s patterns are rewritten
+  (`scopeGitignoreLine()`) to be relative to the workspace root (prefixed with the `.gitignore`'s
+  own directory, and widened with a `**` unless the pattern is itself anchored) and flattened
+  into one `ignore()` matcher (the `ignore` npm package) so a single pass enforces every
+  `.gitignore` in the tree at once, the same net effect as `git ls-files` without needing a `git`
+  binary on `PATH`. Capped at 20000 files (`MAX_WORKSPACE_FILES`). `FileSearchVsCode` is the
+  usual injected-`vscode`-slice interface (mirrors `EditorIntegrationVsCode`) so the module only
+  imports `vscode`'s types, never its runtime value; `extension.ts`'s `realFileSearchVsCode()` is
+  the real implementation, constructing the `vscode.RelativePattern` `findFiles()` needs.
+* **Keeping the list fresh without re-scanning.** A one-shot scan is a snapshot, not a live view:
+  it wouldn't otherwise notice a file created/deleted (or a `.gitignore` edited) after it runs.
+  `FileSearch.watch(onChanged)` covers that gap with two `vscode.FileSystemWatcher`s — one on
+  `**/*` with `ignoreChangeEvents: true` (a file's *content* changing can't change whether it's in
+  the list) and one on `**/.gitignore` with content changes *not* ignored (a `.gitignore` edit
+  changes the filter itself) — and calls `onChanged(files: string[])` with the updated list,
+  debounced by `WATCH_DEBOUNCE_MS` (400ms) so a burst of events (e.g. an `npm install` or branch
+  checkout) resolves to one call, not one per event. Critically, an ordinary create/delete is
+  applied as a single add/remove against the cached list and the `Ignore` matcher the last scan
+  produced — classifying one path, not touching the filesystem again — since the watcher event
+  already names the exact file that changed; only a `.gitignore` create/edit/delete falls back to
+  a full re-scan (`_scan()`, shared with `listWorkspaceFiles()`), because the `ignore` package
+  can't selectively un-apply previously added patterns, so the matcher itself has to be rebuilt
+  from scratch. Concurrent flushes are serialized through a promise chain (`flushChain`) so a
+  slow `.gitignore`-triggered rescan can't race a later debounced flush over the shared cache.
+  `watch()` runs its own initial scan immediately on call (nothing to debounce yet) and calls
+  `onChanged` once that lands, before any watcher event does; `FileSearchVsCode.
+  createFileSystemWatcher(root, glob, ignoreChangeEvents)` is the corresponding addition to the
+  injected-`vscode`-slice interface. `extension.ts`'s `activate()` creates one such watcher for
+  the extension's lifetime (`context.subscriptions`), wired to `provider.setWorkspaceFiles(files)`
+  — which both posts `{type: 'workspaceFiles', files: string[]}` (POSIX-style paths relative to
+  the workspace root) and caches it in `KlorbSessionViewProvider._workspaceFiles`, so
+  `resolveWebviewView()` can re-post that cached list to a freshly (re)resolved view — the same
+  "repost cached state, don't recompute it" pattern `postSnapshot()` uses — instead of scanning
+  again on every resolve. `App`'s `workspaceFiles` state holds the latest snapshot (not persisted
+  via `vscode.setState()`: a webview reload gets a fresh post from the next `resolveWebviewView()`
+  instead of risking a stale cached list) and is passed straight through to `PromptInput`.
+* **Mention detection and matching** (`vscode-plugin/src/webview/features/fileFinder/`).
+  `fileFinderModel.ts`'s `detectMentionQuery(text, cursor)` scans backward from the cursor for
+  the nearest `@` not separated from it by whitespace, itself preceded by start-of-text or
+  whitespace (so an email-like `foo@bar` doesn't trigger); returns the `@`'s index and the query
+  typed after it. `useFileFinder(files)` (`useFileFinder.ts`) owns the finder's React state:
+  `sync(text, cursor)` re-runs detection on every keystroke/cursor-move and, when a mention is
+  active, fuzzy-matches `files` with Fuse.js (`new Fuse(files, {threshold: 0.4, ignoreLocation:
+  true})`, capped to 6 results — an empty query shows the first 6 files unranked) or resets to
+  closed when there's no mention or (per the "keep typing rules everything out" behavior) zero
+  matches. Escape (`dismiss()`) closes the popup without forgetting the mention itself — an
+  `escapedStartRef` remembers which mention's `@` position was dismissed, so further typing
+  within that same mention doesn't reopen it, but moving to a *different* `@` does.
+* **`FileFinderPanel`** (`components/FileFinderPanel.tsx`) renders each match via
+  `splitFinderPath()`, which splits a path at its last `/` into a `dirPart` (rendered with CSS
+  ellipsis truncation, `text-overflow: ellipsis` + `white-space: nowrap`) and a fixed,
+  never-truncated `filePart` carrying its own leading `/` — so a deep path reads as
+  "some/path/to…/file.txt" instead of wrapping or scrolling horizontally. The popup itself
+  (`.file-finder-panel`) is `position: absolute; bottom: 100%` inside `PromptInput`'s own
+  `.input-row` (which is `position: relative` for this purpose) rather than living in `App`'s
+  `#interaction-area`: an overlay that doesn't push the input row down as matches change per
+  keystroke, unlike the in-flow `ApprovalPanel`/`QuestionPanel`. `max-height` caps it at ~6 rows
+  with `overflow-y: auto`, so it shrinks to fit when there are fewer matches instead of reserving
+  empty space.
+* **Keyboard/mouse wiring** (`PromptInput.tsx`). While the finder is open, `handleKeyDown`
+  intercepts ArrowUp/ArrowDown (`finder.moveActive()`, wrapping at both ends), Enter/Tab
+  (`applyFinderSelection()`), and Escape (`finder.dismiss()`) before its normal Shift+Tab/Escape/
+  Enter handling runs; a click on a row (`FileFinderPanel`'s `onSelect`) does the same. Caret
+  position is read via a `cursorPosition()` helper (`wrappedElement.selectionStart`, falling back
+  to the element's own `selectionStart` and finally to end-of-text) fed from the textarea's
+  `onInput` (every keystroke), `onKeyUp` (only ArrowLeft/ArrowRight/Home/End, which move the
+  caret without an `input` event), and `onClick`.
+* **Insertion** (`fileFinderModel.ts`'s `escapeMentionPath()`/`buildMentionInsertion()`).
+  `applyFinderSelection()` replaces the `@query` span with `@` followed by the chosen path
+  (workspace-root-relative) and a trailing space, so the user can keep typing immediately — the
+  `@` itself stays in the text. `escapeMentionPath()` backslash-escapes, in this order (backslash
+  first, so the escapes it introduces aren't themselves re-escaped by the later passes), a
+  literal `\`, `"`, and space — e.g. a file named `foo bar.txt` inserts as `@foo\ bar.txt`.
 
 ### Queued messages and interrupt polish
 
@@ -1008,8 +1095,9 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
   agent does, `PermissionAskMessage` ("Approval and question panels" above),
   `QuestionAskMessage` ("Approval and question panels" above), `StatusUpdateMessage`, and
-  `SessionStatsMessage` (both "Status row and session controls" above), and
-  `TaskListUpdateMessage`/`{type: 'toggleTaskPanel'}` (both "Task panel" above).
+  `SessionStatsMessage` (both "Status row and session controls" above),
+  `TaskListUpdateMessage`/`{type: 'toggleTaskPanel'}` (both "Task panel" above), and
+  `{type: 'workspaceFiles', files: string[]}` ("File finder" above).
 * `parseHostMessage()`/`parseWebviewMessage()` are the type guards each side runs on every
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
   and `MessageEvent.data` (webview side) are untyped `unknown`. The richer message types above

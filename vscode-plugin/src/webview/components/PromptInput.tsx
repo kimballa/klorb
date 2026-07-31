@@ -12,7 +12,8 @@ import {
   useState,
 } from 'react';
 
-import { PlayMediaIcon, StopMediaIcon } from 'webview/components/klorbIcons';
+import { StopMediaIcon } from 'webview/components/klorbIcons';
+import { FileFinderPanel, useFileFinder } from 'webview/features/fileFinder';
 import { classifyEnterKey } from 'webview/keyHandling';
 
 const MIN_ROWS = 1;
@@ -36,6 +37,10 @@ interface PromptInputProps {
    * idle-turn one (the caller distinguishes by its own `inFlight` state) instead of the input
    * simply being disabled. */
   enqueueMessageCapable?: boolean;
+  /** The workspace's file list (see `App`'s `workspaceFiles` state), backing the `@`-mention
+   * file finder (`webview/features/fileFinder`). Empty until the host's `workspaceFiles`
+   * message arrives, or when no workspace folder is open. */
+  workspaceFiles?: string[];
   onSubmit(text: string): void;
   onCancel(): void;
   onCyclePermissionMode(): void;
@@ -48,6 +53,27 @@ function targetValue(event: SyntheticEvent | KeyboardEvent<HTMLElement>): string
   return typeof value === 'string' ? value : '';
 }
 
+/** Reads the caret offset out of the event's target element -- `wrappedElement.selectionStart`
+ * for a real `<vscode-textarea>`, falling back to the element's own `selectionStart` (what a
+ * plain mocked element exposes in tests) and finally to end-of-text when neither is available. */
+function cursorPosition(event: SyntheticEvent | KeyboardEvent<HTMLElement>): number {
+  const target = event.target as {
+    wrappedElement?: { selectionStart?: number | null };
+    selectionStart?: number | null;
+    value?: unknown;
+  };
+  const selectionStart = target.wrappedElement?.selectionStart ?? target.selectionStart;
+  if (typeof selectionStart === 'number') {
+    return selectionStart;
+  }
+  const value = typeof target.value === 'string' ? target.value : '';
+  return value.length;
+}
+
+/** Navigation keys that move the caret without an accompanying `input` event -- a keyup on one
+ * of these re-syncs the file finder against the caret's new position. */
+const CARET_MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
+
 /**
  * The multi-line prompt input row: Enter submits, Shift/Ctrl+Enter inserts a newline
  * (`classifyEnterKey`). While a turn is in flight, the textarea is disabled and a Stop button
@@ -55,12 +81,16 @@ function targetValue(event: SyntheticEvent | KeyboardEvent<HTMLElement>): string
  * in which case the textarea stays enabled (with both Send and Stop available) so a mid-turn
  * submit queues into the running turn instead. Exposes an imperative `focus()` via `ref` (see
  * `PromptInputHandle`) so `App` can reclaim focus after a turn ends or an interaction resolves.
+ * Also drives the `@`-mention file finder (`useFileFinder`/`FileFinderPanel`): while it's open,
+ * ArrowUp/ArrowDown/Enter/Tab/Escape are claimed for finder navigation instead of their usual
+ * textarea behavior.
  */
 const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function PromptInput(
   {
     inFlight,
     muted = false,
     enqueueMessageCapable = false,
+    workspaceFiles = [],
     onSubmit,
     onCancel,
     onCyclePermissionMode,
@@ -74,6 +104,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const trailingNewlinesRef = useRef(0);
   const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
   const disabled = inFlight && !enqueueMessageCapable;
+  const finder = useFileFinder(workspaceFiles);
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
@@ -155,7 +186,52 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     onSubmit(text);
   }
 
+  /** Splices `finder`'s match at `index` (default: its active row) into the textarea, both the
+   * underlying DOM element (so the caret lands in the right place immediately) and `draft`
+   * state (so React's own render stays in sync) -- mirrors `submit()`'s "write the DOM element
+   * directly, then mirror into state" approach. */
+  function applyFinderSelection(index?: number): void {
+    const selection = finder.select(draft, index);
+    if (selection === undefined) {
+      return;
+    }
+    const el = textareaRef.current;
+    if (el !== null) {
+      el.value = selection.text;
+      const wrapped = el.wrappedElement;
+      if (wrapped) {
+        wrapped.selectionStart = selection.cursor;
+        wrapped.selectionEnd = selection.cursor;
+      }
+    }
+    setDraft(selection.text);
+    computeRows(selection.text);
+    el?.focus();
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (finder.isOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finder.dismiss();
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        finder.moveActive(1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        finder.moveActive(-1);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        applyFinderSelection();
+        return;
+      }
+    }
     if (event.key === 'Tab' && event.shiftKey) {
       // Claims Shift+Tab for the permission-mode cycle (mirroring the TUI's own Shift+Tab)
       // instead of letting it fall through to the browser's default tab-order navigation.
@@ -180,6 +256,14 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
 
   return (
     <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
+      {finder.isOpen ? (
+        <FileFinderPanel
+          paths={finder.matches}
+          activeIndex={finder.activeIndex}
+          onHover={finder.setActiveIndex}
+          onSelect={applyFinderSelection}
+        />
+      ) : null}
       <vscode-textarea
         ref={textareaRef}
         id="prompt-input"
@@ -192,7 +276,14 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           const value = targetValue(event);
           setDraft(value);
           computeRows(value);
+          finder.sync(value, cursorPosition(event));
         }}
+        onKeyUp={(event: KeyboardEvent<HTMLElement>) => {
+          if (CARET_MOVE_KEYS.has(event.key)) {
+            finder.sync(draft, cursorPosition(event));
+          }
+        }}
+        onClick={(event: SyntheticEvent) => finder.sync(draft, cursorPosition(event))}
       />
       {!inFlight || enqueueMessageCapable ? (
         <vscode-button
@@ -202,7 +293,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           aria-label="Send"
           disabled={draft.trim().length === 0}
           onClick={() => submit()}>
-          <PlayMediaIcon />
+          <vscode-icon name="send" />
         </vscode-button>
       ) : null}
       {inFlight ? (

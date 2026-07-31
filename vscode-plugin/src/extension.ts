@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { ApiKeyManager, type ApiKeyVsCode } from 'host/apiKeyStorage';
 import { EditorIntegration, type EditorIntegrationVsCode } from 'host/editorIntegration';
 import { AcpConnection, errorMessage } from 'host/features/acp';
+import { FileSearch, type FileSearchVsCode } from 'host/features/fileSearch';
 import {
   SessionControls,
   WorkspaceTrustBridge,
@@ -43,6 +44,25 @@ function realEditorIntegrationVsCode(): EditorIntegrationVsCode {
       vscode.workspace.registerTextDocumentContentProvider(scheme, provider),
     openDiffEditor: (oldUri, newUri, title) =>
       vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title),
+  };
+}
+
+/** The real `vscode`-backed `FileSearchVsCode` (see host/features/fileSearch/fileSearch.ts's
+ * own doc comment). */
+function realFileSearchVsCode(): FileSearchVsCode {
+  return {
+    workspaceRoot: () => vscode.workspace.workspaceFolders?.[0]?.uri,
+    findFiles: (root, glob, maxResults) =>
+      vscode.workspace.findFiles(new vscode.RelativePattern(root, glob), undefined, maxResults),
+    readFile: (uri) => vscode.workspace.fs.readFile(uri),
+    relativePath: (uri) => vscode.workspace.asRelativePath(uri, false),
+    createFileSystemWatcher: (root, glob, ignoreChangeEvents) =>
+      vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(root, glob),
+        false,
+        ignoreChangeEvents,
+        false
+      ),
   };
 }
 
@@ -137,6 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const serverProcess = new KlorbServerProcess();
   const editorIntegration = new EditorIntegration(realEditorIntegrationVsCode());
   context.subscriptions.push(editorIntegration);
+  const fileSearch = new FileSearch(realFileSearchVsCode(), log);
   const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration, log);
   const apiKeyManager = new ApiKeyManager(realApiKeyVsCode(context));
   const connection = new AcpConnection(serverProcess, provider, log);
@@ -154,6 +175,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push({ dispose: () => workspaceTrustBridge.dispose() });
   context.subscriptions.push({ dispose: () => connection.stop() });
+  context.subscriptions.push(fileSearch.watch((files) => provider.setWorkspaceFiles(files)));
 
   const startConnection = async (): Promise<void> => {
     try {

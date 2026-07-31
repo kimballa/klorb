@@ -134,7 +134,32 @@
 * Ability to use vision models and incorporate screenshots / png+bmp files as prompt input.
   * tokens ≈ (width_px × height_px) / 750
   * downsampled to ~1.15 MP (1092x1092 for square)
-  * Supported models: Kimi k3, Kimi k2.7-Code, Sonnet 5, Qwen 3.7 Plus, GPT 5 Nano
+  * Supported models: Kimi k3, Kimi k2.7-Code, Sonnet 5, Qwen 3.7 Plus, GPT 5 Nano, Mimo V2.5 (not Pro)
+
+```plain
+  "Due to how the content is parsed, we recommend sending the text prompt first, then the images. If
+  the images must come first, we recommend putting it in the system prompt."
+
+   "image_url": {
+                    "url": f"data:image/jpeg;base64,{base64_image}"
+                }
+    Supports image/jpeg, image/png, image/webp, image/gif.
+
+    Kimi model supports:
+image/jpeg
+image/png
+image/gif
+image/webp
+image/bmp
+image/heic
+image/heif
+Kimi max resolution: 4096×2160
+No max file count, 100MB overall conversation body limit.
+
+Qwen 3.7: max 2,621,440 pixels (~2.6 MP)
+Token count per image: h x w / (32 x 32) + 2
+max image files 2048
+```
 
 * Add more system interjections:
   * If the agent does *not* have a plan, after a while, start harrassing it to write down some
@@ -224,7 +249,8 @@
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
 
-* TUI needs a fuzzy-finder so you can `@-mention` files in the workspace and have it autocomplete.
+* TUI needs a fuzzy-finder so you can `@-mention` files in the workspace and have it autocomplete
+  (use the `textual.fuzzy` package already in there).
 
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
@@ -244,15 +270,9 @@
 
 ### Feature backlog
 
-* fzf fuzzy finder for @-mentioning files in the project
-  * use Fuse.js for the fuzzy-matching
-  * to discover/iterate over files in the first place, use the 'ignore' lib to toss out
-    gitignore'd files. (Unless vscode has its own ability to deliver to us a list of
-    'all the files in the workspace'?)
-  * The TUI should have this too. But use the `textual.fuzzy` package already in there.
-  * The Session backend should preprocess scripts and if anything matches `@<a-real-file>`,
-    it should add a system interjection naming that file and suggesting the agent use
-    ReadFile on it.
+* The Session backend should preprocess scripts and if anything matches `@<a-real-file>`,
+  it should add a system interjection naming that file and suggesting the agent use
+  ReadFile on it.
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)

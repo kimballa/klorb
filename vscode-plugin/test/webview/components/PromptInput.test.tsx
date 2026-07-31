@@ -2,9 +2,15 @@
 // © Copyright 2026 Aaron Kimball
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
+
+beforeAll(() => {
+  // jsdom doesn't implement scrollIntoView, which FileFinderPanel calls to keep its active row
+  // visible (see test/webview/App.test.tsx's own identical stub).
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
 
 vi.mock('@chenglou/pretext', () => ({
   prepare: vi.fn(() => ({})),
@@ -97,5 +103,96 @@ describe('PromptInput', () => {
     ref.current?.focus();
 
     expect(focusSpy).toHaveBeenCalled();
+  });
+});
+
+const WORKSPACE_FILES = ['src/App.tsx', 'README.md'];
+
+describe('PromptInput file finder', () => {
+  it('shows matching files once @ is typed', () => {
+    const { container } = render(
+      <PromptInput
+        inFlight={false}
+        workspaceFiles={WORKSPACE_FILES}
+        onSubmit={() => undefined}
+        {...NOOP}
+      />
+    );
+
+    typeText(container, '@App');
+
+    expect(screen.getByText('/App.tsx')).toBeTruthy();
+    expect(screen.queryByText('README.md')).toBeNull();
+  });
+
+  it('splices the active match into the draft on Enter, keeping the finder closed', () => {
+    const { container } = render(
+      <PromptInput
+        inFlight={false}
+        workspaceFiles={WORKSPACE_FILES}
+        onSubmit={() => undefined}
+        {...NOOP}
+      />
+    );
+
+    typeText(container, '@App');
+    fireEvent.keyDown(promptTextarea(container), { key: 'Enter' });
+
+    expect(promptTextarea(container).value).toBe('@src/App.tsx ');
+    expect(screen.queryByText('/App.tsx')).toBeNull();
+  });
+
+  it('selects a match on click', () => {
+    const { container } = render(
+      <PromptInput
+        inFlight={false}
+        workspaceFiles={WORKSPACE_FILES}
+        onSubmit={() => undefined}
+        {...NOOP}
+      />
+    );
+
+    typeText(container, '@App');
+    fireEvent.click(screen.getByText('/App.tsx'));
+
+    expect(promptTextarea(container).value).toBe('@src/App.tsx ');
+  });
+
+  it('Escape dismisses the finder without submitting or cancelling', () => {
+    const onCancel = vi.fn();
+    const { container } = render(
+      <PromptInput
+        inFlight={false}
+        workspaceFiles={WORKSPACE_FILES}
+        onSubmit={() => undefined}
+        onCancel={onCancel}
+        onCyclePermissionMode={() => undefined}
+      />
+    );
+
+    typeText(container, '@App');
+    fireEvent.keyDown(promptTextarea(container), { key: 'Escape' });
+
+    expect(screen.queryByText('/App.tsx')).toBeNull();
+    expect(promptTextarea(container).value).toBe('@App');
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('closes the finder once further typing rules out every file', () => {
+    const { container } = render(
+      <PromptInput
+        inFlight={false}
+        workspaceFiles={WORKSPACE_FILES}
+        onSubmit={() => undefined}
+        {...NOOP}
+      />
+    );
+
+    typeText(container, '@App');
+    expect(screen.getByText('/App.tsx')).toBeTruthy();
+
+    typeText(container, '@Appzzzznomatch');
+
+    expect(screen.queryByText('/App.tsx')).toBeNull();
   });
 });

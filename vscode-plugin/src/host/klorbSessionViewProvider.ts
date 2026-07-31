@@ -48,6 +48,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   private _view: vscode.WebviewView | undefined;
   private _connection: AcpConnection | undefined;
   private _sessionControls: SessionControls | undefined;
+  // The last workspace file list `setWorkspaceFiles()` received from `extension.ts`'s
+  // `FileSearch.watch()` callback -- re-posted (not re-scanned) on `resolveWebviewView()`, the
+  // same "repost cached state to a freshly resolved view" pattern `postSnapshot()` uses.
+  private _workspaceFiles: string[] = [];
 
   public constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -92,6 +96,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     });
     this._connection?.client?.repostPendingInteraction();
     this._sessionControls?.postSnapshot();
+    this.postHostMessage({ type: 'workspaceFiles', files: this._workspaceFiles });
   }
 
   public onAgentText(text: string): void {
@@ -331,6 +336,16 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     } catch (err) {
       this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
     }
+  }
+
+  /** Caches and posts the workspace's current file list -- called by `extension.ts`'s
+   * `FileSearch.watch()` callback, both for its initial scan and every incremental update after
+   * that. Caching it (rather than only posting) is what lets `resolveWebviewView()` re-show the
+   * current list to a freshly (re)resolved view without re-scanning, the same "repost cached
+   * state" pattern `postSnapshot()` uses. */
+  public setWorkspaceFiles(files: string[]): void {
+    this._workspaceFiles = files;
+    this.postHostMessage({ type: 'workspaceFiles', files });
   }
 
   /**

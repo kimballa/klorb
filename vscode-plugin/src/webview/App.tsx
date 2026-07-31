@@ -69,6 +69,10 @@ export default function App({
     initialPendingInteraction
   );
   const [status, setStatus] = useState<StatusSnapshot>(initialStatus ?? {});
+  // Not persisted via `vscode.setState()`: the host re-pushes the current workspace file list
+  // every time the view resolves (see `KlorbSessionViewProvider._postWorkspaceFiles()`), so a
+  // fresh value always follows shortly after a webview reload rather than risking a stale one.
+  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [taskList, setTaskList] = useState<TaskListSnapshot | undefined>(initialTaskList);
   const [taskPanelVisible, setTaskPanelVisible] = useState(initialTaskPanelVisible ?? true);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -152,6 +156,9 @@ export default function App({
       }
       if (message.type === 'toggleTaskPanel') {
         toggleTaskPanelVisible();
+      }
+      if (message.type === 'workspaceFiles') {
+        setWorkspaceFiles(message.files);
       }
     }
     window.addEventListener('message', onMessage);
@@ -313,6 +320,7 @@ export default function App({
         inFlight={inFlight}
         muted={pendingInteraction !== undefined}
         enqueueMessageCapable={status.enqueueMessageCapable}
+        workspaceFiles={workspaceFiles}
         onSubmit={submit}
         onCancel={cancel}
         onCyclePermissionMode={cyclePermissionMode}

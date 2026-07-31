@@ -353,6 +353,17 @@ export interface RecentSessionSummary {
   title: string | null;
 }
 
+/** The workspace's enumerated files, pushed once when the view resolves (mirrors
+ * `SessionControls.postSnapshot()`'s "re-push current state on view resolve" convention) --
+ * POSIX-style paths relative to the workspace root, already filtered by `files.exclude` and
+ * every `.gitignore` in the workspace (see `host/features/fileSearch`). Backs the prompt input's
+ * `@`-mention file finder (`webview/features/fileFinder`); empty when no workspace folder is
+ * open. */
+export interface WorkspaceFilesMessage {
+  type: 'workspaceFiles';
+  files: string[];
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -373,7 +384,8 @@ export type HostMessage =
   | SessionStatsMessage
   | TaskListUpdateMessage
   | ToggleTaskPanelMessage
-  | SessionReplayMessage;
+  | SessionReplayMessage
+  | WorkspaceFilesMessage;
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
@@ -882,6 +894,13 @@ function parseSessionReplay(record: Record<string, unknown>): SessionReplayMessa
   return record as unknown as SessionReplayMessage;
 }
 
+function parseWorkspaceFiles(record: Record<string, unknown>): WorkspaceFilesMessage | undefined {
+  if (!Array.isArray(record.files) || !record.files.every((file) => typeof file === 'string')) {
+    return undefined;
+  }
+  return { type: 'workspaceFiles', files: record.files };
+}
+
 function parseOpenLocation(record: Record<string, unknown>): OpenLocationMessage | undefined {
   if (
     typeof record.path === 'string' &&
@@ -955,6 +974,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseTaskListUpdate(record);
     case 'sessionReplay':
       return parseSessionReplay(record);
+    case 'workspaceFiles':
+      return parseWorkspaceFiles(record);
     default:
       return undefined;
   }

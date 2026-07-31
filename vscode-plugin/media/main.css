@@ -460,12 +460,60 @@ button.bash-tool-call-command {
 }
 
 .input-row {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   gap: 6px;
   padding: 8px 12px;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
   align-items: flex-end;
+}
+
+.file-finder-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%;
+  margin-bottom: 4px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  max-height: 156px; /* ~6 rows at this row's own padding/line-height */
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--vscode-sideBar-background) 92%, white 8%);
+}
+
+.file-finder-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.file-finder-row:hover,
+.file-finder-row-active {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.file-finder-row-dir {
+  /* flex-grow: 0 so a short dir doesn't stretch to fill the row (leaving a gap before
+     .file-finder-row-file); flex-shrink: 1 still lets it shrink -- and ellipsis-truncate --
+     once the row is too narrow for the full path. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-finder-row-file {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .approval-panel {

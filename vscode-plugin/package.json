@@ -37,7 +37,8 @@
         {
           "type": "webview",
           "id": "klorb.sessionView",
-          "name": "Session"
+          "name": "Session",
+          "icon": "media/icon.svg"
         }
       ]
     },
@@ -132,6 +133,8 @@
     "@chenglou/pretext": "^0.0.8",
     "@vscode-elements/elements": "^2.5.1",
     "@vscode/codicons": "^0.0.45",
+    "fuse.js": "^7.5.0",
+    "ignore": "^7.0.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

@@ -383,6 +383,10 @@ export function applyHostMessage(
       return [...entries];
     case 'sessionReplay':
       return applySessionReplay(message.entries);
+    case 'workspaceFiles':
+      // Tracked separately by `App`'s own `workspaceFiles` state, not as a history entry -- the
+      // file finder reads from that state instead.
+      return [...entries];
   }
 }
 

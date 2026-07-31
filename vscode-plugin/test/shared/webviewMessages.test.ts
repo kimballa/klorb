@@ -144,6 +144,8 @@ describe('parseHostMessage', () => {
           },
         ],
       },
+      { type: 'workspaceFiles', files: ['src/App.tsx', 'README.md'] },
+      { type: 'workspaceFiles', files: [] },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -290,6 +292,8 @@ describe('parseHostMessage', () => {
         entries: [{ kind: 'toolCall', callId: 'c1', status: 'running', title: 'x' }],
       })
     ).toBeUndefined();
+    expect(parseHostMessage({ type: 'workspaceFiles' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'workspaceFiles', files: ['ok', 42] })).toBeUndefined();
   });
 });
 
