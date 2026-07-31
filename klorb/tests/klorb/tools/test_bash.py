@@ -341,7 +341,7 @@ def test_omitted_shell_lifetime_runs_command_scoped(
     assert "terminal_alive" not in result
 
 
-# --- network-command domain scanning (bashDomains, Component 3) ---
+# --- network-command domain scanning (bashDomains) ---
 
 
 def test_network_command_domains_recognizes_urls_and_bare_hosts() -> None:
@@ -405,8 +405,9 @@ def test_non_literal_network_target_still_escalates_via_existing_forced_ask_path
     tmp_path: Path,
 ) -> None:
     """A non-literal argument on a recognized network command (`curl "$URL"`) already escalates
-    to "ask" via the existing non-literal-token ForcedAskReason path -- Component 3 only adds a
-    *more specific* domain-typed ask for the literal case, it doesn't change this one."""
+    to "ask" via the existing non-literal-token ForcedAskReason path -- the network-command
+    scanner only adds a *more specific* domain-typed ask for the literal case, it doesn't change
+    this one."""
     context = _context(tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]))
     tool = BashTool(context)
     with pytest.raises(MultiPermissionAskRequired) as exc_info:
@@ -1107,11 +1108,10 @@ def test_persistent_sandbox_refuses_to_rebuild_over_live_background_jobs(
 
 requires_bwrap_and_internet = requires_bwrap
 """Alias documenting *why* these particular `requires_bwrap` tests are opt-in: unlike the rest of
-the sandboxed-execution section, they also need real outbound internet access to pypi.org (the
-same live target the plan's own testing-strategy section names), since the whole point is
-proving a real HTTPS request reaches the real internet through the real relay stub + `ProxyBackend`
-running inside a real `bwrap` sandbox -- nothing about them is mockable without losing exactly
-what they're meant to catch."""
+the sandboxed-execution section, they also need real outbound internet access to pypi.org, since
+the whole point is proving a real HTTPS request reaches the real internet through the real relay
+stub + `ProxyBackend` running inside a real `bwrap` sandbox -- nothing about them is mockable
+without losing exactly what they're meant to catch."""
 
 
 @requires_bwrap_and_internet
@@ -1138,9 +1138,9 @@ def test_sandboxed_curl_reaches_allowed_domain_through_socks5_proxy(
 ) -> None:
     _use_real_sandbox(monkeypatch)
     # bashDomains must allow both the real target (pypi.org) and the explicit --proxy address
-    # itself (127.0.0.1) -- Component 3's scanner has no notion of "this argument names the
-    # proxy, not the request target", so it correctly flags both as literal domains this command
-    # names.
+    # itself (127.0.0.1) -- the network-command scanner has no notion of "this argument names
+    # the proxy, not the request target", so it correctly flags both as literal domains this
+    # command names.
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),
         bash_domain_rules=DomainRules(allow=["pypi.org", "127.0.0.1"]))
@@ -1156,20 +1156,19 @@ def test_sandboxed_curl_to_denied_domain_fails_fast_and_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The proxy itself is the last line of defense for a domain the static pre-flight scanner
-    didn't (and structurally can't) catch -- one read from a config file, per the plan's "Fail
-    closed, fast, and observably" section -- and it fails fast (bounded wall-clock time, not the
-    full `tools.bash.timeout`) and reports the refusal via `blocked_domains`, never a generic
-    connection failure with no explanation. `curl --config <file>` (not a literal URL argument)
-    is used specifically so Component 3's own scanner has nothing to flag ahead of time -- this
-    test is about the proxy's own runtime enforcement, not the pre-flight ask. No real
-    reachability to 169.254.169.254 is needed: the proxy refuses before ever attempting to dial
-    out."""
+    didn't (and structurally can't) catch -- one read from a config file -- and it fails fast
+    (bounded wall-clock time, not the full `tools.bash.timeout`) and reports the refusal via
+    `blocked_domains`, never a generic connection failure with no explanation. `curl --config
+    <file>` (not a literal URL argument) is used specifically so the network-command scanner has
+    nothing to flag ahead of time -- this test is about the proxy's own runtime enforcement, not
+    the pre-flight ask. No real reachability to 169.254.169.254 is needed: the proxy refuses
+    before ever attempting to dial out."""
     _use_real_sandbox(monkeypatch)
     config_file = tmp_path / "curl.cfg"
     # https:// (not http://): a plain-http target would make curl send an ordinary forward-proxy
     # request to HTTP_PROXY rather than a CONNECT -- this proxy only implements CONNECT tunnel
-    # semantics (see klorb.sandbox.network's module docstring and the plan's "Why both protocols"
-    # section), so the domain-evaluation step this test is about only runs for a CONNECT.
+    # semantics (see klorb.sandbox.network's module docstring), so the domain-evaluation step
+    # this test is about only runs for a CONNECT.
     config_file.write_text('url = "https://169.254.169.254/latest/meta-data/"\n')
     context = _context(
         tmp_path, command_rules=CommandRules(allow=[["curl", "**"]]),

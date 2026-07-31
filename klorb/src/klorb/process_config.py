@@ -196,7 +196,8 @@ DEFAULT_BASH_NETWORK_ENABLED = True
 domain-gated network-egress proxy at all (`klorb.sandbox.network`); `False` is a full escape
 hatch, mirroring `bash_risk_classifier_enabled`: the sandbox reverts to today's unconditional
 `--unshare-net`-denies-everything behavior, no proxy/relay stood up. See
-docs/plans/archive/018-bash-network-egress-socks-proxy.md."""
+docs/specs/bash-tool-and-command-permissions.md's "Network egress (domain-gated proxy)"
+section."""
 
 DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS = [
     "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
@@ -205,8 +206,19 @@ DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS = [
 """Default for `ProcessConfig.bash_network_recognized_clients` — the argv0 allowlist
 `BashTool._classify`'s network-command scanner treats as "this command makes outbound network
 calls, so scan its literal arguments for a target domain." See
-docs/plans/archive/018-bash-network-egress-socks-proxy.md's "Component 3" for why `ssh`/`scp`/
-`rsync` are deliberately excluded."""
+docs/specs/bash-tool-and-command-permissions.md's "Pre-flight scanning" section for why
+`ssh`/`scp`/`rsync` are deliberately excluded."""
+
+DEFAULT_BASH_NETWORK_SOCKS_PORT = 10800
+"""Default for `ProcessConfig.bash_network_socks_port` — the fixed loopback port
+`klorb.sandbox.network`'s in-sandbox relay stub listens on for SOCKS5 (`ALL_PROXY`) traffic.
+Adjustable in case something else on the host is already listening on this port."""
+
+DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT = 10801
+"""Default for `ProcessConfig.bash_network_http_connect_port` — the fixed loopback port
+`klorb.sandbox.network`'s in-sandbox relay stub listens on for HTTP CONNECT (`HTTP_PROXY`/
+`HTTPS_PROXY`) traffic. Adjustable in case something else on the host is already listening on
+this port."""
 
 DEFAULT_WEB_FETCH_TIMEOUT_SECONDS = 120.0
 """Default wall-clock seconds `WebFetch` lets an HTTP request run before timing out — see
@@ -265,12 +277,11 @@ headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md an
 absent: the operating role is set by code (defaulting to the operator role), never by a
 config file — see docs/specs/roles-and-system-prompts.md.
 `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`webDomains`/
-`bashDomains`/`shareEnv`/`setEnv` are also deliberately absent — `readDirs`/`writeDirs`/
-`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`webDomains`/`bashDomains`/`shareEnv` are
-merged by list concatenation and `setEnv` merges key-by-key (a later layer's value for the same
-key replaces an earlier layer's), none of them the 1:1 scalar replacement `_route_keys()`
-implements — so `load_process_config()` handles all nine separately, ahead of `_route_keys()` —
-see docs/specs/permissions.md and docs/specs/skills.md and
+`bashDomains`/`shareEnv`/`setEnv` are also deliberately absent — lists and maps like `readDirs`
+and `shareEnv` are merged (by list concatenation, or key-by-key for `setEnv`, where a later
+layer's value for the same key replaces an earlier layer's) rather than the 1:1 scalar
+replacement `_route_keys()` implements, so `load_process_config()` handles all nine separately,
+ahead of `_route_keys()` — see docs/specs/permissions.md and docs/specs/skills.md and
 docs/specs/bash-tool-and-command-permissions.md. `workspace` is deliberately absent too:
 it has no on-disk key at all, by design — see `SessionConfig.workspace`/
 docs/specs/projects-and-trust.md — a project must never be able to grant itself trust via its
@@ -308,6 +319,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.riskClassifier.historySize": "bash_risk_classifier_history_size",
     "tools.bash.network.enabled": "bash_network_enabled",
     "tools.bash.network.recognizedClients": "bash_network_recognized_clients",
+    "tools.bash.network.socksPort": "bash_network_socks_port",
+    "tools.bash.network.httpConnectPort": "bash_network_http_connect_port",
     "tools.webFetch.timeout": "web_fetch_timeout_seconds",
     "tools.webFetch.connectTimeout": "web_fetch_connect_timeout_seconds",
     "tools.webFetch.spillBytes": "web_fetch_spill_bytes",
@@ -434,11 +447,15 @@ class ProcessConfig(BaseModel):
     bash_network_recognized_clients: list[str] = Field(
         default_factory=lambda: list(DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS))
     """See `DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS`. A top-level (not `sessionDefaults`) key
-    like every other `tools.bash.*` setting, so — unlike `readDirs`/`writeDirs`/`webDomains`/
-    `bashDomains`/`shareEnv` — a later config layer's value replaces an earlier layer's outright
-    rather than concatenating with it, the same 1:1 scalar-replacement `_route_keys()` gives
-    every other `PROCESS_KEY_MAP` entry; a project that wants to extend rather than replace the
-    packaged default list repeats it in full alongside its own additions."""
+    like every other `tools.bash.*` setting, so — unlike a list-merged `sessionDefaults` key such
+    as `readDirs` — a later config layer's value replaces an earlier layer's outright rather than
+    concatenating with it, the same 1:1 scalar-replacement `_route_keys()` gives every other
+    `PROCESS_KEY_MAP` entry; a project that wants to extend rather than replace the packaged
+    default list repeats it in full alongside its own additions."""
+    bash_network_socks_port: int = DEFAULT_BASH_NETWORK_SOCKS_PORT
+    """See `DEFAULT_BASH_NETWORK_SOCKS_PORT`."""
+    bash_network_http_connect_port: int = DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT
+    """See `DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT`."""
     web_fetch_timeout_seconds: float = DEFAULT_WEB_FETCH_TIMEOUT_SECONDS
     """Maximum wall-clock seconds `WebFetch` lets an HTTP request run before timing out.
     See `tools.webFetch.timeout`."""
@@ -666,10 +683,9 @@ def process_config_to_disk_dict(process_config: ProcessConfig) -> dict[str, Any]
     """Convert a `ProcessConfig` back to the on-disk config dict format.
 
     Only includes keys that are readable from config files -- the keys in
-    `SESSION_KEY_MAP`, `PROCESS_KEY_MAP`, and the permission-rule keys
-    (`readDirs`, `writeDirs`, `readFiles`, `writeFiles`, `commandRules`,
-    `skillRules`, `webDomains`, `bashDomains`, `shareEnv`, `setEnv`). Output keys use dotted camelCase
-    names matching the on-disk `klorb-config.json` format.
+    `SESSION_KEY_MAP`, `PROCESS_KEY_MAP`, and the permission-rule keys like `readDirs` and
+    `bashDomains`. Output keys use dotted camelCase names matching the on-disk
+    `klorb-config.json` format.
 
     Permission-rule lists are serialized using the same format the grant
     machinery uses when writing back to config files.

@@ -190,8 +190,8 @@ class PersistentShell:
         self, argv: list[str], env: dict[str, str], cwd: str,
         sandbox_snapshot: "frozenset[Path] | None" = None,
         networking: SandboxNetworking | None = None,
-        pass_fds: tuple[int, ...] = (),
     ) -> None:
+        pass_fds = () if networking is None else (networking.sandbox_fd,)
         self.process = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, cwd=cwd, start_new_session=True, text=True, bufsize=1, pass_fds=pass_fds)
@@ -207,10 +207,7 @@ class PersistentShell:
         self.networking = networking
         """This shell's live `klorb.sandbox.network.SandboxNetworking` (the network-egress proxy
         backend + relay-stub wiring — see `BashTool._start_sandbox_networking`), or `None` when
-        the shell is unsandboxed or `tools.bash.network.enabled` is `False`. Closed exactly once,
-        in `_mark_dead()`, whichever path (`kill()` or an EOF-detected death in `_run_raw`)
-        actually flips `alive` to `False` first — a fresh one is created for every reconcile-on-
-        grow rebuild (`BashTool._rebuild_persistent_shell`), same as `sandbox_snapshot`."""
+        the shell is unsandboxed or `tools.bash.network.enabled` is `False`."""
         self.alive = True
         self._queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
         assert self.process.stdout is not None
@@ -601,9 +598,11 @@ def _spill(path: Path, spill_bytes: int) -> tuple[str | None, str | None]:
     return None, str(path)
 
 
-_GIT_NETWORK_SUBCOMMANDS = frozenset({"clone", "pull", "push", "fetch", "ls-remote"})
-_GO_NETWORK_SUBCOMMANDS = frozenset({"get", "install"})
-_CARGO_NETWORK_SUBCOMMANDS = frozenset({"add", "install", "build"})
+_CMDS_WITH_NETWORK_SUBCOMMANDS: dict[str, frozenset[str]] = {
+    "git": frozenset({"clone", "pull", "push", "fetch", "ls-remote"}),
+    "go": frozenset({"get", "install"}),
+    "cargo": frozenset({"add", "install", "build"}),
+}
 """Which subcommand(s) of `git`/`go`/`cargo` actually reach the network — these three, unlike
 every other entry `tools.bash.network.recognizedClients` names, are used constantly for purely
 local operations (`git status`, `go build` against an already-vendored module cache, `cargo
@@ -643,33 +642,27 @@ def _extract_literal_domain(token: str) -> str | None:
 
 
 def _bash_network_scan_targets(argv: list[str]) -> list[str] | None:
-    """The slice of `argv` (excluding `argv0`) Component 3 should actually scan for a literal
+    """The slice of `argv` (excluding `argv0`) that should actually be scanned for a literal
     domain, or `None` if this particular invocation of a recognized network client isn't
-    network-shaped at all -- only `git`/`go`/`cargo` are subcommand-gated (see
-    `_GIT_NETWORK_SUBCOMMANDS` and friends); every other recognized client has every non-flag
-    argument scanned, since virtually any of them could be a URL for that kind of tool."""
+    network-shaped at all -- only commands in `_CMDS_WITH_NETWORK_SUBCOMMANDS` are
+    subcommand-gated; every other recognized client has every non-flag argument scanned, since
+    virtually any of them could be a URL for that kind of tool."""
     argv0 = argv[0]
-    if argv0 == "git":
-        if len(argv) < 2 or argv[1] not in _GIT_NETWORK_SUBCOMMANDS:
-            return None
-        return argv[2:]
-    if argv0 == "go":
-        if len(argv) >= 2 and argv[1] in _GO_NETWORK_SUBCOMMANDS:
+    subcommands = _CMDS_WITH_NETWORK_SUBCOMMANDS.get(argv0)
+    if subcommands is not None:
+        if len(argv) >= 2 and argv[1] in subcommands:
             return argv[2:]
-        if len(argv) >= 3 and argv[1] == "mod" and argv[2] == "download":
+        # `go mod download` is a two-token subcommand, not a single entry `subcommands` can name.
+        if argv0 == "go" and len(argv) >= 3 and argv[1] == "mod" and argv[2] == "download":
             return argv[3:]
         return None
-    if argv0 == "cargo":
-        if len(argv) < 2 or argv[1] not in _CARGO_NETWORK_SUBCOMMANDS:
-            return None
-        return argv[2:]
     return argv[1:]
 
 
 def _network_command_domains(argv: list[str], recognized_clients: frozenset[str]) -> list[str]:
-    """Every distinct literal domain Component 3 finds in `argv`, in first-seen order, or `[]` if
-    `argv0` isn't a recognized network client (`tools.bash.network.recognizedClients`) or none of
-    its scanned arguments look like a domain at all. A `--flag=value` token is scanned both as a
+    """Every distinct literal domain found in `argv`, in first-seen order, or `[]` if `argv0`
+    isn't a recognized network client (`tools.bash.network.recognizedClients`) or none of its
+    scanned arguments look like a domain at all. A `--flag=value` token is scanned both as a
     whole (in case the value itself is the whole token, e.g. a bare positional URL) and by its
     `value` half, so `--index-url=https://mirror.example.com/simple` is caught the same as a
     space-separated `--index-url https://mirror.example.com/simple` would be."""
@@ -740,6 +733,8 @@ class BashTool(InterruptibleTool):
         self._network_enabled = context.process_config.bash_network_enabled
         self._network_recognized_clients = frozenset(
             context.process_config.bash_network_recognized_clients)
+        self._network_socks_port = context.process_config.bash_network_socks_port
+        self._network_http_connect_port = context.process_config.bash_network_http_connect_port
 
     def name(self) -> str:
         return "Bash"
@@ -1003,8 +998,14 @@ class BashTool(InterruptibleTool):
         (`sys.executable`'s parent), on top of the ordinary `PATH`-derived top-up binds — so the
         in-sandbox network-egress relay stub (`klorb.sandbox.network`, launched with this same
         interpreter — see `_start_sandbox_networking`) is always reachable inside the sandbox
-        regardless of whether that interpreter's own directory happens to be on `PATH`."""
-        interpreter_dir = Path(sys.executable).resolve().parent
+        regardless of whether that interpreter's own directory happens to be on `PATH`.
+        Deliberately *not* resolved (symlinks followed): the relay stub is launched with the
+        literal, unresolved `sys.executable` string (see `start_sandbox_networking`), so it's
+        that literal path's own directory that must be bound, not its eventual symlink target's
+        -- a venv's `python3` is commonly a symlink chain ending outside the venv's own `bin/`,
+        and binding only the resolved target's directory leaves the literal invoked path
+        unreachable."""
+        interpreter_dir = Path(sys.executable).parent
         return build_bwrap_argv(
             workspace_root=self.context.session_config.workspace.path.resolve(),
             home=home, env=env, dirs=self._compute_sandbox_dirs(home),
@@ -1020,7 +1021,9 @@ class BashTool(InterruptibleTool):
         has unrestricted network access)."""
         if not self._network_enabled:
             return None
-        return start_sandbox_networking(self.context.session_config, sys.executable)
+        return start_sandbox_networking(
+            self.context.session_config, sys.executable,
+            self._network_socks_port, self._network_http_connect_port)
 
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()
@@ -1044,18 +1047,16 @@ class BashTool(InterruptibleTool):
             argv = self._bwrap_prefix(sandbox_env, Path(home)) + inner_argv
         else:
             argv = inner_argv
-        pass_fds = () if networking is None else (networking.sandbox_fd,)
 
         try:
-            return self._execute_inner(
-                command, argv, env, home, workspace_root, pass_fds, networking)
+            return self._execute_inner(command, argv, env, home, workspace_root, networking)
         finally:
             if networking is not None:
                 networking.close()
 
     def _execute_inner(
         self, command: str, argv: list[str], env: dict[str, str], home: str,
-        workspace_root: Path, pass_fds: tuple[int, ...], networking: SandboxNetworking | None,
+        workspace_root: Path, networking: SandboxNetworking | None,
     ) -> dict[str, Any]:
         """The body of `_execute()` proper, split out so `_execute()` itself can wrap it in a
         `try`/`finally` that unconditionally closes `networking` (if any) on every exit path —
@@ -1093,7 +1094,8 @@ class BashTool(InterruptibleTool):
                 # process group leader (pgid == pid), which the timeout-kill path below relies on.
                 process = subprocess.Popen(
                     argv, stdin=subprocess.DEVNULL, stdout=stdout_f, stderr=stderr_f,
-                    env=env, cwd=str(workspace_root), start_new_session=True, pass_fds=pass_fds)
+                    env=env, cwd=str(workspace_root), start_new_session=True,
+                    pass_fds=() if networking is None else (networking.sandbox_fd,))
             except FileNotFoundError as exc:
                 # stdout_f/stderr_f are still open here (this `with` block's __exit__ hasn't run
                 # yet). Safe on POSIX regardless: unlink() only removes a directory entry, not the
@@ -1107,6 +1109,9 @@ class BashTool(InterruptibleTool):
             # fd; this process's own copy is no longer needed, and must be released for
             # ProxyBackend's recv_fds() to ever see EOF once the sandboxed process actually dies
             # (a lingering open copy here would keep the control channel looking "live" forever).
+            # No try/finally needed around this call: nothing between the Popen() above and here
+            # can raise, and any other exception from Popen() itself is still caught by
+            # `_execute()`'s own `try`/`finally`, whose `networking.close()` releases this fd too.
             if networking is not None:
                 networking.release_sandbox_fd()
 
@@ -1233,15 +1238,21 @@ class BashTool(InterruptibleTool):
             argv = self._bwrap_prefix(sandbox_env, Path(home)) + [self._bash_command]
             snapshot: frozenset[Path] | None = allowed_dir_snapshot(
                 self._compute_sandbox_dirs(Path(home)))
-            pass_fds = () if networking is None else (networking.sandbox_fd,)
         else:
             argv = [self._bash_command]
             snapshot = None
             networking = None
-            pass_fds = ()
-        shell = PersistentShell(
-            argv, env, str(workspace_root), sandbox_snapshot=snapshot, networking=networking,
-            pass_fds=pass_fds)
+        try:
+            shell = PersistentShell(
+                argv, env, str(workspace_root), sandbox_snapshot=snapshot, networking=networking)
+        except Exception:
+            # PersistentShell's own subprocess.Popen() is what could raise here; nothing has
+            # taken ownership of `networking` yet in that case, so this method must close it
+            # itself rather than leaking it -- unlike the rest of this method's cleanup, which
+            # `PersistentShell._mark_dead()` takes over once construction succeeds.
+            if networking is not None:
+                networking.close()
+            raise
         if networking is not None:
             # The shell process now has its own fork-inherited copy of the control-channel fd --
             # see the matching comment in _execute_inner for why this process's own copy must be

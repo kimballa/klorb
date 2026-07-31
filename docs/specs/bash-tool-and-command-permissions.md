@@ -715,7 +715,9 @@ before this feature existed.
   "tools.bash.network.recognizedClients": [
     "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
     "go", "cargo", "mvn", "nc", "ncat", "telnet", "http", "https"
-  ]
+  ],
+  "tools.bash.network.socksPort": 10800,
+  "tools.bash.network.httpConnectPort": 10801
 }
 ```
 

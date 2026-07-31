@@ -4,10 +4,9 @@ proxy backend (`ProxyBackend`) reachable only from inside that one sandbox's own
 loopback, via a small in-sandbox relay stub that hands off each accepted connection's raw fd to
 this process over a `socketpair()` control channel established before the sandbox is launched.
 
-See docs/plans/archive/018-bash-network-egress-socks-proxy.md for the full design (the
-"Architecture" section in particular), docs/specs/bash-tool-and-command-permissions.md's "Network
-egress (domain-gated proxy)" section for the current-state description this module implements,
-and docs/adrs/cross-sandbox-net-namespace-via-socketpair-fd-passing.md for why fd-passing over a
+See docs/specs/bash-tool-and-command-permissions.md's "Network egress (domain-gated proxy)"
+section for the current-state design this module implements, and
+docs/adrs/cross-sandbox-net-namespace-via-socketpair-fd-passing.md for why fd-passing over a
 `socketpair()` is the mechanism that gets one end of a live channel across the sandbox's
 `--unshare-net` boundary in the first place.
 
@@ -31,13 +30,13 @@ a real HTTP response) rather than a `CONNECT` — only an `https://` target (or 
 `--proxytunnel`-style override) makes a client `CONNECT` first. `ProxyBackend` never implements
 forward-proxy request/response relaying, only `CONNECT` tunneling (see `_read_http_connect_
 request`'s method check), matching this module's `CONNECT`-only, never-decrypts-the-tunnel
-posture (see the plan's "Why both protocols, not SOCKS alone" section) — a plain-`http://`
-request against this listener gets no reply at all and the client sees a connection failure, not
-a domain-gated refusal. In practice this is a narrow gap: `pip`/`npm`/`git`/registry traffic is
-HTTPS-only today, and `ALL_PROXY`'s SOCKS5 listener has no such restriction (SOCKS5 is
-transport-agnostic once a domain is approved).
+posture — a plain-`http://` request against this listener gets no reply at all and the client
+sees a connection failure, not a domain-gated refusal. In practice this is a narrow gap:
+`pip`/`npm`/`git`/registry traffic is HTTPS-only today, and `ALL_PROXY`'s SOCKS5 listener has no
+such restriction (SOCKS5 is transport-agnostic once a domain is approved).
 """
 
+import importlib.resources
 import logging
 import os
 import shlex
@@ -47,25 +46,24 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from klorb.permissions.domain_access import evaluate_domain
+from klorb.process_config import DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT, DEFAULT_BASH_NETWORK_SOCKS_PORT
 from klorb.session import SessionConfig
 
 logger = logging.getLogger(__name__)
 
 PROXY_LOOPBACK_HOST = "127.0.0.1"
-SOCKS_LISTEN_PORT = 10800
-HTTP_CONNECT_LISTEN_PORT = 10801
-"""Fixed ports the in-sandbox relay stub listens on, inside the sandbox's own private loopback
-(`bwrap --unshare-net` gives every sandboxed command a fresh, isolated `lo` — see the "Why a
-namespace-crossing relay is required at all" section of the plan cited in this module's
-docstring), so there is no possibility of colliding with a real port on the host or in another
-concurrently-running sandbox. Two separate fixed ports rather than one multiplexed port, matching
-the plan's "Why both protocols, not SOCKS alone" section — v1 keeps SOCKS5 and HTTP CONNECT on
-distinct ports rather than sniffing the first byte to multiplex one."""
+"""Loopback address the in-sandbox relay stub binds its two listeners on, inside the sandbox's
+own private loopback (`bwrap --unshare-net` gives every sandboxed command a fresh, isolated
+`lo`), so there is no possibility of colliding with a real port on the host or in another
+concurrently-running sandbox."""
 
-CTRL_FD_ENV_VAR = "KLORB_SANDBOX_CTRL_FD"
-"""Env var the relay stub reads its own end of the control-channel `socketpair()` from — set via
-`SandboxNetworking.env_vars`, which `BashTool` folds into the sandbox's `--setenv` set alongside
-the ordinary `build_bash_env()` dict."""
+_RELAY_STUB_RESOURCE_NAME = "relay_stub.py"
+_RELAY_STUB_SOURCE = (
+    importlib.resources.files("klorb.resources").joinpath(_RELAY_STUB_RESOURCE_NAME).read_text())
+"""Source for the in-sandbox relay stub, packaged as `klorb.resources.relay_stub` and loaded
+once at import time -- see that module's own docstring. Written to a temp file and run from
+there (`_bootstrap_script()`), rather than passed as a `python3 -c` argument, so embedding it
+inside a bash script string needs no shell-quoting of the Python source itself."""
 
 _HANDSHAKE_TIMEOUT_SECONDS = 15.0
 """How long `ProxyBackend` waits for a SOCKS5 greeting/request or an HTTP CONNECT request line
@@ -84,64 +82,21 @@ _RELAY_STUB_FILENAME = "/tmp/.klorb-relay-stub.py"
 _READY_FIFO_PATH = "/tmp/.klorb-relay-ready"
 _RELAY_HEREDOC_DELIM = "KLORB_RELAY_STUB_EOF"
 
-_RELAY_STUB_SOURCE = f"""\
-import os, socket, threading
 
-_ctrl = socket.socket(fileno=int(os.environ[{CTRL_FD_ENV_VAR!r}]))
-_send_lock = threading.Lock()
-
-
-def _listen(port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(({PROXY_LOOPBACK_HOST!r}, port))
-    s.listen(128)
-    return s
-
-
-def _accept_loop(listener, tag):
-    while True:
-        try:
-            conn, _addr = listener.accept()
-        except OSError:
-            return
-        try:
-            with _send_lock:
-                socket.send_fds(_ctrl, [tag], [conn.fileno()])
-        except OSError:
-            pass
-        conn.close()
-
-
-_socks_listener = _listen({SOCKS_LISTEN_PORT})
-_http_listener = _listen({HTTP_CONNECT_LISTEN_PORT})
-threading.Thread(target=_accept_loop, args=(_socks_listener, b"S"), daemon=True).start()
-threading.Thread(target=_accept_loop, args=(_http_listener, b"H"), daemon=True).start()
-
-with open({_READY_FIFO_PATH!r}, "w") as _f:
-    _f.write("1")
-
-threading.Event().wait()
-"""
-"""Source for the in-sandbox relay stub (Component 1 of the plan cited in this module's
-docstring) -- a small, dependency-free script run with the *klorb process's own* Python
-interpreter (`sys.executable`, reachable inside the sandbox via a PATH-derived top-up bind --
-see `klorb.tools.bash._bwrap_prefix`), never a `python3` klorb happens to find on the sandboxed
-`PATH`, so `socket.send_fds`'s Python-3.9+ requirement is always satisfied. Written to a temp
-file and run from there (`_bootstrap_script()`), rather than passed as a `python3 -c` argument,
-so embedding it inside a bash script string needs no shell-quoting of the Python source itself."""
-
-
-def _bootstrap_script(python_executable: str) -> str:
+def _bootstrap_script(
+    python_executable: str, ctrl_fd: int, socks_port: int, http_connect_port: int,
+) -> str:
     """The bash snippet `BashTool` runs as the first step of a sandboxed shell's life (before the
     model's own command, for a one-shot invocation; once, at spawn, for a persistent shell): write
     `_RELAY_STUB_SOURCE` to a file via a quoted heredoc (so bash performs no `$`/backtick
-    expansion on its contents), launch it in the background with `python_executable`, then block
-    on reading `_READY_FIFO_PATH` -- a POSIX FIFO `open()` for reading blocks until a writer opens
-    it, which the relay stub only does once both its listeners are actually bound (see
-    `_RELAY_STUB_SOURCE`) -- so the real command never starts racing against a relay that isn't
-    listening yet. The FIFO must be created (`mkfifo`) before the relay is launched, since opening
-    a not-yet-existing path is just an ordinary error, not a wait-for-creation.
+    expansion on its contents), launch it in the background with `python_executable` and its
+    positional arguments (`ctrl_fd`, the loopback host, `socks_port`, `http_connect_port`, and
+    the ready-FIFO path -- see `klorb.resources.relay_stub`), then block on reading
+    `_READY_FIFO_PATH` -- a POSIX FIFO `open()` for reading blocks until a writer opens it, which
+    the relay stub only does once both its listeners are actually bound -- so the real command
+    never starts racing against a relay that isn't listening yet. The FIFO must be created
+    (`mkfifo`) before the relay is launched, since opening a not-yet-existing path is just an
+    ordinary error, not a wait-for-creation.
 
     The relay is `disown`ed right after backgrounding: without it, a persistent shell's `jobs -p`
     would list the relay forever, indistinguishable from a real model-started background job --
@@ -162,29 +117,32 @@ def _bootstrap_script(python_executable: str) -> str:
     than, say, `set +m` for the whole shell) leaves a real model-started background job's own
     `[N] <pid>` announcement intact, exactly as it prints today.
     """
-    return (
-        f"cat > {_RELAY_STUB_FILENAME} <<'{_RELAY_HEREDOC_DELIM}'\n"
-        f"{_RELAY_STUB_SOURCE}"
-        f"{_RELAY_HEREDOC_DELIM}\n"
-        f"mkfifo {_READY_FIFO_PATH}\n"
-        f"{{ {shlex.quote(python_executable)} {_RELAY_STUB_FILENAME} & }} 2>/dev/null\n"
-        f"disown\n"
-        f"read -r _klorb_relay_ready < {_READY_FIFO_PATH}\n"
-        f"rm -f {_READY_FIFO_PATH}\n"
-    )
+    return f"""\
+cat > {_RELAY_STUB_FILENAME} <<'{_RELAY_HEREDOC_DELIM}'
+{_RELAY_STUB_SOURCE}{_RELAY_HEREDOC_DELIM}
+mkfifo {_READY_FIFO_PATH}
+{{ {shlex.quote(python_executable)} {_RELAY_STUB_FILENAME} \
+{ctrl_fd} {PROXY_LOOPBACK_HOST} {socks_port} {http_connect_port} {_READY_FIFO_PATH} & }} 2>/dev/null
+disown
+read -r _klorb_relay_ready < {_READY_FIFO_PATH}
+rm -f {_READY_FIFO_PATH}
+"""
 
 
-def proxy_env_vars() -> dict[str, str]:
+def proxy_env_vars(
+    socks_port: int = DEFAULT_BASH_NETWORK_SOCKS_PORT,
+    http_connect_port: int = DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT,
+) -> dict[str, str]:
     """The `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (and lowercase forms) env vars pointing at the
-    relay's two fixed loopback ports, plus `NO_PROXY`/`no_proxy` forced empty so a value inherited
-    from `shareEnv`/`setEnv` can't punch a bypass hole -- see the plan's "Why both protocols, not
-    SOCKS alone" section for why both an HTTP CONNECT proxy (`HTTP_PROXY`/`HTTPS_PROXY` --
-    understood natively by `pip`/`npm`/etc. with no optional dependency) and a SOCKS5 one
-    (`ALL_PROXY`, `socks5h://` so DNS resolution happens host-side) are both stood up. Only
-    meaningful once folded into a sandbox's own `--setenv` set -- see `SandboxNetworking.env_vars`
-    and `klorb.tools.bash.build_bash_env`."""
-    http_url = f"http://{PROXY_LOOPBACK_HOST}:{HTTP_CONNECT_LISTEN_PORT}"
-    socks_url = f"socks5h://{PROXY_LOOPBACK_HOST}:{SOCKS_LISTEN_PORT}"
+    relay's two loopback ports, plus `NO_PROXY`/`no_proxy` forced empty so a value inherited from
+    `shareEnv`/`setEnv` can't punch a bypass hole -- both an HTTP CONNECT proxy (`HTTP_PROXY`/
+    `HTTPS_PROXY` -- understood natively by `pip`/`npm`/etc. with no optional dependency) and a
+    SOCKS5 one (`ALL_PROXY`, `socks5h://` so DNS resolution happens host-side) are stood up, on
+    two separate ports rather than one multiplexed port. Only meaningful once folded into a
+    sandbox's own `--setenv` set -- see `SandboxNetworking.env_vars` and
+    `klorb.tools.bash.build_bash_env`."""
+    http_url = f"http://{PROXY_LOOPBACK_HOST}:{http_connect_port}"
+    socks_url = f"socks5h://{PROXY_LOOPBACK_HOST}:{socks_port}"
     return {
         "http_proxy": http_url, "HTTP_PROXY": http_url,
         "https_proxy": http_url, "HTTPS_PROXY": http_url,
@@ -197,11 +155,10 @@ class BlockedDomainRecorder:
     """Thread-safe, deduplicating collector for domains `ProxyBackend` refused during one
     sandboxed command's lifetime. `ProxyBackend`'s connection-handler threads call `record()`
     concurrently (a shell script can open several connections in parallel); `BashTool` reads
-    `domains` back once the command finishes, to populate its `blocked_domains` response field --
-    see the plan's "Fail closed, fast, and observably" section. A persistent shell's single
-    `SandboxNetworking` (and thus this recorder) outlives any one command, so `BashTool` calls
-    `reset()` immediately before each `run_command()` so one command's response never reports a
-    prior command's blocked domains."""
+    `domains` back once the command finishes, to populate its `blocked_domains` response field. A
+    persistent shell's single `SandboxNetworking` (and thus this recorder) outlives any one
+    command, so `BashTool` calls `reset()` immediately before each `run_command()` so one
+    command's response never reports a prior command's blocked domains."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -235,11 +192,23 @@ def _recv_exact(sock: socket.socket, count: int) -> bytes | None:
     return bytes(chunks)
 
 
+_SOCKS5_REP_SUCCEEDED = 0x00
+_SOCKS5_REP_NOT_ALLOWED_BY_RULESET = 0x02
+_SOCKS5_REP_CONNECTION_REFUSED = 0x05
+_SOCKS5_REP_COMMAND_NOT_SUPPORTED = 0x07
+_SOCKS5_REP_ADDRESS_TYPE_NOT_SUPPORTED = 0x08
+"""RFC 1928 `REP` status codes `_socks5_reply()` sends -- the SOCKS5 replies this proxy actually
+uses; RFC 1928 defines several more (general server failure, network/host unreachable, TTL
+expired) that no code path here ever has reason to send."""
+
+
 def _socks5_handshake(conn: socket.socket) -> bool:
     """Read a SOCKS5 greeting (RFC 1928 `VER`/`NMETHODS`/`METHODS`) and reply, accepting only the
-    no-auth method (`0x00`) -- see the plan's "No SOCKS/proxy auth is added" security note for why
-    no other method is offered. Returns whether the greeting was valid and no-auth was accepted;
-    `False` means the caller should give up on this connection without reading a request."""
+    no-auth method (`0x00`) -- no other method is ever offered, since this proxy's own
+    domain-gating is the only access control it needs; RFC 1928's username/password auth would
+    just be one more secret to manage for no additional protection. Returns whether the greeting
+    was valid and no-auth was accepted; `False` means the caller should give up on this
+    connection without reading a request."""
     header = _recv_exact(conn, 2)
     if header is None or header[0] != 0x05:
         return False
@@ -273,7 +242,7 @@ def _socks5_read_request(conn: socket.socket) -> tuple[str, int] | None:
         return None
     cmd, atyp = header[1], header[3]
     if cmd != 0x01:
-        _socks5_reply(conn, 0x07)  # command not supported -- BIND/UDP ASSOCIATE unsupported.
+        _socks5_reply(conn, _SOCKS5_REP_COMMAND_NOT_SUPPORTED)  # BIND/UDP ASSOCIATE unsupported.
         return None
     if atyp == 0x01:
         addr_bytes = _recv_exact(conn, 4)
@@ -294,7 +263,7 @@ def _socks5_read_request(conn: socket.socket) -> tuple[str, int] | None:
             return None
         host = socket.inet_ntop(socket.AF_INET6, addr_bytes)
     else:
-        _socks5_reply(conn, 0x08)  # address type not supported.
+        _socks5_reply(conn, _SOCKS5_REP_ADDRESS_TYPE_NOT_SUPPORTED)
         return None
     port_bytes = _recv_exact(conn, 2)
     if port_bytes is None:
@@ -367,17 +336,16 @@ def _relay_bidirectional(a: socket.socket, b: socket.socket) -> None:
 
 
 class ProxyBackend:
-    """The host-side half of one sandboxed command's network-egress proxy (Component 2 of the
-    plan cited in this module's docstring): owns the host end of the control-channel
-    `socketpair()`, receives each connection the in-sandbox relay stub accepts (via
-    `socket.recv_fds`, tagged `b"S"`/`b"H"` for which of the stub's two listeners it came from),
-    speaks just enough SOCKS5 or HTTP CONNECT to extract the target `host:port`, evaluates the
-    host against `session_config.bash_domain_rules` (read fresh on every connection, never
-    cached, so a mid-command grant takes effect on the very next connection -- see the plan's
-    "Reconcile-on-grow, extended to domains" section), and either relays bytes bidirectionally
-    (an `"allow"` verdict) or replies with a protocol-appropriate refusal and closes (`"deny"` or
-    unresolved `"ask"` -- both fail closed identically in v1; see the plan's "Fail closed, fast,
-    and observably" section for why a live ask isn't attempted here).
+    """The host-side half of one sandboxed command's network-egress proxy: owns the host end of
+    the control-channel `socketpair()`, receives each connection the in-sandbox relay stub
+    accepts (via `socket.recv_fds`, tagged `b"S"`/`b"H"` for which of the stub's two listeners it
+    came from), speaks just enough SOCKS5 or HTTP CONNECT to extract the target `host:port`,
+    evaluates the host against `session_config.bash_domain_rules` (read fresh on every
+    connection, never cached, so a mid-command grant takes effect on the very next connection),
+    and either relays bytes bidirectionally (an `"allow"` verdict) or replies with a
+    protocol-appropriate refusal and closes (`"deny"` or unresolved `"ask"` -- both fail closed
+    identically in v1, since there is no live-ask mechanism that could reach a proxy connection
+    mid-handshake).
     """
 
     def __init__(
@@ -452,13 +420,13 @@ class ProxyBackend:
         if self._evaluate(host) != "allow":
             logger.info("ProxyBackend refused SOCKS5 CONNECT to %s:%d (bashDomains)", host, port)
             self._on_blocked(host)
-            _socks5_reply(conn, 0x02)  # connection not allowed by ruleset.
+            _socks5_reply(conn, _SOCKS5_REP_NOT_ALLOWED_BY_RULESET)
             return
         outbound = self._connect(host, port)
         if outbound is None:
-            _socks5_reply(conn, 0x05)  # connection refused.
+            _socks5_reply(conn, _SOCKS5_REP_CONNECTION_REFUSED)
             return
-        _socks5_reply(conn, 0x00)
+        _socks5_reply(conn, _SOCKS5_REP_SUCCEEDED)
         conn.settimeout(None)
         try:
             _relay_bidirectional(conn, outbound)
@@ -503,6 +471,7 @@ class SandboxNetworking:
     env_vars: dict[str, str]
     bootstrap_script: str
     _sandbox_sock: socket.socket = field(repr=False)
+    _closed: bool = field(default=False, repr=False)
 
     def release_sandbox_fd(self) -> None:
         """Close this (klorb) process's own copy of the sandbox-side control-channel socket, once
@@ -518,21 +487,29 @@ class SandboxNetworking:
     def close(self) -> None:
         """End this sandbox's network-egress proxy entirely: release the sandbox-side fd (see
         `release_sandbox_fd`, a no-op if already released) and close the host-side control socket,
-        which stops `ProxyBackend`'s accept loop on its next `recv_fds()` call. Safe to call more
-        than once."""
+        which stops `ProxyBackend`'s accept loop on its next `recv_fds()` call. A no-op past the
+        first call, so callers never need to track whether they've already closed one of these."""
+        if self._closed:
+            return
+        self._closed = True
         self.release_sandbox_fd()
         self.backend.close()
 
 
 def start_sandbox_networking(
     session_config: SessionConfig, python_executable: str,
+    socks_port: int = DEFAULT_BASH_NETWORK_SOCKS_PORT,
+    http_connect_port: int = DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT,
 ) -> SandboxNetworking:
     """Create the control-channel `socketpair()`, start a live `ProxyBackend` listening on the
     host side, and return everything `BashTool` needs to wire the sandbox side of one live
     sandbox's network egress in. `python_executable` is the interpreter the in-sandbox relay stub
     is run with -- the klorb process's own (`sys.executable`), reached via a PATH-derived top-up
     bind (see `klorb.tools.bash._bwrap_prefix`), never a `python3` klorb happens to find on the
-    sandboxed `PATH` -- see `_RELAY_STUB_SOURCE`'s own docstring for why."""
+    sandboxed `PATH` -- see `klorb.resources.relay_stub`'s own docstring for why. `socks_port`/
+    `http_connect_port` come from `ProcessConfig.bash_network_socks_port`/
+    `bash_network_http_connect_port` (`tools.bash.network.socksPort`/`httpConnectPort`), so a
+    host on which those fixed loopback ports are already taken can move the relay elsewhere."""
     host_sock, sandbox_sock = socket.socketpair()
     os.set_inheritable(sandbox_sock.fileno(), True)
     recorder = BlockedDomainRecorder()
@@ -541,9 +518,9 @@ def start_sandbox_networking(
     logger.debug(
         "start_sandbox_networking: control socketpair host_fd=%d sandbox_fd=%d",
         host_sock.fileno(), sandbox_sock.fileno())
-    env_vars = dict(proxy_env_vars())
-    env_vars[CTRL_FD_ENV_VAR] = str(sandbox_sock.fileno())
     return SandboxNetworking(
         backend=backend, recorder=recorder, sandbox_fd=sandbox_sock.fileno(),
-        env_vars=env_vars, bootstrap_script=_bootstrap_script(python_executable),
+        env_vars=proxy_env_vars(socks_port, http_connect_port),
+        bootstrap_script=_bootstrap_script(
+            python_executable, sandbox_sock.fileno(), socks_port, http_connect_port),
         _sandbox_sock=sandbox_sock)

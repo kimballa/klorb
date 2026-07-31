@@ -1,16 +1,15 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.sandbox.network: `ProxyBackend`'s SOCKS5/HTTP CONNECT protocol handling,
 domain evaluation against `bash_domain_rules`, `BlockedDomainRecorder` bookkeeping, and the
-relay-stub/bootstrap-script generation. See
-docs/plans/archive/018-bash-network-egress-socks-proxy.md and
-docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section.
+relay-stub/bootstrap-script generation. See docs/specs/bash-tool-and-command-permissions.md's
+"Sandboxing" section.
 
 `ProxyBackend` itself never cares whether an accepted connection's fd came from a real TCP
 listener or anything else -- it just wraps it as a `socket.socket` and speaks the protocol over
 it. So these tests hand it one end of an ordinary `socket.socketpair()` in place of the in-sandbox
 relay stub's real TCP `accept()`, exactly the way `socket.send_fds`/`recv_fds` pass a real
 accepted connection's fd across the control channel -- no real TCP port, and no real `bwrap`
-sandbox, is needed to exercise Component 2 in isolation. End-to-end coverage through a real
+sandbox, is needed to exercise `ProxyBackend` in isolation. End-to-end coverage through a real
 `bwrap` sandbox and the actual relay stub lives in `tests/klorb/tools/test_bash.py`'s
 `requires_bwrap` section.
 """
@@ -162,7 +161,7 @@ def test_socks5_no_acceptable_auth_method_rejected() -> None:
     try:
         client = harness.open_client(b"S")
         # Offer only username/password auth (0x02) -- no-auth (0x00) is the only method
-        # ProxyBackend accepts (see the plan's "No SOCKS/proxy auth is added" security note).
+        # ProxyBackend accepts.
         client.sendall(bytes([0x05, 0x01, 0x02]))
         assert client.recv(2) == bytes([0x05, 0xFF])
         client.close()
@@ -295,14 +294,15 @@ def test_relay_stub_source_is_valid_python() -> None:
 
 
 def test_bootstrap_script_shape() -> None:
-    script = _bootstrap_script("/usr/bin/python3")
+    script = _bootstrap_script("/usr/bin/python3", 42, 10800, 10801)
     assert script.count(_RELAY_HEREDOC_DELIM) == 2
     assert "/usr/bin/python3" in script
     assert "mkfifo" in script
     assert "disown" in script
     assert "2>/dev/null" in script
+    assert " 42 127.0.0.1 10800 10801 " in script
 
 
 def test_bootstrap_script_quotes_interpreter_path_with_special_characters() -> None:
-    script = _bootstrap_script("/path with spaces/python3")
+    script = _bootstrap_script("/path with spaces/python3", 42, 10800, 10801)
     assert "'/path with spaces/python3'" in script

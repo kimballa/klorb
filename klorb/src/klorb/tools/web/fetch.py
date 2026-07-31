@@ -4,8 +4,7 @@ size-spilling mechanism that keeps oversized results out of the context window.
 
 Before fetching, the tool screens the target domain against a session-scoped `webDomains`
 permission table (`deny`/`ask`/`allow`), following the same pattern the existing
-`readDirs`/`writeDirs`/`commandRules`/`skillRules` tables use. `webDomains` is independent of
-`bashDomains`, the analogous table sandboxed `Bash` network egress consults — see
+`readDirs`/`writeDirs`/`commandRules`/`skillRules` tables use — see
 `klorb.session.SessionConfig.web_domain_rules`.
 
 The tool extends `InterruptibleTool` — network I/O can take a long time, and a
