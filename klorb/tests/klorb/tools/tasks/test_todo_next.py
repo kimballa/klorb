@@ -122,16 +122,25 @@ def test_returns_the_same_current_task_again_if_still_open(tmp_path: Path) -> No
 
 @requires_chainlink
 def test_advances_to_the_next_task_once_the_current_one_is_closed(tmp_path: Path) -> None:
+    """`TodoUpdate`'s close-time auto-advance (see docs/specs/chainlink-task-tracking.md's
+    "Auto-activation" section) does the picking itself -- a subsequent `TodoNext` call just
+    re-confirms whatever it already picked, the same as it would for any other already-current
+    task."""
     context = _context(tmp_path)
     first = TodoCreateTool(context).apply({"title": "First task"})
     second = TodoCreateTool(context).apply({"title": "Second task"})
     TodoNextTool(context).apply({})
-    TodoUpdateTool(context).apply({"id": first["id"], "close": True})
+
+    close_result = TodoUpdateTool(context).apply({"id": first["id"], "close": True})
+
+    assert close_result["next_task_id"] == second["id"]
+    assert context.session is not None
+    assert context.session.cur_chainlink_task_id == second["id"]
 
     result = TodoNextTool(context).apply({})
 
     assert result["task"]["id"] == second["id"]
-    assert "message" not in result
+    assert "message" in result
 
 
 @requires_chainlink

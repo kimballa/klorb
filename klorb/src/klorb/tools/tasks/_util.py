@@ -42,8 +42,8 @@ def standing_interjection_provider(
         return (
             f'Your current tracked task is #{task_id}: "{title}". Record a comment on it '
             "(TodoUpdate add_comment) whenever you make meaningful progress, learn something "
-            "new, or make a decision; close it (TodoUpdate close) once it's done and verified, "
-            "then call TodoNext for the next one."
+            "new, or make a decision; close it (TodoUpdate close) once it's done and verified -- "
+            "doing so automatically picks up whatever's next."
         )
 
     return provider
