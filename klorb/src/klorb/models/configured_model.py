@@ -21,6 +21,7 @@ class _ConfiguredModelData(BaseModel):
     name: str
     family: str | None = None
     model_version: str | None = None
+    release_date: str | None = None
     knowledge_cutoff: str | None = None
     settings: dict[str, Any] = {}
     capabilities: dict[str, Any] = {}
@@ -60,6 +61,9 @@ class ConfiguredModel(Model):
 
     def model_version(self) -> str | None:
         return self._data.model_version
+
+    def release_date(self) -> str | None:
+        return self._data.release_date
 
     def knowledge_cutoff(self) -> str | None:
         return self._data.knowledge_cutoff

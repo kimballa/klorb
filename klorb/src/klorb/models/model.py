@@ -72,6 +72,13 @@ class Model(ABC):
         unknown. See `family()`."""
         return None
 
+    def release_date(self) -> str | None:
+        """Return this model's release date as an ISO-8601 date string (e.g. `"2024-06-30"`), or
+        `None` if unknown/unpublished. Can be used as a stand-in for knowledge cutoff if
+        the latter is unspecified.
+        """
+        return None
+
     def knowledge_cutoff(self) -> str | None:
         """Return this model's training data knowledge cutoff date as an ISO-8601 date
         string (e.g. `"2024-06-30"`), or `None` if unknown/unpublished."""

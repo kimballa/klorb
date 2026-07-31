@@ -132,6 +132,9 @@
   up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
 * Ability to use vision models and incorporate screenshots / png+bmp files as prompt input.
+  * tokens ≈ (width_px × height_px) / 750
+  * downsampled to ~1.15 MP (1092x1092 for square)
+  * Supported models: Kimi k3, Kimi k2.7-Code, Sonnet 5, Qwen 3.7 Plus, GPT 5 Nano
 
 * Add more system interjections:
   * If the agent does *not* have a plan, after a while, start harrassing it to write down some

@@ -7,6 +7,7 @@
   "family": "kimi",
   "model_version": "3",
   "knowledge_cutoff": null,
+  "release_date": "2026-07-16",
   "settings": {},
   "capabilities": {
     "vision": true,

@@ -178,8 +178,12 @@ class SystemPrompt:
         metadata: dict[str, Any] = {"model": self._config.model}
         model = self._active_model()
         knowledge_cutoff = model.knowledge_cutoff() if model is not None else None
+        release_date = model.release_date() if model is not None else None
         if knowledge_cutoff is not None:
             metadata["knowledgeCutoff"] = knowledge_cutoff
+        elif release_date is not None:
+            # Model release date is a reasonable proxy for knowledge cutoff.
+            metadata["knowledgeCutoff"] = release_date
         metadata["config"] = {
             "compatibility.claudeMarkdown": (
                 self._process_config.compatibility_claude_markdown
