@@ -470,6 +470,11 @@ class OpenRouterApiProvider(ApiProvider):
         `reasoning`/`reasoning_details` fields -- the shape OpenRouter expects for replayed
         reasoning, letting the model continue from its own prior reasoning trace. When
         `drop_reasoning` is `True`, a `"thinking"` message's content is discarded entirely.
+
+        Every `"content"` value comes from `message.provider_content()` rather than
+        `message.content` directly, so a message carrying `fragments` (e.g. a user turn with
+        `@mention`ed file attachments -- see docs/specs/at-mention-file-inlining.md) sends its
+        structured content-part array to the API instead of the plain-text `content` field.
         """
         api_messages: list[ChatCompletionMessageParam] = []
         if system_prompt is not None:
@@ -485,7 +490,7 @@ class OpenRouterApiProvider(ApiProvider):
                 continue
             api_message: dict[str, Any]
             if message.role == "tool_use":
-                api_message = {"role": "assistant", "content": message.content or None}
+                api_message = {"role": "assistant", "content": message.provider_content() or None}
                 if message.tool_calls:
                     api_message["tool_calls"] = [
                         {
@@ -499,14 +504,15 @@ class OpenRouterApiProvider(ApiProvider):
                 api_messages.append(cast(ChatCompletionMessageParam, {
                     "role": "tool",
                     "tool_call_id": message.tool_call_id,
-                    "content": message.content,
+                    "content": message.provider_content(),
                 }))
                 continue
             elif message.role == "assistant":
-                api_message = {"role": "assistant", "content": message.content}
+                api_message = {"role": "assistant", "content": message.provider_content()}
             else:
                 api_messages.append(
-                    cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content}))
+                    cast(ChatCompletionMessageParam,
+                         {"role": message.role, "content": message.provider_content()}))
                 continue
             if pending_reasoning is not None:
                 if pending_reasoning.content:

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     # constructs one itself, so a type-checking-only import is enough, same as `ToolRegistry`
     # above.
     from klorb.process_config import ProcessConfig
+    from klorb.tools.util.read_file_core import ReadFileCore
     # `klorb.session` (this package's own `__init__.py`) assembles `Session` from this mixin,
     # so importing it for real here would be circular; needed only to `cast` `self` to
     # `Session` below, since `ToolRegistry.session` is typed against the assembled class, not
@@ -106,6 +107,10 @@ class SessionCoreMixin(SessionBase):
         thread it into `klorb.permissions.grant.apply_permission_grant` for a `"workspace"`/
         `"homedir"` grant's process-wide ripple — see that method and
         docs/adrs/session-applies-its-own-permission-grants.md."""
+        self._mention_read_file_core = self._create_mention_read_file_core(
+            process_config.mention_max_lines
+            if process_config is not None else self._default_mention_max_lines()
+        )
         self._thinking_token_budgets = (
             process_config.thinking_token_budgets if process_config is not None
             else THINKING_EFFORT_TOKEN_BUDGETS
@@ -246,6 +251,22 @@ class SessionCoreMixin(SessionBase):
         self._session_claimed = False
         """Whether this session currently owns a `sessions/<subdir>/` directory (holds its
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
+
+    @staticmethod
+    def _create_mention_read_file_core(max_lines: int) -> "ReadFileCore":
+        """Construct a `ReadFileCore` for @mention file inlining, deferring the import to avoid
+        a circular dependency through `klorb.tools.util` → `klorb.tools.setup_context` →
+        `klorb.process_config` → `klorb.session`."""
+        from klorb.tools.util.read_file_core import ReadFileCore
+        return ReadFileCore(max_lines)
+
+    @staticmethod
+    def _default_mention_max_lines() -> int:
+        """`DEFAULT_MENTION_MAX_LINES`, imported lazily to avoid the same circular dependency
+        `_create_mention_read_file_core` avoids -- `klorb.process_config` imports from
+        `klorb.session`, so a module-level import here would be circular."""
+        from klorb.process_config import DEFAULT_MENTION_MAX_LINES
+        return DEFAULT_MENTION_MAX_LINES
 
     @property
     def role(self) -> Role:

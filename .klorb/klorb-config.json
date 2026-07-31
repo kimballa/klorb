@@ -64,7 +64,8 @@
         ["markdownlint-cli2", "--config", "*", "*"],
         ["git", "log", "--oneline", "--all", "--", "*"],
         ["git", "log", "**"],
-        ["git", "-C", "*", "log", "--oneline", "-15", "--", "**"]
+        ["git", "-C", "*", "log", "--oneline", "-15", "--", "**"],
+        ["find", "/home/aaron/src/klorb/*", "-name", "*"]
       ]
     },
     "shareEnv": [

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from klorb import openrouter
-from klorb.message import Message
+from klorb.message import Message, MessageFragment
 from klorb.token_estimate import estimate_tokens
 
 
@@ -569,6 +569,33 @@ def test_build_api_messages_excludes_tool_defs_role_messages() -> None:
 
     _, kwargs = mock_client.chat.completions.create.call_args
     assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_build_api_messages_sends_fragments_when_message_has_them() -> None:
+    """A user `Message` carrying `fragments` (e.g. an `@mention`ed file attachment -- see
+    docs/specs/at-mention-file-inlining.md) sends its structured content-part array to the
+    provider instead of the plain-text `content` field."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    fragment_message = Message(
+        content="ignored plain text",
+        fragments=[
+            MessageFragment(type="text", text="Filename: f.txt\n\n1|hello"),
+            MessageFragment(type="text", text="what's in f.txt?"),
+        ],
+        role="user", num_tokens=0, processing_state="complete", timestamp=datetime.now())
+
+    provider.send_prompt([fragment_message], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"] == [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Filename: f.txt\n\n1|hello"},
+            {"type": "text", "text": "what's in f.txt?"},
+        ],
+    }]
 
 
 def test_build_api_messages_translates_tool_use_role_to_assistant_with_tool_calls() -> None:

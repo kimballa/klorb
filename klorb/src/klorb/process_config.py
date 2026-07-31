@@ -88,6 +88,10 @@ since a memory is harness-managed session-spanning notes, not a workspace file a
 redirect through; create and delete default to `"ask"` since those are less easily reversed
 (a created file needs an explicit follow-up `ForgetMemory`; a deleted one is simply gone)."""
 
+DEFAULT_MENTION_MAX_LINES = 500
+"""`@mention` file-inlining's per-file line cap default; the canonical source of this value --
+`klorb.session.mixins.mentions` reads `ProcessConfig.mention_max_lines` at runtime instead."""
+
 CONFIG_SCHEMA_NAME = "klorb-config"
 CONFIG_SCHEMA_VERSION = "1.0.0"
 CONFIG_FILENAME = "klorb-config.json"
@@ -292,6 +296,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "thinking.tokenBudgets": "thinking_token_budgets",
     "terminal.input.maxLines": "prompt_input_max_lines",
     "tools.readFile.maxLines": "read_file_max_lines",
+    "tools.@mention.maxLines": "mention_max_lines",
     "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "tools.grep.maxResults": "grep_max_results",
     "tools.grep.contextLines": "grep_context_lines",
@@ -358,6 +363,9 @@ class ProcessConfig(BaseModel):
     prompt_input_max_lines: int = DEFAULT_PROMPT_INPUT_MAX_LINES
     thinking_token_budgets: dict[ThinkingEffort, int] = dict(THINKING_EFFORT_TOKEN_BUDGETS)
     read_file_max_lines: int = DEFAULT_READ_FILE_MAX_LINES
+    mention_max_lines: int = DEFAULT_MENTION_MAX_LINES
+    """Per-file line cap for `@mention` file inlining in user prompts -- see
+    `klorb.session.mixins.mentions` and docs/specs/at-mention-file-inlining.md."""
     edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     grep_max_results: int = DEFAULT_GREP_MAX_RESULTS
     grep_context_lines: int = DEFAULT_GREP_CONTEXT_LINES

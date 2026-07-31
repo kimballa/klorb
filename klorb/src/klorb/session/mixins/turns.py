@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from klorb.api_provider import ProviderResponse, ResponseAborted
-from klorb.message import Message
+from klorb.message import Message, MessageFragment
 from klorb.session.constants import MAX_TOOL_CALL_ROUNDS, ToolCallLimitExceeded
 from klorb.session.events import TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
+from klorb.session.mixins.mentions import resolve_at_mentions
 from klorb.token_estimate import estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -376,6 +377,13 @@ class SessionTurnsMixin(SessionBase):
         `"ask"` permission verdict, to ask whether (and how broadly) to allow it — see
         `_run_tool_calls`.
 
+        Before any interjection is prepended, `resolve_at_mentions()` scans the raw `prompt` for
+        `@mention`ed files and resolves each into its own `MessageFragment`; If any mentions
+        resolved, those fragments plus one final fragment wrapping the fully-embellished `prompt`
+        become the user `Message`'s `fragments`, which a provider sends in place of `content` (see
+        `Message.provider_content()`); `content` still holds the plain-text `prompt` either way, for
+        anything that only wants that. See docs/specs/at-mention-file-inlining.md.
+
         If a permission-framework change is pending (`set_permission_framework()` was called
         since the last turn), the queued interjection is wrapped in a `<SystemInterjection
         subject="PermissionFramework">` tag (see `_wrap_system_interjection`) and prepended
@@ -420,6 +428,8 @@ class SessionTurnsMixin(SessionBase):
         e.g. the TUI updates its status line and renames its session log file.
         """
         original_prompt = prompt
+        mention_fragments = resolve_at_mentions(
+            original_prompt, self._mention_read_file_core, self.config.workspace.path)
         self._ensure_skill_catalog()
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
         leading_token = _leading_skill_token(original_prompt)
@@ -514,13 +524,22 @@ class SessionTurnsMixin(SessionBase):
             # claim_session_directory`. A no-op if already claimed (a restored session that
             # adopted its directory before this call) or the workspace is untrusted.
             self.claim_session_directory()
+        fragments: list[MessageFragment] | None = None
+        if mention_fragments is not None:
+            fragments = [*mention_fragments, MessageFragment(type="text", text=prompt)]
+            logger.debug(
+                "Attaching %d @mention fragment(s) to user turn (plus the prompt fragment)",
+                len(mention_fragments),
+            )
         user_message = Message(
             content=prompt,
+            fragments=fragments,
             role="user",
-            num_tokens=estimate_tokens(prompt),
+            num_tokens=0,
             processing_state="pending",
             timestamp=datetime.now(),
         )
+        user_message.num_tokens = estimate_tokens(user_message.body())
         self._messages.append(user_message)
         self.statistics.user_messages += 1
         logger.info(

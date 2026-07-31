@@ -490,6 +490,41 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
     assert user_msgs_content[2] == "model reply"
 
 
+def test_send_turn_attaches_at_mention_fragments_without_altering_prompt_content(
+    tmp_path: Path,
+) -> None:
+    """An `@mention`ed file becomes its own `MessageFragment` on the user `Message`, appended
+    ahead of a final fragment wrapping the (unmodified) embellished prompt -- see
+    docs/specs/at-mention-file-inlining.md. `content` itself keeps the plain prompt text."""
+    (tmp_path / "notes.txt").write_text("line one\n")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = Session(config, provider=mock_provider, session_id="my-session-id")
+
+    session.send_turn("check @notes.txt please")
+
+    user_message = session.messages[1]
+    assert user_message.content.endswith("check @notes.txt please")
+    assert "@notes.txt" in user_message.content
+    assert user_message.fragments is not None
+    assert len(user_message.fragments) == 2
+    assert "Filename: notes.txt" in user_message.fragments[0].text
+    assert "1|line one" in user_message.fragments[0].text
+    assert user_message.fragments[1].text == user_message.content
+
+
+def test_send_turn_leaves_fragments_none_without_at_mentions() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider, session_id="my-session-id")
+
+    session.send_turn("hi")
+
+    assert session.messages[1].fragments is None
+
+
 def test_run_one_shot_delegates_to_send_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()

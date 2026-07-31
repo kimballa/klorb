@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     # constructs one itself, so a type-checking-only import is enough, same as `ToolRegistry`
     # above.
     from klorb.process_config import ProcessConfig
+    from klorb.tools.util.read_file_core import ReadFileCore
     # isort: on
 
 
@@ -80,6 +81,7 @@ class SessionBase:
     _model_registry: ModelRegistry
     _system_prompt: SystemPrompt
     _process_config: "ProcessConfig | None"
+    _mention_read_file_core: "ReadFileCore"
     _thinking_token_budgets: dict[ThinkingEffort, int]
     _tool_registry: "ToolRegistry | None"
     tool_state: dict[str, Any]
