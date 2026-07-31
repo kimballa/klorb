@@ -149,13 +149,15 @@ All four tools live in `klorb.tools.tasks`, category `"TASKS"`:
   model to finish and close it first — `TodoNext` never silently abandons a task the model
   hasn't closed. Otherwise runs the `fetch_and_sort_issues(include_closed=False)` pipeline and
   picks the first issue (in sort order) with zero open blockers, via
-  `Session.set_chainlink_task()`. Three outcomes overall: `work_exists=False,
+  `klorb.tools.tasks._util.set_current_task()`. Three outcomes overall: `work_exists=False,
   project_complete=True, task=None` (no open issues at all — done); `work_exists=True,
   project_complete=False, task=None` (open issues remain but every one is still blocked —
   nothing actionable right now); or the picked (or re-returned) issue. Registers a standing
   `<SystemInterjection subject="ChainlinkCurrentTask">` (see "Turn interjection", below) whenever
-  it returns a task. `is_read_only()` is `False` despite only reading from chainlink — it mutates
-  session state and registers a standing interjection as a side effect.
+  it returns a task. `is_read_only()` is `True` — the only chainlink calls it makes are reads
+  (`issue list`/`issue show`); picking (or re-returning) a task mutates `Session.
+  cur_chainlink_task_id` and the standing interjection registry, but both are in-memory session
+  state, never written to chainlink itself, so this doesn't count against read-only-ness.
 * **`TodoCreate`** — validates `priority` and (if `blocks_current_issue=true`) that a current
   task actually exists *before* creating anything, then `chainlink issue create --priority
   PRIORITY --label LABEL [-d DESCRIPTION] TITLE` (`--quiet`, parsing the new id from its
@@ -164,7 +166,9 @@ All four tools live in `klorb.tools.tasks`, category `"TASKS"`:
   issue), and once per `blocks_issues` id (that issue is blocked by the new one). If any of
   those `block()` calls fails partway through, the new issue is closed with a comment explaining
   why rather than left behind half-configured, and the original error is re-raised — creation is
-  best-effort atomic. Returns the new issue's full `issue show` detail.
+  best-effort atomic. Returns the new issue's full `issue show` detail, plus an
+  `active_task_note` field if `activate` (see "Auto-activation", below) picked it up as the
+  session's current tracked task.
 * **`TodoUpdate`** — dispatches whichever of its arguments are present to the matching
   chainlink subcommand against `id`: `new_title`/`new_description`/`new_priority` →
   `issue update`; `depends_on`/`drop_dependency` → `issue block`/`issue unblock` per id;
@@ -172,11 +176,40 @@ All four tools live in `klorb.tools.tasks`, category `"TASKS"`:
   reopen`, applied last (so a comment added in the same call lands before the issue closes).
   Closing the issue that's also `Session.cur_chainlink_task_id` clears it
   (`Session.set_chainlink_task(None)`) as part of the same call — a closed issue can never be
-  left tracked as the current task, which would otherwise linger until the model happened to
-  call `TodoNext` again (never, if it was the last task). Returns the updated issue's full
-  `issue show` detail; when `close=True`, that detail also carries a `required_next_tool_call`
-  field naming `TodoNext`, so the model is told directly in the tool result — not just via the
-  standing interjection — that it must call `TodoNext` next.
+  left tracked as the current task. Returns the updated issue's full `issue show` detail; when
+  `close=True`, unless `activate=false`, that same call also immediately picks up whatever's
+  next (see "Auto-activation", below) rather than requiring a separate `TodoNext` call. When the
+  call doesn't close the issue, `activate` may instead pick the updated issue itself up as the
+  session's current tracked task.
+
+### Auto-activation
+
+`TodoUpdate` and `TodoCreate` both accept an optional `activate: bool | None` argument.
+
+When `TodoUpdate` doesn't close the issue, and for `TodoCreate` always, `activate` is resolved by
+the shared `klorb.tools.tasks._util.maybe_activate_task()`: it can pick up the issue in question
+(the one just updated, or just created) as `Session.cur_chainlink_task_id` — the same two steps
+(`set_chainlink_task()` plus registering the standing interjection) `TodoNext` itself performs —
+without a separate `TodoNext` call.
+
+* `activate=false` never activates.
+* Otherwise, the issue must be open.
+* `activate=true` then activates unconditionally past that check.
+* `activate` omitted ("auto mode") activates only if, in addition, the session has no current
+  tracked task already and the issue has zero still-open blockers (`klorb.tools.tasks._util.
+  task_is_ready()`) — the same state `TodoNext` itself requires before ever handing a task back.
+
+When `TodoUpdate` *does* close the issue, `activate` instead controls whether the call
+auto-advances to whatever's next: unless `activate=false`, `TodoUpdateTool.apply()` directly
+constructs and calls a `TodoNextTool` against the same `ToolSetupContext` right after the close
+(and after clearing `cur_chainlink_task_id` if the closed issue was the tracked one) — the exact
+same tool a model would otherwise have to call itself. Its `task` field (if any) is folded into
+the `TodoUpdate` result as `next_task_id`/`next_task_title` (both `None` if nothing is ready, or
+every task is done), alongside an `active_task_note` summarizing the outcome
+(`klorb.tools.tasks.todo_update._next_task_note()`). A closed issue is never itself a candidate
+to become the new current task, since `maybe_activate_task()`'s "must be open" check would
+exclude it — so this branch calls `TodoNextTool` directly instead of going through
+`maybe_activate_task()`, which is why closing has no analogous "activate this issue" behavior.
 
 None of the four apply any `ProcessConfig`-driven permission gate (unlike, say,
 `tools.memory.readPermission`) — chainlink's SQLite file lives under the workspace's own
@@ -193,12 +226,13 @@ The indirection exists so that a future subagent's `Session` can pass its parent
 through its own constructor and end up sharing one label with the rest of that task tree, rather
 than every subagent scoping issues to its own, narrower `id`.
 
-`Session.cur_chainlink_task_id: int | None` (default `None`) tracks the issue id `TodoNext` most
-recently picked (or re-returned). Written only through `Session.set_chainlink_task(task_id)` —
-`TodoNext` picking a new one, or `TodoUpdate` clearing it to `None` when the tracked issue itself
-is closed — never assigned directly to the attribute by a `Tool`; read directly (a plain public
-attribute, like `active_cancel_event`) by `TodoCreate`'s `blocks_current_issue` handling and the
-standing interjection provider.
+`Session.cur_chainlink_task_id: int | None` (default `None`) tracks the issue id most recently
+picked (or re-returned) as the current tracked task — by `TodoNext`, by `TodoUpdate`'s
+close-time auto-advance, or by `TodoUpdate`/`TodoCreate`'s auto-activation (see
+"Auto-activation", above). Written only through `Session.set_chainlink_task(task_id)` — never
+assigned directly to the attribute by a `Tool`; read directly (a plain public attribute, like
+`active_cancel_event`) by `TodoCreate`'s `blocks_current_issue` handling and the standing
+interjection provider.
 
 Both round-trip through `last-session.json`
 (`klorb.workspace.last_session.LastSessionState.root_id`/`cur_chainlink_task_id`, additive
@@ -213,14 +247,22 @@ via `set_chainlink_task()` on the reconstructed `Session` right after constructi
 
 ## Turn interjection
 
-Whenever `TodoNext` picks a task, it registers a standing interjection
+Whenever a task becomes the session's current tracked task — `TodoNext` picking one, or
+`TodoUpdate`/`TodoCreate`'s auto-activation (see "Auto-activation", above) — `klorb.tools.tasks.
+_util.set_current_task()` registers a standing interjection
 (`Session.register_standing_interjection("ChainlinkCurrentTask", ...)`) that's polled on every
 subsequent `send_turn()` call, exactly like `BashTool`'s live-persistent-shell notice. Its
-provider re-resolves the task's title fresh via `chainlink issue show` on every poll (`Session`
-only stores the id, not the title) and returns `None` — ending the interjection — once
-`cur_chainlink_task_id` is cleared or the issue can no longer be resolved. The message reminds
-the model to comment on meaningful progress and to close the issue (then call `TodoNext` again)
-once it's done and verified.
+provider (`klorb.tools.tasks._util.standing_interjection_provider()`) re-resolves the task's
+title fresh via `chainlink issue show` on every poll (`Session` only stores the id, not the
+title) and returns `None` — ending the interjection — once `cur_chainlink_task_id` is cleared or
+the issue can no longer be resolved. The message reminds the model to comment on meaningful
+progress and that closing the issue (`TodoUpdate close`) once it's done and verified
+automatically picks up whatever's next — see "Auto-activation", above.
+
+`klorb.tools.tasks._util` is where this mechanism (and the shared auto-activation logic in
+"Auto-activation", above) lives, so `TodoNext`'s own `apply()` and `TodoUpdate`/`TodoCreate`'s
+each perform it via the same two shared functions rather than duplicating the "set the id,
+register the interjection" steps three times over.
 
 ## TUI sidebar
 

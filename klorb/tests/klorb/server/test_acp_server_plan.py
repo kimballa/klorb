@@ -194,7 +194,9 @@ async def test_todo_create_then_close_emits_two_plan_updates_tracking_fake_state
     after_create = plan_updates[0]
     assert len(after_create.entries) == 1
     assert after_create.entries[0].content == "#1 Write the spec"
-    assert after_create.entries[0].status == "pending"
+    # TodoCreate auto-activates the new issue as the session's current tracked task since none
+    # was set yet -- see klorb.tools.tasks._util.maybe_activate_task.
+    assert after_create.entries[0].status == "in_progress"
 
     after_close = plan_updates[1]
     assert len(after_close.entries) == 1

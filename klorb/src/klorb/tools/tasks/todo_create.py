@@ -4,6 +4,7 @@
 import logging
 from typing import Any
 
+from klorb.tools.tasks._util import maybe_activate_task
 from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, validate_priority
 from klorb.tools.tool import Tool
 
@@ -25,6 +26,10 @@ class TodoCreateTool(Tool):
     best-effort atomic: if any `block()` call fails partway through, the new issue is closed
     with a comment explaining why, rather than left behind half-configured, and the original
     error is re-raised.
+
+    `activate` (see `maybe_activate_task`) may pick up the new issue as the session's current
+    tracked task — the same thing a `TodoNext` call would do — and adds an `active_task_note`
+    field to the returned detail explaining that this happened.
     """
 
     def name(self) -> str:
@@ -39,7 +44,10 @@ class TodoCreateTool(Tool):
     def description(self) -> str:
         return (
             "Creates a new todo item for this session and returns its full detail. Use "
-            "blocked_by/blocks_current_issue/blocks_issues to record dependencies up front."
+            "blocked_by/blocks_current_issue/blocks_issues to record dependencies up front. "
+            "The new item may be auto-activated as your current tracked task (as if by "
+            "TodoNext) if you don't already have one and it's ready; pass activate=true/false "
+            "to force or suppress this."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -70,6 +78,14 @@ class TodoCreateTool(Tool):
                     "items": {"type": "integer"},
                     "description": "Ids of tasks that depend on (are blocked by) this new one.",
                 },
+                "activate": {
+                    "type": "boolean",
+                    "description": (
+                        "Force (true) or suppress (false) picking up the new item as your "
+                        "current tracked task. Omit for auto mode: activates it if (and only "
+                        "if) you don't already have a current task."
+                    ),
+                },
             },
             "required": ["title"],
             "additionalProperties": False,
@@ -95,6 +111,7 @@ class TodoCreateTool(Tool):
                 "TodoNext first.")
 
         client = ChainlinkClient(self.context)
+        assert session is not None  # ChainlinkClient() above already requires one
         new_id = client.create_issue(title, description=description, priority=priority)
         logger.debug("TodoCreate created issue #%d %r", new_id, title)
 
@@ -119,7 +136,11 @@ class TodoCreateTool(Tool):
                     new_id, exc_info=True)
             raise
 
-        return client.show_issue(new_id)
+        result = client.show_issue(new_id)
+        note = maybe_activate_task(session, self.context, client, result, activate=args.get("activate"))
+        if note is not None:
+            result["active_task_note"] = note
+        return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         title = args.get("title", "?")
