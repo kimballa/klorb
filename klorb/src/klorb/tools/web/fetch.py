@@ -2,9 +2,10 @@
 """A Tool that fetches content from a URL, with optional HTML-to-markdown cleaning and a
 size-spilling mechanism that keeps oversized results out of the context window.
 
-Before fetching, the tool screens the target domain against a session-scoped `domains`
+Before fetching, the tool screens the target domain against a session-scoped `webDomains`
 permission table (`deny`/`ask`/`allow`), following the same pattern the existing
-`readDirs`/`writeDirs`/`commandRules`/`skillRules` tables use.
+`readDirs`/`writeDirs`/`commandRules`/`skillRules` tables use — see
+`klorb.session.SessionConfig.web_domain_rules`.
 
 The tool extends `InterruptibleTool` — network I/O can take a long time, and a
 Ctrl+C/Escape should reach it mid-flight.
@@ -125,7 +126,7 @@ class WebFetchTool(InterruptibleTool):
     """Retrieves content from a URL, with optional HTML-to-markdown cleaning.
 
     The tool is read-only and uses the HTTP GET method. Before any network call,
-    the target domain is screened against the session's `domains` permission table.
+    the target domain is screened against the session's `webDomains` permission table.
     Large responses are spilled to a session-scoped temp file rather than returned
     inline.
     """
@@ -182,7 +183,7 @@ class WebFetchTool(InterruptibleTool):
             # Domain was approved "Allow (once)" — skip domain permission check
             pass
         else:
-            domain_rules: DomainRules = self.context.session_config.domain_rules
+            domain_rules: DomainRules = self.context.session_config.web_domain_rules
             verdict = evaluate_domain(domain_rules, domain)
             raise_if_not_allowed(
                 verdict,

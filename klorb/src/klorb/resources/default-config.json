@@ -117,7 +117,7 @@
     "setEnv": {
       "EDITOR": "false"
     },
-    "domains": {
+    "webDomains": {
       "deny": [],
       "ask": [],
       "allow": [
@@ -129,6 +129,17 @@
         "172.16.*",
         "developer.mozilla.org",
         "docs.python.org"
+      ]
+    },
+    "bashDomains": {
+      "deny": [
+        "169.254.*"
+      ],
+      "ask": [],
+      "allow": [
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org"
       ]
     }
   },
@@ -148,6 +159,11 @@
   "tools.bash.riskClassifier.e2eTimeout": 10.0,
   "tools.bash.riskClassifier.tooRiskyThreshold": 9,
   "tools.bash.riskClassifier.historySize": 20,
+  "tools.bash.network.enabled": true,
+  "tools.bash.network.recognizedClients": [
+    "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
+    "go", "cargo", "mvn", "nc", "ncat", "telnet", "http", "https"
+  ],
   "tools.webFetch.timeout": 120.0,
   "tools.webFetch.connectTimeout": 5.0,
   "tools.webFetch.spillBytes": 32768,

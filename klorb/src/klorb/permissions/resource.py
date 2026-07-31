@@ -269,13 +269,22 @@ class SkillResource(PermissionResource):
 
 @dataclass(frozen=True)
 class DomainResource(PermissionResource):
-    """A `WebFetch` domain-access ask: `url` is the full URL a tool is trying to retrieve, shown
-    verbatim to the user; `domain` (derived, not stored, since it's cheap to recompute and storing
-    it separately would risk drifting out of sync with `url`) is what grant/override checks
+    """A domain-access ask: `url` is the full URL a tool is trying to reach, shown verbatim to
+    the user; `domain` (derived, not stored, since it's cheap to recompute and storing it
+    separately would risk drifting out of sync with `url`) is what grant/override checks
     actually key on, matching `domain_grant.py`/`PermissionOverride.domains`, which are
-    domain-keyed rather than URL-keyed."""
+    domain-keyed rather than URL-keyed.
+
+    `rule_set` says which independent `DomainRules` table this ask is evaluated against and
+    should be granted into: `"web"` (the default — `WebFetch`, `SessionConfig.web_domain_rules`)
+    or `"bash"` (sandboxed `Bash` network egress, `SessionConfig.bash_domain_rules`) — see that
+    field's docstring for why the two tables are kept separate rather than shared.
+    `PermissionOverride.domains` stays a single shared set regardless of `rule_set`: a once-scope
+    override is only ever checked back against the one retried tool call that raised it, so there
+    is no cross-tool ambiguity to a domain string appearing in it twice."""
 
     url: str
+    rule_set: str = "web"
 
     @property
     def domain(self) -> str:
@@ -283,7 +292,7 @@ class DomainResource(PermissionResource):
         return parse_domain(self.url)
 
     def header_kind(self) -> str:
-        return "Fetch URL"
+        return "Fetch URL" if self.rule_set == "web" else "Bash network access"
 
     def preview_text(self) -> str | None:
         return self.url
@@ -297,7 +306,8 @@ class DomainResource(PermissionResource):
         *, grant_patterns: list[list[str]] | None = None,
     ) -> None:
         from klorb.permissions.domain_grant import apply_domain_permission_grant
-        apply_domain_permission_grant(action, scope, session_config, process_config, self.domain)
+        apply_domain_permission_grant(
+            action, scope, session_config, process_config, self.domain, rule_set=self.rule_set)
 
     def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
         return PermissionOverride(

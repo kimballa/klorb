@@ -191,6 +191,35 @@ along with the item actually being scored, so a run of similar approvals/denials
 same session can inform how aggressively the classifier generalizes its next `suggested_pattern`
 — see `klorb.permissions.risk_classifier.record_decision_history`."""
 
+DEFAULT_BASH_NETWORK_ENABLED = True
+"""Default for `ProcessConfig.bash_network_enabled` — whether a sandboxed `Bash` command gets a
+domain-gated network-egress proxy at all (`klorb.sandbox.network`); `False` is a full escape
+hatch, mirroring `bash_risk_classifier_enabled`: the sandbox reverts to today's unconditional
+`--unshare-net`-denies-everything behavior, no proxy/relay stood up. See
+docs/specs/bash-tool-and-command-permissions.md's "Network egress (domain-gated proxy)"
+section."""
+
+DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS = [
+    "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
+    "go", "cargo", "mvn", "nc", "ncat", "telnet", "http", "https",
+]
+"""Default for `ProcessConfig.bash_network_recognized_clients` — the argv0 allowlist
+`BashTool._classify`'s network-command scanner treats as "this command makes outbound network
+calls, so scan its literal arguments for a target domain." See
+docs/specs/bash-tool-and-command-permissions.md's "Pre-flight scanning" section for why
+`ssh`/`scp`/`rsync` are deliberately excluded."""
+
+DEFAULT_BASH_NETWORK_SOCKS_PORT = 10800
+"""Default for `ProcessConfig.bash_network_socks_port` — the fixed loopback port
+`klorb.sandbox.network`'s in-sandbox relay stub listens on for SOCKS5 (`ALL_PROXY`) traffic.
+Adjustable in case something else on the host is already listening on this port."""
+
+DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT = 10801
+"""Default for `ProcessConfig.bash_network_http_connect_port` — the fixed loopback port
+`klorb.sandbox.network`'s in-sandbox relay stub listens on for HTTP CONNECT (`HTTP_PROXY`/
+`HTTPS_PROXY`) traffic. Adjustable in case something else on the host is already listening on
+this port."""
+
 DEFAULT_WEB_FETCH_TIMEOUT_SECONDS = 120.0
 """Default wall-clock seconds `WebFetch` lets an HTTP request run before timing out — see
 `ProcessConfig.web_fetch_timeout_seconds` and `tools.webFetch.timeout`."""
@@ -247,11 +276,11 @@ headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md an
 [[default-permission-framework-to-deny-headlessly]]. `role_name` is likewise deliberately
 absent: the operating role is set by code (defaulting to the operator role), never by a
 config file — see docs/specs/roles-and-system-prompts.md.
-`readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`domains`/`shareEnv`/`setEnv`
-are also deliberately absent — `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/
-`skillRules`/`shareEnv` are merged by list concatenation and `setEnv` merges key-by-key (a later
-layer's value for the same key replaces an earlier layer's), none of them the 1:1 scalar
-replacement `_route_keys()` implements — so `load_process_config()` handles all eight separately,
+`readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`webDomains`/
+`bashDomains`/`shareEnv`/`setEnv` are also deliberately absent — lists and maps like `readDirs`
+and `shareEnv` are merged (by list concatenation, or key-by-key for `setEnv`, where a later
+layer's value for the same key replaces an earlier layer's) rather than the 1:1 scalar
+replacement `_route_keys()` implements, so `load_process_config()` handles all nine separately,
 ahead of `_route_keys()` — see docs/specs/permissions.md and docs/specs/skills.md and
 docs/specs/bash-tool-and-command-permissions.md. `workspace` is deliberately absent too:
 it has no on-disk key at all, by design — see `SessionConfig.workspace`/
@@ -288,6 +317,10 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.riskClassifier.e2eTimeout": "bash_risk_classifier_e2e_timeout_seconds",
     "tools.bash.riskClassifier.tooRiskyThreshold": "bash_risk_classifier_too_risky_threshold",
     "tools.bash.riskClassifier.historySize": "bash_risk_classifier_history_size",
+    "tools.bash.network.enabled": "bash_network_enabled",
+    "tools.bash.network.recognizedClients": "bash_network_recognized_clients",
+    "tools.bash.network.socksPort": "bash_network_socks_port",
+    "tools.bash.network.httpConnectPort": "bash_network_http_connect_port",
     "tools.webFetch.timeout": "web_fetch_timeout_seconds",
     "tools.webFetch.connectTimeout": "web_fetch_connect_timeout_seconds",
     "tools.webFetch.spillBytes": "web_fetch_spill_bytes",
@@ -409,6 +442,20 @@ class ProcessConfig(BaseModel):
     """See `DEFAULT_BASH_RISK_CLASSIFIER_TOO_RISKY_THRESHOLD`."""
     bash_risk_classifier_history_size: int = DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE
     """See `DEFAULT_BASH_RISK_CLASSIFIER_HISTORY_SIZE`."""
+    bash_network_enabled: bool = DEFAULT_BASH_NETWORK_ENABLED
+    """See `DEFAULT_BASH_NETWORK_ENABLED`."""
+    bash_network_recognized_clients: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS))
+    """See `DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS`. A top-level (not `sessionDefaults`) key
+    like every other `tools.bash.*` setting, so — unlike a list-merged `sessionDefaults` key such
+    as `readDirs` — a later config layer's value replaces an earlier layer's outright rather than
+    concatenating with it, the same 1:1 scalar-replacement `_route_keys()` gives every other
+    `PROCESS_KEY_MAP` entry; a project that wants to extend rather than replace the packaged
+    default list repeats it in full alongside its own additions."""
+    bash_network_socks_port: int = DEFAULT_BASH_NETWORK_SOCKS_PORT
+    """See `DEFAULT_BASH_NETWORK_SOCKS_PORT`."""
+    bash_network_http_connect_port: int = DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT
+    """See `DEFAULT_BASH_NETWORK_HTTP_CONNECT_PORT`."""
     web_fetch_timeout_seconds: float = DEFAULT_WEB_FETCH_TIMEOUT_SECONDS
     """Maximum wall-clock seconds `WebFetch` lets an HTTP request run before timing out.
     See `tools.webFetch.timeout`."""
@@ -636,10 +683,9 @@ def process_config_to_disk_dict(process_config: ProcessConfig) -> dict[str, Any]
     """Convert a `ProcessConfig` back to the on-disk config dict format.
 
     Only includes keys that are readable from config files -- the keys in
-    `SESSION_KEY_MAP`, `PROCESS_KEY_MAP`, and the permission-rule keys
-    (`readDirs`, `writeDirs`, `readFiles`, `writeFiles`, `commandRules`,
-    `skillRules`, `domains`, `shareEnv`, `setEnv`). Output keys use dotted camelCase
-    names matching the on-disk `klorb-config.json` format.
+    `SESSION_KEY_MAP`, `PROCESS_KEY_MAP`, and the permission-rule keys like `readDirs` and
+    `bashDomains`. Output keys use dotted camelCase names matching the on-disk
+    `klorb-config.json` format.
 
     Permission-rule lists are serialized using the same format the grant
     machinery uses when writing back to config files.
@@ -696,11 +742,17 @@ def process_config_to_disk_dict(process_config: ProcessConfig) -> dict[str, Any]
         "ask": [format_fqsn(pair) for pair in skill_rules.ask],
         "allow": [format_fqsn(pair) for pair in skill_rules.allow],
     }
-    domain_rules = process_config.session.domain_rules
-    session["domains"] = {
-        "deny": list(domain_rules.deny),
-        "ask": list(domain_rules.ask),
-        "allow": list(domain_rules.allow),
+    web_domain_rules = process_config.session.web_domain_rules
+    session["webDomains"] = {
+        "deny": list(web_domain_rules.deny),
+        "ask": list(web_domain_rules.ask),
+        "allow": list(web_domain_rules.allow),
+    }
+    bash_domain_rules = process_config.session.bash_domain_rules
+    session["bashDomains"] = {
+        "deny": list(bash_domain_rules.deny),
+        "ask": list(bash_domain_rules.ask),
+        "allow": list(bash_domain_rules.allow),
     }
     session["shareEnv"] = process_config.session.share_env
     session["setEnv"] = process_config.session.set_env
@@ -744,7 +796,8 @@ def load_process_config(
     argparse `Namespace` shape.
 
     One exception to the "`dict.update`, not a deep merge" rule above:
-    `sessionDefaults.readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`domains`
+    `sessionDefaults.readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/
+    `webDomains`/`bashDomains`
     are concatenated across layers instead of replaced — a layer's `deny`/`ask`/`allow` entries
     add to, rather than replace, every earlier layer's — since a stricter rule from any layer must
     never be discardable by a looser rule from another. See docs/specs/permissions.md and
@@ -787,7 +840,8 @@ def load_process_config(
     concatenated_write_files: dict[str, list[Path]] = {"deny": [], "ask": [], "allow": []}
     concatenated_command_rules: dict[str, list[list[str]]] = {"deny": [], "ask": [], "allow": []}
     concatenated_skill_rules: dict[str, list[SkillId]] = {"deny": [], "ask": [], "allow": []}
-    concatenated_domains: dict[str, list[str]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_web_domains: dict[str, list[str]] = {"deny": [], "ask": [], "allow": []}
+    concatenated_bash_domains: dict[str, list[str]] = {"deny": [], "ask": [], "allow": []}
     concatenated_share_env: list[str] = []
     merged_set_env: dict[str, str] = {}
 
@@ -810,11 +864,16 @@ def load_process_config(
                 # string, or missing the separator) is skipped rather than crashing config load.
                 if isinstance(entry, str) and ":" in entry:
                     concatenated_skill_rules[category].append(parse_fqsn(entry))
-        layer_domains = session_layer.pop("domains", None) or {}
+        layer_web_domains = session_layer.pop("webDomains", None) or {}
         for category in ("deny", "ask", "allow"):
-            for entry in layer_domains.get(category, []):
+            for entry in layer_web_domains.get(category, []):
                 if isinstance(entry, str):
-                    concatenated_domains[category].append(entry)
+                    concatenated_web_domains[category].append(entry)
+        layer_bash_domains = session_layer.pop("bashDomains", None) or {}
+        for category in ("deny", "ask", "allow"):
+            for entry in layer_bash_domains.get(category, []):
+                if isinstance(entry, str):
+                    concatenated_bash_domains[category].append(entry)
         concatenated_share_env.extend(session_layer.pop("shareEnv", None) or [])
         merged_set_env.update(session_layer.pop("setEnv", None) or {})
         merged_session_defaults.update(session_layer)
@@ -848,7 +907,8 @@ def load_process_config(
     session_overrides["write_files"] = FileRules(**concatenated_write_files)
     session_overrides["command_rules"] = CommandRules(**concatenated_command_rules)
     session_overrides["skill_rules"] = SkillRules(**concatenated_skill_rules)
-    session_overrides["domain_rules"] = DomainRules(**concatenated_domains)
+    session_overrides["web_domain_rules"] = DomainRules(**concatenated_web_domains)
+    session_overrides["bash_domain_rules"] = DomainRules(**concatenated_bash_domains)
     session_overrides["share_env"] = concatenated_share_env
     session_overrides["set_env"] = merged_set_env
     session_overrides["workspace"] = workspace

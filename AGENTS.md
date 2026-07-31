@@ -22,6 +22,14 @@ semantics into the existing spec keeps one current-state document per feature ar
 scattering related facts across several. Only start a new spec file for a genuinely new
 feature that isn't an extension of something already documented.
 
+Never reference a `docs/plans/` file (archived or not) from a source code comment or docstring.
+A plan is a planning doc for one task, expected to go stale and get archived once the task ships
+— code that points at one breaks the moment it's archived or superseded, and a reader with no
+memory of the plan gets a dead-end pointer instead of an explanation. If a plan's content is
+still true and worth explaining from code, that content belongs in a spec (durable, describes
+current-state behavior) or an ADR (durable, records a decision and its reasoning); write it
+there and point the code comment at that instead.
+
 Key architecture decisions are captured in architecture decision records (ADRs). ADRs
 are short documents that record a decision, with the format:
 
@@ -173,6 +181,25 @@ The Klorb project is organized as a collection of subprojects:
     running (e.g. "constructed fresh by each tool's `apply()`, mirroring how `ToolRegistry.
     instantiate_tool()` builds a `Tool`" is fine — it's describing this object's own lifecycle,
     not borrowing a justification from elsewhere).
+  * Never enumerate every item a rule applies to. If a comment needs to illustrate that a rule
+    covers several things (several config keys, several call sites, several directories), name
+    *one or two* concrete examples and stop — `"lists and maps like readDirs and shareEnv are
+    merged..."`, not `"readDirs/writeDirs/readFiles/writeFiles/commandRules/skillRules/webDomains/
+    bashDomains/shareEnv are merged..."`. The complete list is already in the code right next to
+    the comment; retyping it into prose is pure duplication that goes stale the next time an item
+    is added or removed, and a reader who wants the exact set reads the code, not the comment.
+    This applies with extra force to a comment that already named the full set once (in a type
+    signature, a preceding sentence, a dict literal) — do not immediately repeat the same
+    enumeration a second time in the very next sentence.
+  * Never repeat an explanation. If you have already stated *why* something works a certain way —
+    anywhere in the same file, the same docstring, or earlier in the same patch — do not restate
+    it again at the next place that happens to touch the same fact, even in different words. Point
+    at the one place that says it (`webDomains is independent of bashDomains — see
+    SessionConfig.web_domain_rules`) instead of re-explaining the independence there too. Before
+    writing a sentence that justifies *why*, grep the file (and the rest of the patch) for whether
+    that justification already exists; if it does, delete the new sentence and leave the pointer.
+    A patch that says the same thing three times in three docstrings is not being thorough, it is
+    wasting the reader's time three times over — trim on sight, don't wait to be asked twice.
   * Prefer `map()`/`filter()` (wrapped in `list()`/`set()` as needed) over bracket-notation
     comprehensions for a plain transform-only or filter-only list/set build — e.g.
     `list(filter(lambda x: x.is_open, items))` over `[x for x in items if x.is_open]`. A

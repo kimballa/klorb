@@ -20,9 +20,8 @@ requires_bwrap = pytest.mark.skipif(
     not sandbox.bwrap_available(),
     reason="bwrap cannot create a sandbox here (missing binary or no unprivileged user namespaces)")
 """Skip (never xfail/error) tests that need a real, working `bwrap` — shared with the runtime's
-own `bwrap_available()` gate rather than a separate Docker-detection heuristic, per the plan's
-'klorb's own test suite' note. Container/cloud-agent CI environments legitimately can't run these;
-a WSL2/bare-metal dev host can."""
+own `bwrap_available()` gate rather than a separate Docker-detection heuristic. Container/
+cloud-agent CI environments legitimately can't run these; a WSL2/bare-metal dev host can."""
 
 
 @pytest.fixture(autouse=True)

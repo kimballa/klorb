@@ -355,7 +355,8 @@ def build_bwrap_argv(
     Shape (see docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and the
     plan it came from):
 
-    * Namespaces: `--unshare-net` (no network until a proxy exists), `--unshare-ipc`,
+    * Namespaces: `--unshare-net` (its own private network namespace — see
+      `klorb.sandbox.network` for the one path across it, a domain-gated proxy), `--unshare-ipc`,
       `--unshare-pid`, `--unshare-uts` (needed for `--hostname`), `--unshare-cgroup`, plus
       `--unshare-user`/`--disable-userns` (defense-in-depth against nested-userns escapes; the
       user namespace uses an identity uid/gid map, so files the command creates in the binds are

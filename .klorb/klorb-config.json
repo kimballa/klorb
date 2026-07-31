@@ -79,7 +79,7 @@
         "workspace:add-cli-flag"
       ]
     },
-    "domains": {
+    "webDomains": {
       "deny": [],
       "ask": [],
       "allow": [

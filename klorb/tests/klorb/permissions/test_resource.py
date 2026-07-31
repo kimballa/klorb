@@ -185,7 +185,18 @@ def test_domain_resource_grant_preview_and_apply_grant_key_on_the_domain(tmp_pat
     resource.apply_grant("allow", "session", session_config, None)
 
     assert preview == GrantPreview(resource_text="example.com")
-    assert session_config.domain_rules.allow == ["example.com"]
+    assert session_config.web_domain_rules.allow == ["example.com"]
+
+
+def test_domain_resource_bash_rule_set_grants_into_bash_domain_rules(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    resource = DomainResource(url="https://example.com/some/path", rule_set="bash")
+
+    resource.apply_grant("allow", "session", session_config, None)
+
+    assert session_config.bash_domain_rules.allow == ["example.com"]
+    assert session_config.web_domain_rules.allow == []
+    assert resource.header_kind() == "Bash network access"
 
 
 def test_domain_resource_added_to_override_uses_the_domain_not_the_url() -> None:

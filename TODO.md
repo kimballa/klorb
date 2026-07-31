@@ -112,10 +112,7 @@
 
 * Permissions
   * BashTool / bubblewrap sandbox follow-ups: a `--seccomp` defense-in-depth
-    filter (ptrace/mount/reboot/keyring), and network egress via a
-    domain-allowlist proxy (today `--unshare-net` denies all network).
-    * Once domains are available in the bubblewrapped bash, add allow-list entries for
-      pypi, npm, maven-central.
+    filter (ptrace/mount/reboot/keyring).
   * TOCTOU: every permission check (klorb.permissions.workspace/directory_access) resolves a
     path string at check time; nothing holds an open OS-level directory handle across the gap
     between that check and the actual file I/O, so a rename/symlink swap in that window could
@@ -184,6 +181,31 @@
 * `docs/specs/klorb-server.md`'s `fork_session`/`resume_session` stubs are unaffected by this
   plan; a future plan could build genuine session forking on top of this same `sessions/`
   directory layout.
+
+### Plan 018: Bash network egress
+
+* Live, mid-connection interactive ask (`ProxyAskBroker` + a new concurrent-ask transport for
+  both the TUI and ACP), gated on measuring how often the static pre-flight scanner actually
+  misses a domain a live ask would have caught (`blocked_domains` on the `Bash` response is the
+  data source for that measurement).
+* Port-scoped `DomainSpec` matching (`localhost:3000`), so a loopback/LAN grant for one workflow
+  doesn't implicitly cover every other locally-bound service.
+* Single-port SOCKS/HTTP-CONNECT protocol sniffing instead of two fixed listener ports, if
+  managing two turns out to be operationally annoying.
+* Non-HTTP(S) protocols as a first-class, pre-flight-recognized command shape (`ssh`/`scp`/
+  `rsync` and friends) -- today these simply have no egress path at all.
+* Third-party domain-reputation/malware-blocklist integration (same deferral as `WebFetch`'s own,
+  see "Plan 013: WebFetch" above).
+* TLS-terminating inspection, if a future need for content-level (not just domain-level) request
+  filtering emerges.
+* `HTTP_PROXY`/`HTTPS_PROXY` only understands `CONNECT`, not forward-proxy request/response
+  relaying -- a plain-`http://` target (as opposed to `https://`) gets no reply at all instead of
+  a domain-gated refusal. Narrow in practice (registry/API traffic is HTTPS-only today), but
+  worth closing if it ever bites a real workflow. See `klorb.sandbox.network`'s module docstring.
+* `bashDomains.allow`'s packaged defaults cover `pip`/`uv`/`npm` (PyPI, npm registry) but not
+  Maven Central (`cargo`/`go`'s registries are also unlisted) -- add `repo.maven.apache.org` (and
+  reconsider `crates.io`/`proxy.golang.org`) once real usage shows they're worth defaulting to
+  rather than an ordinary first-use `ask`.
 
 ## TUI
 
