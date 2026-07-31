@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.scratchpad.common."""
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -64,12 +65,31 @@ def test_fresh_scratchpad_registers_an_atexit_sweep(monkeypatch: pytest.MonkeyPa
     """The fresh-directory branch registers an atexit hook to remove its directory, so it's
     swept on process exit even when Session.close()/cleanup() never runs (the last active
     session on a normal TUI exit, or a crash/SIGKILL)."""
-    registered: list[tuple[object, ...]] = []
-    monkeypatch.setattr(common.atexit, "register", lambda *args, **kwargs: registered.append(args))
+    registered: list[Callable[[], None]] = []
+    monkeypatch.setattr(common.atexit, "register", registered.append)
 
     scratchpad = Scratchpad(None)
+    scratchpad_dir = scratchpad.path.parent
 
-    assert (common.shutil.rmtree, scratchpad.path.parent) in registered
+    assert len(registered) == 1
+    registered[0]()
+    assert not scratchpad_dir.exists()
+
+
+def test_cleanup_unregisters_the_atexit_backstop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cleanup()` (`Session.close()`'s eager teardown) unregisters the atexit backstop
+    registered at creation time, so the same directory removal doesn't fire a second time at
+    interpreter shutdown."""
+    registered: list[Callable[[], None]] = []
+    unregistered: list[Callable[[], None]] = []
+    monkeypatch.setattr(common.atexit, "register", registered.append)
+    monkeypatch.setattr(common.atexit, "unregister", unregistered.append)
+    scratchpad = Scratchpad(None)
+    assert len(registered) == 1
+
+    scratchpad.cleanup()
+
+    assert unregistered == registered
 
 
 def test_reused_scratchpad_registers_no_atexit_sweep(

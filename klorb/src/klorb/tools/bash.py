@@ -1064,9 +1064,18 @@ class BashTool(InterruptibleTool):
         method's own body alone wouldn't reach cleanly given the nested `with open(...)` block
         it raises out of."""
         tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
+
+        def cleanup_tmp_dir() -> None:
+            # Whichever call site removes `tmp_dir` first -- the early return below on a missing
+            # executable, or the end-of-command cleanup further down -- unregisters the atexit
+            # backstop so it doesn't `shutil.rmtree` an already-gone directory again at process
+            # exit.
+            atexit.unregister(cleanup_tmp_dir)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
         # Registered immediately after creation, before anything else can raise, so this
         # directory is always swept on process exit even if klorb dies mid-command.
-        atexit.register(shutil.rmtree, tmp_dir, ignore_errors=True)
+        atexit.register(cleanup_tmp_dir)
         stdout_path = tmp_dir / "stdout"
         stderr_path = tmp_dir / "stderr"
         for path in (stdout_path, stderr_path):
@@ -1102,7 +1111,7 @@ class BashTool(InterruptibleTool):
                 # underlying inode, so rmtree can remove both files and the now-empty directory
                 # while fds to them are still live; the fds themselves stay valid until __exit__
                 # closes them moments later, as this exception propagates out of the `with`.
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+                cleanup_tmp_dir()
                 raise ValueError(f"{self._bash_command!r} not found; cannot run command") from exc
 
             # The sandboxed process now has its own fork-inherited copy of the control-channel
@@ -1176,7 +1185,7 @@ class BashTool(InterruptibleTool):
         stderr_text, stderr_file = _spill(stderr_path, self._spill_bytes)
 
         if stdout_file is None and stderr_file is None:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            cleanup_tmp_dir()
         else:
             self._grant_tmp_dir_read_access(tmp_dir)
 

@@ -14,23 +14,6 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
-* Why do some `klorb.foo` logger instances manage to consistently emit to stderr during pytest?
-  *most* of the logging is correctly captured by the pytest harness (which then dumps the
-  setup/run/teardown-specific logs to stderr if any of the unit tests fail). But I get the
-  following types of log lines pretty consistently on the console amidst the progress indicators:
-
-  ```plain
-  (in test_bash.py)
-  2026-07-31 01:13:25 - DEBUG:klorb.sandbox.network:ProxyBackend control channel closed; stopping accept loop
-  2026-07-31 01:13:26 - DEBUG:klorb.sandbox.network:ProxyBackend control channel closed; stopping accept loop
-  (in test_key_actions.py)
-  2026-07-31 00:10:23 - INFO:klorb.session.mixins.turns:Turn aborted for some/model
-  (and during teardown, several iterations of the following)
-  2026-07-31 00:10:49 - DEBUG:klorb.tools.util.spill:Cleaned up Grep spill tmpdir: /tmp/klorb-grep-qm_xbya9
-  ```
-
-  (Are these happening off the main thread? The actual set of log msgs on the console varies run-to-run.)
-
 ### Feature backlog
 
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions

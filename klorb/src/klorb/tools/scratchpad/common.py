@@ -13,6 +13,7 @@ below does, and only under `TYPE_CHECKING`) so that `klorb.session.Session` can 
 import atexit
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,7 +44,10 @@ class Scratchpad:
     def __init__(self, scratchpad_path: str | None) -> None:
         self._owned_dir: Path | None = None
         """The directory this `Scratchpad` created and therefore owns, or `None` when
-        `scratchpad_path` named an existing file to reuse instead — the sole switch `cleanup()`
+        `scratchpad_path` named an existing file to reuse instead."""
+        self._cleanup_once: Callable[[], None] | None = None
+        """The closure `_resolve()` builds for an owned `_owned_dir` -- `None` when
+        `scratchpad_path` named an existing file to reuse instead, the sole switch `cleanup()`
         checks, so a caller-supplied scratchpad is never touched by it."""
         self._path = self._resolve(scratchpad_path)
 
@@ -51,11 +55,21 @@ class Scratchpad:
         if scratchpad_path is not None:
             return Path(scratchpad_path)
         scratchpad_dir = Path(tempfile.mkdtemp(prefix="klorb-scratchpad-"))
+
+        def cleanup_once() -> None:
+            # Whichever path removes this directory first -- `cleanup()` (Session.close()'s
+            # eager teardown), or the interpreter actually reaching this atexit callback --
+            # unregisters the atexit registration so the other one, if it still runs later,
+            # doesn't `rmtree` an already-gone directory again.
+            atexit.unregister(cleanup_once)
+            shutil.rmtree(scratchpad_dir, ignore_errors=True)
+
         # Registered immediately after creation, before anything else can raise, so this
         # directory is always swept on process exit even when `cleanup()` never runs -- the
         # final active session is never `close()`d on normal TUI exit, and a crash or SIGKILL
         # skips teardown entirely. Mirrors `BashTool`'s spilled-output tmpdir handling.
-        atexit.register(shutil.rmtree, scratchpad_dir, ignore_errors=True)
+        atexit.register(cleanup_once)
+        self._cleanup_once = cleanup_once
         path = scratchpad_dir / SCRATCHPAD_FILENAME
         path.touch()
         self._owned_dir = scratchpad_dir
@@ -71,15 +85,16 @@ class Scratchpad:
 
         A no-op when this `Scratchpad` was constructed with an existing `scratchpad_path` to
         reuse — that file's lifecycle belongs to whatever created it, not to this `Scratchpad`.
-        Safe to call more than once (`shutil.rmtree(..., ignore_errors=True)`), matching every
-        other teardown callback's idempotency contract (see `Session.register_teardown`).
+        Safe to call more than once, matching every other teardown callback's idempotency
+        contract (see `Session.register_teardown`).
 
         This is the eager path, run by `Session.close()` so a switched-away session's directory
         goes right away; an `atexit` hook registered at creation time (see `_resolve`) is the
-        backstop that sweeps the directory on process exit when `close()` never runs at all.
+        backstop that sweeps the directory on process exit when `close()` never runs at all --
+        whichever of the two runs first unregisters the other.
         """
-        if self._owned_dir is not None:
-            shutil.rmtree(self._owned_dir, ignore_errors=True)
+        if self._cleanup_once is not None:
+            self._cleanup_once()
 
 
 def scratchpad_path(context: "ToolSetupContext") -> Path:

@@ -56,8 +56,16 @@ class SpillDir:
         logger.debug("Created %s spill tmpdir: %s", self._tool_name, tmpdir_path)
         tool_state[_TMPDIR_KEY] = str(tmpdir_path)
 
-        session.register_teardown(self._tool_name, lambda: self._cleanup(tmpdir_path))
-        atexit.register(self._cleanup, tmpdir_path)
+        def cleanup_once() -> None:
+            # Whichever path runs first -- `session.close()`'s eager teardown, or the interpreter
+            # actually reaching this atexit callback -- unregisters the atexit registration so the
+            # other path (if it still runs later) doesn't call `_cleanup()`, and so log, a second
+            # time.
+            atexit.unregister(cleanup_once)
+            self._cleanup(tmpdir_path)
+
+        session.register_teardown(self._tool_name, cleanup_once)
+        atexit.register(cleanup_once)
 
         return tmpdir_path
 
