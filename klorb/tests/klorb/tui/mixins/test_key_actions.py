@@ -128,6 +128,12 @@ async def test_interrupting_notice_becomes_interrupted_once_the_turn_finishes() 
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+        # `wait_for_complete()` only proves the worker thread returned, not that it returned via
+        # the cancel-to-`ResponseAborted` path this test means to exercise -- check the turn's own
+        # user `Message` landed in `"aborted"` state, the one thing `_dispatch_turn`'s
+        # `except ResponseAborted:` branch (and nothing else) sets.
+        assert app._session.messages[-1].processing_state == "aborted"
+
         assert not history.query(".interrupting")
         # The rewritten notice keeps its `notice` class; `.notice.interrupted` distinguishes it
         # from the standalone "(interrupted)" marker `_handle_aborted_response` also mounts.
@@ -318,6 +324,11 @@ async def test_ctrl_c_aborts_an_in_flight_model_turn_instead_of_quitting() -> No
         await pilot.press("ctrl+c")
         await app.workers.wait_for_complete()
         await pilot.pause()
+
+        # As in test_interrupting_notice_becomes_interrupted_once_the_turn_finishes:
+        # `wait_for_complete()` proves the worker returned, not that it returned by actually
+        # converting the cancel signal into `ResponseAborted` -- confirm that directly.
+        assert app._session.messages[-1].processing_state == "aborted"
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.query_one(".interrupted", Static)

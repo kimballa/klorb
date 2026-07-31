@@ -76,6 +76,14 @@ _CONNECT_TIMEOUT_SECONDS = 10.0
 `"allow"`-verdict domain) before giving up and replying with a connection-refused/502 -- separate
 from `_HANDSHAKE_TIMEOUT_SECONDS`, which bounds reading the client's own request instead."""
 
+_ACCEPT_THREAD_JOIN_TIMEOUT_SECONDS = 0.25
+"""How long `ProxyBackend.close()` waits for the accept-loop thread to actually exit before
+giving up on it -- long enough for `_accept_loop`'s blocked `recv_fds()` call to unblock and
+return once the control socket closes underneath it (near-instant in practice), short enough
+that a caller's own teardown (a test, `Session.close()`) never meaningfully stalls on it. The
+thread is a daemon, so a caller that hits this timeout still returns rather than hanging --
+the thread just keeps running in the background until it notices the closed socket."""
+
 _RECV_CHUNK_BYTES = 65536
 
 _RELAY_STUB_FILENAME = "/tmp/.klorb-relay-stub.py"
@@ -357,18 +365,27 @@ class ProxyBackend:
         self._on_blocked = on_blocked
         self._thread = threading.Thread(
             target=self._accept_loop, daemon=True, name="klorb-proxy-accept")
+        self._started = False
 
     def start(self) -> None:
         logger.debug("ProxyBackend starting accept loop")
+        self._started = True
         self._thread.start()
 
     def close(self) -> None:
         """Close the host-side control-channel socket, so `_accept_loop`'s next `recv_fds()`
-        call returns EOF and the accept thread exits. Safe to call more than once."""
+        call returns EOF and the accept thread exits, then wait up to
+        `_ACCEPT_THREAD_JOIN_TIMEOUT_SECONDS` for that exit to actually happen -- so the thread's
+        own teardown (its "stopping accept loop" log line included) has already landed by the
+        time this call returns, instead of racing whatever the caller does next (a test's own
+        teardown, process shutdown). Safe to call more than once, and a no-op join if `start()`
+        was never called."""
         try:
             self._control_sock.close()
         except OSError:
             pass
+        if self._started:
+            self._thread.join(timeout=_ACCEPT_THREAD_JOIN_TIMEOUT_SECONDS)
 
     def _accept_loop(self) -> None:
         while True:

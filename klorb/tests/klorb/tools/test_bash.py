@@ -642,6 +642,27 @@ def test_spilled_output_dir_gets_an_automatic_read_grant(tmp_path: Path) -> None
     assert spilled_dir in context.session_config.read_dirs.allow
 
 
+def test_output_capture_dir_cleanup_unregisters_its_atexit_backstop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the command's output fits inline (no spill), `_execute_inner` removes its stdout/
+    stderr capture tmpdir synchronously -- that removal must also unregister the `atexit`
+    backstop registered when the tmpdir was created, so it doesn't fire a second time (on an
+    already-gone directory) at interpreter shutdown."""
+    context = _context(tmp_path, command_rules=CommandRules(allow=[["echo", "*"]]))
+    tool = BashTool(context)
+    registered: list[Any] = []
+    unregistered: list[Any] = []
+    monkeypatch.setattr("klorb.tools.bash.atexit.register", registered.append)
+    monkeypatch.setattr("klorb.tools.bash.atexit.unregister", unregistered.append)
+
+    result = _apply(tool, "echo hello")
+
+    assert result["stdout_file"] is None  # small output -- took the synchronous-cleanup path.
+    assert len(registered) == 1
+    assert unregistered == registered
+
+
 def test_sandbox_notice_appears_once_per_session(tmp_path: Path) -> None:
     context = _context(tmp_path, command_rules=CommandRules(allow=[["true"]]))
     tool1 = BashTool(context)

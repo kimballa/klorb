@@ -2,10 +2,14 @@
 """Tests for klorb.tools.util.spill.SpillDir."""
 
 from pathlib import Path
+from typing import Callable
+
+import pytest
 
 from klorb.permissions.directory_access import DirRules
 from klorb.session import Session, SessionConfig
 from klorb.tools.util import SpillDir
+from klorb.tools.util import spill as spill_module
 from klorb.workspace import Workspace
 
 
@@ -67,6 +71,31 @@ def test_grant_read_access_adds_tmpdir_to_read_dirs_allow(tmp_path: Path) -> Non
         assert tmpdir in session.config.read_dirs.allow
     finally:
         session.close()
+
+
+def test_session_close_unregisters_the_atexit_backstop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`session.close()` runs the spill tmpdir's teardown eagerly; that teardown must unregister
+    its `atexit` backstop so the same cleanup (and its "Cleaned up ... tmpdir" log line) doesn't
+    fire a second time when the interpreter actually exits."""
+    session = _session(tmp_path)
+    registered: list[Callable[[], None]] = []
+    unregistered: list[Callable[[], None]] = []
+    monkeypatch.setattr(spill_module.atexit, "register", registered.append)
+    monkeypatch.setattr(spill_module.atexit, "unregister", unregistered.append)
+
+    tmpdir = SpillDir("Grep").get_or_create(session)
+    assert len(registered) == 1
+
+    session.close()
+
+    assert not tmpdir.exists()
+    # `session.close()` also runs the session's other teardowns (e.g. its `Scratchpad`'s own
+    # atexit-backed cleanup, which -- since `atexit` is one shared module object -- shows up
+    # through this same monkeypatch too), so check specifically for the spill callback rather
+    # than requiring `unregistered` to contain nothing else.
+    assert registered[0] in unregistered
 
 
 def test_grant_read_access_is_idempotent(tmp_path: Path) -> None:

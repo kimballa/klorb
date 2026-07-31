@@ -264,6 +264,29 @@ def test_http_connect_bracketed_ipv6_target_parsed() -> None:
         harness.close()
 
 
+# --- ProxyBackend.close() ---
+
+
+def test_close_joins_the_accept_thread_before_returning() -> None:
+    """`close()` doesn't just signal the accept-loop thread to stop -- it waits for that thread to
+    actually exit, so a caller (a test, `Session.close()`) never races it: the thread's own
+    "stopping accept loop" log line has already landed by the time `close()` returns."""
+    harness = _harness()
+    harness.close()
+    assert not harness.backend._thread.is_alive()
+
+
+def test_close_before_start_does_not_raise() -> None:
+    """`close()` must not blow up (`RuntimeError: cannot join thread before it is started`) on a
+    `ProxyBackend` whose accept thread was never started."""
+    host_sock, sandbox_sock = socket.socketpair()
+    try:
+        backend = ProxyBackend(host_sock, SessionConfig(), lambda _domain: None)
+        backend.close()
+    finally:
+        sandbox_sock.close()
+
+
 # --- BlockedDomainRecorder ---
 
 
