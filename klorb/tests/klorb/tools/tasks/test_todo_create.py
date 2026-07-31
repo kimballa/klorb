@@ -128,6 +128,69 @@ def test_blocks_current_issue_blocks_the_tracked_task(tmp_path: Path) -> None:
 
 
 @requires_chainlink
+def test_auto_activates_as_current_task_when_none_is_set(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+
+    result = TodoCreateTool(context).apply({"title": "New task"})
+
+    assert context.session.cur_chainlink_task_id == result["id"]
+    assert f"#{result['id']}" in result["active_task_note"]
+
+
+@requires_chainlink
+def test_auto_activation_skipped_when_a_current_task_already_exists(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    first = TodoCreateTool(context).apply({"title": "First"})
+    assert context.session.cur_chainlink_task_id == first["id"]
+
+    second = TodoCreateTool(context).apply({"title": "Second"})
+
+    assert context.session.cur_chainlink_task_id == first["id"]
+    assert "active_task_note" not in second
+
+
+@requires_chainlink
+def test_activate_true_forces_activation_over_an_existing_current_task(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    first = TodoCreateTool(context).apply({"title": "First"})
+    assert context.session.cur_chainlink_task_id == first["id"]
+
+    second = TodoCreateTool(context).apply({"title": "Second", "activate": True})
+
+    assert context.session.cur_chainlink_task_id == second["id"]
+    assert "active_task_note" in second
+
+
+@requires_chainlink
+def test_activate_false_suppresses_auto_activation(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+
+    result = TodoCreateTool(context).apply({"title": "New task", "activate": False})
+
+    assert context.session.cur_chainlink_task_id is None
+    assert "active_task_note" not in result
+
+
+@requires_chainlink
+def test_auto_activation_skipped_when_the_new_task_is_not_ready(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    blocker = TodoCreateTool(context).apply({"title": "Blocker", "activate": False})
+    assert context.session.cur_chainlink_task_id is None
+
+    blocked = TodoCreateTool(context).apply({
+        "title": "Blocked task", "blocked_by": [blocker["id"]],
+    })
+
+    assert context.session.cur_chainlink_task_id is None
+    assert "active_task_note" not in blocked
+
+
+@requires_chainlink
 def test_name_and_parameters(tmp_path: Path) -> None:
     tool = TodoCreateTool(_context(tmp_path))
 

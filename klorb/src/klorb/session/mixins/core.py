@@ -121,11 +121,12 @@ class SessionCoreMixin(SessionBase):
         if tool_registry is not None:
             tool_registry.session = cast("Session", self)
         self.cur_chainlink_task_id: int | None = None
-        """The chainlink issue id `TodoNext` most recently selected as this session's current
-        task, or `None` if none is set (no `TodoNext` call yet, or the last one found nothing
-        ready/open). Read by `klorb.tools.tasks.todo_next`'s standing interjection provider on
-        every turn, and by `TodoCreate`'s `blocks_current_issue` argument. Round-trips through
-        `session.json` (`klorb.workspace.session_store.SessionState.
+        """The chainlink issue id most recently selected as this session's current task -- by
+        `TodoNext`, or by `TodoUpdate`/`TodoCreate`'s auto-activation (`klorb.tools.tasks._util.
+        maybe_activate_task`) -- or `None` if none is set (no task picked or activated yet, or
+        the last one found nothing ready/open). Read by `klorb.tools.tasks._util`'s standing
+        interjection provider on every turn, and by `TodoCreate`'s `blocks_current_issue`
+        argument. Round-trips through `session.json` (`klorb.workspace.session_store.SessionState.
         cur_chainlink_task_id`) like `id`/`session_name`. Written only via `set_chainlink_task()`,
         never assigned directly by a `Tool`. See docs/specs/chainlink-task-tracking.md."""
         self.tool_state: dict[str, Any] = {}
@@ -406,10 +407,11 @@ class SessionCoreMixin(SessionBase):
         return self.root_id
 
     def set_chainlink_task(self, task_id: int | None) -> None:
-        """Set `cur_chainlink_task_id` -- the only way a caller (`klorb.tools.tasks.todo_next.
-        TodoNextTool` picking a new one, or `klorb.tools.tasks.todo_update.TodoUpdateTool`
-        clearing it when the tracked task itself is closed) should change it, rather than
-        assigning the attribute directly."""
+        """Set `cur_chainlink_task_id` -- the only way a caller (`klorb.tools.tasks._util.
+        set_current_task`, picking a new one on `TodoNextTool`'s or `TodoUpdateTool`'s/
+        `TodoCreateTool`'s auto-activation's behalf, or `TodoUpdateTool` clearing it when the
+        tracked task itself is closed) should change it, rather than assigning the attribute
+        directly."""
         self.cur_chainlink_task_id = task_id
 
     def enqueue_queued_message(self, queued_msg: QueuedMessage) -> None:

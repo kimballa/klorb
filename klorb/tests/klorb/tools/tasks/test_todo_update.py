@@ -141,6 +141,86 @@ def test_depends_on_and_drop_dependency(tmp_path: Path) -> None:
 
 
 @requires_chainlink
+def test_auto_activates_as_current_task_when_none_is_set(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    created = TodoCreateTool(context).apply({"title": "Task", "activate": False})
+    assert context.session.cur_chainlink_task_id is None
+
+    result = TodoUpdateTool(context).apply({"id": created["id"], "add_comment": "progress"})
+
+    assert context.session.cur_chainlink_task_id == created["id"]
+    assert f"#{created['id']}" in result["active_task_note"]
+
+
+@requires_chainlink
+def test_auto_activation_skipped_when_a_current_task_already_exists(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    tracked = TodoCreateTool(context).apply({"title": "Tracked"})
+    other = TodoCreateTool(context).apply({"title": "Other", "activate": False})
+    assert context.session.cur_chainlink_task_id == tracked["id"]
+
+    result = TodoUpdateTool(context).apply({"id": other["id"], "add_comment": "progress"})
+
+    assert context.session.cur_chainlink_task_id == tracked["id"]
+    assert "active_task_note" not in result
+
+
+@requires_chainlink
+def test_activate_true_forces_activation_over_an_existing_current_task(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    tracked = TodoCreateTool(context).apply({"title": "Tracked"})
+    other = TodoCreateTool(context).apply({"title": "Other", "activate": False})
+    assert context.session.cur_chainlink_task_id == tracked["id"]
+
+    result = TodoUpdateTool(context).apply({"id": other["id"], "activate": True})
+
+    assert context.session.cur_chainlink_task_id == other["id"]
+    assert "active_task_note" in result
+
+
+@requires_chainlink
+def test_activate_false_suppresses_auto_activation(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    created = TodoCreateTool(context).apply({"title": "Task", "activate": False})
+
+    result = TodoUpdateTool(context).apply({
+        "id": created["id"], "add_comment": "progress", "activate": False,
+    })
+
+    assert context.session.cur_chainlink_task_id is None
+    assert "active_task_note" not in result
+
+
+@requires_chainlink
+def test_auto_activation_skipped_when_the_task_is_not_ready(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    blocker = TodoCreateTool(context).apply({"title": "Blocker", "activate": False})
+    task = TodoCreateTool(context).apply({"title": "Task", "activate": False})
+
+    result = TodoUpdateTool(context).apply({"id": task["id"], "depends_on": [blocker["id"]]})
+
+    assert context.session.cur_chainlink_task_id is None
+    assert "active_task_note" not in result
+
+
+@requires_chainlink
+def test_closing_never_auto_activates(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+    created = TodoCreateTool(context).apply({"title": "Task", "activate": False})
+
+    result = TodoUpdateTool(context).apply({"id": created["id"], "close": True})
+
+    assert context.session.cur_chainlink_task_id is None
+    assert "active_task_note" not in result
+
+
+@requires_chainlink
 def test_close_applies_after_a_comment_added_in_the_same_call(tmp_path: Path) -> None:
     context = _context(tmp_path)
     created = TodoCreateTool(context).apply({"title": "Task"})

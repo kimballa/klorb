@@ -3,9 +3,9 @@
 current task."""
 
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from klorb.tools.tasks._util import set_current_task
 from klorb.tools.tasks.common import (
     ChainlinkClient,
     ChainlinkError,
@@ -14,40 +14,7 @@ from klorb.tools.tasks.common import (
 )
 from klorb.tools.tool import Tool
 
-if TYPE_CHECKING:
-    from klorb.session import Session
-    from klorb.tools.setup_context import ToolSetupContext
-
 logger = logging.getLogger(__name__)
-
-_STANDING_INTERJECTION_SUBJECT = "ChainlinkCurrentTask"
-
-
-def _standing_interjection_provider(
-    session: "Session", context: "ToolSetupContext",
-) -> Callable[[], str | None]:
-    """Build the `Session.register_standing_interjection` provider for the current tracked
-    task: a message naming its id and title, re-resolved fresh on every poll (`Session.
-    cur_chainlink_task_id` only stores the id, not the title), for as long as one is set --
-    `None` once `TodoNext` clears it (no ready or open work left)."""
-
-    def provider() -> str | None:
-        task_id = session.cur_chainlink_task_id
-        if task_id is None:
-            return None
-        try:
-            issue = ChainlinkClient(context).show_issue(task_id)
-        except (ChainlinkError, ValueError):
-            return None
-        title = issue.get("title", "(untitled)")
-        return (
-            f'Your current tracked task is #{task_id}: "{title}". Record a comment on it '
-            "(TodoUpdate add_comment) whenever you make meaningful progress, learn something "
-            "new, or make a decision; close it (TodoUpdate close) once it's done and verified, "
-            "then call TodoNext for the next one."
-        )
-
-    return provider
 
 
 class TodoNextTool(Tool):
@@ -63,11 +30,13 @@ class TodoNextTool(Tool):
     open issues remain but none are ready yet (every one is still blocked) -- there's nothing
     actionable to hand back right now, but the project isn't done either. Otherwise returns the
     top-sorted ready issue and registers a standing `<SystemInterjection>` (see
-    `_standing_interjection_provider`) reminding the model of it on every subsequent turn, not
-    just this one.
+    `klorb.tools.tasks._util.standing_interjection_provider`) reminding the model of it on every
+    subsequent turn, not just this one.
 
-    Mutates session state as a side effect of what reads like a query, so `is_read_only()` is
-    `False` even though the only chainlink calls it makes are reads (`issue list`/`issue show`).
+    Only ever reads from chainlink (`issue list`/`issue show`) -- picking a task (or re-returning
+    the current one) mutates `Session.cur_chainlink_task_id` and the standing interjection
+    registry, both in-memory session state that's never written to chainlink itself, so
+    `is_read_only()` is `True`.
     """
 
     def name(self) -> str:
@@ -77,7 +46,7 @@ class TodoNextTool(Tool):
         return "TASKS"
 
     def is_read_only(self) -> bool:
-        return False
+        return True
 
     def description(self) -> str:
         return (
@@ -106,8 +75,7 @@ class TodoNextTool(Tool):
             current_task = self._still_open_current_task(client, current_id)
             if current_task is not None:
                 logger.debug("TodoNext: current task #%d is still open; returning it again.", current_id)
-                session.register_standing_interjection(
-                    _STANDING_INTERJECTION_SUBJECT, _standing_interjection_provider(session, self.context))
+                set_current_task(session, self.context, current_id)
                 return {
                     "work_exists": True,
                     "project_complete": False,
@@ -121,19 +89,17 @@ class TodoNextTool(Tool):
         issues = fetch_and_sort_issues(client, include_closed=False)
 
         if not issues:
-            session.set_chainlink_task(None)
+            set_current_task(session, self.context, None)
             logger.debug("TodoNext: no open issues under label %r", session.get_chainlink_label())
             return {"work_exists": False, "project_complete": True, "task": None}
 
         open_ids = {issue["id"] for issue in issues}
         ready = [issue for issue in issues if open_blocker_count(issue, open_ids) == 0]
         task = ready[0] if ready else None
-        session.set_chainlink_task(task["id"] if task is not None else None)
+        set_current_task(session, self.context, task["id"] if task is not None else None)
 
         if task is not None:
             logger.debug("TodoNext: next task is #%d", task["id"])
-            session.register_standing_interjection(
-                _STANDING_INTERJECTION_SUBJECT, _standing_interjection_provider(session, self.context))
         else:
             logger.debug("TodoNext: %d open issue(s), none ready (all blocked)", len(issues))
 

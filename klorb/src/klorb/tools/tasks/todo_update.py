@@ -4,6 +4,7 @@
 import logging
 from typing import Any
 
+from klorb.tools.tasks._util import maybe_activate_task
 from klorb.tools.tasks.common import ChainlinkClient, validate_priority
 from klorb.tools.tool import Tool
 
@@ -39,8 +40,12 @@ class TodoUpdateTool(Tool):
     changes, adding/dropping dependencies, adding a comment, and closing/reopening, in that
     order (close/reopen last, so a comment added in the same call lands before the issue closes).
     Closing the issue (`close=True`) adds a `required_next_tool_call` field to the returned
-    detail, telling the model it must call `TodoNext` next. See
-    docs/specs/chainlink-task-tracking.md.
+    detail, telling the model it must call `TodoNext` next.
+
+    Unless the update closes the issue, `activate` (see `maybe_activate_task`) may also pick up
+    the updated issue as the session's current tracked task — the same thing a `TodoNext` call
+    would do — and add an `active_task_note` field to the returned detail explaining that this
+    happened. See docs/specs/chainlink-task-tracking.md.
     """
 
     def name(self) -> str:
@@ -56,7 +61,10 @@ class TodoUpdateTool(Tool):
         return (
             "Updates a todo item: title/description/priority, dependencies (depends_on/"
             "drop_dependency), a comment, and/or closing or reopening it. Every field besides "
-            "id is optional; omitted ones are left unchanged."
+            "id is optional; omitted ones are left unchanged. Unless you're closing the item, "
+            "it may be auto-activated as your current tracked task (as if by TodoNext) if you "
+            "don't already have one and the item is ready; pass activate=true/false to force or "
+            "suppress this."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -84,6 +92,14 @@ class TodoUpdateTool(Tool):
                     "enum": ["low", "medium", "high", "critical"],
                     "description": "Replacement priority.",
                 },
+                "activate": {
+                    "type": "boolean",
+                    "description": (
+                        "Force (true) or suppress (false) picking up this item as your current "
+                        "tracked task. Omit for auto mode: activates it if (and only if) you "
+                        "don't already have a current task."
+                    ),
+                },
             },
             "required": ["id"],
             "additionalProperties": False,
@@ -98,6 +114,8 @@ class TodoUpdateTool(Tool):
         if new_priority is not None:
             validate_priority(new_priority)
         client = ChainlinkClient(self.context)
+        session = self.context.session
+        assert session is not None  # ChainlinkClient() above already requires one
 
         client.update_issue(
             issue_id, title=args.get("new_title"), description=args.get("new_description"),
@@ -108,10 +126,10 @@ class TodoUpdateTool(Tool):
             client.unblock(issue_id, blocker_id)
         if args.get("add_comment"):
             client.comment(issue_id, args["add_comment"])
-        if args.get("close"):
+        closing = bool(args.get("close"))
+        if closing:
             client.close_issue(issue_id)
-            session = self.context.session
-            if session is not None and session.cur_chainlink_task_id == issue_id:
+            if session.cur_chainlink_task_id == issue_id:
                 # Closing the session's own tracked task must clear it immediately -- otherwise
                 # it keeps reporting as the current task (to the plan-update snapshot, and to
                 # TodoNext's standing interjection) until the model happens to call TodoNext
@@ -124,10 +142,16 @@ class TodoUpdateTool(Tool):
         logger.debug(
             "TodoUpdate applied to issue #%d: %s", issue_id, ", ".join(fields) or "no changes")
         result = client.show_issue(issue_id)
-        if args.get("close"):
+        if closing:
             result["required_next_tool_call"] = (
-                "TodoNext -- you must call this now to get your next task."
+                "Call TodoNext right now, before any other tool call, to pick up whatever's "
+                "next -- don't leave this session without a tracked task."
             )
+        else:
+            note = maybe_activate_task(
+                session, self.context, client, result, activate=args.get("activate"))
+            if note is not None:
+                result["active_task_note"] = note
         return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:

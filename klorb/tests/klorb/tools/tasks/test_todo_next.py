@@ -140,7 +140,7 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
     assert tool.name() == "TodoNext"
     assert tool.category() == "TASKS"
-    assert tool.is_read_only() is False
+    assert tool.is_read_only() is True
     assert tool.parameters()["required"] == []
 
 
