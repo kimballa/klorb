@@ -8,6 +8,7 @@ heartbeat -- rather than periodic rescans. This is the same mechanism WSGI dev-s
 
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -219,11 +220,14 @@ class WorkspaceFileIndex:
             if self._rescan_in_progress or self._closing_event.is_set():
                 return
             self._rescan_in_progress = True
+        logger.debug("WorkspaceFileIndex starting rescan of %s", self._workspace_root)
+        started_at = time.monotonic()
         try:
             files = _scan_workspace_files(self._workspace_root, lambda: self._closing_event.is_set())
         except _ScanAborted:
             logger.debug(
-                "WorkspaceFileIndex rescan of %s aborted by close()", self._workspace_root)
+                "WorkspaceFileIndex rescan of %s aborted by close() after %.3fs",
+                self._workspace_root, time.monotonic() - started_at)
             with self._lock:
                 self._rescan_in_progress = False
             return
@@ -233,7 +237,8 @@ class WorkspaceFileIndex:
         if self._closing_event.is_set():
             return
         logger.debug(
-            "WorkspaceFileIndex indexed %d file(s) under %s", len(files), self._workspace_root)
+            "WorkspaceFileIndex indexed %d file(s) under %s in %.3fs",
+            len(files), self._workspace_root, time.monotonic() - started_at)
         self._on_changed()
         self._flush()
 
