@@ -11,7 +11,7 @@ from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME
 from klorb.permissions.skill_access import evaluate_skill
 from klorb.session.events import UserSkillActivation
 from klorb.session.mixins._base import SessionBase
-from klorb.tools.skill.catalog import get_skill_catalog_registry
+from klorb.tools.skill.catalog import SkillCatalogs
 from klorb.tools.skill.common import skill_activation_payload
 from klorb.tools.skill.model import Skill
 
@@ -85,20 +85,40 @@ class SessionSkillsMixin(SessionBase):
         return filenames
 
     def _ensure_skill_catalog(self) -> None:
-        """Build the process-wide skill catalog if this process hasn't built one yet -- a no-op
-        after the first call. See `klorb.tools.skill.catalog.SkillCatalogRegistry.ensure`."""
-        get_skill_catalog_registry().ensure(
+        """Build this session's skill catalog if it hasn't built one yet -- a no-op after the
+        first call. See `klorb.tools.skill.catalog.SkillCatalogRegistry.ensure`."""
+        self._skill_catalog_registry.ensure(
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
             claude_skills_compat=self._compatibility_claude_skills,
         )
 
+    def reload_skills(self) -> SkillCatalogs:
+        """Rebuild this session's skill catalog from a fresh disk scan against the current
+        workspace -- the ">Reload skills" command palette action and `_klorb/reloadSkills` ACP
+        extension's shared implementation (see `klorb.tui.commands.skill_commands` and
+        docs/specs/klorb-server.md), and also called whenever a workspace's trust state changes
+        (a newly-trusted workspace's `.klorb/skills/` tier is otherwise invisible until an
+        explicit reload). Prefers the live `ProcessConfig.compatibility_claude_skills` this
+        session was constructed with over its own construction-time snapshot
+        (`_compatibility_claude_skills`), since a caller holding a `ProcessConfig` reference may
+        have just reloaded it (e.g. a newly-trusted workspace's own config layer)."""
+        claude_skills_compat = (
+            self._process_config.compatibility_claude_skills if self._process_config is not None
+            else self._compatibility_claude_skills
+        )
+        return self._skill_catalog_registry.reload(
+            workspace_root=self.config.workspace.path,
+            workspace_trusted=self.config.workspace.trusted,
+            claude_skills_compat=claude_skills_compat,
+        )
+
     def _discover_skills(self) -> list[Skill]:
-        """Every currently non-`deny`-verdicted skill, precedence-deduped by name, from the
-        process-wide catalog and this session's live `skill_rules`. No disk access -- see
+        """Every currently non-`deny`-verdicted skill, precedence-deduped by name, from this
+        session's catalog and its live `skill_rules`. No disk access -- see
         `klorb.tools.skill.catalog.SkillCatalog.discoverable` and docs/specs/skills.md."""
         self._ensure_skill_catalog()
-        return get_skill_catalog_registry().canonical().discoverable(self.config.skill_rules)
+        return self._skill_catalog_registry.canonical().discoverable(self.config.skill_rules)
 
     @staticmethod
     def _format_skill_list(skills: list[Skill]) -> str:
@@ -145,7 +165,7 @@ class SessionSkillsMixin(SessionBase):
         if not tokens:
             return None
         self._ensure_skill_catalog()
-        catalog = get_skill_catalog_registry().typed()
+        catalog = self._skill_catalog_registry.typed()
         mentioned: list[Skill] = []
         seen: set[tuple[str, str]] = set()
         for token in tokens:
@@ -183,7 +203,7 @@ class SessionSkillsMixin(SessionBase):
         bypasses `skillRules` approval. See docs/specs/skills.md.
         """
         self._ensure_skill_catalog()
-        skill = get_skill_catalog_registry().typed().resolve_reference(token)
+        skill = self._skill_catalog_registry.typed().resolve_reference(token)
         if skill is None:
             return None
         skill_id = (skill.namespace, skill.name)

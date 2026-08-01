@@ -59,7 +59,7 @@ whole dict, so a future feature can read a new attribute without a frontmatter-s
   "must": the directory basename is *always* the canonical name — nothing else could be, since
   precedence, `skillRules`, and approval decisions all need one identity nailed down before a
   frontmatter file is even parsed. When the frontmatter `name` disagrees with the basename, the
-  catalog builder logs a `logger.warning()` (see "The process-wide skill catalog" below) and moves
+  catalog builder logs a `logger.warning()` (see "The session-scoped skill catalog" below) and moves
   on: the skill is still discoverable under its basename, and the frontmatter `name` becomes
   usable as an *alias* a user may type instead — see `Skill.aliases` below — but klorb itself
   (`ActivateSkill`, `ReadSkillFile`, `skillRules`, every interjection) only ever resolves and
@@ -109,7 +109,7 @@ When the same `name` exists in more than one tier (or in both workspace source d
 most-specific tier wins outright — user, then workspace, then internal (and, within the workspace
 tier, `.klorb/skills/` before `.claude/skills/`) — and the others' copies of that name are not
 merged or consulted at all, the same all-or-nothing shadowing `resolve_prompt_file()` uses. This
-precedence shadows *which tier a bare, unqualified `name` means* (see "The process-wide skill
+precedence shadows *which tier a bare, unqualified `name` means* (see "The session-scoped skill
 catalog" below); it does not remove the shadowed tier's copy from the catalog outright — a
 lower-precedence skill of the same name is still resolvable directly by its exact `(namespace,
 name)` pair (e.g. `ActivateSkill(namespace="internal", name="foo")`, or a typed
@@ -122,14 +122,20 @@ workspace root `Path`, a trust `bool`, the `compatibility.claudeSkills` flag) ra
 modules incur. The `internal` tier dir is resolved through `internal_skills_dir()`, a one-line
 seam so tests can redirect it.
 
-## The process-wide skill catalog
+## The session-scoped skill catalog
 
 Nothing that resolves a skill at runtime — `SearchSkills`, `ActivateSkill`, `ReadSkillFile`, or any
-`Session` interjection — walks the filesystem itself. Instead, a single process-wide
-`klorb.tools.skill.catalog.SkillCatalogRegistry` instance (reached via `get_skill_catalog_registry()`
-— never by importing its backing module global directly) holds two `SkillCatalog`s (each just a
-`{(namespace, name): Skill}` dict plus lookup/derived-view methods), built from a **single** disk
-scan, and every subsequent lookup reads them in memory through a method call on that instance:
+`Session` interjection — walks the filesystem itself. Instead, each `Session` owns one
+`klorb.tools.skill.catalog.SkillCatalogRegistry` instance (`Session.skill_catalog_registry`, built
+fresh in `SessionCoreMixin.__init__` alongside its `ToolRegistry` — never a module-level global) that
+holds two `SkillCatalog`s (each just a `{(namespace, name): Skill}` dict plus lookup/derived-view
+methods), built from a **single** disk scan, and every subsequent lookup for that session reads them
+in memory through a method call on that instance. A `Tool`'s `apply()` reaches its session's registry
+via `context.session.skill_catalog_registry`, most commonly through the
+`klorb.tools.skill.catalog.resolve_session_skill_catalog_registry()` convenience helper (which also
+calls `ensure_from_context()` and raises `ValueError` if `context` wasn't built with a real
+`Session`); `Session`'s own skill interjections (`klorb.session.mixins.skills.SessionSkillsMixin`)
+use `self._skill_catalog_registry` directly:
 
 * **`registry.canonical()`** is keyed by every discovered skill's true `(namespace, name)` identity
   — its directory basename. This is the *only* catalog `ActivateSkill`/`ReadSkillFile` may resolve
@@ -143,22 +149,27 @@ scan, and every subsequent lookup reads them in memory through a method call on 
   collides with a genuine skill's canonical name, the alias is dropped (logged) and the real skill
   wins.
 
-Both catalogs are built once, lazily, the first time either is needed in the process (via
-`registry.ensure()` — a cheap no-op once built), and stay in memory for the rest of the process's
-life, **independent of any one `Session`**: a `/clear` that replaces the live `Session` does *not*
-rebuild the catalog, since the registry is a process-wide singleton keyed off the
-workspace/trust/compat parameters the *first* caller supplied, not off whichever `Session` happens
-to be asking. A skill added, removed, or edited on disk after that point is invisible until an
-explicit `registry.reload()` call — the **"Reload skills"** command-palette action (reachable via
-`ctrl+p` or by typing `>reload skills` in the prompt, `klorb.tui.commands.skill_commands.
-SkillCommandProvider`) rebuilds both catalogs from a fresh scan against the current session's
-workspace, and reports the resulting skill count.
+Both catalogs are built once, lazily, the first time either is needed in that session (via
+`registry.ensure()` — a cheap no-op once built), and stay in memory for the rest of that
+`Session`'s life. **Scoped to the `Session`, not the process**: a `/clear` that replaces the live
+`Session` gets a brand-new, empty `SkillCatalogRegistry`, which rescans the disk on its own first
+use rather than inheriting whatever the outgoing session's catalog held — see
+docs/adrs/scope-skill-catalogs-to-session-not-process.md. Skill catalogs are never persisted to
+`session.json`; a restored session rebuilds its catalog the same way a brand-new one does, on its
+own first use. Within one session's lifetime, a skill added, removed, or edited on disk after the
+catalog was built is still invisible until an explicit `Session.reload_skills()` call — the
+**"Reload skills"** command-palette action (reachable via `ctrl+p` or by typing `>reload skills` in
+the prompt, `klorb.tui.commands.skill_commands.SkillCommandProvider`) and the `_klorb/reloadSkills`
+ACP extension both call it — which rebuilds both catalogs from a fresh scan against the session's
+current workspace and reports the resulting skill count. `Session.reload_skills()` is also what a
+workspace trust-state change (`_apply_workspace_config`) calls internally, so a newly-trusted
+workspace's `.klorb/skills/` tier becomes visible immediately rather than only after an explicit
+reload.
 
 `SkillCatalogRegistry` itself holds no free-standing module-level mutable state: its `_typed`/
-`_canonical` fields are private instance attributes, reset only through its own methods
-(`ensure()`, `reload()`, and the test-only `reset_for_tests()`), and `build_catalogs()` — the pure,
-stateless disk-scan function `reload()` calls — returns a `SkillCatalogs` bundle (`.typed`/
-`.canonical` fields) rather than a positional tuple.
+`_canonical` fields are private instance attributes, reset only through its own methods (`ensure()`
+and `reload()`), and `build_catalogs()` — the pure, stateless disk-scan function `reload()` calls —
+returns a `SkillCatalogs` bundle (`.typed`/`.canonical` fields) rather than a positional tuple.
 
 `SkillCatalog.precedence_deduped()` computes the "one winning `Skill` per bare name" view described
 above, entirely from the already-built `SkillCatalogRegistry.canonical()` — no disk access.
@@ -415,7 +426,7 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
   `commandRules`.
 * `compatibility.claudeSkills` — `bool`, default `false` (see above).
 * No `klorb-config.json` key controls *discovery* — the tier locations are fixed, scanned
-  unconditionally subject to the workspace-trust gate, once per process (see "The process-wide
+  unconditionally subject to the workspace-trust gate, once per session (see "The session-scoped
   skill catalog").
 
 ## Known risks
@@ -431,11 +442,12 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
   name)` closes the strictly worse variant — a workspace skill *hijacking* a grant the user made
   for a same-named `internal`/`user` skill. Mitigation: a user- or `/etc`-level `skillRules.deny`
   for a `(namespace, name)` always outranks any `allow`, since `deny` is evaluated first.
-* **A stale catalog.** Since the catalog is built once per process and not tied to any one
-  `Session`, a skill added, edited, or removed on disk mid-process is invisible to every session
-  running in that process until `>reload skills` is run explicitly. This is a deliberate
-  performance/simplicity trade rather than an oversight; a future version could auto-invalidate on
-  a filesystem-watch signal.
+* **A stale catalog.** Since each `Session`'s catalog is built once, from a single disk scan, a
+  skill added, edited, or removed on disk after that point is invisible to that session until
+  `>reload skills` is run explicitly (a brand-new `Session` — a fresh interactive session, a
+  restored one, or a `/clear` — is unaffected, since it rescans on its own first use). This is a
+  deliberate performance/simplicity trade rather than an oversight; a future version could
+  auto-invalidate on a filesystem-watch signal.
 
 ## Out of scope
 
@@ -455,5 +467,5 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
   role-agnostic — every session sees every discoverable, non-denied skill.
 * **Subagent inheritance.** How a spawned subagent's skill state relates to its parent's is
   unaddressed; today there is only one session.
-* **Automatic catalog invalidation.** The catalog is rebuilt only on an explicit `>reload skills`
-  or a fresh process; there's no filesystem watch or staleness detection.
+* **Automatic catalog invalidation.** Within one session's lifetime, its catalog is rebuilt only on
+  an explicit `>reload skills`; there's no filesystem watch or staleness detection.

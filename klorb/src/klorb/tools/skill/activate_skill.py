@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from klorb.token_estimate import estimate_tokens
-from klorb.tools.skill.catalog import get_skill_catalog_registry, resolve_and_gate_skill
+from klorb.tools.skill.catalog import resolve_and_gate_skill, resolve_session_skill_catalog_registry
 from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, skill_activation_payload
 from klorb.tools.tool import Tool, truncate_lines
 
@@ -68,8 +68,7 @@ class ActivateSkillTool(Tool):
             raise ValueError("Missing required argument: 'name'. Provide the skill's name.")
         logger.debug("ActivateSkill %s/%s", namespace, name)
 
-        registry = get_skill_catalog_registry()
-        registry.ensure_from_context(self.context)
+        registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
             catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)

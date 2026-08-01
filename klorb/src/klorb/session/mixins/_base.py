@@ -42,6 +42,7 @@ from klorb.system_prompt import SystemPrompt
 from klorb.tools.ask.common import AskUserQuestionsRequired
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.scratchpad.common import Scratchpad
+from klorb.tools.skill.catalog import SkillCatalogRegistry
 from klorb.tools.skill.model import Skill
 
 if TYPE_CHECKING:
@@ -90,6 +91,7 @@ class SessionBase:
     _tool_calls_this_turn: int
     _compatibility_claude_markdown: bool
     _compatibility_claude_skills: bool
+    _skill_catalog_registry: SkillCatalogRegistry
     _log_tool_calls: bool
     _messages: list[Message]
     _skills_seeded: bool

@@ -99,8 +99,8 @@ Later increments grow this section as they land.
   docs/specs/permissions.md. The server always has trust management enabled today (`AcpServer`/
   `KlorbAcpAgent` construct a real `TrustManager` whenever the caller doesn't inject one), so
   there is currently no path that makes this ext method unavailable.
-* **`_klorb/reloadSkills`** — rebuilds the process-wide skill catalog from a fresh disk scan
-  against the session's workspace, mirroring the TUI's "Reload skills" command
+* **`_klorb/reloadSkills`** — rebuilds the session's skill catalog (`Session.reload_skills()`)
+  from a fresh disk scan against its workspace, mirroring the TUI's "Reload skills" command
   (`ReplApp.reload_skills`). Params: `{sessionId: string}`. Result: `{skillCount: int}`.
 * **`_klorb/enqueueMessage`** — queues `text` into the currently in-flight turn, mirroring the
   TUI's queue-while-a-turn-is-running behavior (see "Queued messages" below). Params:
