@@ -68,7 +68,10 @@
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
     (see "Plan 013: WebFetch" section below)
 
-* Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
+* Improvements to Skills:
+  * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
+    get moved into Session. This will set up a clean mechanism for restricting skill availability
+    for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
   * Add skill for code review
   * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
@@ -76,10 +79,9 @@
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
       into a directory klorb itself trusts and auto-discovers deserves the same escalation
       klorb's own skills directory gets.
-
-* Eventually when we have a lot of skills, the skill list that is auto-advertised in the
-  initial SystemInterjection should be pruned and only display some top most-relevant
-  skills or most-frequently-used skills. Let the agent discover others via SearchSkills.
+  * Eventually when we have a lot of skills, the skill list that is auto-advertised in the
+    initial SystemInterjection should be pruned and only display some top most-relevant
+    skills or most-frequently-used skills. Let the agent discover others via SearchSkills.
 
 * Subagent spawning
   * When an agent spawns a subagent for a different role, the subagent gets a new child
@@ -128,9 +130,9 @@
   up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
 * Ability to use vision models and incorporate screenshots / png+bmp files as prompt input.
-  * tokens ≈ (width_px × height_px) / 750
-  * downsampled to ~1.15 MP (1092x1092 for square)
-  * Supported models: Kimi k3, Kimi k2.7-Code, Sonnet 5, Qwen 3.7 Plus, GPT 5 Nano, Mimo V2.5 (not Pro)
+  * Anthropic guidance: tokens ≈ (width_px × height_px) / 750
+  * downsampled to ~1.15 MP (1092x1092 for square) for Anthropic
+  * models we define, which support vision: Kimi k3, Kimi k2.7-Code, Sonnet 5, Qwen 3.7 Plus, GPT 5 Nano, Mimo V2.5 (not Pro)
 
 ```plain
   "Due to how the content is parsed, we recommend sending the text prompt first, then the images. If
@@ -139,7 +141,7 @@
    "image_url": {
                     "url": f"data:image/jpeg;base64,{base64_image}"
                 }
-    Supports image/jpeg, image/png, image/webp, image/gif.
+    Anthropic supports image/jpeg, image/png, image/webp, image/gif.
 
     Kimi model supports:
 image/jpeg
