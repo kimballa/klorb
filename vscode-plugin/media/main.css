@@ -853,12 +853,6 @@ button.status-chip:hover {
   padding-right: 12px;
 }
 
-.session-stats-tool-row {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 12px;
-}
-
 /* A spacer cell that goes across a column to create a horizontal rule in the table. */
 .session-stats-rule-cell {
   border-top: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.7));

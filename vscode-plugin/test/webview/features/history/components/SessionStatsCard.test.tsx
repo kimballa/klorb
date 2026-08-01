@@ -34,10 +34,12 @@ describe('SessionStatsCard', () => {
     expect(screen.getAllByText('22,558')).toHaveLength(2);
   });
 
-  it('renders the per-tool breakdown when present', () => {
+  it('renders the per-tool breakdown when present, aligned to the shared value/note columns', () => {
     render(<SessionStatsCard entry={ENTRY} />);
     expect(screen.getByText('Per-tool breakdown')).toBeTruthy();
-    expect(screen.getByText('3 succeeded, 1 failed (4 total)')).toBeTruthy();
+    expect(screen.getByText('Bash')).toBeTruthy();
+    expect(screen.getByText('3 succeeded, 1 failed')).toBeTruthy();
+    expect(screen.getByText('(4 total)')).toBeTruthy();
   });
 
   it('omits the per-tool breakdown section when no tools ran', () => {
@@ -49,7 +51,7 @@ describe('SessionStatsCard', () => {
     const { container } = render(<SessionStatsCard entry={{ ...ENTRY, cachePercent: 12.5 }} />);
     expect(screen.getByText('(12.5%)')).toBeTruthy();
     // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
-    const notes = container.querySelectorAll('.session-stats-note');
+    const notes = container.querySelectorAll('.session-stats-note:not(.session-stats-tool-note)');
     const nonEmpty = Array.from(notes).filter((note) => note.textContent !== '');
     expect(nonEmpty).toHaveLength(1);
   });

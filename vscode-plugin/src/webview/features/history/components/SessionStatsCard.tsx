@@ -35,6 +35,30 @@ function StatRow({ label, value, note, formatValue }: StatRowProps): JSX.Element
   );
 }
 
+interface ToolStatRowProps {
+  name: string;
+  succeeded: number;
+  failed: number;
+}
+
+/** Same five-cell shape as StatRow, so a tool's name/count columns land in the same grid
+ * columns as every other row instead of the wrapping flex div this used to be. */
+function ToolStatRow({ name, succeeded, failed }: ToolStatRowProps): JSX.Element {
+  return (
+    <>
+      <span className="session-stats-label">{name}</span>
+      <span></span>
+      <span className="session-stats-value">
+        {succeeded} succeeded, {failed} failed
+      </span>
+      <span className="session-stats-note session-stats-tool-note">
+        ({succeeded + failed} total)
+      </span>
+      <span></span>
+    </>
+  );
+}
+
 /**
  * Renders a "Show Session Stats" result as a history entry: message/tool-call counts, an
  * optional per-tool breakdown, and token usage, all sharing one CSS grid so their value
@@ -61,13 +85,12 @@ export default function SessionStatsCard({ entry }: SessionStatsCardProps): JSX.
           <>
             <div className="session-stats-subtitle">Per-tool breakdown</div>
             {entry.toolBreakdown.map((tool) => (
-              <div className="session-stats-tool-row" key={tool.name}>
-                <span className="session-stats-label">{tool.name}</span>
-                <span className="session-stats-tool-detail">
-                  {tool.succeeded} succeeded, {tool.failed} failed ({tool.succeeded + tool.failed}{' '}
-                  total)
-                </span>
-              </div>
+              <ToolStatRow
+                key={tool.name}
+                name={tool.name}
+                succeeded={tool.succeeded}
+                failed={tool.failed}
+              />
             ))}
           </>
         ) : null}

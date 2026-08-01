@@ -270,9 +270,6 @@ max image files 2048
 
 ### Feature backlog
 
-* The Session backend should preprocess scripts and if anything matches `@<a-real-file>`,
-  it should add a system interjection naming that file and suggesting the agent use
-  ReadFile on it.
 * ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
