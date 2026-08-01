@@ -18,6 +18,12 @@
 
 * once we have the python tui fzf for files, we'll have a python mechanism for maintaining a list of all files in the repo. The FindFiles tool should take advantage of that for much faster performance than actually hitting the filesystem directly. (The "server side" tool should maintain its own list, not share with the tui. It should also include gitignored files. It should build this list on startup then subscribe to watchdog events. It should definitely do this work on a bg thread.)
 
+* once we have the python tui fzf for files, we'll have a python mechanism for maintaining a list of all files in the repo. The FindFiles tool should take advantage of that for much faster performance than actually hitting the filesystem directly. (The "server side" tool should maintain its own list, not share with the tui. It should also include gitignored files. It should build this list on startup then subscribe to watchdog events. It should definitely do this work on a bg thread.)
+
+* @mentioning a file currently just reflexively opens it as text and tries to fold it into the user
+  message. It should instead attempt to identify mime type from file extension, and/or by magic
+  signature bytes matching, and for images in system-supported formats, it should attach them as such.
+
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
   or start testing anything. Maybe we should notice this condition (only using read-only tools for N
   tool calls in a row) and force it to deliver a report to the user that enumerates some concrete
@@ -129,36 +135,6 @@
 * Integrate with `chainlink`'s `blocked_by_open` field, once merged. Then we don't have to look
   up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
-* Ability to use vision models and incorporate screenshots / png+bmp files as prompt input.
-  * Anthropic guidance: tokens ≈ (width_px × height_px) / 750
-  * downsampled to ~1.15 MP (1092x1092 for square) for Anthropic
-  * models we define, which support vision: Kimi k3, Kimi k2.7-Code, Sonnet 5, Qwen 3.7 Plus, GPT 5 Nano, Mimo V2.5 (not Pro)
-
-```plain
-  "Due to how the content is parsed, we recommend sending the text prompt first, then the images. If
-  the images must come first, we recommend putting it in the system prompt."
-
-   "image_url": {
-                    "url": f"data:image/jpeg;base64,{base64_image}"
-                }
-    Anthropic supports image/jpeg, image/png, image/webp, image/gif.
-
-    Kimi model supports:
-image/jpeg
-image/png
-image/gif
-image/webp
-image/bmp
-image/heic
-image/heif
-Kimi max resolution: 4096×2160
-No max file count, 100MB overall conversation body limit.
-
-Qwen 3.7: max 2,621,440 pixels (~2.6 MP)
-Token count per image: h x w / (32 x 32) + 2
-max image files 2048
-```
-
 * Add more system interjections:
   * If the agent does *not* have a plan, after a while, start harrassing it to write down some
     objectives for itself via TodoWrite and use TodoNext to start focusing on task-oriented work.
@@ -263,11 +239,45 @@ max image files 2048
 
 ## VSCode plugin
 
+### Bugs
+
+* System interjections need to be stripped from user messages shown to the user in the HistoryView
+  when the window is reloaded and the session is restored.
+  * On the backend we should store SystemInterjections separately from the main content, so that
+    we properly throw out all system interjections, but the user typing `<SystemInterjection>` doesn't
+    get cut out.
+
 ### Feature backlog
 
-* ability to drag'n'drop a screenshot onto the prompt (when vision models are useful)
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
 
 * "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
   or `<table>`, not just a bunch of text.
+
+### Plan 020: Vision / image input
+
+* TUI/CLI image attachment (`--image path.png`, or a `>attach <workspace-file>` palette
+  command) -- no drag-drop/paste-image surface to build the UI on top of in a raw terminal; the
+  resize pipeline and `MessageFragment`/ACP plumbing are already UI-agnostic and reusable once a
+  TUI-side entry point exists.
+* Remote image URLs (`{"image_url": {"url": "https://..."}}` instead of always inlining base64),
+  gated through WebFetch's existing `DomainAccessTable` for permission screening -- smaller wire
+  payload, at the cost of a new network trust boundary. Images are always inlined today.
+* Remote file upload / preflighting -- sending image files to a dedicated file upload endpoint
+  of the provider and using a reference to the uploaded file, instead of resending base64 every
+  turn.
+* Image retention/pruning policy -- an analogue to the existing per-model `drop_reasoning`
+  toggle, e.g. dropping or summarizing image fragments from history after N turns, to cap the
+  ongoing resend-token cost of an image attached early in a long session (klorb's session
+  history has no context-pruning mechanism at all yet).
+* Re-verify `gpt-5-nano`/`mimo-v2.5`'s exact resolution/token-formula numbers against
+  OpenRouter's live `/models` response as that API's data evolves -- sourced from each vendor's
+  own docs today (OpenAI's `images-vision` guide; MiMo-V2.5's own `preprocessor_config.json`),
+  not guessed, but the live API is the tie-breaker if OpenRouter's routing ever imposes
+  different effective limits than the base model's own spec.
+* Kimi's token formula remains genuinely unpublished -- still riding the generic Anthropic-tiles
+  fallback until Moonshot AI publishes one.
+* Client-side (webview canvas) pre-downscaling before the postMessage hop, if raw-image transit
+  over stdio/postMessage proves to be a practical bottleneck in real use -- the resize pipeline
+  is server-authoritative today.

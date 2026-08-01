@@ -11,7 +11,7 @@ import pytest
 from acp.schema import AllowedOutcome, DeniedOutcome
 from fixtures.sample_models import sample_model_registry
 
-from klorb.message import Message, MessageRole, ToolCallRequest
+from klorb.message import Message, MessageFragment, MessageRole, ToolCallRequest
 from klorb.permissions.command_grant import compute_command_grant_patterns
 from klorb.permissions.directory_access import DirRules, canonicalize_dir
 from klorb.permissions.resource import BashCommandContext, CommandResource, PathResource, StructuralResource
@@ -299,7 +299,8 @@ def test_finished_update_keeps_json_serializable_raw_output(tmp_path: Path) -> N
 
 
 def test_finished_update_handles_no_tool_registry_at_all(tmp_path: Path) -> None:
-    event = ToolCallEvent(call_id="1", name="ReadFile", args={"filename": "foo.txt"}, result="ok", error=None)
+    event = ToolCallEvent(call_id="1", name="ReadFile", args={
+                          "filename": "foo.txt"}, result="ok", error=None)
 
     update = tool_call_finished_update(event, None, tmp_path)
 
@@ -630,3 +631,40 @@ class TestBuildSessionReplay:
         assert len(entries) == 1
         assert entries[0]["status"] == "completed"
         assert entries[0]["contentText"] is None
+
+    def test_prompt_entry_carries_image_metadata_without_bytes(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([_msg("user", "look at this", fragments=[
+            MessageFragment(type="text", text="look at this"),
+            MessageFragment(
+                type="image_url", image_url={"url": "data:image/png;base64,xx"},
+                source_filename="shot.png", original_width=123, original_height=456),
+        ])])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries == [{
+            "kind": "prompt", "text": "look at this", "streaming": False,
+            "images": [{"name": "shot.png", "width": 123, "height": 456}],
+        }]
+
+    def test_prompt_entry_image_metadata_omits_unknown_fields_rather_than_nulling_them(
+        self, tmp_path: Path,
+    ) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([_msg("user", "look", fragments=[
+            MessageFragment(type="text", text="look"),
+            MessageFragment(type="image_url", image_url={"url": "data:image/png;base64,xx"}),
+        ])])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries[0]["images"] == [{}]
+
+    def test_prompt_entry_without_image_fragments_has_no_images_key(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([_msg("user", "hi")])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert "images" not in entries[0]

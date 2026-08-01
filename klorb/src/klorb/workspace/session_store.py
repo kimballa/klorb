@@ -29,6 +29,7 @@ release) -- see that mixin.
 
 import logging
 import shutil
+import uuid
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
@@ -51,6 +52,9 @@ SESSIONS_LIST_FILENAME = "sessions.json"
 SESSION_STATE_FILENAME = "session.json"
 WORKSPACE_LOCK_FILENAME = "workspace.lock"
 SESSION_LOCK_FILENAME = "session.lock"
+SESSION_IMAGES_DIR_NAME = "images"
+"""Subdirectory of `sessions/<subdir>/` holding on-disk-backed image-fragment bytes -- see
+`write_session_image`."""
 
 SESSIONS_LIST_SCHEMA_NAME = "klorb-session-list"
 SESSIONS_LIST_SCHEMA_VERSION = "1.0.0"
@@ -157,6 +161,36 @@ def session_state_path(workspace: Workspace, subdir: str) -> Path:
 def session_lock_path(workspace: Workspace, subdir: str) -> Path:
     """The `session.lock` path for the session saved in `sessions/<subdir>/`."""
     return session_subdir_path(workspace, subdir) / SESSION_LOCK_FILENAME
+
+
+def session_images_dir(workspace: Workspace, subdir: str) -> Path:
+    """The `images/` directory holding on-disk-backed image-fragment bytes for the session
+    saved in `sessions/<subdir>/` -- see `write_session_image`."""
+    return session_subdir_path(workspace, subdir) / SESSION_IMAGES_DIR_NAME
+
+
+def write_session_image(workspace: Workspace, subdir: str, data: bytes, extension: str) -> str:
+    """Write `data` to a freshly-named file under `session_images_dir(workspace, subdir)`,
+    creating that directory if needed, and return its path relative to `sessions/<subdir>/`
+    (e.g. `"images/<uuid>.webp"`) -- the value `klorb.message.MessageFragment.image_path`
+    stores. Deleting a session's directory (`_prune_sessions_index`'s `shutil.rmtree`)
+    already cleans up every image written here for free, since it lives inside that same
+    subtree.
+    """
+    images_dir = session_images_dir(workspace, subdir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}.{extension}"
+    (images_dir / filename).write_bytes(data)
+    logger.debug(
+        "Wrote session image sessions/%s/images/%s (%d bytes).", subdir, filename, len(data))
+    return f"{SESSION_IMAGES_DIR_NAME}/{filename}"
+
+
+def read_session_image(workspace: Workspace, subdir: str, image_path: str) -> bytes:
+    """Read back the bytes at `image_path` (as returned by `write_session_image`, relative to
+    `sessions/<subdir>/`) -- used by `klorb.session.restore.try_restore_session` to rehydrate
+    a restored image fragment's wire-format `image_url`."""
+    return (session_subdir_path(workspace, subdir) / image_path).read_bytes()
 
 
 def read_sessions_index(workspace: Workspace) -> SessionsIndexState:
@@ -266,7 +300,8 @@ def write_session_state(
     different is that a workspace now has many `subdir`s, each independently overwritable.
     """
     state = SessionState(
-        config=config, messages=messages, statistics=statistics,
+        config=config, messages=[message.for_persistence() for message in messages],
+        statistics=statistics,
         session_id=session_id, root_id=root_id, session_name=session_name,
         cur_chainlink_task_id=cur_chainlink_task_id, aliases=aliases or [])
     write_versioned_json(

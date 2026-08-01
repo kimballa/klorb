@@ -4,6 +4,7 @@
 (`_dispatch_turn`), and the three public entry points (`send_turn`, `retry_last_turn`,
 `run_one_shot`) that build or resend the user-facing `Message` each turn revolves around."""
 
+import base64
 import logging
 import re
 import subprocess
@@ -13,12 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from klorb.api_provider import ProviderResponse, ResponseAborted
+from klorb.images.prepare import extension_for_mime_type
 from klorb.message import Message, MessageFragment
 from klorb.session.constants import MAX_TOOL_CALL_ROUNDS, ToolCallLimitExceeded
 from klorb.session.events import TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.mentions import resolve_at_mentions
-from klorb.token_estimate import estimate_tokens
+from klorb.token_estimate import estimate_message_tokens, estimate_tokens
+from klorb.workspace.session_store import write_session_image
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,19 @@ def _wrap_system_interjection(subject: str, message: str) -> str:
     turn content within the same `Message.content` — see `Session.send_turn()`'s handling of
     `_pending_permission_framework_interjection`."""
     return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
+
+
+def _image_header_text(index: int, image_fragment: MessageFragment) -> str:
+    """Text-fragment header `Session.send_turn()` prepends immediately ahead of each image
+    fragment, per the vendor guidance that images should follow the text prompt they
+    accompany (see docs/specs/vision-image-input.md). Names the image's 1-indexed position
+    among the ones attached to this turn, plus its origin -- `image_fragment.source_filename`
+    if the image came from a named file (a drag-drop), or "(pasted from clipboard)"
+    otherwise."""
+    origin = (
+        f"filename='{image_fragment.source_filename}'" if image_fragment.source_filename
+        else "(pasted from clipboard)")
+    return f"The following is image #{index} in the order provided by the user: {origin}"
 
 
 class SessionTurnsMixin(SessionBase):
@@ -352,10 +368,29 @@ class SessionTurnsMixin(SessionBase):
             self.active_cancel_event = None
             self._current_turn_handlers = None
 
+    def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
+        """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` (see
+        `klorb.workspace.session_store.write_session_image`) and return the same fragment with
+        `image_path` populated, so a later `persist_state()` call can drop the in-memory
+        `image_url` from `session.json` (see `Message.for_persistence`) without losing the
+        image. A no-op if this session's directory isn't claimed (an untrusted workspace never
+        persists), since there's nowhere durable to write to -- the fragment keeps its
+        in-memory `image_url` and is sent normally for the rest of this process's lifetime."""
+        if self._session_subdir is None:
+            return image_fragment
+        assert image_fragment.image_url is not None
+        assert image_fragment.mime_type is not None
+        data = base64.b64decode(image_fragment.image_url["url"].split(",", 1)[1])
+        image_fragment.image_path = write_session_image(
+            self.config.workspace, self._session_subdir, data,
+            extension_for_mime_type(image_fragment.mime_type))
+        return image_fragment
+
     def send_turn(
         self,
         prompt: str,
         callbacks: TurnEventHandlers | None = None,
+        image_fragments: list[MessageFragment] | None = None,
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
@@ -383,6 +418,13 @@ class SessionTurnsMixin(SessionBase):
         become the user `Message`'s `fragments`, which a provider sends in place of `content` (see
         `Message.provider_content()`); `content` still holds the plain-text `prompt` either way, for
         anything that only wants that. See docs/specs/at-mention-file-inlining.md.
+
+        `image_fragments`, if given (already prepared for the active model by `klorb.images.
+        prepare.prepare_image_for_model` before this call), are appended *after* the prompt
+        fragment -- per vendor guidance to send the text prompt first, then images -- each
+        preceded by its own text-fragment header (see `_image_header_text`) and spilled to
+        `sessions/<subdir>/images/` if this session's directory is claimed (see
+        `_spill_image_fragment_to_disk`). See docs/specs/vision-image-input.md.
 
         If a permission-framework change is pending (`set_permission_framework()` was called
         since the last turn), the queued interjection is wrapped in a `<SystemInterjection
@@ -496,11 +538,11 @@ class SessionTurnsMixin(SessionBase):
                                  workspace_git_path, git_branch_output.returncode, git_branch_output.stderr)
 
             metadata_strs = [
-                f"The session began at {started_at}."
-                f"The workspace root is `{workspace_root}`."
+                f"The session began at {started_at}. "
+                f"The workspace root is `{workspace_root}`. "
             ]
             if git_branch:
-                metadata_strs.append(f"The current git branch is `{git_branch}`")
+                metadata_strs.append(f"The current git branch is `{git_branch}`. ")
 
             metadata_body = "\n".join(metadata_strs)
             prompt = f"{_wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
@@ -525,12 +567,20 @@ class SessionTurnsMixin(SessionBase):
             # adopted its directory before this call) or the workspace is untrusted.
             self.claim_session_directory()
         fragments: list[MessageFragment] | None = None
-        if mention_fragments is not None:
-            fragments = [*mention_fragments, MessageFragment(type="text", text=prompt)]
-            logger.debug(
-                "Attaching %d @mention fragment(s) to user turn (plus the prompt fragment)",
-                len(mention_fragments),
-            )
+        if mention_fragments is not None or image_fragments:
+            fragments = list(mention_fragments) if mention_fragments is not None else []
+            fragments.append(MessageFragment(type="text", text=prompt))
+            if mention_fragments:
+                logger.debug(
+                    "Attaching %d @mention fragment(s) to user turn (plus the prompt fragment)",
+                    len(mention_fragments),
+                )
+            if image_fragments:
+                for index, image_fragment in enumerate(image_fragments, start=1):
+                    fragments.append(MessageFragment(type="text", text=_image_header_text(
+                        index, image_fragment)))
+                    fragments.append(self._spill_image_fragment_to_disk(image_fragment))
+                logger.debug("Attaching %d image fragment(s) to user turn", len(image_fragments))
         user_message = Message(
             content=prompt,
             fragments=fragments,
@@ -539,7 +589,10 @@ class SessionTurnsMixin(SessionBase):
             processing_state="pending",
             timestamp=datetime.now(),
         )
-        user_message.num_tokens = estimate_tokens(user_message.body())
+        active_model = self.active_model()
+        user_message.num_tokens = (
+            estimate_message_tokens(user_message, active_model) if active_model is not None
+            else estimate_tokens(user_message.body()))
         self._messages.append(user_message)
         self.statistics.user_messages += 1
         logger.info(

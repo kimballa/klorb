@@ -232,6 +232,10 @@ export interface StatusUpdateMessage {
    * stays enabled during a turn (mid-turn submit queues into the running turn) or falls back to
    * 002's disabled-while-in-flight behavior. */
   enqueueMessageCapable?: boolean;
+  /** Whether the currently active model supports image input -- gates the prompt input's
+   * attach-image affordance (drag/paste/file-picker). Known once per `_klorb/getSessionConfig`
+   * round trip, same as `model` -- see docs/specs/vision-image-input.md. */
+  activeModelVision?: boolean;
 }
 
 /** An ordered label -> numeric-value map, rendered as a right-aligned two-column table row per
@@ -311,11 +315,14 @@ export interface ToggleTaskPanelMessage {
  * feature) since `shared/` must stay importable by both the host and webview tsconfigs, and a
  * feature's internals aren't exported outside its own barrel -- the same reasoning
  * `ToolCallStartedMessage`/`ToolCallHistoryEntry` are already two distinct-but-similar types
- * for. Always `streaming: false`: a replay entry is already complete, never a live chunk. */
+ * for. Always `streaming: false`: a replay entry is already complete, never a live chunk.
+ * `images`, present only for a `kind: 'prompt'` entry that had attachments, carries metadata
+ * only (`AttachedImageMeta`, no bytes) -- see its own doc comment. */
 export interface SessionReplayTextEntry {
   kind: 'prompt' | 'response' | 'thinking';
   text: string;
   streaming: false;
+  images?: AttachedImageMeta[];
 }
 
 /** One tool-call entry replayed from a previously saved session -- mirrors
@@ -364,6 +371,14 @@ export interface WorkspaceFilesMessage {
   files: string[];
 }
 
+/** An image the user picked via the status row's "Attach Image…" menu item (see
+ * `AttachImageFileMessage`) is ready to add to the prompt input's pending attachment tray --
+ * the same shape a drag-drop/paste attachment reaches internally. */
+export interface ImageAttachedMessage {
+  type: 'imageAttached';
+  image: ImageAttachment;
+}
+
 /** Every message the extension host may post to the webview. */
 export type HostMessage =
   | TurnStartedMessage
@@ -385,12 +400,38 @@ export type HostMessage =
   | TaskListUpdateMessage
   | ToggleTaskPanelMessage
   | SessionReplayMessage
-  | WorkspaceFilesMessage;
+  | WorkspaceFilesMessage
+  | ImageAttachedMessage;
+
+/** An attached image's caption-worthy metadata, without its bytes -- what a restored/replayed
+ * prompt entry (`SessionReplayTextEntry.images`) carries, since the server doesn't resend an
+ * already-persisted image's bytes just to redraw a thumbnail (see docs/specs/session-
+ * persistence.md's "Image-fragment storage" section). `name`, when known (a drag-drop/file-pick;
+ * absent for a clipboard paste), captions as itself with any leading directory parts stripped,
+ * or as "(clipboard)" when absent -- see `AttachmentThumbnail`. `width`/`height`, when known,
+ * caption as `<width>x<height>`. `AttachmentThumbnail` renders a plain paper-clip placeholder
+ * icon in place of a thumbnail whenever bytes aren't present, i.e. exactly an
+ * `AttachedImageMeta` that isn't also a full `ImageAttachment`. */
+export interface AttachedImageMeta {
+  name?: string;
+  width?: number;
+  height?: number;
+}
+
+/** One image the user attached to a prompt (drag-drop, clipboard paste, or the status row's file
+ * picker) -- raw bytes travel webview -> host -> ACP as-is; the resize/transcode pipeline runs
+ * server-side (see docs/specs/vision-image-input.md). `name`, when known, becomes the image's
+ * `filename='...'` header on the server side. */
+export interface ImageAttachment extends AttachedImageMeta {
+  mimeType: string;
+  dataBase64: string;
+}
 
 /** The user submitted a prompt from the input box. */
 export interface SubmitPromptMessage {
   type: 'submitPrompt';
   text: string;
+  images?: ImageAttachment[];
 }
 
 /** The user submitted a prompt while a turn was already in flight, and the connected server
@@ -399,6 +440,7 @@ export interface SubmitPromptMessage {
 export interface EnqueueMessageMessage {
   type: 'enqueueMessage';
   text: string;
+  images?: ImageAttachment[];
 }
 
 /** The user asked to cancel the in-flight turn (Stop button or Escape). */
@@ -493,6 +535,14 @@ export interface ReloadSkillsMessage {
   type: 'reloadSkills';
 }
 
+/** The user picked "Attach Image…" from the status row's menu: open a native file picker
+ * (`vscode.window.showOpenDialog`, filtered to image files) and, if one was chosen, add it to
+ * the prompt input's pending attachment tray via a follow-up `ImageAttachedMessage` -- the same
+ * end state a drag-drop onto the input reaches, just triggered from the menu instead. */
+export interface AttachImageFileMessage {
+  type: 'attachImageFile';
+}
+
 /** The user clicked the stopwatch ("Session history") icon: fetch this workspace's saved
  * sessions (`session/list`) and show them in a native `showQuickPick`; picking one loads it
  * (`session/load`), replacing the live session -- all handled host-side (`klorb.browseSessions`)
@@ -531,6 +581,7 @@ export type WebviewMessage =
   | NewSessionMessage
   | ReloadSkillsMessage
   | ListRecentSessionsMessage
+  | AttachImageFileMessage
   | WebviewErrorMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
@@ -547,10 +598,6 @@ const HOST_FIELD_SPECS: readonly FieldSpec[] = [
 
 const HOST_BARE_TYPES: readonly string[] = ['turnStarted', 'sessionReset', 'toggleTaskPanel'];
 
-const WEBVIEW_FIELD_SPECS: readonly FieldSpec[] = [
-  { field: 'text', types: ['submitPrompt', 'enqueueMessage'] },
-];
-
 const WEBVIEW_BARE_TYPES: readonly string[] = [
   'cancelTurn',
   'restartServer',
@@ -562,6 +609,7 @@ const WEBVIEW_BARE_TYPES: readonly string[] = [
   'newSession',
   'reloadSkills',
   'listRecentSessions',
+  'attachImageFile',
 ];
 
 function parseMessage(
@@ -785,7 +833,8 @@ function parseStatusUpdate(record: Record<string, unknown>): StatusUpdateMessage
       typeof record.sessionTitle !== 'string') ||
     (record.workspaceTrusted !== undefined && typeof record.workspaceTrusted !== 'boolean') ||
     (record.enqueueMessageCapable !== undefined &&
-      typeof record.enqueueMessageCapable !== 'boolean')
+      typeof record.enqueueMessageCapable !== 'boolean') ||
+    (record.activeModelVision !== undefined && typeof record.activeModelVision !== 'boolean')
   ) {
     return undefined;
   }
@@ -863,13 +912,29 @@ function parseTaskListUpdate(record: Record<string, unknown>): TaskListUpdateMes
   return record as unknown as TaskListUpdateMessage;
 }
 
+function isAttachedImageMeta(value: unknown): value is AttachedImageMeta {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    (v.name === undefined || typeof v.name === 'string') &&
+    (v.width === undefined || typeof v.width === 'number') &&
+    (v.height === undefined || typeof v.height === 'number')
+  );
+}
+
 function isSessionReplayEntry(value: unknown): value is SessionReplayEntry {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
   const v = value as Record<string, unknown>;
   if (v.kind === 'prompt' || v.kind === 'response' || v.kind === 'thinking') {
-    return typeof v.text === 'string' && v.streaming === false;
+    return (
+      typeof v.text === 'string' &&
+      v.streaming === false &&
+      (v.images === undefined || (Array.isArray(v.images) && v.images.every(isAttachedImageMeta)))
+    );
   }
   if (v.kind === 'toolCall') {
     return (
@@ -899,6 +964,13 @@ function parseWorkspaceFiles(record: Record<string, unknown>): WorkspaceFilesMes
     return undefined;
   }
   return { type: 'workspaceFiles', files: record.files };
+}
+
+function parseImageAttached(record: Record<string, unknown>): ImageAttachedMessage | undefined {
+  if (!isImageAttachment(record.image)) {
+    return undefined;
+  }
+  return { type: 'imageAttached', image: record.image };
 }
 
 function parseOpenLocation(record: Record<string, unknown>): OpenLocationMessage | undefined {
@@ -931,6 +1003,37 @@ function parseToolCallLimitDecision(
     return { type: 'toolCallLimitDecision', requestId: record.requestId, cancelled: true };
   }
   return undefined;
+}
+
+function isImageAttachment(value: unknown): value is ImageAttachment {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.mimeType === 'string' &&
+    typeof v.dataBase64 === 'string' &&
+    (v.name === undefined || typeof v.name === 'string') &&
+    (v.width === undefined || typeof v.width === 'number') &&
+    (v.height === undefined || typeof v.height === 'number')
+  );
+}
+
+/** Shared validation for `SubmitPromptMessage`/`EnqueueMessageMessage`'s `text`/`images`
+ * fields -- both carry the same shape, differing only in `type`. */
+function parseTextWithImages(
+  record: Record<string, unknown>
+): { text: string; images?: ImageAttachment[] } | undefined {
+  if (typeof record.text !== 'string') {
+    return undefined;
+  }
+  if (record.images === undefined) {
+    return { text: record.text };
+  }
+  if (!Array.isArray(record.images) || !record.images.every(isImageAttachment)) {
+    return undefined;
+  }
+  return { text: record.text, images: record.images };
 }
 
 function parseWebviewError(record: Record<string, unknown>): WebviewErrorMessage | undefined {
@@ -976,6 +1079,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseSessionReplay(record);
     case 'workspaceFiles':
       return parseWorkspaceFiles(record);
+    case 'imageAttached':
+      return parseImageAttached(record);
     default:
       return undefined;
   }
@@ -984,7 +1089,7 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
 /** Narrows an untyped `postMessage` payload to a `WebviewMessage`, or `undefined` if it isn't
  * one. */
 export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
-  const simple = parseMessage(data, WEBVIEW_FIELD_SPECS, WEBVIEW_BARE_TYPES);
+  const simple = parseMessage(data, [], WEBVIEW_BARE_TYPES);
   if (simple !== undefined) {
     return simple as unknown as WebviewMessage;
   }
@@ -993,6 +1098,14 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
   }
   const record = data as Record<string, unknown>;
   switch (record.type) {
+    case 'submitPrompt': {
+      const parsed = parseTextWithImages(record);
+      return parsed === undefined ? undefined : { type: 'submitPrompt', ...parsed };
+    }
+    case 'enqueueMessage': {
+      const parsed = parseTextWithImages(record);
+      return parsed === undefined ? undefined : { type: 'enqueueMessage', ...parsed };
+    }
     case 'openLocation':
       return parseOpenLocation(record);
     case 'openDiff':

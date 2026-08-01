@@ -3,21 +3,90 @@
 
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 import tiktoken
 
 from klorb import token_estimate
+from klorb.message import Message, MessageFragment
+from klorb.models.configured_model import ConfiguredModel
 from klorb.token_estimate import (
     ENCODING_NAME,
     TIKTOKEN_CACHE_DIR_ENV_VAR,
     configure_tiktoken_cache_env,
+    estimate_image_tokens,
+    estimate_message_tokens,
     estimate_tokens,
     install_tiktoken_cache,
     tiktoken_cache_encoding_dir,
     tiktoken_cache_target_dir,
 )
+
+
+def _model(vision_details: dict[str, object] | None = None) -> ConfiguredModel:
+    return ConfiguredModel(
+        {"name": "test/model", "capabilities": {"vision": True, "vision_details": vision_details}},
+        source="test")
+
+
+class TestEstimateImageTokens:
+    def test_anthropic_tiles_formula(self) -> None:
+        assert estimate_image_tokens(750, 1000, _model({"token_formula": "anthropic_tiles"})) == 1000
+
+    def test_qwen_pixel_ratio_formula(self) -> None:
+        assert estimate_image_tokens(320, 320, _model({"token_formula": "qwen_pixel_ratio"})) == 102
+
+    def test_openai_patch_budget_formula(self) -> None:
+        model = _model({
+            "token_formula": "openai_patch_budget", "patch_budget": 1536, "token_multiplier": 2.46,
+        })
+        # 320x320 -> 10x10 patches = 100 patches, well under the 1536 budget.
+        assert estimate_image_tokens(320, 320, model) == round(100 * 2.46)
+
+    def test_openai_patch_budget_formula_clamps_to_patch_budget(self) -> None:
+        model = _model({
+            "token_formula": "openai_patch_budget", "patch_budget": 10, "token_multiplier": 2.0,
+        })
+        assert estimate_image_tokens(3200, 3200, model) == 20
+
+    def test_unrecognized_formula_falls_back_to_anthropic_tiles(self) -> None:
+        assert estimate_image_tokens(750, 1000, _model({"token_formula": "moonshotai_unknown"})) == 1000
+
+    def test_no_vision_details_falls_back_to_anthropic_tiles(self) -> None:
+        model = ConfiguredModel({"name": "test/model", "capabilities": {"vision": True}}, source="test")
+        assert estimate_image_tokens(750, 1000, model) == 1000
+
+
+class TestEstimateMessageTokens:
+    def _message(self, **overrides: object) -> Message:
+        defaults: dict[str, object] = dict(
+            content="hello", role="user", num_tokens=0, processing_state="complete",
+            timestamp=datetime.now())
+        defaults.update(overrides)
+        return Message(**defaults)  # type: ignore[arg-type]
+
+    def test_matches_estimate_tokens_when_no_fragments(self) -> None:
+        message = self._message(content="hello world")
+        assert estimate_message_tokens(message, _model()) == estimate_tokens("hello world")
+
+    def test_sums_text_fragments_via_estimate_tokens(self) -> None:
+        message = self._message(fragments=[
+            MessageFragment(type="text", text="one"), MessageFragment(type="text", text="two"),
+        ])
+        assert estimate_message_tokens(message, _model()) == (
+            estimate_tokens("one") + estimate_tokens("two"))
+
+    def test_sums_image_fragment_via_estimate_image_tokens_using_resized_dimensions(self) -> None:
+        model = _model({"token_formula": "anthropic_tiles"})
+        message = self._message(fragments=[
+            MessageFragment(type="text", text="look at this"),
+            MessageFragment(
+                type="image_url", image_url={"url": "data:image/png;base64,xx"},
+                resized_width=750, resized_height=1000),
+        ])
+        assert estimate_message_tokens(message, model) == estimate_tokens("look at this") + 1000
 
 
 def test_estimate_tokens_empty_string_is_zero() -> None:

@@ -27,7 +27,9 @@ $KLORB_DATA_DIR/projects/<basename>-<token>/
     ├── sessions.json             # ordered index of recent sessions (most-recent first)
     └── <subdir>/
         ├── session.json          # one saved session's full state
-        └── session.lock          # held by the live process that owns this session, if any
+        ├── session.lock          # held by the live process that owns this session, if any
+        └── images/                # image-fragment bytes spilled off session.json -- see below
+            └── <uuid>.<ext>
 ```
 
 `sessions/` lives in the same per-project directory as the prompt-input history file
@@ -168,6 +170,38 @@ short-lived `Session`s that are mostly never explicitly closed — an `atexit` h
 claimed test `Session` for the rest of the process and fire its writes at interpreter shutdown,
 after test fixtures have already reverted any filesystem isolation, writing real files into the
 developer's actual `$KLORB_DATA_DIR`.
+
+### Image-fragment storage
+
+An `image_url`-type `klorb.message.MessageFragment` carries a full base64 data URI --
+hundreds of KB to a few MB per image -- categorically larger than any other fragment content,
+so it isn't dumped inline into `session.json` the way a `@mention` fragment's text is. Instead,
+`SessionTurnsMixin._spill_image_fragment_to_disk` (called from `send_turn()`, right after
+`claim_session_directory()`) writes the fragment's bytes to `sessions/<subdir>/images/<uuid>.
+<ext>` (`klorb.workspace.session_store.write_session_image`) and sets `image_path` (relative to
+`sessions/<subdir>/`) and `mime_type` on the fragment; a no-op, leaving the fragment purely
+in-memory, if the session's directory isn't claimed (an untrusted workspace).
+
+`Message.for_persistence()` -- called by `write_session_state` -- returns a copy with
+`image_url` cleared for any fragment that already has `image_path` set, so `session.json` stores
+the durable path reference only, never a second copy of the base64 payload. On restore,
+`klorb.session.restore.try_restore_session` rehydrates every such fragment's `image_url` back
+into memory, once, from its on-disk bytes (`read_session_image`) plus the stored `mime_type` --
+so `Message.provider_content()` stays a pure function of in-memory state, never touching the
+filesystem itself. See docs/adrs/store-image-fragments-on-disk-not-inline-in-session-json.md and
+docs/specs/vision-image-input.md.
+
+Deleting a session's directory (`MAX_RECENT_SESSIONS` pruning's `shutil.rmtree`, below) already
+cleans up its `images/` subtree for free, since it lives inside that same directory.
+
+`source_filename`/`original_width`/`original_height` are the one exception to "klorb-only
+bookkeeping fields never persist": they're not `exclude=True`, unlike `resized_width`/
+`resized_height`/`estimated_tokens`, specifically so a `_klorb/sessionReplay` restore (see
+docs/specs/klorb-server.md) can still caption a restored image attachment even though the
+server never resends its bytes -- `klorb.server.update_mapping.build_session_replay` reads them
+back off the fragment to build a `prompt` entry's `images` metadata (no bytes), which the
+webview renders as a paper-clip placeholder icon captioned with whatever of that metadata
+survived (see docs/specs/vision-image-input.md).
 
 ### Pruning (`MAX_RECENT_SESSIONS`)
 

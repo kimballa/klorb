@@ -15,7 +15,23 @@
     "thinking_budget_style": "effort",
     "max_context_window": 1048576,
     "function_calling": true,
-    "streaming": true
+    "streaming": true,
+    "vision_details": {
+      "supported_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+        "image/heic",
+        "image/heif"
+      ],
+      "max_width_px": 4096,
+      "max_height_px": 2160,
+      "max_megapixels": null,
+      "token_formula": null,
+      "max_images_per_request": null
+    }
   },
   "cache_mgmt_style": "AUTOMATIC"
 }

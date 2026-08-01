@@ -34,6 +34,7 @@
     "httpx >= 0.27.0, < 1.0.0",
     "agent-client-protocol >= 0.7.0, < 0.8.0",
     "watchdog >= 6.0.0, < 7.0.0",
+    "Pillow >= 11.0.0, < 12.0.0",
   ]
 
 [project.scripts]
@@ -84,27 +85,30 @@
   # importlib.resources -- one directory per skill, each holding at minimum a SKILL.md plus any
   # supporting files that skill's own instructions reference. See docs/specs/skills.md.
   "klorb.resources" = [
-    "system_prompts.d/*.md", "system_prompts.d/roles/*/*.md", 
+    "system_prompts.d/*.md",
+    "system_prompts.d/roles/*/*.md",
     "default-config.json",
     "template-config.json",
-    "tiktoken-cache/*/*", "models/*.json", "greetings.json",
-    "skills/*/SKILL.md", "skills/*/**/*",
+    "tiktoken-cache/*/*",
+    "models/*.json",
+    "greetings.json",
+    "skills/*/SKILL.md",
+    "skills/*/**/*",
   ]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
-# Any particular test case should never take more than 20 seconds.
-timeout = 20
-filterwarnings = [
-]
+  asyncio_mode = "auto"
+  # Any particular test case should never take more than 20 seconds.
+  timeout = 20
+  filterwarnings = []
 
 [tool.isort]
-# Mirrors this repo's existing import style: one `from`/`import` block per module, wrapped in
-# parens with a hanging indent (and trailing comma) once it would exceed the same line length
-# flake8 enforces (see .flake8's max-line-length) rather than one-name-per-line or grid-wrapped.
-line_length = 110
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-known_first_party = ["klorb"]
+  # Mirrors this repo's existing import style: one `from`/`import` block per module, wrapped in
+  # parens with a hanging indent (and trailing comma) once it would exceed the same line length
+  # flake8 enforces (see .flake8's max-line-length) rather than one-name-per-line or grid-wrapped.
+  line_length = 110
+  multi_line_output = 3
+  include_trailing_comma = true
+  force_grid_wrap = 0
+  use_parentheses = true
+  known_first_party = ["klorb"]

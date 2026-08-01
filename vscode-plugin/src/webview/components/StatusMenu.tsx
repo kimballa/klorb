@@ -11,6 +11,9 @@ const MENU_GAP_PX = 4;
 
 export interface StatusMenuProps {
   taskPanelVisible: boolean;
+  /** Whether the active model supports image input -- shows/hides the "Attach Image…" item
+   * (see `PromptInput`'s `imagesCapable` prop for the drag/paste side of this same gate). */
+  activeModelVision?: boolean;
   onPickModel(): void;
   onPickThinking(): void;
   onSetPermissionMode(): void;
@@ -18,6 +21,7 @@ export interface StatusMenuProps {
   onNewSession(): void;
   onReloadSkills(): void;
   onToggleTaskPanel(): void;
+  onAttachImage(): void;
 }
 
 type StatusMenuAction =
@@ -27,13 +31,19 @@ type StatusMenuAction =
   | 'sessionStats'
   | 'newSession'
   | 'reloadSkills'
-  | 'toggleTaskPanel';
+  | 'toggleTaskPanel'
+  | 'attachImage';
 
 /** The task-panel item's own label reflects current visibility -- it's the only way to bring
  * the panel back once its own header pin has hidden it (see `TaskPanel.tsx`'s `onToggleVisibility`
  * and docs/specs/vscode-plugin.md's "Task panel" section), so it reads as an action name rather
- * than a static, state-blind "Toggle Task Panel". */
-export function menuItems(taskPanelVisible: boolean): { label: string; value: StatusMenuAction }[] {
+ * than a static, state-blind "Toggle Task Panel". `attachImage` is included only when
+ * `activeModelVision` is `true` -- attaching against a non-vision model can only fail
+ * server-side, so the item is hidden rather than shown-but-erroring. */
+export function menuItems(
+  taskPanelVisible: boolean,
+  activeModelVision: boolean
+): { label: string; value: StatusMenuAction }[] {
   return [
     { label: 'Set Model…', value: 'model' },
     { label: 'Set Thinking…', value: 'thinking' },
@@ -45,6 +55,7 @@ export function menuItems(taskPanelVisible: boolean): { label: string; value: St
       label: taskPanelVisible ? 'Hide Task Panel' : 'Show Task Panel',
       value: 'toggleTaskPanel',
     },
+    ...(activeModelVision ? [{ label: 'Attach Image…', value: 'attachImage' as const }] : []),
   ];
 }
 
@@ -65,6 +76,7 @@ export function menuItems(taskPanelVisible: boolean): { label: string; value: St
  */
 export default function StatusMenu({
   taskPanelVisible,
+  activeModelVision = false,
   onPickModel,
   onPickThinking,
   onSetPermissionMode,
@@ -72,6 +84,7 @@ export default function StatusMenu({
   onNewSession,
   onReloadSkills,
   onToggleTaskPanel,
+  onAttachImage,
 }: StatusMenuProps): JSX.Element {
   const menuRef = useRef<VscodeContextMenu>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -112,6 +125,9 @@ export default function StatusMenu({
       case 'toggleTaskPanel':
         onToggleTaskPanel();
         break;
+      case 'attachImage':
+        onAttachImage();
+        break;
     }
   }
 
@@ -127,7 +143,7 @@ export default function StatusMenu({
       <vscode-context-menu
         ref={menuRef}
         className="status-menu-popup"
-        data={menuItems(taskPanelVisible)}
+        data={menuItems(taskPanelVisible, activeModelVision)}
         onvsc-context-menu-select={handleSelect}
       />
     </>

@@ -4,12 +4,14 @@ import { StringDecoder } from 'string_decoder';
 
 import type {
   ClientSideConnection,
+  ContentBlock,
   InitializeResponse,
   LoadSessionResponse,
   SessionInfo as AcpSessionInfo,
 } from '@agentclientprotocol/sdk';
 
 import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerProcess';
+import type { ImageAttachment } from 'shared/webviewMessages';
 
 import {
   KlorbAcpClient,
@@ -318,7 +320,7 @@ export class AcpConnection {
    * "cancelled"). Rejects if the server fails the turn, exits mid-turn, or `stop()` is
    * called while the turn is in flight.
    */
-  public async prompt(text: string): Promise<string> {
+  public async prompt(text: string, images?: ImageAttachment[]): Promise<string> {
     const connection = this._connection;
     const sessionId = this._sessionId;
     if (connection === undefined || sessionId === undefined) {
@@ -327,9 +329,15 @@ export class AcpConnection {
     if (this._inflightReject !== undefined) {
       throw new Error('a prompt turn is already in flight');
     }
+    const imageBlocks: ContentBlock[] = (images ?? []).map((image) => ({
+      type: 'image',
+      data: image.dataBase64,
+      mimeType: image.mimeType,
+      ...(image.name !== undefined ? { _meta: { klorb: { filename: image.name } } } : {}),
+    }));
     const request = connection.prompt({
       sessionId,
-      prompt: [{ type: 'text', text }],
+      prompt: [{ type: 'text', text }, ...imageBlocks],
     });
     // If stop()/connection-closed wins the race below, the losing request promise may still
     // reject later; mark that rejection as handled so it can't surface as unhandled.

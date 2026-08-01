@@ -78,41 +78,131 @@
     },
     "commandRules": {
       "deny": [
-        ["rm", "-rf", "/"]
+        [
+          "rm",
+          "-rf",
+          "/"
+        ]
       ],
       "ask": [],
       "allow": [
-        ["true", "**"],
-        ["false", "**"],
-        ["cat", "*"],
-        ["less", "*"],
-        ["more", "*"],
-        ["head", "?"],
-        ["head", "-n", "*", "?"],
-        ["tail", "?"],
-        ["tail", "-n", "*", "?"],
-        ["echo", "**"],
-        ["pwd"],
-        ["jobs"],
-        ["sort"],
-        ["sort", "-n"],
-        ["uniq"],
-        ["uniq", "-c"],
-        ["wc", "**"],
-        ["jq", "**"],
-        ["ls", "**"],
-        ["cd", "*"],
-        ["set", "-e"],
-        ["set", "-x"],
-        ["set", "+e"],
-        ["set", "+x"],
-        ["set", "-euo", "pipefail"],
-        ["pushd", "*"],
-        ["popd"]
+        [
+          "true",
+          "**"
+        ],
+        [
+          "false",
+          "**"
+        ],
+        [
+          "cat",
+          "*"
+        ],
+        [
+          "less",
+          "*"
+        ],
+        [
+          "more",
+          "*"
+        ],
+        [
+          "head",
+          "?"
+        ],
+        [
+          "head",
+          "-n",
+          "*",
+          "?"
+        ],
+        [
+          "tail",
+          "?"
+        ],
+        [
+          "tail",
+          "-n",
+          "*",
+          "?"
+        ],
+        [
+          "echo",
+          "**"
+        ],
+        [
+          "pwd"
+        ],
+        [
+          "jobs"
+        ],
+        [
+          "sort"
+        ],
+        [
+          "sort",
+          "-n"
+        ],
+        [
+          "uniq"
+        ],
+        [
+          "uniq",
+          "-c"
+        ],
+        [
+          "wc",
+          "**"
+        ],
+        [
+          "jq",
+          "**"
+        ],
+        [
+          "ls",
+          "**"
+        ],
+        [
+          "cd",
+          "*"
+        ],
+        [
+          "set",
+          "-e"
+        ],
+        [
+          "set",
+          "-x"
+        ],
+        [
+          "set",
+          "+e"
+        ],
+        [
+          "set",
+          "+x"
+        ],
+        [
+          "set",
+          "-euo",
+          "pipefail"
+        ],
+        [
+          "pushd",
+          "*"
+        ],
+        [
+          "popd"
+        ]
       ]
     },
     "shareEnv": [
-      "LANG", "LC_ALL", "LOCALE", "HOSTTYPE", "MACHTYPE", "TZ"
+      "LANG",
+      "LC_ALL",
+      "LOCALE",
+      "HOSTTYPE",
+      "MACHTYPE",
+      "TZ"
     ],
     "setEnv": {
       "EDITOR": "false"
@@ -161,13 +251,34 @@
   "tools.bash.riskClassifier.historySize": 20,
   "tools.bash.network.enabled": true,
   "tools.bash.network.recognizedClients": [
-    "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
-    "go", "cargo", "mvn", "nc", "ncat", "telnet", "http", "https"
+    "curl",
+    "wget",
+    "git",
+    "pip",
+    "pip3",
+    "uv",
+    "npm",
+    "yarn",
+    "pnpm",
+    "go",
+    "cargo",
+    "mvn",
+    "nc",
+    "ncat",
+    "telnet",
+    "http",
+    "https"
   ],
   "tools.webFetch.timeout": 120.0,
   "tools.webFetch.connectTimeout": 5.0,
   "tools.webFetch.spillBytes": 32768,
   "tools.webFetch.maxBodyBytes": 10485760,
+  "tools.images.defaultMaxDimensionPx": 1568,
+  "tools.images.maxBytesRaw": 26214400,
+  "tools.images.preferredFormats": [
+    "image/webp",
+    "image/png"
+  ],
   "classifier.model": null,
   "classifier.timeout": 5.0,
   "classifier.e2eTimeout": 10.0,

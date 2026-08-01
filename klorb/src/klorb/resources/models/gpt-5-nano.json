@@ -17,7 +17,22 @@
     "max_context_window": 400000,
     "max_output_tokens": 128000,
     "function_calling": true,
-    "streaming": true
+    "streaming": true,
+    "vision_details": {
+      "supported_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif"
+      ],
+      "max_width_px": null,
+      "max_height_px": null,
+      "max_megapixels": 1.572864,
+      "token_formula": "openai_patch_budget",
+      "max_images_per_request": 1500,
+      "patch_budget": 1536,
+      "token_multiplier": 2.46
+    }
   },
   "klorb_capabilities": {
     "NANO_CLASSIFIER": true

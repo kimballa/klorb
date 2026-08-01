@@ -4,6 +4,7 @@ owns the single live `Session`, and dispatches `session/new`/`session/prompt`/`s
 See docs/specs/klorb-server.md."""
 
 import asyncio
+import base64
 import logging
 from pathlib import Path
 from typing import Any, cast
@@ -35,6 +36,9 @@ from acp.schema import (
 )
 
 from klorb.api_provider import ApiProvider, ResponseAborted
+from klorb.images.prepare import ImagePipelineConfig, ImageTooLargeError, prepare_image_for_model
+from klorb.message import MessageFragment
+from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import concat_dir_rules
@@ -143,6 +147,7 @@ class KlorbAcpAgent(acp.Agent):
                     "reloadSkills": True,
                     "enqueueMessage": True,
                     "taskMeta": chainlink_available(),
+                    "imageInput": True,
                 }}),
         )
 
@@ -219,13 +224,14 @@ class KlorbAcpAgent(acp.Agent):
         self._validate_session(session_id)
         if self._turn_in_flight:
             raise acp.RequestError(-32000, "A prompt is already in progress for this session")
-        prompt_text = _extract_prompt_text(prompt)
-        assert self._turn_bridge is not None
         assert self._session is not None
+        prompt_text, image_fragments = _extract_prompt_content(
+            prompt, self._session.active_model(), self._process_config)
+        assert self._turn_bridge is not None
         self._turn_in_flight = True
         logger.debug("session/prompt dispatching turn for ACP session %s", session_id)
         try:
-            await self._turn_bridge.run_turn(prompt_text)
+            await self._turn_bridge.run_turn(prompt_text, image_fragments=image_fragments)
         except ResponseAborted:
             logger.debug("session/prompt turn cancelled for ACP session %s", session_id)
             self._session.persist_state()
@@ -535,14 +541,47 @@ class KlorbAcpAgent(acp.Agent):
         klorb follows -- see the plan overview's "Extensibility rules" section."""
 
 
-def _extract_prompt_text(blocks: list[_PromptContentBlock]) -> str:
-    """Concatenate every `text` block's content, in order. Raises a JSON-RPC `invalid params`
-    error on the first non-text block -- images/audio/resources aren't supported until a later
-    increment."""
+def _extract_prompt_content(
+    blocks: list[_PromptContentBlock], active_model: Model | None, config: ProcessConfig,
+) -> tuple[str, list[MessageFragment]]:
+    """Split `blocks` into the concatenated text of every `text` block and one `MessageFragment`
+    per `image` block, resizing/transcoding each image for `active_model` via `klorb.images.
+    prepare.prepare_image_for_model`. Raises a JSON-RPC `invalid params` error on the first
+    `image` block if `active_model` is `None` or its `capabilities()["vision"]` is falsy, or if
+    `prepare_image_for_model` raises `ImageTooLargeError`; audio/resource blocks keep raising
+    `invalid_params` unconditionally -- unchanged, out of scope here. See docs/specs/vision-
+    image-input.md.
+    """
     texts: list[str] = []
+    image_fragments: list[MessageFragment] = []
     for block in blocks:
-        if block.type != "text":
+        if block.type == "text":
+            texts.append(block.text)
+            continue
+        if block.type != "image":
             raise acp.RequestError.invalid_params(
                 {"reason": f"content block type {block.type!r} is not supported yet"})
-        texts.append(block.text)
-    return "".join(texts)
+        if active_model is None or not active_model.capabilities().get("vision"):
+            raise acp.RequestError.invalid_params(
+                {"reason": "the active model does not support image input"})
+        pipeline_config = ImagePipelineConfig(
+            default_max_dimension_px=config.image_default_max_dimension_px,
+            max_bytes_raw=config.image_max_bytes_raw,
+            preferred_formats=config.image_preferred_formats)
+        try:
+            prepared = prepare_image_for_model(base64.b64decode(
+                block.data), active_model, pipeline_config)
+        except ImageTooLargeError as exc:
+            raise acp.RequestError.invalid_params({"reason": str(exc)}) from exc
+        klorb_meta = (block.field_meta or {}).get("klorb") or {}
+        image_fragments.append(MessageFragment(
+            type="image_url",
+            image_url={"url": f"data:{prepared.mime_type};base64,{prepared.data_b64}"},
+            mime_type=prepared.mime_type,
+            source_filename=klorb_meta.get("filename"),
+            original_width=prepared.original_width,
+            original_height=prepared.original_height,
+            resized_width=prepared.width,
+            resized_height=prepared.height,
+        ))
+    return "".join(texts), image_fragments

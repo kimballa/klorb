@@ -16,6 +16,16 @@ from klorb.workspace import TrustManager
 
 logger = logging.getLogger(__name__)
 
+STDIN_STREAM_LIMIT_BYTES = 64 * 1024 * 1024
+"""Buffer limit for the stdin `asyncio.StreamReader` `ServerStreams.from_stdio()` builds, well
+above `asyncio.StreamReader`'s own 64KiB default. ACP frames one JSON-RPC message per line, and
+an image `session/prompt` request's `data` field is the *raw* attachment (klorb resizes/
+transcodes server-side -- see docs/specs/vision-image-input.md), base64-inflated (~4/3) and
+client-side-capped at 25MB per image (`PromptInput.MAX_ATTACHMENT_RAW_BYTES`) with no cap on
+attachment count per turn -- comfortably over the default limit, which fails closed as an
+unrecoverable `LimitOverrunError` that tears down the whole connection, not a per-request error.
+"""
+
 
 class ServerStreams:
     """Owns the async reader/writer pair an ACP connection is built from.
@@ -40,9 +50,12 @@ class ServerStreams:
     @classmethod
     async def from_stdio(cls) -> "ServerStreams":
         """Bind this process's real `stdin`/`stdout` as an ACP stream pair, via the SDK's own
-        `acp.stdio_streams()` helper."""
-        reader, writer = await acp.stdio_streams()
-        logger.debug("Bound ACP server streams to process stdio")
+        `acp.stdio_streams()` helper, with `STDIN_STREAM_LIMIT_BYTES` as the stdin reader's
+        buffer limit (see its own docstring)."""
+        reader, writer = await acp.stdio_streams(limit=STDIN_STREAM_LIMIT_BYTES)
+        logger.debug(
+            "Bound ACP server streams to process stdio (stdin limit=%d bytes)",
+            STDIN_STREAM_LIMIT_BYTES)
         return cls(reader, writer)
 
 

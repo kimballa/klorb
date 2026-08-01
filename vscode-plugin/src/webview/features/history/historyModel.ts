@@ -1,7 +1,9 @@
 // © Copyright 2026 Aaron Kimball
 import type {
+  AttachedImageMeta,
   BashToolMeta,
   HostMessage,
+  ImageAttachment,
   PermissionAskMessage,
   QuestionAskMessage,
   SessionReplayEntry,
@@ -44,6 +46,13 @@ export interface TextHistoryEntry {
   kind: HistoryEntryKind;
   text: string;
   streaming: boolean;
+  /** Images attached to a `'prompt'` entry -- a live-submitted entry carries the full
+   * `ImageAttachment` (bytes and all, verbatim from the `SubmitPromptMessage` that created
+   * it); a `_klorb/sessionReplay`-restored entry carries `AttachedImageMeta` only (no bytes --
+   * the server doesn't resend an already-persisted image just to redraw a thumbnail), which
+   * `AttachmentThumbnail` renders as a paper-clip placeholder instead of the real image. Never
+   * set for any other `kind`. */
+  images?: (ImageAttachment | AttachedImageMeta)[];
 }
 
 /** A tool-call chip entry: `expanded` defaults to `false` and can be flipped individually
@@ -76,9 +85,14 @@ export interface SessionStatsHistoryEntry {
 /** One entry in the panel's history scroll. */
 export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry | SessionStatsHistoryEntry;
 
-/** Appends the user's submitted prompt as a finished (non-streaming) entry. */
-export function appendPrompt(entries: readonly HistoryEntry[], text: string): HistoryEntry[] {
-  return [...entries, { kind: 'prompt', text, streaming: false }];
+/** Appends the user's submitted prompt as a finished (non-streaming) entry, with any images
+ * attached to it (see `PromptInput`'s attachment tray). */
+export function appendPrompt(
+  entries: readonly HistoryEntry[],
+  text: string,
+  images?: ImageAttachment[]
+): HistoryEntry[] {
+  return [...entries, { kind: 'prompt', text, streaming: false, ...(images ? { images } : {}) }];
 }
 
 /** Appends a message the server just confirmed queuing into the running turn
@@ -386,6 +400,10 @@ export function applyHostMessage(
     case 'workspaceFiles':
       // Tracked separately by `App`'s own `workspaceFiles` state, not as a history entry -- the
       // file finder reads from that state instead.
+      return [...entries];
+    case 'imageAttached':
+      // Routed directly to `PromptInput`'s pending attachment tray by `App` (see its own
+      // `onMessage` handler), not tracked as a history entry.
       return [...entries];
   }
 }

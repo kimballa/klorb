@@ -300,7 +300,7 @@ categorically larger. Deleting a session's directory (`MAX_RECENT_SESSIONS` prun
 `shutil.rmtree`) already cleans up `images/` for free as long as it lives inside the session's own
 directory tree.
 
-_This proposal has been signed off as approved._
+*This proposal has been signed off as approved.*
 
 ## Security
 

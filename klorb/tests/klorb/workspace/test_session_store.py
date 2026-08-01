@@ -1,13 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.workspace.session_store."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from klorb.lockfile import create_lockfile
-from klorb.message import Message, MessageRole
+from klorb.message import Message, MessageFragment, MessageRole
 from klorb.schema_envelope import write_versioned_json
 from klorb.session import SessionConfig
 from klorb.workspace import Workspace
@@ -20,12 +21,14 @@ from klorb.workspace.session_store import (
     SESSIONS_LIST_SCHEMA_VERSION,
     RecentSession,
     find_recent_session,
+    read_session_image,
     read_session_state,
     read_sessions_index,
     session_lock_path,
     session_state_path,
     sessions_list_path,
     touch_recent_session,
+    write_session_image,
     write_session_state,
 )
 
@@ -69,9 +72,9 @@ class TestSessionState:
         workspace = _workspace(tmp_path)
         write_session_state(workspace, "sess-1", SessionConfig(), [])
 
-        import json
         raw = json.loads(session_state_path(workspace, "sess-1").read_text(encoding="utf-8"))
-        assert raw["schema"] == {"name": SESSION_STATE_SCHEMA_NAME, "version": SESSION_STATE_SCHEMA_VERSION}
+        assert raw["schema"] == {"name": SESSION_STATE_SCHEMA_NAME,
+            "version": SESSION_STATE_SCHEMA_VERSION}
 
     def test_two_subdirs_are_independent(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)
@@ -130,6 +133,73 @@ class TestSessionState:
         assert state.session_id == "2026-07-19-01-50-fix-auth"
         assert state.session_name == "Fix auth token refresh bug"
         assert state.cur_chainlink_task_id == 7
+
+
+class TestSessionImages:
+    """Tests for write_session_image/read_session_image and write_session_state's use of
+    Message.for_persistence() to keep base64 image bytes out of session.json -- see
+    docs/adrs/store-image-fragments-on-disk-not-inline-in-session-json.md."""
+
+    def test_write_then_read_round_trips_bytes(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        data = b"some raw image bytes"
+
+        image_path = write_session_image(workspace, "sess-1", data, "webp")
+
+        assert image_path.startswith("images/")
+        assert image_path.endswith(".webp")
+        assert read_session_image(workspace, "sess-1", image_path) == data
+
+    def test_two_writes_get_distinct_paths(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        path_a = write_session_image(workspace, "sess-1", b"a", "png")
+        path_b = write_session_image(workspace, "sess-1", b"b", "png")
+        assert path_a != path_b
+
+    def test_write_session_state_drops_image_url_once_image_path_is_set(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        image_path = write_session_image(workspace, "sess-1", b"raw bytes", "webp")
+        message = Message(
+            content="look", role="user", num_tokens=1, processing_state="complete",
+            timestamp=datetime(2026, 7, 12, 0, 0, 0),
+            fragments=[MessageFragment(
+                type="image_url", image_url={"url": "data:image/webp;base64,xx"},
+                image_path=image_path, mime_type="image/webp")])
+
+        write_session_state(workspace, "sess-1", SessionConfig(), [message])
+
+        raw = json.loads(session_state_path(workspace, "sess-1").read_text(encoding="utf-8"))
+        stored_fragment = raw["messages"][0]["fragments"][0]
+        assert stored_fragment["image_url"] is None
+        assert stored_fragment["image_path"] == image_path
+
+    def test_write_then_read_round_trips_filename_and_original_dimensions(
+        self, tmp_path: Path,
+    ) -> None:
+        """`source_filename`/`original_width`/`original_height` survive a session.json round
+        trip (unlike `resized_width`/`resized_height`, which don't) -- so a `_klorb/
+        sessionReplay` restore can still caption a restored attachment even though its bytes
+        aren't resent (`klorb.server.update_mapping.build_session_replay`)."""
+        workspace = _workspace(tmp_path)
+        image_path = write_session_image(workspace, "sess-1", b"raw bytes", "webp")
+        message = Message(
+            content="look", role="user", num_tokens=1, processing_state="complete",
+            timestamp=datetime(2026, 7, 12, 0, 0, 0),
+            fragments=[MessageFragment(
+                type="image_url", image_path=image_path, mime_type="image/webp",
+                source_filename="shot.png", original_width=123, original_height=456,
+                resized_width=64, resized_height=64)])
+
+        write_session_state(workspace, "sess-1", SessionConfig(), [message])
+        state = read_session_state(workspace, "sess-1")
+
+        assert state is not None
+        restored_fragment = state.messages[0].fragments[0]  # type: ignore[index]
+        assert restored_fragment.source_filename == "shot.png"
+        assert restored_fragment.original_width == 123
+        assert restored_fragment.original_height == 456
+        assert restored_fragment.resized_width is None
+        assert restored_fragment.resized_height is None
 
 
 class TestRecentSessionsIndex:

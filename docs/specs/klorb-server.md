@@ -33,10 +33,13 @@ way the TUI's own commands do.
 * `initialize` negotiates the protocol version (klorb always replies with `acp.PROTOCOL_VERSION`,
   the SDK's own current value) and exchanges capabilities. klorb's `agentCapabilities._meta`
   carries `{"klorb": {"sessionConfig": true, "sessionStats": true, "trustWorkspace": true,
-  "reloadSkills": true, "enqueueMessage": true, "taskMeta": <chainlink binary discoverable>}}` —
-  grown by later increments as more `_klorb/*` extension methods are added (see "Extension
-  methods" below). `taskMeta` doesn't gate an extension method the way the others do; see
-  "Chainlink task-plan updates" below for what it actually means.
+  "reloadSkills": true, "enqueueMessage": true, "taskMeta": <chainlink binary discoverable>,
+  "imageInput": true}}` — grown by later increments as more `_klorb/*` extension methods are
+  added (see "Extension methods" below). `taskMeta` doesn't gate an extension method the way the
+  others do; see "Chainlink task-plan updates" below for what it actually means. `imageInput`
+  is static (the server understands `ImageContentBlock` at the protocol level at all); whether
+  the *active* model actually accepts an image is reported separately, per session, since the
+  active model can change mid-session — see "Model and thinking session config" below.
 * `session/new` builds a fresh `Session` for the given `cwd`, tearing down any existing one
   first — see "Single top-level session" below. `mcpServers` is accepted but never acted on
   (klorb has no MCP support). The response's `modes` field advertises the session's permission
@@ -44,9 +47,13 @@ way the TUI's own commands do.
   `{workspace: {path, trusted}, title: string | null}` — the resolved workspace's trust state,
   and the session's name if one is already known (always `null` today, since every session
   built here is fresh — see "Single top-level session").
-* `session/prompt` sends one turn. Only `TextContentBlock` prompt content is supported at this
-  checkpoint — an image/audio/resource block gets a JSON-RPC `invalid params` error instead of
-  being silently dropped or misread. The reply's `stopReason` is `"end_turn"` on success or
+* `session/prompt` sends one turn. `TextContentBlock` and `ImageContentBlock` prompt content are
+  supported; an audio/resource block still gets a JSON-RPC `invalid params` error instead of
+  being silently dropped or misread. An `ImageContentBlock` against a model whose `capabilities()`
+  doesn't report `vision` also gets `invalid_params` (`{"reason": "the active model does not
+  support image input"}`) — see docs/specs/vision-image-input.md for the resize/transcode
+  pipeline and how image content threads through `Session.send_turn()`. The reply's `stopReason`
+  is `"end_turn"` on success or
   `"cancelled"` if the turn was aborted via `session/cancel`; any other failure propagates as a
   JSON-RPC error, with the turn's error state left inside `Session` exactly as `send_turn()`
   already leaves it for the TUI/one-shot paths.
@@ -74,10 +81,13 @@ Later increments grow this section as they land.
 
 * **`_klorb/getSessionConfig`** — reads the session's model/thinking config. Params:
   `{sessionId: string}`. Result: `{model: {current: string, available: [{id: string, name:
-  string}]}, thinking: {enabled: boolean, effort: "low" | "medium" | "high"}}` — `available` is
-  every model `ModelRegistry` knows about, `id`/`name` both `Model.name()` (there's no separate
-  display-name concept). See "Model and thinking session config" below for why this rides an
-  ext method rather than the SDK's own `session/set_model`.
+  string}]}, thinking: {enabled: boolean, effort: "low" | "medium" | "high"}, activeModelVision:
+  boolean}` — `available` is every model `ModelRegistry` knows about, `id`/`name` both
+  `Model.name()` (there's no separate display-name concept); `activeModelVision` is `current`
+  model's own `capabilities()["vision"]`, so a client can gate an image-attach affordance without
+  waiting on a rejected `session/prompt` (see docs/specs/vision-image-input.md). See "Model and
+  thinking session config" below for why this rides an ext method rather than the SDK's own
+  `session/set_model`.
 * **`_klorb/setSessionConfig`** — changes the session's model/thinking config. Params:
   `{sessionId: string, model?: string, thinking?: {enabled?: boolean, effort?: "low" | "medium"
   | "high"}}` — every field left unset is left unchanged. `model` is assigned unvalidated
@@ -284,8 +294,10 @@ richer view from that same detail.
     `modes`/`_meta.klorb` as described in "Wire protocol" above.
   * `set_session_mode(mode_id, session_id)`: see "Session modes" above.
   * `prompt(prompt, session_id)`: validates `session_id`, rejects a second concurrent prompt,
-    concatenates the request's `TextContentBlock`s (any other block type is a JSON-RPC error),
-    and delegates to `TurnBridge.run_turn()`.
+    splits the request's content blocks into concatenated text plus a list of image
+    `MessageFragment`s (`_extract_prompt_content()` -- an audio/resource block, or an image
+    against a non-vision model, is a JSON-RPC error; see docs/specs/vision-image-input.md), and
+    delegates to `TurnBridge.run_turn()`.
   * `cancel(session_id)`: sets `Session.active_cancel_event`, if one is live for that session.
   * `ext_method(method, params)`: dispatches `_klorb/getSessionConfig`/`_klorb/setSessionConfig`/
     `_klorb/sessionStats`/`_klorb/reloadSkills`/`_klorb/trustWorkspace` by name (see "Extension
@@ -609,7 +621,7 @@ of being rejected, mirroring the TUI's queue-while-a-turn-is-running behavior
   finally resolves. The JSON-RPC response reflects the *last* turn in the chain (its `stopReason`
   on success or cancellation; its exception, if it raised, propagating as the request's error) —
   not necessarily the first turn's own outcome.
-  
+
 ### CLI wiring
 
 `klorb.cli.run_server_cli(argv)` parses `klorb server`'s own flags (`--config`), resolves it

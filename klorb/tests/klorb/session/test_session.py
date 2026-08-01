@@ -17,7 +17,7 @@ from fixtures.sample_models import NO_SUCH_DIR, sample_model_registry
 
 from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
-from klorb.message import Message, ToolCallRequest
+from klorb.message import Message, MessageFragment, ToolCallRequest
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
@@ -525,6 +525,44 @@ def test_send_turn_leaves_fragments_none_without_at_mentions() -> None:
     assert session.messages[1].fragments is None
 
 
+def test_send_turn_appends_image_fragments_after_prompt_with_headers() -> None:
+    """Image fragments are appended after the prompt's own text fragment (vendor guidance:
+    send text first, then images), each preceded by a header fragment naming its position and
+    origin -- see _image_header_text and docs/specs/vision-image-input.md."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider, session_id="my-session-id")
+    image_fragment = MessageFragment(
+        type="image_url", image_url={"url": "data:image/png;base64,xx"}, mime_type="image/png",
+        source_filename="shot.png")
+
+    session.send_turn("what is this?", image_fragments=[image_fragment])
+
+    user_message = session.messages[1]
+    assert user_message.fragments is not None
+    assert [f.type for f in user_message.fragments] == ["text", "text", "image_url"]
+    assert user_message.fragments[0].text == user_message.content
+    assert "image #1" in user_message.fragments[1].text
+    assert "filename='shot.png'" in user_message.fragments[1].text
+    assert user_message.fragments[2] is image_fragment
+
+
+def test_send_turn_image_header_notes_clipboard_paste_when_no_filename() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=mock_provider, session_id="my-session-id")
+    image_fragment = MessageFragment(
+        type="image_url", image_url={"url": "data:image/png;base64,xx"}, mime_type="image/png")
+
+    session.send_turn("what is this?", image_fragments=[image_fragment])
+
+    fragments = session.messages[1].fragments
+    assert fragments is not None
+    assert "pasted from clipboard" in fragments[1].text
+
+
 def test_run_one_shot_delegates_to_send_turn() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
@@ -743,7 +781,8 @@ def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
     config = SessionConfig(model="alpha")
     registry = sample_model_registry()
     tool_registry = _sample_tool_registry(config)
-    session = Session(config, provider=mock_provider, model_registry=registry, tool_registry=tool_registry)
+    session = Session(config, provider=mock_provider,
+                      model_registry=registry, tool_registry=tool_registry)
 
     session.send_turn("hi")
 
@@ -1593,7 +1632,8 @@ def test_per_session_tool_call_limit_accumulates_across_turns() -> None:
         _reply("first done"),
         _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
     ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000, max_tool_calls_per_session=1)
+    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000,
+                           max_tool_calls_per_session=1)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1656,7 +1696,8 @@ def test_approving_session_limit_increase_doubles_it_and_continues() -> None:
         _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
         _reply("second done"),
     ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000, max_tool_calls_per_session=1)
+    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000,
+                           max_tool_calls_per_session=1)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_limit_reached = MagicMock(return_value=True)
@@ -2484,7 +2525,8 @@ def test_multi_ask_resolve_threads_skill_field_into_ask_context(tmp_path: Path) 
     a skill)."""
     config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
     session = Session(config, provider=MagicMock(), tool_registry=MagicMock())
-    item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
+    item = PermissionAskItem("activate skill internal/s",
+                             resource=SkillResource(skill_id=("internal", "s")))
     multi_ask_exc = MultiPermissionAskRequired("ask", items=[item])
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
@@ -2508,7 +2550,8 @@ def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None
     mock_registry = MagicMock()
     mock_registry.instantiate_tool.return_value = mock_tool
     session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
-    item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
+    item = PermissionAskItem("activate skill internal/s",
+                             resource=SkillResource(skill_id=("internal", "s")))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
 
     outcome = session._retry_after_multi_permission_decisions(
@@ -2532,7 +2575,8 @@ def test_multi_ask_persistent_scope_applies_skill_grant(tmp_path: Path) -> None:
     mock_registry = MagicMock()
     mock_registry.instantiate_tool.return_value = mock_tool
     session = Session(config, provider=MagicMock(), tool_registry=mock_registry)
-    item = PermissionAskItem("activate skill internal/s", resource=SkillResource(skill_id=("internal", "s")))
+    item = PermissionAskItem("activate skill internal/s",
+                             resource=SkillResource(skill_id=("internal", "s")))
     call = ToolCallRequest(id="call_1", name="whatever", arguments="{}")
 
     outcome = session._retry_after_multi_permission_decisions(

@@ -55,6 +55,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
 const SESSION_CONFIG_RESULT = {
   model: { current: 'gpt-5', available: [{ id: 'gpt-5', name: 'gpt-5' }] },
   thinking: { enabled: true, effort: 'high' },
+  activeModelVision: true,
 };
 
 describe('SessionControls', () => {

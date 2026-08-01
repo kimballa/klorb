@@ -26,6 +26,17 @@ describe('appendPrompt', () => {
     const entries = appendPrompt([], 'do the thing');
     expect(entries).toEqual([{ kind: 'prompt', text: 'do the thing', streaming: false }]);
   });
+
+  it('carries attached images onto the prompt entry', () => {
+    const images = [{ mimeType: 'image/png', dataBase64: 'abcd', name: 'shot.png' }];
+    const entries = appendPrompt([], 'what is this?', images);
+    expect(entries).toEqual([{ kind: 'prompt', text: 'what is this?', streaming: false, images }]);
+  });
+
+  it('omits the images field entirely when none were attached', () => {
+    const entries = appendPrompt([], 'do the thing', undefined);
+    expect(entries[0]).not.toHaveProperty('images');
+  });
 });
 
 describe('applyHostMessage', () => {

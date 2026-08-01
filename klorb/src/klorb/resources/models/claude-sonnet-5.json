@@ -16,6 +16,19 @@
     "max_context_window": 1000000,
     "max_output_tokens": 128000,
     "function_calling": true,
-    "streaming": true
+    "streaming": true,
+    "vision_details": {
+      "supported_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif"
+      ],
+      "max_width_px": 2576,
+      "max_height_px": 2576,
+      "max_megapixels": 3.748,
+      "token_formula": "anthropic_tiles",
+      "max_images_per_request": 20
+    }
   }
 }

@@ -91,6 +91,7 @@ const SESSION_CONFIG_RESULT = {
     ],
   },
   thinking: { enabled: false, effort: 'medium' },
+  activeModelVision: false,
 };
 
 describe('selectModelCommand', () => {

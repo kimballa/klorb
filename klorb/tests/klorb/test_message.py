@@ -39,9 +39,13 @@ class TestBody:
                 MessageFragment(type="text", text="prompt"),
             ],
         )
+        fragment_json = {
+            "image_url": None, "image_path": None, "mime_type": None,
+            "source_filename": None, "original_width": None, "original_height": None,
+        }
         assert message.body() == json.dumps([
-            {"type": "text", "text": "attachment"},
-            {"type": "text", "text": "prompt"},
+            {"type": "text", "text": "attachment", **fragment_json},
+            {"type": "text", "text": "prompt", **fragment_json},
         ])
 
 
@@ -60,3 +64,41 @@ class TestProviderContent:
             {"type": "text", "text": "a"},
             {"type": "text", "text": "b"},
         ]
+
+    def test_image_fragment_dumps_to_exact_wire_shape_excluding_bookkeeping(self) -> None:
+        message = _message(fragments=[MessageFragment(
+            type="image_url", image_url={"url": "data:image/webp;base64,xx"},
+            mime_type="image/webp", source_filename="foo.png",
+            original_width=800, original_height=600, resized_width=400, resized_height=300,
+            estimated_tokens=123,
+        )])
+        assert message.provider_content() == [
+            {"type": "image_url", "image_url": {"url": "data:image/webp;base64,xx"}},
+        ]
+
+
+class TestForPersistence:
+    """Tests for Message.for_persistence()."""
+
+    def test_returns_self_when_no_fragments(self) -> None:
+        message = _message(content="hello")
+        assert message.for_persistence() is message
+
+    def test_returns_self_when_no_spilled_image_fragments(self) -> None:
+        message = _message(fragments=[MessageFragment(type="text", text="a")])
+        assert message.for_persistence() is message
+
+    def test_clears_image_url_once_image_path_is_set(self) -> None:
+        message = _message(fragments=[MessageFragment(
+            type="image_url", image_url={"url": "data:image/webp;base64,xx"},
+            image_path="images/a.webp", mime_type="image/webp")])
+
+        persisted = message.for_persistence()
+
+        assert persisted is not message
+        assert persisted.fragments is not None
+        assert persisted.fragments[0].image_url is None
+        assert persisted.fragments[0].image_path == "images/a.webp"
+        # The original in-memory message is untouched -- still safe to send this turn.
+        assert message.fragments is not None
+        assert message.fragments[0].image_url == {"url": "data:image/webp;base64,xx"}

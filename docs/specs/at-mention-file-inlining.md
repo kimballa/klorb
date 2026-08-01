@@ -118,11 +118,12 @@ text of this turn" (TUI rendering, char-count logging, `retry_last_turn()`) keep
 whether or not the turn had any `@mention`s -- `fragments` is `None` when it didn't.
 
 `Message.provider_content()` is what actually goes out over the wire: `fragments` (each
-dumped to its `{"type": "text", "text": ...}` wire shape) when set, else the plain
-`content` string. `Message.body()` is a separate, more general "give me a reasonable
-text representation of this message" helper (JSON-stringified `fragments` if set, else
-joined `streaming_content` if still streaming, else `content`) used for things like
-token-count estimation that want to account for attachment content too.
+dumped via `MessageFragment.to_wire_dict()` -- `{"type": "text", "text": ...}` for a text
+fragment; see docs/specs/vision-image-input.md for the `"image_url"` fragment type images
+use) when set, else the plain `content` string. `Message.body()` is a separate, more
+general "give me a reasonable text representation of this message" helper
+(JSON-stringified `fragments` if set, else joined `streaming_content` if still streaming,
+else `content`) used for things like debug char-count totals.
 
 ## Configuration
 

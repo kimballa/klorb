@@ -10,9 +10,12 @@ import {
   type SessionUpdateListener,
 } from 'host/features/acp';
 import type { SessionControls } from 'host/features/sessionControls';
+import { readImageDimensions } from 'shared/imageDimensions';
+import { IMAGE_FILE_EXTENSIONS, IMAGE_MIME_TYPE_BY_EXTENSION } from 'shared/imageFileTypes';
 import {
   parseWebviewMessage,
   type HostMessage,
+  type ImageAttachment,
   type PermissionAskMessage,
   type QuestionAskMessage,
   type SessionReplayEntry,
@@ -204,10 +207,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     }
     switch (parsed.type) {
       case 'submitPrompt':
-        await this._runTurn(parsed.text);
+        await this._runTurn(parsed.text, parsed.images);
         break;
       case 'enqueueMessage':
-        await this._enqueueMessage(parsed.text);
+        await this._enqueueMessage(parsed.text, parsed.images);
         break;
       case 'cancelTurn':
         this._connection?.cancel();
@@ -269,6 +272,9 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       case 'reloadSkills':
         await vscode.commands.executeCommand('klorb.reloadSkills');
         break;
+      case 'attachImageFile':
+        await this._attachImageFile();
+        break;
       case 'webviewError':
         this._log(
           `klorb: webview crashed: ${parsed.message}${parsed.stack !== undefined ? `\n${parsed.stack}` : ''}`
@@ -277,7 +283,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     }
   }
 
-  private async _runTurn(text: string): Promise<void> {
+  private async _runTurn(text: string, images?: ImageAttachment[]): Promise<void> {
     const connection = this._connection;
     if (connection === undefined || !connection.isReady) {
       this.postHostMessage({
@@ -291,7 +297,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     const turnGeneration = connection.turnGeneration;
     this.postHostMessage({ type: 'turnStarted' });
     try {
-      const stopReason = await connection.prompt(text);
+      const stopReason = await connection.prompt(text, images);
       // A `newSession()`/`loadSession()` call while this turn was in flight interrupts it
       // (`AcpConnection._interruptInFlightTurn()`) and bumps `turnGeneration` -- when that's
       // what settled this `prompt()`, the result belongs to a session this provider has
@@ -322,7 +328,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
    * capability-absent or not-ready connection surfaces a `turnError` rather than silently
    * dropping the message -- the webview only posts this when it believes the capability is
    * present, so reaching here otherwise means the connection state changed underneath it. */
-  private async _enqueueMessage(text: string): Promise<void> {
+  private async _enqueueMessage(text: string, images?: ImageAttachment[]): Promise<void> {
     const connection = this._connection;
     if (connection === undefined || !connection.isReady || !connection.enqueueMessageCapable) {
       this.postHostMessage({
@@ -331,11 +337,51 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       });
       return;
     }
+    // `_klorb/enqueueMessage` redelivers as plain text (see docs/specs/klorb-server.md) -- it
+    // has no content-block channel of its own, so an image attached while a turn is already in
+    // flight can't be queued the way the prompt text itself can.
+    if (images !== undefined && images.length > 0) {
+      this.postHostMessage({
+        type: 'turnError',
+        message:
+          'Image attachments cannot be queued into an in-progress turn; wait for it to finish.',
+      });
+      return;
+    }
     try {
       await connection.enqueueMessage(text);
     } catch (err) {
       this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
     }
+  }
+
+  /** Handles the status row's "Attach Image…" menu item: opens a native file picker filtered
+   * to image extensions, and if the user picked one, posts an `imageAttached` message so
+   * `PromptInput` adds it to its pending tray -- the same end state a drag-drop/paste reaches.
+   * A no-op (no message posted) if the dialog is dismissed without a selection. */
+  private async _attachImageFile(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      title: 'Attach Image',
+      filters: { Images: IMAGE_FILE_EXTENSIONS },
+    });
+    if (picked === undefined || picked.length === 0) {
+      return;
+    }
+    const uri = picked[0]!;
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    const dotIndex = uri.path.lastIndexOf('.');
+    const extension = dotIndex === -1 ? '' : uri.path.slice(dotIndex).toLowerCase();
+    const name = uri.path.slice(uri.path.lastIndexOf('/') + 1);
+    this.postHostMessage({
+      type: 'imageAttached',
+      image: {
+        mimeType: IMAGE_MIME_TYPE_BY_EXTENSION[extension] ?? 'application/octet-stream',
+        dataBase64: Buffer.from(bytes).toString('base64'),
+        name,
+        ...readImageDimensions(bytes),
+      },
+    });
   }
 
   /** Caches and posts the workspace's current file list -- called by `extension.ts`'s
@@ -382,7 +428,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource}; font-src ${webview.cspSource};">
+    content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src ${webview.cspSource}; font-src ${webview.cspSource}; img-src ${webview.cspSource} data:;">
   <link id="vscode-codicon-stylesheet" rel="stylesheet" href="${codiconUri}">
   <link rel="stylesheet" href="${styleUri}">
   <title>Klorb session</title>

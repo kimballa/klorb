@@ -15,6 +15,7 @@ from typing import Any, NamedTuple, TypeVar
 import acp
 from acp.schema import SessionInfoUpdate
 
+from klorb.message import MessageFragment
 from klorb.permissions.risk_classifier import (
     ItemRiskAssessment,
     record_decision_history,
@@ -208,7 +209,9 @@ class TurnBridge:
             "outputTokens": self._session.total_output_tokens_used(),
         }
 
-    async def run_turn(self, prompt_text: str) -> str:
+    async def run_turn(
+        self, prompt_text: str, image_fragments: list[MessageFragment] | None = None,
+    ) -> str:
         """Send `prompt_text` as one turn of `self._session`'s conversation, streaming the
         reply and any reasoning text out as ACP `session/update` notifications. Returns the
         final response text of the *last* turn in the chain (see class docstring for the
@@ -223,9 +226,15 @@ class TurnBridge:
         one on the next text chunk if at least `_USAGE_UPDATE_INTERVAL` seconds have elapsed
         since the last usage update. These are enqueued in the same ordered queue as every
         other update, so they arrive interleaved with the session updates they accompany.
+
+        `image_fragments`, if given, are attached to the *first* `Session.send_turn()` call
+        only -- never to a later iteration of the turn-end redelivery loop, which resends
+        plain drained-queued-message text, not a fresh ACP `session/prompt` with its own
+        content blocks.
         """
         loop = asyncio.get_running_loop()
         text_to_send = prompt_text
+        pending_image_fragments = image_fragments
         response_text = ""
         pending_error: Exception | None = None
         _last_usage_update: float = 0.0
@@ -397,12 +406,13 @@ class TurnBridge:
             pump_task = asyncio.create_task(pump())
             try:
                 response_text = await asyncio.to_thread(
-                    self._session.send_turn, text_to_send, handlers)
+                    self._session.send_turn, text_to_send, handlers, pending_image_fragments)
                 pending_error = None
             except Exception as exc:
                 pending_error = exc
                 response_text = ""
             finally:
+                pending_image_fragments = None
                 enqueue(_SENTINEL)
                 await pump_task
 

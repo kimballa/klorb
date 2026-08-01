@@ -2,6 +2,8 @@
 import { type PreparedText, prepare, layout } from '@chenglou/pretext';
 import type { VscodeTextarea } from '@vscode-elements/elements';
 import {
+  type ClipboardEvent,
+  type DragEvent,
   type JSX,
   type SyntheticEvent,
   type KeyboardEvent,
@@ -12,6 +14,10 @@ import {
   useState,
 } from 'react';
 
+import { readImageDimensions } from 'shared/imageDimensions';
+import { IMAGE_FILE_MIME_TYPES } from 'shared/imageFileTypes';
+import type { ImageAttachment } from 'shared/webviewMessages';
+import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
 import { StopMediaIcon } from 'webview/components/klorbIcons';
 import { FileFinderPanel, useFileFinder } from 'webview/features/fileFinder';
 import { classifyEnterKey } from 'webview/keyHandling';
@@ -19,10 +25,48 @@ import { classifyEnterKey } from 'webview/keyHandling';
 const MIN_ROWS = 1;
 const MAX_ROWS = 10;
 
+/** MIME types offered for drag-drop/paste/file-picker attachment -- the union of every
+ * packaged vision model's `vision_details.supported_mime_types` (see docs/specs/vision-image-
+ * input.md), not any one vendor's own list; the server re-validates and transcodes for the
+ * actual active model regardless. */
+export const ACCEPTED_IMAGE_MIME_TYPES = IMAGE_FILE_MIME_TYPES;
+
+/** Client-side raw (pre-encode) byte ceiling for a single dropped/pasted/picked image,
+ * independent of the server-side `tools.images.maxBytesRaw` ceiling -- rejects an oversized
+ * attachment before it's ever base64-encoded and posted through `vscode.postMessage`. */
+export const MAX_ATTACHMENT_RAW_BYTES = 25 * 1024 * 1024;
+
 /** Imperative handle exposed via `ref`, so `App` can reclaim focus after a turn ends or an
- * interaction panel resolves (see `docs/specs/vscode-plugin.md`'s input-discipline sweep). */
+ * interaction panel resolves (see `docs/specs/vscode-plugin.md`'s input-discipline sweep), and
+ * so the status row's "Attach Image…" file-picker flow (`App`'s `imageAttached` handler) can
+ * add its result to the pending attachment tray the same way a drag-drop/paste does. */
 export interface PromptInputHandle {
   focus(): void;
+  addAttachment(image: ImageAttachment): void;
+}
+
+/** Reads `blob` into a `data:` URL and splits it into `{mimeType, dataBase64}` -- the shape
+ * every attachment source (drop, paste, file-picker) converges on before it's added to the
+ * pending tray. */
+function readAttachment(blob: Blob): Promise<{ mimeType: string; dataBase64: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('failed to read attachment'));
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const commaIndex = result.indexOf(',');
+      if (commaIndex === -1) {
+        reject(new Error('failed to read attachment'));
+        return;
+      }
+      const mimeMatch = /^data:([^;]+);base64$/.exec(result.slice(0, commaIndex));
+      resolve({
+        mimeType: mimeMatch?.[1] ?? blob.type,
+        dataBase64: result.slice(commaIndex + 1),
+      });
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 interface PromptInputProps {
@@ -41,7 +85,12 @@ interface PromptInputProps {
    * file finder (`webview/features/fileFinder`). Empty until the host's `workspaceFiles`
    * message arrives, or when no workspace folder is open. */
   workspaceFiles?: string[];
-  onSubmit(text: string): void;
+  /** Whether the currently active model supports image input (`StatusSnapshot.
+   * activeModelVision`) -- gates the drag/paste/file-picker attach affordance entirely; `false`
+   * or not-yet-known both hide it, since attaching against a non-vision model can only fail
+   * server-side. */
+  imagesCapable?: boolean;
+  onSubmit(text: string, images?: ImageAttachment[]): void;
   onCancel(): void;
   onCyclePermissionMode(): void;
 }
@@ -91,6 +140,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     muted = false,
     enqueueMessageCapable = false,
     workspaceFiles = [],
+    imagesCapable = false,
     onSubmit,
     onCancel,
     onCyclePermissionMode,
@@ -99,6 +149,8 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
 ): JSX.Element {
   const [draft, setDraft] = useState('');
   const [rows, setRows] = useState(MIN_ROWS);
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [attachError, setAttachError] = useState<string | undefined>(undefined);
   const textareaRef = useRef<VscodeTextarea>(null);
   const preparedRef = useRef<PreparedText | null>(null);
   const trailingNewlinesRef = useRef(0);
@@ -108,7 +160,80 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
+    addAttachment: (image: ImageAttachment) => setAttachments((prev) => [...prev, image]),
   }));
+
+  /** Reads `blob` and adds it to the pending attachment tray, rejecting it (with an inline
+   * error instead of a silent drop) if it's over `MAX_ATTACHMENT_RAW_BYTES` or not a
+   * recognized image type. Shared by the drop/paste handlers below. */
+  async function addAttachmentFromBlob(blob: Blob, name?: string): Promise<void> {
+    if (!ACCEPTED_IMAGE_MIME_TYPES.includes(blob.type)) {
+      return;
+    }
+    if (blob.size > MAX_ATTACHMENT_RAW_BYTES) {
+      setAttachError(
+        `${name ?? 'Pasted image'} is too large (max ${Math.floor(MAX_ATTACHMENT_RAW_BYTES / (1024 * 1024))}MB).`
+      );
+      return;
+    }
+    try {
+      const [{ mimeType, dataBase64 }, buffer] = await Promise.all([
+        readAttachment(blob),
+        blob.arrayBuffer(),
+      ]);
+      const dimensions = readImageDimensions(new Uint8Array(buffer));
+      setAttachError(undefined);
+      setAttachments((prev) => [...prev, { mimeType, dataBase64, name, ...dimensions }]);
+    } catch {
+      setAttachError(`Failed to read ${name ?? 'pasted image'}.`);
+    }
+  }
+
+  function removeAttachment(index: number): void {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function handleDragOver(event: DragEvent<HTMLElement>): void {
+    if (!imagesCapable || !event.dataTransfer.types.includes('Files')) {
+      return;
+    }
+    event.preventDefault();
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>): void {
+    if (!imagesCapable) {
+      return;
+    }
+    const files = Array.from(event.dataTransfer.files).filter((file) =>
+      ACCEPTED_IMAGE_MIME_TYPES.includes(file.type)
+    );
+    if (files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    for (const file of files) {
+      void addAttachmentFromBlob(file, file.name);
+    }
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLElement>): void {
+    if (!imagesCapable) {
+      return;
+    }
+    const items = Array.from(event.clipboardData.items).filter((item) => item.kind === 'file');
+    const imageFiles = items
+      .map((item) => item.getAsFile())
+      .filter(
+        (file): file is File => file !== null && ACCEPTED_IMAGE_MIME_TYPES.includes(file.type)
+      );
+    if (imageFiles.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    for (const file of imageFiles) {
+      void addAttachmentFromBlob(file);
+    }
+  }
 
   /** Read and cache font metrics from the inner textarea element. */
   function readMetrics(): { font: string; lineHeight: number } | null {
@@ -183,7 +308,10 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     setDraft('');
     setRows(MIN_ROWS);
     preparedRef.current = null;
-    onSubmit(text);
+    const images = attachments.length > 0 ? attachments : undefined;
+    setAttachments([]);
+    setAttachError(undefined);
+    onSubmit(text, images);
   }
 
   /** Splices `finder`'s match at `index` (default: its active row) into the textarea, both the
@@ -255,57 +383,72 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   }
 
   return (
-    <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
-      {finder.isOpen ? (
-        <FileFinderPanel
-          paths={finder.matches}
-          activeIndex={finder.activeIndex}
-          onHover={finder.setActiveIndex}
-          onSelect={applyFinderSelection}
+    <div className="prompt-input-wrapper" onDragOver={handleDragOver} onDrop={handleDrop}>
+      {attachError !== undefined ? <div className="attachment-error">{attachError}</div> : null}
+      {attachments.length > 0 ? (
+        <div className="attachment-tray">
+          {attachments.map((attachment, index) => (
+            <AttachmentThumbnail
+              key={`${attachment.name ?? 'pasted'}-${index}`}
+              image={attachment}
+              onRemove={() => removeAttachment(index)}
+            />
+          ))}
+        </div>
+      ) : null}
+      <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
+        {finder.isOpen ? (
+          <FileFinderPanel
+            paths={finder.matches}
+            activeIndex={finder.activeIndex}
+            onHover={finder.setActiveIndex}
+            onSelect={applyFinderSelection}
+          />
+        ) : null}
+        <vscode-textarea
+          ref={textareaRef}
+          id="prompt-input"
+          rows={rows}
+          resize="none"
+          placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
+          value={draft}
+          disabled={disabled}
+          onInput={(event: SyntheticEvent) => {
+            const value = targetValue(event);
+            setDraft(value);
+            computeRows(value);
+            finder.sync(value, cursorPosition(event));
+          }}
+          onKeyUp={(event: KeyboardEvent<HTMLElement>) => {
+            if (CARET_MOVE_KEYS.has(event.key)) {
+              finder.sync(draft, cursorPosition(event));
+            }
+          }}
+          onClick={(event: SyntheticEvent) => finder.sync(draft, cursorPosition(event))}
+          onPaste={handlePaste}
         />
-      ) : null}
-      <vscode-textarea
-        ref={textareaRef}
-        id="prompt-input"
-        rows={rows}
-        resize="none"
-        placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
-        value={draft}
-        disabled={disabled}
-        onInput={(event: SyntheticEvent) => {
-          const value = targetValue(event);
-          setDraft(value);
-          computeRows(value);
-          finder.sync(value, cursorPosition(event));
-        }}
-        onKeyUp={(event: KeyboardEvent<HTMLElement>) => {
-          if (CARET_MOVE_KEYS.has(event.key)) {
-            finder.sync(draft, cursorPosition(event));
-          }
-        }}
-        onClick={(event: SyntheticEvent) => finder.sync(draft, cursorPosition(event))}
-      />
-      {!inFlight || enqueueMessageCapable ? (
-        <vscode-button
-          id="submit-button"
-          iconOnly
-          title="Send"
-          aria-label="Send"
-          disabled={draft.trim().length === 0}
-          onClick={() => submit()}>
-          <vscode-icon name="send" />
-        </vscode-button>
-      ) : null}
-      {inFlight ? (
-        <vscode-button
-          id="stop-button"
-          iconOnly
-          title="Stop"
-          aria-label="Stop"
-          onClick={() => onCancel()}>
-          <StopMediaIcon />
-        </vscode-button>
-      ) : null}
+        {!inFlight || enqueueMessageCapable ? (
+          <vscode-button
+            id="submit-button"
+            iconOnly
+            title="Send"
+            aria-label="Send"
+            disabled={draft.trim().length === 0}
+            onClick={() => submit()}>
+            <vscode-icon name="send" />
+          </vscode-button>
+        ) : null}
+        {inFlight ? (
+          <vscode-button
+            id="stop-button"
+            iconOnly
+            title="Stop"
+            aria-label="Stop"
+            onClick={() => onCancel()}>
+            <StopMediaIcon />
+          </vscode-button>
+        ) : null}
+      </div>
     </div>
   );
 });

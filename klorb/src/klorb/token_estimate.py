@@ -18,9 +18,12 @@ import logging
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 import tiktoken
 
+from klorb.message import Message
+from klorb.models.model import Model
 from klorb.paths import KLORB_DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,67 @@ def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return len(_encoding_instance().encode(text, disallowed_special=()))
+
+
+def estimate_image_tokens(width: int, height: int, model: Model) -> int:
+    """Estimate an image's token cost for `model`, dispatching on `model.capabilities().get(
+    "vision_details", {}).get("token_formula")` -- klorb has no per-provider tokenizer for
+    pixels any more than it does for text (see module docstring), so this is a best-effort
+    estimate sourced from each vendor's own published billing formula, not a value the
+    provider itself reports back.
+
+    `"anthropic_tiles"` is also the fallback for a model with no recognized `token_formula`
+    (including `moonshotai/kimi-*`, which has no published formula at all) -- a conservative
+    approximation rather than a vendor-verified number for those models.
+    """
+    vision_details: dict[str, Any] = model.capabilities().get("vision_details") or {}
+    formula = vision_details.get("token_formula")
+    if formula == "qwen_pixel_ratio":
+        effective_formula = formula
+        num_tokens = (width * height) // (32 * 32) + 2
+    elif formula == "openai_patch_budget":
+        effective_formula = formula
+        patch_budget: int = vision_details["patch_budget"]
+        token_multiplier: float = vision_details["token_multiplier"]
+        patches = min(patch_budget, -(-width // 32) * -(-height // 32))
+        num_tokens = round(patches * token_multiplier)
+    else:
+        # Anthropic tiles token formula used as default fallback token estimator.
+        effective_formula = "anthropic_tiles"
+        num_tokens = (width * height) // 750
+
+    logger.debug("Image msg (%sx%s) estimated at %s tokens using formula '%s'",
+            width, height, num_tokens, effective_formula)
+    return num_tokens
+
+
+def estimate_message_tokens(message: Message, model: Model) -> int:
+    """Estimate `message`'s total token cost against `model`, the same "definitive cost"
+    treatment `Message.num_tokens` gives every other message (see docs/adrs/count-every-
+    message-tokens-client-side-with-tiktoken.md) but extended to cover image fragments,
+    which `estimate_tokens(message.body())` can't: `body()` JSON-dumps `fragments` verbatim,
+    so tiktoken-encoding it would count an image fragment's multi-KB base64 payload as if it
+    were prose, producing a number with no relationship to the model's actual multimodal
+    billing.
+
+    Each text fragment (or the plain `content`/`streaming_content`, when there are no
+    fragments) goes through `estimate_tokens`; each `image_url` fragment goes through
+    `estimate_image_tokens`, using its `resized_width`/`resized_height` bookkeeping fields
+    (set by `klorb.images.prepare.prepare_image_for_model` before the fragment was built).
+    """
+    if message.fragments is None:
+        if message.streaming_content is not None:
+            return estimate_tokens("".join(message.streaming_content))
+        return estimate_tokens(message.content)
+    total = 0
+    for fragment in message.fragments:
+        if fragment.type == "image_url":
+            assert fragment.resized_width is not None
+            assert fragment.resized_height is not None
+            total += estimate_image_tokens(fragment.resized_width, fragment.resized_height, model)
+        else:
+            total += estimate_tokens(fragment.text)
+    return total
 
 
 TIKTOKEN_CACHE_RESOURCE_NAME = "tiktoken-cache"

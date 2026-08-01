@@ -459,6 +459,12 @@ button.bash-tool-call-command {
   justify-content: center;
 }
 
+.prompt-input-wrapper {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
 .input-row {
   position: relative;
   flex: 0 0 auto;
@@ -467,6 +473,97 @@ button.bash-tool-call-command {
   padding: 8px 12px;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
   align-items: flex-end;
+}
+
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  background-color: color-mix(in srgb, var(--vscode-sideBar-background) 92%, white 8%);
+}
+
+.attachment-error {
+  padding: 4px 12px 0;
+  color: var(--vscode-errorForeground);
+  font-size: 0.9em;
+}
+
+.prompt-attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* Shared by PromptInput's pending tray and a sent prompt bubble's attachments
+   (AttachmentThumbnail, webview/components/AttachmentThumbnail.tsx). */
+.attachment-thumb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 64px;
+}
+
+.attachment-thumb-image-wrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.attachment-thumb-image-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Stands in for a restored attachment's thumbnail when its bytes weren't resent (see
+   AttachmentThumbnail.tsx's own doc comment). */
+.attachment-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  background-color: var(--vscode-input-background, rgba(128, 128, 128, 0.1));
+}
+
+.attachment-caption {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 0.75em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Deliberately a sibling of .attachment-thumb-image-wrap, not nested inside it, so it isn't
+   clipped by that element's own overflow: hidden -- it's meant to overhang the rounded
+   thumbnail's corner, not sit flush inside it. */
+.attachment-remove {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  cursor: pointer;
 }
 
 .file-finder-panel {

@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 
+import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
+
 import type { HistoryEntry } from '../historyModel';
 import { renderYamlFrontmatter } from '../renderYamlFrontmatter';
 
@@ -33,6 +35,13 @@ function renderEntry(
     case 'prompt':
       return (
         <div className="bubble bubble-prompt" key={index}>
+          {entry.images !== undefined && entry.images.length > 0 ? (
+            <div className="prompt-attachment-tray">
+              {entry.images.map((image, imageIndex) => (
+                <AttachmentThumbnail key={imageIndex} image={image} />
+              ))}
+            </div>
+          ) : null}
           {entry.text}
         </div>
       );

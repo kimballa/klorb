@@ -14,6 +14,7 @@ export interface StatusRowProps {
   maxTokens?: number | null;
   outputTokens?: number;
   taskPanelVisible: boolean;
+  activeModelVision?: boolean;
   onPickModel(): void;
   onPickThinking(): void;
   onCyclePermissionMode(): void;
@@ -22,6 +23,7 @@ export interface StatusRowProps {
   onNewSession(): void;
   onReloadSkills(): void;
   onToggleTaskPanel(): void;
+  onAttachImage(): void;
 }
 
 const EFFORT_LABEL: Record<ThinkingEffort, string> = {
@@ -84,6 +86,7 @@ export default function StatusRow({
   maxTokens,
   outputTokens,
   taskPanelVisible,
+  activeModelVision,
   onPickModel,
   onPickThinking,
   onCyclePermissionMode,
@@ -92,6 +95,7 @@ export default function StatusRow({
   onNewSession,
   onReloadSkills,
   onToggleTaskPanel,
+  onAttachImage,
 }: StatusRowProps): JSX.Element {
   const [flashing, setFlashing] = useState(false);
   const previousMode = useRef(permissionMode);
@@ -114,6 +118,7 @@ export default function StatusRow({
     <div id="status-row">
       <StatusMenu
         taskPanelVisible={taskPanelVisible}
+        activeModelVision={activeModelVision}
         onPickModel={onPickModel}
         onPickThinking={onPickThinking}
         onSetPermissionMode={onSetPermissionMode}
@@ -121,6 +126,7 @@ export default function StatusRow({
         onNewSession={onNewSession}
         onReloadSkills={onReloadSkills}
         onToggleTaskPanel={onToggleTaskPanel}
+        onAttachImage={onAttachImage}
       />
       <button type="button" className="status-chip status-model" onClick={onPickModel}>
         {model ?? '...'}

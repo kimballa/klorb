@@ -71,6 +71,11 @@ this one shape.
     that populates and condenses this (see [[session-and-turns]] and
     [[session-owns-in-progress-assistant-message-during-streaming]]) — `ApiProvider`
     implementations only emit raw text deltas, they don't touch `Message` state directly.
+  * `fragments: list[MessageFragment] | None` — an optional multi-part payload attached
+    alongside (not instead of) `content`, sent to a provider in place of `content` via
+    `provider_content()` when set. Each `MessageFragment` is `type="text"` (an `@mention`ed
+    file attachment — see [[at-mention-file-inlining]]) or `type="image_url"` (a user-attached
+    image — see docs/specs/vision-image-input.md).
 
 ## Out of scope
 

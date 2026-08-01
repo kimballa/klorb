@@ -253,6 +253,22 @@ ABSOLUTE_MAX_BODY_BYTES = 256 * 1024 * 1024
 """Hard ceiling on response body bytes, regardless of config — `WebFetch` aborts reading if
 the body exceeds this, to avoid consuming unbounded memory."""
 
+DEFAULT_IMAGE_DEFAULT_MAX_DIMENSION_PX = 1568
+"""Long-edge downscale cap `klorb.images.prepare.prepare_image_for_model` falls back to for a
+model with no `vision_details.max_width_px`/`max_height_px`/`max_megapixels` — Anthropic's own
+general-purpose recommendation. See `ProcessConfig.image_default_max_dimension_px` and
+`tools.images.defaultMaxDimensionPx`."""
+
+DEFAULT_IMAGE_MAX_BYTES_RAW = 25 * 1024 * 1024
+"""Default post-encode byte ceiling `klorb.images.prepare.prepare_image_for_model` enforces on
+a prepared image before giving up (`klorb.images.prepare.ImageTooLargeError`). See
+`ProcessConfig.image_max_bytes_raw` and `tools.images.maxBytesRaw`."""
+
+DEFAULT_IMAGE_PREFERRED_FORMATS: list[str] = ["image/webp", "image/png"]
+"""Default transcode preference order `klorb.images.prepare.prepare_image_for_model` tries, in
+order, filtered against the active model's `vision_details.supported_mime_types`. See
+`ProcessConfig.image_preferred_formats` and `tools.images.preferredFormats`."""
+
 DEFAULT_SESSION_CLASSIFIER_MODEL = "openai/gpt-5-nano"
 """Last-resort model `klorb.session_naming._default_naming_model` falls back to when
 `ProcessConfig.session_classifier_model` is unset (the normal case) and no registered model
@@ -338,6 +354,9 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.webFetch.connectTimeout": "web_fetch_connect_timeout_seconds",
     "tools.webFetch.spillBytes": "web_fetch_spill_bytes",
     "tools.webFetch.maxBodyBytes": "web_fetch_max_body_bytes",
+    "tools.images.defaultMaxDimensionPx": "image_default_max_dimension_px",
+    "tools.images.maxBytesRaw": "image_max_bytes_raw",
+    "tools.images.preferredFormats": "image_preferred_formats",
     "classifier.model": "session_classifier_model",
     "classifier.timeout": "session_classifier_timeout_seconds",
     "classifier.e2eTimeout": "session_classifier_e2e_timeout_seconds",
@@ -487,6 +506,17 @@ class ProcessConfig(BaseModel):
     web_fetch_max_body_bytes: int = DEFAULT_WEB_FETCH_MAX_BODY_BYTES
     """Maximum response body bytes `WebFetch` will read, clamped to
     `[1, ABSOLUTE_MAX_BODY_BYTES]`. See `tools.webFetch.maxBodyBytes`."""
+    image_default_max_dimension_px: int = DEFAULT_IMAGE_DEFAULT_MAX_DIMENSION_PX
+    """Long-edge downscale cap for a model with no `vision_details` resolution bounds. See
+    `tools.images.defaultMaxDimensionPx`."""
+    image_max_bytes_raw: int = DEFAULT_IMAGE_MAX_BYTES_RAW
+    """Post-encode byte ceiling `klorb.images.prepare.prepare_image_for_model` enforces on a
+    prepared image. See `tools.images.maxBytesRaw`."""
+    image_preferred_formats: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_IMAGE_PREFERRED_FORMATS))
+    """Transcode preference order `klorb.images.prepare.prepare_image_for_model` tries, in
+    order, filtered against the active model's supported mime types. See
+    `tools.images.preferredFormats`."""
     session_classifier_model: str | None = None
     """Model `klorb.session_naming.generate_session_name()` sends its request to, via the same
     `ApiProvider` instance the main conversation uses. `None` (the default, and

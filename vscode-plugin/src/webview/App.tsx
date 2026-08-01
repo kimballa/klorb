@@ -3,6 +3,7 @@ import { type JSX, useEffect, useRef, useState } from 'react';
 
 import {
   parseHostMessage,
+  type ImageAttachment,
   type QuestionAskMessage,
   type StatusUpdateMessage,
 } from 'shared/webviewMessages';
@@ -160,6 +161,9 @@ export default function App({
       if (message.type === 'workspaceFiles') {
         setWorkspaceFiles(message.files);
       }
+      if (message.type === 'imageAttached') {
+        promptInputRef.current?.addAttachment(message.image);
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -203,19 +207,24 @@ export default function App({
     vscode.postMessage({ type: 'reloadSkills' });
   }
 
-  function submit(text: string): void {
+  function submit(text: string, images?: ImageAttachment[]): void {
     if (inFlight) {
       // Mid-turn submit: queues into the running turn (`_klorb/enqueueMessage`) rather than
       // starting a new one. The history entry itself is created from the host's own
       // `messageQueued` echo (see `historyModel.ts`'s `appendQueuedMessage`), not optimistically
       // here, since the server -- not the webview -- is what actually accepted the message.
-      vscode.postMessage({ type: 'enqueueMessage', text });
+      // (The host rejects `images` here -- queued messages have no content-block channel.)
+      vscode.postMessage({ type: 'enqueueMessage', text, ...(images ? { images } : {}) });
       return;
     }
-    setEntries((prev) => appendPrompt(prev, text));
+    setEntries((prev) => appendPrompt(prev, text, images));
     // Raised optimistically; the host's turnStarted/turnError follow-up confirms or clears it.
     setInFlight(true);
-    vscode.postMessage({ type: 'submitPrompt', text });
+    vscode.postMessage({ type: 'submitPrompt', text, ...(images ? { images } : {}) });
+  }
+
+  function attachImage(): void {
+    vscode.postMessage({ type: 'attachImageFile' });
   }
 
   function cancel(): void {
@@ -321,6 +330,7 @@ export default function App({
         muted={pendingInteraction !== undefined}
         enqueueMessageCapable={status.enqueueMessageCapable}
         workspaceFiles={workspaceFiles}
+        imagesCapable={status.activeModelVision}
         onSubmit={submit}
         onCancel={cancel}
         onCyclePermissionMode={cyclePermissionMode}
@@ -336,6 +346,7 @@ export default function App({
         onNewSession={newSession}
         onReloadSkills={reloadSkills}
         onToggleTaskPanel={toggleTaskPanelVisible}
+        onAttachImage={attachImage}
       />
     </VsCodeApiProvider>
   );

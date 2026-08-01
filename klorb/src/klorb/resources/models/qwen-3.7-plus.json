@@ -17,7 +17,19 @@
     "max_context_window": 1000000,
     "max_output_tokens": 66000,
     "function_calling": true,
-    "streaming": true
+    "streaming": true,
+    "vision_details": {
+      "supported_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp"
+      ],
+      "max_width_px": null,
+      "max_height_px": null,
+      "max_megapixels": 2.62144,
+      "token_formula": "qwen_pixel_ratio",
+      "max_images_per_request": 2048
+    }
   },
   "cache_mgmt_style": "ANTHROPIC_EXPLICIT"
 }

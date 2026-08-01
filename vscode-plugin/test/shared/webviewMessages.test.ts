@@ -121,6 +121,12 @@ describe('parseHostMessage', () => {
         type: 'sessionReplay',
         entries: [
           { kind: 'prompt', text: 'hi', streaming: false },
+          {
+            kind: 'prompt',
+            text: 'look at this',
+            streaming: false,
+            images: [{ name: 'shot.png', width: 123, height: 456 }, {}],
+          },
           { kind: 'response', text: 'hello', streaming: false },
           { kind: 'thinking', text: 'pondering...', streaming: false },
           {
@@ -146,6 +152,19 @@ describe('parseHostMessage', () => {
       },
       { type: 'workspaceFiles', files: ['src/App.tsx', 'README.md'] },
       { type: 'workspaceFiles', files: [] },
+      {
+        type: 'statusUpdate',
+        model: 'anthropic/claude-sonnet-5',
+        activeModelVision: true,
+      },
+      {
+        type: 'imageAttached',
+        image: { mimeType: 'image/png', dataBase64: 'abcd', name: 'shot.png' },
+      },
+      {
+        type: 'imageAttached',
+        image: { mimeType: 'image/png', dataBase64: 'abcd' },
+      },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -292,8 +311,31 @@ describe('parseHostMessage', () => {
         entries: [{ kind: 'toolCall', callId: 'c1', status: 'running', title: 'x' }],
       })
     ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'sessionReplay',
+        entries: [{ kind: 'prompt', text: 'hi', streaming: false, images: 'not-an-array' }],
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'sessionReplay',
+        entries: [{ kind: 'prompt', text: 'hi', streaming: false, images: [{ width: 'wide' }] }],
+      })
+    ).toBeUndefined();
     expect(parseHostMessage({ type: 'workspaceFiles' })).toBeUndefined();
     expect(parseHostMessage({ type: 'workspaceFiles', files: ['ok', 42] })).toBeUndefined();
+    expect(parseHostMessage({ type: 'statusUpdate', activeModelVision: 'yes' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'imageAttached' })).toBeUndefined();
+    expect(
+      parseHostMessage({ type: 'imageAttached', image: { mimeType: 'image/png' } })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'imageAttached',
+        image: { mimeType: 'image/png', dataBase64: 'abcd', name: 7 },
+      })
+    ).toBeUndefined();
   });
 });
 
@@ -301,6 +343,17 @@ describe('parseWebviewMessage', () => {
   it('round-trips every webview message shape', () => {
     const messages: WebviewMessage[] = [
       { type: 'submitPrompt', text: 'do the thing' },
+      {
+        type: 'submitPrompt',
+        text: 'what is in this screenshot?',
+        images: [{ mimeType: 'image/png', dataBase64: 'abcd', name: 'shot.png' }],
+      },
+      {
+        type: 'enqueueMessage',
+        text: 'also this one',
+        images: [{ mimeType: 'image/png', dataBase64: 'abcd' }],
+      },
+      { type: 'attachImageFile' },
       { type: 'cancelTurn' },
       { type: 'openLocation', path: '/tmp/foo.py', line: 5 },
       { type: 'openLocation', path: '/tmp/foo.py' },
@@ -332,6 +385,19 @@ describe('parseWebviewMessage', () => {
     expect(parseWebviewMessage({ type: 'submit', text: 'legacy shape' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'submitPrompt' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'submitPrompt', text: 7 })).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'submitPrompt', text: 'hi', images: 'not-an-array' })
+    ).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'submitPrompt', text: 'hi', images: [{ mimeType: 'image/png' }] })
+    ).toBeUndefined();
+    expect(
+      parseWebviewMessage({
+        type: 'enqueueMessage',
+        text: 'hi',
+        images: [{ mimeType: 'image/png', dataBase64: 'abcd', name: 7 }],
+      })
+    ).toBeUndefined();
     expect(parseWebviewMessage({ type: 'agentChunk', text: 'wrong direction' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'openLocation' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'openLocation', path: '/x', line: 'nope' })).toBeUndefined();

@@ -600,6 +600,7 @@ def session_config_json(session: Session, model_registry: ModelRegistry) -> dict
     of `thinking.enabled`/`thinking.effort` at all (`session/set_model` exists but is marked
     unstable and only covers `model`), so both ride this one ext-method JSON shape uniformly
     rather than splitting model onto the native surface and thinking onto an ext method."""
+    active_model = session.active_model()
     return {
         "model": {
             "current": session.config.model,
@@ -612,6 +613,7 @@ def session_config_json(session: Session, model_registry: ModelRegistry) -> dict
             "enabled": session.config.thinking_enabled,
             "effort": session.config.thinking_effort,
         },
+        "activeModelVision": bool(active_model.capabilities().get("vision")) if active_model else False,
     }
 
 
@@ -733,6 +735,33 @@ def _replay_tool_call_entry(
     return entry
 
 
+def _replay_image_meta(message: Message) -> list[dict[str, Any]]:
+    """Build the `AttachedImageMeta`-shaped dicts (`shared/webviewMessages.ts`) for `message`'s
+    `image_url` fragments, if any -- metadata only, no bytes: a `_klorb/sessionReplay` restore
+    doesn't resend an already-persisted image just to redraw a thumbnail (see docs/specs/
+    session-persistence.md), so the webview renders a paper-clip placeholder captioned with
+    whatever of `source_filename`/`original_width`/`original_height` survived persistence (see
+    `klorb.message.MessageFragment`). A key is omitted rather than sent as `null` for an unknown
+    field, matching every other optional field this dict's TS counterpart expects absent, not
+    `null`, when unset.
+    """
+    if message.fragments is None:
+        return []
+    images: list[dict[str, Any]] = []
+    for fragment in message.fragments:
+        if fragment.type != "image_url":
+            continue
+        meta: dict[str, Any] = {}
+        if fragment.source_filename is not None:
+            meta["name"] = fragment.source_filename
+        if fragment.original_width is not None:
+            meta["width"] = fragment.original_width
+        if fragment.original_height is not None:
+            meta["height"] = fragment.original_height
+        images.append(meta)
+    return images
+
+
 def build_session_replay(
     session: Session, tool_registry: ToolRegistry | None, workspace_root: Path,
 ) -> list[dict[str, Any]]:
@@ -751,10 +780,14 @@ def build_session_replay(
     text_kind_by_role = {"user": "prompt", "assistant": "response", "thinking": "thinking"}
     for message in session.messages:
         if message.role in text_kind_by_role:
-            entries.append({
+            entry: dict[str, Any] = {
                 "kind": text_kind_by_role[message.role], "text": message.content,
                 "streaming": False,
-            })
+            }
+            images = _replay_image_meta(message) if message.role == "user" else []
+            if images:
+                entry["images"] = images
+            entries.append(entry)
         elif message.role == "tool_use":
             for call in message.tool_calls or []:
                 entries.append(_replay_tool_call_entry(

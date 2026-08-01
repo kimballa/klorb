@@ -17,6 +17,7 @@ const NOOP = {
   onNewSession: () => undefined,
   onReloadSkills: () => undefined,
   onToggleTaskPanel: () => undefined,
+  onAttachImage: () => undefined,
 };
 
 describe('StatusRow', () => {

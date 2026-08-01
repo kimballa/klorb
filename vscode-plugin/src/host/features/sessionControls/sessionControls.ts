@@ -16,6 +16,7 @@ export interface SessionModelInfo {
 export interface SessionConfigResult {
   model: { current: string; available: SessionModelInfo[] };
   thinking: { enabled: boolean; effort: ThinkingEffort };
+  activeModelVision: boolean;
 }
 
 /** A `_klorb/setSessionConfig` request's params: every field left unset is left unchanged by
@@ -43,6 +44,11 @@ export interface StatusSnapshot {
   sessionTitle?: string | null;
   workspaceTrusted?: boolean;
   enqueueMessageCapable?: boolean;
+  /** Whether the currently active model supports image input -- gates the prompt input's
+   * attach-image affordance (see `webview/features/promptInput`). Fetched alongside
+   * `model`/`thinking` via `_klorb/getSessionConfig`, since the active model can change
+   * mid-session. */
+  activeModelVision?: boolean;
 }
 
 export type StatusListener = (status: StatusSnapshot) => void;
@@ -77,13 +83,15 @@ function parseSessionConfigResult(value: Record<string, unknown>): SessionConfig
     !Array.isArray(m.available) ||
     !m.available.every(isSessionModelInfo) ||
     typeof t.enabled !== 'boolean' ||
-    !isThinkingEffort(t.effort)
+    !isThinkingEffort(t.effort) ||
+    typeof value.activeModelVision !== 'boolean'
   ) {
     throw new Error('klorb server returned a malformed session config result');
   }
   return {
     model: { current: m.current, available: m.available },
     thinking: { enabled: t.enabled, effort: t.effort },
+    activeModelVision: value.activeModelVision,
   };
 }
 
@@ -163,6 +171,7 @@ export class SessionControls {
       model: undefined,
       thinkingEnabled: undefined,
       thinkingEffort: undefined,
+      activeModelVision: undefined,
     });
     void this.getSessionConfig().catch((err: unknown) => {
       this._log(`klorb: failed to fetch session config: ${errorMessage(err)}`);
@@ -256,6 +265,7 @@ export class SessionControls {
       model: config.model.current,
       thinkingEnabled: config.thinking.enabled,
       thinkingEffort: config.thinking.effort,
+      activeModelVision: config.activeModelVision,
     });
   }
 

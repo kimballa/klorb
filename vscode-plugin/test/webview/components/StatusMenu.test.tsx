@@ -17,6 +17,7 @@ function mountStatusMenu(overrides: Partial<StatusMenuProps> = {}): StatusMenuPr
     onNewSession: vi.fn(),
     onReloadSkills: vi.fn(),
     onToggleTaskPanel: vi.fn(),
+    onAttachImage: vi.fn(),
     ...overrides,
   };
   render(<StatusMenu {...callbacks} />);
@@ -83,11 +84,24 @@ describe('StatusMenu', () => {
     // main.tsx registers it for the real webview) down to a plain `Array.prototype.toString()`
     // attribute string ("[object Object],[object Object]"), not a readable property, so there's
     // nothing structured to inspect on the DOM node itself here.
-    expect(menuItems(true).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
+    expect(menuItems(true, false).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
       'Hide Task Panel'
     );
-    expect(menuItems(false).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
+    expect(menuItems(false, false).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
       'Show Task Panel'
     );
+  });
+
+  it('includes "Attach Image…" only when activeModelVision is true', () => {
+    expect(menuItems(true, true).some((item) => item.value === 'attachImage')).toBe(true);
+    expect(menuItems(true, false).some((item) => item.value === 'attachImage')).toBe(false);
+  });
+
+  it('dispatches onAttachImage when the Attach Image item is picked', () => {
+    const callbacks = mountStatusMenu({ activeModelVision: true });
+
+    selectMenuItem('attachImage');
+
+    expect(callbacks.onAttachImage).toHaveBeenCalledOnce();
   });
 });

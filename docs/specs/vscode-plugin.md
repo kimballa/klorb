@@ -244,8 +244,11 @@ together for this extension specifically.
   own background fetch of `out/webview/main.js.map` -- when a developer opens **Developer: Open
   Webview Developer Tools** to inspect a crash -- isn't blocked by the `default-src 'none'`
   fallback, which would otherwise leave the console showing only minified bundle positions with
-  no source-mapped file/line), and `font-src ${webview.cspSource}` (so the codicon web font's own
-  `@font-face` fetch isn't blocked either — see "Component library" below). A `<link
+  no source-mapped file/line), `font-src ${webview.cspSource}` (so the codicon web font's own
+  `@font-face` fetch isn't blocked either — see "Component library" below), and `img-src
+  ${webview.cspSource} data:` (`data:` specifically for the base64 `<img>` thumbnails "Image
+  attachments" above renders — without it, `default-src 'none'` silently blocks every image load,
+  rendering the browser's own broken-image icon with no visible error). A `<link
   id="vscode-codicon-stylesheet">` for the build-generated `out/media/codicon.css` is emitted
   before `main.css`'s own `<link>` — `<vscode-icon>` looks for that exact element id to find the
   font stylesheet, and
@@ -694,6 +697,25 @@ not the ACP interaction protocol those two share.
   first, so the escapes it introduces aren't themselves re-escaped by the later passes), a
   literal `\`, `"`, and space — e.g. a file named `foo bar.txt` inserts as `@foo\ bar.txt`.
 
+### Image attachments
+
+`PromptInput` also owns a pending image-attachment tray, populated by drag-drop (`onDragOver`/
+`onDrop` on the input row's wrapper), clipboard paste (`onPaste` on the textarea), or the status
+row's "Attach Image…" menu item (a native file picker round trip via a new `attachImageFile`/
+`imageAttached` message pair); each source converges on the same `ImageAttachment` shape
+(`{mimeType, dataBase64, name?}`) added to local `attachments` state and rendered as a removable
+thumbnail above the textarea. All three sources are gated on `imagesCapable`
+(`StatusSnapshot.activeModelVision`, fetched alongside `model`/`thinking` via
+`_klorb/getSessionConfig`): `false` or not-yet-known both hide the affordance entirely, since
+attaching against a non-vision model can only fail server-side. `submit()` passes the pending
+attachments through as `onSubmit`'s second argument; `AcpConnection.prompt()` turns them into
+ACP `image` content blocks (a picked/dragged file's name riding `_meta.klorb.filename`, absent
+for a clipboard paste). A submitted prompt's images also ride its history entry
+(`TextHistoryEntry.images`), rendered as thumbnails in the scrolled history. See
+docs/specs/vision-image-input.md for the full data flow (client-side MIME/size guards, the
+server-side resize pipeline, and why `_klorb/enqueueMessage` rejects images outright rather than
+silently dropping them).
+
 ### Queued messages and interrupt polish
 
 A prompt submitted while a turn is already running is queued into it, not rejected, when the
@@ -1059,18 +1081,21 @@ and webview) so the same types check both sides — over the standard `vscode.po
 ACP directly; `KlorbSessionViewProvider` is the only place that translates between the two (see
 `docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md`).
 
-* Webview → host (`WebviewMessage`): `{type: 'submitPrompt', text: string}` (once per submitted
-  prompt while idle), `{type: 'enqueueMessage', text: string}` (a mid-turn submit, "Queued
-  messages and interrupt polish" above), `{type: 'cancelTurn'}` (Stop button or Escape while a
+* Webview → host (`WebviewMessage`): `{type: 'submitPrompt', text: string, images?:
+  ImageAttachment[]}` (once per submitted prompt while idle), `{type: 'enqueueMessage', text:
+  string, images?: ImageAttachment[]}` (a mid-turn submit, "Queued messages and interrupt
+  polish" above -- `images` here is rejected server-side, "Image attachments" above),
+  `{type: 'cancelTurn'}` (Stop button or Escape while a
   turn is running), `{type: 'restartServer'}` (a `'serverError'` entry's action button, "Queued
   messages and interrupt polish" above), `{type: 'openLocation', path: string, line?: number}`
   (a tool-call title link), `{type: 'openDiff', callId: string, path: string}` ("Open diff"),
   `PermissionDecisionMessage` ("Approval and question panels" above) answering a
   `permissionAsk`, `QuestionAnswerMessage` ("Approval and question panels" above) answering a
-  `questionAsk`, and `{type: 'pickModel'}`/`{type: 'pickThinking'}`/
+  `questionAsk`, `{type: 'pickModel'}`/`{type: 'pickThinking'}`/
   `{type: 'cyclePermissionMode'}`/`{type: 'showSessionStats'}`/`{type: 'newSession'}`/
   `{type: 'reloadSkills'}` ("Status row and session controls" above, the status row's chips and
-  its `StatusMenu` popup), and `WebviewErrorMessage`
+  its `StatusMenu` popup), `{type: 'attachImageFile'}` ("Image attachments" above, the status
+  row's file-picker item), and `WebviewErrorMessage`
   (`{type: 'webviewError', message: string, stack?: string}`, "Webview UI structure" above's
   `ErrorBoundary`).
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
@@ -1094,10 +1119,13 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   `status` (see [[klorb-server]]'s tool-call update mapping section), but the flattening
   defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
   agent does, `PermissionAskMessage` ("Approval and question panels" above),
-  `QuestionAskMessage` ("Approval and question panels" above), `StatusUpdateMessage`, and
+  `QuestionAskMessage` ("Approval and question panels" above), `StatusUpdateMessage` (now also
+  carrying `activeModelVision?: boolean`, "Image attachments" above), and
   `SessionStatsMessage` (both "Status row and session controls" above),
-  `TaskListUpdateMessage`/`{type: 'toggleTaskPanel'}` (both "Task panel" above), and
-  `{type: 'workspaceFiles', files: string[]}` ("File finder" above).
+  `TaskListUpdateMessage`/`{type: 'toggleTaskPanel'}` (both "Task panel" above),
+  `{type: 'workspaceFiles', files: string[]}` ("File finder" above), and
+  `{type: 'imageAttached', image: ImageAttachment}` ("Image attachments" above, the status
+  row's file-picker result).
 * `parseHostMessage()`/`parseWebviewMessage()` are the type guards each side runs on every
   incoming payload before acting on it, since both `onDidReceiveMessage`'s argument (host side)
   and `MessageEvent.data` (webview side) are untyped `unknown`. The richer message types above
