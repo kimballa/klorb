@@ -39,7 +39,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onTaskListUpdate: () => undefined,
     onMessageQueued: (text) => messagesQueued.push(text),
     onQueuedMessageSent: (text) => queuedMessagesSent.push(text),
-    onSessionReplay: () => undefined,
+    onSessionReplay: (entries) => events.push(`sessionReplay:${entries.length}`),
     onSessionReset: () => events.push('sessionReset'),
   };
   const connection = new AcpConnection(serverProcess, listener, () => undefined, 500);
@@ -92,6 +92,37 @@ describe('AcpConnection', () => {
     expect(connection.sessionId).toBe('sess-1');
     expect(agent.receivedNewSessions).toHaveLength(1);
     expect(events).toContain('sessionReset');
+  });
+
+  it('loadSession() delivers a sessionReplay notification sent before session/load responds', async () => {
+    const agent = new MockAgent();
+    agent.onLoadSession = async (params, connection) => {
+      await connection.extNotification('_klorb/sessionReplay', {
+        sessionId: params.sessionId,
+        entries: [{ kind: 'prompt', text: 'hi', streaming: false }],
+      });
+      return {};
+    };
+    const { connection, events } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+
+    events.length = 0;
+    await connection.loadSession('/work', 'sess-2');
+
+    expect(connection.sessionId).toBe('sess-2');
+    expect(events).toContain('sessionReplay:1');
+  });
+
+  it('loadSession() restores the previous sessionId when the load fails', async () => {
+    const { connection, events } = makeHarness();
+    await connection.start(OPTIONS, '/work');
+    expect(connection.sessionId).toBe('sess-1');
+
+    events.length = 0;
+    await expect(connection.loadSession('/work', 'sess-2')).rejects.toThrow();
+
+    expect(connection.sessionId).toBe('sess-1');
+    expect(events).not.toContain('sessionReset');
   });
 
   it('forwards session/new response state via onSessionInfo', async () => {

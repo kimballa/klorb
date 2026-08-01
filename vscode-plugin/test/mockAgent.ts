@@ -16,6 +16,7 @@ export class MockAgent implements acp.Agent {
   public connection: acp.AgentSideConnection | undefined;
   public readonly receivedInitializes: acp.InitializeRequest[] = [];
   public readonly receivedNewSessions: acp.NewSessionRequest[] = [];
+  public readonly receivedLoadSessions: acp.LoadSessionRequest[] = [];
   public readonly receivedPrompts: acp.PromptRequest[] = [];
   public readonly receivedCancels: acp.CancelNotification[] = [];
   public readonly receivedSetSessionModes: acp.SetSessionModeRequest[] = [];
@@ -31,6 +32,15 @@ export class MockAgent implements acp.Agent {
         params: acp.PromptRequest,
         connection: acp.AgentSideConnection
       ) => Promise<acp.PromptResponse>)
+    | undefined;
+  /** Scripts `loadSession()`'s outcome. Unset by default, so `session/load` rejects the way an
+   * agent that never advertised the `loadSession` capability would -- matching the behavior
+   * tests already relied on before this method existed on `MockAgent`. */
+  public onLoadSession:
+    | ((
+        params: acp.LoadSessionRequest,
+        connection: acp.AgentSideConnection
+      ) => Promise<acp.LoadSessionResponse>)
     | undefined;
   public onSetSessionMode:
     ((params: acp.SetSessionModeRequest) => Promise<acp.SetSessionModeResponse | void>) | undefined;
@@ -53,6 +63,17 @@ export class MockAgent implements acp.Agent {
 
   public async authenticate(_params: acp.AuthenticateRequest): Promise<acp.AuthenticateResponse> {
     return {};
+  }
+
+  public async loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse> {
+    this.receivedLoadSessions.push(params);
+    if (this.onLoadSession === undefined) {
+      throw new Error('session is locked or no longer exists');
+    }
+    if (this.connection === undefined) {
+      throw new Error('MockAgent.connection is not wired yet');
+    }
+    return this.onLoadSession(params, this.connection);
   }
 
   public async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {

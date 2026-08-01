@@ -5,6 +5,7 @@ import { StringDecoder } from 'string_decoder';
 import type {
   ClientSideConnection,
   InitializeResponse,
+  LoadSessionResponse,
   SessionInfo as AcpSessionInfo,
 } from '@agentclientprotocol/sdk';
 
@@ -236,10 +237,24 @@ export class AcpConnection {
       throw new Error('klorb server connection is not ready');
     }
     this._interruptInFlightTurn('turn interrupted: a loaded session replaced this one');
-    const session = await this._raceClosed(
-      connection.loadSession({ cwd, mcpServers: [], sessionId })
-    );
+    // Set before awaiting the response, unlike newSession() -- the server sends
+    // `_klorb/sessionReplay` for `sessionId` while `session/load` is still in flight, and
+    // KlorbAcpClient._isLiveSession() would otherwise drop it as stale (still tagged against
+    // the session being replaced) until this promise resolves.
+    const previousSessionId = this._sessionId;
     this._sessionId = sessionId;
+    let session: LoadSessionResponse;
+    try {
+      session = await this._raceClosed(connection.loadSession({ cwd, mcpServers: [], sessionId }));
+    } catch (err) {
+      // The server keeps the previous session live on a failed load (see docs/specs/
+      // session-persistence.md) -- restore it here too, unless the connection itself died
+      // meanwhile, in which case _handleClosed()/stop() already reset this state.
+      if (this._connection === connection) {
+        this._sessionId = previousSessionId;
+      }
+      throw err;
+    }
     this._log(`klorb: session loaded: ${sessionId}`);
     this._listener.onSessionInfo(sessionInfoFromResponse(session, this._enqueueMessageCapable));
   }
