@@ -829,11 +829,6 @@ button.status-chip:hover {
   margin-top: 8px;
 }
 
-.session-stats-subtitle {
-  grid-column: 1 / -1;
-  color: var(--vscode-descriptionForeground);
-}
-
 .session-stats-label {
   /* The stat-name column reads better in the panel's regular UI font -- only the numeric
      columns benefit from the monospace/tabular figures the rest of the card uses. */

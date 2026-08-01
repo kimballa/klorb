@@ -83,7 +83,9 @@ export default function SessionStatsCard({ entry }: SessionStatsCardProps): JSX.
         ))}
         {entry.toolBreakdown.length > 0 ? (
           <>
-            <div className="session-stats-subtitle">Per-tool breakdown</div>
+            <div className="session-stats-title session-stats-section-spaced">
+              Per-tool breakdown
+            </div>
             {entry.toolBreakdown.map((tool) => (
               <ToolStatRow
                 key={tool.name}
