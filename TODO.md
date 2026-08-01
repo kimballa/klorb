@@ -69,9 +69,6 @@
     (see "Plan 013: WebFetch" section below)
 
 * Skills in `<built-in-skills-dir>`, ~/.klorb/skills, projRoot/.klorb/skills/
-  * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
-    get moved into Session. This will set up a clean mechanism for restricting skill availability
-    for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
   * Add skill for code review
   * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a

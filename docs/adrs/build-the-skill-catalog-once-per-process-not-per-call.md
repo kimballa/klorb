@@ -1,5 +1,10 @@
 # Build the skill catalog once per process (not per tool call, and not per `Session`)
 
+* Superseded by: [[scope-skill-catalogs-to-session-not-process]] — the "process-wide, not
+  per-`Session`" half of the answer below no longer holds: `SkillCatalogRegistry` is now built
+  fresh by each `Session`, not shared process-wide. The "once, not per tool call" half — building
+  the catalog from a single disk scan and reusing it in memory rather than re-walking the
+  filesystem on every lookup — is unchanged, just scoped to a `Session` instead of a process.
 * Date: 2026-07-19 00:00
 * Question: `SearchSkills`, `ActivateSkill`, `ReadSkillFile`, and `Session`'s skill interjections
   each used to walk the filesystem themselves (`klorb.tools.skill.common.resolve_all_skills`/

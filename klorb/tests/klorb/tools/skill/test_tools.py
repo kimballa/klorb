@@ -2,6 +2,7 @@
 """Tests for the skill tools: SearchSkills, ActivateSkill, ReadSkillFile."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -9,7 +10,7 @@ from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.skill import common as skill_common
 from klorb.tools.skill.activate_skill import ActivateSkillTool
@@ -39,11 +40,13 @@ def _context(
 ) -> ToolSetupContext:
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
+    process_config = ProcessConfig(compatibility_claude_skills=claude_skills)
+    session_config = SessionConfig(
+        workspace=Workspace(path=ws, trusted=True),
+        skill_rules=skill_rules if skill_rules is not None else SkillRules())
+    session = Session(session_config, provider=MagicMock(), process_config=process_config)
     return ToolSetupContext(
-        process_config=ProcessConfig(compatibility_claude_skills=claude_skills),
-        session_config=SessionConfig(
-            workspace=Workspace(path=ws, trusted=True),
-            skill_rules=skill_rules if skill_rules is not None else SkillRules()),
+        process_config=process_config, session_config=session_config, session=session,
         permission_override=override)
 
 

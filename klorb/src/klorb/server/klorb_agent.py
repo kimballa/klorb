@@ -51,7 +51,6 @@ from klorb.session.constants import PermissionFramework, ToolCallLimitExceeded
 from klorb.session.events import QueuedMessage
 from klorb.session.restore import try_restore_session
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.session_store import find_recent_session, read_sessions_index
@@ -332,9 +331,7 @@ class KlorbAcpAgent(acp.Agent):
         self._process_config.session.write_dirs = concat_dir_rules(
             self._process_config.session.write_dirs, reloaded.session.write_dirs)
 
-        get_skill_catalog_registry().reload(
-            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=self._process_config.compatibility_claude_skills)
+        self._session.reload_skills()
 
     def _require_session_id(self, params: dict[str, Any]) -> str:
         """Extract and validate `params["sessionId"]` for a `_klorb/*` ext request, raising
@@ -379,10 +376,7 @@ class KlorbAcpAgent(acp.Agent):
     def _ext_reload_skills(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
-        workspace = self._session.config.workspace
-        catalogs = get_skill_catalog_registry().reload(
-            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=self._process_config.compatibility_claude_skills)
+        catalogs = self._session.reload_skills()
         logger.debug(
             "_klorb/reloadSkills rebuilt the skill catalog for ACP session %s: %d skill(s)",
             self._acp_session_id, len(catalogs.canonical))

@@ -37,6 +37,7 @@ from klorb.session_statistics import SessionStatistics
 from klorb.system_prompt import SystemPrompt
 from klorb.tool_call_log import tool_call_logging_enabled
 from klorb.tools.scratchpad.common import Scratchpad
+from klorb.tools.skill.catalog import SkillCatalogRegistry
 
 if TYPE_CHECKING:
     # isort: off
@@ -158,6 +159,11 @@ class SessionCoreMixin(SessionBase):
         )
         """Whether to also discover workspace-namespace skills from `.claude/skills/`. See
         docs/specs/skills.md."""
+        self._skill_catalog_registry = SkillCatalogRegistry()
+        """This session's own skill catalogs -- a fresh, empty `SkillCatalogRegistry` per
+        `Session`, rescanning the disk on first use (`_ensure_skill_catalog`) rather than reusing
+        another session's catalog. Not persisted -- a restored session rebuilds it the same way a
+        fresh one does. See `klorb.tools.skill.catalog` and docs/specs/skills.md."""
         self._log_tool_calls = tool_call_logging_enabled(
             process_config.log_tool_calls if process_config is not None else None
         )
@@ -307,6 +313,11 @@ class SessionCoreMixin(SessionBase):
         """Return the `ToolRegistry` this session dispatches model tool-call requests
         through, or `None` if tool-calling isn't enabled for this session."""
         return self._tool_registry
+
+    @property
+    def skill_catalog_registry(self) -> SkillCatalogRegistry:
+        """Return this session's own `SkillCatalogRegistry` -- see `klorb.tools.skill.catalog`."""
+        return self._skill_catalog_registry
 
     @property
     def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:

@@ -26,7 +26,6 @@ from klorb.process_config import ProcessConfig, persist_session_default, persist
 from klorb.session import Session, ThinkingEffort, TurnEventHandlers
 from klorb.session_statistics import SessionStatistics
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.skill.catalog import get_skill_catalog_registry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import InitCommandProvider
 from klorb.tui.commands.model_commands import ModelCommandProvider
@@ -480,13 +479,10 @@ class ReplApp(
         self.show_notice(message.text, error=message.error)
 
     def reload_skills(self) -> None:
-        """Rebuild the process-wide skill catalog (`klorb.tools.skill.catalog`) from a fresh disk
-        scan against the active session's workspace, and report the resulting skill count in the
-        history scroll -- see `klorb.tui.commands.skill_commands.SkillCommandProvider`."""
-        workspace = self._session.config.workspace
-        catalogs = get_skill_catalog_registry().reload(
-            workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=self._process_config.compatibility_claude_skills)
+        """Rebuild the active session's skill catalog (`klorb.tools.skill.catalog`) from a fresh
+        disk scan against its workspace, and report the resulting skill count in the history
+        scroll -- see `klorb.tui.commands.skill_commands.SkillCommandProvider`."""
+        catalogs = self._session.reload_skills()
         count = len(catalogs.canonical)
         self.show_notice(f"Reloaded skill catalog: {count} skill{'s' if count != 1 else ''} found.")
 

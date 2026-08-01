@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.skill.catalog import get_skill_catalog_registry, resolve_and_gate_skill
+from klorb.tools.skill.catalog import resolve_and_gate_skill, resolve_session_skill_catalog_registry
 from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, resolve_skill_file
 from klorb.tools.tool import ReadPreview, Tool, truncate_lines
 from klorb.tools.util import (
@@ -98,8 +98,7 @@ class ReadSkillFileTool(Tool):
             raise ValueError(f"path must be a string, got {path!r}")
         logger.debug("ReadSkillFile %s/%s %s", namespace, name, path)
 
-        registry = get_skill_catalog_registry()
-        registry.ensure_from_context(self.context)
+        registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
             catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)
@@ -159,8 +158,7 @@ class ReadSkillFileTool(Tool):
         tools' `_open_full_view`, this re-consults `skillRules` rather than skipping the gate,
         since that check is idempotent against an already-granted permission and there's no
         ungated resolution path to call instead)."""
-        registry = get_skill_catalog_registry()
-        registry.ensure_from_context(self.context)
+        registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
             catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)

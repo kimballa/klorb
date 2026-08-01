@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""The process-wide skill catalog: two `SkillCatalog`s built once, from a single disk scan across
-every tier, and reused by every subsequent skill lookup instead of re-walking the filesystem per
-call. See docs/specs/skills.md.
+"""The session-scoped skill catalog: two `SkillCatalog`s built once per `Session`, from a single
+disk scan across every tier, and reused by every subsequent skill lookup in that session instead
+of re-walking the filesystem per call. See docs/specs/skills.md.
 
 `SkillCatalogRegistry.canonical()` is keyed by every discovered skill's true `(namespace, name)`
 identity -- its directory basename. This is the only catalog `ActivateSkill`/`ReadSkillFile` may
@@ -14,13 +14,16 @@ basename. This is the catalog a user's typed `/<name>` or `/<namespace>:<name>` 
 checked against, via `SkillCatalog.resolve_reference()`, before the harness treats it as a real
 skill mention.
 
-Exactly one `SkillCatalogRegistry` exists per process, reached via `get_skill_catalog_registry()`
--- every catalog lookup goes through a method call on that instance rather than a scattered set of
-module-level globals and free functions (see AGENTS.md's "encapsulate singleton state in a class"
-principle). Both catalogs are built once, lazily, on first use (`SkillCatalogRegistry.ensure()`);
-`SkillCatalogRegistry.reload()` forces a fresh disk scan -- the ">Reload skills" command palette
-action's implementation (see `klorb.tui.commands.skill_commands`). A skill added, removed, or
-edited on disk between then and now is invisible until the catalog is rebuilt.
+Each `Session` owns exactly one `SkillCatalogRegistry` instance (`Session.skill_catalog_registry`,
+built fresh in `SessionCoreMixin.__init__`) -- every catalog lookup goes through a method call on
+that instance rather than a scattered set of module-level globals and free functions (see
+AGENTS.md's "encapsulate singleton state in a class" principle). Both catalogs are built once,
+lazily, on first use (`SkillCatalogRegistry.ensure()`); `SkillCatalogRegistry.reload()` forces a
+fresh disk scan -- `Session.reload_skills()`'s implementation, itself the ">Reload skills" command
+palette action's implementation (see `klorb.tui.commands.skill_commands`). A skill added, removed,
+or edited on disk between then and now is invisible until the catalog is rebuilt; a brand-new
+`Session` always starts from a fresh, empty registry, so it rescans the disk on its own first use
+rather than inheriting whatever a previous session's catalog held.
 """
 
 import logging
@@ -52,8 +55,8 @@ logger = logging.getLogger(__name__)
 
 class SkillCatalog(BaseModel):
     """One `(namespace, name) -> Skill` dict, plus the read-only views/lookups over it. Two
-    instances exist process-wide -- see module docstring -- with the same shape but different
-    contents: `SkillCatalogRegistry.canonical()`'s `skills` holds only true identities,
+    instances exist per `SkillCatalogRegistry` -- see module docstring -- with the same shape but
+    different contents: `SkillCatalogRegistry.canonical()`'s `skills` holds only true identities,
     `SkillCatalogRegistry.typed()`'s also holds frontmatter-alias identities pointing at the same
     `Skill` objects.
     """
@@ -137,7 +140,7 @@ def build_catalogs(
 ) -> SkillCatalogs:
     """Scan every tier once and return the `(typed, canonical)` `SkillCatalog`s. Pure -- touches
     no shared state, so it's independently testable and is what `SkillCatalogRegistry.reload()`
-    calls to actually populate the process-wide catalogs.
+    calls to actually populate a session's catalogs.
 
     A skill whose frontmatter `name` disagrees with its directory basename logs a warning (it's
     still discoverable under its canonical basename; the frontmatter name is only ever added to
@@ -204,7 +207,7 @@ def resolve_and_gate_skill(
     *, catalog: SkillCatalog, skill_rules: SkillRules,
     override: PermissionOverride | None, namespace: object, name: object,
 ) -> Skill:
-    """Validate `namespace`/`name`, resolve the pair against the process-wide canonical skill
+    """Validate `namespace`/`name`, resolve the pair against the session's canonical skill
     `catalog` (see `SkillCatalogRegistry.canonical()`), and enforce its `skillRules` verdict --
     the shared front half of `ActivateSkill` and `ReadSkillFile`. Raises `ValueError` for a malformed
     argument or an unknown pair, and `PermissionError`/`PermissionAskRequired` per
@@ -226,8 +229,8 @@ def resolve_and_gate_skill(
 
 
 class SkillCatalogRegistry:
-    """Holds the two process-wide skill catalogs and the logic to (re)build them. Exactly one
-    instance exists per process (`get_skill_catalog_registry()`); nothing outside this class
+    """Holds the two skill catalogs a `Session` owns and the logic to (re)build them. One
+    instance exists per `Session` (`Session.skill_catalog_registry`); nothing outside this class
     reads or writes its state directly.
     """
 
@@ -238,9 +241,9 @@ class SkillCatalogRegistry:
     def ensure(
         self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
     ) -> None:
-        """Build both catalogs if they haven't been built yet in this process. A no-op on every
-        call after the first -- the tiers are scanned exactly once; reflecting a change to disk
-        (or to workspace trust) requires an explicit `reload()` call."""
+        """Build both catalogs if this registry hasn't built them yet. A no-op on every call
+        after the first -- the tiers are scanned exactly once; reflecting a change to disk (or to
+        workspace trust) requires an explicit `reload()` call."""
         if self._typed is not None:
             return
         self.reload(
@@ -276,7 +279,7 @@ class SkillCatalogRegistry:
     def typed(self) -> SkillCatalog:
         """The catalog a user's typed `/<name>` or `/<namespace>:<name>` reference is checked
         against -- includes frontmatter-alias identities. Raises `RuntimeError` if the catalog
-        hasn't been built yet in this process (call `ensure()` first)."""
+        hasn't been built yet (call `ensure()` first)."""
         if self._typed is None:
             raise RuntimeError("skill catalog not yet initialized -- call ensure() first")
         return self._typed
@@ -288,19 +291,16 @@ class SkillCatalogRegistry:
             raise RuntimeError("skill catalog not yet initialized -- call ensure() first")
         return self._canonical
 
-    def reset_for_tests(self) -> None:
-        """Clear both catalogs so the next `ensure()` call rebuilds them from scratch. Test-only
-        seam: production code has no legitimate reason to un-build the catalog short of
-        `reload()`, which replaces it directly."""
-        self._typed = None
-        self._canonical = None
 
-
-_registry = SkillCatalogRegistry()
-"""The process-wide singleton instance -- reach it only through `get_skill_catalog_registry()`,
-never by importing this name directly."""
-
-
-def get_skill_catalog_registry() -> SkillCatalogRegistry:
-    """Return the process-wide `SkillCatalogRegistry` singleton."""
-    return _registry
+def resolve_session_skill_catalog_registry(context: "ToolSetupContext") -> SkillCatalogRegistry:
+    """Return `context.session`'s own `SkillCatalogRegistry`, ensuring its catalogs are built
+    against `context`'s live workspace/trust/compat settings first -- the common first step every
+    skill `Tool.apply()` needs. Raises `ValueError` if `context` wasn't built with a real `Session`
+    (e.g. a `ToolSetupContext` constructed directly, as most unit tests for other tools do): skill
+    catalogs are per-session state, so a skill `Tool` has nothing to resolve against without one.
+    """
+    if context.session is None:
+        raise ValueError("skill tools require an active session")
+    registry = context.session.skill_catalog_registry
+    registry.ensure_from_context(context)
+    return registry
