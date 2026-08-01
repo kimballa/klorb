@@ -177,12 +177,14 @@ Score each item, and the overall compound command, on a 0-10 scale:
   source tree).
 * 4-6: a real but bounded blast radius -- affects files or state the user can recover or
   recreate, but isn't purely read-only (e.g. `git push` to a feature branch, `rm` of a file
-  inside the workspace, installing a package).
+  inside the workspace, installing a package). The user should be aware of the impact
+  before running them.
 * 7-8: a real and not-trivially-reversible blast radius (e.g. `git push --force`, `rm -rf` of a
-  whole directory, modifying a shared/production-sounding resource).
+  directory within the workspace, modifying a shared/production-sounding resource). These
+  commands should be seriously scrutinized by the user before running them.
 * 9-10: destructive, irreversible, or capable of exfiltrating data or executing untrusted remote
-  content -- something that should probably just be rejected outright (e.g. `rm -rf /`,
-  `curl <url> | sh`, writing into `~/.ssh`).
+  content -- The user should probably reject these commands outright (e.g. `rm -rf /`, recursive
+  deletion of system-wide paths like /home or /etc, `curl <url> | sh`, writing into `~/.ssh`).
 
 ## The suggested_pattern grammar
 

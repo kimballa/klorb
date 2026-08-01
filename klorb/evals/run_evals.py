@@ -24,6 +24,7 @@ from .cases import ALL_SUITES
 from .colors import colorize, use_color
 from .harness import CaseResult, EvalCase, run_evaluation, tool_token_counts
 from .report import render_case_detail, render_report, render_summary
+from .risk_classifier_cases import RISK_CLASSIFIER_CASES, RiskClassifierCase, run_risk_classifier_evaluation
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,8 @@ EVAL_LOG_PATH = Path("evals.log")
 ALL_SUITES_ARG = "all"
 """`--suite` value that runs every `EvalSuite` in `klorb.evals.cases.ALL_SUITES`, rather than
 just one."""
+RISK_CLASSIFIER_SUITE_NAME = "risk-classifier"
+"""`--suite` value that runs the bash risk classifier eval cases."""
 
 _SELF_REVIEW_PROMPT_TEMPLATE = """\
 A klorb tool-efficacy eval suite just finished a run. Its detailed results are saved at \
@@ -88,6 +91,13 @@ def _resolve_cases(suite_name: str) -> list[EvalCase] | None:
     for suite in ALL_SUITES:
         if suite.name == suite_name:
             return suite.cases
+    return None
+
+
+def _resolve_risk_classifier_cases(suite_name: str) -> list[RiskClassifierCase] | None:
+    """The `RiskClassifierCase`s `--suite=suite_name` selects, or `None` if it doesn't match."""
+    if suite_name in (ALL_SUITES_ARG, RISK_CLASSIFIER_SUITE_NAME):
+        return RISK_CLASSIFIER_CASES
     return None
 
 
@@ -177,10 +187,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_suites:
         for suite in ALL_SUITES:
             print(suite.name)
+        print(RISK_CLASSIFIER_SUITE_NAME)
         return 0
 
     cases = _resolve_cases(args.suite)
-    if cases is None:
+    rc_cases = _resolve_risk_classifier_cases(args.suite)
+    if cases is None and rc_cases is None:
         print(f"Unknown eval suite {args.suite!r}. Run with --list-suites to see available suites.")
         return 1
 
@@ -194,16 +206,33 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     color = use_color()
+
+    results: list[CaseResult] = []
+
+    if rc_cases is not None:
+        print()
+        print(
+            f'Running eval suite: {colorize(args.suite, "green", enabled=color)} '
+            f'on risk classifier model: {colorize(model, "green", enabled=color)}...')
+        results.extend(run_risk_classifier_evaluation(
+            rc_cases, api_provider=provider, model=model,
+            on_case_start=lambda name: _print_case_start(name, color=color),
+            on_case_complete=lambda result: _print_case_result(result, color=color)))
+
+    if cases is not None:
+        print()
+        print(
+            f'Running eval suite: {colorize(args.suite, "green", enabled=color)} on model: '
+            f'{colorize(model, "green", enabled=color)}...')
+        results.extend(run_evaluation(
+            cases, model=model, provider=provider,
+            on_case_start=lambda name: _print_case_start(name, color=color),
+            on_case_complete=lambda result: _print_case_result(result, color=color)))
+
     print()
-    print(
-        f'Running eval suite: {colorize(args.suite, "green", enabled=color)} on model: '
-        f'{colorize(model, "green", enabled=color)}...')
-    results = run_evaluation(
-        cases, model=model, provider=provider,
-        on_case_start=lambda name: _print_case_start(name, color=color),
-        on_case_complete=lambda result: _print_case_result(result, color=color))
-    print()
-    print(render_report(results, color=color, tool_token_counts=tool_token_counts(model=model)))
+    print(render_report(
+        results, color=color,
+        tool_token_counts=tool_token_counts(model=model) if cases is not None else None))
     _write_eval_log(results, path=EVAL_LOG_PATH)
 
     self_review: str | None = None

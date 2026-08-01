@@ -19,6 +19,26 @@ offline against mocks. They run under their own `make evals` target instead — 
 [the skip-without-a-key ADR](../adrs/tool-evals-skip-without-api-key.md) for why a missing
 `OPENROUTER_API_KEY` skips rather than fails that target.
 
+## Running
+
+Basic invocation:
+
+```bash
+make evals
+```
+
+Testing with a specific model:
+
+```bash
+make evals EVALARGS='--model xiaomi/mimo-v2.5-pro --self-review'
+```
+
+Running the bash security classification tests:
+
+```bash
+make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite risk-classifier'
+```
+
 ## How it works
 
 * `klorb/evals/harness.py` defines:
@@ -132,14 +152,15 @@ offline against mocks. They run under their own `make evals` target instead — 
   * `--suite <name>` selects one `EvalSuite` from `klorb.evals.cases.ALL_SUITES` by `name`
     (default: the special value `"all"`, `ALL_SUITES_ARG`, which concatenates every suite's
     cases and runs them all — the same set the old flat `CASES` list ran before suites existed).
-    `_resolve_cases(suite_name)` returns `None` when `suite_name` matches neither `"all"` nor a
-    known suite's `name`; `main()` then prints `Unknown eval suite '<name>'. Run with
-    --list-suites to see available suites.` and returns exit code `1` without ever checking
-    `OPENROUTER_API_KEY` or constructing a provider — an unknown suite name is a usage error,
-    not something to skip quietly.
-  * `--list-suites` prints every `EvalSuite.name` in `ALL_SUITES`, one per line, and returns `0`
-    immediately — before the `OPENROUTER_API_KEY` check, since listing suite names needs no
-    model access.
+    The special value `"risk-classifier"` (`RISK_CLASSIFIER_SUITE_NAME`) runs the bash risk
+    classifier eval cases instead of file-tool cases. `_resolve_cases(suite_name)` returns
+    `None` when `suite_name` matches neither `"all"` nor a known suite's `name`;
+    `main()` then prints `Unknown eval suite '<name>'. Run with --list-suites to see available
+    suites.` and returns exit code `1` without ever checking `OPENROUTER_API_KEY` or constructing
+    a provider — an unknown suite name is a usage error, not something to skip quietly.
+  * `--list-suites` prints every `EvalSuite.name` in `ALL_SUITES` plus `"risk-classifier"`,
+    one per line, and returns `0` immediately — before the `OPENROUTER_API_KEY` check, since
+    listing suite names needs no model access.
   * It passes `run_evaluation()` an `on_case_start` callback (prints `"<name>..."` as each case
     begins) and an `on_case_complete` callback (prints `tool_call_log`'s raw request/response
     transcript — `-> Tool(args)` / `<- response`, color-coded red when the response starts
@@ -198,6 +219,12 @@ outright.
   for a scenario group that doesn't belong under `file-tools`.
   An `EvalCase` may set `workspace_trusted`/`skill_rules` for a scenario (e.g. a skill case) that
   needs a trusted workspace or a pre-`allow`ed skill.
+* The bash risk classifier (`klorb.permissions.risk_classifier`) has its own eval suite
+  (`risk-classifier`) in `klorb/evals/risk_classifier_cases.py`, exercised via
+  `RiskClassifierCase`/`run_risk_classifier_evaluation` rather than `EvalCase`/`run_evaluation`.
+  It tests two dimensions: basic risk scoring (commands at each level of the 0-10 rubric) and
+  prompt injection resilience (dangerous commands wrapped in adversarial text that attempts to
+  subvert the classifier's standing instructions).
 * No LLM-as-judge grading, and no fuzzy/semantic matching of `final_response` — see
   [[grade-tool-evals-by-filesystem-state]].
 * Not wired into `make test` or CI's default gate — see [[tool-evals-skip-without-api-key]].

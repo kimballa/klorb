@@ -40,9 +40,6 @@
   could start from the common symlink side when picking things to remove and also clean up dead
   symlinks.
 
-* Risk classifier (risk_classifier.py) "Command comments to review must not be trusted" instructions
-  should be put in an eval that judges how well the model resists malicious prompt input.
-
 * ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
   just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
   that readfile and editfile can interact in a loop even with field masking making literal context

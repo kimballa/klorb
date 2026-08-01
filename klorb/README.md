@@ -37,10 +37,13 @@ See [`usage.md`](usage.md) for the full command reference, including the
 ## Evals
 
 ```bash
-make evals                                        # run every suite in klorb/evals/cases.py
-EVALARGS='--suite file-tools' make evals          # run just one suite
-EVALARGS='--list-suites' make evals               # print known suite names and exit
-EVALARGS='--model openai/gpt-5-nano' make evals   # against a specific model
+make evals                                       # run every suite in klorb/evals/cases.py
+make evals EVALARGS='--suite file-tools'         # run just one suite
+make evals EVALARGS='--list-suites'              # print known suite names and exit
+make evals EVALARGS='--model openai/gpt-5-nano'  # against a specific model
+
+# Run the risk classifier tests with the risk classifier model:
+make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite risk-classifier'
 ```
 
 `make evals` runs `klorb/evals/`'s tool-efficacy suites: unlike `make test` (fully offline), it
