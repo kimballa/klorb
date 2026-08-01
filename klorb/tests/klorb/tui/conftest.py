@@ -60,7 +60,7 @@ def _start_file_index(app: ReplApp, root: Path, *rel_paths: str) -> WorkspaceFil
     """Create `rel_paths` as empty files under `root`, then start a real `WorkspaceFileIndex`
     scoped to it and attach it to `app` -- bypassing the `trust_manager`-gated
     `_start_file_finder_index` so file-finder tests don't need a full workspace-trust bootstrap
-    just to seed a small, known file list. Callers must `.stop()` the returned index once done,
+    just to seed a small, known file list. Callers must `.close()` the returned index once done,
     so its background observer thread doesn't leak into a later test."""
     for rel_path in rel_paths:
         path = root / rel_path

@@ -29,25 +29,53 @@ _DEBOUNCE_SECONDS = 0.4
 it, so a burst of events (an `npm install`, a branch checkout) collapses into one update
 instead of one per event."""
 
+_ABORT_CHECK_INTERVAL = 256
+"""How many directory entries `_scan_dir` examines between each non-blocking check of the
+closing signal (`WorkspaceFileIndex._closing_event.is_set()`), on top of the check it always
+makes on every recursive descent into a subdirectory -- see `_scan_dir`."""
 
-def _scan_workspace_files(workspace_root: Path) -> list[str]:
+
+class _ScanAborted(Exception):
+    """Raised internally to unwind a rescan's recursive directory walk once `close()` has
+    signaled shutdown (`WorkspaceFileIndex._closing_event`); always caught by `_rescan()` and
+    never escapes it."""
+
+
+def _scan_workspace_files(workspace_root: Path, should_abort: Callable[[], bool]) -> list[str]:
     """Recursively list every non-gitignored, non-`.git` file under `workspace_root` as a
-    sorted, POSIX-style path relative to it, capped at `MAX_INDEXED_FILES` entries."""
+    sorted, POSIX-style path relative to it, capped at `MAX_INDEXED_FILES` entries.
+
+    `should_abort` is polled periodically (`_scan_dir`) so a caller can cancel a scan already in
+    flight; raises `_ScanAborted` the moment it returns `True`, leaving the caller's own `files`
+    list (if any) irrelevant -- `WorkspaceFileIndex._rescan()` never applies a partial result.
+    """
     files: list[str] = []
-    _scan_dir(workspace_root, workspace_root, GitignoreFilter.for_root(workspace_root, workspace_root), files)
+    _scan_dir(
+        workspace_root, workspace_root, GitignoreFilter.for_root(workspace_root, workspace_root),
+        files, should_abort)
     files.sort()
     return files
 
 
-def _scan_dir(root: Path, dir_path: Path, gitignore: GitignoreFilter, files: list[str]) -> None:
+def _scan_dir(
+    root: Path, dir_path: Path, gitignore: GitignoreFilter, files: list[str],
+    should_abort: Callable[[], bool],
+) -> None:
     """Recursion helper for `_scan_workspace_files`: appends `dir_path`'s own non-ignored files
     (POSIX-relative to `root`) onto `files` and recurses into its non-ignored subdirectories,
-    stopping early once `MAX_INDEXED_FILES` is reached."""
+    stopping early once `MAX_INDEXED_FILES` is reached. Checks `should_abort` on every recursive
+    descent into a subdirectory, and every `_ABORT_CHECK_INTERVAL` entries within one directory's
+    own listing, so a long-running scan of a large tree notices `close()` promptly rather than
+    only between top-level directories."""
+    if should_abort():
+        raise _ScanAborted()
     try:
         entries = sorted(dir_path.iterdir(), key=lambda entry: entry.name)
     except OSError:
         return
-    for entry in entries:
+    for index, entry in enumerate(entries):
+        if index % _ABORT_CHECK_INTERVAL == 0 and should_abort():
+            raise _ScanAborted()
         if len(files) >= MAX_INDEXED_FILES:
             return
         if entry.is_symlink():
@@ -60,7 +88,7 @@ def _scan_dir(root: Path, dir_path: Path, gitignore: GitignoreFilter, files: lis
         if entry.is_dir():
             if entry.name == GIT_DIR_NAME or gitignore.is_ignored(entry, is_dir=True):
                 continue
-            _scan_dir(root, entry, gitignore.descend(entry), files)
+            _scan_dir(root, entry, gitignore.descend(entry), files, should_abort)
         elif not gitignore.is_ignored(entry, is_dir=False):
             files.append(entry.relative_to(root).as_posix())
 
@@ -107,6 +135,22 @@ class WorkspaceFileIndex:
     watchdog observer's or a debounce timer's -- every time `files` actually changes, so a
     caller driving a UI must marshal back onto its own thread (e.g. Textual's
     `App.call_from_thread`) before touching widgets from it.
+
+    A rescan (the initial one in `start()`, or a later one `_flush()` triggers) can run on
+    whatever thread invokes it and can take a while against a large tree, during which watchdog
+    events keep arriving concurrently on the observer's own thread. `_rescan_in_progress`
+    (guarded by `_lock`, like every other piece of mutable state here) makes that safe:
+    `_queue_created`/`_queue_deleted`/`_queue_rescan` still record what happened, but skip
+    scheduling a debounce timer while a rescan is running, and `_flush()` itself is a no-op if
+    it fires anyway (e.g. a timer already in flight when a rescan started). Once a rescan
+    completes, it calls `_flush()` immediately -- bypassing the debounce entirely -- to apply
+    whatever queued up while it ran, so no event is ever lost to the race.
+
+    `close()` signals `_closing_event`, which `_scan_dir` polls periodically (see
+    `_ABORT_CHECK_INTERVAL`) so an in-flight scan aborts promptly instead of running to
+    completion (or worse, restarting) after the index is supposed to be dead; it also cancels
+    any pending debounce timer and stops the observer thread. See
+    docs/adrs/use-watchdog-for-tui-file-finder-index.md.
     """
 
     def __init__(self, workspace_root: Path, on_changed: Callable[[], None]) -> None:
@@ -119,6 +163,8 @@ class WorkspaceFileIndex:
         self._needs_rescan = False
         self._pending_created: set[str] = set()
         self._pending_deleted: set[str] = set()
+        self._rescan_in_progress = False
+        self._closing_event = threading.Event()
 
     @property
     def files(self) -> list[str]:
@@ -126,10 +172,15 @@ class WorkspaceFileIndex:
         with self._lock:
             return list(self._files)
 
+    @property
+    def is_closing(self) -> bool:
+        """Whether `close()` has been called -- a non-blocking check of `_closing_event`."""
+        return self._closing_event.is_set()
+
     def start(self) -> None:
         """Run the initial scan synchronously, then start watching `workspace_root` in the
-        background. A no-op if already started."""
-        if self._observer is not None:
+        background. A no-op if already started or already closed."""
+        if self._observer is not None or self._closing_event.is_set():
             return
         self._rescan()
         observer = Observer()
@@ -140,9 +191,12 @@ class WorkspaceFileIndex:
             "WorkspaceFileIndex watching %s for file/.gitignore create/delete events",
             self._workspace_root)
 
-    def stop(self) -> None:
-        """Cancel any pending debounced update and stop the background observer thread. Safe to
-        call more than once, or when never started."""
+    def close(self) -> None:
+        """Signal shutdown (notifying `_closing_event`, which an in-flight `_rescan()` polls to
+        abort its walk promptly -- see `_scan_dir`), cancel any pending debounced flush, and stop
+        the background observer thread. Safe to call more than once, or when never started.
+        """
+        self._closing_event.set()
         with self._lock:
             if self._debounce_timer is not None:
                 self._debounce_timer.cancel()
@@ -154,18 +208,43 @@ class WorkspaceFileIndex:
             logger.debug("WorkspaceFileIndex stopped watching %s", self._workspace_root)
 
     def _rescan(self) -> None:
-        files = _scan_workspace_files(self._workspace_root)
+        """Perform a full, gitignore-aware rescan, replacing `files` with the result and
+        notifying `on_changed` -- unless another rescan is already running or `close()` has
+        already been called, in which case this is a no-op, or the scan is aborted partway
+        through by a concurrent `close()` (`_ScanAborted`), in which case `files` is left
+        untouched. Once complete, immediately (bypassing the debounce timer) calls `_flush()` to
+        apply any create/delete/rescan requests that queued up while this scan was running.
+        """
+        with self._lock:
+            if self._rescan_in_progress or self._closing_event.is_set():
+                return
+            self._rescan_in_progress = True
+        try:
+            files = _scan_workspace_files(self._workspace_root, lambda: self._closing_event.is_set())
+        except _ScanAborted:
+            logger.debug(
+                "WorkspaceFileIndex rescan of %s aborted by close()", self._workspace_root)
+            with self._lock:
+                self._rescan_in_progress = False
+            return
         with self._lock:
             self._files = files
+            self._rescan_in_progress = False
+        if self._closing_event.is_set():
+            return
         logger.debug(
             "WorkspaceFileIndex indexed %d file(s) under %s", len(files), self._workspace_root)
+        self._on_changed()
+        self._flush()
 
     def _queue_created(self, abs_path: Path) -> None:
         """Record `abs_path` (an absolute, non-directory path a watchdog event just reported as
-        created) for the next debounced flush, unless a `.gitignore` covering its own directory
-        excludes it -- checked fresh via `GitignoreFilter.for_root` rather than a cached
-        whole-tree filter, since only `abs_path`'s own ancestor chain of `.gitignore` files
-        needs reading here, not a full rescan."""
+        created) for the next flush, unless a `.gitignore` covering its own directory excludes
+        it -- checked fresh via `GitignoreFilter.for_root` rather than a cached whole-tree
+        filter, since only `abs_path`'s own ancestor chain of `.gitignore` files needs reading
+        here, not a full rescan. Does not schedule a debounce timer while a rescan is already
+        running (`_rescan_in_progress`); that rescan's own post-completion `_flush()` call picks
+        this up once it finishes."""
         try:
             rel_path = abs_path.relative_to(self._workspace_root).as_posix()
         except ValueError:
@@ -176,7 +255,9 @@ class WorkspaceFileIndex:
         with self._lock:
             self._pending_created.add(rel_path)
             self._pending_deleted.discard(rel_path)
-        self._schedule_flush()
+            rescanning = self._rescan_in_progress
+        if not rescanning:
+            self._schedule_flush()
 
     def _queue_deleted(self, abs_path: Path) -> None:
         try:
@@ -186,14 +267,20 @@ class WorkspaceFileIndex:
         with self._lock:
             self._pending_deleted.add(rel_path)
             self._pending_created.discard(rel_path)
-        self._schedule_flush()
+            rescanning = self._rescan_in_progress
+        if not rescanning:
+            self._schedule_flush()
 
     def _queue_rescan(self) -> None:
         with self._lock:
             self._needs_rescan = True
-        self._schedule_flush()
+            rescanning = self._rescan_in_progress
+        if not rescanning:
+            self._schedule_flush()
 
     def _schedule_flush(self) -> None:
+        if self._closing_event.is_set():
+            return
         with self._lock:
             if self._debounce_timer is not None:
                 self._debounce_timer.cancel()
@@ -203,19 +290,27 @@ class WorkspaceFileIndex:
             timer.start()
 
     def _flush(self) -> None:
+        """Apply whatever create/delete/rescan requests are currently pending -- either as the
+        debounce timer's own callback, or called directly by `_rescan()` right after it
+        completes, to process anything that queued up mid-scan. A no-op if a rescan is already
+        running (guards the race where a timer scheduled just before one started fires while it
+        is still in flight) or `close()` has already been called; either way, whatever's pending
+        stays pending for a later, still-relevant call to pick up."""
         with self._lock:
+            self._debounce_timer = None
+            if self._rescan_in_progress or self._closing_event.is_set():
+                return
             rescan = self._needs_rescan
             created = self._pending_created
             deleted = self._pending_deleted
             self._needs_rescan = False
             self._pending_created = set()
             self._pending_deleted = set()
-            self._debounce_timer = None
         if rescan:
             self._rescan()
-        elif created or deleted:
-            with self._lock:
-                self._files = sorted((set(self._files) - deleted) | created)
-        else:
             return
+        if not created and not deleted:
+            return
+        with self._lock:
+            self._files = sorted((set(self._files) - deleted) | created)
         self._on_changed()

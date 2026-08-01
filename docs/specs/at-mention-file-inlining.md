@@ -69,7 +69,12 @@ is resolvable by `resolve_at_mentions()` later.
   LivenessWatchdog`, klorb's own hang-detection heartbeat) instead of periodic polling, the same
   mechanism WSGI dev-server reloaders use. A plain file's creation or deletion is applied as an
   incremental add/remove; a directory create/delete or any `.gitignore` change forces a full
-  rescan, since either can affect more paths than the one the filesystem event names. See
+  rescan, since either can affect more paths than the one the filesystem event names. A rescan
+  can run on any thread and take a while against a large tree; events that arrive while one is
+  already running are queued rather than lost, and applied immediately (no debounce) once that
+  rescan completes, instead of racing it. `close()` signals a shutdown event a running rescan
+  polls periodically so it aborts its walk promptly rather than running to completion (or
+  restarting) after the index should already be dead. See
   `docs/adrs/use-watchdog-for-tui-file-finder-index.md`.
 * **Startup.** The index starts only once workspace trust is resolved for a real `klorb`
   process (`ReplApp._start_file_finder_index`, gated on `trust_manager` the same way

@@ -736,7 +736,7 @@ async def test_at_mention_opens_the_finder_with_matches(tmp_path: Path) -> None:
             assert finder.display is True
             assert prompt_input._finder_matches == ["src/main.py"]
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_up_down_arrows_move_the_finder_highlight_not_the_cursor(tmp_path: Path) -> None:
@@ -762,7 +762,7 @@ async def test_up_down_arrows_move_the_finder_highlight_not_the_cursor(tmp_path:
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
             assert prompt_input.text == "@"
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_enter_selects_the_highlighted_match_and_escapes_spaces(tmp_path: Path) -> None:
@@ -780,7 +780,7 @@ async def test_enter_selects_the_highlighted_match_and_escapes_spaces(tmp_path: 
             assert prompt_input.text == "see @readme\\ with\\ space.md "
             assert finder.display is False
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
@@ -796,7 +796,7 @@ async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
             assert prompt_input.text == "@src/main.py "
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_escape_dismisses_the_finder_and_continues_as_plain_text(tmp_path: Path) -> None:
@@ -820,7 +820,7 @@ async def test_escape_dismisses_the_finder_and_continues_as_plain_text(tmp_path:
             assert prompt_input.text == "@main!"
             assert finder.display is False
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_no_matching_query_does_not_intercept_enter_and_submits_normally(tmp_path: Path) -> None:
@@ -844,7 +844,7 @@ async def test_no_matching_query_does_not_intercept_enter_and_submits_normally(t
             prompt_widget = history.query(Static).exclude(".mascot").first()
             assert prompt_widget.content == "@zzznomatch"
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_typing_space_after_the_mention_closes_the_finder(tmp_path: Path) -> None:
@@ -865,7 +865,7 @@ async def test_typing_space_after_the_mention_closes_the_finder(tmp_path: Path) 
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)  # type: ignore[unreachable]
             assert prompt_input.text == "@main "
         finally:
-            index.stop()
+            index.close()
 
 
 async def test_moving_cursor_out_of_the_mention_closes_the_finder(tmp_path: Path) -> None:
@@ -883,4 +883,4 @@ async def test_moving_cursor_out_of_the_mention_closes_the_finder(tmp_path: Path
             await pilot.pause()
             assert finder.display is False
         finally:
-            index.stop()
+            index.close()

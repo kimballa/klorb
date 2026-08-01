@@ -470,7 +470,7 @@ class ReplApp(
                 self.call_from_thread(self._refresh_file_finder_after_index_change)
             except RuntimeError:
                 # The app's event loop has already stopped (e.g. mid-shutdown, racing
-                # `on_unmount`'s `_file_index.stop()`) -- nothing is left to refresh.
+                # `on_unmount`'s `_file_index.close()`) -- nothing is left to refresh.
                 pass
 
         self._file_index = WorkspaceFileIndex(workspace.path, on_changed=on_changed)
