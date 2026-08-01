@@ -166,47 +166,65 @@ class TestHasAtMention:
 
 
 class TestDetectMentionMimeType:
-    """Tests for detect_mention_mime_type -- magic-byte and extension-based image detection."""
+    """Tests for detect_mention_mime_type -- filetype-then-extension image detection."""
 
-    def test_png_magic_bytes(self) -> None:
-        assert detect_mention_mime_type("whatever", _png_bytes()) == "image/png"
+    def _write(self, tmp_path: Path, name: str, data: bytes) -> Path:
+        path = tmp_path / name
+        path.write_bytes(data)
+        return path
 
-    def test_jpeg_magic_bytes(self) -> None:
-        head = b"\xff\xd8\xff\xe0\x00\x10JFIF"
-        assert detect_mention_mime_type("whatever", head) == "image/jpeg"
+    def test_png_magic_bytes(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "whatever", _png_bytes())
+        assert detect_mention_mime_type("whatever", path) == "image/png"
 
-    def test_gif87a_magic_bytes(self) -> None:
-        assert detect_mention_mime_type("whatever", b"GIF87a rest of file") == "image/gif"
+    def test_jpeg_magic_bytes(self, tmp_path: Path) -> None:
+        head = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 20
+        path = self._write(tmp_path, "whatever", head)
+        assert detect_mention_mime_type("whatever", path) == "image/jpeg"
 
-    def test_gif89a_magic_bytes(self) -> None:
-        assert detect_mention_mime_type("whatever", b"GIF89a rest of file") == "image/gif"
+    def test_gif89a_magic_bytes(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "whatever", b"GIF89a" + b"\x00" * 20)
+        assert detect_mention_mime_type("whatever", path) == "image/gif"
 
-    def test_bmp_magic_bytes(self) -> None:
-        assert detect_mention_mime_type("whatever", b"BMxxxxxxxxxxxx") == "image/bmp"
+    def test_bmp_magic_bytes(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "whatever", b"BM" + b"\x00" * 20)
+        assert detect_mention_mime_type("whatever", path) == "image/bmp"
 
-    def test_webp_magic_bytes(self) -> None:
-        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8 "
-        assert detect_mention_mime_type("whatever", head) == "image/webp"
+    def test_webp_magic_bytes(self, tmp_path: Path) -> None:
+        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8 " + b"\x00" * 10
+        path = self._write(tmp_path, "whatever", head)
+        assert detect_mention_mime_type("whatever", path) == "image/webp"
 
-    def test_riff_without_webp_is_not_matched(self) -> None:
+    def test_riff_without_webp_is_not_matched(self, tmp_path: Path) -> None:
         """A RIFF container that isn't WEBP (e.g. a WAV file) is not treated as an image."""
-        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WAVE" + b"fmt "
-        assert detect_mention_mime_type("audio.wav", head) is None
+        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WAVE" + b"fmt " + b"\x00" * 10
+        path = self._write(tmp_path, "audio.wav", head)
+        assert detect_mention_mime_type("audio.wav", path) is None
 
-    def test_extension_fallback_when_magic_bytes_inconclusive(self) -> None:
+    def test_extension_fallback_when_magic_bytes_inconclusive(self, tmp_path: Path) -> None:
         """A mismatched or truncated header still resolves via the file extension."""
-        assert detect_mention_mime_type("photo.png", b"not really a png") == "image/png"
+        path = self._write(tmp_path, "photo.png", b"not really a png")
+        assert detect_mention_mime_type("photo.png", path) == "image/png"
 
-    def test_unrecognized_extension_and_bytes_return_none(self) -> None:
-        assert detect_mention_mime_type("notes.txt", b"just some text") is None
+    def test_unrecognized_extension_and_bytes_return_none(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "notes.txt", b"just some text")
+        assert detect_mention_mime_type("notes.txt", path) is None
 
-    def test_heic_extension_not_recognized(self) -> None:
-        """HEIC is declared as vision-supported by some models, but this module can neither
-        magic-sniff nor decode it, so it must not be treated as a recognized image mention."""
-        assert detect_mention_mime_type("photo.heic", b"\x00\x00\x00\x18ftypheic") is None
+    def test_heic_not_recognized(self, tmp_path: Path) -> None:
+        """HEIC is declared as vision-supported by some models, and `filetype` itself can sniff
+        it, but this codebase has no decoder for it, so it must not be treated as a recognized
+        image mention."""
+        head = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 20
+        path = self._write(tmp_path, "photo.heic", head)
+        assert detect_mention_mime_type("photo.heic", path) is None
 
-    def test_empty_bytes_and_no_extension(self) -> None:
-        assert detect_mention_mime_type("noext", b"") is None
+    def test_empty_file_and_no_extension_returns_none(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "noext", b"")
+        assert detect_mention_mime_type("noext", path) is None
+
+    def test_nonexistent_file_raises_oserror(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            detect_mention_mime_type("missing.png", tmp_path / "missing.png")
 
 
 # --- resolve_at_mentions ---

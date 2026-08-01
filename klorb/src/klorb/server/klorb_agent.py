@@ -226,7 +226,7 @@ class KlorbAcpAgent(acp.Agent):
             raise acp.RequestError(-32000, "A prompt is already in progress for this session")
         assert self._session is not None
         prompt_text, image_fragments = _extract_prompt_content(
-            prompt, self._session.active_model(), self._process_config)
+            prompt, self._session.active_model(), self._session.image_pipeline_config)
         assert self._turn_bridge is not None
         self._turn_in_flight = True
         logger.debug("session/prompt dispatching turn for ACP session %s", session_id)
@@ -542,15 +542,18 @@ class KlorbAcpAgent(acp.Agent):
 
 
 def _extract_prompt_content(
-    blocks: list[_PromptContentBlock], active_model: Model | None, config: ProcessConfig,
+    blocks: list[_PromptContentBlock], active_model: Model | None,
+    image_pipeline_config: ImagePipelineConfig,
 ) -> tuple[str, list[MessageFragment]]:
     """Split `blocks` into the concatenated text of every `text` block and one `MessageFragment`
     per `image` block, resizing/transcoding each image for `active_model` via `klorb.images.
-    prepare.prepare_image_for_model`. Raises a JSON-RPC `invalid params` error on the first
-    `image` block if `active_model` is `None` or its `capabilities()["vision"]` is falsy, or if
-    `prepare_image_for_model` raises `ImageTooLargeError`; audio/resource blocks keep raising
-    `invalid_params` unconditionally -- unchanged, out of scope here. See docs/specs/vision-
-    image-input.md.
+    prepare.prepare_image_for_model` using `image_pipeline_config` (the calling `Session`'s own
+    `image_pipeline_config` property -- the same settings `resolve_at_mentions()` uses for an
+    @mentioned image, see docs/specs/at-mention-file-inlining.md). Raises a JSON-RPC
+    `invalid params` error on the first `image` block if `active_model` is `None` or its
+    `capabilities()["vision"]` is falsy, or if `prepare_image_for_model` raises
+    `ImageTooLargeError`; audio/resource blocks keep raising `invalid_params` unconditionally --
+    unchanged, out of scope here. See docs/specs/vision-image-input.md.
     """
     texts: list[str] = []
     image_fragments: list[MessageFragment] = []
@@ -564,13 +567,9 @@ def _extract_prompt_content(
         if active_model is None or not active_model.capabilities().get("vision"):
             raise acp.RequestError.invalid_params(
                 {"reason": "the active model does not support image input"})
-        pipeline_config = ImagePipelineConfig(
-            default_max_dimension_px=config.image_default_max_dimension_px,
-            max_bytes_raw=config.image_max_bytes_raw,
-            preferred_formats=config.image_preferred_formats)
         try:
             prepared = prepare_image_for_model(base64.b64decode(
-                block.data), active_model, pipeline_config)
+                block.data), active_model, image_pipeline_config)
         except ImageTooLargeError as exc:
             raise acp.RequestError.invalid_params({"reason": str(exc)}) from exc
         klorb_meta = (block.field_meta or {}).get("klorb") or {}

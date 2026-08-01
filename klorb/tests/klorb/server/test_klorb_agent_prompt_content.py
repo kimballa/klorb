@@ -10,8 +10,8 @@ import acp
 import pytest
 from PIL import Image
 
+from klorb.images.prepare import ImagePipelineConfig
 from klorb.models.configured_model import ConfiguredModel
-from klorb.process_config import ProcessConfig
 from klorb.server.klorb_agent import _extract_prompt_content
 
 
@@ -30,17 +30,23 @@ def _non_vision_model() -> ConfiguredModel:
     return ConfiguredModel({"name": "test/no-vision", "capabilities": {"vision": False}}, source="test")
 
 
+def _pipeline_config(max_bytes_raw: int = 26214400) -> ImagePipelineConfig:
+    return ImagePipelineConfig(
+        default_max_dimension_px=1568, max_bytes_raw=max_bytes_raw,
+        preferred_formats=["image/webp", "image/png"])
+
+
 class TestExtractPromptContent:
     def test_concatenates_text_blocks(self) -> None:
         text, images = _extract_prompt_content(
-            [acp.text_block("hello "), acp.text_block("world")], _vision_model(), ProcessConfig())
+            [acp.text_block("hello "), acp.text_block("world")], _vision_model(), _pipeline_config())
         assert text == "hello world"
         assert images == []
 
     def test_builds_an_image_fragment_for_a_vision_model(self) -> None:
         block = acp.image_block(data=_image_data_b64(), mime_type="image/png")
 
-        text, images = _extract_prompt_content([block], _vision_model(), ProcessConfig())
+        text, images = _extract_prompt_content([block], _vision_model(), _pipeline_config())
 
         assert text == ""
         assert len(images) == 1
@@ -54,35 +60,34 @@ class TestExtractPromptContent:
     def test_rejects_image_block_when_active_model_has_no_vision(self) -> None:
         block = acp.image_block(data=_image_data_b64(), mime_type="image/png")
         with pytest.raises(acp.RequestError):
-            _extract_prompt_content([block], _non_vision_model(), ProcessConfig())
+            _extract_prompt_content([block], _non_vision_model(), _pipeline_config())
 
     def test_rejects_image_block_when_there_is_no_active_model(self) -> None:
         block = acp.image_block(data=_image_data_b64(), mime_type="image/png")
         with pytest.raises(acp.RequestError):
-            _extract_prompt_content([block], None, ProcessConfig())
+            _extract_prompt_content([block], None, _pipeline_config())
 
     def test_still_rejects_audio_blocks(self) -> None:
         block = acp.audio_block(data="xx", mime_type="audio/wav")
         with pytest.raises(acp.RequestError):
-            _extract_prompt_content([block], _vision_model(), ProcessConfig())
+            _extract_prompt_content([block], _vision_model(), _pipeline_config())
 
     def test_reads_filename_from_block_meta(self) -> None:
         block = acp.image_block(data=_image_data_b64(), mime_type="image/png")
         block = block.model_copy(update={"field_meta": {"klorb": {"filename": "shot.png"}}})
 
-        _, images = _extract_prompt_content([block], _vision_model(), ProcessConfig())
+        _, images = _extract_prompt_content([block], _vision_model(), _pipeline_config())
 
         assert images[0].source_filename == "shot.png"
 
     def test_no_filename_meta_means_source_filename_is_none(self) -> None:
         block = acp.image_block(data=_image_data_b64(), mime_type="image/png")
 
-        _, images = _extract_prompt_content([block], _vision_model(), ProcessConfig())
+        _, images = _extract_prompt_content([block], _vision_model(), _pipeline_config())
 
         assert images[0].source_filename is None
 
     def test_wraps_image_too_large_error_as_invalid_params(self) -> None:
         block = acp.image_block(data=_image_data_b64(400, 400), mime_type="image/png")
-        config = ProcessConfig(image_max_bytes_raw=1)
         with pytest.raises(acp.RequestError):
-            _extract_prompt_content([block], _vision_model(), config)
+            _extract_prompt_content([block], _vision_model(), _pipeline_config(max_bytes_raw=1))

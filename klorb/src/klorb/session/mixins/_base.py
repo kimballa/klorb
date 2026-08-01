@@ -84,7 +84,7 @@ class SessionBase:
     _system_prompt: SystemPrompt
     _process_config: "ProcessConfig | None"
     _mention_read_file_core: "ReadFileCore"
-    _mention_image_pipeline_config: ImagePipelineConfig
+    _image_pipeline_config: ImagePipelineConfig
     _thinking_token_budgets: dict[ThinkingEffort, int]
     _tool_registry: "ToolRegistry | None"
     tool_state: dict[str, Any]

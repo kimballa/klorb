@@ -109,16 +109,19 @@ class SessionCoreMixin(SessionBase):
         thread it into `klorb.permissions.grant.apply_permission_grant` for a `"workspace"`/
         `"homedir"` grant's process-wide ripple — see that method and
         docs/adrs/session-applies-its-own-permission-grants.md."""
-        self._mention_read_file_core = self._create_mention_read_file_core(
+        self._mention_read_file_core = self._create_read_file_core(
             process_config.mention_max_lines
             if process_config is not None else self._default_mention_max_lines(),
             process_config.read_file_max_line_length
             if process_config is not None else self._default_mention_max_line_length(),
         )
-        self._mention_image_pipeline_config = self._create_mention_image_pipeline_config(process_config)
-        """The `ImagePipelineConfig` `resolve_at_mentions()` passes to `klorb.images.prepare.
-        prepare_image_for_model` for an @mentioned file recognized as an image -- see
-        docs/specs/at-mention-file-inlining.md."""
+        self._image_pipeline_config = self._create_image_pipeline_config(process_config)
+        """This session's `ImagePipelineConfig`, built once from `process_config`'s
+        `tools.images.*` settings (or the packaged defaults) -- passed to `klorb.images.prepare.
+        prepare_image_for_model` for every image this session sends, whether it arrived as a
+        drag-drop/paste attachment (`klorb.server.klorb_agent._extract_prompt_content`, via the
+        `image_pipeline_config` property below) or an @mentioned file recognized as an image
+        (`resolve_at_mentions()`, see docs/specs/at-mention-file-inlining.md)."""
         self._thinking_token_budgets = (
             process_config.thinking_token_budgets if process_config is not None
             else THINKING_EFFORT_TOKEN_BUDGETS
@@ -267,21 +270,21 @@ class SessionCoreMixin(SessionBase):
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
 
     @staticmethod
-    def _create_mention_read_file_core(max_lines: int, max_line_length: int) -> "ReadFileCore":
-        """Construct a `ReadFileCore` for @mention file inlining, deferring the import to avoid
-        a circular dependency through `klorb.tools.util` → `klorb.tools.setup_context` →
-        `klorb.process_config` → `klorb.session`."""
+    def _create_read_file_core(max_lines: int, max_line_length: int) -> "ReadFileCore":
+        """Construct a `ReadFileCore`, deferring the import to avoid a circular dependency
+        through `klorb.tools.util` → `klorb.tools.setup_context` → `klorb.process_config` →
+        `klorb.session`."""
         from klorb.tools.util.read_file_core import ReadFileCore
         return ReadFileCore(max_lines, max_line_length)
 
     @staticmethod
-    def _create_mention_image_pipeline_config(
+    def _create_image_pipeline_config(
         process_config: "ProcessConfig | None",
     ) -> ImagePipelineConfig:
-        """Build the `ImagePipelineConfig` @mention image resolution needs, from
-        *process_config*'s `tools.images.*` settings, or the packaged defaults (imported lazily
-        to avoid the same circular dependency `_create_mention_read_file_core` avoids) for a
-        `Session` built without a `ProcessConfig`."""
+        """Build this session's `ImagePipelineConfig` from *process_config*'s `tools.images.*`
+        settings, or the packaged defaults (imported lazily to avoid the same circular
+        dependency `_create_read_file_core` avoids) for a `Session` built without a
+        `ProcessConfig`."""
         if process_config is not None:
             return ImagePipelineConfig(
                 default_max_dimension_px=process_config.image_default_max_dimension_px,
@@ -302,15 +305,15 @@ class SessionCoreMixin(SessionBase):
     @staticmethod
     def _default_mention_max_lines() -> int:
         """`DEFAULT_MENTION_MAX_LINES`, imported lazily to avoid the same circular dependency
-        `_create_mention_read_file_core` avoids -- `klorb.process_config` imports from
-        `klorb.session`, so a module-level import here would be circular."""
+        `_create_read_file_core` avoids -- `klorb.process_config` imports from `klorb.session`,
+        so a module-level import here would be circular."""
         from klorb.process_config import DEFAULT_MENTION_MAX_LINES
         return DEFAULT_MENTION_MAX_LINES
 
     @staticmethod
     def _default_mention_max_line_length() -> int:
         """`DEFAULT_READ_FILE_MAX_LINE_LENGTH`, imported lazily to avoid the same circular
-        dependency `_create_mention_read_file_core` avoids."""
+        dependency `_create_read_file_core` avoids."""
         from klorb.process_config import DEFAULT_READ_FILE_MAX_LINE_LENGTH
         return DEFAULT_READ_FILE_MAX_LINE_LENGTH
 
@@ -337,6 +340,15 @@ class SessionCoreMixin(SessionBase):
     def model_registry(self) -> ModelRegistry:
         """Return the `ModelRegistry` this session resolves model names against."""
         return self._model_registry
+
+    @property
+    def image_pipeline_config(self) -> ImagePipelineConfig:
+        """Return this session's `ImagePipelineConfig` -- see `_create_image_pipeline_config`.
+        The single source both `resolve_at_mentions()` and `klorb.server.klorb_agent.
+        _extract_prompt_content` (a drag-drop/paste ACP attachment) pass to `klorb.images.
+        prepare.prepare_image_for_model`, so every image this session sends is resized/
+        transcoded under the same settings regardless of how it arrived."""
+        return self._image_pipeline_config
 
     @property
     def tool_registry(self) -> "ToolRegistry | None":

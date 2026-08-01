@@ -116,29 +116,29 @@ that can't be attached (see below) produces the same shape of error fragment.
 
 An `@mention`ed file whose bytes are recognized as an image is attached the same way a
 drag-drop/paste attachment is (see docs/specs/vision-image-input.md), instead of being read
-and inlined as text: `klorb.session.mixins.mentions.detect_mention_mime_type(filename, head)`
-sniffs the file's leading bytes (`_MENTION_MIME_SNIFF_BYTES`, read once per mention) against
-`_IMAGE_MAGIC_SIGNATURES` (PNG, JPEG, GIF87a/89a, BMP, plus a WEBP `RIFF....WEBP` container
-check), falling back to `mimetypes.guess_type(filename)` only when the magic-byte sniff finds
-nothing -- content is the ground truth over a filename's extension. Only MIME types this module
-can both sniff and decode (`image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/bmp`)
-are recognized; a format some model declares vision support for but this module can't magic-sniff
-(e.g. `image/heic`) is left to fall through to an ordinary (and, for binary bytes, failing) text
-read.
+and inlined as text: `klorb.session.mixins.mentions.detect_mention_mime_type(filename, path)`
+sniffs the file's magic bytes via the third-party `filetype` package, falling back to
+`mimetypes.guess_type(filename)` only when the sniff is inconclusive (an unrecognized or
+truncated header) -- content is the ground truth over a filename's extension. Both results are
+filtered against a fixed set of MIME types this codebase can actually decode (`image/png`,
+`image/jpeg`, `image/gif`, `image/webp`, `image/bmp`), so a format some model declares vision
+support for but klorb has no decoder for (e.g. `image/heic`, which `filetype` itself
+recognizes) is left to fall through to an ordinary (and, for binary bytes, failing) text read.
 
 A recognized image is resized/transcoded via `klorb.images.prepare.prepare_image_for_model`
-for the session's active model (`_resolve_mention_image`), using the `ImagePipelineConfig`
-`Session` builds once at construction (`_mention_image_pipeline_config`, from
-`ProcessConfig`'s `tools.images.*` settings -- see docs/specs/vision-image-input.md's
-"Configuration" section) -- the exact pipeline a drag-drop/paste attachment goes through. On
+for the session's active model (`_resolve_mention_image`), using `Session.image_pipeline_config`
+-- the same `ImagePipelineConfig` a drag-drop/paste ACP attachment is prepared with (see
+`klorb.server.klorb_agent._extract_prompt_content` and docs/specs/vision-image-input.md's
+"Configuration" section); an @mentioned image and a pasted one are resized/transcoded under
+identical settings because they share this one object, not two independently-built copies. On
 success the mention resolves to two fragments: a text header (`Filename`/`Attachment Id`/
 `Type`, mirroring `AttachedFile`'s framing so the model can correlate an image mention with a
-text one by ordinal) immediately followed by the `image_url` fragment itself. `resolve_at_mentions()`'s
-optional `active_model`/`image_pipeline_config` parameters default to `None`; `Session.send_turn()`
-always supplies its own active model and pipeline config, but a caller that omits either (most
-unit tests) gets the pre-image-mention behavior: an image mention is still attempted as an
-ordinary text read and produces an error fragment (a binary file fails `ReadFileCore`'s
-UTF-8 decode).
+text one by ordinal) immediately followed by the `image_url` fragment itself.
+`resolve_at_mentions()`'s optional `active_model`/`image_pipeline_config` parameters default to
+`None`; `Session.send_turn()` always supplies its own active model and pipeline config, but a
+caller that omits either (most unit tests) gets the pre-image-mention behavior: an image
+mention is still attempted as an ordinary text read and produces an error fragment (a binary
+file fails `ReadFileCore`'s UTF-8 decode).
 
 An image mention fails gracefully -- producing an error-text fragment via the same
 `(error reading file: <message>)` shape as a failed text read, never raising -- when: the
@@ -185,7 +185,7 @@ The core logic lives in `klorb.session.mixins.mentions`:
 * `_AT_MENTION_RE` -- the regex that finds `@mentions` in prompt text.
 * `unescape_mention_filename()` -- resolves `\`, `\\`, `\"` escape sequences.
 * `has_at_mention()` -- fast check for whether a prompt contains any mention.
-* `detect_mention_mime_type()` -- magic-byte-then-extension image MIME detection (see "Image
+* `detect_mention_mime_type()` -- `filetype`-then-extension image MIME detection (see "Image
   mentions" above).
 * `resolve_at_mentions()` -- the main entry point: finds all mentions and resolves each unique
   one to its `MessageFragment`(s) (in first-seen order) via `_resolve_mention_fragments()`, or
@@ -193,7 +193,7 @@ The core logic lives in `klorb.session.mixins.mentions`:
 * `_resolve_mention_path()` -- resolves a filename to an absolute path within the workspace;
   shared by the text and image resolution paths. No permission check is performed since the
   user implicitly authorized the read by @mentioning the file.
-* `_resolve_mention_fragments()` -- sniffs a mention's leading bytes and dispatches to either
+* `_resolve_mention_fragments()` -- sniffs a mention's magic bytes and dispatches to either
   `_resolve_mention_image()` or `_resolve_and_read()` (text) based on `detect_mention_mime_type()`.
 * `_resolve_and_read()` -- reads a resolved path via `ReadFileCore`.
 * `_resolve_mention_image()` -- resizes/transcodes a resolved image path via
@@ -202,26 +202,30 @@ The core logic lives in `klorb.session.mixins.mentions`:
 
 `Session.send_turn()` calls `resolve_at_mentions()` first, against the raw (pre-interjection)
 prompt, before skill mention detection and interjection assembly, passing `self.active_model()`
-and `self._mention_image_pipeline_config`. Every other interjection is then prepended onto
-`prompt` exactly as it would be without any mentions -- mention resolution doesn't affect that
-assembly at all. Only once `prompt` is fully embellished, right before constructing the turn's
-`Message`, is a final `MessageFragment` wrapping that `prompt` text appended onto the list
+and `self.image_pipeline_config`. Every other interjection is then prepended onto `prompt`
+exactly as it would be without any mentions -- mention resolution doesn't affect that assembly
+at all. Only once `prompt` is fully embellished, right before constructing the turn's `Message`,
+is a final `MessageFragment` wrapping that `prompt` text appended onto the list
 `resolve_at_mentions()` returned (if it returned one), after any `image_url` fragments in that
 list have been spilled to disk (`_spill_image_fragment_to_disk`); that combined list becomes
 `Message.fragments`, while `Message.content` is set to `prompt` either way. See
 docs/specs/permissions.md and docs/specs/skills.md for what those other interjections look like.
 
 `SessionCoreMixin.__init__` constructs a `ReadFileCore` instance configured with
-`process_config.mention_max_lines`, stored as `_mention_read_file_core`. The `ReadFileCore`
-import is deferred (inside a static method) to avoid a circular import through
-`klorb.tools.util` → `klorb.tools.setup_context` → `klorb.process_config` → `klorb.session`.
-`SessionCoreMixin.__init__` likewise builds an `ImagePipelineConfig` (from `process_config`'s
-`tools.images.*` settings, or the packaged defaults for a `Session` built without a
-`ProcessConfig`) once, stored as `_mention_image_pipeline_config` -- `klorb.images.prepare`
-itself imports cleanly at module level here (unlike `ReadFileCore`), since it depends only on
-`klorb.models.model`, not on anything that imports back through `klorb.session`; only its
-default-constant fallback (`klorb.process_config.DEFAULT_IMAGE_*`) needs the same deferred-import
-treatment.
+`process_config.mention_max_lines`, stored as `_mention_read_file_core` -- the `ReadFileCore`
+import is deferred (inside `_create_read_file_core`, a static method) to avoid a circular import
+through `klorb.tools.util` → `klorb.tools.setup_context` → `klorb.process_config` →
+`klorb.session`. `SessionCoreMixin.__init__` likewise builds this session's one
+`ImagePipelineConfig` (from `process_config`'s `tools.images.*` settings, or the packaged
+defaults for a `Session` built without a `ProcessConfig`, via `_create_image_pipeline_config`)
+once, stored as `_image_pipeline_config` and exposed read-only as the `image_pipeline_config`
+property -- `klorb.images.prepare` itself imports cleanly at module level here (unlike
+`ReadFileCore`), since it depends only on `klorb.models.model`, not on anything that imports
+back through `klorb.session`; only its default-constant fallback (`klorb.process_config.
+DEFAULT_IMAGE_*`) needs the same deferred-import treatment. This is the same object
+`klorb.server.klorb_agent._extract_prompt_content` uses to prepare a drag-drop/paste ACP image
+attachment (via `session.image_pipeline_config`, replacing that call's own previously
+independently-constructed `ImagePipelineConfig`) -- see docs/specs/vision-image-input.md.
 
 `klorb.openrouter.OpenRouterApiProvider._build_api_messages` sends `message.provider_content()`
 (not `message.content`) as each API message's `content` field, so a message carrying

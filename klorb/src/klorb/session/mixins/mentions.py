@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import filetype
+
 from klorb.images.prepare import (
     ImagePipelineConfig,
     ImageTooLargeError,
@@ -35,50 +37,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MENTION_MIME_SNIFF_BYTES = 16
-"""How many leading bytes `_resolve_mention_fragment` reads to sniff an @mentioned file's magic
-signature -- enough to cover every signature in `_IMAGE_MAGIC_SIGNATURES` plus the WEBP
-`RIFF....WEBP` container check."""
-
-_IMAGE_MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-    (b"BM", "image/bmp"),
-)
-"""Leading-byte signatures `_sniff_image_mime_type` matches against an @mentioned file's head --
-the formats every packaged vision model's `vision_details.supported_mime_types` overlaps on
-(see docs/specs/vision-image-input.md), plus BMP. WEBP isn't a fixed prefix (its signature spans
-a 4-byte size field at offset 4-7) so it's checked separately."""
-
 _RECOGNIZED_IMAGE_MIME_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"})
-"""Every MIME type `detect_mention_mime_type` will report -- the extension-guessed counterpart
-of `_IMAGE_MAGIC_SIGNATURES`, so a `mimetypes.guess_type()` hit for a format this module can't
-magic-sniff (e.g. `image/heic`) is never treated as a recognized image mention."""
+"""Every MIME type `detect_mention_mime_type` will report -- the formats every packaged vision
+model's `vision_details.supported_mime_types` overlaps on (see docs/specs/vision-image-input.md),
+plus BMP. Filters both the `filetype`-sniffed and the extension-guessed result, so a MIME type
+the `filetype` package recognizes but this codebase can't decode (e.g. `image/heic`, which needs
+a Pillow plugin klorb doesn't bundle) is never treated as a recognized image mention."""
 
 
-def _sniff_image_mime_type(head: bytes) -> str | None:
-    """Match *head* (an @mentioned file's leading bytes) against `_IMAGE_MAGIC_SIGNATURES` plus
-    the WEBP `RIFF....WEBP` container signature. Returns `None` if nothing matches."""
-    for signature, mime_type in _IMAGE_MAGIC_SIGNATURES:
-        if head.startswith(signature):
-            return mime_type
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
-def detect_mention_mime_type(filename: str, head: bytes) -> str | None:
-    """Return the image MIME type an @mentioned file's *head* bytes (and *filename*) identify
-    it as, or `None` if it isn't a recognized image. Magic bytes take precedence over the file
-    extension, since content is the ground truth; the extension is only consulted when the
-    magic-byte sniff finds nothing (e.g. a mismatched or unusual extension for a real image
-    format `_sniff_image_mime_type` doesn't cover)."""
-    sniffed = _sniff_image_mime_type(head)
-    if sniffed is not None:
-        return sniffed
+def detect_mention_mime_type(filename: str, path: Path) -> str | None:
+    """Return the image MIME type an @mentioned file at *path* should be treated as, or `None`
+    if it isn't a recognized image. Sniffs *path*'s magic bytes via the `filetype` package
+    (content is the ground truth) and only falls back to *filename*'s extension
+    (`mimetypes.guess_type`) when the sniff is inconclusive (an unrecognized or truncated
+    header). Propagates `OSError` if *path* can't be opened -- the caller already needs to
+    handle that for the read that follows regardless of mention kind."""
+    kind = filetype.guess(path)
+    if kind is not None and kind.mime in _RECOGNIZED_IMAGE_MIME_TYPES:
+        return kind.mime
     guessed, _ = mimetypes.guess_type(filename)
     return guessed if guessed in _RECOGNIZED_IMAGE_MIME_TYPES else None
 
@@ -241,19 +218,18 @@ def _resolve_mention_fragments(
     image_pipeline_config: ImagePipelineConfig | None,
 ) -> list[MessageFragment]:
     """Resolve one @mentioned *filename* into its `MessageFragment`(s): an image header text
-    fragment plus an `image_url` fragment (see `_resolve_mention_image`) if the file's leading
+    fragment plus an `image_url` fragment (see `_resolve_mention_image`) if the file's magic
     bytes identify it as an image (`detect_mention_mime_type`), or a single text fragment
     wrapping a `ReadFileCore`-formatted read (`_resolve_and_read`) otherwise."""
     path = _resolve_mention_path(filename, workspace_path)
     try:
-        with open(path, "rb") as fh:
-            head = fh.read(_MENTION_MIME_SNIFF_BYTES)
+        is_image = detect_mention_mime_type(filename, path) is not None
     except OSError as exc:
         logger.debug("@mention read failed for %s: %s", filename, exc)
         return [MessageFragment(
             type="text", text=_format_attachment(ordinal, filename, _mention_read_error_result(exc)))]
 
-    if detect_mention_mime_type(filename, head) is not None:
+    if is_image:
         return _resolve_mention_image(ordinal, filename, path, active_model, image_pipeline_config)
 
     resolved = _resolve_and_read(filename, read_file_core, workspace_path)
@@ -288,7 +264,7 @@ def _resolve_mention_image(
     image is too large/unreadable as an image."""
     if (active_model is None or image_pipeline_config is None
             or not active_model.capabilities().get("vision")):
-        logger.debug(
+        logger.warning(
             "@mention %r looks like an image but the active model has no vision support",
             filename)
         return [MessageFragment(type="text", text=_format_attachment(
@@ -298,14 +274,14 @@ def _resolve_mention_image(
     try:
         raw_bytes = path.read_bytes()
     except OSError as exc:
-        logger.debug("@mention image read failed for %s: %s", filename, exc)
+        logger.error("@mention image read failed for %s: %s", filename, exc)
         return [MessageFragment(
             type="text", text=_format_attachment(ordinal, filename, _mention_read_error_result(exc)))]
 
     try:
         prepared = prepare_image_for_model(raw_bytes, active_model, image_pipeline_config)
     except (ImageTooLargeError, OSError) as exc:
-        logger.debug("@mention image prepare failed for %s: %s", filename, exc)
+        logger.error("@mention image prepare failed for %s: %s", filename, exc)
         return [MessageFragment(
             type="text", text=_format_attachment(ordinal, filename, _mention_read_error_result(exc)))]
 

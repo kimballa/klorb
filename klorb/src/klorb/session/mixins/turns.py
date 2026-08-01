@@ -476,7 +476,7 @@ class SessionTurnsMixin(SessionBase):
         active_model = self.active_model()
         mention_fragments = resolve_at_mentions(
             original_prompt, self._mention_read_file_core, self.config.workspace.path,
-            active_model=active_model, image_pipeline_config=self._mention_image_pipeline_config)
+            active_model=active_model, image_pipeline_config=self._image_pipeline_config)
         self._ensure_skill_catalog()
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
         leading_token = _leading_skill_token(original_prompt)

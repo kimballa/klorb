@@ -101,6 +101,14 @@ The Klorb project is organized as a collection of subprojects:
   `.claude/skills/encapsulate-in-classes/SKILL.md` for the checklist and worked examples this
   rule expands into. `klorb.models.registry.ModelRegistry`/`klorb.tools.registry.ToolRegistry`
   are existing examples of the class-based shape to follow for a stateful registry.
+* Name a method/field after what it does or holds, not after whichever caller happens to use it
+  today. Encapsulation means a method has no real perspective on its callers; naming it after
+  one (`_create_mention_read_file_core` for a factory that just builds a `ReadFileCore` from two
+  ints, with no mention-specific logic of its own) bakes today's narrowest caller into the name
+  and misleads a reader once a second caller shows up or the original one is renamed. Before
+  naming something after the feature that happens to be its only caller right now, check whether
+  the thing itself does anything specific to that feature — if not, name it for its actual effect
+  and let the caller's own name (or a docstring) carry the feature-specific framing instead.
 * Do not import protected methods from other modules, except for testing. If you see a line
   like `from foo import _bar`, that's a sign that `_bar` should be explictly made public as `bar`.
 * When revising or refactoring, make the smallest code change necessary to effect the change.
