@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { FileFinderPanel } from 'webview/features/fileFinder';
+import { FileFinderPanel, type FinderMatch } from 'webview/features/fileFinder';
 
 beforeAll(() => {
   // jsdom doesn't implement scrollIntoView, which the panel calls to keep the active row
@@ -13,13 +13,17 @@ beforeAll(() => {
 
 afterEach(cleanup);
 
-const PATHS = ['README.md', 'src/webview/App.tsx', 'some/deeply/nested/path/to/file.txt'];
+const MATCHES: FinderMatch[] = [
+  { path: 'README.md', isDir: false },
+  { path: 'src/webview/App.tsx', isDir: false },
+  { path: 'some/deeply/nested/path/to/file.txt', isDir: false },
+];
 
 describe('FileFinderPanel', () => {
-  it('renders a row per path, splitting nested paths into dir/file parts', () => {
+  it('renders a row per match, splitting nested paths into dir/file parts', () => {
     render(
       <FileFinderPanel
-        paths={PATHS}
+        matches={MATCHES}
         activeIndex={0}
         onHover={() => undefined}
         onSelect={() => undefined}
@@ -33,10 +37,24 @@ describe('FileFinderPanel', () => {
     expect(screen.getByText('some/deeply/nested/path/to')).toBeTruthy();
   });
 
+  it('appends a trailing slash to a directory row instead of splitting a file part', () => {
+    render(
+      <FileFinderPanel
+        matches={[{ path: 'src/webview', isDir: true }]}
+        activeIndex={0}
+        onHover={() => undefined}
+        onSelect={() => undefined}
+      />
+    );
+
+    expect(screen.getByText('/webview/')).toBeTruthy();
+    expect(screen.getByText('src')).toBeTruthy();
+  });
+
   it('marks the active row distinctly', () => {
     render(
       <FileFinderPanel
-        paths={PATHS}
+        matches={MATCHES}
         activeIndex={1}
         onHover={() => undefined}
         onSelect={() => undefined}
@@ -55,7 +73,7 @@ describe('FileFinderPanel', () => {
     const onSelect = vi.fn();
     render(
       <FileFinderPanel
-        paths={PATHS}
+        matches={MATCHES}
         activeIndex={0}
         onHover={() => undefined}
         onSelect={onSelect}
@@ -70,7 +88,12 @@ describe('FileFinderPanel', () => {
   it('calls onHover with the hovered row index', () => {
     const onHover = vi.fn();
     render(
-      <FileFinderPanel paths={PATHS} activeIndex={0} onHover={onHover} onSelect={() => undefined} />
+      <FileFinderPanel
+        matches={MATCHES}
+        activeIndex={0}
+        onHover={onHover}
+        onSelect={() => undefined}
+      />
     );
 
     fireEvent.mouseEnter(screen.getByText('/App.tsx'));

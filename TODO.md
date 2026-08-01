@@ -16,9 +16,12 @@
 
 ### Feature backlog
 
-* once we have the python tui fzf for files, we'll have a python mechanism for maintaining a list of all files in the repo. The FindFiles tool should take advantage of that for much faster performance than actually hitting the filesystem directly. (The "server side" tool should maintain its own list, not share with the tui. It should also include gitignored files. It should build this list on startup then subscribe to watchdog events. It should definitely do this work on a bg thread.)
-
-* once we have the python tui fzf for files, we'll have a python mechanism for maintaining a list of all files in the repo. The FindFiles tool should take advantage of that for much faster performance than actually hitting the filesystem directly. (The "server side" tool should maintain its own list, not share with the tui. It should also include gitignored files. It should build this list on startup then subscribe to watchdog events. It should definitely do this work on a bg thread.)
+* once we have the python tui fzf for files, we'll have a python mechanism for maintaining a list of
+  all files in the repo. The FindFiles tool should take advantage of that for much faster
+  performance than actually hitting the filesystem directly. (The "server side" tool should maintain
+  its own list, not share with the tui. It should also include gitignored files. It should build
+  this list on startup then subscribe to watchdog events. It should definitely do this work on a bg
+  thread.)
 
 * @mentioning a file currently just reflexively opens it as text and tries to fold it into the user
   message. It should instead attempt to identify mime type from file extension, and/or by magic

@@ -14,8 +14,16 @@ from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
 FILE_FINDER_ID = "file-finder"
-MAX_FILE_FINDER_MATCHES = 6
-"""How many matches the popup shows at once -- also its maximum visible row count."""
+MAX_FILE_FINDER_MATCHES = 25
+"""How many ranked matches the popup keeps, scrollable within its fixed on-screen height (see
+`FileFinderPanel.DEFAULT_CSS`'s `max-height`) -- well beyond what fits on screen at once, so a
+broad query still surfaces distant matches instead of hiding them outright."""
+
+_DIRECTORY_SCORE_BUMP = 0.1
+"""Added to a directory candidate's fuzzy-match score (`textual.fuzzy.Matcher.match` returns
+0..1) before ranking, so a directory whose name matches about as well as a file surfaces above
+it -- letting the user drill into a subtree via `FileFinderPanel`'s directory rows instead of
+only ever seeing leaf files."""
 
 _ROW_WIDTH_PADDING = 4
 """Estimated horizontal space `FileFinderPanel`'s `OptionList` chrome (a scrollbar, plus each
@@ -58,18 +66,53 @@ def detect_mention_query(line: str, cursor_column: int) -> MentionQuery | None:
     return None
 
 
+@dataclass(frozen=True)
+class FinderMatch:
+    """One row the fuzzy finder can show: a workspace-relative path plus whether it names a
+    directory rather than a file. A file row is a leaf mention target (see
+    `build_mention_insertion`); a directory row instead narrows the active query into that
+    subtree when selected (`PromptInput._select_finder_match`), since a bare directory isn't a
+    valid `@mention` target."""
+
+    path: str
+    is_dir: bool
+
+
+def _ancestor_directories(paths: Sequence[str]) -> set[str]:
+    """Every directory (as a POSIX-style, workspace-relative string) that contains, directly or
+    transitively, one of `paths` -- the finder's directory candidates, since `paths` itself only
+    ever lists files (`WorkspaceFileIndex` never indexes directories)."""
+    directories: set[str] = set()
+    for path in paths:
+        parts = path.split("/")[:-1]
+        for depth in range(1, len(parts) + 1):
+            directories.add("/".join(parts[:depth]))
+    return directories
+
+
 def filter_workspace_files(
     paths: Sequence[str], query: str, *, limit: int = MAX_FILE_FINDER_MATCHES,
-) -> list[str]:
-    """Return up to `limit` of `paths` that fuzzy-match `query`, in display order: alphabetical
-    for an empty query (nothing to rank), otherwise by descending `textual.fuzzy.Matcher`
-    score. Mirrors `klorb.tui.commands.model_commands.filter_model_names`.
+) -> list[FinderMatch]:
+    """Return up to `limit` files and ancestor directories from `paths` that fuzzy-match `query`,
+    ranked as one list by descending `textual.fuzzy.Matcher` score (directories get
+    `_DIRECTORY_SCORE_BUMP` added first) -- or, for an empty query (nothing to rank),
+    alphabetically with directories sorted ahead of files. Mirrors
+    `klorb.tui.commands.model_commands.filter_model_names`.
     """
+    directories = _ancestor_directories(paths)
     if not query:
-        return sorted(paths)[:limit]
+        ordered = sorted(set(paths) | directories, key=lambda path: (path not in directories, path))
+        return [FinderMatch(path, path in directories) for path in ordered[:limit]]
     matcher = Matcher(query)
-    scored = sorted(((matcher.match(path), path) for path in paths), key=lambda pair: -pair[0])
-    return [path for score, path in scored if score > 0][:limit]
+
+    def score_of(path: str, is_dir: bool) -> float:
+        base = matcher.match(path)
+        return base + _DIRECTORY_SCORE_BUMP if base > 0 and is_dir else base
+
+    candidates = [(path, False) for path in paths] + [(path, True) for path in directories]
+    scored = ((score_of(path, is_dir), path, is_dir) for path, is_dir in candidates)
+    ranked = sorted(scored, key=lambda triple: -triple[0])
+    return [FinderMatch(path, is_dir) for score, path, is_dir in ranked if score > 0][:limit]
 
 
 def escape_mention_path(rel_path: str) -> str:
@@ -95,10 +138,12 @@ def build_mention_insertion(query_start_column: int, cursor_column: int, rel_pat
 def split_finder_row(rel_path: str, available_width: int) -> tuple[str, str]:
     """Split `rel_path` into a (possibly truncated) directory part and a fixed, always-fully-
     visible file part (with its own leading `/` whenever a directory is present), so a deeply
-    nested path reads as `"some/path/to.../file.txt"` instead of overflowing `available_width`.
-    Truncation (when the full path doesn't fit) drops characters off the *end* of the directory
-    part and appends `"..."`, keeping the path's leading context; `available_width <= 0` means
-    the width is unknown and no truncation is applied.
+    nested path reads as `".../path/to/file.txt"` instead of overflowing `available_width`.
+    Truncation (when the full path doesn't fit) drops characters off the *front* of the
+    directory part and prepends `"..."`, keeping the segment immediately before the file part --
+    the most differentiating context when several matches share a long, generic leading prefix
+    (e.g. several rows all under the same top-level directory); `available_width <= 0` means the
+    width is unknown and no truncation is applied.
     """
     idx = rel_path.rfind("/")
     if idx == -1:
@@ -111,25 +156,29 @@ def split_finder_row(rel_path: str, available_width: int) -> tuple[str, str]:
     budget = available_width - len(file_part) - len(ellipsis)
     if budget <= 0:
         return ellipsis, file_part
-    return dir_part[:budget] + ellipsis, file_part
+    return ellipsis + dir_part[-budget:], file_part
 
 
-def _row_content(rel_path: str, available_width: int) -> Content:
-    """Build the styled row label for `rel_path`: the directory part (if any) in a muted
-    color, the file part (including its leading `/`) in the normal foreground."""
-    dir_display, file_display = split_finder_row(rel_path, available_width)
+def _row_content(match: FinderMatch, available_width: int) -> Content:
+    """Build the styled row label for `match`: the directory part (if any) in a muted color,
+    the file part (including its leading `/`) in the normal foreground, with a trailing `/`
+    appended when `match` is itself a directory."""
+    reserved = 1 if match.is_dir else 0
+    dir_display, file_display = split_finder_row(match.path, max(available_width - reserved, 0))
+    if match.is_dir:
+        file_display += "/"
     if not dir_display:
         return Content(file_display)
     return Content.assemble((dir_display, "$text-muted"), file_display)
 
 
 class FileFinderOption(Option):
-    """An `OptionList` row that carries the workspace-relative path it renders, so selecting it
-    can recover the plain path to insert."""
+    """An `OptionList` row that carries the `FinderMatch` it renders, so selecting it can
+    recover the match to insert or drill into."""
 
-    def __init__(self, rel_path: str, available_width: int) -> None:
-        super().__init__(_row_content(rel_path, available_width))
-        self.rel_path = rel_path
+    def __init__(self, match: FinderMatch, available_width: int) -> None:
+        super().__init__(_row_content(match, available_width))
+        self.match = match
 
 
 class FileFinderPanel(OptionList, can_focus=False):
@@ -147,17 +196,21 @@ class FileFinderPanel(OptionList, can_focus=False):
         width: 1fr;
         height: auto;
         max-height: 7;
+        border: none;
         border-top: solid $accent;
         background: $panel;
+        & > .option-list--option {
+            padding: 0 1 0 0;
+        }
     }
     """
 
-    def show_matches(self, paths: Sequence[str]) -> None:
-        """Replace the displayed rows with `paths` and highlight the first one."""
+    def show_matches(self, matches: Sequence[FinderMatch]) -> None:
+        """Replace the displayed rows with `matches` and highlight the first one."""
         self.clear_options()
         available_width = max(self.size.width - _ROW_WIDTH_PADDING, _MIN_ROW_WIDTH)
-        self.add_options([FileFinderOption(path, available_width) for path in paths])
-        if paths:
+        self.add_options([FileFinderOption(match, available_width) for match in matches])
+        if matches:
             self.highlighted = 0
         self.display = True
 
@@ -167,14 +220,13 @@ class FileFinderPanel(OptionList, can_focus=False):
         self.clear_options()
 
     @property
-    def current_path(self) -> str | None:
-        """The workspace-relative path of the currently-highlighted row, or `None` if the
-        popup has no rows."""
+    def current_match(self) -> FinderMatch | None:
+        """The currently-highlighted row's `FinderMatch`, or `None` if the popup has no rows."""
         if self.highlighted is None:
             return None
         option = self.get_option_at_index(self.highlighted)
         assert isinstance(option, FileFinderOption)
-        return option.rel_path
+        return option.match
 
     def move_highlight(self, direction: int) -> None:
         """Move the highlighted row by one, up (`direction < 0`) or down (`direction > 0`),

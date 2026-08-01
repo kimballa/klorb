@@ -39,26 +39,39 @@ is resolvable by `resolve_at_mentions()` later.
   interactively completed; the quoted form (`@"..."`) is still accepted when typed by hand, but
   the finder never offers it.
 * **Matching.** `klorb.tui.widgets.file_finder.filter_workspace_files` fuzzy-matches the query
-  against the workspace's file list with `textual.fuzzy.Matcher` -- the same matcher
-  `klorb.tui.commands.model_commands.filter_model_names` uses for model selection -- showing up
-  to 6 matches (an empty query lists the first 6 alphabetically) in a `FileFinderPanel`
-  (`klorb.tui.widgets.file_finder`), an `OptionList` mounted directly above the prompt input and
-  never focused: the prompt input keeps focus throughout and drives the panel's highlight
-  programmatically. Up/Down move the highlight; Enter or Tab inserts the highlighted match;
-  Escape closes the popup without changing the text, and typing further within the same
-  `@query` (its start position unchanged) does not reopen it until the cursor moves to a
-  different mention. A query matching nothing closes the popup outright, so Enter/Tab/Up/Down
-  keep their ordinary meaning (submit, navigate) instead of being claimed by an empty finder.
+  with `textual.fuzzy.Matcher` -- the same matcher `klorb.tui.commands.model_commands.
+  filter_model_names` uses for model selection -- against one blended candidate list: every
+  workspace file plus every ancestor directory of one (`_ancestor_directories`), since the
+  workspace index itself only ever lists files. A directory candidate's score gets
+  `_DIRECTORY_SCORE_BUMP` added on top of its own fuzzy score, so it ranks above an
+  equally-relevant file and the query can be used to drill toward a subtree, not just a leaf
+  file. Up to `MAX_FILE_FINDER_MATCHES` (25) ranked results are kept, scrollable within the
+  popup's fixed on-screen height, in a `FileFinderPanel` (`klorb.tui.widgets.file_finder`), an
+  `OptionList` mounted directly above the prompt input and never focused: the prompt input keeps
+  focus throughout and drives the panel's highlight programmatically. An empty query lists
+  entries alphabetically with directories sorted ahead of files rather than by fuzzy score
+  (there's nothing to rank). Up/Down move the highlight; Enter or Tab applies the highlighted
+  match (see "Insertion" below); Escape closes the popup without changing the text, and typing
+  further within the same `@query` (its start position unchanged) does not reopen it until the
+  cursor moves to a different mention. A query matching nothing closes the popup outright, so
+  Enter/Tab/Up/Down keep their ordinary meaning (submit, navigate) instead of being claimed by
+  an empty finder.
 * **Row display.** Each match is shown as its workspace-relative path split into a directory
   part (muted color) and a file part (normal color, with its own leading `/`) --
-  `klorb.tui.widgets.file_finder.split_finder_row`. When the full path doesn't fit the panel's
-  width, the directory part's *end* is truncated with a trailing `...`, keeping the file part
-  always fully visible: `foo/bar/baz/quux.../someFile.txt`.
-* **Insertion.** Selecting a match replaces the `@query` span with `@` followed by the path,
-  escaped exactly per the "Syntax" table above (backslash, then double quote, then space, via
-  `klorb.tui.widgets.file_finder.escape_mention_path` -- the precise inverse of
-  `unescape_mention_filename`), plus a trailing space, landing the cursor right after it so
-  typing continues immediately.
+  `klorb.tui.widgets.file_finder.split_finder_row` -- with a trailing `/` appended when the row
+  is itself a directory. When the full path doesn't fit the panel's width, the directory part's
+  *front* is truncated with a leading `...`, keeping the segment immediately before the file
+  part -- the most differentiating context when several rows share a long, generic leading
+  prefix -- always fully visible: `.../deep/path/someFile.txt`.
+* **Insertion.** Selecting a file match replaces the `@query` span with `@` followed by the
+  path, escaped exactly per the "Syntax" table above (backslash, then double quote, then space,
+  via `klorb.tui.widgets.file_finder.escape_mention_path` -- the precise inverse of
+  `unescape_mention_filename`), plus a trailing space, landing the cursor right after it and
+  closing the popup so typing continues immediately as plain text. Selecting a directory match
+  instead replaces the `@query` span with `@` followed by the escaped directory path plus a
+  trailing `/`, and leaves the mention (and the popup) open so the query keeps narrowing into
+  that subtree -- a directory is never a resolvable `@mention` target on its own
+  (`resolve_at_mentions()` only ever reads files).
 * **Workspace index.** `klorb.tui.workspace_file_index.WorkspaceFileIndex` maintains the
   candidate file list: a gitignore-aware recursive scan (reusing
   `klorb.tools.util.gitignore.GitignoreFilter`, the mechanism [[gitignore-aware-tree-walk]]

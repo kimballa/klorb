@@ -615,9 +615,10 @@ webview panel (see below).
 ### File finder (`@`-mention)
 
 Typing `@` into the prompt input (at the start of the text, or after whitespace) opens a popup
-listing up to 6 fuzzy-matching workspace files, mirroring the `ApprovalPanel`/`QuestionPanel`
-family's "docked panel above the prompt input" look but driven entirely by local textarea state,
-not the ACP interaction protocol those two share.
+listing up to 25 fuzzy-matching workspace files and directories, scrollable within a fixed
+~6-row-tall panel, mirroring the `ApprovalPanel`/`QuestionPanel` family's "docked panel above the
+prompt input" look but driven entirely by local textarea state, not the ACP interaction protocol
+those two share.
 
 * **Workspace enumeration** (`vscode-plugin/src/host/features/fileSearch/fileSearch.ts`).
   `FileSearch.listWorkspaceFiles()` lists every file under the first workspace folder via
@@ -665,23 +666,36 @@ not the ACP interaction protocol those two share.
   whitespace (so an email-like `foo@bar` doesn't trigger); returns the `@`'s index and the query
   typed after it. `useFileFinder(files)` (`useFileFinder.ts`) owns the finder's React state:
   `sync(text, cursor)` re-runs detection on every keystroke/cursor-move and, when a mention is
-  active, fuzzy-matches `files` with Fuse.js (`new Fuse(files, {threshold: 0.4, ignoreLocation:
-  true})`, capped to 6 results — an empty query shows the first 6 files unranked) or resets to
-  closed when there's no mention or (per the "keep typing rules everything out" behavior) zero
-  matches. Escape (`dismiss()`) closes the popup without forgetting the mention itself — an
+  active, fuzzy-matches one blended candidate list — `files` plus every ancestor directory of one
+  (`ancestorDirectories()`, since `files` itself only ever lists files) — with Fuse.js (`new
+  Fuse(candidates, {keys: ['path'], threshold: 0.4, ignoreLocation: true, includeScore: true})`).
+  A directory candidate's Fuse score (0 = perfect match, 1 = no match) gets `DIRECTORY_SCORE_BUMP`
+  (0.1) subtracted before ranking, so it surfaces above an equally-relevant file; Fuse's own
+  `threshold` already excludes non-matches before the bump is applied. Up to `MAX_MATCHES` (25)
+  ranked results are kept — an empty query instead lists candidates alphabetically with
+  directories sorted ahead of files (nothing to rank) — or the finder resets to closed when
+  there's no mention or (per the "keep typing rules everything out" behavior) zero matches.
+  Escape (`dismiss()`) closes the popup without forgetting the mention itself — an
   `escapedStartRef` remembers which mention's `@` position was dismissed, so further typing
   within that same mention doesn't reopen it, but moving to a *different* `@` does.
-* **`FileFinderPanel`** (`components/FileFinderPanel.tsx`) renders each match via
-  `splitFinderPath()`, which splits a path at its last `/` into a `dirPart` (rendered with CSS
-  ellipsis truncation, `text-overflow: ellipsis` + `white-space: nowrap`) and a fixed,
-  never-truncated `filePart` carrying its own leading `/` — so a deep path reads as
-  "some/path/to…/file.txt" instead of wrapping or scrolling horizontally. The popup itself
+* **`FileFinderPanel`** (`components/FileFinderPanel.tsx`) renders each match (`FinderMatch`:
+  `{path, isDir}`) via `splitFinderPath()`, which splits a path at its last `/` into a `dirPart`
+  and a fixed, never-truncated `filePart` carrying its own leading `/` (with a trailing `/`
+  appended when `isDir` is true) — so a deep path reads as ".../path/to/file.txt" instead of
+  wrapping or scrolling horizontally. `dirPart` truncates via CSS (`text-overflow: ellipsis` +
+  `white-space: nowrap`), but from the *front*: `.file-finder-row-dir` sets `direction: rtl;
+  text-align: left` (plus `unicode-bidi: plaintext` to keep the Latin path text itself in normal
+  reading order), which moves the browser's end-of-string ellipsis to the visual front, since
+  browsers don't natively support start-of-string ellipsis. This keeps the segment immediately
+  before the filename visible — the most differentiating context when several rows share a long,
+  common leading prefix — instead of the segment closest to the workspace root. The popup itself
   (`.file-finder-panel`) is `position: absolute; bottom: 100%` inside `PromptInput`'s own
   `.input-row` (which is `position: relative` for this purpose) rather than living in `App`'s
   `#interaction-area`: an overlay that doesn't push the input row down as matches change per
   keystroke, unlike the in-flow `ApprovalPanel`/`QuestionPanel`. `max-height` caps it at ~6 rows
-  with `overflow-y: auto`, so it shrinks to fit when there are fewer matches instead of reserving
-  empty space.
+  with `overflow-y: auto`, so it shrinks to fit when there are fewer matches than that, and
+  scrolls to reach the rest of `MAX_MATCHES` otherwise; this cap is independent of `MAX_MATCHES`
+  and must be updated by hand if the row height or desired visible count changes.
 * **Keyboard/mouse wiring** (`PromptInput.tsx`). While the finder is open, `handleKeyDown`
   intercepts ArrowUp/ArrowDown (`finder.moveActive()`, wrapping at both ends), Enter/Tab
   (`applyFinderSelection()`), and Escape (`finder.dismiss()`) before its normal Shift+Tab/Escape/
@@ -690,12 +704,17 @@ not the ACP interaction protocol those two share.
   to the element's own `selectionStart` and finally to end-of-text) fed from the textarea's
   `onInput` (every keystroke), `onKeyUp` (only ArrowLeft/ArrowRight/Home/End, which move the
   caret without an `input` event), and `onClick`.
-* **Insertion** (`fileFinderModel.ts`'s `escapeMentionPath()`/`buildMentionInsertion()`).
-  `applyFinderSelection()` replaces the `@query` span with `@` followed by the chosen path
-  (workspace-root-relative) and a trailing space, so the user can keep typing immediately — the
-  `@` itself stays in the text. `escapeMentionPath()` backslash-escapes, in this order (backslash
-  first, so the escapes it introduces aren't themselves re-escaped by the later passes), a
-  literal `\`, `"`, and space — e.g. a file named `foo bar.txt` inserts as `@foo\ bar.txt`.
+* **Insertion** (`fileFinderModel.ts`'s `escapeMentionPath()`/`buildMentionInsertion()`/
+  `buildDirectoryInsertion()`). `applyFinderSelection()` calls `useFileFinder`'s `select()`,
+  which branches on the chosen match: a file match replaces the `@query` span with `@` followed
+  by the chosen path and a trailing space, closing the finder, so the user can keep typing
+  immediately as plain text — the `@` itself stays in the text. A directory match instead
+  replaces the span with `@` followed by the escaped directory path and a trailing `/` (no
+  space), then re-syncs the finder against that narrowed text instead of closing it, so the query
+  keeps drilling into that subtree — a directory is never a resolvable `@mention` target on its
+  own. `escapeMentionPath()` backslash-escapes, in this order (backslash first, so the escapes it
+  introduces aren't themselves re-escaped by the later passes), a literal `\`, `"`, and space —
+  e.g. a file named `foo bar.txt` inserts as `@foo\ bar.txt`.
 
 ### Image attachments
 

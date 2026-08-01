@@ -399,7 +399,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
       <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
         {finder.isOpen ? (
           <FileFinderPanel
-            paths={finder.matches}
+            matches={finder.matches}
             activeIndex={finder.activeIndex}
             onHover={finder.setActiveIndex}
             onSelect={applyFinderSelection}

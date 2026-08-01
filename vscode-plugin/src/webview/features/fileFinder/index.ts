@@ -1,10 +1,13 @@
 // © Copyright 2026 Aaron Kimball
 import FileFinderPanel from './components/FileFinderPanel';
 import {
+  ancestorDirectories,
+  buildDirectoryInsertion,
   buildMentionInsertion,
   detectMentionQuery,
   escapeMentionPath,
   splitFinderPath,
+  type FinderMatch,
   type FinderPathParts,
   type MentionContext,
   type MentionInsertion,
@@ -14,9 +17,12 @@ import useFileFinder, { type FileFinder, type FileFinderSelection } from './useF
 export {
   type FileFinder,
   type FileFinderSelection,
+  type FinderMatch,
   type FinderPathParts,
   type MentionContext,
   type MentionInsertion,
+  ancestorDirectories,
+  buildDirectoryInsertion,
   buildMentionInsertion,
   detectMentionQuery,
   escapeMentionPath,

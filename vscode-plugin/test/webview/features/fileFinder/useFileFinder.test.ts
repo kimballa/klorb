@@ -21,17 +21,25 @@ describe('useFileFinder', () => {
     act(() => result.current.sync('see @App', 8));
 
     expect(result.current.isOpen).toBe(true);
-    expect(result.current.matches).toContain('src/App.tsx');
+    expect(result.current.matches).toContainEqual({ path: 'src/App.tsx', isDir: false });
     expect(result.current.activeIndex).toBe(0);
   });
 
-  it('shows the first files when the query is empty right after @', () => {
+  it('shows directories ahead of files, alphabetically, when the query is empty right after @', () => {
     const { result } = renderHook(() => useFileFinder(FILES));
 
     act(() => result.current.sync('see @', 5));
 
     expect(result.current.isOpen).toBe(true);
-    expect(result.current.matches).toEqual(FILES.slice(0, 4));
+    expect(result.current.matches).toEqual([
+      { path: 'docs', isDir: true },
+      { path: 'docs/specs', isDir: true },
+      { path: 'src', isDir: true },
+      { path: 'README.md', isDir: false },
+      { path: 'docs/specs/vscode-plugin.md', isDir: false },
+      { path: 'src/App.tsx', isDir: false },
+      { path: 'src/AppStyles.ts', isDir: false },
+    ]);
   });
 
   it('dismisses when further typing rules out every file', () => {
@@ -77,7 +85,7 @@ describe('useFileFinder', () => {
     act(() => result.current.sync('@App second @Rea', 16));
 
     expect(result.current.isOpen).toBe(true);
-    expect(result.current.matches).toContain('README.md');
+    expect(result.current.matches).toContainEqual({ path: 'README.md', isDir: false });
   });
 
   it('select() splices the chosen path into the text and closes the finder', () => {
@@ -102,5 +110,28 @@ describe('useFileFinder', () => {
     const selection = result.current.select('no mention', 0);
 
     expect(selection).toBeUndefined();
+  });
+
+  it('ranks a directory above an equally-scored file via the score bump', () => {
+    const { result } = renderHook(() => useFileFinder(['srcstuff.py', 'src/file.py']));
+
+    act(() => result.current.sync('@src', 4));
+
+    expect(result.current.matches[0]).toEqual({ path: 'src', isDir: true });
+  });
+
+  it('select() on a directory narrows the query into that subtree and keeps the finder open', () => {
+    const { result } = renderHook(() => useFileFinder(['src/main.ts']));
+    act(() => result.current.sync('@src', 4));
+    expect(result.current.matches[0]).toEqual({ path: 'src', isDir: true });
+
+    let selection: FileFinderSelection | undefined;
+    act(() => {
+      selection = result.current.select('@src', 0);
+    });
+
+    expect(selection).toEqual({ text: '@src/', cursor: '@src/'.length });
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.matches).toContainEqual({ path: 'src/main.ts', isDir: false });
   });
 });

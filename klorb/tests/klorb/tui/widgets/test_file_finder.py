@@ -2,7 +2,9 @@
 """Tests for klorb.tui.widgets.file_finder."""
 
 from klorb.tui.widgets.file_finder import (
+    FinderMatch,
     MentionQuery,
+    _ancestor_directories,
     build_mention_insertion,
     detect_mention_query,
     escape_mention_path,
@@ -41,24 +43,59 @@ class TestDetectMentionQuery:
         assert detect_mention_query("@foo", 0) is None
 
 
+class TestAncestorDirectories:
+    def test_no_directories_for_flat_paths(self) -> None:
+        assert _ancestor_directories(["a.py", "b.py"]) == set()
+
+    def test_collects_every_ancestor_of_a_nested_path(self) -> None:
+        assert _ancestor_directories(["a/b/c.py"]) == {"a", "a/b"}
+
+    def test_dedupes_shared_ancestors_across_paths(self) -> None:
+        assert _ancestor_directories(["a/b/c.py", "a/b/d.py", "a/e.py"]) == {"a", "a/b"}
+
+
 class TestFilterWorkspaceFiles:
     def test_empty_query_returns_sorted_paths_up_to_limit(self) -> None:
         paths = ["zz.py", "aa.py", "mm.py"]
 
-        assert filter_workspace_files(paths, "", limit=2) == ["aa.py", "mm.py"]
+        assert filter_workspace_files(paths, "", limit=2) == [
+            FinderMatch("aa.py", is_dir=False), FinderMatch("mm.py", is_dir=False)]
+
+    def test_empty_query_sorts_directories_ahead_of_files(self) -> None:
+        paths = ["b/file.py", "a_file.py"]
+
+        matches = filter_workspace_files(paths, "", limit=10)
+
+        assert matches == [
+            FinderMatch("b", is_dir=True), FinderMatch("a_file.py", is_dir=False),
+            FinderMatch("b/file.py", is_dir=False)]
 
     def test_query_ranks_by_fuzzy_match_score(self) -> None:
         paths = ["src/main.py", "src/other.py", "unrelated.txt"]
 
         matches = filter_workspace_files(paths, "main")
 
-        assert matches[0] == "src/main.py"
-        assert "unrelated.txt" not in matches
+        assert matches[0] == FinderMatch("src/main.py", is_dir=False)
+        assert "unrelated.txt" not in [match.path for match in matches]
 
     def test_respects_limit(self) -> None:
         paths = [f"file{i}.py" for i in range(10)]
 
         assert len(filter_workspace_files(paths, "file", limit=3)) == 3
+
+    def test_matching_directory_outranks_an_equally_scored_file(self) -> None:
+        paths = ["srcstuff.py", "src/file.py"]
+
+        matches = filter_workspace_files(paths, "src")
+
+        assert matches[0] == FinderMatch("src", is_dir=True)
+
+    def test_non_matching_directory_is_not_included_via_the_bump(self) -> None:
+        paths = ["zzz/main.py"]
+
+        matches = filter_workspace_files(paths, "main")
+
+        assert matches == [FinderMatch("zzz/main.py", is_dir=False)]
 
 
 class TestEscapeMentionPath:
@@ -97,11 +134,12 @@ class TestSplitFinderRow:
         long_path = "a/" * 50 + "file.txt"
         assert split_finder_row(long_path, 0) == (long_path[:-9], "/file.txt")
 
-    def test_truncates_the_end_of_the_dir_part_when_it_does_not_fit(self) -> None:
+    def test_truncates_the_front_of_the_dir_part_when_it_does_not_fit(self) -> None:
         dir_display, file_display = split_finder_row("foo/bar/baz/quux/deep/path/someFile.txt", 30)
 
         assert file_display == "/someFile.txt"
-        assert dir_display.endswith("...")
+        assert dir_display.startswith("...")
+        assert dir_display.endswith("path")
         assert len(dir_display) + len(file_display) <= 30
 
     def test_extremely_narrow_width_still_shows_the_full_file_part(self) -> None:

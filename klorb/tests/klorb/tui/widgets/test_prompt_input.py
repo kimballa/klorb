@@ -26,7 +26,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
-from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
+from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel, FinderMatch
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.workspace import TrustManager, Workspace
@@ -734,7 +734,7 @@ async def test_at_mention_opens_the_finder_with_matches(tmp_path: Path) -> None:
             finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
             assert finder.display is True
-            assert prompt_input._finder_matches == ["src/main.py"]
+            assert prompt_input._finder_matches == [FinderMatch("src/main.py", is_dir=False)]
         finally:
             index.close()
 
@@ -795,6 +795,33 @@ async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
 
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
             assert prompt_input.text == "@src/main.py "
+        finally:
+            index.close()
+
+
+async def test_tab_on_a_directory_match_narrows_the_query_instead_of_completing(
+    tmp_path: Path,
+) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@src")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            assert finder.current_match == FinderMatch("src", is_dir=True)
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert prompt_input.text == "@src/"
+            assert finder.display is True
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert prompt_input.text == "@src/main.py "
+            assert finder.display is False
         finally:
             index.close()
 

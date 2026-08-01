@@ -14,9 +14,11 @@ from textual.widgets import TextArea
 from klorb.tui.widgets.file_finder import (
     FILE_FINDER_ID,
     FileFinderPanel,
+    FinderMatch,
     MentionQuery,
     build_mention_insertion,
     detect_mention_query,
+    escape_mention_path,
     filter_workspace_files,
 )
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
@@ -117,9 +119,9 @@ class PromptInput(TextArea):
         self._finder_mention: MentionQuery | None = None
         """The `@mention` (if any) the cursor currently sits inside of, recomputed on every
         text/selection change by `refresh_finder`."""
-        self._finder_matches: list[str] = []
-        """Workspace files currently matching `_finder_mention`'s query -- empty whenever
-        there's no active mention, or its start position is `_finder_dismissed_at`."""
+        self._finder_matches: list[FinderMatch] = []
+        """Workspace files and directories currently matching `_finder_mention`'s query -- empty
+        whenever there's no active mention, or its start position is `_finder_dismissed_at`."""
         self._finder_dismissed_at: tuple[int, int] | None = None
         """The `(row, start_column)` of the `@mention` Escape last dismissed the finder popup
         for -- while `refresh_finder` keeps seeing that same position, the popup stays closed
@@ -269,15 +271,22 @@ class PromptInput(TextArea):
         self._finder_widget().hide()
 
     def _select_finder_match(self) -> None:
-        """Replace the active `@query` mention with the finder's currently-highlighted match,
-        escaped per `klorb.tui.widgets.file_finder.escape_mention_path`, and close the popup.
-        A no-op if there's no active mention or no highlighted row."""
+        """Apply the finder's currently-highlighted match. A file match replaces the active
+        `@query` with an escaped `@mention` (per
+        `klorb.tui.widgets.file_finder.escape_mention_path`) and closes the popup; a directory
+        match instead narrows the query to that directory (with a trailing `/`) and leaves the
+        popup open so the user can keep drilling in, since a directory isn't a valid mention
+        target on its own. A no-op if there's no active mention or no highlighted row."""
         mention = self._finder_mention
-        path = self._finder_widget().current_path
-        if mention is None or path is None:
+        match = self._finder_widget().current_match
+        if mention is None or match is None:
             return
         row, column = self.cursor_location
-        insertion, _ = build_mention_insertion(mention.start_column, column, path)
+        if match.is_dir:
+            insertion = f"@{escape_mention_path(match.path)}/"
+            self.replace(insertion, (row, mention.start_column), (row, column))
+            return
+        insertion, _ = build_mention_insertion(mention.start_column, column, match.path)
         self.replace(insertion, (row, mention.start_column), (row, column))
         self._finder_mention = None
         self._finder_matches = []

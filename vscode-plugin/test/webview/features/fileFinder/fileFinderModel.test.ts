@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ancestorDirectories,
+  buildDirectoryInsertion,
   buildMentionInsertion,
   detectMentionQuery,
   escapeMentionPath,
@@ -82,5 +84,27 @@ describe('buildMentionInsertion', () => {
   it('keeps the @ symbol in the text body', () => {
     const result = buildMentionInsertion('@q', 0, 2, 'a.txt');
     expect(result.text.startsWith('@')).toBe(true);
+  });
+});
+
+describe('buildDirectoryInsertion', () => {
+  it('replaces the @query span with the escaped path plus a trailing slash, no space', () => {
+    const result = buildDirectoryInsertion('see @sr for details', 4, 7, 'src');
+    expect(result.text).toBe('see @src/ for details');
+    expect(result.cursor).toBe(4 + '@src/'.length);
+  });
+});
+
+describe('ancestorDirectories', () => {
+  it('returns no directories for flat paths', () => {
+    expect(ancestorDirectories(['a.py', 'b.py'])).toEqual(new Set());
+  });
+
+  it('collects every ancestor of a nested path', () => {
+    expect(ancestorDirectories(['a/b/c.py'])).toEqual(new Set(['a', 'a/b']));
+  });
+
+  it('dedupes shared ancestors across paths', () => {
+    expect(ancestorDirectories(['a/b/c.py', 'a/b/d.py', 'a/e.py'])).toEqual(new Set(['a', 'a/b']));
   });
 });

@@ -606,6 +606,15 @@ button.bash-tool-call-command {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vscode-descriptionForeground);
+  /* Browsers only support end-of-string ellipsis natively; flipping direction to rtl moves the
+     visual "end" (where the ellipsis lands) to the front, truncating the segments nearest the
+     workspace root and keeping the segment immediately before the filename -- the most
+     differentiating context when several rows share a long, common leading prefix.
+     unicode-bidi: plaintext keeps the Latin path characters themselves in their normal
+     left-to-right order. */
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
 }
 
 .file-finder-row-file {
