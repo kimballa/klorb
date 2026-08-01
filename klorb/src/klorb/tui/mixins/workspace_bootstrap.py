@@ -126,6 +126,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         # purely in-memory recall and never touches a real `$KLORB_DATA_DIR`.
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.set_history_store(project_history_path(workspace))
+        # Same gating rationale as the history store above: start the `@`-mention file finder's
+        # background index only for a real `cli.main()` run, against the now-resolved workspace
+        # root.
+        self._start_file_finder_index(workspace)
         if workspace.trusted:
             self._maybe_restore_latest_session(workspace)
 

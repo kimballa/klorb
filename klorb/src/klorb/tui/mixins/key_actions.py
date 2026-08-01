@@ -376,8 +376,12 @@ class KeyActionsMixin(ReplAppBase):
     def on_unmount(self) -> None:
         """Disarm the liveness watchdog as the app tears down, so it can't fire during the
         post-run shutdown window (crash handling, session save) once the event loop has stopped
-        snoozing it — see `_snooze_watchdog` and docs/specs/interrupt-and-liveness-watchdog.md."""
+        snoozing it — see `_snooze_watchdog` and docs/specs/interrupt-and-liveness-watchdog.md.
+        Also stops the `@`-mention file finder's background filesystem observer, if one was
+        started (see `WorkspaceBootstrapMixin._resolve_workspace_trust`)."""
         self._watchdog.stop()
+        if self._file_index is not None:
+            self._file_index.stop()
 
     def _snooze_watchdog(self) -> None:
         """Tell the liveness watchdog the event loop is alive. Driven by a `set_interval` timer on

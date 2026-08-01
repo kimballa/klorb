@@ -45,8 +45,9 @@ from klorb.tui.widgets.tool_call_widgets import (
     ToolCallStatic,
     TurnWaitingStatic,
 )
+from klorb.tui.workspace_file_index import WorkspaceFileIndex
 from klorb.watchdog import LivenessWatchdog
-from klorb.workspace import TrustManager
+from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.session_store import RecentSession
 
 
@@ -86,6 +87,9 @@ class ReplAppBase(App[None]):
     _task_sidebar_shown: bool
     _queued_message_widgets: list[Static]
     _active_turn_callbacks: TurnEventHandlers | None
+    _file_index: WorkspaceFileIndex | None
+
+    def _start_file_finder_index(self, workspace: Workspace) -> None: ...
 
     def _update_status_bar(self) -> None: ...
 

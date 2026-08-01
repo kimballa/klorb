@@ -56,13 +56,15 @@ from klorb.tui.mixins.rendering import RenderingMixin
 from klorb.tui.mixins.status_bar import StatusBarMixin
 from klorb.tui.mixins.task_sidebar import TaskSidebarMixin
 from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
+from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic, TurnWaitingStatic
+from klorb.tui.workspace_file_index import WorkspaceFileIndex
 from klorb.watchdog import LivenessWatchdog
-from klorb.workspace import TrustManager
+from klorb.workspace import TrustManager, Workspace
 
 
 class SelectionSafeScreen(Screen[None]):
@@ -310,6 +312,11 @@ class ReplApp(
         """The `--config` path (if any) `klorb.cli.main()`'s initial `load_process_config()`
         call was given, threaded through so `_apply_workspace_config`'s later reload (once a
         workspace's trust/registration state changes) layers it back in identically."""
+        self._file_index: WorkspaceFileIndex | None = None
+        """The `@`-mention file finder's workspace index, started (`_start_file_finder_index`)
+        only once workspace trust is resolved and only for a real `trust_manager` -- the same
+        gate `set_history_store` uses -- so a `ReplApp` built without one (every existing test)
+        never spawns a background filesystem watcher against a real directory."""
         self._cancel_event: threading.Event | None = None
         self._shell_cancel_event: threading.Event | None = None
         self._last_ctrl_c_at: float = 0.0
@@ -415,6 +422,7 @@ class ReplApp(
         yield TaskSidebar(id=TASK_SIDEBAR_ID)
         yield VerticalScroll(id=HISTORY_ID)
         yield Vertical(id=INTERACTION_PANEL_ID)
+        yield FileFinderPanel(id=FILE_FINDER_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         yield Static(NEW_SESSION_LABEL, id=SESSION_NAME_ID)
@@ -443,6 +451,37 @@ class ReplApp(
         """Return every model name discovered by the session's `ModelRegistry`, sorted for a
         stable display order — see `ModelCommandProvider`."""
         return sorted(model.name() for model in self._session.model_registry.models())
+
+    def workspace_files(self) -> list[str]:
+        """Return the `@`-mention file finder's current workspace-relative file list, or `[]`
+        if `_file_index` was never started (no `trust_manager`, e.g. every existing test) — see
+        `_start_file_finder_index`."""
+        return self._file_index.files if self._file_index is not None else []
+
+    def _start_file_finder_index(self, workspace: Workspace) -> None:
+        """Start the `@`-mention file finder's background `WorkspaceFileIndex` for `workspace`,
+        refreshing the popup (if currently shown) whenever the index's file list changes.
+        Called only from `_resolve_workspace_trust`, gated on `trust_manager` the same way
+        `PromptInput.set_history_store` is, so a `ReplApp` built without one never spawns a
+        background filesystem watcher against a real directory.
+        """
+        def on_changed() -> None:
+            try:
+                self.call_from_thread(self._refresh_file_finder_after_index_change)
+            except RuntimeError:
+                # The app's event loop has already stopped (e.g. mid-shutdown, racing
+                # `on_unmount`'s `_file_index.stop()`) -- nothing is left to refresh.
+                pass
+
+        self._file_index = WorkspaceFileIndex(workspace.path, on_changed=on_changed)
+        self._file_index.start()
+
+    def _refresh_file_finder_after_index_change(self) -> None:
+        """Re-run the file finder's current query against the just-updated workspace file list,
+        so a create/delete elsewhere is reflected in an already-open popup instead of it going
+        stale until the next keystroke."""
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.call_later(prompt_input.refresh_finder)
 
     def get_session_statistics(self) -> SessionStatistics:
         """Return the active session's running statistics — see

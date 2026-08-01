@@ -246,9 +246,6 @@ max image files 2048
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
   to type after ruling out any matches.
 
-* TUI needs a fuzzy-finder so you can `@-mention` files in the workspace and have it autocomplete
-  (use the `textual.fuzzy` package already in there).
-
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
     compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.

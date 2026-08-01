@@ -23,6 +23,60 @@ embedded in a word (e.g. `user@example.com`) is not treated as a mention.
 
 Quoted filenames (`@"..."`) support the same escape sequences inside the quotes.
 
+## Interactive fuzzy finder (TUI)
+
+Typing `@` in the terminal REPL's prompt box opens an inline fuzzy-finder popup, an in-flow
+panel shown directly above the prompt input -- mirroring `klorb.tui.widgets.palette`'s `>`
+command palette (see [[command-palette-from-prompt]] for that mechanism). It narrows to
+matching workspace files as more of the query is typed; inserting a selection always produces
+exactly the escaped syntax the "Syntax" table above describes, so anything the finder inserts
+is resolvable by `resolve_at_mentions()` later.
+
+* **Trigger.** The popup activates once the cursor sits inside an `@query`: an `@` preceded by
+  the start of the line or whitespace, with no whitespace yet typed between it and the cursor --
+  mirroring `_AT_MENTION_RE`'s own unquoted-mention boundary rule
+  (`klorb.tui.widgets.file_finder.detect_mention_query`). Only the unquoted form is
+  interactively completed; the quoted form (`@"..."`) is still accepted when typed by hand, but
+  the finder never offers it.
+* **Matching.** `klorb.tui.widgets.file_finder.filter_workspace_files` fuzzy-matches the query
+  against the workspace's file list with `textual.fuzzy.Matcher` -- the same matcher
+  `klorb.tui.commands.model_commands.filter_model_names` uses for model selection -- showing up
+  to 6 matches (an empty query lists the first 6 alphabetically) in a `FileFinderPanel`
+  (`klorb.tui.widgets.file_finder`), an `OptionList` mounted directly above the prompt input and
+  never focused: the prompt input keeps focus throughout and drives the panel's highlight
+  programmatically. Up/Down move the highlight; Enter or Tab inserts the highlighted match;
+  Escape closes the popup without changing the text, and typing further within the same
+  `@query` (its start position unchanged) does not reopen it until the cursor moves to a
+  different mention. A query matching nothing closes the popup outright, so Enter/Tab/Up/Down
+  keep their ordinary meaning (submit, navigate) instead of being claimed by an empty finder.
+* **Row display.** Each match is shown as its workspace-relative path split into a directory
+  part (muted color) and a file part (normal color, with its own leading `/`) --
+  `klorb.tui.widgets.file_finder.split_finder_row`. When the full path doesn't fit the panel's
+  width, the directory part's *end* is truncated with a trailing `...`, keeping the file part
+  always fully visible: `foo/bar/baz/quux.../someFile.txt`.
+* **Insertion.** Selecting a match replaces the `@query` span with `@` followed by the path,
+  escaped exactly per the "Syntax" table above (backslash, then double quote, then space, via
+  `klorb.tui.widgets.file_finder.escape_mention_path` -- the precise inverse of
+  `unescape_mention_filename`), plus a trailing space, landing the cursor right after it so
+  typing continues immediately.
+* **Workspace index.** `klorb.tui.workspace_file_index.WorkspaceFileIndex` maintains the
+  candidate file list: a gitignore-aware recursive scan (reusing
+  `klorb.tools.util.gitignore.GitignoreFilter`, the mechanism [[gitignore-aware-tree-walk]]
+  documents, minus that walk's permission gating -- selecting a file only inserts a path, the
+  same "no permission check" reasoning this doc's own "Security" section gives for reading an
+  `@mention`ed file) kept current via the `watchdog` PyPI package's filesystem push
+  notifications (`watchdog.observers.Observer` -- unrelated to `klorb.watchdog.
+  LivenessWatchdog`, klorb's own hang-detection heartbeat) instead of periodic polling, the same
+  mechanism WSGI dev-server reloaders use. A plain file's creation or deletion is applied as an
+  incremental add/remove; a directory create/delete or any `.gitignore` change forces a full
+  rescan, since either can affect more paths than the one the filesystem event names. See
+  `docs/adrs/use-watchdog-for-tui-file-finder-index.md`.
+* **Startup.** The index starts only once workspace trust is resolved for a real `klorb`
+  process (`ReplApp._start_file_finder_index`, gated on `trust_manager` the same way
+  `PromptInput.set_history_store` is), so a `ReplApp` built without one -- every existing test
+  that doesn't explicitly opt in -- never spawns a background filesystem watcher against a real
+  directory.
+
 ## Output format
 
 `resolve_at_mentions()` never modifies the prompt text -- an `@mention` stays exactly as
@@ -132,3 +186,11 @@ covers wire serialization. `tests/klorb/session/test_session.py`'s
 `test_send_turn_attaches_at_mention_fragments_without_altering_prompt_content` and
 `test_send_turn_leaves_fragments_none_without_at_mentions` cover the end-to-end
 `Session.send_turn()` path.
+
+The interactive fuzzy finder is covered by `tests/klorb/tui/widgets/test_file_finder.py`
+(mention detection, fuzzy matching, escaping, insertion, and row-truncation helpers, all as
+pure functions), `tests/klorb/tui/test_workspace_file_index.py` (gitignore-aware scanning plus
+the `watchdog`-driven incremental/rescan update paths), and the "@-mention file finder" section
+of `tests/klorb/tui/widgets/test_prompt_input.py` (end-to-end keyboard-driven flows: opening,
+narrowing, up/down, Enter/Tab selection, Escape dismissal, and the finder correctly staying out
+of the way of a non-matching query or a cursor that moves out of the mention).

@@ -11,6 +11,14 @@ from textual.message import Message
 from textual.types import IgnoreReturnCallbackType
 from textual.widgets import TextArea
 
+from klorb.tui.widgets.file_finder import (
+    FILE_FINDER_ID,
+    FileFinderPanel,
+    MentionQuery,
+    build_mention_insertion,
+    detect_mention_query,
+    filter_workspace_files,
+)
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
 from klorb.workspace.input_history import append_history, load_history
 
@@ -41,6 +49,11 @@ class PromptInput(TextArea):
     Whenever the text starts with `>` (see `klorb.tui.widgets.palette`), up/down/enter instead drive the
     inline `PromptPalette` popup mounted just above this widget rather than history recall or
     submission: see `_on_key`'s palette branch and `_refresh_palette`.
+
+    Whenever the cursor sits inside an `@mention` with at least one matching workspace file (see
+    `klorb.tui.widgets.file_finder`), up/down/enter/tab/escape instead drive the inline
+    `FileFinderPanel` popup: see `_on_key`'s finder branch and `refresh_finder`. Checked before
+    palette mode, so a `@mention` inside a `>`-prefixed palette query still opens the finder.
     """
 
     NEWLINE_KEYS = ("ctrl+j", "ctrl+enter")
@@ -101,6 +114,16 @@ class PromptInput(TextArea):
         self._suppress_palette_during_recall: bool = False
         self._last_key: str | None = None
         self._history_path: Path | None = None
+        self._finder_mention: MentionQuery | None = None
+        """The `@mention` (if any) the cursor currently sits inside of, recomputed on every
+        text/selection change by `refresh_finder`."""
+        self._finder_matches: list[str] = []
+        """Workspace files currently matching `_finder_mention`'s query -- empty whenever
+        there's no active mention, or its start position is `_finder_dismissed_at`."""
+        self._finder_dismissed_at: tuple[int, int] | None = None
+        """The `(row, start_column)` of the `@mention` Escape last dismissed the finder popup
+        for -- while `refresh_finder` keeps seeing that same position, the popup stays closed
+        even though matches would otherwise reopen it."""
         # Reverse-incremental-search state (Ctrl+R). When `_isearch_active` is True, typed
         # printable characters extend `_isearch_query` and each extension re-runs a
         # newest-first, case-insensitive substring search of `self._history`, loading the
@@ -147,6 +170,10 @@ class PromptInput(TextArea):
         self._suppress_palette_during_recall = False
         self._exit_isearch()
         self._palette_widget().hide()
+        self._finder_mention = None
+        self._finder_matches = []
+        self._finder_dismissed_at = None
+        self._finder_widget().hide()
 
     @property
     def _palette_mode(self) -> bool:
@@ -168,6 +195,94 @@ class PromptInput(TextArea):
     def _palette_widget(self) -> PromptPalette:
         """The sibling `PromptPalette` popup mounted just above this widget."""
         return self.screen.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
+
+    @property
+    def _file_finder_mode(self) -> bool:
+        """Whether up/down/enter/tab/escape should drive the `FileFinderPanel` popup rather
+        than palette mode, history recall, or submission: the cursor sits inside an `@mention`
+        (`_finder_mention`, kept current by `refresh_finder`) that currently has at least one
+        matching workspace file. A mention with no matches (including one `_dismiss_finder` has
+        just hidden) doesn't claim these keys, mirroring the VS Code plugin's own file finder --
+        Enter falls through to a plain submit and Escape to whatever it would otherwise do.
+        """
+        return self._finder_mention is not None and bool(self._finder_matches)
+
+    def _finder_widget(self) -> FileFinderPanel:
+        """The sibling `FileFinderPanel` popup mounted just above this widget."""
+        return self.screen.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+
+    def _current_mention(self) -> MentionQuery | None:
+        """The `@mention` (if any) the cursor currently sits inside of, on its own line -- see
+        `klorb.tui.widgets.file_finder.detect_mention_query`."""
+        row, column = self.cursor_location
+        return detect_mention_query(self.document[row], column)
+
+    def refresh_finder(self) -> None:
+        """Recompute the active `@mention` at the cursor and update the finder popup to match.
+        Called (via `call_later`) on every text change and cursor/selection movement, mirroring
+        `_refresh_palette`'s own scheduling.
+
+        A mention whose start position is `_finder_dismissed_at` (the user just pressed Escape
+        on it) stays closed even if its query would otherwise match, until the cursor moves to a
+        different mention -- `_dismiss_finder` sets that position and this clears it as soon as
+        the current mention's start no longer equals it.
+        """
+        mention = self._current_mention()
+        self._finder_mention = mention
+        if mention is None:
+            self._finder_matches = []
+            self._finder_dismissed_at = None
+            self._finder_widget().hide()
+            return
+        row, _ = self.cursor_location
+        if (row, mention.start_column) == self._finder_dismissed_at:
+            self._finder_matches = []
+            self._finder_widget().hide()
+            return
+        self._finder_dismissed_at = None
+        self._finder_matches = filter_workspace_files(self._workspace_files(), mention.query)
+        finder = self._finder_widget()
+        if self._finder_matches:
+            finder.show_matches(self._finder_matches)
+        else:
+            finder.hide()
+
+    def _workspace_files(self) -> list[str]:
+        """The active `ReplApp`'s current `@`-mention file list, or `[]` if this widget isn't
+        mounted under one (e.g. a standalone unit test) or no file index has been started."""
+        from klorb.tui.app import ReplApp  # breaks a circular import: ReplApp composes PromptInput
+
+        if not isinstance(self.app, ReplApp):
+            return []
+        return self.app.workspace_files()
+
+    def _dismiss_finder(self) -> None:
+        """Leave finder mode for the mention at the cursor without changing the prompt's text,
+        so the user can keep typing it as plain text (Escape's behavior). Recorded by mention
+        start position, not just "dismissed": moving to a different `@mention` (or starting a
+        new one) reopens the popup normally."""
+        if self._finder_mention is None:
+            return
+        row, _ = self.cursor_location
+        self._finder_dismissed_at = (row, self._finder_mention.start_column)
+        self._finder_matches = []
+        self._finder_widget().hide()
+
+    def _select_finder_match(self) -> None:
+        """Replace the active `@query` mention with the finder's currently-highlighted match,
+        escaped per `klorb.tui.widgets.file_finder.escape_mention_path`, and close the popup.
+        A no-op if there's no active mention or no highlighted row."""
+        mention = self._finder_mention
+        path = self._finder_widget().current_path
+        if mention is None or path is None:
+            return
+        row, column = self.cursor_location
+        insertion, _ = build_mention_insertion(mention.start_column, column, path)
+        self.replace(insertion, (row, mention.start_column), (row, column))
+        self._finder_mention = None
+        self._finder_matches = []
+        self._finder_dismissed_at = None
+        self._finder_widget().hide()
 
     def action_copy(self) -> None:
         """Copy this box's own text selection to the clipboard, same as the base `TextArea.
@@ -192,7 +307,10 @@ class PromptInput(TextArea):
         everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
         popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
-        or leaves palette mode).
+        or leaves palette mode). `_file_finder_mode` is checked first, so up/down/enter/tab/
+        escape drive the `FileFinderPanel` popup instead whenever the cursor sits inside a
+        matching `@mention` (see `refresh_finder`) -- including one inside a `>`-prefixed
+        palette query.
 
         `self._last_key` records the key currently being processed for `on_text_area_changed`
         to read: a mutation-binding key like backspace or delete (see
@@ -242,6 +360,27 @@ class PromptInput(TextArea):
             event.prevent_default()
             self._enter_isearch()
             return
+        if self._file_finder_mode:
+            if key == "escape":
+                event.stop()
+                event.prevent_default()
+                self._dismiss_finder()
+                return
+            if key == "up":
+                event.stop()
+                event.prevent_default()
+                self._finder_widget().move_highlight(-1)
+                return
+            if key == "down":
+                event.stop()
+                event.prevent_default()
+                self._finder_widget().move_highlight(1)
+                return
+            if key in ("enter", "tab"):
+                event.stop()
+                event.prevent_default()
+                self._select_finder_match()
+                return
         if self._palette_mode:
             if key == "escape":
                 event.stop()
@@ -334,6 +473,17 @@ class PromptInput(TextArea):
         if self._suppress_palette_during_recall:
             return
         self.call_later(self._refresh_palette, self._last_key)
+        self.call_later(self.refresh_finder)
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Refresh finder state whenever the cursor moves without the text itself changing --
+        arrow keys, Home/End, a click -- so moving into or out of an `@mention`'s span reopens
+        or closes the popup even though `on_text_area_changed` (which also refreshes it, for
+        the text-mutating case) won't fire. Skipped during history recall for the same reason
+        `on_text_area_changed` skips its own refresh there."""
+        if self._suppress_palette_during_recall:
+            return
+        self.call_later(self.refresh_finder)
 
     async def _refresh_palette(self, key: str | None) -> None:
         """Recompute palette mode from the current text and update the popup to match.
