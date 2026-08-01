@@ -222,9 +222,13 @@ outright.
 * The bash risk classifier (`klorb.permissions.risk_classifier`) has its own eval suite
   (`risk-classifier`) in `klorb/evals/risk_classifier_cases.py`, exercised via
   `RiskClassifierCase`/`run_risk_classifier_evaluation` rather than `EvalCase`/`run_evaluation`.
-  It tests two dimensions: basic risk scoring (commands at each level of the 0-10 rubric) and
-  prompt injection resilience (dangerous commands wrapped in adversarial text that attempts to
-  subvert the classifier's standing instructions).
+  It tests basic risk scoring (commands at each level of the 0-10 rubric), prompt injection and
+  obfuscation resilience (dangerous commands wrapped in adversarial text or hidden behind
+  encoding/shell tricks), false-positive resistance (dangerous-looking tokens appearing as inert
+  text), stated-intent mismatch detection, prior-decision history calibration, non-command item
+  kinds (`StructuralResource`/`PathResource`), and per-item score correlation within mixed-risk
+  compound commands (`RiskClassifierCase.items`) -- everything except the correctness of a
+  suggested command-generalization pattern, which is left to manual review.
 * No LLM-as-judge grading, and no fuzzy/semantic matching of `final_response` — see
   [[grade-tool-evals-by-filesystem-state]].
 * Not wired into `make test` or CI's default gate — see [[tool-evals-skip-without-api-key]].
