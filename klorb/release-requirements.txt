@@ -58,7 +58,7 @@ markdown-it-py==4.2.0
     #   textual
 markdownify==1.2.3
     # via markitdown
-markitdown==0.1.6
+markitdown==0.1.7
     # via klorb (pyproject.toml)
 mdit-py-plugins==0.6.1
     # via textual
@@ -68,9 +68,9 @@ numpy==2.5.1
     # via
     #   magika
     #   onnxruntime
-onnxruntime==1.27.0
+onnxruntime==1.28.0
     # via magika
-openai==2.48.0
+openai==2.52.0
     # via klorb (pyproject.toml)
 packaging==26.2
     # via onnxruntime
@@ -117,7 +117,7 @@ textual==8.2.8
     # via klorb (pyproject.toml)
 tiktoken==0.13.0
     # via klorb (pyproject.toml)
-tqdm==4.69.0
+tqdm==4.70.0
     # via openai
 typing-extensions==4.16.0
     # via
@@ -134,3 +134,5 @@ uc-micro-py==2.0.0
     # via linkify-it-py
 urllib3==2.7.0
     # via requests
+watchdog==6.0.0
+    # via klorb (pyproject.toml)

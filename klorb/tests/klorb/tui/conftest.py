@@ -28,6 +28,7 @@ from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
 from klorb.tui.panels.permission_ask_panel import PermissionAskPanel
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PaletteOption, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
+from klorb.tui.workspace_file_index import WorkspaceFileIndex
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace import input_history as input_history_module
 
@@ -53,6 +54,22 @@ def _palette_hit_texts(palette: PromptPalette) -> set[str]:
     options = palette._options
     assert all(isinstance(option, PaletteOption) for option in options)
     return {str(option.hit.text) for option in options if isinstance(option, PaletteOption)}
+
+
+def _start_file_index(app: ReplApp, root: Path, *rel_paths: str) -> WorkspaceFileIndex:
+    """Create `rel_paths` as empty files under `root`, then start a real `WorkspaceFileIndex`
+    scoped to it and attach it to `app` -- bypassing the `trust_manager`-gated
+    `_start_file_finder_index` so file-finder tests don't need a full workspace-trust bootstrap
+    just to seed a small, known file list. Callers must `.close()` the returned index once done,
+    so its background observer thread doesn't leak into a later test."""
+    for rel_path in rel_paths:
+        path = root / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    index = WorkspaceFileIndex(root, on_changed=lambda: None)
+    index.start()
+    app._file_index = index
+    return index
 
 
 @pytest.fixture(autouse=True)

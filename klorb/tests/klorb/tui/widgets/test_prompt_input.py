@@ -18,6 +18,7 @@ from tui.conftest import (
     _process_config_for_workspace,
     _reply,
     _session,
+    _start_file_index,
     _wait_until,
 )
 
@@ -25,6 +26,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
+from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.workspace import TrustManager, Workspace
@@ -716,3 +718,169 @@ async def test_backspacing_the_leading_gt_to_empty_closes_the_palette() -> None:
         await pilot.press("up")
         await pilot.pause()
         assert prompt_input.text == "earlier prompt"
+
+
+# --- @-mention file finder ---
+
+
+async def test_at_mention_opens_the_finder_with_matches(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py", "src/other.py")
+        try:
+            await pilot.press(*"check @main")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            assert finder.display is True
+            assert prompt_input._finder_matches == ["src/main.py"]
+        finally:
+            index.close()
+
+
+async def test_up_down_arrows_move_the_finder_highlight_not_the_cursor(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "a.py", "b.py")
+        try:
+            await pilot.press(*"@")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            first_highlight = finder.highlighted
+            assert first_highlight is not None
+
+            await pilot.press("down")
+            await pilot.pause()
+            assert finder.highlighted == first_highlight + 1
+
+            await pilot.press("up")
+            await pilot.pause()
+            assert finder.highlighted == first_highlight
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            assert prompt_input.text == "@"
+        finally:
+            index.close()
+
+
+async def test_enter_selects_the_highlighted_match_and_escapes_spaces(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "readme with space.md")
+        try:
+            await pilot.press(*"see @readme")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert prompt_input.text == "see @readme\\ with\\ space.md "
+            assert finder.display is False
+        finally:
+            index.close()
+
+
+async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@main")
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            assert prompt_input.text == "@src/main.py "
+        finally:
+            index.close()
+
+
+async def test_escape_dismisses_the_finder_and_continues_as_plain_text(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@main")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert finder.display is True
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert finder.display is False
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)  # type: ignore[unreachable]
+            await pilot.press("!")
+            await pilot.pause()
+            assert prompt_input.text == "@main!"
+            assert finder.display is False
+        finally:
+            index.close()
+
+
+async def test_no_matching_query_does_not_intercept_enter_and_submits_normally(tmp_path: Path) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@zzznomatch")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert finder.display is False
+
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            prompt_widget = history.query(Static).exclude(".mascot").first()
+            assert prompt_widget.content == "@zzznomatch"
+        finally:
+            index.close()
+
+
+async def test_typing_space_after_the_mention_closes_the_finder(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@main")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert finder.display is True
+
+            await pilot.press("space")
+            await pilot.pause()
+            assert finder.display is False
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)  # type: ignore[unreachable]
+            assert prompt_input.text == "@main "
+        finally:
+            index.close()
+
+
+async def test_moving_cursor_out_of_the_mention_closes_the_finder(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@main")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert finder.display is True
+
+            await pilot.press("home")
+            await pilot.pause()
+            assert finder.display is False
+        finally:
+            index.close()
