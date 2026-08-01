@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from klorb.api_provider import ApiProvider
+from klorb.images.prepare import ImagePipelineConfig
 from klorb.lockfile import Lockfile
 from klorb.message import Message
 from klorb.models.model import Model
@@ -114,6 +115,10 @@ class SessionCoreMixin(SessionBase):
             process_config.read_file_max_line_length
             if process_config is not None else self._default_mention_max_line_length(),
         )
+        self._mention_image_pipeline_config = self._create_mention_image_pipeline_config(process_config)
+        """The `ImagePipelineConfig` `resolve_at_mentions()` passes to `klorb.images.prepare.
+        prepare_image_for_model` for an @mentioned file recognized as an image -- see
+        docs/specs/at-mention-file-inlining.md."""
         self._thinking_token_budgets = (
             process_config.thinking_token_budgets if process_config is not None
             else THINKING_EFFORT_TOKEN_BUDGETS
@@ -268,6 +273,31 @@ class SessionCoreMixin(SessionBase):
         `klorb.process_config` → `klorb.session`."""
         from klorb.tools.util.read_file_core import ReadFileCore
         return ReadFileCore(max_lines, max_line_length)
+
+    @staticmethod
+    def _create_mention_image_pipeline_config(
+        process_config: "ProcessConfig | None",
+    ) -> ImagePipelineConfig:
+        """Build the `ImagePipelineConfig` @mention image resolution needs, from
+        *process_config*'s `tools.images.*` settings, or the packaged defaults (imported lazily
+        to avoid the same circular dependency `_create_mention_read_file_core` avoids) for a
+        `Session` built without a `ProcessConfig`."""
+        if process_config is not None:
+            return ImagePipelineConfig(
+                default_max_dimension_px=process_config.image_default_max_dimension_px,
+                max_bytes_raw=process_config.image_max_bytes_raw,
+                preferred_formats=process_config.image_preferred_formats,
+            )
+        from klorb.process_config import (
+            DEFAULT_IMAGE_DEFAULT_MAX_DIMENSION_PX,
+            DEFAULT_IMAGE_MAX_BYTES_RAW,
+            DEFAULT_IMAGE_PREFERRED_FORMATS,
+        )
+        return ImagePipelineConfig(
+            default_max_dimension_px=DEFAULT_IMAGE_DEFAULT_MAX_DIMENSION_PX,
+            max_bytes_raw=DEFAULT_IMAGE_MAX_BYTES_RAW,
+            preferred_formats=list(DEFAULT_IMAGE_PREFERRED_FORMATS),
+        )
 
     @staticmethod
     def _default_mention_max_lines() -> int:

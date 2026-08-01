@@ -9,9 +9,13 @@ transcodes, and base64-encodes it server-side for whichever model is active, est
 cost, and threads it through the conversation as an `image_url`-type `klorb.message.
 MessageFragment` alongside the prompt text.
 
-Out of scope: TUI/CLI image attachment (no drag-drop/paste-image surface to build on), remote
-image URLs (images are always inlined as base64), server-side file-upload preflighting, and any
-image-retention/pruning policy for long sessions (see "Out of scope" below).
+In the TUI and headless CLI, where there's no drag-drop/paste surface, `@mention`ing a workspace
+image file reuses this same resize/transcode pipeline instead -- see docs/specs/at-mention-file-
+inlining.md's "Image mentions" section.
+
+Out of scope: remote image URLs (images are always inlined as base64), server-side file-upload
+preflighting, and any image-retention/pruning policy for long sessions (see "Out of scope"
+below).
 
 ## Data model
 
@@ -237,9 +241,10 @@ mirroring `tools.@mention.maxLines`'s shape):
 
 ## Out of scope
 
-* TUI/CLI image attachment (`--image path.png`, or a `>attach <workspace-file>` palette command)
-  -- the resize pipeline and `MessageFragment`/ACP plumbing this feature builds are UI-agnostic
-  and directly reusable once a TUI-side entry point exists.
+* A dedicated TUI/CLI attach surface (`--image path.png`, or a `>attach <workspace-file>` palette
+  command) beyond `@mention`ing a workspace image file (docs/specs/at-mention-file-inlining.md's
+  "Image mentions" section) -- the resize pipeline and `MessageFragment`/ACP plumbing this feature
+  builds are UI-agnostic and already reused by that entry point.
 * Remote image URLs (`{"image_url": {"url": "https://..."}}` instead of always inlining base64)
   and server-side file-upload preflighting -- images are always inlined as base64 today.
 * Image retention/pruning policy: klorb's session history has no context-pruning mechanism at

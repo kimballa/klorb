@@ -413,11 +413,14 @@ class SessionTurnsMixin(SessionBase):
         `_run_tool_calls`.
 
         Before any interjection is prepended, `resolve_at_mentions()` scans the raw `prompt` for
-        `@mention`ed files and resolves each into its own `MessageFragment`; If any mentions
-        resolved, those fragments plus one final fragment wrapping the fully-embellished `prompt`
-        become the user `Message`'s `fragments`, which a provider sends in place of `content` (see
-        `Message.provider_content()`); `content` still holds the plain-text `prompt` either way, for
-        anything that only wants that. See docs/specs/at-mention-file-inlining.md.
+        `@mention`ed files and resolves each into its own `MessageFragment`(s) -- text, or an
+        `image_url` fragment (spilled to disk via `_spill_image_fragment_to_disk` exactly like an
+        `image_fragments` attachment below) for a mention recognized as an image the active model
+        can accept. If any mentions resolved, those fragments plus one final fragment wrapping
+        the fully-embellished `prompt` become the user `Message`'s `fragments`, which a provider
+        sends in place of `content` (see `Message.provider_content()`); `content` still holds the
+        plain-text `prompt` either way, for anything that only wants that. See
+        docs/specs/at-mention-file-inlining.md.
 
         `image_fragments`, if given (already prepared for the active model by `klorb.images.
         prepare.prepare_image_for_model` before this call), are appended *after* the prompt
@@ -470,8 +473,10 @@ class SessionTurnsMixin(SessionBase):
         e.g. the TUI updates its status line and renames its session log file.
         """
         original_prompt = prompt
+        active_model = self.active_model()
         mention_fragments = resolve_at_mentions(
-            original_prompt, self._mention_read_file_core, self.config.workspace.path)
+            original_prompt, self._mention_read_file_core, self.config.workspace.path,
+            active_model=active_model, image_pipeline_config=self._mention_image_pipeline_config)
         self._ensure_skill_catalog()
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
         leading_token = _leading_skill_token(original_prompt)
@@ -568,13 +573,17 @@ class SessionTurnsMixin(SessionBase):
             self.claim_session_directory()
         fragments: list[MessageFragment] | None = None
         if mention_fragments is not None or image_fragments:
-            fragments = list(mention_fragments) if mention_fragments is not None else []
-            fragments.append(MessageFragment(type="text", text=prompt))
-            if mention_fragments:
+            fragments = []
+            if mention_fragments is not None:
+                for mention_fragment in mention_fragments:
+                    if mention_fragment.type == "image_url":
+                        mention_fragment = self._spill_image_fragment_to_disk(mention_fragment)
+                    fragments.append(mention_fragment)
                 logger.debug(
                     "Attaching %d @mention fragment(s) to user turn (plus the prompt fragment)",
                     len(mention_fragments),
                 )
+            fragments.append(MessageFragment(type="text", text=prompt))
             if image_fragments:
                 for index, image_fragment in enumerate(image_fragments, start=1):
                     fragments.append(MessageFragment(type="text", text=_image_header_text(
@@ -589,7 +598,6 @@ class SessionTurnsMixin(SessionBase):
             processing_state="pending",
             timestamp=datetime.now(),
         )
-        active_model = self.active_model()
         user_message.num_tokens = (
             estimate_message_tokens(user_message, active_model) if active_model is not None
             else estimate_tokens(user_message.body()))

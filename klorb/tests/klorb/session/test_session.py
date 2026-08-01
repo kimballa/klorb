@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.session."""
 
+import io
 import json
 import re
 import threading
@@ -14,10 +15,12 @@ import fixtures.sample_tools as sample_tools_package
 import pytest
 import yaml
 from fixtures.sample_models import NO_SUCH_DIR, sample_model_registry
+from PIL import Image
 
 from klorb import process_config as process_config_module
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.message import Message, MessageFragment, ToolCallRequest
+from klorb.models.configured_model import ConfiguredModel
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
@@ -512,6 +515,36 @@ def test_send_turn_attaches_at_mention_fragments_without_altering_prompt_content
     assert "Filename: notes.txt" in user_message.fragments[0].text
     assert "1|line one" in user_message.fragments[0].text
     assert user_message.fragments[1].text == user_message.content
+
+
+def test_send_turn_attaches_at_mentioned_image_as_image_fragment(tmp_path: Path) -> None:
+    """An @mentioned file recognized as an image (see klorb.session.mixins.mentions.
+    detect_mention_mime_type) is resized/transcoded and attached as an image_url fragment when
+    the active model supports vision -- the same pipeline a drag-drop/paste attachment goes
+    through. See docs/specs/at-mention-file-inlining.md and docs/specs/vision-image-input.md."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (20, 10), (10, 20, 30)).save(buffer, format="PNG")
+    (tmp_path / "shot.png").write_bytes(buffer.getvalue())
+
+    registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
+    registry.register(ConfiguredModel(
+        {"name": "vision/model", "capabilities": {"vision": True}}, source="test"))
+
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(model="vision/model", workspace=Workspace(path=tmp_path))
+    session = Session(
+        config, provider=mock_provider, model_registry=registry, session_id="my-session-id")
+
+    session.send_turn("check @shot.png please")
+
+    user_message = session.messages[1]
+    assert user_message.fragments is not None
+    assert [f.type for f in user_message.fragments] == ["text", "image_url", "text"]
+    assert "Filename: shot.png" in user_message.fragments[0].text
+    image_fragment = user_message.fragments[1]
+    assert image_fragment.image_url is not None
+    assert image_fragment.source_filename == "shot.png"
 
 
 def test_send_turn_leaves_fragments_none_without_at_mentions() -> None:
