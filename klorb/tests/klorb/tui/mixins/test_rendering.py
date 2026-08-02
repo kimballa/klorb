@@ -159,15 +159,24 @@ async def test_ctrl_o_preserves_the_topmost_visible_history_element() -> None:
         await pilot.pause()
         assert history.scroll_y == target_y
 
-        await pilot.press("ctrl+o")
-        await _wait_until(pilot, lambda: str(anchor_widget.render()) != "echo")
-        region = anchor_widget.virtual_region
-        assert region.y <= history.scroll_y < region.y + region.height
+        def _anchor_settled(pre_toggle_y: int) -> bool:
+            region = anchor_widget.virtual_region
+            return region.y != pre_toggle_y and region.y <= history.scroll_y < region.y + region.height
 
+        # Wait on the anchor's own position and scroll_y, not `anchor_widget.render()`: the
+        # rendered text flips synchronously inside the action handler, well before the
+        # layout refresh and scroll restore -- both deferred via `call_after_refresh` --
+        # actually run, so waiting on the render change races them instead of observing
+        # them. Requiring the region to have moved away from its pre-toggle position (rather
+        # than just checking containment) also rules out the case where neither the layout
+        # nor the scroll have been touched yet, since both would still trivially agree.
+        pre_toggle_y = anchor_widget.virtual_region.y
         await pilot.press("ctrl+o")
-        await _wait_until(pilot, lambda: str(anchor_widget.render()) == "echo")
-        region = anchor_widget.virtual_region
-        assert region.y <= history.scroll_y < region.y + region.height
+        await _wait_until(pilot, lambda: _anchor_settled(pre_toggle_y))
+
+        pre_toggle_y = anchor_widget.virtual_region.y
+        await pilot.press("ctrl+o")
+        await _wait_until(pilot, lambda: _anchor_settled(pre_toggle_y))
 
 
 async def test_unregistered_tool_name_renders_via_default_formatters() -> None:

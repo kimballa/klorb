@@ -16,12 +16,17 @@
 
 ### Feature backlog
 
-* once we have the python tui fzf for files, we'll have a python mechanism for maintaining a list of
+* Verify: If the user uses an `@mentioned-file.txt` in the prompt and then uses a punctuation
+  character, like `"see @foo.txt."` we should make sure that this actually properly loads a file
+  called `foo.txt`.
+
+* now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
   all files in the repo. The FindFiles tool should take advantage of that for much faster
   performance than actually hitting the filesystem directly. (The "server side" tool should maintain
-  its own list, not share with the tui. It should also include gitignored files. It should build
-  this list on startup then subscribe to watchdog events. It should definitely do this work on a bg
-  thread.)
+  its own list, not share with the tui. It should also include gitignored files... as well as anything
+  that readDirs and readFiles deny access to. It should build this list on startup then subscribe to
+  watchdog events, like the other fzf file index. It should also rebuild this file any time readDirs
+  or readFiles permissions are updated. It should definitely do this work on a bg thread.)
 
 * Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
   or start testing anything. Maybe we should notice this condition (only using read-only tools for N
