@@ -82,6 +82,9 @@
   # models/*.json ships the built-in klorb-model JSON files klorb.models.registry.ModelRegistry
   # discovers at runtime. See docs/specs/model-framework.md.
   #
+  # agents.json ships the subagent role policy table klorb.agents.registry.AgentRegistry reads
+  # once at process start. See docs/plans/ready/021-subagents.md.
+  #
   # skills/**/* ships the built-in (namespace "internal") skills klorb discovers at runtime via
   # importlib.resources -- one directory per skill, each holding at minimum a SKILL.md plus any
   # supporting files that skill's own instructions reference. See docs/specs/skills.md.
@@ -92,6 +95,7 @@
     "template-config.json",
     "tiktoken-cache/*/*",
     "models/*.json",
+    "agents.json",
     "greetings.json",
     "skills/*/SKILL.md",
     "skills/*/**/*",

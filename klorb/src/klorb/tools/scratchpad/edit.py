@@ -35,7 +35,11 @@ class EditScratchpadTool(Tool):
         return "SCRATCHPAD"
 
     def is_read_only(self) -> bool:
-        return False
+        """`True` despite writing to disk: the scratchpad is harness-managed shared
+        collaboration state, not a user file or environment `is_read_only()` is meant to
+        protect.
+        """
+        return True
 
     def description(self) -> str:
         return (

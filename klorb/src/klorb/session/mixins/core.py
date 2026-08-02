@@ -16,7 +16,7 @@ from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.role import Role, get_role
-from klorb.session.config import SessionConfig
+from klorb.session.config import PermissionFrameworkState, SessionConfig
 from klorb.session.constants import (
     PERMISSION_FRAMEWORK_INTERJECTIONS,
     THINKING_EFFORT_TOKEN_BUDGETS,
@@ -80,17 +80,43 @@ class SessionCoreMixin(SessionBase):
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
+        parent: "Session | None" = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
         self.root_id = root_id or self.id
         """The `id` of the root (top-level) session this one descends from -- itself, for every
-        session today, since klorb has no subagent-spawning mechanism yet (see `klorb.role.Role.
-        repertoire`). A future subagent's `Session` would pass its parent's `root_id` through
-        here so both share one identity for anything scoped to "the whole task tree" rather than
-        this one `Session` specifically -- see `get_chainlink_label()`. Round-trips through
-        `session.json` (`klorb.workspace.session_store.SessionState.root_id`) like `id`/
-        `session_name`."""
+        top-level session, or `parent.root_id` for a subagent (see `parent`). Anything scoped to
+        "the whole task tree" rather than this one `Session` specifically keys off this, not
+        `id` -- see `get_chainlink_label()`. Round-trips through `session.json` (`klorb.
+        workspace.session_store.SessionState.root_id`) like `id`/`session_name`."""
+        self.parent = parent
+        """The `Session` this one was spawned from as a subagent, or `None` for a top-level
+        session -- see `docs/plans/ready/021-subagents.md`'s "Subagent session model". Not
+        persisted: a subagent session is never written to its own `sessions/<subdir>/` (see
+        that plan's "Persistence" section), so this only ever needs to be live in-process."""
+        self.depth = parent.depth + 1 if parent is not None else 0
+        """How many subagent hops below the top-level (user-facing) session this one sits --
+        `0` for that top-level session itself. `CreateSubagent` (Phase 2) rejects a call that
+        would produce a child whose `depth` exceeds `ProcessConfig.subagents_max_depth`."""
+        self._next_child_index = 0
+        """Count of subagents this session has ever spawned, monotonically incremented by
+        `_allocate_child_index()` and never decremented or reused -- even after a child
+        finishes or is torn down -- so a dotted-decimal `address()` segment always identifies
+        one specific subagent for as long as this process runs. See `address()`."""
+        self._child_index = parent._allocate_child_index() if parent is not None else 0
+        """This session's own address segment among its parent's children (assigned once, by
+        the parent, at construction time), or `0` for a top-level session -- see `address()`."""
+        if parent is None:
+            # `config` (built via `process_config.session.model_copy()`, or restored from
+            # `session.json`) may still reference the same `PermissionFrameworkState` box
+            # another top-level session shares, since pydantic's `model_copy()` doesn't
+            # deep-copy nested models -- without this, every session built from the same
+            # `ProcessConfig.session` template would silently cycle each other's permission
+            # framework. A subagent (`parent is not None`) keeps whatever box its `config.
+            # model_copy()` from the parent's own `config` already carries, by design.
+            self.config.permission_framework_state = PermissionFrameworkState(
+                value=self.config.permission_framework_state.value)
         self.aliases: list[str] = list(aliases) if aliases is not None else []
         """Every prior `id` this session was renamed from (oldest first) -- appended to by
         `set_id`, never assigned directly. Lets a caller holding a pre-rename id (e.g. an ACP
@@ -458,6 +484,24 @@ class SessionCoreMixin(SessionBase):
         same task tree its root session tracks rather than being scoped to the subagent's own,
         narrower `id`. See docs/specs/chainlink-task-tracking.md."""
         return self.root_id
+
+    def _allocate_child_index(self) -> int:
+        """Return the next `_child_index` for a subagent about to be constructed with
+        `parent=self`. Called once per subagent, from that subagent's own `__init__` -- see
+        `_next_child_index`."""
+        self._next_child_index += 1
+        return self._next_child_index
+
+    def address(self) -> str:
+        """Return this session's dotted-decimal display address within its session tree (e.g.
+        `"1"` for a top-level session, `"1.2"` for its second subagent, `"1.2.1"` for that
+        subagent's first subagent) -- recomputed from the live `parent` chain on every call
+        rather than cached or persisted, per docs/plans/ready/021-subagents.md's "Addressing"
+        section. Purely a human-facing label for the agents panel; no tool takes an address as
+        an argument."""
+        if self.parent is None:
+            return "1"
+        return f"{self.parent.address()}.{self._child_index}"
 
     def set_chainlink_task(self, task_id: int | None) -> None:
         """Set `cur_chainlink_task_id` -- the only way a caller (`klorb.tools.tasks._util.

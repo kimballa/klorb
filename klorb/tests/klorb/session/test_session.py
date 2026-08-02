@@ -1985,7 +1985,7 @@ def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Pat
 
 
 def test_set_permission_framework_updates_config() -> None:
-    config = SessionConfig(model="some/model", permission_framework="ask")
+    config = SessionConfig(model="some/model")
     session = Session(config, provider=MagicMock())
 
     session.set_permission_framework("auto")
@@ -1994,7 +1994,7 @@ def test_set_permission_framework_updates_config() -> None:
 
 
 def test_set_permission_framework_rejects_an_invalid_value() -> None:
-    config = SessionConfig(model="some/model", permission_framework="ask")
+    config = SessionConfig(model="some/model")
     session = Session(config, provider=MagicMock())
 
     with pytest.raises(ValueError, match="not-a-real-mode"):
@@ -2186,8 +2186,8 @@ def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_p
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(
-        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="deny")
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config.permission_framework = "deny"
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 
@@ -2207,8 +2207,8 @@ def test_permission_framework_auto_approves_without_any_callback(tmp_path: Path)
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(
-        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config.permission_framework = "auto"
     process_config = ProcessConfig()
     session = _session_with_ask_tool(config, mock_provider, process_config)
 
@@ -2230,8 +2230,8 @@ def test_permission_framework_auto_ignores_an_on_permission_ask_callback(tmp_pat
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(
-        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config.permission_framework = "auto"
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
 
@@ -2521,8 +2521,8 @@ def test_multi_ask_permission_framework_auto_approves_every_item(tmp_path: Path)
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(
-        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="auto")
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config.permission_framework = "auto"
     session = _session_with_ask_tool(config, mock_provider)
 
     response = session.send_turn("try it")
@@ -2538,8 +2538,8 @@ def test_multi_ask_permission_framework_deny_fails_closed_without_asking(tmp_pat
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(
-        model="some/model", workspace=Workspace(path=tmp_path), permission_framework="deny")
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config.permission_framework = "deny"
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 

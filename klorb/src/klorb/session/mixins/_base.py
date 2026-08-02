@@ -61,6 +61,10 @@ if TYPE_CHECKING:
     # above.
     from klorb.process_config import ProcessConfig
     from klorb.tools.util.read_file_core import ReadFileCore
+    # `klorb.session` (this package's own `__init__.py`) assembles `Session` from this mixin,
+    # so importing it for real here would be circular; needed only to type `parent` below,
+    # since a subagent's `parent` is another `Session`.
+    from klorb.session import Session
     # isort: on
 
 
@@ -76,6 +80,10 @@ class SessionBase:
     config: SessionConfig
     id: str
     root_id: str
+    depth: int
+    parent: "Session | None"
+    _next_child_index: int
+    _child_index: int
     cur_chainlink_task_id: int | None
     _session_name: str | None
     _role: Role

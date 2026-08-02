@@ -269,6 +269,12 @@ DEFAULT_IMAGE_PREFERRED_FORMATS: list[str] = ["image/webp", "image/png"]
 order, filtered against the active model's `vision_details.supported_mime_types`. See
 `ProcessConfig.image_preferred_formats` and `tools.images.preferredFormats`."""
 
+DEFAULT_SUBAGENTS_MAX_DEPTH = 2
+"""Default for `ProcessConfig.subagents_max_depth`: how many levels below the top-level
+(user-facing) session a subagent tree may nest -- depth 1 is the user's agent's own
+subagents, depth 2 their subagents' subagents; `CreateSubagent` rejects a call that would
+exceed it. See docs/plans/ready/021-subagents.md."""
+
 DEFAULT_SESSION_CLASSIFIER_MODEL = "openai/gpt-5-nano"
 """Last-resort model `klorb.session_naming._default_naming_model` falls back to when
 `ProcessConfig.session_classifier_model` is unset (the normal case) and no registered model
@@ -357,6 +363,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.images.defaultMaxDimensionPx": "image_default_max_dimension_px",
     "tools.images.maxBytesRaw": "image_max_bytes_raw",
     "tools.images.preferredFormats": "image_preferred_formats",
+    "tools.subagents.maxDepth": "subagents_max_depth",
     "classifier.model": "session_classifier_model",
     "classifier.timeout": "session_classifier_timeout_seconds",
     "classifier.e2eTimeout": "session_classifier_e2e_timeout_seconds",
@@ -517,6 +524,8 @@ class ProcessConfig(BaseModel):
     """Transcode preference order `klorb.images.prepare.prepare_image_for_model` tries, in
     order, filtered against the active model's supported mime types. See
     `tools.images.preferredFormats`."""
+    subagents_max_depth: int = DEFAULT_SUBAGENTS_MAX_DEPTH
+    """See `DEFAULT_SUBAGENTS_MAX_DEPTH` and `tools.subagents.maxDepth`."""
     session_classifier_model: str | None = None
     """Model `klorb.session_naming.generate_session_name()` sends its request to, via the same
     `ApiProvider` instance the main conversation uses. `None` (the default, and

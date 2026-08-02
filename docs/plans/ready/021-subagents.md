@@ -97,7 +97,7 @@ address) exists.
 
 An address is a purely human-facing display label for where an agent sits in the tree — it is not
 a `Session.id` and no tool operates on it (`CreateSubagent`/`WaitForSubagent`/`MessageSubagent` all
-take real session ids). It's derived from the `parent_id` links each `Session` carries (see
+take real session ids). It's derived from the `parent.id` links each `Session` carries (see
 "Subagent session model"), maintained by whatever in-memory structure tracks the live tree of
 running sessions for a process — the same tracking a cascading teardown (see "Lifecycle and
 teardown") needs anyway to find a session's descendants. Addresses are not persisted; they're
@@ -152,14 +152,14 @@ these three tools as non-read-only would strip subagent-spawning ability from an
 retain the ability to launch further Explorer/Vision subagents per the "Explorer Subagent"
 section below).
 
-`enforce_readonly_tools` must also let the `SCRATCHPAD` category through regardless of
-`is_read_only()`, so `EditScratchpad` (which currently reports `is_read_only() == False`, since it
-does write to disk) isn't silently stripped from a read-only-enforced role. The scratchpad is
-harness-managed shared workspace state, not the user's own files or environment — it already sits
-outside the `writeDirs` permission system for this same reason (see `EditScratchpad`'s own
-docstring) — so a role instruction like Explorer's "don't modify anything" is about the codebase
-and the user's files, not about this designated collaboration surface. Concretely:
-the `EditScratchpad` tool should be modified to report `is_read_only() -> True`.
+The `EditScrachpad` tool (which currently reports `is_read_only() == False`) should be modified
+to return `is_read_only() => True`. It must not be silently striped from read-only-enforced state.
+It does write to disk, but the scratchpad is harness-managed shared workspace state, not the user's
+own files or environment — it already sits outside the `writeDirs` permission system for this same
+reason (see `EditScratchpad`'s own docstring) — so a role instruction like Explorer's "don't modify
+anything" is about the codebase and the user's files, not about this designated collaboration
+surface. Concretely: the `EditScratchpad` tool should be modified to report `is_read_only() ->
+True`.
 
 Sharing the scratchpad across a subagent tree does introduce one channel that "the subagent simply
 says its output out loud" doesn't: a sibling subagent can read what another sibling wrote to the
@@ -339,9 +339,9 @@ it to finish first.
 ## Subagent session model
 
 Each subagent gets its own Session, constructed directly rather than by copying the parent
-`Session` object. `root_id`/`depth`/`parent_id` are fields on `Session` itself, not on
+`Session` object. `root_id`/`depth`/`parent` are fields on `Session` itself, not on
 `SessionConfig` — `root_id` already exists there today (anticipating exactly this use), `depth` and
-`parent_id` are new.
+`parent` are new.
 
 * same ProcessConfig as the parent
 * SessionConfig is copied from the parent (`model_copy()`), then:
@@ -352,7 +352,7 @@ Each subagent gets its own Session, constructed directly rather than by copying 
     under "Permissions", below.
 * the new `Session`'s own fields, set directly (not part of the copied `SessionConfig`):
   * `root_id` = parent's `root_id`.
-  * `parent_id` = parent's `id`.
+  * `parent` = a reference to the parent Session.
   * `depth` = `parent.depth + 1` (the session directly interacting with the user has `depth == 0`).
   * `id` gets its own timestamp + coolname-slug value, same as any other session.
   * `session_name` is pre-set to the parent-supplied `session_title` rather than left `None` — see

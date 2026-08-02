@@ -1,0 +1,21 @@
+{
+  "schema": {
+    "name": "klorb-agents",
+    "version": "1.0.0"
+  },
+  "agents": [
+    {
+      "name": "test_explorer",
+      "default_model": "test/explorer-model",
+      "restrict_to": {
+        "tools": ["ReadFile", "Grep"],
+        "enforce_readonly_tools": true
+      },
+      "allow_subagents": true
+    },
+    {
+      "name": "test_vision_assistant",
+      "default_model": "test/vision-model"
+    }
+  ]
+}

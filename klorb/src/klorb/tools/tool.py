@@ -205,16 +205,20 @@ class Tool(ABC):
         """Execute the tool with the given arguments and return its result."""
 
     def category(self) -> str:
-        """Return this tool's category (e.g. `"FILES"`, `"MEMORY"`), used to filter which
-        tools a subagent is offered. Not yet overridden by any tool; raises until a
-        subclass implements it.
+        """Return this tool's category (e.g. `"FILES"`, `"MEMORY"`), used by
+        `klorb.agents.intersection.compute_child_tool_set` to filter which tools a subagent
+        is offered by category rather than by naming each one. Every concrete `Tool` must
+        override this; the base implementation raises so a subclass that forgets to fails
+        loudly rather than silently reporting no category.
         """
         raise NotImplementedError
 
     def is_read_only(self) -> bool:
-        """Return whether this tool only reads (never mutates) its subject, used to filter
-        which tools a subagent is offered. Not yet overridden by any tool; raises until a
-        subclass implements it.
+        """Return whether this tool only reads (never mutates) its subject, used by
+        `klorb.agents.intersection.compute_child_tool_set` to clamp an
+        `enforce_readonly_tools` subagent role to read-only tools. Every concrete `Tool` must
+        override this; the base implementation raises so a subclass that forgets to fails
+        loudly rather than silently reporting itself read-only.
         """
         raise NotImplementedError
 

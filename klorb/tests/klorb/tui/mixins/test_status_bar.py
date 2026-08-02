@@ -202,9 +202,9 @@ async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes
 
 async def test_permission_badge_shows_the_session_permission_framework() -> None:
     mock_provider = MagicMock()
-    session = Session(
-        SessionConfig(model="some/model", permission_framework="auto"),
-        provider=mock_provider, session_id=TEST_SESSION_ID)
+    config = SessionConfig(model="some/model")
+    config.permission_framework = "auto"
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
     async with app.run_test():

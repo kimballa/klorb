@@ -21,6 +21,20 @@ from klorb.session.constants import (
 from klorb.workspace import Workspace
 
 
+class PermissionFrameworkState(BaseModel):
+    """Mutable holder for a session tree's `permission_framework` value, shared by reference
+    (never independently copied) across every `SessionConfig` in one tree -- see
+    `SessionConfig.permission_framework_state` and "Shared permission framework state" in
+    docs/plans/ready/021-subagents.md. A plain `PermissionFramework` scalar field can't do
+    this: pydantic's `model_copy()` always produces an independent copy of a scalar attribute,
+    so cloning a `SessionConfig` for a subagent would silently diverge its permission
+    framework from its parent's. Wrapping the value in this one-field model instead lets
+    `model_copy()`'s shallow-copy semantics (which preserve, not clone, nested model
+    references) do the sharing for free."""
+
+    value: PermissionFramework = "ask"
+
+
 class SessionConfig(BaseModel):
     """Configuration for a `Session`, set once at startup from parsed CLI arguments."""
 
@@ -116,17 +130,11 @@ class SessionConfig(BaseModel):
     after `share_env`'s pass-through so they shadow it — see `klorb.tools.bash.build_bash_env`.
     On-disk `setEnv`, merged across config layers with a later layer's value for the same key
     replacing an earlier layer's (see `klorb.process_config.load_process_config`)."""
-    permission_framework: PermissionFramework = "ask"
-    """How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict for every
-    tool-use approval (today, `readDirs`/`writeDirs` "ask" rules; more approval kinds may
-    exist in the future): `"ask"` uses `TurnEventHandlers.on_permission_ask` if the caller
-    gave one (e.g. the TUI's modal), else fails closed per call, same as `"deny"`; `"auto"`
-    auto-approves every ask with an in-memory-only `"session"`-scope grant, without ever
-    invoking `on_permission_ask`; `"deny"` fails closed per call without invoking
-    `on_permission_ask` even if one was given. Deliberately absent from
-    `klorb.process_config.SESSION_KEY_MAP` — like `interactive`, its default depends on
-    whether the session is interactive, resolved explicitly by `klorb.cli.main()` rather
-    than a static config default. See docs/specs/permissions.md."""
+    permission_framework_state: PermissionFrameworkState = Field(
+        default_factory=PermissionFrameworkState)
+    """Holds the effective `permission_framework` value -- see `permission_framework` below
+    and `PermissionFrameworkState`'s own docstring for why this is a nested model rather than
+    a plain scalar field."""
     approved_scopes: set[str] = Field(default_factory=set)
     """Session-only privilege-escalation scopes the user has interactively approved *this
     session*, via the `EscalatePrivileges` tool (see `klorb.tools.escalate_privileges`).
@@ -140,3 +148,27 @@ class SessionConfig(BaseModel):
     `ProcessConfig`, precisely because escalation is session-scoped — a `Session` owns its
     own `SessionConfig`, so the grant dies with it rather than leaking to the next session
     the process starts."""
+
+    @property
+    def permission_framework(self) -> PermissionFramework:
+        """How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict for every
+        tool-use approval (today, `readDirs`/`writeDirs` "ask" rules; more approval kinds may
+        exist in the future): `"ask"` uses `TurnEventHandlers.on_permission_ask` if the caller
+        gave one (e.g. the TUI's modal), else fails closed per call, same as `"deny"`; `"auto"`
+        auto-approves every ask with an in-memory-only `"session"`-scope grant, without ever
+        invoking `on_permission_ask`; `"deny"` fails closed per call without invoking
+        `on_permission_ask` even if one was given. Deliberately absent from
+        `klorb.process_config.SESSION_KEY_MAP` — like `interactive`, its default depends on
+        whether the session is interactive, resolved explicitly by `klorb.cli.main()` rather
+        than a static config default. See docs/specs/permissions.md.
+
+        A thin read/write proxy onto `permission_framework_state.value` -- kept as a
+        same-named property (rather than requiring every caller to spell out
+        `.permission_framework_state.value`) so assigning or reading `config.
+        permission_framework` reaches through to the box every session in this config's tree
+        shares, without changing any existing call site's syntax."""
+        return self.permission_framework_state.value
+
+    @permission_framework.setter
+    def permission_framework(self, value: PermissionFramework) -> None:
+        self.permission_framework_state.value = value
