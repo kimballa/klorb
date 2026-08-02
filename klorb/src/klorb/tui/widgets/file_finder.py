@@ -13,6 +13,8 @@ from textual.fuzzy import Matcher
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
+from klorb.tui.constants import PROMPT_INPUT_ID
+
 FILE_FINDER_ID = "file-finder"
 MAX_FILE_FINDER_MATCHES = 25
 """How many ranked matches the popup keeps, scrollable within its fixed on-screen height (see
@@ -24,6 +26,15 @@ _DIRECTORY_SCORE_BUMP = 0.1
 0..1) before ranking, so a directory whose name matches about as well as a file surfaces above
 it -- letting the user drill into a subtree via `FileFinderPanel`'s directory rows instead of
 only ever seeing leaf files."""
+
+_DIRECTORY_DEPTH_DECAY = 0.85
+"""Multiplies a directory candidate's score once per `/` in its path (e.g. a candidate three
+levels deep is scaled by `0.85 ** 3`), so among similarly-scored directories the one nearest
+the workspace root outranks one nested many levels deep (e.g. a top-level `docs` beats
+`.claude/skills/some-skill/references`). Multiplicative rather than a flat subtraction because
+`Matcher.match`'s real output isn't normalized to a fixed range (an exact substring match can
+score well above 1 for a multi-character query) -- a flat penalty sized for one query length
+would be negligible for another."""
 
 _ROW_WIDTH_PADDING = 4
 """Estimated horizontal space `FileFinderPanel`'s `OptionList` chrome (a scrollbar, plus each
@@ -71,7 +82,7 @@ class FinderMatch:
     """One row the fuzzy finder can show: a workspace-relative path plus whether it names a
     directory rather than a file. A file row is a leaf mention target (see
     `build_mention_insertion`); a directory row instead narrows the active query into that
-    subtree when selected (`PromptInput._select_finder_match`), since a bare directory isn't a
+    subtree when selected (`PromptInput.select_finder_match`), since a bare directory isn't a
     valid `@mention` target."""
 
     path: str
@@ -90,27 +101,77 @@ def _ancestor_directories(paths: Sequence[str]) -> set[str]:
     return directories
 
 
+def _split_query_directory(query: str) -> tuple[str, str]:
+    """Split `query` at its last `/` into a literal directory prefix (including the trailing
+    `/`, or `""` if `query` has no `/`) and the remaining fuzzy-match text -- e.g. `"klorb/sr"`
+    splits into `("klorb/", "sr")`, and a query fresh off selecting a directory match (which
+    always ends in `/`, see `PromptInput.select_finder_match`) splits into a prefix and an
+    empty remainder."""
+    idx = query.rfind("/")
+    if idx == -1:
+        return "", query
+    return query[:idx + 1], query[idx + 1:]
+
+
+def _breadth_first_matches(
+    candidates: set[str], directories: set[str], dir_prefix: str, limit: int,
+) -> list[FinderMatch]:
+    """Order `candidates` (a mix of files and directories, all real descendants of `dir_prefix`)
+    with the immediate contents of `dir_prefix` first -- its own subdirectories, then its own
+    files, all of them regardless of `limit` -- followed by everything nested deeper (again
+    subdirectories before files, then shallower before deeper, then alphabetically), which fills
+    in only up to `limit` total. Used when there's no fuzzy-match text to rank by, so browsing a
+    directory (or the workspace root, for which `dir_prefix` is `""`) always shows everything
+    sitting directly in it instead of letting a large subtree's grandchildren -- which a plain
+    depth-then-alphabetical sort could rank ahead of a sibling file, since nothing before this
+    capped `limit` at the boundary between the two groups -- crowd it out of the truncated list.
+    """
+    def relative_depth(path: str) -> int:
+        return path[len(dir_prefix):].count("/")
+
+    def sort_key(path: str) -> tuple[bool, bool, int, str]:
+        depth = relative_depth(path)
+        return (depth != 0, path not in directories, depth, path)
+
+    ordered = sorted(candidates, key=sort_key)
+    immediate_count = sum(1 for path in candidates if relative_depth(path) == 0)
+    cutoff = max(limit, immediate_count)
+    return [FinderMatch(path, path in directories) for path in ordered[:cutoff]]
+
+
 def filter_workspace_files(
     paths: Sequence[str], query: str, *, limit: int = MAX_FILE_FINDER_MATCHES,
 ) -> list[FinderMatch]:
-    """Return up to `limit` files and ancestor directories from `paths` that fuzzy-match `query`,
-    ranked as one list by descending `textual.fuzzy.Matcher` score (directories get
-    `_DIRECTORY_SCORE_BUMP` added first) -- or, for an empty query (nothing to rank),
-    alphabetically with directories sorted ahead of files. Mirrors
-    `klorb.tui.commands.model_commands.filter_model_names`.
+    """Return up to `limit` files and ancestor directories from `paths` that match `query`.
+    `query` splits at its last `/` (`_split_query_directory`) into a literal directory prefix
+    and a remaining fuzzy-match fragment: candidates are first narrowed to real descendants of
+    that prefix (a plain string-prefix check, not fuzzy), so a query built by selecting a
+    directory match -- which always ends in `/` -- actually scopes to that subtree instead of
+    fuzzy-matching the directory's name against every workspace path (which could resurface an
+    unrelated path that merely happens to contain the same text, e.g. `.klorb/` for a `klorb/`
+    prefix). Within that scope, an empty fragment (nothing to rank) falls back to
+    `_breadth_first_matches`; otherwise candidates rank by descending `textual.fuzzy.Matcher`
+    score of the fragment against each candidate's path *relative to the prefix* (directories
+    get `_DIRECTORY_SCORE_BUMP` added, then `_DIRECTORY_DEPTH_DECAY` applied per path segment).
+    Mirrors `klorb.tui.commands.model_commands.filter_model_names`.
     """
     directories = _ancestor_directories(paths)
-    if not query:
-        ordered = sorted(set(paths) | directories, key=lambda path: (path not in directories, path))
-        return [FinderMatch(path, path in directories) for path in ordered[:limit]]
-    matcher = Matcher(query)
+    universe = set(paths) | directories
+    dir_prefix, fragment = _split_query_directory(query)
+    scoped = {path for path in universe if path.startswith(dir_prefix)} if dir_prefix else universe
+
+    if not fragment:
+        return _breadth_first_matches(scoped, directories, dir_prefix, limit)
+
+    matcher = Matcher(fragment)
 
     def score_of(path: str, is_dir: bool) -> float:
-        base = matcher.match(path)
-        return base + _DIRECTORY_SCORE_BUMP if base > 0 and is_dir else base
+        base = matcher.match(path[len(dir_prefix):])
+        if base <= 0 or not is_dir:
+            return base
+        return (base + _DIRECTORY_SCORE_BUMP) * (_DIRECTORY_DEPTH_DECAY ** path.count("/"))
 
-    candidates = [(path, False) for path in paths] + [(path, True) for path in directories]
-    scored = ((score_of(path, is_dir), path, is_dir) for path, is_dir in candidates)
+    scored = ((score_of(path, path in directories), path, path in directories) for path in scoped)
     ranked = sorted(scored, key=lambda triple: -triple[0])
     return [FinderMatch(path, is_dir) for score, path, is_dir in ranked if score > 0][:limit]
 
@@ -187,7 +248,12 @@ class FileFinderPanel(OptionList, can_focus=False):
 
     Never focused (`can_focus=False`): the prompt input keeps focus the whole time, and
     `PromptInput` drives this widget's highlight programmatically (`move_highlight`) in
-    response to up/down arrow keys, mirroring `klorb.tui.widgets.palette.PromptPalette`.
+    response to up/down arrow keys, mirroring `klorb.tui.widgets.palette.PromptPalette`. A
+    mouse click still reaches this widget regardless of focus, though: `OptionList`'s own
+    `_on_click` moves `highlighted` to the clicked row and posts `OptionSelected`, which
+    `on_option_list_option_selected` below turns into an actual activation of that row --
+    mirroring the VS Code plugin's file finder, where clicking a row selects it outright rather
+    than only highlighting it.
     """
 
     DEFAULT_CSS = """
@@ -235,3 +301,13 @@ class FileFinderPanel(OptionList, can_focus=False):
             self.action_cursor_up()
         else:
             self.action_cursor_down()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """A mouse click (or other `OptionList` selection) on a row activates it exactly as
+        Enter/Tab would, via the sibling `PromptInput.select_finder_match`. `PromptInput`
+        imported inline to break the circular import it itself has on this module (mirrors
+        `PromptInput._workspace_files`'s own inline import of `ReplApp` for the same reason)."""
+        from klorb.tui.widgets.prompt_input import PromptInput
+
+        event.stop()
+        self.screen.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).select_finder_match()

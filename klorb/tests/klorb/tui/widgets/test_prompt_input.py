@@ -783,6 +783,51 @@ async def test_enter_selects_the_highlighted_match_and_escapes_spaces(tmp_path: 
             index.close()
 
 
+async def test_clicking_a_match_activates_it_not_just_highlights_it(tmp_path: Path) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "a.py", "b.py", "c.py")
+        try:
+            await pilot.press(*"@")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert finder.highlighted == 0  # a.py, not the row about to be clicked
+
+            # Row 0 renders directly below the panel's `border-top`, so row 1 (b.py) is at y=2.
+            await pilot.click(FileFinderPanel, offset=(2, 2))
+            await pilot.pause()
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            assert prompt_input.text == "@b.py "
+            assert finder.display is False
+        finally:
+            index.close()
+
+
+async def test_clicking_a_directory_match_narrows_the_query_instead_of_completing(
+    tmp_path: Path,
+) -> None:
+    app = ReplApp(session=_session(MagicMock()))
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await pilot.press(*"@src")
+            await pilot.pause()
+
+            finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            assert finder.current_match == FinderMatch("src", is_dir=True)
+
+            await pilot.click(FileFinderPanel, offset=(2, 1))
+            await pilot.pause()
+
+            assert prompt_input.text == "@src/"
+            assert finder.display is True
+        finally:
+            index.close()
+
+
 async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
     app = ReplApp(session=_session(MagicMock()))
     async with app.run_test() as pilot:

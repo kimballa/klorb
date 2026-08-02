@@ -7,7 +7,9 @@ import {
   buildMentionInsertion,
   detectMentionQuery,
   escapeMentionPath,
+  pathDepth,
   splitFinderPath,
+  splitQueryDirectory,
 } from 'webview/features/fileFinder';
 
 describe('detectMentionQuery', () => {
@@ -92,6 +94,30 @@ describe('buildDirectoryInsertion', () => {
     const result = buildDirectoryInsertion('see @sr for details', 4, 7, 'src');
     expect(result.text).toBe('see @src/ for details');
     expect(result.cursor).toBe(4 + '@src/'.length);
+  });
+});
+
+describe('pathDepth', () => {
+  it('is zero for a top-level path', () => {
+    expect(pathDepth('src')).toBe(0);
+  });
+
+  it('counts one level per slash', () => {
+    expect(pathDepth('a/b/c')).toBe(2);
+  });
+});
+
+describe('splitQueryDirectory', () => {
+  it('is all fragment when there is no slash', () => {
+    expect(splitQueryDirectory('main')).toEqual({ dirPrefix: '', fragment: 'main' });
+  });
+
+  it('leaves an empty fragment right after a trailing slash', () => {
+    expect(splitQueryDirectory('klorb/')).toEqual({ dirPrefix: 'klorb/', fragment: '' });
+  });
+
+  it('splits at the last slash', () => {
+    expect(splitQueryDirectory('klorb/sr')).toEqual({ dirPrefix: 'klorb/', fragment: 'sr' });
   });
 });
 

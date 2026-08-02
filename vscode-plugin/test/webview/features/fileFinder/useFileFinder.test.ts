@@ -25,7 +25,7 @@ describe('useFileFinder', () => {
     expect(result.current.activeIndex).toBe(0);
   });
 
-  it('shows directories ahead of files, alphabetically, when the query is empty right after @', () => {
+  it('shows immediate subdirs, then immediate files, then deeper entries, when the query is empty right after @', () => {
     const { result } = renderHook(() => useFileFinder(FILES));
 
     act(() => result.current.sync('see @', 5));
@@ -33,13 +33,24 @@ describe('useFileFinder', () => {
     expect(result.current.isOpen).toBe(true);
     expect(result.current.matches).toEqual([
       { path: 'docs', isDir: true },
-      { path: 'docs/specs', isDir: true },
       { path: 'src', isDir: true },
       { path: 'README.md', isDir: false },
-      { path: 'docs/specs/vscode-plugin.md', isDir: false },
+      { path: 'docs/specs', isDir: true },
       { path: 'src/App.tsx', isDir: false },
       { path: 'src/AppStyles.ts', isDir: false },
+      { path: 'docs/specs/vscode-plugin.md', isDir: false },
     ]);
+  });
+
+  it('lists directories breadth-first, not alphabetically, when the query is empty', () => {
+    const { result } = renderHook(() =>
+      useFileFinder(['.claude/skills/foo.py', '.github/workflows/ci.yml'])
+    );
+
+    act(() => result.current.sync('@', 1));
+
+    const dirs = result.current.matches.filter((match) => match.isDir).map((match) => match.path);
+    expect(dirs).toEqual(['.claude', '.github', '.claude/skills', '.github/workflows']);
   });
 
   it('dismisses when further typing rules out every file', () => {
@@ -118,6 +129,89 @@ describe('useFileFinder', () => {
     act(() => result.current.sync('@src', 4));
 
     expect(result.current.matches[0]).toEqual({ path: 'src', isDir: true });
+  });
+
+  it('ranks a shallower directory above an equally-matching deeper one', () => {
+    const { result } = renderHook(() => useFileFinder(['a/utils/x.py', 'a/b/c/utils/y.py']));
+
+    act(() => result.current.sync('@utils', 6));
+
+    const dirs = result.current.matches.filter((match) => match.isDir).map((match) => match.path);
+    expect(dirs.indexOf('a/utils')).toBeLessThan(dirs.indexOf('a/b/c/utils'));
+  });
+
+  it('narrowing into a directory excludes a lookalike outside it', () => {
+    const { result } = renderHook(() =>
+      useFileFinder(['klorb/src/app.py', '.klorb/skills/foo.py'])
+    );
+
+    act(() => result.current.sync('@klorb/', 7));
+
+    const paths = result.current.matches.map((match) => match.path);
+    expect(paths).not.toContain('.klorb/skills');
+    expect(paths).not.toContain('.klorb/skills/foo.py');
+  });
+
+  it('narrowing into a directory surfaces its immediate children first', () => {
+    const { result } = renderHook(() =>
+      useFileFinder(['klorb/src/klorb/app.py', 'klorb/tests/test_app.py'])
+    );
+
+    act(() => result.current.sync('@klorb/', 7));
+
+    const dirs = result.current.matches.filter((match) => match.isDir).map((match) => match.path);
+    expect(dirs.slice(0, 2)).toEqual(['klorb/src', 'klorb/tests']);
+  });
+
+  it('never truncates the immediate contents of the current directory, even beyond the match cap', () => {
+    const files = Array.from({ length: 30 }, (_, i) => `file${i}.py`);
+    const { result } = renderHook(() => useFileFinder(files));
+
+    act(() => result.current.sync('@', 1));
+
+    expect(result.current.matches).toHaveLength(30);
+  });
+
+  it('scoped browsing never truncates the current directorys own contents', () => {
+    const files = ['klorb/a.py', ...Array.from({ length: 30 }, (_, i) => `klorb/sub${i}/deep.py`)];
+    const { result } = renderHook(() => useFileFinder(files));
+
+    act(() => result.current.sync('@klorb/', 7));
+
+    const immediate = new Set([
+      'klorb/a.py',
+      ...Array.from({ length: 30 }, (_, i) => `klorb/sub${i}`),
+    ]);
+    const shown = new Set(result.current.matches.map((match) => match.path));
+    for (const path of immediate) {
+      expect(shown.has(path)).toBe(true);
+    }
+  });
+
+  it('scoped browsing fills remaining slots with deeper entries up to the match cap', () => {
+    const files = ['klorb/a.py', ...Array.from({ length: 30 }, (_, i) => `klorb/sub/deep${i}.py`)];
+    const { result } = renderHook(() => useFileFinder(files));
+
+    act(() => result.current.sync('@klorb/', 7));
+
+    // klorb/sub (immediate dir) + klorb/a.py (immediate file) + 23 deeper entries to fill to 25.
+    expect(result.current.matches).toHaveLength(25);
+    expect(result.current.matches.slice(0, 2)).toEqual([
+      { path: 'klorb/sub', isDir: true },
+      { path: 'klorb/a.py', isDir: false },
+    ]);
+  });
+
+  it('scoped browsing orders immediate subdirs before immediate files before deeper entries', () => {
+    const { result } = renderHook(() => useFileFinder(['klorb/a.py', 'klorb/sub/deep.py']));
+
+    act(() => result.current.sync('@klorb/', 7));
+
+    expect(result.current.matches.map((match) => match.path)).toEqual([
+      'klorb/sub',
+      'klorb/a.py',
+      'klorb/sub/deep.py',
+    ]);
   });
 
   it('select() on a directory narrows the query into that subtree and keeps the finder open', () => {

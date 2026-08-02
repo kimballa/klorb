@@ -5,6 +5,7 @@ from klorb.tui.widgets.file_finder import (
     FinderMatch,
     MentionQuery,
     _ancestor_directories,
+    _split_query_directory,
     build_mention_insertion,
     detect_mention_query,
     escape_mention_path,
@@ -54,12 +55,33 @@ class TestAncestorDirectories:
         assert _ancestor_directories(["a/b/c.py", "a/b/d.py", "a/e.py"]) == {"a", "a/b"}
 
 
+class TestSplitQueryDirectory:
+    def test_no_slash_is_all_fragment(self) -> None:
+        assert _split_query_directory("main") == ("", "main")
+
+    def test_trailing_slash_leaves_an_empty_fragment(self) -> None:
+        assert _split_query_directory("klorb/") == ("klorb/", "")
+
+    def test_splits_at_the_last_slash(self) -> None:
+        assert _split_query_directory("klorb/sr") == ("klorb/", "sr")
+
+
 class TestFilterWorkspaceFiles:
-    def test_empty_query_returns_sorted_paths_up_to_limit(self) -> None:
+    def test_empty_query_returns_sorted_paths(self) -> None:
         paths = ["zz.py", "aa.py", "mm.py"]
 
-        assert filter_workspace_files(paths, "", limit=2) == [
-            FinderMatch("aa.py", is_dir=False), FinderMatch("mm.py", is_dir=False)]
+        assert filter_workspace_files(paths, "") == [
+            FinderMatch("aa.py", is_dir=False), FinderMatch("mm.py", is_dir=False),
+            FinderMatch("zz.py", is_dir=False)]
+
+    def test_empty_query_never_truncates_the_immediate_contents_of_the_current_directory(
+        self,
+    ) -> None:
+        paths = [f"file{i}.py" for i in range(30)]
+
+        matches = filter_workspace_files(paths, "", limit=5)
+
+        assert len(matches) == 30
 
     def test_empty_query_sorts_directories_ahead_of_files(self) -> None:
         paths = ["b/file.py", "a_file.py"]
@@ -69,6 +91,14 @@ class TestFilterWorkspaceFiles:
         assert matches == [
             FinderMatch("b", is_dir=True), FinderMatch("a_file.py", is_dir=False),
             FinderMatch("b/file.py", is_dir=False)]
+
+    def test_empty_query_lists_directories_breadth_first_not_alphabetically(self) -> None:
+        paths = [".claude/skills/foo.py", ".github/workflows/ci.yml"]
+
+        matches = filter_workspace_files(paths, "", limit=10)
+
+        dirs = [match.path for match in matches if match.is_dir]
+        assert dirs == [".claude", ".github", ".claude/skills", ".github/workflows"]
 
     def test_query_ranks_by_fuzzy_match_score(self) -> None:
         paths = ["src/main.py", "src/other.py", "unrelated.txt"]
@@ -96,6 +126,58 @@ class TestFilterWorkspaceFiles:
         matches = filter_workspace_files(paths, "main")
 
         assert matches == [FinderMatch("zzz/main.py", is_dir=False)]
+
+    def test_shallower_directory_outranks_a_deeper_equally_matching_one(self) -> None:
+        paths = ["a/utils/x.py", "a/b/c/utils/y.py"]
+
+        matches = filter_workspace_files(paths, "utils")
+
+        dirs = [match.path for match in matches if match.is_dir]
+        assert dirs.index("a/utils") < dirs.index("a/b/c/utils")
+
+    def test_narrowing_into_a_directory_excludes_a_lookalike_outside_it(self) -> None:
+        paths = ["klorb/src/app.py", ".klorb/skills/foo.py"]
+
+        matches = filter_workspace_files(paths, "klorb/")
+
+        assert ".klorb/skills" not in [match.path for match in matches]
+        assert ".klorb/skills/foo.py" not in [match.path for match in matches]
+
+    def test_narrowing_into_a_directory_surfaces_its_immediate_children_first(self) -> None:
+        paths = ["klorb/src/klorb/app.py", "klorb/tests/test_app.py"]
+
+        matches = filter_workspace_files(paths, "klorb/")
+
+        dirs = [match.path for match in matches if match.is_dir]
+        assert dirs[:2] == ["klorb/src", "klorb/tests"]
+
+    def test_scoped_browsing_never_truncates_the_current_directorys_own_contents(self) -> None:
+        paths = ["klorb/a.py"] + [f"klorb/sub{i}/deep.py" for i in range(30)]
+
+        matches = filter_workspace_files(paths, "klorb/", limit=5)
+
+        immediate = {"klorb/a.py"} | {f"klorb/sub{i}" for i in range(30)}
+        assert immediate <= {match.path for match in matches}
+
+    def test_scoped_browsing_fills_remaining_slots_with_deeper_entries_up_to_the_limit(
+        self,
+    ) -> None:
+        paths = ["klorb/a.py"] + [f"klorb/sub/deep{i}.py" for i in range(30)]
+
+        matches = filter_workspace_files(paths, "klorb/", limit=5)
+
+        # klorb/sub (immediate dir) + klorb/a.py (immediate file) + 3 deeper entries to fill to 5.
+        assert len(matches) == 5
+        assert matches[:2] == [FinderMatch("klorb/sub", is_dir=True), FinderMatch("klorb/a.py", is_dir=False)]
+
+    def test_scoped_browsing_orders_immediate_subdirs_before_immediate_files_before_deeper(
+        self,
+    ) -> None:
+        paths = ["klorb/a.py", "klorb/sub/deep.py"]
+
+        matches = filter_workspace_files(paths, "klorb/")
+
+        assert [match.path for match in matches] == ["klorb/sub", "klorb/a.py", "klorb/sub/deep.py"]
 
 
 class TestEscapeMentionPath:

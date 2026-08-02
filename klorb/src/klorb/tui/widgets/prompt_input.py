@@ -270,13 +270,16 @@ class PromptInput(TextArea):
         self._finder_matches = []
         self._finder_widget().hide()
 
-    def _select_finder_match(self) -> None:
+    def select_finder_match(self) -> None:
         """Apply the finder's currently-highlighted match. A file match replaces the active
         `@query` with an escaped `@mention` (per
         `klorb.tui.widgets.file_finder.escape_mention_path`) and closes the popup; a directory
         match instead narrows the query to that directory (with a trailing `/`) and leaves the
         popup open so the user can keep drilling in, since a directory isn't a valid mention
-        target on its own. A no-op if there's no active mention or no highlighted row."""
+        target on its own. A no-op if there's no active mention or no highlighted row. Public --
+        called both by `_on_key`'s Enter/Tab handling and, via `FileFinderPanel.
+        on_option_list_option_selected`, by a mouse click on a row (which first updates
+        `current_match`'s underlying `highlighted` index itself, per `OptionList._on_click`)."""
         mention = self._finder_mention
         match = self._finder_widget().current_match
         if mention is None or match is None:
@@ -388,7 +391,7 @@ class PromptInput(TextArea):
             if key in ("enter", "tab"):
                 event.stop()
                 event.prevent_default()
-                self._select_finder_match()
+                self.select_finder_match()
                 return
         if self._palette_mode:
             if key == "escape":

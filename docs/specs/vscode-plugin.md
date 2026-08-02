@@ -666,15 +666,39 @@ those two share.
   whitespace (so an email-like `foo@bar` doesn't trigger); returns the `@`'s index and the query
   typed after it. `useFileFinder(files)` (`useFileFinder.ts`) owns the finder's React state:
   `sync(text, cursor)` re-runs detection on every keystroke/cursor-move and, when a mention is
-  active, fuzzy-matches one blended candidate list — `files` plus every ancestor directory of one
-  (`ancestorDirectories()`, since `files` itself only ever lists files) — with Fuse.js (`new
-  Fuse(candidates, {keys: ['path'], threshold: 0.4, ignoreLocation: true, includeScore: true})`).
-  A directory candidate's Fuse score (0 = perfect match, 1 = no match) gets `DIRECTORY_SCORE_BUMP`
-  (0.1) subtracted before ranking, so it surfaces above an equally-relevant file; Fuse's own
-  `threshold` already excludes non-matches before the bump is applied. Up to `MAX_MATCHES` (25)
-  ranked results are kept — an empty query instead lists candidates alphabetically with
-  directories sorted ahead of files (nothing to rank) — or the finder resets to closed when
-  there's no mention or (per the "keep typing rules everything out" behavior) zero matches.
+  active, ranks the query against one blended candidate list — `files` plus every ancestor
+  directory of one (`ancestorDirectories()`, since `files` itself only ever lists files).
+  `rankMatches` first splits the query at its last `/` (`splitQueryDirectory()`) into a literal
+  directory prefix (e.g. `'klorb/'`) and a remaining fuzzy-match fragment (e.g. `'sr'`), and
+  narrows candidates to real descendants of that prefix by a plain string-prefix check, not a
+  fuzzy one, before any Fuse.js scoring happens: this is what makes selecting a directory match
+  (which always inserts a trailing `/`, `buildDirectoryInsertion`) actually scope into that
+  subtree instead of fuzzy-matching the directory's name against every workspace path, which
+  could otherwise resurface an unrelated path that merely contains the same text (e.g. `.klorb/`
+  would falsely match a `klorb/` prefix). An unprefixed query reuses the persistent `fuse` index
+  memoized over the whole candidate list (`new Fuse(candidates, {keys: ['path'], threshold: 0.4,
+  ignoreLocation: true, includeScore: true})`); a prefixed one builds a throwaway `Fuse` index
+  over just the (already much smaller) scoped subset, keyed on each candidate's path *relative
+  to the prefix* rather than its full path, since that relative string differs per prefix and
+  can't be precomputed once. A directory candidate's Fuse score (0 = perfect match, 1 = no
+  match) gets `DIRECTORY_SCORE_BUMP` (0.1) subtracted before ranking, so it surfaces above an
+  equally-relevant file, then `DIRECTORY_DEPTH_PENALTY` (0.02) added back per `/` in its full
+  path (`pathDepth()`), so among several directories that match the query about equally well,
+  the one nearest the workspace root outranks one nested many levels deep. Fuse's own
+  `threshold` already excludes non-matches before either adjustment is applied. Up to
+  `MAX_MATCHES` (25) ranked results are kept (`rankFuseResults`) for a non-empty fragment — an
+  empty fragment (including a bare empty query right after `@`) instead lists the scoped
+  candidates via `breadthFirstMatches` with a different, two-tier priority: everything sitting
+  directly in the current directory (its own subdirectories, then its own files) is always shown
+  in full, with no size cutoff, however many there are; only after all of that does the list
+  fill in with everything nested deeper (again subdirectories before files, then shallower
+  before deeper, then alphabetically within a depth), and only up to `MAX_MATCHES` total. This
+  keeps a directory's own files from being crowded out of the visible list by an unrelated, much
+  larger subtree sitting alongside them — which a flat depth-then-alphabetical sort with a
+  single size cutoff would otherwise do, since a parent directory's path is always a string
+  prefix of its children's and nothing would stop a deep branch's many entries from filling the
+  cutoff before a sibling file is ever reached. The finder resets to closed when there's no
+  mention or (per the "keep typing rules everything out" behavior) zero matches.
   Escape (`dismiss()`) closes the popup without forgetting the mention itself — an
   `escapedStartRef` remembers which mention's `@` position was dismissed, so further typing
   within that same mention doesn't reopen it, but moving to a *different* `@` does.

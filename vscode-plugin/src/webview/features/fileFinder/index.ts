@@ -6,11 +6,14 @@ import {
   buildMentionInsertion,
   detectMentionQuery,
   escapeMentionPath,
+  pathDepth,
   splitFinderPath,
+  splitQueryDirectory,
   type FinderMatch,
   type FinderPathParts,
   type MentionContext,
   type MentionInsertion,
+  type QueryDirectorySplit,
 } from './fileFinderModel';
 import useFileFinder, { type FileFinder, type FileFinderSelection } from './useFileFinder';
 
@@ -21,12 +24,15 @@ export {
   type FinderPathParts,
   type MentionContext,
   type MentionInsertion,
+  type QueryDirectorySplit,
   ancestorDirectories,
   buildDirectoryInsertion,
   buildMentionInsertion,
   detectMentionQuery,
   escapeMentionPath,
+  pathDepth,
   splitFinderPath,
+  splitQueryDirectory,
   FileFinderPanel,
   useFileFinder,
 };

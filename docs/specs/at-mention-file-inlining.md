@@ -38,24 +38,51 @@ is resolvable by `resolve_at_mentions()` later.
   (`klorb.tui.widgets.file_finder.detect_mention_query`). Only the unquoted form is
   interactively completed; the quoted form (`@"..."`) is still accepted when typed by hand, but
   the finder never offers it.
-* **Matching.** `klorb.tui.widgets.file_finder.filter_workspace_files` fuzzy-matches the query
-  with `textual.fuzzy.Matcher` -- the same matcher `klorb.tui.commands.model_commands.
-  filter_model_names` uses for model selection -- against one blended candidate list: every
-  workspace file plus every ancestor directory of one (`_ancestor_directories`), since the
-  workspace index itself only ever lists files. A directory candidate's score gets
-  `_DIRECTORY_SCORE_BUMP` added on top of its own fuzzy score, so it ranks above an
-  equally-relevant file and the query can be used to drill toward a subtree, not just a leaf
-  file. Up to `MAX_FILE_FINDER_MATCHES` (25) ranked results are kept, scrollable within the
-  popup's fixed on-screen height, in a `FileFinderPanel` (`klorb.tui.widgets.file_finder`), an
-  `OptionList` mounted directly above the prompt input and never focused: the prompt input keeps
-  focus throughout and drives the panel's highlight programmatically. An empty query lists
-  entries alphabetically with directories sorted ahead of files rather than by fuzzy score
-  (there's nothing to rank). Up/Down move the highlight; Enter or Tab applies the highlighted
-  match (see "Insertion" below); Escape closes the popup without changing the text, and typing
-  further within the same `@query` (its start position unchanged) does not reopen it until the
-  cursor moves to a different mention. A query matching nothing closes the popup outright, so
-  Enter/Tab/Up/Down keep their ordinary meaning (submit, navigate) instead of being claimed by
-  an empty finder.
+* **Matching.** `klorb.tui.widgets.file_finder.filter_workspace_files` first splits the query at
+  its last `/` (`_split_query_directory`) into a literal directory prefix (e.g. `"klorb/"`) and
+  a remaining fuzzy-match fragment (e.g. `"sr"`). Candidates -- every workspace file plus every
+  ancestor directory of one (`_ancestor_directories`), since the workspace index itself only
+  ever lists files -- are narrowed to real descendants of that prefix by a plain string-prefix
+  check, not a fuzzy one, before any scoring happens: this is what makes selecting a directory
+  match (which always inserts a trailing `/`, see "Insertion" below) actually scope into that
+  subtree, rather than fuzzy-matching the directory's name against every workspace path, which
+  could otherwise resurface an unrelated path that merely contains the same text (e.g. `.klorb/`
+  would falsely match a `klorb/` prefix). Within that scope, an empty fragment (nothing to rank)
+  falls back to the same breadth-first order the empty top-level query uses (below); otherwise
+  candidates are fuzzy-matched with `textual.fuzzy.Matcher` -- the same matcher
+  `klorb.tui.commands.model_commands.filter_model_names` uses for model selection -- against
+  each candidate's path *relative to the prefix*, so a nearer match within the subtree isn't
+  diluted by the shared prefix text. A directory candidate's score gets `_DIRECTORY_SCORE_BUMP`
+  added on top of its own fuzzy score, so it ranks above an equally-relevant file, then scaled
+  by `_DIRECTORY_DEPTH_DECAY` once per `/` in the directory's full path, so among several
+  directories that match the query about equally well, the one nearest the workspace root
+  outranks one nested many levels deep (e.g. surfacing a top-level `docs` ahead of
+  `.claude/skills/some-skill/references`) -- `Matcher.match`'s output isn't normalized to a
+  fixed range, so this decay is multiplicative rather than a flat subtraction, to stay
+  proportional regardless of query length. Up to `MAX_FILE_FINDER_MATCHES` (25) ranked results
+  are kept for a non-empty fragment, scrollable within the popup's fixed on-screen height, in a
+  `FileFinderPanel` (`klorb.tui.widgets.file_finder`), an `OptionList` mounted directly above the
+  prompt input and never focused: the prompt input keeps focus throughout and drives the panel's
+  highlight programmatically. An empty fragment (including a bare empty query right after `@`)
+  instead lists the scoped candidates via `_breadth_first_matches` with a different, two-tier
+  priority: everything sitting directly in the current directory (its own subdirectories, then
+  its own files) is always shown in full, with no size cutoff, however many there are; only after
+  all of that does the list fill in with everything nested deeper (again subdirectories before
+  files, then shallower before deeper, then alphabetically within a depth), and only up to
+  `MAX_FILE_FINDER_MATCHES` total. This keeps a directory's own files from being crowded out of
+  the visible list by an unrelated, much larger subtree sitting alongside them -- which a flat
+  depth-then-alphabetical sort with a single size cutoff would otherwise do, since a parent
+  directory's path is always a string prefix of its children's and nothing would stop a deep
+  branch's many entries from filling the cutoff before a sibling file is ever reached. Up/Down
+  move the highlight; Enter or Tab applies the highlighted match (see "Insertion" below); a
+  mouse click on a row applies that row directly, regardless of which was previously highlighted
+  (`FileFinderPanel.on_option_list_option_selected`, reached via `OptionList`'s own click
+  handling even though the panel itself is never keyboard-focused) -- mirroring the VS Code
+  plugin's file finder, where a click activates a row outright rather than only highlighting it.
+  Escape closes the popup without changing the text, and typing further within the same
+  `@query` (its start position unchanged) does not reopen it until the cursor moves to a
+  different mention. A query matching nothing closes the popup outright, so Enter/Tab/Up/Down
+  keep their ordinary meaning (submit, navigate) instead of being claimed by an empty finder.
 * **Row display.** Each match is shown as its workspace-relative path split into a directory
   part (muted color) and a file part (normal color, with its own leading `/`) --
   `klorb.tui.widgets.file_finder.split_finder_row` -- with a trailing `/` appended when the row

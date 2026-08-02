@@ -74,6 +74,29 @@ export function ancestorDirectories(files: string[]): Set<string> {
   return directories;
 }
 
+/** Number of `/` separators in `path` -- how many levels below the workspace root it sits, used
+ * to bias directory ranking toward the search root (see `useFileFinder`'s `DIRECTORY_DEPTH_PENALTY`). */
+export function pathDepth(path: string): number {
+  return (path.match(/\//g) ?? []).length;
+}
+
+/** `query` split at its last `/` into a literal directory prefix (including the trailing `/`,
+ * or `''` if `query` has no `/`) and the remaining fuzzy-match fragment -- e.g. `'klorb/sr'`
+ * splits into `{dirPrefix: 'klorb/', fragment: 'sr'}`, and a query fresh off selecting a
+ * directory match (which always ends in `/`, see `buildDirectoryInsertion`) splits into a
+ * prefix and an empty fragment. */
+export interface QueryDirectorySplit {
+  dirPrefix: string;
+  fragment: string;
+}
+
+export function splitQueryDirectory(query: string): QueryDirectorySplit {
+  const idx = query.lastIndexOf('/');
+  return idx === -1
+    ? { dirPrefix: '', fragment: query }
+    : { dirPrefix: query.slice(0, idx + 1), fragment: query.slice(idx + 1) };
+}
+
 /** Escapes a path for insertion into the prompt's plain-text body: backslash first (so the
  * escapes this function itself introduces aren't re-escaped by the later replacements), then
  * double quotes, then spaces -- e.g. `@foo\ bar.txt`, `@a\"b.txt`, `@a\\b.txt`. */
