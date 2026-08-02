@@ -23,6 +23,25 @@ embedded in a word (e.g. `user@example.com`) is not treated as a mention.
 
 Quoted filenames (`@"..."`) support the same escape sequences inside the quotes.
 
+### Trailing punctuation
+
+An `@mention` is often woven directly into a sentence -- `see @foo.txt.`, `(@foo.txt)`,
+`did you read @foo.txt?` -- so an *unquoted* mention has one trailing character from
+`klorb.session.mixins.mentions.TRAILING_MENTION_PUNCTUATION` (`.` `,` `'` `)` `]` `}` `!` `?`
+`:` `;`) trimmed off before the filename is resolved, via `strip_trailing_mention_punctuation`.
+Stripping repeats (`@foo.txt!)` -> `foo.txt`) but never empties the filename outright, and a
+character reached via an explicit backslash escape (`@foo\!`, which unescapes to the literal
+`foo\!` per the "Literal backslash" row above) is left alone rather than stripped, since the
+user typed the backslash deliberately.
+
+An unescaped double quote needs no entry in that set: it's excluded from the unquoted
+character class outright (see `_AT_MENTION_RE`), so it can never appear in an unquoted match at
+all -- `hello @foo.txt"followed by...` already stops the match at `foo.txt` with no special
+handling, regardless of whether some earlier, unrelated quote in the sentence was "open".
+
+None of this applies to a quoted mention (`@"foo.txt."`): its contents, trailing punctuation
+included, are taken verbatim.
+
 ## Interactive fuzzy finder (TUI)
 
 Typing `@` in the terminal REPL's prompt box opens an inline fuzzy-finder popup, an in-flow
@@ -94,11 +113,16 @@ is resolvable by `resolve_at_mentions()` later.
   path, escaped exactly per the "Syntax" table above (backslash, then double quote, then space,
   via `klorb.tui.widgets.file_finder.escape_mention_path` -- the precise inverse of
   `unescape_mention_filename`), plus a trailing space, landing the cursor right after it and
-  closing the popup so typing continues immediately as plain text. Selecting a directory match
-  instead replaces the `@query` span with `@` followed by the escaped directory path plus a
-  trailing `/`, and leaves the mention (and the popup) open so the query keeps narrowing into
-  that subtree -- a directory is never a resolvable `@mention` target on its own
-  (`resolve_at_mentions()` only ever reads files).
+  closing the popup so typing continues immediately as plain text. If the selected path itself
+  ends in a `TRAILING_MENTION_PUNCTUATION` character (`build_mention_insertion` checks this),
+  the quoted form (`@"<path>"`, via `_escape_quoted_mention_path`) is inserted instead of the
+  ordinary escaped one -- otherwise `strip_trailing_mention_punctuation` would trim that
+  character back off once the prompt is resolved, and the mention would no longer name the file
+  that was actually selected. Selecting a directory match instead replaces the `@query` span
+  with `@` followed by the escaped directory path plus a trailing `/`, and leaves the mention
+  (and the popup) open so the query keeps narrowing into that subtree -- a directory is never a
+  resolvable `@mention` target on its own (`resolve_at_mentions()` only ever reads files), and a
+  trailing `/` is never itself trailing-punctuation, so this quoting concern doesn't apply there.
 * **Workspace index.** `klorb.tui.workspace_file_index.WorkspaceFileIndex` maintains the
   candidate file list: a gitignore-aware recursive scan (reusing
   `klorb.tools.util.gitignore.GitignoreFilter`, the mechanism [[gitignore-aware-tree-walk]]
@@ -291,10 +315,17 @@ Tests live in `tests/klorb/session/test_mentions.py`:
 * `TestDetectMentionMimeType` -- magic-byte matches for every recognized format, the WEBP
   container check (including a non-WEBP RIFF container correctly *not* matching), extension
   fallback, and the HEIC-not-recognized case.
+* `TestStripTrailingMentionPunctuation` -- trailing-punctuation trimming edge cases (each
+  character in `TRAILING_MENTION_PUNCTUATION`, multiple trailing characters, an escaped
+  character kept literal, never stripping down to an empty string).
 * `TestResolveAtMentions` -- integration with real files (simple, relative, absolute paths,
   errors, deduplication, escapes, truncation, confirming the prompt itself is never modified,
   and an image mention falling back to a text-read error when no model/pipeline config is
   given).
+* `TestResolveAtMentionsTrailingPunctuation` -- an unquoted mention woven into a sentence still
+  loads the intended file for every character in `TRAILING_MENTION_PUNCTUATION`, plus a mention
+  sitting right before an unrelated sentence-ending quote (with and without whitespace after
+  it), and a quoted mention retaining trailing punctuation verbatim.
 * `TestResolveAtMentionsImages` -- image-mention resolution end to end: a successful
   header-plus-`image_url` pair, no vision capability, no pipeline config, an oversized image
   (`ImageTooLargeError`), corrupt image bytes, a nonexistent file, and ordinal numbering shared
@@ -309,9 +340,21 @@ covers wire serialization. `tests/klorb/session/test_session.py`'s
 `Session.send_turn()` path.
 
 The interactive fuzzy finder is covered by `tests/klorb/tui/widgets/test_file_finder.py`
-(mention detection, fuzzy matching, escaping, insertion, and row-truncation helpers, all as
-pure functions), `tests/klorb/tui/test_workspace_file_index.py` (gitignore-aware scanning plus
-the `watchdog`-driven incremental/rescan update paths), and the "@-mention file finder" section
-of `tests/klorb/tui/widgets/test_prompt_input.py` (end-to-end keyboard-driven flows: opening,
-narrowing, up/down, Enter/Tab selection, Escape dismissal, and the finder correctly staying out
-of the way of a non-matching query or a cursor that moves out of the mention).
+(mention detection, fuzzy matching, escaping, insertion -- including `TestBuildMentionInsertion`
+selecting the quoted form for a filename ending in a `TRAILING_MENTION_PUNCTUATION` character --
+and row-truncation helpers, all as pure functions), `tests/klorb/tui/test_workspace_file_index.py`
+(gitignore-aware scanning plus the `watchdog`-driven incremental/rescan update paths), and the
+"@-mention file finder" section of `tests/klorb/tui/widgets/test_prompt_input.py` (end-to-end
+keyboard-driven flows: opening, narrowing, up/down, Enter/Tab selection, Escape dismissal, and
+the finder correctly staying out of the way of a non-matching query or a cursor that moves out of
+the mention).
+
+The VS Code plugin mirrors this module's parsing in TypeScript
+(`vscode-plugin/src/webview/features/fileFinder/mentionParser.ts`), covered by
+`vscode-plugin/test/webview/features/fileFinder/mentionParser.test.ts` (escape resolution,
+trailing-punctuation trimming for every character, and `findMentionSpans()` end to end --
+simple, quoted, multiple, and each trailing-punctuation scenario), its own
+`fileFinderModel.test.ts` (the quoted-form insertion fallback), and
+`vscode-plugin/test/webview/features/history/components/MentionHighlightedText.test.tsx` (the
+`.mention-chip`-wrapping renderer). See docs/specs/vscode-plugin.md's "Mention highlighting in
+history" section.

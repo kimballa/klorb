@@ -12,6 +12,11 @@ marks (`\"`); each is unescaped before the file is opened.  A backslash followed
 character is left as-is (the backslash is literal).  Quoted filenames (`@"path with spaces"`)
 are also supported -- the quotes are stripped and the inner escapes processed identically.
 
+An unquoted mention's trailing sentence punctuation (`.`, `,`, `'`, `)`, `]`, `}`, `!`, `?`) is
+trimmed before the file is opened, so a mention interwoven into a sentence (`see @foo.txt.`,
+`(@foo.txt)`) still resolves to the intended file -- see `TRAILING_MENTION_PUNCTUATION` and
+`strip_trailing_mention_punctuation`. A quoted mention is exempt: its contents are used verbatim.
+
 See docs/specs/at-mention-file-inlining.md for the full design.
 """
 
@@ -69,7 +74,50 @@ r"""Matches an `@mention` in a user prompt.
 
 Group 1 captures a double-quoted filename (quotes stripped at match time); group 2 captures an
 unquoted token of non-whitespace characters, where a backslash-escaped character (including
-`\ `) counts as one unit.  Escapes are resolved by `unescape_mention_filename`."""
+`\ `) counts as one unit.  Escapes are resolved by `unescape_mention_filename`; a trailing
+sentence-punctuation character on group 2's match is further trimmed by
+`strip_trailing_mention_punctuation` before that."""
+
+TRAILING_MENTION_PUNCTUATION = frozenset({".", ",", "'", ")", "]", "}", "!", "?", ":", ";"})
+"""Characters that, as the literal last character of an *unquoted* `@mention` match, are far
+more likely to be sentence punctuation immediately following the mention (`see @foo.txt.`,
+`(@foo.txt)`) than part of the filename itself. Stripped from the tail of an unquoted match by
+`strip_trailing_mention_punctuation` so those mentions still resolve to the intended file. A
+quoted mention (`@"foo.txt."`) is never subject to this -- its contents are taken verbatim. An
+unescaped `"` needs no entry here: it's excluded from `_AT_MENTION_RE`'s unquoted character class
+outright, so it can never appear in an unquoted match (leading, trailing, or embedded) in the
+first place -- `hello @foo.txt"followed by...` already stops the unquoted match at `foo.txt`
+without this set's help, with no need to track whether some earlier, unrelated quote in the
+sentence was "open"."""
+
+
+def _mention_token_starts(raw: str) -> list[int]:
+    """Start index of each token in an unquoted `@mention`'s raw (still-escaped) text, using the
+    same tokenization as `_AT_MENTION_RE`'s unquoted branch: a token is either one ordinary
+    character or a backslash followed by any character."""
+    starts: list[int] = []
+    i = 0
+    while i < len(raw):
+        starts.append(i)
+        i += 2 if raw[i] == "\\" and i + 1 < len(raw) else 1
+    return starts
+
+
+def strip_trailing_mention_punctuation(raw: str) -> str:
+    """Strip trailing `TRAILING_MENTION_PUNCTUATION` characters off the end of an *unquoted*
+    `@mention`'s raw (still-escaped) text, so sentence punctuation immediately following a
+    mention (`see @foo.txt.`, `(@foo.txt)`) isn't swept into the filename. Stops once the
+    remaining text would become empty or its last token is a backslash-escaped character (an
+    explicit `\\!`/`\\.`/etc. is kept literal, never stripped).
+    """
+    while True:
+        token_start = _mention_token_starts(raw)[-1]
+        if token_start == 0:
+            return raw
+        token = raw[token_start:]
+        if len(token) != 1 or token not in TRAILING_MENTION_PUNCTUATION:
+            return raw
+        raw = raw[:token_start]
 
 
 def unescape_mention_filename(raw: str) -> str:
@@ -178,7 +226,10 @@ def resolve_at_mentions(
     seen_filenames: dict[str, int] = {}  # filename -> ordinal
     fragments: list[MessageFragment] = []
     for match in mentions:
-        raw = match.group(1) if match.group(1) is not None else match.group(2)
+        if match.group(1) is not None:
+            raw = match.group(1)
+        else:
+            raw = strip_trailing_mention_punctuation(match.group(2))
         filename = unescape_mention_filename(raw)
         if filename in seen_filenames:
             logger.debug(

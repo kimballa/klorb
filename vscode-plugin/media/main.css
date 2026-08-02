@@ -209,6 +209,17 @@ body {
   align-self: flex-end;
 }
 
+/* Highlights an @mention within a submitted prompt (see MentionHighlightedText.tsx) so it reads
+   as a distinct file reference rather than plain prose. A fixed light-on-dark-purple pill (not
+   derived from --vscode-* theme variables, unlike most of this file) since the chip carries its
+   own background regardless of the surrounding bubble's light/dark theme. */
+.mention-chip {
+  color: #3b1e6b;
+  background-color: #e6dcfb;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
 /* Agent-produced entries (markdown responses, thinking, errors, notices) render full-width
    with no bubble chrome. */
 .entry {

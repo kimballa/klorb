@@ -738,7 +738,45 @@ those two share.
   keeps drilling into that subtree — a directory is never a resolvable `@mention` target on its
   own. `escapeMentionPath()` backslash-escapes, in this order (backslash first, so the escapes it
   introduces aren't themselves re-escaped by the later passes), a literal `\`, `"`, and space —
-  e.g. a file named `foo bar.txt` inserts as `@foo\ bar.txt`.
+  e.g. a file named `foo bar.txt` inserts as `@foo\ bar.txt`. If the chosen path itself ends in a
+  character from `TRAILING_MENTION_PUNCTUATION` (`fileFinder/mentionParser.ts` — see "Mention
+  highlighting in history" below), `needsQuotedMention()` routes the insertion through the
+  quoted form instead (`@"<path>"`, via `escapeQuotedMentionPath()`, which escapes only `\` and
+  `"` — a quoted mention's contents need no space-escaping), since the unquoted form would
+  otherwise have that trailing character trimmed back off once the prompt is parsed
+  (`stripTrailingMentionPunctuation()`), no longer naming the file that was actually selected.
+
+### Mention highlighting in history
+
+Every `@mention` in an already-submitted `'prompt'`/`'queuedMessage'` history entry
+(`HistoryView.tsx`) is wrapped in a `.mention-chip` span (fixed light-purple background,
+dark-purple text — a self-contained pill, not derived from `--vscode-*` theme variables, so it
+reads consistently regardless of the host's light/dark theme) by `MentionHighlightedText`
+(`history/components/MentionHighlightedText.tsx`), so a submitted prompt visibly confirms
+exactly which file references the server resolved.
+
+* **Parsing** (`fileFinder/mentionParser.ts`). `findMentionSpans(text)` mirrors
+  `klorb.session.mixins.mentions._AT_MENTION_RE`/`resolve_at_mentions` field-for-field in
+  TypeScript — same two-branch regex (quoted `@"..."` vs. unquoted), the same
+  `unescapeMentionFilename()`/`stripTrailingMentionPunctuation()` pair, and the same
+  `TRAILING_MENTION_PUNCTUATION` set (now including `:`/`;` on both sides) — so the webview
+  never has to ask the extension host to re-derive which spans are mentions; it just re-parses
+  the same prompt text the server already parsed. Each returned `MentionSpan` is
+  `{start, end, filename}`: `end` excludes trailing punctuation trimmed off an unquoted match,
+  but includes a quoted mention's closing `"`, matching exactly the syntax
+  `resolve_at_mentions()` would treat as the file reference. This module owns
+  `TRAILING_MENTION_PUNCTUATION` — `fileFinderModel.ts`'s `needsQuotedMention()` imports it
+  rather than keeping its own copy, so the finder's "does this path need quoting" check and the
+  history view's "where does this mention actually end" check can never drift apart.
+* **Rendering** (`MentionHighlightedText.tsx`). Splits `entry.text` at each `MentionSpan`,
+  rendering the mention's own substring (`text.slice(span.start, span.end)`) inside a
+  `<span className="mention-chip">` and everything between spans as plain text, preserving the
+  original string byte-for-byte across the split (no re-escaping or reformatting) so the prompt
+  still reads exactly as typed. Applied by `HistoryView.tsx` to both `'prompt'` and
+  `'queuedMessage'` entries -- already-submitted text only. `PromptInput`'s live-typing
+  `<textarea>` is plain text and unaffected; highlighting it would need a different rendering
+  approach (an overlay or a rich-text editor) rather than this component, which only ever
+  produces read-only JSX.
 
 ### Image attachments
 

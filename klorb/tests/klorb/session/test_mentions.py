@@ -15,6 +15,7 @@ from klorb.session.mixins.mentions import (
     detect_mention_mime_type,
     has_at_mention,
     resolve_at_mentions,
+    strip_trailing_mention_punctuation,
     unescape_mention_filename,
 )
 from klorb.tools.util.read_file_core import ReadFileCore
@@ -141,6 +142,67 @@ class TestAtMentionRegex:
         m = _AT_MENTION_RE.search("see @foo.txt")
         assert m is not None
         assert m.group(2) == "foo.txt"
+
+    def test_quoted_filename_retains_trailing_punctuation(self) -> None:
+        """Unlike an unquoted mention, a quoted mention's contents (including trailing
+        punctuation) are matched verbatim -- stripping only ever applies to group 2."""
+        m = _AT_MENTION_RE.search('@"foo.txt."')
+        assert m is not None
+        assert m.group(1) == "foo.txt."
+
+
+# --- strip_trailing_mention_punctuation ---
+
+
+class TestStripTrailingMentionPunctuation:
+    """Tests for strip_trailing_mention_punctuation -- trimming sentence punctuation woven
+    immediately after an unquoted @mention (e.g. `see @foo.txt.`) off the extracted filename."""
+
+    def test_no_trailing_punctuation_is_unchanged(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt") == "foo.txt"
+
+    def test_trailing_period(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt.") == "foo.txt"
+
+    def test_trailing_comma(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt,") == "foo.txt"
+
+    def test_trailing_single_quote(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt'") == "foo.txt"
+
+    def test_trailing_closing_paren(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt)") == "foo.txt"
+
+    def test_trailing_closing_square_bracket(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt]") == "foo.txt"
+
+    def test_trailing_closing_curly_brace(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt}") == "foo.txt"
+
+    def test_trailing_exclamation_point(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt!") == "foo.txt"
+
+    def test_trailing_question_mark(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt?") == "foo.txt"
+
+    def test_trailing_colon(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt:") == "foo.txt"
+
+    def test_trailing_semicolon(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt;") == "foo.txt"
+
+    def test_multiple_trailing_punctuation_characters_are_all_stripped(self) -> None:
+        assert strip_trailing_mention_punctuation("foo.txt!)") == "foo.txt"
+
+    def test_escaped_trailing_punctuation_is_kept_literal(self) -> None:
+        """An explicit `\\!` isn't a recognized escape (only `\\ `, `\\\\`, `\\"` are), but the
+        backslash-char pair is still one atomic token the user deliberately typed, so it's left
+        alone rather than stripped."""
+        assert strip_trailing_mention_punctuation(r"foo\!") == r"foo\!"
+
+    def test_never_strips_down_to_an_empty_string(self) -> None:
+        assert strip_trailing_mention_punctuation(".") == "."
+        assert strip_trailing_mention_punctuation("!") == "!"
 
 
 # --- has_at_mention ---
@@ -357,6 +419,91 @@ class TestResolveAtMentions:
         assert fragments is not None
         assert len(fragments) == 1
         assert "(error reading file:" in fragments[0].text
+
+
+# --- resolve_at_mentions: mentions woven into a sentence, followed by trailing punctuation ---
+
+
+class TestResolveAtMentionsTrailingPunctuation:
+    """Tests for resolve_at_mentions correctly loading the mentioned file when the mention is
+    immediately followed by punctuation woven into the surrounding sentence, e.g. `see @foo.txt.`
+    must load `foo.txt`, not a nonexistent `foo.txt.` (see strip_trailing_mention_punctuation)."""
+
+    @pytest.fixture
+    def core(self) -> ReadFileCore:
+        return ReadFileCore(max_lines=200, max_line_length=500)
+
+    def _assert_loads_foo_txt(self, core: ReadFileCore, tmp_path: Path, prompt: str) -> None:
+        (tmp_path / "foo.txt").write_text("hello")
+        fragments = resolve_at_mentions(prompt, core, tmp_path)
+        assert fragments is not None
+        text = fragments[0].text
+        assert "Filename: foo.txt" in text
+        assert "1|hello" in text
+        assert "(error reading file:" not in text
+
+    def test_trailing_period(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "see @foo.txt.")
+
+    def test_trailing_comma(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "check @foo.txt, thanks")
+
+    def test_trailing_single_quote(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "check @foo.txt' thanks")
+
+    def test_trailing_double_quote(self, core: ReadFileCore, tmp_path: Path) -> None:
+        """An unescaped `"` is never part of the unquoted match at all (it's excluded from the
+        character class), so this already worked before the punctuation-stripping fix."""
+        self._assert_loads_foo_txt(core, tmp_path, 'check @foo.txt" thanks')
+
+    def test_trailing_closing_paren(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "see (result @foo.txt) now")
+
+    def test_trailing_closing_square_bracket(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "see [item @foo.txt] now")
+
+    def test_trailing_closing_curly_brace(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "see {value @foo.txt} now")
+
+    def test_trailing_exclamation_point(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "wow @foo.txt! amazing")
+
+    def test_trailing_question_mark(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "did you read @foo.txt? really")
+
+    def test_trailing_colon(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "attached: @foo.txt: see above")
+
+    def test_trailing_semicolon(self, core: ReadFileCore, tmp_path: Path) -> None:
+        self._assert_loads_foo_txt(core, tmp_path, "see @foo.txt; then continue")
+
+    def test_sentence_wrapped_in_quotes(self, core: ReadFileCore, tmp_path: Path) -> None:
+        """A mention that happens to sit right before the closing quote of an unrelated quoted
+        sentence resolves correctly without any special-casing -- the unquoted branch's
+        character class already excludes an unescaped `"`, so the match simply ends at the
+        mention regardless of what quote elsewhere in the prompt it happens to precede."""
+        self._assert_loads_foo_txt(core, tmp_path, '"hello @foo.txt"')
+
+    def test_trailing_quote_immediately_followed_by_more_prose(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        """Even with no whitespace between the closing quote and the prose that follows it, the
+        mention still resolves correctly -- the `"` itself (not a following space) is what ends
+        the unquoted match."""
+        self._assert_loads_foo_txt(
+            core, tmp_path, 'hello @foo.txt"followed by a quote out of context.')
+
+    def test_quoted_mention_retains_trailing_punctuation_verbatim(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        """A quoted mention is never subject to trailing-punctuation stripping -- it names a
+        file whose actual name ends in `.` verbatim."""
+        (tmp_path / "foo.txt.").write_text("literal trailing dot")
+        fragments = resolve_at_mentions('see @"foo.txt."', core, tmp_path)
+        assert fragments is not None
+        text = fragments[0].text
+        assert "Filename: foo.txt." in text
+        assert "1|literal trailing dot" in text
 
 
 # --- resolve_at_mentions: image mentions ---
