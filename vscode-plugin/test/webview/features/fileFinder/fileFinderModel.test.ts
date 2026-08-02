@@ -87,6 +87,31 @@ describe('buildMentionInsertion', () => {
     const result = buildMentionInsertion('@q', 0, 2, 'a.txt');
     expect(result.text.startsWith('@')).toBe(true);
   });
+
+  it('uses the quoted form when the filename ends in a period', () => {
+    const result = buildMentionInsertion('@n', 0, 2, 'notes.');
+    expect(result.text).toBe('@"notes." ');
+  });
+
+  it('uses the quoted form when the filename ends in an exclamation point', () => {
+    const result = buildMentionInsertion('@t', 0, 2, 'TODO!');
+    expect(result.text).toBe('@"TODO!" ');
+  });
+
+  it('uses the quoted form when the filename ends in a closing paren', () => {
+    const result = buildMentionInsertion('@o', 0, 2, 'output(1)');
+    expect(result.text).toBe('@"output(1)" ');
+  });
+
+  it('escapes backslashes and double quotes in the quoted form', () => {
+    const result = buildMentionInsertion('@a', 0, 2, 'a\\b "c"!');
+    expect(result.text).toBe('@"a\\\\b \\"c\\"!" ');
+  });
+
+  it('uses the unquoted form when the filename does not end in trailing punctuation', () => {
+    const result = buildMentionInsertion('@f', 0, 2, 'foo.txt');
+    expect(result.text).toBe('@foo.txt ');
+  });
 });
 
 describe('buildDirectoryInsertion', () => {

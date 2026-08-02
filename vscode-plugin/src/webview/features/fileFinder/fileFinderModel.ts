@@ -1,5 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 
+import { TRAILING_MENTION_PUNCTUATION } from './mentionParser';
+
 /** Where the currently-active `@`-mention starts (the index of `@` itself in the full text) and
  * what's been typed after it up to the cursor -- the file finder's search query. */
 export interface MentionContext {
@@ -104,6 +106,19 @@ export function escapeMentionPath(relPath: string): string {
   return relPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/ /g, '\\ ');
 }
 
+/** Escapes a path for insertion inside an `@"..."` quoted mention: backslash first, then double
+ * quotes -- unlike `escapeMentionPath`, spaces need no escaping inside the quotes. */
+function escapeQuotedMentionPath(relPath: string): string {
+  return relPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** Whether `relPath` needs the quoted `@"..."` mention form to round-trip through
+ * `strip_trailing_mention_punctuation` unchanged -- true when it ends in a character from
+ * `TRAILING_MENTION_PUNCTUATION`. */
+function needsQuotedMention(relPath: string): boolean {
+  return TRAILING_MENTION_PUNCTUATION.has(relPath.slice(-1));
+}
+
 /** The result of splicing a selected file into the prompt's text: the full new text, and where
  * the cursor should land afterward. */
 export interface MentionInsertion {
@@ -112,14 +127,19 @@ export interface MentionInsertion {
 }
 
 /** Replaces the `@query` mention spanning `[mentionStart, cursor)` in `text` with `@` followed
- * by `relPath`'s escaped form and a trailing space, so the user can keep typing immediately. */
+ * by `relPath`'s escaped form and a trailing space, so the user can keep typing immediately.
+ * Uses the quoted form (`@"relPath" `) when `relPath` itself ends in a
+ * `TRAILING_MENTION_PUNCTUATION` character (`needsQuotedMention`), since the unquoted form would
+ * otherwise have that trailing character trimmed back off when the prompt is later resolved. */
 export function buildMentionInsertion(
   text: string,
   mentionStart: number,
   cursor: number,
   relPath: string
 ): MentionInsertion {
-  const insertion = `@${escapeMentionPath(relPath)} `;
+  const insertion = needsQuotedMention(relPath)
+    ? `@"${escapeQuotedMentionPath(relPath)}" `
+    : `@${escapeMentionPath(relPath)} `;
   return {
     text: text.slice(0, mentionStart) + insertion + text.slice(cursor),
     cursor: mentionStart + insertion.length,

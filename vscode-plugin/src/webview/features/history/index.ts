@@ -1,6 +1,9 @@
 // (c) Copyright 2026 Aaron Kimball
 
 import HistoryView, { type HistoryViewProps } from './components/HistoryView';
+import MentionHighlightedText, {
+  type MentionHighlightedTextProps,
+} from './components/MentionHighlightedText';
 import SessionStatsCard from './components/SessionStatsCard';
 import {
   type HistoryEntryKind,
@@ -34,6 +37,7 @@ export {
   type HistoryEntry,
   type HistoryEntryKind,
   type HistoryViewProps,
+  type MentionHighlightedTextProps,
   type PendingInteraction,
   type SessionStatsHistoryEntry,
   type TaskListSnapshot,
@@ -57,5 +61,6 @@ export {
   renderDiffLines,
   renderYamlFrontmatter,
   HistoryView,
+  MentionHighlightedText,
   SessionStatsCard,
 };

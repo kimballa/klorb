@@ -16,10 +16,6 @@
 
 ### Feature backlog
 
-* Verify: If the user uses an `@mentioned-file.txt` in the prompt and then uses a punctuation
-  character, like `"see @foo.txt."` we should make sure that this actually properly loads a file
-  called `foo.txt`.
-
 * now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
   all files in the repo. The FindFiles tool should take advantage of that for much faster
   performance than actually hitting the filesystem directly. (The "server side" tool should maintain

@@ -204,6 +204,42 @@ class TestBuildMentionInsertion:
         assert insertion == "@foo\\ bar.txt "
         assert new_column == 6 + len(insertion)
 
+    def test_uses_quoted_form_when_filename_ends_in_a_period(self) -> None:
+        insertion, new_column = build_mention_insertion(0, 0, "notes.")
+
+        assert insertion == '@"notes." '
+        assert new_column == len(insertion)
+
+    def test_uses_quoted_form_when_filename_ends_in_an_exclamation_point(self) -> None:
+        insertion, _ = build_mention_insertion(0, 0, "TODO!")
+
+        assert insertion == '@"TODO!" '
+
+    def test_uses_quoted_form_when_filename_ends_in_a_closing_paren(self) -> None:
+        insertion, _ = build_mention_insertion(0, 0, "output(1)")
+
+        assert insertion == '@"output(1)" '
+
+    def test_uses_quoted_form_when_filename_ends_in_a_colon(self) -> None:
+        insertion, _ = build_mention_insertion(0, 0, "notes:")
+
+        assert insertion == '@"notes:" '
+
+    def test_uses_quoted_form_when_filename_ends_in_a_semicolon(self) -> None:
+        insertion, _ = build_mention_insertion(0, 0, "notes;")
+
+        assert insertion == '@"notes;" '
+
+    def test_quoted_form_escapes_backslashes_and_double_quotes(self) -> None:
+        insertion, _ = build_mention_insertion(0, 0, 'a\\b "c"!')
+
+        assert insertion == '@"a\\\\b \\"c\\"!" '
+
+    def test_unquoted_form_used_when_filename_does_not_end_in_trailing_punctuation(self) -> None:
+        insertion, _ = build_mention_insertion(0, 0, "foo.txt")
+
+        assert insertion == "@foo.txt "
+
 
 class TestSplitFinderRow:
     def test_no_directory_component(self) -> None:

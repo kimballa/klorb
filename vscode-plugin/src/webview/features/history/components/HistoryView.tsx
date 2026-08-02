@@ -10,6 +10,7 @@ import type { HistoryEntry } from '../historyModel';
 import { renderYamlFrontmatter } from '../renderYamlFrontmatter';
 
 import BashToolCallChip from './BashToolCallChip';
+import MentionHighlightedText from './MentionHighlightedText';
 import SessionStatsCard from './SessionStatsCard';
 import ToolCallChip from './ToolCallChip';
 
@@ -42,14 +43,14 @@ function renderEntry(
               ))}
             </div>
           ) : null}
-          {entry.text}
+          <MentionHighlightedText text={entry.text} />
         </div>
       );
     case 'queuedMessage':
       return (
         <div className="bubble bubble-prompt bubble-queued" key={index}>
           <div className="queued-prompt-header">Queued message</div>
-          {entry.text}
+          <MentionHighlightedText text={entry.text} />
         </div>
       );
     case 'response':

@@ -13,6 +13,7 @@ from textual.fuzzy import Matcher
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
+from klorb.session.mixins.mentions import TRAILING_MENTION_PUNCTUATION
 from klorb.tui.constants import PROMPT_INPUT_ID
 
 FILE_FINDER_ID = "file-finder"
@@ -185,14 +186,27 @@ def escape_mention_path(rel_path: str) -> str:
     return rel_path.replace("\\", "\\\\").replace('"', '\\"').replace(" ", "\\ ")
 
 
+def _escape_quoted_mention_path(rel_path: str) -> str:
+    r"""Escape `rel_path` for insertion inside an `@"..."` quoted mention: backslash first, then
+    double quotes -- unlike `escape_mention_path`, spaces need no escaping inside the quotes."""
+    return rel_path.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def build_mention_insertion(query_start_column: int, cursor_column: int, rel_path: str) -> tuple[str, int]:
     """Return `(insertion_text, new_cursor_column)` for replacing the current line's
-    `[query_start_column, cursor_column)` span -- the active `@query` -- with an escaped
-    `@mention` of `rel_path` plus a trailing space, so the user can keep typing immediately.
-    The caller applies `insertion_text` via `TextArea.replace()` at those two column positions
-    on the cursor's row and moves the cursor to `new_cursor_column`.
+    `[query_start_column, cursor_column)` span -- the active `@query` -- with an `@mention` of
+    `rel_path` plus a trailing space, so the user can keep typing immediately. Uses the quoted
+    form (`@"rel_path" `) when `rel_path` itself ends in a `TRAILING_MENTION_PUNCTUATION`
+    character, since `strip_trailing_mention_punctuation` would otherwise trim that character
+    back off an unquoted insertion when the prompt is later resolved; every other path uses the
+    ordinary escaped unquoted form. The caller applies `insertion_text` via `TextArea.replace()`
+    at those two column positions on the cursor's row and moves the cursor to
+    `new_cursor_column`.
     """
-    insertion = f"@{escape_mention_path(rel_path)} "
+    if rel_path and rel_path[-1] in TRAILING_MENTION_PUNCTUATION:
+        insertion = f'@"{_escape_quoted_mention_path(rel_path)}" '
+    else:
+        insertion = f"@{escape_mention_path(rel_path)} "
     return insertion, query_start_column + len(insertion)
 
 
