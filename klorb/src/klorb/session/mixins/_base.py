@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from klorb.api_provider import ApiProvider
+from klorb.images.prepare import ImagePipelineConfig
 from klorb.lockfile import Lockfile
 from klorb.message import Message, ToolCallRequest
 from klorb.models.model import CacheMgmtStyle, Model
@@ -83,6 +84,7 @@ class SessionBase:
     _system_prompt: SystemPrompt
     _process_config: "ProcessConfig | None"
     _mention_read_file_core: "ReadFileCore"
+    _image_pipeline_config: ImagePipelineConfig
     _thinking_token_budgets: dict[ThinkingEffort, int]
     _tool_registry: "ToolRegistry | None"
     tool_state: dict[str, Any]

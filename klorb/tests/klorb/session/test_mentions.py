@@ -1,18 +1,47 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.session.mixins.mentions -- @mention file inlining."""
 
+import io
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
+from klorb.images.prepare import ImagePipelineConfig
 from klorb.message import MessageFragment
+from klorb.models.configured_model import ConfiguredModel
 from klorb.session.mixins.mentions import (
     _AT_MENTION_RE,
+    detect_mention_mime_type,
     has_at_mention,
     resolve_at_mentions,
     unescape_mention_filename,
 )
 from klorb.tools.util.read_file_core import ReadFileCore
+
+
+def _png_bytes(width: int = 20, height: int = 10) -> bytes:
+    image = Image.new("RGB", (width, height), (200, 50, 50))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _pipeline_config(max_bytes_raw: int = 26214400) -> ImagePipelineConfig:
+    return ImagePipelineConfig(
+        default_max_dimension_px=1568, max_bytes_raw=max_bytes_raw,
+        preferred_formats=["image/webp", "image/png"])
+
+
+def _vision_model() -> ConfiguredModel:
+    return ConfiguredModel(
+        {"name": "test/vision-model", "capabilities": {"vision": True}}, source="test")
+
+
+def _text_only_model() -> ConfiguredModel:
+    return ConfiguredModel(
+        {"name": "test/text-model", "capabilities": {"vision": False}}, source="test")
+
 
 # --- unescape_mention_filename ---
 
@@ -131,6 +160,71 @@ class TestHasAtMention:
 
     def test_empty_string(self) -> None:
         assert has_at_mention("") is False
+
+
+# --- detect_mention_mime_type ---
+
+
+class TestDetectMentionMimeType:
+    """Tests for detect_mention_mime_type -- filetype-then-extension image detection."""
+
+    def _write(self, tmp_path: Path, name: str, data: bytes) -> Path:
+        path = tmp_path / name
+        path.write_bytes(data)
+        return path
+
+    def test_png_magic_bytes(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "whatever", _png_bytes())
+        assert detect_mention_mime_type("whatever", path) == "image/png"
+
+    def test_jpeg_magic_bytes(self, tmp_path: Path) -> None:
+        head = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 20
+        path = self._write(tmp_path, "whatever", head)
+        assert detect_mention_mime_type("whatever", path) == "image/jpeg"
+
+    def test_gif89a_magic_bytes(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "whatever", b"GIF89a" + b"\x00" * 20)
+        assert detect_mention_mime_type("whatever", path) == "image/gif"
+
+    def test_bmp_magic_bytes(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "whatever", b"BM" + b"\x00" * 20)
+        assert detect_mention_mime_type("whatever", path) == "image/bmp"
+
+    def test_webp_magic_bytes(self, tmp_path: Path) -> None:
+        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8 " + b"\x00" * 10
+        path = self._write(tmp_path, "whatever", head)
+        assert detect_mention_mime_type("whatever", path) == "image/webp"
+
+    def test_riff_without_webp_is_not_matched(self, tmp_path: Path) -> None:
+        """A RIFF container that isn't WEBP (e.g. a WAV file) is not treated as an image."""
+        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WAVE" + b"fmt " + b"\x00" * 10
+        path = self._write(tmp_path, "audio.wav", head)
+        assert detect_mention_mime_type("audio.wav", path) is None
+
+    def test_extension_fallback_when_magic_bytes_inconclusive(self, tmp_path: Path) -> None:
+        """A mismatched or truncated header still resolves via the file extension."""
+        path = self._write(tmp_path, "photo.png", b"not really a png")
+        assert detect_mention_mime_type("photo.png", path) == "image/png"
+
+    def test_unrecognized_extension_and_bytes_return_none(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "notes.txt", b"just some text")
+        assert detect_mention_mime_type("notes.txt", path) is None
+
+    def test_heic_not_recognized(self, tmp_path: Path) -> None:
+        """HEIC is declared as vision-supported by some models, and `filetype` itself can sniff
+        it, but this codebase has no decoder for it, so it must not be treated as a recognized
+        image mention."""
+        head = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 20
+        path = self._write(tmp_path, "photo.heic", head)
+        assert detect_mention_mime_type("photo.heic", path) is None
+
+    def test_empty_file_and_no_extension_returns_none(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, "noext", b"")
+        assert detect_mention_mime_type("noext", path) is None
+
+    def test_nonexistent_file_raises_oserror(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            detect_mention_mime_type("missing.png", tmp_path / "missing.png")
 
 
 # --- resolve_at_mentions ---
@@ -252,3 +346,109 @@ class TestResolveAtMentions:
         fragments = resolve_at_mentions("before @f.txt after", core, tmp_path)
         assert fragments is not None
         assert all(isinstance(fragment, MessageFragment) for fragment in fragments)
+
+    def test_image_mention_without_model_falls_back_to_read_error(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        """With no active_model/image_pipeline_config given (the default), an image mention is
+        still attempted as a text read and fails -- unchanged legacy behavior."""
+        (tmp_path / "pic.png").write_bytes(_png_bytes())
+        fragments = resolve_at_mentions("see @pic.png", core, tmp_path)
+        assert fragments is not None
+        assert len(fragments) == 1
+        assert "(error reading file:" in fragments[0].text
+
+
+# --- resolve_at_mentions: image mentions ---
+
+
+class TestResolveAtMentionsImages:
+    """Tests for resolve_at_mentions's image-mention path (PNG/JPEG/GIF/WEBP/BMP recognized via
+    detect_mention_mime_type, resized/transcoded via klorb.images.prepare.prepare_image_for_model)."""
+
+    @pytest.fixture
+    def core(self) -> ReadFileCore:
+        return ReadFileCore(max_lines=200, max_line_length=500)
+
+    def test_image_mention_attaches_image_url_fragment(self, core: ReadFileCore, tmp_path: Path) -> None:
+        (tmp_path / "pic.png").write_bytes(_png_bytes(40, 20))
+        fragments = resolve_at_mentions(
+            "see @pic.png", core, tmp_path,
+            active_model=_vision_model(), image_pipeline_config=_pipeline_config())
+        assert fragments is not None
+        assert len(fragments) == 2
+        header, image_fragment = fragments
+        assert header.type == "text"
+        assert "Filename: pic.png" in header.text
+        assert "Attachment Id: 1" in header.text
+        assert image_fragment.type == "image_url"
+        assert image_fragment.image_url is not None
+        assert image_fragment.image_url["url"].startswith("data:image/")
+        assert image_fragment.source_filename == "pic.png"
+        assert image_fragment.original_width == 40
+        assert image_fragment.original_height == 20
+
+    def test_image_mention_without_vision_capability_produces_error_fragment(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "pic.png").write_bytes(_png_bytes())
+        fragments = resolve_at_mentions(
+            "see @pic.png", core, tmp_path,
+            active_model=_text_only_model(), image_pipeline_config=_pipeline_config())
+        assert fragments is not None
+        assert len(fragments) == 1
+        assert "does not support image input" in fragments[0].text
+
+    def test_image_mention_with_no_pipeline_config_produces_error_fragment(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "pic.png").write_bytes(_png_bytes())
+        fragments = resolve_at_mentions(
+            "see @pic.png", core, tmp_path, active_model=_vision_model())
+        assert fragments is not None
+        assert len(fragments) == 1
+        assert "does not support image input" in fragments[0].text
+
+    def test_oversized_image_produces_error_fragment(self, core: ReadFileCore, tmp_path: Path) -> None:
+        (tmp_path / "pic.png").write_bytes(_png_bytes(400, 400))
+        fragments = resolve_at_mentions(
+            "see @pic.png", core, tmp_path,
+            active_model=_vision_model(), image_pipeline_config=_pipeline_config(max_bytes_raw=1))
+        assert fragments is not None
+        assert len(fragments) == 1
+        assert "(error reading file:" in fragments[0].text
+
+    def test_corrupt_image_bytes_produce_error_fragment(self, core: ReadFileCore, tmp_path: Path) -> None:
+        """A file whose extension claims an image format but whose bytes Pillow can't decode
+        fails gracefully instead of raising."""
+        (tmp_path / "broken.png").write_bytes(b"not actually a png")
+        fragments = resolve_at_mentions(
+            "see @broken.png", core, tmp_path,
+            active_model=_vision_model(), image_pipeline_config=_pipeline_config())
+        assert fragments is not None
+        assert len(fragments) == 1
+        assert "(error reading file:" in fragments[0].text
+
+    def test_nonexistent_image_mention_produces_error_fragment(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        fragments = resolve_at_mentions(
+            "see @missing.png", core, tmp_path,
+            active_model=_vision_model(), image_pipeline_config=_pipeline_config())
+        assert fragments is not None
+        assert len(fragments) == 1
+        assert "(error reading file:" in fragments[0].text
+
+    def test_mixed_text_and_image_mentions_share_ordinal_sequence(
+        self, core: ReadFileCore, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "notes.txt").write_text("hello")
+        (tmp_path / "pic.png").write_bytes(_png_bytes())
+        fragments = resolve_at_mentions(
+            "@notes.txt then @pic.png", core, tmp_path,
+            active_model=_vision_model(), image_pipeline_config=_pipeline_config())
+        assert fragments is not None
+        assert len(fragments) == 3
+        assert "Attachment Id: 1" in fragments[0].text
+        assert "Attachment Id: 2" in fragments[1].text
+        assert fragments[2].type == "image_url"

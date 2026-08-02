@@ -30,6 +30,8 @@ defusedxml==0.7.1
     # via markitdown
 distro==1.9.0
     # via openai
+filetype==1.2.0
+    # via klorb (pyproject.toml)
 flatbuffers==25.12.19
     # via onnxruntime
 h11==0.16.0

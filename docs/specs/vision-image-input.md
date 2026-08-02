@@ -9,9 +9,13 @@ transcodes, and base64-encodes it server-side for whichever model is active, est
 cost, and threads it through the conversation as an `image_url`-type `klorb.message.
 MessageFragment` alongside the prompt text.
 
-Out of scope: TUI/CLI image attachment (no drag-drop/paste-image surface to build on), remote
-image URLs (images are always inlined as base64), server-side file-upload preflighting, and any
-image-retention/pruning policy for long sessions (see "Out of scope" below).
+In the TUI and headless CLI, where there's no drag-drop/paste surface, `@mention`ing a workspace
+image file reuses this same resize/transcode pipeline instead -- see docs/specs/at-mention-file-
+inlining.md's "Image mentions" section.
+
+Out of scope: remote image URLs (images are always inlined as base64), server-side file-upload
+preflighting, and any image-retention/pruning policy for long sessions (see "Out of scope"
+below).
 
 ## Data model
 
@@ -107,12 +111,16 @@ token count with no relationship to a provider's actual multimodal billing.
   capped client-side at 25MB per image with no cap on attachment count -- routinely exceed the
   default, which fails closed as an unrecoverable `LimitOverrunError` that tears down the whole
   ACP connection rather than erroring just that one request.
-* `klorb_agent._extract_prompt_content(blocks, active_model, config) -> (text, image_fragments)`
-  concatenates every `text` block and builds one `MessageFragment` per `image` block via
-  `prepare_image_for_model`. Raises `invalid_params` for an `image` block if `active_model` is
-  `None` or its `capabilities()["vision"]` is falsy (`{"reason": "the active model does not
-  support image input"}`), or if `prepare_image_for_model` raises `ImageTooLargeError`;
-  audio/resource blocks keep raising `invalid_params` unconditionally.
+* `klorb_agent._extract_prompt_content(blocks, active_model, image_pipeline_config) -> (text,
+  image_fragments)` concatenates every `text` block and builds one `MessageFragment` per `image`
+  block via `prepare_image_for_model`. `image_pipeline_config` is the calling `Session`'s own
+  `image_pipeline_config` property (see docs/specs/at-mention-file-inlining.md) rather than a
+  fresh `ImagePipelineConfig` built from `ProcessConfig` per call, so a drag-drop/paste
+  attachment and an @mentioned image are resized/transcoded under identical settings. Raises
+  `invalid_params` for an `image` block if `active_model` is `None` or its
+  `capabilities()["vision"]` is falsy (`{"reason": "the active model does not support image
+  input"}`), or if `prepare_image_for_model` raises `ImageTooLargeError`; audio/resource blocks
+  keep raising `invalid_params` unconditionally.
 * `agentCapabilities._meta.klorb.imageInput = true` at `initialize()` -- static (the server
   understands `ImageContentBlock` at the protocol level at all). `_klorb/getSessionConfig`'s
   result additionally carries `activeModelVision: boolean` (the *current* model's own
@@ -237,9 +245,10 @@ mirroring `tools.@mention.maxLines`'s shape):
 
 ## Out of scope
 
-* TUI/CLI image attachment (`--image path.png`, or a `>attach <workspace-file>` palette command)
-  -- the resize pipeline and `MessageFragment`/ACP plumbing this feature builds are UI-agnostic
-  and directly reusable once a TUI-side entry point exists.
+* A dedicated TUI/CLI attach surface (`--image path.png`, or a `>attach <workspace-file>` palette
+  command) beyond `@mention`ing a workspace image file (docs/specs/at-mention-file-inlining.md's
+  "Image mentions" section) -- the resize pipeline and `MessageFragment`/ACP plumbing this feature
+  builds are UI-agnostic and already reused by that entry point.
 * Remote image URLs (`{"image_url": {"url": "https://..."}}` instead of always inlining base64)
   and server-side file-upload preflighting -- images are always inlined as base64 today.
 * Image retention/pruning policy: klorb's session history has no context-pruning mechanism at
