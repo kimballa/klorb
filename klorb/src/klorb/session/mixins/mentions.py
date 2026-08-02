@@ -88,10 +88,7 @@ unescaped `"` needs no entry here: it's excluded from `_AT_MENTION_RE`'s unquote
 outright, so it can never appear in an unquoted match (leading, trailing, or embedded) in the
 first place -- `hello @foo.txt"followed by...` already stops the unquoted match at `foo.txt`
 without this set's help, with no need to track whether some earlier, unrelated quote in the
-sentence was "open". Also consulted by `klorb.tui.widgets.file_finder.build_mention_insertion`
-(and its VS Code mirror, `escapeQuotedMentionPath`/`buildMentionInsertion` in
-fileFinderModel.ts) to decide whether inserting a fuzzy-finder selection needs the quoted form to
-round-trip correctly."""
+sentence was "open"."""
 
 
 def _mention_token_starts(raw: str) -> list[int]:

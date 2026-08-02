@@ -21,9 +21,7 @@ const MENTION_RE = /(?<!\S)@"((?:[^"\\\n]|\\[\s\S])*?)"|(?<!\S)@((?:[^\s"\\]|\\[
  * `klorb.session.mixins.mentions.TRAILING_MENTION_PUNCTUATION`. A quoted mention (`@"foo."`) is
  * never subject to this: an unescaped `"` can't appear in an unquoted match at all (excluded
  * from `MENTION_RE`'s own character class), so this set only ever needs the characters that
- * *are* part of that class. Also consulted by `fileFinderModel.ts`'s `needsQuotedMention` to
- * decide whether an inserted path needs the quoted form to round-trip through this same
- * trimming. */
+ * *are* part of that class. */
 export const TRAILING_MENTION_PUNCTUATION = new Set([
   '.',
   ',',
@@ -86,7 +84,7 @@ function mentionTokenStarts(raw: string): number[] {
  * `klorb.session.mixins.mentions.strip_trailing_mention_punctuation`. */
 export function stripTrailingMentionPunctuation(raw: string): string {
   let text = raw;
-  for (;;) {
+  while (true) {
     const starts = mentionTokenStarts(text);
     const tokenStart = starts[starts.length - 1];
     if (tokenStart === undefined || tokenStart === 0) {
