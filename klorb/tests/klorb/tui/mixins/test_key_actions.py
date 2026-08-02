@@ -179,8 +179,16 @@ async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock
 
             await pilot.press("ctrl+c")  # third within window: force-exit
             await _wait_until(pilot, lambda: stub_force_exit.called)
+
+            # Release the wedged worker and wait for it to actually unwind here, while the app
+            # (and pytest's per-test log capture) is still up -- otherwise it finishes on its own
+            # schedule after this test has already returned, and its log record leaks to raw
+            # stderr instead of being captured (see `_wait_until` callers elsewhere in this file
+            # for the same pattern applied to non-stuck turns).
+            release.set()
+            await app.workers.wait_for_complete()
     finally:
-        release.set()  # let the worker unwind so the harness can shut the app down
+        release.set()  # safety net: still unstick the worker if an assertion above raised
 
     stub_force_exit.assert_called()
 
