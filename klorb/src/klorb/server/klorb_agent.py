@@ -36,6 +36,7 @@ from acp.schema import (
 )
 
 from klorb.agents.policy import compute_root_session_grants
+from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, walk_session_tree
 from klorb.api_provider import ApiProvider, ResponseAborted
 from klorb.images.prepare import ImagePipelineConfig, ImageTooLargeError, prepare_image_for_model
 from klorb.message import MessageFragment
@@ -44,6 +45,7 @@ from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config, persist_session_default, user_config_path
+from klorb.server.subagent_updates import build_subagent_tree_snapshot
 from klorb.server.turn_bridge import TurnBridge
 from klorb.server.update_mapping import (
     build_session_replay,
@@ -148,6 +150,7 @@ class KlorbAcpAgent(acp.Agent):
                     "enqueueMessage": True,
                     "taskMeta": chainlink_available(),
                     "imageInput": True,
+                    "subagents": True,
                 }}),
         )
 
@@ -407,6 +410,56 @@ class KlorbAcpAgent(acp.Agent):
             "_klorb/enqueueMessage queued a message for ACP session %s", self._acp_session_id)
         return {"queued": True}
 
+    def _find_subagent(self, subagent_id: str) -> tuple[Session, SubagentHandle] | None:
+        """Look up `subagent_id` (a non-root `Session.id`) anywhere in the live tree, returning
+        its `Session` and the `SubagentHandle` its creator tracks it under, or `None` if no node
+        in the tree (other than the root, which has no handle) matches -- used by both
+        `_ext_subagent_transcript` and `_ext_subagent_cancel`."""
+        assert self._session is not None
+        for node in walk_session_tree(self._session):
+            if node.session.id == subagent_id and node.handle is not None:
+                return node.session, node.handle
+        return None
+
+    def _ext_subagent_tree(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_session_id(params)
+        assert self._session is not None
+        assert self._acp_session_id is not None
+        return build_subagent_tree_snapshot(self._session, self._acp_session_id)
+
+    def _ext_subagent_transcript(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_session_id(params)
+        subagent_id = params.get("subagentId")
+        if not isinstance(subagent_id, str):
+            raise acp.RequestError.invalid_params({"reason": "subagentId is required"})
+        found = self._find_subagent(subagent_id)
+        if found is None:
+            raise acp.RequestError.invalid_params(
+                {"subagentId": subagent_id, "reason": "unknown subagent"})
+        subagent_session, handle = found
+        assert self._session is not None
+        entries = build_session_replay(
+            subagent_session, subagent_session.tool_registry, self._session.config.workspace.path)
+        return {
+            "entries": entries,
+            "state": handle.state,
+            "aborted": SUBAGENT_ABORTED_MARKER in (handle.output or ""),
+        }
+
+    def _ext_subagent_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_session_id(params)
+        subagent_id = params.get("subagentId")
+        if not isinstance(subagent_id, str):
+            raise acp.RequestError.invalid_params({"reason": "subagentId is required"})
+        found = self._find_subagent(subagent_id)
+        if found is None:
+            raise acp.RequestError.invalid_params(
+                {"subagentId": subagent_id, "reason": "unknown subagent"})
+        _, handle = found
+        handle.cancel_event.set()
+        logger.debug("_klorb/subagentCancel signaled cancel_event for subagent %s", subagent_id)
+        return {"cancelled": True}
+
     def _ext_trust_workspace(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
@@ -536,6 +589,12 @@ class KlorbAcpAgent(acp.Agent):
             return self._ext_trust_workspace(params)
         if method == "klorb/enqueueMessage":
             return self._ext_enqueue_message(params)
+        if method == "klorb/subagentTree":
+            return self._ext_subagent_tree(params)
+        if method == "klorb/subagentTranscript":
+            return self._ext_subagent_transcript(params)
+        if method == "klorb/subagentCancel":
+            return self._ext_subagent_cancel(params)
         raise acp.RequestError.method_not_found(f"_{method}")
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   parseHostMessage,
+  parseSubagentTranscriptResult,
+  parseSubagentTreeResult,
   parseWebviewMessage,
   type HostMessage,
   type WebviewMessage,
@@ -23,6 +25,7 @@ describe('parseHostMessage', () => {
         title: 'Read foo.py',
         kind: 'read',
         locations: [{ path: '/tmp/foo.py', line: 3 }],
+        toolName: 'ReadFile',
       },
       { type: 'toolCallStarted', callId: 'call-2', title: 'Mystery', kind: 'other', locations: [] },
       {
@@ -165,6 +168,68 @@ describe('parseHostMessage', () => {
         type: 'imageAttached',
         image: { mimeType: 'image/png', dataBase64: 'abcd' },
       },
+      {
+        type: 'permissionAsk',
+        requestId: 2,
+        title: '[subagent 1.1 (explorer)] Run: ls',
+        options: [{ id: 'allow:once', name: 'Allow once', kind: 'allow_once', scope: 'once' }],
+        klorbMeta: { resourceDescription: 'run shell command: ls' },
+        originSessionId: 'subagent-1',
+      },
+      {
+        type: 'questionAsk',
+        requestId: 2,
+        header: '[subagent 1.1 (explorer)] Format',
+        question: 'Which format?',
+        options: [{ label: 'JSON' }],
+        index: 0,
+        total: 1,
+        originSessionId: 'subagent-1',
+      },
+      {
+        type: 'subagentTreeUpdate',
+        nodes: [
+          {
+            id: 'root-1',
+            parentId: null,
+            address: '1',
+            title: null,
+            role: 'operator',
+            state: null,
+            aborted: false,
+            model: 'anthropic/claude-sonnet-5',
+            thinkingEnabled: false,
+            thinkingEffort: 'medium',
+            usedTokens: 0,
+            maxTokens: 128000,
+            outputTokens: 0,
+          },
+          {
+            id: 'subagent-1',
+            parentId: 'root-1',
+            address: '1.1',
+            title: 'find the bug',
+            role: 'explorer',
+            state: 'running',
+            aborted: false,
+            model: 'moonshotai/kimi-k2.7-code',
+            thinkingEnabled: true,
+            thinkingEffort: 'high',
+            usedTokens: 500,
+            maxTokens: null,
+            outputTokens: 50,
+          },
+        ],
+      },
+      { type: 'subagentTreeUpdate', nodes: [] },
+      {
+        type: 'subagentTranscriptUpdate',
+        sessionId: 'subagent-1',
+        entries: [{ kind: 'response', text: 'found it', streaming: false }],
+        state: 'finished',
+        aborted: false,
+      },
+      { type: 'toggleSubagentsPanel' },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -336,6 +401,101 @@ describe('parseHostMessage', () => {
         image: { mimeType: 'image/png', dataBase64: 'abcd', name: 7 },
       })
     ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'permissionAsk',
+        requestId: 1,
+        title: 'x',
+        options: [],
+        klorbMeta: {},
+        originSessionId: 7,
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'questionAsk',
+        requestId: 1,
+        header: 'x',
+        question: 'y?',
+        options: [],
+        index: 0,
+        total: 1,
+        originSessionId: 7,
+      })
+    ).toBeUndefined();
+    expect(parseHostMessage({ type: 'subagentTreeUpdate' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'subagentTreeUpdate', nodes: [{ id: 'x' }] })).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'subagentTranscriptUpdate',
+        sessionId: 'x',
+        entries: [],
+        state: 'paused',
+        aborted: false,
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'subagentTranscriptUpdate',
+        entries: [],
+        state: 'running',
+        aborted: false,
+      })
+    ).toBeUndefined();
+  });
+});
+
+describe('parseSubagentTreeResult', () => {
+  it('accepts a valid {nodes} result', () => {
+    const value = {
+      nodes: [
+        {
+          id: 'root-1',
+          parentId: null,
+          address: '1',
+          title: null,
+          role: 'operator',
+          state: null,
+          aborted: false,
+          model: 'anthropic/claude-sonnet-5',
+          thinkingEnabled: false,
+          thinkingEffort: 'medium',
+          usedTokens: 0,
+          maxTokens: null,
+          outputTokens: 0,
+        },
+      ],
+    };
+    expect(parseSubagentTreeResult(value)).toEqual(value.nodes);
+  });
+
+  it('rejects malformed results', () => {
+    expect(parseSubagentTreeResult(undefined)).toBeUndefined();
+    expect(parseSubagentTreeResult({})).toBeUndefined();
+    expect(parseSubagentTreeResult({ nodes: 'not-an-array' })).toBeUndefined();
+    expect(parseSubagentTreeResult({ nodes: [{ id: 'x' }] })).toBeUndefined();
+  });
+});
+
+describe('parseSubagentTranscriptResult', () => {
+  it('accepts a valid {entries, state, aborted} result', () => {
+    const value = {
+      entries: [{ kind: 'response', text: 'found it', streaming: false }],
+      state: 'finished',
+      aborted: true,
+    };
+    expect(parseSubagentTranscriptResult(value)).toEqual(value);
+  });
+
+  it('rejects malformed results', () => {
+    expect(parseSubagentTranscriptResult(undefined)).toBeUndefined();
+    expect(parseSubagentTranscriptResult({ entries: [], state: 'running' })).toBeUndefined();
+    expect(
+      parseSubagentTranscriptResult({ entries: [], state: 'paused', aborted: false })
+    ).toBeUndefined();
+    expect(
+      parseSubagentTranscriptResult({ entries: 'nope', state: 'running', aborted: false })
+    ).toBeUndefined();
   });
 });
 
@@ -374,6 +534,11 @@ describe('parseWebviewMessage', () => {
       { type: 'listRecentSessions' },
       { type: 'webviewError', message: 'boom' },
       { type: 'webviewError', message: 'boom', stack: 'at App (App.tsx:1:1)' },
+      { type: 'setSubagentsPanelVisible', visible: true },
+      { type: 'setSubagentsPanelVisible', visible: false },
+      { type: 'selectSubagent', sessionId: null },
+      { type: 'selectSubagent', sessionId: 'subagent-1' },
+      { type: 'cancelSubagent', sessionId: 'subagent-1' },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);
@@ -413,5 +578,13 @@ describe('parseWebviewMessage', () => {
     expect(
       parseWebviewMessage({ type: 'webviewError', message: 'boom', stack: 7 })
     ).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'setSubagentsPanelVisible' })).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'setSubagentsPanelVisible', visible: 'yes' })
+    ).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'selectSubagent' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'selectSubagent', sessionId: 7 })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'cancelSubagent' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'cancelSubagent', sessionId: null })).toBeUndefined();
   });
 });

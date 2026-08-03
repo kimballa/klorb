@@ -79,6 +79,9 @@ export class AcpConnection {
    * at `initialize()` -- set once per `start()` call and threaded into every `newSession()`'s
    * `SessionInfo`, since it's a property of the connection/server, not of any one session. */
   private _enqueueMessageCapable = false;
+  /** Whether the connected server advertised `agentCapabilities._meta.klorb.subagents` at
+   * `initialize()` -- same lifetime/threading as `_enqueueMessageCapable`. */
+  private _subagentsCapable = false;
 
   public constructor(
     serverProcess: KlorbServerProcess,
@@ -190,6 +193,7 @@ export class AcpConnection {
       );
     }
     this._enqueueMessageCapable = klorbAgentCapability(initResult, 'enqueueMessage');
+    this._subagentsCapable = klorbAgentCapability(initResult, 'subagents');
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
     if (resumeSessionId !== undefined) {
       this._log(`klorb: attempting session/load for resumeSessionId=${resumeSessionId}`);
@@ -223,7 +227,9 @@ export class AcpConnection {
     const session = await this._raceClosed(connection.newSession({ cwd, mcpServers: [] }));
     this._sessionId = session.sessionId;
     this._log(`klorb: session created: ${session.sessionId}`);
-    this._listener.onSessionInfo(sessionInfoFromResponse(session, this._enqueueMessageCapable));
+    this._listener.onSessionInfo(
+      sessionInfoFromResponse(session, this._enqueueMessageCapable, this._subagentsCapable)
+    );
   }
 
   /** Loads a previously saved session (`session/load`), replacing the current one -- see
@@ -258,7 +264,9 @@ export class AcpConnection {
       throw err;
     }
     this._log(`klorb: session loaded: ${sessionId}`);
-    this._listener.onSessionInfo(sessionInfoFromResponse(session, this._enqueueMessageCapable));
+    this._listener.onSessionInfo(
+      sessionInfoFromResponse(session, this._enqueueMessageCapable, this._subagentsCapable)
+    );
   }
 
   /** Lists this workspace's saved sessions (`session/list`), most recently touched first. */
@@ -297,6 +305,14 @@ export class AcpConnection {
    * `enqueueMessageCapable` prop). */
   public get enqueueMessageCapable(): boolean {
     return this._enqueueMessageCapable;
+  }
+
+  /** Whether the connected server advertised `_klorb/subagentTree` (and its sibling ext
+   * methods) -- gates whether `SubagentPoller` attempts to poll at all, so an older server that
+   * predates this feature isn't hit with a stream of `method not found` errors every poll
+   * interval. */
+  public get subagentsCapable(): boolean {
+    return this._subagentsCapable;
   }
 
   /** Queues `text` into the currently in-flight turn (`_klorb/enqueueMessage`) -- valid only
@@ -379,6 +395,7 @@ export class AcpConnection {
     this._client = undefined;
     this._sessionId = undefined;
     this._enqueueMessageCapable = false;
+    this._subagentsCapable = false;
     reject?.(new Error('klorb server restarted'));
     this._serverProcess.stop();
   }
@@ -393,6 +410,7 @@ export class AcpConnection {
     this._client = undefined;
     this._sessionId = undefined;
     this._enqueueMessageCapable = false;
+    this._subagentsCapable = false;
     reject?.(new Error('klorb server exited unexpectedly; run "Klorb: Restart Server"'));
     this._serverProcess.stop();
   }

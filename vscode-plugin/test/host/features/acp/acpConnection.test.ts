@@ -155,6 +155,43 @@ describe('AcpConnection', () => {
     expect(events).toContain('sessionInfo::true');
   });
 
+  it('threads the initialize()-negotiated subagents capability through subagentsCapable', async () => {
+    const agent = new MockAgent();
+    agent.onInitialize = async () => ({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: { _meta: { klorb: { subagents: true } } },
+    });
+    const { connection } = makeHarness(agent);
+
+    expect(connection.subagentsCapable).toBe(false);
+    await connection.start(OPTIONS, '/work');
+
+    expect(connection.subagentsCapable).toBe(true);
+  });
+
+  it('subagentsCapable defaults to false for a server that does not advertise it', async () => {
+    const { connection } = makeHarness(new MockAgent());
+
+    await connection.start(OPTIONS, '/work');
+
+    expect(connection.subagentsCapable).toBe(false);
+  });
+
+  it('resets subagentsCapable to false on stop()', async () => {
+    const agent = new MockAgent();
+    agent.onInitialize = async () => ({
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: { _meta: { klorb: { subagents: true } } },
+    });
+    const { connection } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+    expect(connection.subagentsCapable).toBe(true);
+
+    connection.stop();
+
+    expect(connection.subagentsCapable).toBe(false);
+  });
+
   it('enqueueMessage() sends _klorb/enqueueMessage with the text', async () => {
     const agent = new MockAgent();
     agent.onExtMethod = async () => ({ queued: true });

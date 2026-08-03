@@ -122,7 +122,9 @@ export interface BashToolMeta {
 /** A tool call was just started (ACP `tool_call` update): `kind` and `status` are left as
  * plain strings (mirroring `TurnEndedMessage.stopReason`) rather than a literal union, so an
  * ACP `ToolKind`/`ToolCallStatus` value this client doesn't recognize yet still round-trips
- * instead of failing to parse. */
+ * instead of failing to parse. `toolName` is the server's own `_meta.klorb.toolName` (e.g.
+ * `"CreateSubagent"`), omitted for a non-klorb ACP agent -- lets a listener distinguish tools
+ * that share one `kind` bucket (see `update_mapping.TOOL_KIND_MAP`'s `"other"` entries). */
 export interface ToolCallStartedMessage {
   type: 'toolCallStarted';
   callId: string;
@@ -130,6 +132,7 @@ export interface ToolCallStartedMessage {
   kind: string;
   locations: ToolCallLocation[];
   bashMeta?: BashToolMeta;
+  toolName?: string;
 }
 
 /** A tool call finished or otherwise changed (ACP `tool_call_update`); mutates the matching
@@ -161,13 +164,19 @@ export interface PermissionAskOption {
  * until a matching `permissionDecision` resolves it. `klorbMeta` is the request's `_meta.klorb`
  * payload verbatim (see docs/specs/klorb-server.md's "Permission asks and escalation" section):
  * `resourceDescription`, and for a bash ask `commandText`/`itemCommandText`/`itemIndex`/
- * `itemTotal`/`grantPatterns`/`riskLevel`, or for an escalation ask `escalation`. */
+ * `itemTotal`/`grantPatterns`/`riskLevel`, or for an escalation ask `escalation`.
+ * `originSessionId`, present only when this ask was raised by a subagent's turn rather than the
+ * root session's own (`klorb.session.events.PermissionAskContext.origin_session_id`, forwarded
+ * through `klorb.agents.policy.build_subagent_turn_handlers`), names which session in the
+ * subagents panel this ask belongs to -- the panel only renders it once that session is
+ * selected, mirroring the TUI's `SubagentsPanelMixin._await_session_selected` gate. */
 export interface PermissionAskMessage {
   type: 'permissionAsk';
   requestId: number;
   title: string;
   options: PermissionAskOption[];
   klorbMeta: Record<string, unknown>;
+  originSessionId?: string;
 }
 
 /** One selectable option in a `questionAsk`'s option list, flattened from a `_klorb/
@@ -181,7 +190,8 @@ export interface QuestionAskOption {
  * `QuestionPanel` in the interaction area until a matching `questionAnswer` resolves it. One
  * question of a multi-question `AskUserQuestions` batch, asked serially (`index`/`total` name
  * this question's position, e.g. "Question 2 of 3" -- see docs/specs/klorb-server.md's
- * extension-method registry). */
+ * extension-method registry). `originSessionId` mirrors `PermissionAskMessage.originSessionId`
+ * -- see that field's own doc comment. */
 export interface QuestionAskMessage {
   type: 'questionAsk';
   requestId: number;
@@ -190,6 +200,7 @@ export interface QuestionAskMessage {
   options: QuestionAskOption[];
   index: number;
   total: number;
+  originSessionId?: string;
 }
 
 /** A `_klorb/raiseToolCallLimit` ext request the server is waiting on an answer for -- mounts
@@ -236,6 +247,12 @@ export interface StatusUpdateMessage {
    * attach-image affordance (drag/paste/file-picker). Known once per `_klorb/getSessionConfig`
    * round trip, same as `model` -- see docs/specs/vision-image-input.md. */
   activeModelVision?: boolean;
+  /** Whether the connected server advertised `agentCapabilities._meta.klorb.subagents` at
+   * `initialize()` -- known once per connection, not per-session (mirrors
+   * `enqueueMessageCapable`). Gates whether the subagents panel polls/renders at all, so an
+   * older server that predates `_klorb/subagentTree` doesn't leave the panel permanently empty
+   * with no explanation. */
+  subagentsCapable?: boolean;
 }
 
 /** An ordered label -> numeric-value map, rendered as a right-aligned two-column table row per
@@ -307,6 +324,87 @@ export interface TaskListUpdateMessage {
  * state (which the webview keeps un-persisted, native `<details>` state). */
 export interface ToggleTaskPanelMessage {
   type: 'toggleTaskPanel';
+}
+
+/** One session in the live tree rooted at the root session -- mirrors one entry of
+ * `klorb.server.subagent_updates.build_subagent_tree_snapshot`'s `"nodes"` list, and (for
+ * `role`/`state`/`address`) `klorb.tui.widgets.subagents_panel.SubagentRowData`. The root
+ * session's own entry (`parentId: null`) is included alongside every subagent's, so a single
+ * `SubagentTreeUpdateMessage` is enough to render the whole selectable tree, root row included
+ * -- see docs/specs/vscode-plugin.md's "Subagents panel" section. `model`/`thinkingEnabled`/
+ * `thinkingEffort`/`usedTokens`/`maxTokens`/`outputTokens` are this session's own
+ * `SessionConfig`/token tally, letting the header/status row follow whichever session is
+ * selected without a second round trip -- the VSCode analogue of the TUI's `ReplApp.
+ * format_title`/`StatusBarMixin._update_status_bar` reading `_selected_session` directly. */
+export interface SubagentNodeInfo {
+  id: string;
+  parentId: string | null;
+  address: string;
+  title: string | null;
+  role: string;
+  state: 'running' | 'finished' | null;
+  aborted: boolean;
+  model: string;
+  thinkingEnabled: boolean;
+  thinkingEffort: ThinkingEffort;
+  usedTokens: number;
+  maxTokens: number | null;
+  outputTokens: number;
+}
+
+/** A fresh snapshot of the whole subagent tree (`_klorb/subagentTree`), replacing the panel's
+ * node list wholesale -- polled by the host while the subagents panel is visible, mirroring
+ * `TaskListUpdateMessage`'s own "always the complete snapshot, never a delta" convention. */
+export interface SubagentTreeUpdateMessage {
+  type: 'subagentTreeUpdate';
+  nodes: SubagentNodeInfo[];
+}
+
+/** A fresh transcript snapshot for the currently selected subagent (`_klorb/subagentTranscript`),
+ * polled by the host while that subagent stays selected -- `entries` is the same
+ * `SessionReplayEntry[]` shape a `sessionReplay` carries, so the webview can render it through
+ * the same `HistoryView`. `state`/`aborted` drive the trailing status line's four states (still
+ * working / task complete / interrupted / sending interrupt…, the last being purely local UI
+ * state around a `cancelSubagent` click -- see docs/specs/vscode-plugin.md). */
+export interface SubagentTranscriptUpdateMessage {
+  type: 'subagentTranscriptUpdate';
+  sessionId: string;
+  entries: SessionReplayEntry[];
+  state: 'running' | 'finished';
+  aborted: boolean;
+}
+
+/** The user ran **Klorb: Toggle Subagents Panel** (or clicked its own header pin control),
+ * mirroring `ToggleTaskPanelMessage`. */
+export interface ToggleSubagentsPanelMessage {
+  type: 'toggleSubagentsPanel';
+}
+
+/** The webview's subagents panel became visible or hidden -- the host starts/stops polling
+ * `_klorb/subagentTree` accordingly (no point polling a tree nothing is drawing). Sent once per
+ * actual visibility change (`toggleSubagentsPanel`'s own JSX-mount effect), not per render. */
+export interface SetSubagentsPanelVisibleMessage {
+  type: 'setSubagentsPanelVisible';
+  visible: boolean;
+}
+
+/** The user selected a row in the subagents panel: `sessionId: null` selects the root session
+ * (restoring normal interactivity), a real id selects that subagent. The host starts polling
+ * `_klorb/subagentTranscript` for a non-null selection (stopping any previous selection's poll)
+ * and stops entirely for `null` -- see docs/specs/vscode-plugin.md's "Subagents panel" section. */
+export interface SelectSubagentMessage {
+  type: 'selectSubagent';
+  sessionId: string | null;
+}
+
+/** The user clicked Stop while a subagent (not the root) was selected: cancel that specific
+ * subagent's turn (`_klorb/subagentCancel`), leaving the root session's own turn (if any)
+ * untouched -- mirrors the TUI's per-subagent Escape/Ctrl+C handling
+ * (`KeyActionsMixin._interrupt_running_activity`/`SubagentsPanelMixin.
+ * _note_subagent_interrupt_requested`). */
+export interface CancelSubagentMessage {
+  type: 'cancelSubagent';
+  sessionId: string;
 }
 
 /** One text entry replayed from a previously saved session (see `SessionReplayMessage`) --
@@ -399,6 +497,9 @@ export type HostMessage =
   | SessionStatsMessage
   | TaskListUpdateMessage
   | ToggleTaskPanelMessage
+  | SubagentTreeUpdateMessage
+  | SubagentTranscriptUpdateMessage
+  | ToggleSubagentsPanelMessage
   | SessionReplayMessage
   | WorkspaceFilesMessage
   | ImageAttachedMessage;
@@ -582,6 +683,9 @@ export type WebviewMessage =
   | ReloadSkillsMessage
   | ListRecentSessionsMessage
   | AttachImageFileMessage
+  | SetSubagentsPanelVisibleMessage
+  | SelectSubagentMessage
+  | CancelSubagentMessage
   | WebviewErrorMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
@@ -596,7 +700,12 @@ const HOST_FIELD_SPECS: readonly FieldSpec[] = [
   { field: 'message', types: ['turnError', 'serverLost'] },
 ];
 
-const HOST_BARE_TYPES: readonly string[] = ['turnStarted', 'sessionReset', 'toggleTaskPanel'];
+const HOST_BARE_TYPES: readonly string[] = [
+  'turnStarted',
+  'sessionReset',
+  'toggleTaskPanel',
+  'toggleSubagentsPanel',
+];
 
 const WEBVIEW_BARE_TYPES: readonly string[] = [
   'cancelTurn',
@@ -728,7 +837,8 @@ function parsePermissionAsk(record: Record<string, unknown>): PermissionAskMessa
     Array.isArray(record.options) &&
     record.options.every(isPermissionAskOption) &&
     typeof record.klorbMeta === 'object' &&
-    record.klorbMeta !== null
+    record.klorbMeta !== null &&
+    (record.originSessionId === undefined || typeof record.originSessionId === 'string')
   ) {
     return record as unknown as PermissionAskMessage;
   }
@@ -754,7 +864,8 @@ function parseQuestionAsk(record: Record<string, unknown>): QuestionAskMessage |
     Array.isArray(record.options) &&
     record.options.every(isQuestionAskOption) &&
     typeof record.index === 'number' &&
-    typeof record.total === 'number'
+    typeof record.total === 'number' &&
+    (record.originSessionId === undefined || typeof record.originSessionId === 'string')
   ) {
     return record as unknown as QuestionAskMessage;
   }
@@ -834,7 +945,8 @@ function parseStatusUpdate(record: Record<string, unknown>): StatusUpdateMessage
     (record.workspaceTrusted !== undefined && typeof record.workspaceTrusted !== 'boolean') ||
     (record.enqueueMessageCapable !== undefined &&
       typeof record.enqueueMessageCapable !== 'boolean') ||
-    (record.activeModelVision !== undefined && typeof record.activeModelVision !== 'boolean')
+    (record.activeModelVision !== undefined && typeof record.activeModelVision !== 'boolean') ||
+    (record.subagentsCapable !== undefined && typeof record.subagentsCapable !== 'boolean')
   ) {
     return undefined;
   }
@@ -910,6 +1022,118 @@ function parseTaskListUpdate(record: Record<string, unknown>): TaskListUpdateMes
     return undefined;
   }
   return record as unknown as TaskListUpdateMessage;
+}
+
+function isSubagentState(value: unknown): value is 'running' | 'finished' | null {
+  return value === 'running' || value === 'finished' || value === null;
+}
+
+function isSubagentNodeInfo(value: unknown): value is SubagentNodeInfo {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === 'string' &&
+    (v.parentId === null || typeof v.parentId === 'string') &&
+    typeof v.address === 'string' &&
+    (v.title === null || typeof v.title === 'string') &&
+    typeof v.role === 'string' &&
+    isSubagentState(v.state) &&
+    typeof v.aborted === 'boolean' &&
+    typeof v.model === 'string' &&
+    typeof v.thinkingEnabled === 'boolean' &&
+    isThinkingEffort(v.thinkingEffort) &&
+    typeof v.usedTokens === 'number' &&
+    (v.maxTokens === null || typeof v.maxTokens === 'number') &&
+    typeof v.outputTokens === 'number'
+  );
+}
+
+function parseSubagentTreeUpdate(
+  record: Record<string, unknown>
+): SubagentTreeUpdateMessage | undefined {
+  if (!Array.isArray(record.nodes) || !record.nodes.every(isSubagentNodeInfo)) {
+    return undefined;
+  }
+  return { type: 'subagentTreeUpdate', nodes: record.nodes };
+}
+
+function parseSubagentTranscriptUpdate(
+  record: Record<string, unknown>
+): SubagentTranscriptUpdateMessage | undefined {
+  if (
+    typeof record.sessionId !== 'string' ||
+    !Array.isArray(record.entries) ||
+    !record.entries.every(isSessionReplayEntry) ||
+    (record.state !== 'running' && record.state !== 'finished') ||
+    typeof record.aborted !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return {
+    type: 'subagentTranscriptUpdate',
+    sessionId: record.sessionId,
+    entries: record.entries,
+    state: record.state,
+    aborted: record.aborted,
+  };
+}
+
+/** Validates a raw `_klorb/subagentTree` ext-method result (`{nodes: [...]}`, no message
+ * envelope) into `SubagentNodeInfo[]`, or `undefined` if malformed -- shared by
+ * `host/features/subagents/subagentPoller.ts`, which polls this ext method directly rather than
+ * receiving it as a `HostMessage`. */
+export function parseSubagentTreeResult(value: unknown): SubagentNodeInfo[] | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const nodes = (value as Record<string, unknown>).nodes;
+  return Array.isArray(nodes) && nodes.every(isSubagentNodeInfo) ? nodes : undefined;
+}
+
+/** Validates a raw `_klorb/subagentTranscript` ext-method result (`{entries, state, aborted}`,
+ * no message envelope, no `sessionId` -- the poller already knows which subagent it asked
+ * about), or `undefined` if malformed -- see `parseSubagentTreeResult`'s own doc comment. */
+export function parseSubagentTranscriptResult(
+  value: unknown
+): { entries: SessionReplayEntry[]; state: 'running' | 'finished'; aborted: boolean } | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const v = value as Record<string, unknown>;
+  if (
+    !Array.isArray(v.entries) ||
+    !v.entries.every(isSessionReplayEntry) ||
+    (v.state !== 'running' && v.state !== 'finished') ||
+    typeof v.aborted !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return { entries: v.entries, state: v.state, aborted: v.aborted };
+}
+
+function parseSetSubagentsPanelVisible(
+  record: Record<string, unknown>
+): SetSubagentsPanelVisibleMessage | undefined {
+  if (typeof record.visible !== 'boolean') {
+    return undefined;
+  }
+  return { type: 'setSubagentsPanelVisible', visible: record.visible };
+}
+
+function parseSelectSubagent(record: Record<string, unknown>): SelectSubagentMessage | undefined {
+  if (record.sessionId !== null && typeof record.sessionId !== 'string') {
+    return undefined;
+  }
+  return { type: 'selectSubagent', sessionId: record.sessionId };
+}
+
+function parseCancelSubagent(record: Record<string, unknown>): CancelSubagentMessage | undefined {
+  if (typeof record.sessionId !== 'string') {
+    return undefined;
+  }
+  return { type: 'cancelSubagent', sessionId: record.sessionId };
 }
 
 function isAttachedImageMeta(value: unknown): value is AttachedImageMeta {
@@ -1075,6 +1299,10 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseSessionStats(record);
     case 'taskListUpdate':
       return parseTaskListUpdate(record);
+    case 'subagentTreeUpdate':
+      return parseSubagentTreeUpdate(record);
+    case 'subagentTranscriptUpdate':
+      return parseSubagentTranscriptUpdate(record);
     case 'sessionReplay':
       return parseSessionReplay(record);
     case 'workspaceFiles':
@@ -1116,6 +1344,12 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parseQuestionAnswer(record);
     case 'toolCallLimitDecision':
       return parseToolCallLimitDecision(record);
+    case 'setSubagentsPanelVisible':
+      return parseSetSubagentsPanelVisible(record);
+    case 'selectSubagent':
+      return parseSelectSubagent(record);
+    case 'cancelSubagent':
+      return parseCancelSubagent(record);
     case 'webviewError':
       return parseWebviewError(record);
     default:

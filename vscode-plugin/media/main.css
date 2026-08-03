@@ -183,6 +183,121 @@ body {
   font-style: italic;
 }
 
+.subagents-panel {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.subagents-panel-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.subagents-panel-icon {
+  flex: 0 0 auto;
+}
+
+.subagents-panel-summary-text {
+  flex: 1 1 auto;
+  font-weight: 600;
+}
+
+.subagents-panel-pin {
+  flex: 0 0 auto;
+  cursor: pointer;
+  transform: rotate(-45deg);
+}
+
+.subagents-panel-list {
+  max-height: 30vh;
+  overflow-y: auto;
+  padding: 0 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.subagents-panel-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.subagents-panel-row:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.subagents-panel-row-selected {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+/* A fixed-width column, always present (even empty) -- see `.task-star`'s own comment for why. */
+.subagents-panel-row-marker {
+  flex: 0 0 1em;
+  color: var(--vscode-textLink-foreground);
+}
+
+.subagents-panel-row-address {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+}
+
+.subagents-panel-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagents-panel-footer {
+  padding: 4px 12px 6px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+#subagent-history-wrapper {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  /* Without this, the flex item's default min-height: auto would grow to fit #history's full
+     (unscrolled) content instead of letting #history's own overflow-y: auto actually scroll. */
+  min-height: 0;
+}
+
+/* #history is normally a direct child of body's own flex column, where its default min-height
+   works out; nested one level deeper inside #subagent-history-wrapper's own flex column, it
+   needs the same min-height: 0 override that wrapper already has, for the same reason. */
+#subagent-history-wrapper #history {
+  min-height: 0;
+}
+
+#subagent-history-status {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.status-chip-static {
+  cursor: default;
+}
+
 #history {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -870,6 +985,20 @@ button.bash-tool-call-command {
 
 .input-row-muted {
   opacity: 0.6;
+}
+
+#subagent-attention-fallback {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 12px;
+  border: none;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  background-color: var(--vscode-inputValidation-warningBackground, transparent);
+  color: var(--vscode-inputValidation-warningForeground, inherit);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 #prompt-input {

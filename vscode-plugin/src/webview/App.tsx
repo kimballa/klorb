@@ -1,11 +1,12 @@
 // © Copyright 2026 Aaron Kimball
-import { type JSX, useEffect, useRef, useState } from 'react';
+import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   parseHostMessage,
   type ImageAttachment,
   type QuestionAskMessage,
   type StatusUpdateMessage,
+  type SubagentNodeInfo,
 } from 'shared/webviewMessages';
 import ApprovalPanel, { type ApprovalDecision } from 'webview/components/ApprovalPanel';
 import PanelHeader from 'webview/components/PanelHeader';
@@ -27,12 +28,21 @@ import {
   applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
-  isScrollPinnedToBottom,
   type HistoryEntry,
   type PendingInteraction,
   type TaskListSnapshot,
 } from 'webview/features/history';
+import {
+  SubagentsPanel,
+  SubagentTranscriptView,
+  applySubagentTranscriptUpdate,
+  applySubagentTreeUpdate,
+  findRootNode,
+  subagentTranscriptEntries,
+  type SubagentTranscriptSnapshot,
+} from 'webview/features/subagents';
 import { TaskPanel } from 'webview/features/tasks';
+import usePinnedScroll from 'webview/hooks/usePinnedScroll';
 
 /** The status row's data, without the message envelope's `type` discriminant -- see
  * `shared/webviewMessages.ts`'s `StatusUpdateMessage` for field semantics. */
@@ -45,6 +55,8 @@ interface AppProps {
   initialStatus?: StatusSnapshot;
   initialTaskList?: TaskListSnapshot;
   initialTaskPanelVisible?: boolean;
+  initialSubagentsPanelVisible?: boolean;
+  initialSelectedSubagentId?: string | null;
 }
 
 /**
@@ -63,6 +75,8 @@ export default function App({
   initialStatus,
   initialTaskList,
   initialTaskPanelVisible,
+  initialSubagentsPanelVisible,
+  initialSelectedSubagentId,
 }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
@@ -76,36 +90,94 @@ export default function App({
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [taskList, setTaskList] = useState<TaskListSnapshot | undefined>(initialTaskList);
   const [taskPanelVisible, setTaskPanelVisible] = useState(initialTaskPanelVisible ?? true);
-  const historyRef = useRef<HTMLDivElement>(null);
+  // The subagent tree/transcript/expansion state below is deliberately not persisted -- see
+  // `SessionState`'s own doc comment (`webview/features/sessionState`).
+  const [subagentNodes, setSubagentNodes] = useState<SubagentNodeInfo[]>([]);
+  const [subagentTranscript, setSubagentTranscript] = useState<
+    SubagentTranscriptSnapshot | undefined
+  >(undefined);
+  const [subagentExpandedCallIds, setSubagentExpandedCallIds] = useState<ReadonlySet<string>>(
+    new Set()
+  );
+  const [subagentInterruptPending, setSubagentInterruptPending] = useState<string | undefined>(
+    undefined
+  );
+  const [subagentsPanelVisible, setSubagentsPanelVisible] = useState(
+    initialSubagentsPanelVisible ?? false
+  );
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(
+    initialSelectedSubagentId ?? null
+  );
   const promptInputRef = useRef<PromptInputHandle>(null);
-  // Whether the history scroll was at (or near) its bottom edge the last time the user
-  // scrolled it -- a ref, not state, since it's read (not rendered) by the autoscroll effect
-  // below and must reflect the *latest* scroll position without triggering its own re-render.
-  // Mirrors the TUI's `_history_pinned_to_bottom` (see `isScrollPinnedToBottom`).
-  const pinnedToBottomRef = useRef(true);
+  // Follows new content to the bottom only while the user hasn't scrolled away from it, mirroring
+  // the TUI's own `_scroll_if_pinned`/`_subagent_history_pinned_to_bottom` -- two independent
+  // instances, one per scrolling transcript view (root and subagent), since a reader can scroll
+  // either one away from its own bottom independently of the other.
+  const { containerRef: historyRef, scrollToBottomIfPinned: scrollHistoryIfPinned } =
+    usePinnedScroll<HTMLDivElement>();
 
-  useEffect(() => {
-    vscode.setState({ entries, pendingInteraction, status, taskList, taskPanelVisible });
-  }, [entries, pendingInteraction, status, taskList, taskPanelVisible, vscode]);
+  /** Flips the subagents panel's shown/hidden state and tells the host, so its `SubagentPoller`
+   * starts/stops the tree poll accordingly -- unlike `toggleTaskPanelVisible()` further down,
+   * this state has a host-side effect (the task panel has none), hence the `postMessage`
+   * alongside the flip. `useCallback`'d (stable identity, `vscode` never actually changes) so it
+   * can safely be referenced from the mount-once message-listener effect further down. */
+  const toggleSubagentsPanelVisible = useCallback((): void => {
+    setSubagentsPanelVisible((prev) => {
+      const next = !prev;
+      vscode.postMessage({ type: 'setSubagentsPanelVisible', visible: next });
+      return next;
+    });
+  }, [vscode]);
 
-  useEffect(() => {
-    const history = historyRef.current;
-    if (history === null) {
-      return;
-    }
-    function onScroll(): void {
-      if (history === null) {
-        return;
+  /** Selects a row in the subagents panel (`null` selects the root session), clearing whatever
+   * transcript/interrupt state belonged to the previous selection and telling the host so its
+   * `SubagentPoller` starts polling the new selection's transcript (or stops entirely for
+   * `null`) -- see docs/specs/vscode-plugin.md's "Subagents panel" section. `useCallback`'d for
+   * the same reason as `toggleSubagentsPanelVisible` above. */
+  const selectSubagentRow = useCallback(
+    (sessionId: string | null): void => {
+      setSelectedSubagentId(sessionId);
+      setSubagentTranscript(undefined);
+      setSubagentInterruptPending(undefined);
+      vscode.postMessage({ type: 'selectSubagent', sessionId });
+    },
+    [vscode]
+  );
+
+  /** Opens the subagents panel if it isn't already shown -- called when a `CreateSubagent` tool
+   * call starts, so a session's first subagent surfaces the panel automatically instead of
+   * requiring the user to notice and open it manually. A no-op once the panel is already visible,
+   * unlike `toggleSubagentsPanelVisible`, which would incorrectly close it on a second call. */
+  const showSubagentsPanel = useCallback((): void => {
+    setSubagentsPanelVisible((prev) => {
+      if (prev) {
+        return prev;
       }
-      pinnedToBottomRef.current = isScrollPinnedToBottom(
-        history.scrollTop,
-        history.scrollHeight,
-        history.clientHeight
-      );
-    }
-    history.addEventListener('scroll', onScroll);
-    return () => history.removeEventListener('scroll', onScroll);
-  }, []);
+      vscode.postMessage({ type: 'setSubagentsPanelVisible', visible: true });
+      return true;
+    });
+  }, [vscode]);
+
+  useEffect(() => {
+    vscode.setState({
+      entries,
+      pendingInteraction,
+      status,
+      taskList,
+      taskPanelVisible,
+      subagentsPanelVisible,
+      selectedSubagentId,
+    });
+  }, [
+    entries,
+    pendingInteraction,
+    status,
+    taskList,
+    taskPanelVisible,
+    subagentsPanelVisible,
+    selectedSubagentId,
+    vscode,
+  ]);
 
   useEffect(() => {
     // Deliberately not keyed on taskList/taskPanelVisible: those live in the same persisted
@@ -113,13 +185,27 @@ export default function App({
     // arrive several times per turn (once per TodoCreate/TodoUpdate/TodoNext call), and
     // scrolling on every one of those fights the browser's own attempt to keep a focused element
     // elsewhere on the page (e.g. the task panel's own <summary>) in view, which visibly reads as
-    // the history freezing until focus moves away. Only follows new content to the bottom while
-    // the user hasn't scrolled away from it (see `pinnedToBottomRef`), mirroring the TUI's own
-    // `_scroll_if_pinned`.
-    if (pinnedToBottomRef.current) {
-      historyRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
+    // the history freezing until focus moves away.
+    scrollHistoryIfPinned();
+  }, [entries, pendingInteraction, status, scrollHistoryIfPinned]);
+
+  useEffect(() => {
+    // Re-syncs the host's `SubagentPoller` to this webview instance's restored panel-visibility/
+    // selection state -- the poller's own timers live in the extension host, which can outlive a
+    // webview reload (or start fresh alongside one), so this instance's restored state and the
+    // poller's live state must be explicitly reconciled once, right after mount, rather than
+    // assumed to already agree.
+    vscode.postMessage({
+      type: 'setSubagentsPanelVisible',
+      visible: initialSubagentsPanelVisible ?? false,
+    });
+    if ((initialSelectedSubagentId ?? null) !== null) {
+      vscode.postMessage({
+        type: 'selectSubagent',
+        sessionId: initialSelectedSubagentId ?? null,
+      });
     }
-  }, [entries, pendingInteraction, status]);
+  }, [initialSubagentsPanelVisible, initialSelectedSubagentId, vscode]);
 
   useEffect(() => {
     // Reclaims focus for the prompt input once a turn is no longer running -- mirrors the
@@ -149,6 +235,15 @@ export default function App({
       setInFlight((prev) => applyTurnFlag(prev, message));
       setPendingInteraction((prev) => applyPendingInteraction(prev, message));
       setTaskList((prev) => applyTaskListUpdate(prev, message));
+      setSubagentNodes((prev) => applySubagentTreeUpdate(prev, message));
+      setSubagentTranscript((prev) => applySubagentTranscriptUpdate(prev, message));
+      if (message.type === 'subagentTranscriptUpdate' && message.state === 'finished') {
+        // Clears the optimistic "Sending interrupt…" notice once a poll confirms the
+        // interrupted subagent has actually finished -- mirrors the TUI's own
+        // `_subagent_interrupt_pending` clearing once `_mount_subagent_status_notice` reaches
+        // the finished branch.
+        setSubagentInterruptPending((prev) => (prev === message.sessionId ? undefined : prev));
+      }
       if (message.type === 'statusUpdate') {
         // The host always posts the complete currently-known snapshot (never a delta), so a
         // wholesale replace -- not a merge -- is correct here (see `StatusUpdateMessage`'s
@@ -157,6 +252,18 @@ export default function App({
       }
       if (message.type === 'toggleTaskPanel') {
         toggleTaskPanelVisible();
+      }
+      if (message.type === 'toggleSubagentsPanel') {
+        toggleSubagentsPanelVisible();
+      }
+      if (message.type === 'toolCallStarted' && message.toolName === 'CreateSubagent') {
+        showSubagentsPanel();
+      }
+      if (message.type === 'sessionReset') {
+        // A fresh/loaded session's subagent tree is unrelated to whatever the previous one had
+        // -- deselect back to the root and tell the host so its poller stops tracking a
+        // subagent id that no longer exists.
+        selectSubagentRow(null);
       }
       if (message.type === 'workspaceFiles') {
         setWorkspaceFiles(message.files);
@@ -167,10 +274,48 @@ export default function App({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [toggleSubagentsPanelVisible, showSubagentsPanel, selectSubagentRow]);
 
+  /** Flips the task panel's shown/hidden state -- unlike `toggleSubagentsPanelVisible`, this
+   * state has no host-side effect, so there's no accompanying `postMessage`. `TaskPanel` always
+   * renders once `taskPanelVisible` is `true` (a "No tasks available" placeholder before the
+   * first plan update, real content after -- see `TaskPanel`'s own doc comment), so this flag
+   * alone is an accurate stand-in for what's on screen. */
   function toggleTaskPanelVisible(): void {
     setTaskPanelVisible((prev) => !prev);
+  }
+
+  /** Cancels the selected subagent's turn (Stop button while a subagent, not the root, is
+   * selected) -- shows "Sending interrupt…" immediately, mirroring the TUI's own optimistic
+   * notice, until a later poll confirms the subagent actually finished. */
+  function cancelSubagentTurn(): void {
+    if (selectedSubagentId === null) {
+      return;
+    }
+    setSubagentInterruptPending(selectedSubagentId);
+    vscode.postMessage({ type: 'cancelSubagent', sessionId: selectedSubagentId });
+  }
+
+  /** Opens the subagents panel and selects the session an outstanding ask belongs to -- the
+   * fallback attention bar's own click handler (shown only while the panel itself is hidden). */
+  function openAttentionSubagent(): void {
+    if (attentionSessionId === undefined) {
+      return;
+    }
+    toggleSubagentsPanelVisible();
+    selectSubagentRow(attentionSessionId);
+  }
+
+  function toggleSubagentToolCallExpanded(callId: string): void {
+    setSubagentExpandedCallIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(callId)) {
+        next.delete(callId);
+      } else {
+        next.add(callId);
+      }
+      return next;
+    });
   }
 
   function pickModel(): void {
@@ -299,45 +444,108 @@ export default function App({
     );
   }
 
+  const isSubagentSelected = selectedSubagentId !== null;
+  const selectedSubagentNode = subagentNodes.find((node) => node.id === selectedSubagentId);
+  const rootNode = findRootNode(subagentNodes);
+  const pendingOriginId =
+    pendingInteraction !== undefined && 'originSessionId' in pendingInteraction
+      ? (pendingInteraction.originSessionId ?? null)
+      : null;
+  // An ask raised by a subagent's turn is only shown in the interaction area once that
+  // subagent (its `originSessionId`) is the one currently selected -- mirrors the TUI's
+  // `SubagentsPanelMixin._await_session_selected` gate; while it isn't, the ask instead shows
+  // as an attention marker on its own row (see `attentionSessionId` below).
+  const interactionVisible =
+    pendingInteraction !== undefined && pendingOriginId === selectedSubagentId;
+  const attentionSessionId =
+    pendingInteraction !== undefined && !interactionVisible
+      ? pendingOriginId === null
+        ? rootNode?.id
+        : pendingOriginId
+      : undefined;
+  const activeSubagentTranscript =
+    subagentTranscript !== undefined && subagentTranscript.sessionId === selectedSubagentId
+      ? subagentTranscript
+      : undefined;
+  const headerTitle = isSubagentSelected
+    ? `${selectedSubagentNode?.address ?? '?'} ${selectedSubagentNode?.title ?? 'New session…'}`
+    : sessionTitleText(status);
+  // Shown only while the subagents panel itself is hidden -- once it's open, the panel's own
+  // blinking "!" row marker already surfaces the same fact, mirroring the TUI's
+  // `#subagent-attention-status` fallback (`_update_subagent_attention_status_line`).
+  const attentionNode = subagentNodes.find((node) => node.id === attentionSessionId);
+  const showAttentionFallback = !subagentsPanelVisible && attentionNode !== undefined;
+  const effectiveStatus = selectedStatusOverrides(
+    status,
+    isSubagentSelected ? selectedSubagentNode : undefined
+  );
+
   return (
     <VsCodeApiProvider vscode={vscode}>
       <PanelHeader
-        title={sessionTitleText(status)}
+        title={headerTitle}
         onNewSession={newSession}
         onBrowseSessions={browseSessions}
       />
+      {subagentsPanelVisible ? (
+        <SubagentsPanel
+          nodes={subagentNodes}
+          selectedSessionId={selectedSubagentId}
+          attentionSessionId={attentionSessionId}
+          onSelect={selectSubagentRow}
+          onToggleVisibility={toggleSubagentsPanelVisible}
+        />
+      ) : null}
       {taskPanelVisible ? (
         <TaskPanel taskList={taskList} onToggleVisibility={toggleTaskPanelVisible} />
       ) : null}
-      <HistoryView
-        entries={entries}
-        historyRef={historyRef}
-        onToggleToolCallExpanded={toggleToolCallExpanded}
-        onRestartServer={restartServer}
-      />
+      {isSubagentSelected ? (
+        <SubagentTranscriptView
+          entries={subagentTranscriptEntries(activeSubagentTranscript, subagentExpandedCallIds)}
+          state={activeSubagentTranscript?.state}
+          aborted={activeSubagentTranscript?.aborted ?? false}
+          interruptPending={subagentInterruptPending === selectedSubagentId}
+          onToggleToolCallExpanded={toggleSubagentToolCallExpanded}
+        />
+      ) : (
+        <HistoryView
+          entries={entries}
+          historyRef={historyRef}
+          onToggleToolCallExpanded={toggleToolCallExpanded}
+          onRestartServer={restartServer}
+        />
+      )}
       <div id="interaction-area">
-        {pendingInteraction?.type === 'permissionAsk' ? (
+        {interactionVisible && pendingInteraction?.type === 'permissionAsk' ? (
           <ApprovalPanel ask={pendingInteraction} onDecision={handleApprovalDecision} />
-        ) : pendingInteraction?.type === 'questionAsk' ? (
+        ) : interactionVisible && pendingInteraction?.type === 'questionAsk' ? (
           <QuestionPanel ask={pendingInteraction} onAnswer={handleQuestionAnswer} />
-        ) : pendingInteraction?.type === 'toolCallLimitAsk' ? (
+        ) : interactionVisible && pendingInteraction?.type === 'toolCallLimitAsk' ? (
           <ToolCallLimitPanel ask={pendingInteraction} onDecision={handleToolCallLimitDecision} />
         ) : null}
       </div>
+      {showAttentionFallback ? (
+        <button type="button" id="subagent-attention-fallback" onClick={openAttentionSubagent}>
+          Agent {attentionNode.address} needs your input
+        </button>
+      ) : null}
       <PromptInput
         ref={promptInputRef}
-        inFlight={inFlight}
-        muted={pendingInteraction !== undefined}
+        inFlight={isSubagentSelected ? activeSubagentTranscript?.state === 'running' : inFlight}
+        muted={interactionVisible}
+        readOnly={isSubagentSelected}
         enqueueMessageCapable={status.enqueueMessageCapable}
         workspaceFiles={workspaceFiles}
         imagesCapable={status.activeModelVision}
         onSubmit={submit}
-        onCancel={cancel}
+        onCancel={isSubagentSelected ? cancelSubagentTurn : cancel}
         onCyclePermissionMode={cyclePermissionMode}
       />
       <StatusRow
-        {...status}
+        {...effectiveStatus}
         taskPanelVisible={taskPanelVisible}
+        subagentsPanelVisible={subagentsPanelVisible}
+        interactive={!isSubagentSelected}
         onPickModel={pickModel}
         onPickThinking={pickThinking}
         onCyclePermissionMode={cyclePermissionMode}
@@ -346,10 +554,35 @@ export default function App({
         onNewSession={newSession}
         onReloadSkills={reloadSkills}
         onToggleTaskPanel={toggleTaskPanelVisible}
+        onToggleSubagentsPanel={toggleSubagentsPanelVisible}
         onAttachImage={attachImage}
       />
     </VsCodeApiProvider>
   );
+}
+
+/** `StatusRow`'s effective data source: `status` verbatim while the root session is selected, or
+ * `node`'s own model/thinking/token fields overlaid on top of it while a subagent is selected --
+ * a subagent's model/thinking config is fixed at creation and its token tally is its own (see
+ * docs/specs/subagents.md's "Subagent session model" section), so the chips/tally must follow
+ * `node`, not the root's `status`, once one is selected. `node === undefined` (root selected, or
+ * the selected subagent hasn't appeared in a tree snapshot yet) leaves `status` untouched. */
+function selectedStatusOverrides(
+  status: StatusSnapshot,
+  node: SubagentNodeInfo | undefined
+): StatusSnapshot {
+  if (node === undefined) {
+    return status;
+  }
+  return {
+    ...status,
+    model: node.model,
+    thinkingEnabled: node.thinkingEnabled,
+    thinkingEffort: node.thinkingEffort,
+    usedTokens: node.usedTokens,
+    maxTokens: node.maxTokens,
+    outputTokens: node.outputTokens,
+  };
 }
 
 /** The panel's top title bar text: the active session's title, `New session…` until one

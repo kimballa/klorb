@@ -96,7 +96,11 @@ describe('App', () => {
 
     typeAndSubmit(container, 'hello klorb');
 
-    expect(posted).toEqual([{ type: 'submitPrompt', text: 'hello klorb' }]);
+    // `posted` also carries the mount-time `setSubagentsPanelVisible` resync message (see
+    // App.tsx's own mount-resync effect) -- unrelated to this test's own submit-behavior focus.
+    expect(
+      posted.filter((message) => (message as { type: string }).type === 'submitPrompt')
+    ).toEqual([{ type: 'submitPrompt', text: 'hello klorb' }]);
     expect(screen.getByText('hello klorb')).toBeTruthy();
   });
 
@@ -431,7 +435,7 @@ describe('App', () => {
 
     postHostMessage({ type: 'sessionReset' });
 
-    expect(taskPanelSummaryText(container)).toBeNull();
+    expect(taskPanelSummaryText(container)).toBe('No tasks available');
   });
 
   it('hides the task panel on toggleTaskPanel and shows it again on a second toggle', () => {
@@ -459,6 +463,20 @@ describe('App', () => {
 
     postHostMessage({ type: 'toggleTaskPanel' });
     expect(taskPanelSummaryText(container)).toBe('Tasks: 1 open');
+  });
+
+  it('shows "No tasks available" while the panel is open but no task-plan update has arrived yet', () => {
+    const { vscode } = makeVsCode();
+    const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+    // taskPanelVisible defaults to true, so the panel is already open on a fresh session.
+    expect(taskPanelSummaryText(container)).toBe('No tasks available');
+
+    postHostMessage({ type: 'toggleTaskPanel' });
+    expect(taskPanelSummaryText(container)).toBeNull();
+
+    postHostMessage({ type: 'toggleTaskPanel' });
+    expect(taskPanelSummaryText(container)).toBe('No tasks available');
   });
 
   it('brings the task panel back via the status menu after its own pin hides it', () => {
@@ -582,7 +600,11 @@ describe('App', () => {
 
     // The textarea is disabled, so a second Enter (even if fired anyway) submits nothing new.
     typeAndSubmit(container, 'also check the tests');
-    expect(posted).toEqual([{ type: 'submitPrompt', text: 'long task' }]);
+    // `posted` also carries the mount-time `setSubagentsPanelVisible` resync message (see
+    // App.tsx's own mount-resync effect) -- unrelated to this test's own submit-behavior focus.
+    expect(
+      posted.filter((message) => (message as { type: string }).type === 'submitPrompt')
+    ).toEqual([{ type: 'submitPrompt', text: 'long task' }]);
   });
 
   it('renders a messageQueued entry in queued styling and flips it on queuedMessageSent', () => {
@@ -619,5 +641,133 @@ describe('App', () => {
 
     fireEvent.click(screen.getByText('Restart Server'));
     expect(posted).toContainEqual({ type: 'restartServer' });
+  });
+
+  describe('subagents panel', () => {
+    const TREE_NODES = [
+      {
+        id: 'root-1',
+        parentId: null,
+        address: '1',
+        title: null,
+        role: 'operator',
+        state: null,
+        aborted: false,
+        model: 'anthropic/claude-sonnet-5',
+        thinkingEnabled: false,
+        thinkingEffort: 'medium' as const,
+        usedTokens: 0,
+        maxTokens: 128000,
+        outputTokens: 0,
+      },
+      {
+        id: 'subagent-1',
+        parentId: 'root-1',
+        address: '1.1',
+        title: 'find the bug',
+        role: 'explorer',
+        state: 'running' as const,
+        aborted: false,
+        model: 'moonshotai/kimi-k2.7-code',
+        thinkingEnabled: true,
+        thinkingEffort: 'high' as const,
+        usedTokens: 500,
+        maxTokens: null,
+        outputTokens: 50,
+      },
+    ];
+
+    it('opens the subagents panel automatically on a CreateSubagent tool call', () => {
+      const { vscode, posted } = makeVsCode();
+      render(<App vscode={vscode} initialEntries={[]} />);
+      posted.length = 0;
+
+      postHostMessage({
+        type: 'toolCallStarted',
+        callId: 'call-1',
+        title: 'Create subagent',
+        kind: 'other',
+        locations: [],
+        toolName: 'CreateSubagent',
+      });
+
+      expect(posted).toContainEqual({ type: 'setSubagentsPanelVisible', visible: true });
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: TREE_NODES });
+      expect(screen.getByText('Subagents')).toBeTruthy();
+    });
+
+    it('does not re-toggle an already-visible subagents panel on a later CreateSubagent call', () => {
+      const { vscode, posted } = makeVsCode();
+      render(<App vscode={vscode} initialEntries={[]} />);
+      postHostMessage({ type: 'toggleSubagentsPanel' });
+      posted.length = 0;
+
+      postHostMessage({
+        type: 'toolCallStarted',
+        callId: 'call-1',
+        title: 'Create subagent',
+        kind: 'other',
+        locations: [],
+        toolName: 'CreateSubagent',
+      });
+
+      expect(posted).not.toContainEqual(
+        expect.objectContaining({ type: 'setSubagentsPanelVisible' })
+      );
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: TREE_NODES });
+      expect(screen.getByText('Subagents')).toBeTruthy();
+    });
+
+    it('shows the fallback attention bar when a subagent ask arrives while the panel is hidden', () => {
+      const { vscode, posted } = makeVsCode();
+      render(<App vscode={vscode} initialEntries={[]} />);
+
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: TREE_NODES });
+      postHostMessage({
+        type: 'permissionAsk',
+        requestId: 1,
+        title: '[subagent 1.1 (explorer)] Run: ls',
+        options: [{ id: 'allow:once', name: 'Allow once', kind: 'allow_once' }],
+        klorbMeta: { resourceDescription: 'run shell command: ls' },
+        originSessionId: 'subagent-1',
+      });
+
+      expect(screen.getByText('Agent 1.1 needs your input')).toBeTruthy();
+      // The ask itself isn't shown -- the root session (the current selection) doesn't own it.
+      expect(screen.queryByText('run shell command: ls')).toBeNull();
+
+      fireEvent.click(screen.getByText('Agent 1.1 needs your input'));
+
+      expect(posted).toContainEqual({ type: 'setSubagentsPanelVisible', visible: true });
+      expect(posted).toContainEqual({ type: 'selectSubagent', sessionId: 'subagent-1' });
+      // Selecting the owning session surfaces the ask and clears the fallback bar.
+      expect(screen.getByText('run shell command: ls')).toBeTruthy();
+      expect(screen.queryByText('Agent 1.1 needs your input')).toBeNull();
+    });
+
+    it('disables the prompt input and shows the subagent transcript once a row is selected', () => {
+      const { vscode } = makeVsCode();
+      const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: TREE_NODES });
+      postHostMessage({ type: 'toggleSubagentsPanel' });
+      fireEvent.click(screen.getByText('find the bug'));
+
+      expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
+    });
+
+    it('resets the selection back to root on sessionReset', () => {
+      const { vscode, posted } = makeVsCode();
+      render(<App vscode={vscode} initialEntries={[]} />);
+
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: TREE_NODES });
+      postHostMessage({ type: 'toggleSubagentsPanel' });
+      fireEvent.click(screen.getByText('find the bug'));
+      posted.length = 0;
+
+      postHostMessage({ type: 'sessionReset' });
+
+      expect(posted).toContainEqual({ type: 'selectSubagent', sessionId: null });
+    });
   });
 });

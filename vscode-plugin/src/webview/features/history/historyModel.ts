@@ -395,6 +395,13 @@ export function applyHostMessage(
       // Tracked separately by `App`'s own `taskList`/`taskPanelVisible` state, not as a
       // history entry -- the TaskPanel renders from that state instead.
       return [...entries];
+    case 'subagentTreeUpdate':
+    case 'subagentTranscriptUpdate':
+    case 'toggleSubagentsPanel':
+      // Tracked separately by `App`'s own `subagentNodes`/`subagentTranscript`/
+      // `subagentsPanelVisible` state, not as a history entry -- the subagents panel/transcript
+      // view render from that state instead (see `webview/features/subagents`).
+      return [...entries];
     case 'sessionReplay':
       return applySessionReplay(message.entries);
     case 'workspaceFiles':

@@ -10,6 +10,7 @@ import {
   type SessionUpdateListener,
 } from 'host/features/acp';
 import type { SessionControls } from 'host/features/sessionControls';
+import type { SubagentPoller } from 'host/features/subagents';
 import { readImageDimensions } from 'shared/imageDimensions';
 import { IMAGE_FILE_EXTENSIONS, IMAGE_MIME_TYPE_BY_EXTENSION } from 'shared/imageFileTypes';
 import {
@@ -51,6 +52,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   private _view: vscode.WebviewView | undefined;
   private _connection: AcpConnection | undefined;
   private _sessionControls: SessionControls | undefined;
+  private _subagentPoller: SubagentPoller | undefined;
   // The last workspace file list `setWorkspaceFiles()` received from `extension.ts`'s
   // `FileSearch.watch()` callback -- re-posted (not re-scanned) on `resolveWebviewView()`, the
   // same "repost cached state to a freshly resolved view" pattern `postSnapshot()` uses.
@@ -75,6 +77,13 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
    * order reason as `setConnection()`. */
   public setSessionControls(sessionControls: SessionControls): void {
     this._sessionControls = sessionControls;
+  }
+
+  /** Wires the `SubagentPoller` this provider routes `setSubagentsPanelVisible`/
+   * `selectSubagent`/`cancelSubagent` webview messages into -- set once during activation, same
+   * construction-order reason as `setConnection()`/`setSessionControls()`. */
+  public setSubagentPoller(subagentPoller: SubagentPoller): void {
+    this._subagentPoller = subagentPoller;
   }
 
   public resolveWebviewView(
@@ -274,6 +283,19 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
         break;
       case 'attachImageFile':
         await this._attachImageFile();
+        break;
+      case 'setSubagentsPanelVisible':
+        this._subagentPoller?.setPanelVisible(parsed.visible);
+        break;
+      case 'selectSubagent':
+        this._subagentPoller?.selectSubagent(parsed.sessionId);
+        break;
+      case 'cancelSubagent':
+        try {
+          await this._subagentPoller?.cancelSubagent(parsed.sessionId);
+        } catch (err) {
+          this._log(`klorb: cancelSubagent failed: ${errorMessage(err)}`);
+        }
         break;
       case 'webviewError':
         this._log(

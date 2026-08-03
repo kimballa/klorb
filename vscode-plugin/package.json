@@ -60,6 +60,10 @@
         "title": "Klorb: Toggle Task Panel"
       },
       {
+        "command": "klorb.toggleSubagentsPanel",
+        "title": "Klorb: Toggle Subagents Panel"
+      },
+      {
         "command": "klorb.selectModel",
         "title": "Klorb: Select Model"
       },

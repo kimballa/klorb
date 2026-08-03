@@ -187,7 +187,10 @@ def tool_call_started_update(
 ) -> ToolCallStart:
     """Map a just-started tool call onto an ACP `tool_call` (`session/update`) notification:
     `status="in_progress"` unconditionally -- klorb fires `on_tool_call_started` immediately
-    before `apply()` runs, so there's no separate `"pending"` phase worth reporting."""
+    before `apply()` runs, so there's no separate `"pending"` phase worth reporting.
+    `_meta.klorb.toolName` always carries `event.name` verbatim, so a client can tell apart
+    tools that share one `ToolKind` bucket (e.g. `CreateSubagent`/`WaitForSubagent`/
+    `MessageSubagent`/`AskUserQuestions` all map to `"other"`)."""
     title = _tool_title(event.name, event.args, tool_registry)
     kind = TOOL_KIND_MAP.get(event.name, "other")
     locations = _tool_locations(event.name, event.args, workspace_root)
@@ -195,8 +198,10 @@ def tool_call_started_update(
     result = acp.start_tool_call(
         event.call_id, title, kind=kind, status="in_progress", locations=locations,
         raw_input=event.args)
+    klorb_meta: dict[str, Any] = {"toolName": event.name}
     if bash_meta is not None:
-        result.field_meta = {"klorb": {"bash": bash_meta}}
+        klorb_meta["bash"] = bash_meta
+    result.field_meta = {"klorb": klorb_meta}
     return result
 
 
@@ -448,7 +453,11 @@ def permission_ask_meta(
     (`ctx.bash_context` set), additionally the full/per-item command text, this item's position
     within its sibling batch, a grant-pattern preview, and the risk classifier's score and
     rationale (`risk`, or `None` if classification is disabled, not a bash ask, or the classifier
-    failed -- see `klorb.permissions.risk_classifier.resolve_item_risk_assessment`)."""
+    failed -- see `klorb.permissions.risk_classifier.resolve_item_risk_assessment`); `originSessionId`
+    is included whenever `ctx.origin_session_id` is set (a subagent's ask, forwarded through its
+    creator's own turn -- see `klorb.agents.policy.build_subagent_turn_handlers`), so a client
+    tracking multiple sessions (the VSCode subagents panel) can gate showing this ask on that
+    session being selected, mirroring the TUI's own `SubagentsPanelMixin._await_session_selected`."""
     header_kind = "Run command" if ctx.bash_context is not None else ctx.resource.header_kind()
     meta: dict[str, Any] = {
         "resourceDescription": ctx.resource_description, "headerKind": header_kind}
@@ -463,6 +472,8 @@ def permission_ask_meta(
         if risk is not None:
             meta["riskLevel"] = risk.risk_score
             meta["riskRationale"] = risk.rationale
+    if ctx.origin_session_id is not None:
+        meta["originSessionId"] = ctx.origin_session_id
     return meta
 
 
@@ -470,8 +481,11 @@ def escalate_privileges_meta(ctx: EscalatePrivilegesContext) -> dict[str, Any]:
     """The `_meta.klorb` payload for an `EscalatePrivilegesContext` ask's `session/
     request_permission` request: `escalation.scope`/`escalation.description`, so the client can
     render this as its own distinct (e.g. red-border) flow rather than an ordinary permission
-    grid."""
-    return {"escalation": {"scope": ctx.scope, "description": ctx.description}}
+    grid. `originSessionId` is included when set -- see `permission_ask_meta`'s own doc comment."""
+    meta: dict[str, Any] = {"escalation": {"scope": ctx.scope, "description": ctx.description}}
+    if ctx.origin_session_id is not None:
+        meta["originSessionId"] = ctx.origin_session_id
+    return meta
 
 
 def _split_option_id(option_id: str) -> tuple[
@@ -536,8 +550,10 @@ def ask_user_questions_ext_params(
     """The `_klorb/askUserQuestions` ext request params for one question of an
     `AskUserQuestionsItemContext` batch: `{sessionId, header, question, options: [{label,
     description?}], index, total}` -- `index`/`total` verbatim from `ctx`, since klorb asks
-    serially, one request per question, exactly as the TUI panel is driven."""
-    return {
+    serially, one request per question, exactly as the TUI panel is driven. `originSessionId` is
+    included whenever `ctx.origin_session_id` is set -- see `permission_ask_meta`'s own doc
+    comment for why."""
+    params: dict[str, Any] = {
         "sessionId": session_id,
         "header": ctx.header,
         "question": ctx.question,
@@ -545,6 +561,9 @@ def ask_user_questions_ext_params(
         "index": ctx.index,
         "total": ctx.total,
     }
+    if ctx.origin_session_id is not None:
+        params["originSessionId"] = ctx.origin_session_id
+    return params
 
 
 def _ask_user_questions_option(option: QuestionOption) -> dict[str, Any]:
@@ -765,15 +784,47 @@ def _replay_image_meta(message: Message) -> list[dict[str, Any]]:
     return images
 
 
+def _readable_reasoning_text(entry: dict[str, Any]) -> str | None:
+    text = entry.get("text")
+    if isinstance(text, str):
+        return text
+    summary = entry.get("summary")
+    return summary if isinstance(summary, str) else None
+
+
+def _resolve_thinking_text(content: str, reasoning_details: list[dict[str, Any]] | None) -> str:
+    """Reconstruct a `"thinking"` message's replay text from `reasoning_details` when `content`
+    itself is empty -- `content` and `reasoning_details` are populated by two independent
+    provider streams that aren't guaranteed to stay in sync (see `klorb.message.Message.
+    reasoning_details`), so a `content`-only replay can render an empty `<Thinking>` block even
+    though real reasoning text arrived. Duplicates `klorb.tui.formatting.
+    resolve_thinking_body_text`'s logic rather than importing it: that module pulls in
+    `textual`/`rich` at import time, which this server module must not depend on."""
+    if content.strip():
+        return content
+    if not reasoning_details:
+        return content
+    readable = list(filter(None, map(_readable_reasoning_text, reasoning_details)))
+    return "\n\n".join(readable) if readable else content
+
+
 def build_session_replay(
     session: Session, tool_registry: ToolRegistry | None, workspace_root: Path,
 ) -> list[dict[str, Any]]:
     """Build the `entries` payload for a `_klorb/sessionReplay` ext notification (see
-    `KlorbAcpAgent.load_session`): one `HistoryEntry`-shaped dict (matching the webview's own
-    `shared/webviewMessages.ts`-adjacent `HistoryEntry` shape) per restored message, in order.
-    `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching how they're never
-    rendered live either; a `role="tool_response"` is folded into its matching `role="tool_use"`
-    entry (see `_replay_tool_call_entry`) rather than appearing on its own.
+    `KlorbAcpAgent.load_session`) or a `_klorb/subagentTranscript` ext method result (see
+    `KlorbAcpAgent._ext_subagent_transcript`): one `HistoryEntry`-shaped dict (matching the
+    webview's own `shared/webviewMessages.ts`-adjacent `HistoryEntry` shape) per restored
+    message, in order. `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching
+    how they're never rendered live either; a `role="tool_response"` is folded into its matching
+    `role="tool_use"` entry (see `_replay_tool_call_entry`) rather than appearing on its own. A
+    `role="tool_use"` message's own `content` (commentary alongside the tool calls it requested --
+    e.g. the model's final answer, when that answer arrives in the same round as its last tool
+    calls) is emitted as its own `"response"`-kind entry ahead of that message's tool calls, and a
+    `role="thinking"` message's text is resolved via `_resolve_thinking_text` -- both mirror the
+    same two gaps `klorb.tui.formatting.resolve_thinking_body_text` and the TUI's own
+    `tool_use`-content handling close for the TUI's restored-history/subagent-transcript render
+    paths (see docs/specs/subagents.md's "Subagents panel (TUI)" section).
     """
     entries: list[dict[str, Any]] = []
     responses_by_call_id = {
@@ -783,8 +834,11 @@ def build_session_replay(
     text_kind_by_role = {"user": "prompt", "assistant": "response", "thinking": "thinking"}
     for message in session.messages:
         if message.role in text_kind_by_role:
+            text = (
+                _resolve_thinking_text(message.content, message.reasoning_details)
+                if message.role == "thinking" else message.content)
             entry: dict[str, Any] = {
-                "kind": text_kind_by_role[message.role], "text": message.content,
+                "kind": text_kind_by_role[message.role], "text": text,
                 "streaming": False,
             }
             images = _replay_image_meta(message) if message.role == "user" else []
@@ -792,6 +846,8 @@ def build_session_replay(
                 entry["images"] = images
             entries.append(entry)
         elif message.role == "tool_use":
+            if message.content.strip():
+                entries.append({"kind": "response", "text": message.content, "streaming": False})
             for call in message.tool_calls or []:
                 entries.append(_replay_tool_call_entry(
                     call, responses_by_call_id.get(call.id), tool_registry, workspace_root))

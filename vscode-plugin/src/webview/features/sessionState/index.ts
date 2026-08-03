@@ -9,13 +9,19 @@ import {
 } from 'webview/features/history';
 
 /** The shape `vscode.setState()`/`vscode.getState()` persists across the webview's context
- * teardown/rebuild (see `App.tsx`'s own persistence `useEffect`). */
+ * teardown/rebuild (see `App.tsx`'s own persistence `useEffect`). `selectedSubagentId` mirrors
+ * `SelectSubagentMessage.sessionId` (`null` selects the root session); the subagent tree/
+ * transcript/expansion state itself is deliberately *not* persisted -- it's refreshed from a
+ * fresh poll within a couple of seconds of `App` re-mounting (see its own mount-resync effect),
+ * so persisting a stale snapshot would only risk showing outdated data for that brief window. */
 export interface SessionState {
   entries: HistoryEntry[];
   pendingInteraction?: PendingInteraction;
   status?: StatusSnapshot;
   taskList?: TaskListSnapshot;
   taskPanelVisible?: boolean;
+  subagentsPanelVisible?: boolean;
+  selectedSubagentId?: string | null;
 }
 
 /**

@@ -72,12 +72,13 @@ way the TUI's own commands do.
 
 `agentCapabilities._meta.klorb` is `{"sessionConfig": true, "sessionStats": true,
 "trustWorkspace": true, "reloadSkills": true, "enqueueMessage": true, "taskMeta": <chainlink
-discoverable>}` — `sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills`/`enqueueMessage`
-name the *agent*-advertised extension methods below, all client → server; `taskMeta` is not an
-extension method (see "Chainlink task-plan updates" below). Every `_klorb/*` request
-`KlorbAcpAgent` doesn't recognize gets the standard `-32601` method-not-found error; every
-unrecognized `_klorb/*` *notification* is silently ignored, per ACP's own extensibility rules.
-Later increments grow this section as they land.
+discoverable>, "imageInput": true, "subagents": true}` —
+`sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills`/`enqueueMessage`/`subagents` name
+the *agent*-advertised extension methods below, all client → server; `taskMeta`/`imageInput` are
+not extension methods (see "Chainlink task-plan updates" below and docs/specs/vision-image-input.md).
+Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize gets the standard `-32601`
+method-not-found error; every unrecognized `_klorb/*` *notification* is silently ignored, per
+ACP's own extensibility rules. Later increments grow this section as they land.
 
 * **`_klorb/getSessionConfig`** — reads the session's model/thinking config. Params:
   `{sessionId: string}`. Result: `{model: {current: string, available: [{id: string, name:
@@ -119,6 +120,39 @@ Later increments grow this section as they land.
   client with nothing running should send an ordinary `session/prompt`, not this. Always
   supported (no client capability gates it; it's the client that must check the server's own
   `enqueueMessage` advertisement before calling).
+* **`_klorb/subagentTree`** — a read-only snapshot of the live session's entire subagent tree
+  (see docs/specs/subagents.md), for a client that wants to show one (the VSCode subagents
+  panel; the TUI doesn't need this, since it holds the `Session` objects directly in-process).
+  Params: `{sessionId: string}`. Result: `{nodes: [...]}`, one entry per session in the tree
+  (`klorb.server.subagent_updates.build_subagent_tree_snapshot`), the root session included
+  first: `{id, parentId, address, title, role, state: "running" | "finished" | null, aborted:
+  boolean, model, thinkingEnabled, thinkingEffort, usedTokens, maxTokens, outputTokens}` — `id`/
+  `parentId` are `Session.id` (the root's own `id` is overridden to the client-stable ACP session
+  id, since `Session.id` itself can be renamed by the session-naming classifier — see
+  `KlorbAcpAgent`'s own class docstring), `state`/`aborted` are `null`/`false` for the root (no
+  `SubagentHandle` describes it), and `model`/`thinking*`/`*Tokens` are that session's own
+  `SessionConfig`/token tally, so a client can render the header/status row for whichever session
+  is selected without a second round trip. No client capability gates calling this — a client
+  should instead consult the server's own `subagents` advertisement (above) before polling it at
+  all, the same convention `enqueueMessage` follows.
+* **`_klorb/subagentTranscript`** — a read-only replay of one subagent's message history,
+  reusing `klorb.server.update_mapping.build_session_replay` (the same builder `_klorb/
+  sessionReplay` uses for the root session's own saved-session restore). Params: `{sessionId:
+  string, subagentId: string}` (`subagentId` names a non-root node from `_klorb/subagentTree`'s
+  own `nodes`; an unknown id is a JSON-RPC `invalid params` error). Result: `{entries: [...],
+  state: "running" | "finished", aborted: boolean}` — `entries` is the same `HistoryEntry`-shaped
+  array `_klorb/sessionReplay` sends, `state`/`aborted` are that subagent's own `SubagentHandle`
+  fields (`aborted` is whether `klorb.agents.runtime.SUBAGENT_ABORTED_MARKER` appears in its
+  output). A subagent's turn never streams (see docs/specs/subagents.md's "Security model"
+  section — no `TurnEventHandlers` progress callbacks are wired for one), so a client polls this
+  ext method on an interval to catch up, rather than receiving live `session/update`s the way the
+  root session's own turn does.
+* **`_klorb/subagentCancel`** — signals a specific subagent's own `cancel_event` (mirrors the
+  TUI's per-subagent Escape/Ctrl+C, `KeyActionsMixin._interrupt_running_activity`), independent
+  of the root session's own `session/cancel`. Params: `{sessionId: string, subagentId: string}`
+  (an unknown/root `subagentId` is `invalid params`). Result: `{cancelled: true}`. The
+  subagent's background thread only notices the event at its next stream/tool-call boundary, same
+  latency as the TUI's own per-subagent Stop.
 
 One *client*-advertised extension method exists, called server → client:
 
@@ -379,12 +413,16 @@ directly rather than a live `Session`, so they're callable from a test with just
     | `fetch` | `WebFetch` |
     | `think` | `TodoList`, `TodoNext`, `TodoCreate`, `TodoUpdate`, `ActivateSkill` |
     | `delete` | `ForgetMemory` |
-    | `other` | `AskUserQuestions`, `EscalatePrivileges` |
+    | `other` | `AskUserQuestions`, `EscalatePrivileges`, `CreateSubagent`, `WaitForSubagent`, `MessageSubagent` |
 
     A name this table doesn't cover (a future tool added without an entry) falls back to
     `"other"` at lookup time — `tests/klorb/server/test_update_mapping.py` parametrizes over
     every tool `ToolRegistry.discover_tools()` currently returns so that omission fails the test
     loudly instead of passing silently.
+  * `_meta.klorb.toolName` — `event.name` verbatim, on every started update, letting a client
+    distinguish tools that share one `kind` bucket above (e.g. the vscode plugin's subagents
+    panel auto-opens on a `CreateSubagent` call — see docs/specs/vscode-plugin.md's "Subagents
+    panel" section).
   * `locations` — `[{path, line}]` for a tool whose call names a filesystem path, resolved
     against `workspace_root` via `klorb.permissions.directory_access.canonicalize_dir()` (the
     same canonicalization primitive the file tools themselves use via `canonicalize_candidate()`
@@ -489,6 +527,14 @@ short-circuits before ever calling back, exactly as it does for the TUI.
   (`klorb.server.update_mapping.escalate_privileges_meta`): `escalation.scope`/
   `escalation.description`, so the client can render this as its own distinct flow (e.g. a
   red-border panel) rather than an ordinary permission grid.
+* **`originSessionId`** (both `permission_ask_meta` and `escalate_privileges_meta`): present only
+  when the ask was raised by a subagent's turn rather than the root session's own
+  (`PermissionAskContext.origin_session_id`/`EscalatePrivilegesContext.origin_session_id`,
+  stamped by `klorb.agents.policy.build_subagent_turn_handlers` as the ask forwards up through
+  each ancestor to the root's own `TurnBridge` callbacks — see docs/specs/subagents.md). Names
+  the subagent `Session.id` the ask belongs to, letting a multi-session client (the VSCode
+  subagents panel) gate showing the ask on that session being selected, mirroring the TUI's own
+  `SubagentsPanelMixin._await_session_selected`.
 * **Risk classification** reuses `klorb.permissions.risk_classifier.
   resolve_item_risk_assessment(ctx, session=, process_config=)` directly — the same
   gating/sibling-batching/per-session-caching function `klorb.tui.mixins.interactions.
@@ -534,10 +580,12 @@ drives, and the same shape a same-turn bash permission-ask batch already uses fo
 `itemIndex`/`itemTotal` convention.
 
 * **Params** (`klorb.server.update_mapping.ask_user_questions_ext_params(ctx, session_id)`,
-  pure): `{sessionId, header, question, options: [{label, description?}], index, total}` — built
-  directly from the `AskUserQuestionsItemContext`
+  pure): `{sessionId, header, question, options: [{label, description?}], index, total,
+  originSessionId?}` — built directly from the `AskUserQuestionsItemContext`
   `Session._resolve_ask_user_questions` (`PermissionsMixin`) passes in for this one question;
-  `index`/`total` are threaded through verbatim, not re-derived.
+  `index`/`total` are threaded through verbatim, not re-derived. `originSessionId` mirrors the
+  same field on a permission/escalation ask (see "Permission asks and escalation" above) — present
+  only when a subagent's turn raised the question.
 * **Answer formatting.** The server, not the client, renders a selected option (or free text)
   into the final answer string
   (`klorb.server.update_mapping.ask_user_questions_answer_from_result(ctx, result)`, via
@@ -579,7 +627,10 @@ above — `authenticate`, `fork_session`, `resume_session`) as an explicit `Requ
 method_not_found`, rather than relying on the Protocol base class's inherited no-op, so an
 unexpected call fails loudly instead of silently returning nothing. `ext_notification` is the
 one exception: an unrecognized extension *notification* is ignored, per ACP's own extensibility
-rules. Subagent child sessions are explicitly future work — see the plan overview.
+rules. The one live `Session` may itself have created subagents (`CreateSubagent`, see
+docs/specs/subagents.md) — those are never separate ACP sessions of their own (no `session/new`
+call names one), but are exposed read-only via `_klorb/subagentTree`/`_klorb/subagentTranscript`/
+`_klorb/subagentCancel` above.
 
 ### Queued messages
 

@@ -40,6 +40,8 @@ function main(): void {
         initialStatus={state.status}
         initialTaskList={state.taskList}
         initialTaskPanelVisible={state.taskPanelVisible}
+        initialSubagentsPanelVisible={state.subagentsPanelVisible}
+        initialSelectedSubagentId={state.selectedSubagentId}
       />
     </ErrorBoundary>
   );

@@ -47,17 +47,19 @@ export type RequestErrorClass = (typeof import('@agentclientprotocol/sdk'))['Req
  * a peer ACP agent that doesn't advertise `modes` at all); `title` is additionally `null` for
  * "no title yet", distinct from `undefined` for "the response didn't say".
  *
- * `enqueueMessageCapable` is not part of `session/new`'s own response -- it's the connection's
- * `initialize()`-negotiated `agentCapabilities._meta.klorb.enqueueMessage` flag, threaded
- * through here by `AcpConnection` (which keeps it for the connection's whole lifetime, since
- * capabilities don't change per session) so `SessionControls`/`StatusRow` learn it the same way
- * they learn everything else about the session's starting state. */
+ * `enqueueMessageCapable`/`subagentsCapable` are not part of `session/new`'s own response --
+ * they're the connection's `initialize()`-negotiated `agentCapabilities._meta.klorb.
+ * enqueueMessage`/`.subagents` flags, threaded through here by `AcpConnection` (which keeps them
+ * for the connection's whole lifetime, since capabilities don't change per session) so
+ * `SessionControls`/`StatusRow` learn them the same way they learn everything else about the
+ * session's starting state. */
 export interface SessionInfo {
   modeId: string | undefined;
   workspacePath: string | undefined;
   workspaceTrusted: boolean | undefined;
   title: string | null | undefined;
   enqueueMessageCapable: boolean;
+  subagentsCapable: boolean;
 }
 
 /** Receives the streamed text, tool-call activity, and control-plane state the agent produces
@@ -123,7 +125,8 @@ export interface SessionUpdateListener {
  * `initialize()`-negotiated value (see `SessionInfo`'s own doc comment). */
 export function sessionInfoFromResponse(
   session: NewSessionResponse | LoadSessionResponse,
-  enqueueMessageCapable: boolean
+  enqueueMessageCapable: boolean,
+  subagentsCapable: boolean
 ): SessionInfo {
   const meta = klorbMetaOf(session._meta);
   const workspace =
@@ -137,6 +140,7 @@ export function sessionInfoFromResponse(
     workspaceTrusted: typeof workspace?.trusted === 'boolean' ? workspace.trusted : undefined,
     title: title === null ? null : typeof title === 'string' ? title : undefined,
     enqueueMessageCapable,
+    subagentsCapable,
   };
 }
 
@@ -266,6 +270,7 @@ function parseBashMeta(
 
 function toolCallStartedMessage(update: ToolCall): ToolCallStartedMessage {
   const bashMeta = parseBashMeta(update._meta);
+  const toolName = klorbMetaOf(update._meta).toolName;
   return {
     type: 'toolCallStarted',
     callId: update.toolCallId,
@@ -273,6 +278,7 @@ function toolCallStartedMessage(update: ToolCall): ToolCallStartedMessage {
     kind: update.kind ?? 'other',
     locations: (update.locations ?? []).map(toLocationMessage),
     ...(bashMeta !== undefined ? { bashMeta } : {}),
+    ...(typeof toolName === 'string' ? { toolName } : {}),
   };
 }
 
@@ -393,12 +399,15 @@ function permissionAskMessage(
   params: RequestPermissionRequest,
   requestId: number
 ): PermissionAskMessage {
+  const klorbMeta = klorbMetaOf(params._meta);
+  const originSessionId = klorbMeta.originSessionId;
   return {
     type: 'permissionAsk',
     requestId,
     title: params.toolCall.title ?? '',
     options: params.options.map(toPermissionAskOption),
-    klorbMeta: klorbMetaOf(params._meta),
+    klorbMeta,
+    ...(typeof originSessionId === 'string' ? { originSessionId } : {}),
   };
 }
 
@@ -426,18 +435,27 @@ function isQuestionAskOptionParam(value: unknown): value is QuestionAskOption {
 function questionAskMessageFromParams(
   params: Record<string, unknown>
 ): Omit<QuestionAskMessage, 'requestId'> | undefined {
-  const { header, question, options, index, total } = params;
+  const { header, question, options, index, total, originSessionId } = params;
   if (
     typeof header !== 'string' ||
     typeof question !== 'string' ||
     typeof index !== 'number' ||
     typeof total !== 'number' ||
     !Array.isArray(options) ||
-    !options.every(isQuestionAskOptionParam)
+    !options.every(isQuestionAskOptionParam) ||
+    (originSessionId !== undefined && typeof originSessionId !== 'string')
   ) {
     return undefined;
   }
-  return { type: 'questionAsk', header, question, options, index, total };
+  return {
+    type: 'questionAsk',
+    header,
+    question,
+    options,
+    index,
+    total,
+    ...(typeof originSessionId === 'string' ? { originSessionId } : {}),
+  };
 }
 
 function questionAnswerResultToWire(result: QuestionAnswerResult): Record<string, unknown> {

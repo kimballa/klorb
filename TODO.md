@@ -16,13 +16,6 @@
 
 ### Feature backlog
 
-* Also add to vscode plugin for subagents
-  * context token counts up/down should update based on which agent is shown
-  * history should keep scrolling to the bottom if pinned @ bottom, let the user keep reading in-place
-    if they've moved the scrollbar.
-  * The bottom of the history should say either "Subagent is still working..." or "Subagent task
-    complete." so the user can see the status of the subagent when checking on that history feed.
-
 * WaitForSubagent blocks indefinitely. If the user adds a new msg in the meantime, it just gets queued
   rather than interrupting the situation. There's probably a new kind of "user-interruptible" nature
   to this tool to let it get an insta-response from the tool_response ("no agent feedback yet, but

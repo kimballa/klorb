@@ -22,6 +22,7 @@ from klorb.server.update_mapping import (
     TOOL_KIND_MAP,
     TOOL_LOCATION_ARG,
     _diff_text,
+    ask_user_questions_ext_params,
     build_session_replay,
     escalate_privileges_decision_from_outcome,
     escalate_privileges_meta,
@@ -39,11 +40,13 @@ from klorb.server.update_mapping import (
 )
 from klorb.session import Session, SessionConfig
 from klorb.session.events import (
+    AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
     PermissionAskContext,
     ToolCallEvent,
     ToolCallStartedEvent,
 )
+from klorb.tools.ask.common import QuestionOption
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.util import build_diff_hunks
 from klorb.workspace import Workspace
@@ -94,6 +97,17 @@ def test_started_update_title_uses_tool_summary(tmp_path: Path) -> None:
     assert update.status == "in_progress"
     assert update.tool_call_id == "1"
     assert "List dir" in update.title
+
+
+def test_started_update_carries_tool_name_meta(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    event = ToolCallStartedEvent(call_id="1", name="CreateSubagent", args={})
+
+    update = tool_call_started_update(event, registry, tmp_path)
+
+    assert update.kind == "other"
+    assert update.field_meta is not None
+    assert update.field_meta["klorb"]["toolName"] == "CreateSubagent"
 
 
 def test_read_file_location_resolves_relative_path_and_sets_line(tmp_path: Path) -> None:
@@ -414,6 +428,58 @@ def test_escalate_privileges_meta_carries_scope_and_description(tmp_path: Path) 
     assert meta == {"escalation": {"scope": "workspace", "description": "Grant .klorb/ access"}}
 
 
+def test_permission_ask_meta_omits_origin_session_id_when_unset(tmp_path: Path) -> None:
+    resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
+    ctx = PermissionAskContext(resource=resource, resource_description="Read foo.txt")
+    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+
+    meta = permission_ask_meta(ctx, None, 0, 1, session_config)
+
+    assert "originSessionId" not in meta
+
+
+def test_permission_ask_meta_carries_origin_session_id_for_a_subagent_ask(tmp_path: Path) -> None:
+    resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
+    ctx = PermissionAskContext(
+        resource=resource, resource_description="Read foo.txt", origin_session_id="child-1")
+    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+
+    meta = permission_ask_meta(ctx, None, 0, 1, session_config)
+
+    assert meta["originSessionId"] == "child-1"
+
+
+def test_escalate_privileges_meta_carries_origin_session_id_for_a_subagent_ask() -> None:
+    ctx = EscalatePrivilegesContext(
+        scope="workspace", description="Grant .klorb/ access", origin_session_id="child-1")
+
+    meta = escalate_privileges_meta(ctx)
+
+    assert meta["originSessionId"] == "child-1"
+
+
+_SINGLE_OPTION = [QuestionOption(label="A", description=None, recommended=False)]
+
+
+def test_ask_user_questions_ext_params_omits_origin_session_id_when_unset() -> None:
+    ctx = AskUserQuestionsItemContext(
+        header="Pick one", question="Which?", options=_SINGLE_OPTION, index=0, total=1)
+
+    params = ask_user_questions_ext_params(ctx, "session-1")
+
+    assert "originSessionId" not in params
+
+
+def test_ask_user_questions_ext_params_carries_origin_session_id_for_a_subagent_ask() -> None:
+    ctx = AskUserQuestionsItemContext(
+        header="Pick one", question="Which?", options=_SINGLE_OPTION, index=0, total=1,
+        origin_session_id="child-1")
+
+    params = ask_user_questions_ext_params(ctx, "session-1")
+
+    assert params["originSessionId"] == "child-1"
+
+
 def test_permission_decision_grant_patterns_only_set_from_risk_suggestion() -> None:
     resource = CommandResource(argv=("git", "status"))
     risk = ItemRiskAssessment(
@@ -668,3 +734,47 @@ class TestBuildSessionReplay:
         entries = build_session_replay(session, None, tmp_path)
 
         assert "images" not in entries[0]
+
+    def test_tool_use_commentary_becomes_a_response_entry_before_its_tool_calls(
+        self, tmp_path: Path,
+    ) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", content="here's what I found", tool_calls=[
+            ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
+        session.load_messages([tool_use])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries[0] == {"kind": "response", "text": "here's what I found", "streaming": False}
+        assert entries[1]["kind"] == "toolCall"
+
+    def test_tool_use_with_blank_commentary_emits_no_response_entry(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", content="   ", tool_calls=[
+            ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
+        session.load_messages([tool_use])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert len(entries) == 1
+        assert entries[0]["kind"] == "toolCall"
+
+    def test_thinking_text_falls_back_to_reasoning_details_when_content_is_empty(
+        self, tmp_path: Path,
+    ) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([_msg(
+            "thinking", "", reasoning_details=[{"text": "first"}, {"summary": "second"}])])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries == [{"kind": "thinking", "text": "first\n\nsecond", "streaming": False}]
+
+    def test_thinking_text_prefers_content_over_reasoning_details(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        session.load_messages([_msg(
+            "thinking", "pondering...", reasoning_details=[{"text": "ignored"}])])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert entries == [{"kind": "thinking", "text": "pondering...", "streaming": False}]

@@ -10,6 +10,7 @@ afterEach(cleanup);
 function mountStatusMenu(overrides: Partial<StatusMenuProps> = {}): StatusMenuProps {
   const callbacks: StatusMenuProps = {
     taskPanelVisible: true,
+    subagentsPanelVisible: true,
     onPickModel: vi.fn(),
     onPickThinking: vi.fn(),
     onSetPermissionMode: vi.fn(),
@@ -17,6 +18,7 @@ function mountStatusMenu(overrides: Partial<StatusMenuProps> = {}): StatusMenuPr
     onNewSession: vi.fn(),
     onReloadSkills: vi.fn(),
     onToggleTaskPanel: vi.fn(),
+    onToggleSubagentsPanel: vi.fn(),
     onAttachImage: vi.fn(),
     ...overrides,
   };
@@ -75,26 +77,35 @@ describe('StatusMenu', () => {
 
     selectMenuItem('toggleTaskPanel');
     expect(callbacks.onToggleTaskPanel).toHaveBeenCalledOnce();
+
+    selectMenuItem('toggleSubagentsPanel');
+    expect(callbacks.onToggleSubagentsPanel).toHaveBeenCalledOnce();
   });
 
-  it('labels the task-panel item by its current visibility, so it can bring a hidden panel back', () => {
+  it('labels the task-panel/subagents-panel items by their current visibility, so each can bring a hidden panel back', () => {
     // menuItems() is tested directly, rather than through the rendered <vscode-context-menu>'s
     // own `data` property: React serializes a non-primitive JSX prop on an unregistered custom
     // element (there's no real @vscode-elements/elements definition loaded under jsdom, only
     // main.tsx registers it for the real webview) down to a plain `Array.prototype.toString()`
     // attribute string ("[object Object],[object Object]"), not a readable property, so there's
     // nothing structured to inspect on the DOM node itself here.
-    expect(menuItems(true, false).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
-      'Hide Task Panel'
-    );
-    expect(menuItems(false, false).find((item) => item.value === 'toggleTaskPanel')?.label).toBe(
-      'Show Task Panel'
-    );
+    expect(
+      menuItems(true, true, false).find((item) => item.value === 'toggleTaskPanel')?.label
+    ).toBe('Hide Task Panel');
+    expect(
+      menuItems(false, true, false).find((item) => item.value === 'toggleTaskPanel')?.label
+    ).toBe('Show Task Panel');
+    expect(
+      menuItems(true, true, false).find((item) => item.value === 'toggleSubagentsPanel')?.label
+    ).toBe('Hide Subagents Panel');
+    expect(
+      menuItems(true, false, false).find((item) => item.value === 'toggleSubagentsPanel')?.label
+    ).toBe('Show Subagents Panel');
   });
 
   it('includes "Attach Image…" only when activeModelVision is true', () => {
-    expect(menuItems(true, true).some((item) => item.value === 'attachImage')).toBe(true);
-    expect(menuItems(true, false).some((item) => item.value === 'attachImage')).toBe(false);
+    expect(menuItems(true, true, true).some((item) => item.value === 'attachImage')).toBe(true);
+    expect(menuItems(true, true, false).some((item) => item.value === 'attachImage')).toBe(false);
   });
 
   it('dispatches onAttachImage when the Attach Image item is picked', () => {

@@ -9,6 +9,7 @@ afterEach(cleanup);
 
 const NOOP = {
   taskPanelVisible: true,
+  subagentsPanelVisible: false,
   onPickModel: () => undefined,
   onPickThinking: () => undefined,
   onCyclePermissionMode: () => undefined,
@@ -17,6 +18,7 @@ const NOOP = {
   onNewSession: () => undefined,
   onReloadSkills: () => undefined,
   onToggleTaskPanel: () => undefined,
+  onToggleSubagentsPanel: () => undefined,
   onAttachImage: () => undefined,
 };
 
@@ -109,5 +111,24 @@ describe('StatusRow', () => {
 
     fireEvent.click(screen.getByText('[auto]'));
     expect(onCyclePermissionMode).toHaveBeenCalledOnce();
+  });
+
+  it('renders the model/thinking chips as plain text, not buttons, while interactive is false', () => {
+    const onPickModel = vi.fn();
+    render(
+      <StatusRow
+        model="gpt-5"
+        thinkingEnabled={true}
+        thinkingEffort="medium"
+        interactive={false}
+        {...NOOP}
+        onPickModel={onPickModel}
+      />
+    );
+
+    const modelChip = screen.getByText('gpt-5');
+    expect(modelChip.tagName).toBe('SPAN');
+    fireEvent.click(modelChip);
+    expect(onPickModel).not.toHaveBeenCalled();
   });
 });

@@ -90,6 +90,14 @@ interface PromptInputProps {
    * or not-yet-known both hide it, since attaching against a non-vision model can only fail
    * server-side. */
   imagesCapable?: boolean;
+  /** True whenever a subagent (not the root session) is selected in the subagents panel: the
+   * user cannot address a subagent directly, so the textarea and Send button are hidden
+   * entirely -- distinct from `inFlight`'s ordinary disabled-while-running state, which still
+   * allows typing (or shows enabled once the turn ends). The Stop button is unaffected by this
+   * flag (see `inFlight`'s own doc comment): while a subagent is selected, `inFlight`/`onCancel`
+   * are wired by the caller to that subagent's own running state/cancellation instead of the
+   * root session's. */
+  readOnly?: boolean;
   onSubmit(text: string, images?: ImageAttachment[]): void;
   onCancel(): void;
   onCyclePermissionMode(): void;
@@ -141,6 +149,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     enqueueMessageCapable = false,
     workspaceFiles = [],
     imagesCapable = false,
+    readOnly = false,
     onSubmit,
     onCancel,
     onCyclePermissionMode,
@@ -155,7 +164,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const preparedRef = useRef<PreparedText | null>(null);
   const trailingNewlinesRef = useRef(0);
   const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
-  const disabled = inFlight && !enqueueMessageCapable;
+  const disabled = readOnly || (inFlight && !enqueueMessageCapable);
   const finder = useFileFinder(workspaceFiles);
 
   useImperativeHandle(ref, () => ({
@@ -427,7 +436,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           onClick={(event: SyntheticEvent) => finder.sync(draft, cursorPosition(event))}
           onPaste={handlePaste}
         />
-        {!inFlight || enqueueMessageCapable ? (
+        {!readOnly && (!inFlight || enqueueMessageCapable) ? (
           <vscode-button
             id="submit-button"
             iconOnly

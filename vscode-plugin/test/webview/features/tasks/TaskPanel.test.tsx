@@ -35,12 +35,17 @@ function summaryLine(container: HTMLElement): { text: string | null; headlineBol
 }
 
 describe('TaskPanel', () => {
-  it('renders nothing until a plan update has arrived', () => {
+  it('shows "No tasks available" until a plan update has arrived, with no expand affordance', () => {
     const { container } = render(
       <TaskPanel taskList={undefined} onToggleVisibility={() => undefined} />
     );
 
-    expect(container.innerHTML).toBe('');
+    expect(summaryLine(container)).toEqual({ text: 'No tasks available', headlineBold: false });
+    // No chevron -- there's nothing to expand into, mirroring the zero-entry "Tasks: none" case.
+    // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+    const summary = container.querySelector('.task-panel-summary');
+
+    expect(summary?.firstElementChild?.className).toBe('task-panel-icon');
   });
 
   it('shows "Tasks: none" for a plan update with zero entries, not bold', () => {

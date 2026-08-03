@@ -14,7 +14,14 @@ export interface StatusRowProps {
   maxTokens?: number | null;
   outputTokens?: number;
   taskPanelVisible: boolean;
+  subagentsPanelVisible: boolean;
   activeModelVision?: boolean;
+  /** False while a subagent (not the root session) is selected in the subagents panel: the
+   * model/thinking chips render as plain, non-clickable text instead of buttons, since a
+   * subagent's model can't be changed once it's underway (its `SessionConfig` was fixed at
+   * creation -- see docs/specs/subagents.md's "Subagent session model" section). Defaults to
+   * `true`, the root-session behavior this row has always had. */
+  interactive?: boolean;
   onPickModel(): void;
   onPickThinking(): void;
   onCyclePermissionMode(): void;
@@ -23,6 +30,7 @@ export interface StatusRowProps {
   onNewSession(): void;
   onReloadSkills(): void;
   onToggleTaskPanel(): void;
+  onToggleSubagentsPanel(): void;
   onAttachImage(): void;
 }
 
@@ -86,7 +94,9 @@ export default function StatusRow({
   maxTokens,
   outputTokens,
   taskPanelVisible,
+  subagentsPanelVisible,
   activeModelVision,
+  interactive = true,
   onPickModel,
   onPickThinking,
   onCyclePermissionMode,
@@ -95,6 +105,7 @@ export default function StatusRow({
   onNewSession,
   onReloadSkills,
   onToggleTaskPanel,
+  onToggleSubagentsPanel,
   onAttachImage,
 }: StatusRowProps): JSX.Element {
   const [flashing, setFlashing] = useState(false);
@@ -118,6 +129,7 @@ export default function StatusRow({
     <div id="status-row">
       <StatusMenu
         taskPanelVisible={taskPanelVisible}
+        subagentsPanelVisible={subagentsPanelVisible}
         activeModelVision={activeModelVision}
         onPickModel={onPickModel}
         onPickThinking={onPickThinking}
@@ -126,14 +138,25 @@ export default function StatusRow({
         onNewSession={onNewSession}
         onReloadSkills={onReloadSkills}
         onToggleTaskPanel={onToggleTaskPanel}
+        onToggleSubagentsPanel={onToggleSubagentsPanel}
         onAttachImage={onAttachImage}
       />
-      <button type="button" className="status-chip status-model" onClick={onPickModel}>
-        {model ?? '...'}
-      </button>
-      <button type="button" className="status-chip status-thinking" onClick={onPickThinking}>
-        {thinkingLabel(thinkingEnabled, thinkingEffort)}
-      </button>
+      {interactive ? (
+        <button type="button" className="status-chip status-model" onClick={onPickModel}>
+          {model ?? '...'}
+        </button>
+      ) : (
+        <span className="status-chip status-model status-chip-static">{model ?? '...'}</span>
+      )}
+      {interactive ? (
+        <button type="button" className="status-chip status-thinking" onClick={onPickThinking}>
+          {thinkingLabel(thinkingEnabled, thinkingEffort)}
+        </button>
+      ) : (
+        <span className="status-chip status-thinking status-chip-static">
+          {thinkingLabel(thinkingEnabled, thinkingEffort)}
+        </span>
+      )}
       <button
         type="button"
         className={`status-chip status-permission-badge status-permission-${mode}${flashing ? ' status-permission-badge-flash' : ''}`}

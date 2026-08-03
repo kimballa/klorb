@@ -20,6 +20,7 @@ import {
   type PickableItem,
   type WorkspaceTrustVsCode,
 } from 'host/features/sessionControls';
+import { SubagentPoller } from 'host/features/subagents';
 import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
 import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
 
@@ -166,8 +167,15 @@ export function activate(context: vscode.ExtensionContext): void {
     (status) => provider.postHostMessage({ type: 'statusUpdate', ...status }),
     log
   );
+  const subagentPoller = new SubagentPoller(
+    connection,
+    (nodes) => provider.postHostMessage({ type: 'subagentTreeUpdate', nodes }),
+    (update) => provider.postHostMessage({ type: 'subagentTranscriptUpdate', ...update }),
+    log
+  );
   provider.setConnection(connection);
   provider.setSessionControls(sessionControls);
+  provider.setSubagentPoller(subagentPoller);
   const workspaceTrustBridge = new WorkspaceTrustBridge(
     realWorkspaceTrustVsCode(),
     sessionControls,
@@ -175,6 +183,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push({ dispose: () => workspaceTrustBridge.dispose() });
   context.subscriptions.push({ dispose: () => connection.stop() });
+  context.subscriptions.push({ dispose: () => subagentPoller.dispose() });
   context.subscriptions.push(fileSearch.watch((files) => provider.setWorkspaceFiles(files)));
 
   const startConnection = async (): Promise<void> => {
@@ -189,6 +198,11 @@ export function activate(context: vscode.ExtensionContext): void {
           `resumeSessionId=${resumeSessionId ?? '(none recorded)'}`
       );
       await connection.start(await readServerOptions(apiKeyManager), cwd, resumeSessionId);
+      // The webview may have already posted `setSubagentsPanelVisible` (its mount-effect resync
+      // of a persisted `subagentsPanelVisible: true`) while `connection.start()` was still
+      // in flight -- re-check the poller's timers now that `subagentsCapable` is known, so a
+      // reload with the panel previously open doesn't leave it silently unpolled.
+      subagentPoller.resync();
       await rememberLastSessionId(context, cwd, connection.sessionId);
       log(
         `klorb: startConnection: connected sessionId=${connection.sessionId} ` +
@@ -233,6 +247,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('klorb.toggleTaskPanel', () => {
       provider.postHostMessage({ type: 'toggleTaskPanel' });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('klorb.toggleSubagentsPanel', () => {
+      provider.postHostMessage({ type: 'toggleSubagentsPanel' });
     })
   );
 

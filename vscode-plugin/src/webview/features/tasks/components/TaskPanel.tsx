@@ -28,12 +28,12 @@ function currentTaskLabel(taskList: TaskListSnapshot): string | undefined {
 }
 
 /** The header row's one-line summary, built from the snapshot's counts -- "Tasks: none" for a
- * plan update with zero entries (distinct from no update having arrived at all, which renders
- * nothing -- see `TaskPanel`'s own doc comment). The leading "Tasks: `<n>` open" clause renders
- * bold when there's open work to call out (`openCount !== 0`); the trailing blocked-count/
- * current-task clauses stay normal weight. Split into a real component (rather than building one
- * string) specifically so the bold clause can be its own element without losing the rest of the
- * line's plain-text styling. */
+ * plan update with zero entries (distinct from no update having arrived at all, which shows "No
+ * tasks available" instead -- see `TaskPanel`'s own doc comment). The leading "Tasks: `<n>` open"
+ * clause renders bold when there's open work to call out (`openCount !== 0`); the trailing
+ * blocked-count/current-task clauses stay normal weight. Split into a real component (rather than
+ * building one string) specifically so the bold clause can be its own element without losing the
+ * rest of the line's plain-text styling. */
 function TaskPanelSummaryText({ taskList }: { taskList: TaskListSnapshot }): JSX.Element {
   if (taskList.tasks.length === 0) {
     return <>Tasks: none</>;
@@ -85,14 +85,14 @@ const EMPTY_TASK_LIST: TaskInfo[] = [];
  * 90° via `.task-panel[open]` CSS rather than swapped to a different icon name) is what actually
  * signals expand/collapse state, since the native `<details>` marker triangle is suppressed by
  * `.task-panel-summary`'s own `display: flex` (needed for the chevron/icon/text/pin row layout
- * regardless). Renders nothing at all until the server's first `plan` update arrives
- * (`taskList === undefined`) -- there is no client-side chainlink access to derive a
- * placeholder from (see docs/specs/klorb-server.md's "Chainlink task-plan updates" section).
+ * regardless). Shows a static "No tasks available" summary (no expand affordance, same as a
+ * zero-entry `"Tasks: none"` update) before the server's first `plan` update arrives
+ * (`taskList === undefined`) -- there is no client-side chainlink access to derive a real
+ * placeholder from (see docs/specs/klorb-server.md's "Chainlink task-plan updates" section), but
+ * the panel itself always renders once opened, so a user who explicitly asks to see it isn't met
+ * with nothing at all.
  */
-export default function TaskPanel({
-  taskList,
-  onToggleVisibility,
-}: TaskPanelProps): JSX.Element | null {
+export default function TaskPanel({ taskList, onToggleVisibility }: TaskPanelProps): JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
 
   function hidePanel(event: MouseEvent): void {
@@ -122,17 +122,17 @@ export default function TaskPanel({
       ? 'Show detailed task tracking'
       : undefined;
 
-  if (taskList === undefined) {
-    return null;
-  }
-
   return (
     <details className="task-panel" onToggle={onToggleDetails}>
       <summary className="task-panel-summary" onClick={onClickSummary} title={summaryTitle}>
         {hasTasks && <vscode-icon className="task-panel-chevron" name="chevron-right" />}
         <vscode-icon className="task-panel-icon" name="checklist" />
         <span className="task-panel-summary-text">
-          <TaskPanelSummaryText taskList={taskList} />
+          {taskList === undefined ? (
+            'No tasks available'
+          ) : (
+            <TaskPanelSummaryText taskList={taskList} />
+          )}
         </span>
         <vscode-icon
           className="task-panel-pin"

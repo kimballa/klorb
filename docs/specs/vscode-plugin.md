@@ -1101,8 +1101,11 @@ ever show what the server last sent, never fetch or refresh independently.
   `App` persists `taskList` via `vscode.setState()` alongside `entries`/`pendingInteraction`/
   `status`, and threads it through `main.tsx` as `initialTaskList`.
 * **`TaskPanel`** (`src/webview/components/TaskPanel.tsx`, a top-level component, not part of the
-  `history` feature) renders nothing at all while `taskList` is `undefined` (no plan update has
-  arrived yet — no dead chrome). Once one has arrived, it's a plain `<details>`/`<summary>`
+  `history` feature) shows a static "No tasks available" summary line (no chevron, no expand
+  affordance) while `taskList` is `undefined` — no plan update has arrived yet, so there's no
+  client-side chainlink access to derive a real placeholder from, but the panel still renders
+  something once the user has asked to see it rather than showing nothing at all. Once a plan
+  update has arrived, it's a plain `<details>`/`<summary>`
   disclosure (the same hand-rolled pattern the thinking block and the approval panel's "Show full
   command" already use), collapsed by default:
   * The `<summary>` is always visible regardless of collapsed state, left to right: a
@@ -1151,7 +1154,155 @@ ever show what the server last sent, never fetch or refresh independently.
   rendered at all (including its own pin), so once hidden, the status row's `StatusMenu` (see
   "Status row and session controls" below) is the only UI element left to bring it back -- its
   own task-panel item calls `toggleTaskPanelVisible()` directly too, with no host round trip,
-  and its label reflects current visibility so picking it always reads as the right action.
+  and its label reflects current visibility so picking it always reads as the right action --
+  `taskPanelVisible` alone is an accurate stand-in for what's on screen, since `TaskPanel` always
+  renders something once it's mounted (see its own doc comment above for the "No tasks available"
+  placeholder), never silently nothing.
+
+### Subagents panel
+
+A strip docked at the top of the sidebar, above `TaskPanel` (which docks above `HistoryView` --
+see "Task panel" above), listing every session in the tree rooted at the root session -- the
+VSCode adaptation of the TUI's Ctrl+G right-hand panel
+(`klorb.tui.widgets.subagents_panel.SubagentsPanel`, see docs/specs/subagents.md's "Subagents
+panel (TUI)" section). Unlike the TUI, which holds every `Session` object directly in-process,
+the webview never speaks ACP itself (`docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-
+messages.md`), so this feature is built on three new `_klorb/*` ext methods
+([[klorb-server]]'s own "Extension methods" section documents the wire contract in full):
+`_klorb/subagentTree` (a snapshot of the whole tree), `_klorb/subagentTranscript` (one
+subagent's message history), and `_klorb/subagentCancel` (per-subagent Stop). None of the three
+push unprompted -- a subagent's turn never streams at all (see docs/specs/subagents.md's
+"Security model" section) and nothing wakes an idle creator when one finishes (that section's
+"Out of scope" also covers the ACP layer) -- so this feature is poll-driven end to end, unlike
+every other host↔webview data flow in this document, which rides an ACP push.
+
+* **`SubagentPoller`** (`src/host/features/subagents/subagentPoller.ts`) owns two independent
+  `setInterval` timers against the live `AcpConnection`: a tree poll (`_klorb/subagentTree`,
+  every 2s) runs whenever the webview's panel is visible (`setPanelVisible(true)`); a transcript
+  poll (`_klorb/subagentTranscript`, every 1s, plus one immediate off-interval fetch on
+  selection so the view doesn't sit empty for up to a second) additionally requires a non-root
+  selection (`selectSubagent(sessionId)`). Both timers are no-ops (never even start) unless
+  `AcpConnection.subagentsCapable` is `true` -- the connection's own `initialize()`-negotiated
+  `agentCapabilities._meta.klorb.subagents` flag, threaded through `SessionInfo`/
+  `StatusSnapshot.subagentsCapable` the same way `enqueueMessageCapable` already is, so an older
+  server that predates this feature isn't hit with a stream of `method not found` errors.
+  `resync()` re-evaluates both timers against the connection's current `subagentsCapable`, with
+  no change to the poller's own tracked visibility/selection state -- `extension.ts`'s
+  `startConnection()` calls it right after `connection.start()` resolves, since the webview's own
+  mount-effect resync message (below) can call `setPanelVisible(true)` (restoring a persisted
+  `subagentsPanelVisible: true`) before that `initialize()` handshake finishes; without `resync()`,
+  `setPanelVisible`'s own gate would see `subagentsCapable` still `false` at that moment and never
+  start the timer, leaving the panel flagged open with nothing polling until the user manually
+  toggled it closed and back open. `cancelSubagent(sessionId)` calls `_klorb/subagentCancel`
+  directly (no timer involved).
+  `KlorbSessionViewProvider` owns one `SubagentPoller` instance (constructed in `extension.ts`
+  alongside `SessionControls`) and routes the webview's `setSubagentsPanelVisible`/
+  `selectSubagent`/`cancelSubagent` messages into it; its two callbacks post
+  `subagentTreeUpdate`/`subagentTranscriptUpdate` host messages back, mirroring how
+  `SessionControls`'s own status callback posts `statusUpdate`.
+* **`SubagentNodeInfo`** (`src/shared/webviewMessages.ts`) is the wire shape for one tree node --
+  `{id, parentId, address, title, role, state: "running" | "finished" | null, aborted, model,
+  thinkingEnabled, thinkingEffort, usedTokens, maxTokens, outputTokens}` -- the same fields
+  [[klorb-server]]'s `_klorb/subagentTree` result documents; the root session is node `parentId:
+  null`, always present, so the panel and every selection-following piece of chrome (below) treat
+  root and subagent selection uniformly instead of as two separate concepts. `SubagentTreeUpdateMessage`/
+  `SubagentTranscriptUpdateMessage` (host → webview) and `SetSubagentsPanelVisibleMessage`/
+  `SelectSubagentMessage`/`CancelSubagentMessage`/`ToggleSubagentsPanelMessage` (webview ↔ host)
+  round out the protocol; `webview/features/subagents/subagentsModel.ts` holds the pure reducers
+  (`applySubagentTreeUpdate`/`applySubagentTranscriptUpdate`, replace-wholesale-or-clear-on-
+  sessionReset, mirroring `applyTaskListUpdate`) and `subagentTranscriptEntries()`, which converts
+  a transcript snapshot's wire entries into `HistoryEntry[]` for `HistoryView` reuse (see below)
+  and overrides each `toolCall` entry's `expanded` flag from a separately-tracked
+  `expandedCallIds` set -- the wire's own `expanded` is always `false` (`_replay_tool_call_entry`
+  never persists it), so without this override a user's own expand/collapse toggle would revert
+  on the very next 1s poll.
+* **`SubagentsPanel`** (`src/webview/features/subagents/components/SubagentsPanel.tsx`) renders
+  nothing until the first `subagentTreeUpdate` arrives (mirroring `TaskPanel`), then one button
+  row per node in tree order -- **no depth-based indentation** (a node's dotted-decimal address
+  already reads as nested by virtue of being longer than its parent's) and **one leading marker
+  slot**, not one per state: `rowMarker()` (`subagentsModel.ts`) returns `"!"` only while the
+  panel's own 600ms blink timer (`useBlinkPhase`, mirroring the TUI's `_PANEL_TICK_INTERVAL_SECONDS`)
+  is in its on-phase *and* the row is the session an outstanding ask belongs to, else `"*"` for a
+  running row, else nothing -- exactly `SubagentsPanel._render_row_label`'s own precedence.
+  Selection is click-only (native `<button>` Tab/Enter/Space activation), a deliberate scope
+  reduction from the TUI's `OptionList`-driven arrow-key roving selection. The footer shows the
+  selected row's role.
+* **Selection is global, including the root session**, exactly mirroring the TUI's own "Selection
+  is global" rule (docs/specs/subagents.md's "Subagents panel (TUI)" section): `App`'s
+  `selectedSubagentId: string | null` (`null` = root) is the one piece of state every other
+  selection-dependent piece of chrome below reads.
+  * **The transcript view** (`SubagentTranscriptView.tsx`) reuses `HistoryView` wholesale against
+    `subagentTranscriptEntries(...)` rather than a second render path -- deliberately, since a
+    bug in the TUI's own first-cut `_mount_subagent_messages` (a `tool_use` message's own
+    `content` alongside its tool calls, and a `thinking` message's `reasoning_details` fallback,
+    both silently dropped) turned out to live in the *data-building* layer
+    (`klorb.server.update_mapping.build_session_replay`, shared by `_klorb/sessionReplay` and
+    `_klorb/subagentTranscript` alike), not the render layer -- fixing it once there fixes both
+    the root session's own saved-session restore and every subagent transcript, for free, rather
+    than needing a parallel fix in a from-scratch VSCode render path. Own pin-to-bottom tracking
+    (`webview/hooks/usePinnedScroll`, factored out of `App.tsx`'s own root-history scroll-pin
+    logic once this became the second call site needing it), independent of the root `#history`
+    view's. A trailing status line reports one of four states -- "Subagent is still working…" /
+    "Subagent task complete." / "Subagent interrupted." / "Sending interrupt…" (the last shown
+    immediately on a Stop click, via `App`'s own `subagentInterruptPending` state, until a poll
+    confirms `state: "finished"`) -- matching the TUI's own four-state notice one-for-one.
+  * **The prompt input is disabled whenever a subagent is selected** (`PromptInput`'s `readOnly`
+    prop hides the textarea and Send button entirely) -- the user cannot address a subagent
+    directly. The Stop button is unaffected by `readOnly`: while a subagent is selected, `App`
+    wires `inFlight`/`onCancel` to that subagent's own running state/`cancelSubagentTurn()`
+    instead of the root session's, so Stop still cancels whichever turn is actually on screen.
+  * **The status row's model/thinking chips follow the selection** and go non-interactive:
+    `StatusRow`'s `interactive` prop (`false` while a subagent is selected) swaps the model/
+    thinking chips from `<button>` to plain `<span>` -- a subagent's `SessionConfig` is fixed at
+    creation (docs/specs/subagents.md's "Subagent session model" section), so there is nothing a
+    click could change. `App`'s `selectedStatusOverrides()` overlays the selected node's own
+    `model`/`thinkingEnabled`/`thinkingEffort`/`usedTokens`/`maxTokens`/`outputTokens` on top of
+    the root's own `StatusSnapshot` before it reaches `StatusRow`, so the token tally too always
+    reflects whichever session is on screen -- the VSCode analogue of the TUI's `_selected_session`
+    reads in `StatusBarMixin`/`ReplApp.format_title`. The permission-mode badge is *not* gated by
+    `interactive`: `permission_framework` is shared by reference across the whole session tree
+    (docs/specs/subagents.md's "Shared permission framework state" section), so cycling it while
+    a subagent is selected is still a legitimate, tree-wide action.
+  * **The panel header title follows the selection** (`App`'s `headerTitle`, the selected node's
+    own address and title for a subagent, `sessionTitleText(status)` for the root) -- the VSCode
+    analogue of the TUI's `#session-name` status line following `_selected_session.name`.
+* **Ask routing.** A subagent-raised ask (`PermissionAskMessage`/`QuestionAskMessage`'s
+  `originSessionId`, see [[klorb-server]]'s own doc comment on that field) is answerable in the
+  interaction area only once its own session is the one selected (`App`'s `interactionVisible`) --
+  the VSCode counterpart of the TUI's `_await_session_selected` gate, implemented client-side
+  since (unlike the TUI) nothing here blocks a server-side lock waiting for a selection to
+  change. While it isn't visible, the owning row shows the blinking `"!"` marker instead (via
+  `attentionSessionId`, resolved from `originSessionId` to that node's own tree id -- the root's
+  `originSessionId` is `undefined`, resolved to the root node's own `id` from the current tree
+  snapshot so the marker can still target a real row). Because `KlorbAcpClient` only ever
+  surfaces one interaction at a time (its own `_interactionBusy`/`_interactionQueue` serialize
+  every ask system-wide, root or subagent alike -- see "Approval and question panels" above),
+  `App` only needs one `pendingInteraction` slot, gated by whether its `originSessionId` matches
+  the current selection, not a full per-session queue. **While the panel itself is hidden**, the
+  blinking row marker obviously can't be seen at all, so a `#subagent-attention-fallback` bar
+  (`showAttentionFallback`) attaches just above the prompt input instead -- "Agent `<address>`
+  needs your input", clickable to open the panel and jump straight to that row -- mirroring the
+  TUI's own `#subagent-attention-status` line (`SubagentsPanelMixin.
+  _update_subagent_attention_status_line`), shown by the same rule: only while the panel is
+  closed, never alongside the marker itself.
+* **Visibility toggle** mirrors the task panel's own exactly (`App`'s `subagentsPanelVisible`,
+  persisted via `vscode.setState()`, the **Klorb: Toggle Subagents Panel** command
+  (`klorb.toggleSubagentsPanel`) posting a bare `{type: 'toggleSubagentsPanel'}`, and a
+  `StatusMenu` item reflecting current visibility) -- with one addition Tasks doesn't need:
+  toggling also posts `{type: 'setSubagentsPanelVisible', visible}` to the host so
+  `SubagentPoller` starts/stops its tree timer. Because the poller's timers live in the extension
+  host (which can outlive a webview reload) while the visibility/selection flags live in the
+  webview's own persisted state, `App` re-sends both on every mount (keyed off its own
+  `initialSubagentsPanelVisible`/`initialSelectedSubagentId` props, never off the corresponding
+  live state, so the effect stays exhaustive-deps-correct without re-firing on every render) to
+  keep the two sides reconciled after a reload.
+* **Auto-opens on the session's first `CreateSubagent` call**, rather than requiring the user to
+  notice a subagent exists and open the panel manually: `App`'s `onMessage` handler checks every
+  `toolCallStarted` message's `toolName` field (`_meta.klorb.toolName`, [[klorb-server]]'s own
+  "Tool-call update mapping" section) for `"CreateSubagent"` and calls `showSubagentsPanel()`,
+  which sets `subagentsPanelVisible` (and posts `setSubagentsPanelVisible`) only when it isn't
+  already `true` -- unlike `toggleSubagentsPanelVisible`, a second `CreateSubagent` call while
+  the panel is already open doesn't flip it shut again.
 
 ### Webview message protocol
 
@@ -1176,7 +1327,9 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   `{type: 'cyclePermissionMode'}`/`{type: 'showSessionStats'}`/`{type: 'newSession'}`/
   `{type: 'reloadSkills'}` ("Status row and session controls" above, the status row's chips and
   its `StatusMenu` popup), `{type: 'attachImageFile'}` ("Image attachments" above, the status
-  row's file-picker item), and `WebviewErrorMessage`
+  row's file-picker item), `{type: 'setSubagentsPanelVisible', visible: boolean}`/
+  `{type: 'selectSubagent', sessionId: string | null}`/`{type: 'cancelSubagent', sessionId:
+  string}` ("Subagents panel" above), and `WebviewErrorMessage`
   (`{type: 'webviewError', message: string, stack?: string}`, "Webview UI structure" above's
   `ErrorBoundary`).
 * Host → webview (`HostMessage`): `{type: 'turnStarted'}`, `{type: 'agentChunk', text:
@@ -1185,7 +1338,7 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   server process mid-turn, "Queued messages and interrupt polish" above),
   `{type: 'messageQueued', text: string}`/`{type: 'queuedMessageSent', text: string}` (both
   "Queued messages and interrupt polish" above), `{type: 'sessionReset'}`,
-  `{type: 'toolCallStarted', callId, title, kind, locations}`, and
+  `{type: 'toolCallStarted', callId, title, kind, locations, toolName?}`, and
   `{type: 'toolCallUpdated', callId, status, title?, contentText?, diff?, locations?}` — `kind`/
   `status` are plain strings (mirroring `turnEnded`'s own loosely-typed `stopReason`) so a value
   this client doesn't recognize yet still round-trips instead of failing to parse; `locations`
@@ -1200,10 +1353,14 @@ ACP directly; `KlorbSessionViewProvider` is the only place that translates betwe
   `status` (see [[klorb-server]]'s tool-call update mapping section), but the flattening
   defaults `kind`/`locations` to `'other'`/`[]` and `status` to `'completed'` when a peer ACP
   agent does, `PermissionAskMessage` ("Approval and question panels" above),
-  `QuestionAskMessage` ("Approval and question panels" above), `StatusUpdateMessage` (now also
-  carrying `activeModelVision?: boolean`, "Image attachments" above), and
+  `QuestionAskMessage` ("Approval and question panels" above, both now also carrying
+  `originSessionId?: string`, "Subagents panel" above), `StatusUpdateMessage` (now also
+  carrying `activeModelVision?: boolean`, "Image attachments" above, and
+  `subagentsCapable?: boolean`, "Subagents panel" above), and
   `SessionStatsMessage` (both "Status row and session controls" above),
   `TaskListUpdateMessage`/`{type: 'toggleTaskPanel'}` (both "Task panel" above),
+  `SubagentTreeUpdateMessage`/`SubagentTranscriptUpdateMessage`/
+  `{type: 'toggleSubagentsPanel'}` (all "Subagents panel" above),
   `{type: 'workspaceFiles', files: string[]}` ("File finder" above), and
   `{type: 'imageAttached', image: ImageAttachment}` ("Image attachments" above, the status
   row's file-picker result).

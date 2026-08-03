@@ -49,6 +49,9 @@ export interface StatusSnapshot {
    * `model`/`thinking` via `_klorb/getSessionConfig`, since the active model can change
    * mid-session. */
   activeModelVision?: boolean;
+  /** Whether the connected server advertised `_klorb/subagentTree` -- gates whether the
+   * subagents panel polls/renders at all (see `AcpConnection.subagentsCapable`). */
+  subagentsCapable?: boolean;
 }
 
 export type StatusListener = (status: StatusSnapshot) => void;
@@ -165,6 +168,7 @@ export class SessionControls {
       workspaceTrusted: info.workspaceTrusted,
       sessionTitle: info.title ?? null,
       enqueueMessageCapable: info.enqueueMessageCapable,
+      subagentsCapable: info.subagentsCapable,
       usedTokens: undefined,
       maxTokens: undefined,
       outputTokens: undefined,

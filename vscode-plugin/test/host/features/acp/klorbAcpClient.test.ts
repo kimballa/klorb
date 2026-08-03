@@ -500,6 +500,42 @@ describe('KlorbAcpClient', () => {
       await responsePromise;
     });
 
+    it('surfaces _meta.klorb.originSessionId as a top-level field for a subagent ask', async () => {
+      const { listener, permissionAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const responsePromise = client.requestPermission({
+        sessionId: 's1',
+        toolCall: { toolCallId: 't1', title: '[subagent 1.1 (explorer)] Run: ls' },
+        options: [{ optionId: 'deny:once', name: 'Deny', kind: 'reject_once' }],
+        _meta: {
+          klorb: { resourceDescription: 'run shell command: ls', originSessionId: 'subagent-1' },
+        },
+      });
+
+      expect(permissionAsks[0]?.originSessionId).toBe('subagent-1');
+
+      client.resolvePermissionDecision(1, { optionId: 'deny:once' });
+      await responsePromise;
+    });
+
+    it("omits originSessionId for the root session's own ask", async () => {
+      const { listener, permissionAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const responsePromise = client.requestPermission({
+        sessionId: 's1',
+        toolCall: { toolCallId: 't1', title: 'Run: ls' },
+        options: [{ optionId: 'deny:once', name: 'Deny', kind: 'reject_once' }],
+        _meta: { klorb: { resourceDescription: 'run shell command: ls' } },
+      });
+
+      expect(permissionAsks[0]?.originSessionId).toBeUndefined();
+
+      client.resolvePermissionDecision(1, { optionId: 'deny:once' });
+      await responsePromise;
+    });
+
     it('ignores a decision naming a stale/unknown requestId', async () => {
       const { listener } = makeListener();
       const logs: string[] = [];
@@ -633,6 +669,26 @@ describe('KlorbAcpClient', () => {
       expect(questionAsks).toEqual([]);
     });
 
+    it('surfaces originSessionId as a top-level field for a subagent-raised question', async () => {
+      const { listener, questionAsks } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      const resultPromise = client.extMethod('_klorb/askUserQuestions', {
+        sessionId: 's1',
+        header: '[subagent 1.1 (explorer)] Format',
+        question: 'Which format?',
+        options: [{ label: 'JSON' }],
+        index: 0,
+        total: 1,
+        originSessionId: 'subagent-1',
+      });
+
+      expect(questionAsks[0]?.originSessionId).toBe('subagent-1');
+
+      client.resolveQuestionAnswer(1, { selectedOptionIndex: 0 });
+      await resultPromise;
+    });
+
     it('queues a permission ask and a question ask against the same interaction slot', async () => {
       const { listener, permissionAsks, questionAsks } = makeListener();
       const client = new KlorbAcpClient(listener, RequestError, () => undefined);
@@ -688,6 +744,33 @@ describe('KlorbAcpClient', () => {
         title: 'Read foo.py',
         kind: 'read',
         locations: [{ path: '/tmp/foo.py', line: 3 }],
+      },
+    ]);
+  });
+
+  it('surfaces _meta.klorb.toolName on a toolCallStarted message', async () => {
+    const { listener, toolCallsStarted } = makeListener();
+    const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+    await client.sessionUpdate({
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-1',
+        title: 'Create subagent',
+        kind: 'other',
+        _meta: { klorb: { toolName: 'CreateSubagent' } },
+      },
+    });
+
+    expect(toolCallsStarted).toEqual([
+      {
+        type: 'toolCallStarted',
+        callId: 'call-1',
+        title: 'Create subagent',
+        kind: 'other',
+        locations: [],
+        toolName: 'CreateSubagent',
       },
     ]);
   });
