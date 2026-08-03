@@ -14,6 +14,7 @@ at process start to point tiktoken at it, if it's there. See docs/specs/klorb-in
 """
 
 import importlib.resources
+import json
 import logging
 import os
 import shutil
@@ -51,6 +52,18 @@ def estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return len(_encoding_instance().encode(text, disallowed_special=()))
+
+
+def tool_token_counts(tool_definitions: list[dict[str, Any]]) -> dict[str, int]:
+    """Token count of each tool definition's full function-calling JSON encoding (name +
+    description + parameters schema), one entry per `klorb.tools.registry.ToolRegistry.
+    tool_definitions()` result -- the fixed per-turn prompt cost of offering that tool,
+    independent of which tools a particular turn actually calls.
+    """
+    return {
+        definition["function"]["name"]: estimate_tokens(json.dumps(definition, default=str))
+        for definition in tool_definitions
+    }
 
 
 def estimate_image_tokens(width: int, height: int, model: Model) -> int:
