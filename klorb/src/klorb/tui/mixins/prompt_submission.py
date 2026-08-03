@@ -560,9 +560,18 @@ class PromptSubmissionMixin(ReplAppBase):
         itself. Runs synchronously on `_send_prompt`'s worker thread, so every widget/status-line
         touch below hops back onto the UI thread via `call_from_thread`, same as every other
         handler in this file.
+
+        This always fires for the *root* session's own naming classifier (a subagent's `name` is
+        pre-set from `CreateSubagent`'s `session_title` and never goes through this classifier at
+        all -- see docs/specs/subagents.md's "Subagent session model" section), so the
+        `#session-name` line is only actually touched while the root session is the one currently
+        selected in the subagents panel; otherwise the resolved title is left to show the next
+        time `SubagentsPanelMixin._select_session` re-selects the root, which reads `self._session.
+        name` fresh at that point regardless of when it actually resolved.
         """
         if result is None:
-            self.call_from_thread(self._update_session_name_line, self._session.name or "")
+            if self._selected_session is self._session:
+                self.call_from_thread(self._update_session_name_line, self._session.name or "")
             return
 
         if self._session_log_enabled:
@@ -573,7 +582,8 @@ class PromptSubmissionMixin(ReplAppBase):
             if old_log_path.exists():
                 old_log_path.rename(new_log_path)
             configure_logging(repl_mode=True, log_path=new_log_path)
-        self.call_from_thread(self._update_session_name_line, result.title)
+        if self._selected_session is self._session:
+            self.call_from_thread(self._update_session_name_line, result.title)
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""
@@ -658,7 +668,9 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None:
         """Scroll the history into view (iff `was_pinned`, see `_scroll_if_pinned`), refresh the
-        token tally, and hand focus back to the input box. Also clears the in-flight turn's
+        token tally, and re-enable and refocus the input box -- unless a subagent is currently
+        selected, in which case `_update_prompt_input_disabled_state` leaves it disabled (see
+        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin`). Also clears the in-flight turn's
         cancel event and pending-prompt tracking (model turn) and the shell command's cancel
         event (`_run_shell_command`), since neither Escape nor Ctrl+C has anything left to
         abort/interrupt once a turn is done (successfully, in error, or aborted) — shared by
@@ -706,8 +718,9 @@ class PromptSubmissionMixin(ReplAppBase):
         self._update_status_bar()
         self._session.persist_state()
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        input_widget.disabled = False
-        input_widget.focus()
+        self._update_prompt_input_disabled_state()
+        if not input_widget.disabled:
+            input_widget.focus()
         self._cancel_event = None
         self._shell_cancel_event = None
         self._turn_in_flight = False

@@ -102,11 +102,15 @@ name at each hop could recover privileges an ancestor deliberately stripped.
   added to the child's `SessionConfig.skill_rules.deny` on top of whatever the creator's own
   rules already deny. This is a snapshot taken at creation time, matching how the child's
   `ToolRegistry` is likewise a one-time snapshot.
-* **Subagent roles**: `Session.effective_subagent_roles` (a `frozenset[str] | None`, `None`
-  meaning unrestricted — the case for the root session) is computed once, at a subagent's own
-  creation, and stored on it; a later `CreateSubagent` call from that subagent intersects its
-  *own* `effective_subagent_roles` against the requested child role's `restrict_to`, never a
-  fresh lookup of the parent role's nominal `subagent_roles`.
+* **Subagent roles**: `Session.effective_subagent_roles` (a `frozenset[str] | None`) is computed
+  once, at a subagent's own creation, and stored on it; a later `CreateSubagent` call from that
+  subagent intersects its *own* `effective_subagent_roles` against the requested child role's
+  `restrict_to`, never a fresh lookup of the parent role's nominal `subagent_roles`. It's `None`
+  only for the root session, which was never narrowed this way — `klorb.agents.policy.
+  _effective_parent_subagent_roles` falls back, for that one case, to the root's *own*
+  `agents.json` entry's `restrict_to.subagent_roles` (e.g. operator's is `["explorer"]`, so an
+  operator session may launch an Explorer but not another operator), and only to "every role
+  `agents.json` defines" if that field is itself unset.
 * `CreateSubagent`/`WaitForSubagent`/`MessageSubagent` all report `is_read_only() == True` — they
   don't mutate file or environment state directly; a subagent's actual capabilities are bounded
   by the intersection above, not by whether these three tools are offered under
@@ -123,10 +127,13 @@ name at each hop could recover privileges an ancestor deliberately stripped.
   renders a subagent's turn directly today), but every ask-style callback
   (`on_permission_ask`/`on_ask_user_questions`/`on_escalate_privileges`) forwarded to whichever
   callback the *creating* session's own current turn is using (`Session.current_turn_handlers()`,
-  read at dispatch time), with the ask's `resource_description` prefixed
-  `[subagent <address> (<role>)]` so the resulting prompt makes clear which subagent it's for.
-  This routes a subagent's interactive asks through the same single-session UI the creator's own
-  turn already uses, rather than a dedicated per-subagent surface.
+  read at dispatch time), with the ask's human-readable text field prefixed
+  `[subagent <address> (<role>)]` and its `origin_session_id` stamped with the leaf subagent that
+  actually raised it (see "Subagents panel" below for how the TUI uses that id). This routes a
+  subagent's interactive asks through the same single-session UI the creator's own turn already
+  uses — ultimately, always the root session's own `ReplApp` callbacks, since every level's
+  forwarding closure just relays to its own creator's `current_turn_handlers()` — rather than a
+  dedicated per-subagent transport.
 
 ## Subagent session model
 
@@ -277,21 +284,114 @@ other in-flight session state.
 whatever it needs to (files, prior decisions, memories, web pages) to answer a bounded question,
 never to modify the codebase or environment, and to end its turn with a report meant to stand on
 its own — that report is its only deliverable; the creator never sees its intermediate tool
-calls or reasoning. Its `agents.json` entry: `default_model` `moonshotai/kimi-k2.7-code`,
-`enforce_readonly_tools: true`, `skills: []` (no skill access at all — moot in practice, since
-its `tools` list also excludes every skill tool), and a `tools` list covering `FindFile`, `Grep`,
-`ListDir`, `ReadFile`, `ListMemories`, `SearchMemories`, `ReadMemory`, `EditScratchpad`,
-`ReadScratchpad`, and `WebFetch`. `restrict_to.subagent_roles` names `["explorer",
-"vision_assistant"]`, but `allow_subagents: false` means an Explorer cannot currently launch
-subagents of its own at all — only `operator`'s `agents.json` entry has `allow_subagents: true`
-today.
+calls or reasoning. Its `agents.json` entry: `enforce_readonly_tools: true`, `skills: []` (no
+skill access at all — moot in practice, since its `tools` list also excludes every skill tool),
+and a `tools` list covering `FindFile`, `Grep`, `ListDir`, `ReadFile`, `ListMemories`,
+`SearchMemories`, `ReadMemory`, `EditScratchpad`, `ReadScratchpad`, and `WebFetch`.
+`restrict_to.subagent_roles` names `["explorer"]` and `allow_subagents: true`, so an Explorer may
+itself launch further Explorer subagents (bounded by `tools.subagents.maxDepth` like any other
+nesting) — operator's own `restrict_to.subagent_roles` names only `["explorer"]` too, so neither
+role can ever launch an `operator` subagent (see "Security model" above).
+
+## Subagents panel (TUI)
+
+`klorb.tui.widgets.subagents_panel.SubagentsPanel` (Ctrl+G, `klorb.tui.mixins.subagents_panel.
+SubagentsPanelMixin`) docks a right-hand panel — mutually exclusive with the Ctrl+T task
+sidebar, since both occupy the same slot — listing every session in the live tree rooted at the
+process's top-level session (`klorb.agents.runtime.walk_session_tree`, a pre-order walk mirroring
+`total_active_subagents`/`cascade_close_subagents`'s own recursive walk). Each row shows the
+session's address and title; the footer shows the selected row's `config.role_name`. The inner
+`OptionList` handles click/up-down-arrow navigation itself; highlighting a row calls
+`SubagentsPanelMixin._select_session`.
+
+**Selection is global, and gates every ask — root included.** `ReplApp._selected_session`
+(default: the root session) and `_selected_handle` (`None` for the root) track which session is
+currently displayed. `InteractionsMixin._confirm_permission_ask`/`_confirm_ask_user_questions`/
+`_confirm_escalate_privileges` each start by calling `SubagentsPanelMixin.
+_await_session_selected(ask_ctx.origin_session_id or self._session.id)`, which polls
+(`asyncio.sleep`, mirroring `SubagentTracker`'s own poll pattern rather than a new
+synchronization primitive) until that session becomes selected, *before* acquiring
+`_interaction_lock` — so an ask for a session that isn't selected can't hold the lock and starve
+every other panel, including the root's own. This makes "the ask only shows once its owner is
+selected" the general rule (a strict generalization of the pre-Phase-3 behavior, which was
+equivalent to "root is always selected"), not a subagent-specific special case. While waiting, the
+session's id sits in `_attention_needed` (an insertion-ordered `dict[str, None]`), which
+`SubagentsPanel.show_rows` renders as a blinking `(!)` marker (`_tick_subagents_panel`, a
+`set_interval` timer, flips the blink phase every 0.6s) and which drives the
+`#subagent-attention-status` status-line fallback ("Agent 1.1 needs your input") shown only while
+the panel itself is hidden.
+
+**The transcript view is a second, separate `#subagent-history` `VerticalScroll`**, not a
+repurposed `#history` — the root session's own live streaming into `#history` is completely
+unaffected by panel selection. Selecting a subagent renders a fresh snapshot of its
+`Session.messages` into `#subagent-history` (`SubagentsPanelMixin._render_full_subagent_transcript`),
+reusing `RenderingMixin`'s pure `_render_restored_tool_call`/`_render_tool_result` against the
+*root* session's own `tool_registry` — safe because a subagent's tool set is always a subset of
+every ancestor's, including the root's, by the Phase-1 intersection invariant. While it stays
+selected, the tick timer catches the view up incrementally (`_append_new_subagent_messages`, mounting
+only messages added since the last render, mirroring how `#history` streams a live turn) rather than
+rebuilding it from scratch, and follows the bottom only if the view was already pinned there
+(`_subagent_history_pinned_to_bottom`, kept in sync by `_on_subagent_history_scroll_changed` the same
+way `_history_pinned_to_bottom` is) — a user who scrolled up to reread earlier output isn't yanked
+back down by new content. A trailing status `Static` (`_mount_subagent_status_notice`) always
+occupies the last line: "Subagent is still working…" while `handle.state == "running"`, else
+"Subagent task complete." — or "Subagent interrupted." instead, if `handle.output` carries
+`klorb.agents.runtime.SUBAGENT_ABORTED_MARKER`.
+
+**Escape/Ctrl+C** abort the selected subagent's own `cancel_event` when one is selected, leaving
+the root session's `_cancel_event`/`_shell_cancel_event` untouched — the existing
+`SUBAGENT_ABORTED_MARKER` relay (`klorb.agents.policy._run_subagent_turn`) already covers the
+resulting `ResponseAborted`. Since the subagent's background thread only notices `cancel_event` at
+its next stream/tool-call boundary, `KeyActionsMixin._interrupt_running_activity` also calls
+`SubagentsPanelMixin._note_subagent_interrupt_requested` to immediately show "Sending interrupt…"
+in `#subagent-history` — tracked via `_subagent_interrupt_pending` so every tick in between keeps
+showing it rather than reverting to "still working" — until the handle actually finishes and the
+notice flips to "Subagent interrupted.". **The prompt input is disabled whenever a subagent is
+selected** (`SubagentsPanelMixin._update_prompt_input_disabled_state`, consulted by every site that
+used to unconditionally set `PromptInput.disabled = False`) — the user cannot address a subagent
+directly. **The footer token tallies** (`StatusBarMixin._update_status_bar`) also follow the
+selection — they report `_selected_session.total_tokens_used()`/`max_context_window()`/
+`total_output_tokens_used()`, not always the root's, so they read correctly for whichever
+transcript is actually on screen.
+
+**Every other selection-dependent chrome follows the same rule.** The `Header`'s title (model
+name, plus thinking effort in parentheses if enabled) reads `_selected_session.config` directly
+in `ReplApp.format_title` — a subagent can run a different model than the root, entirely
+independently, since `SessionConfig` is deep-copied at subagent creation. `_select_session` calls
+`_refresh_header_title()` (the same `mutate_reactive(sub_title)` trick already used for
+thinking-effort/workspace-trust changes) so the header redraws even though `self.sub_title`'s own
+*value* — which still only ever tracks the root's model, via `select_model` — didn't necessarily
+change. The `#session-name` status line (`"Session: <title>"`) is handled the same way
+(`SubagentsPanelMixin._update_session_name_line_for_selection`, reading `_selected_session.name`);
+`PromptSubmissionMixin._handle_session_name_changed` (the root session's own first-turn naming
+classifier callback) now only actually writes to that line while the root is the one currently
+selected, so a subagent's title on screen can't be clobbered by the root's classifier resolving
+in the background.
+
+**A subagent's transcript must show everything a live turn would, not just tool calls.** Two
+gaps existed in the first cut of `_mount_subagent_messages` (and, identically, in `RenderingMixin.
+_mount_restored_history`, since both walk a `Session.messages` list the same way once a turn is
+over rather than reacting to `TurnEventHandlers` streaming callbacks): a `role="tool_use"`
+message's own `content` was never rendered, only its `tool_calls` — but `Session._send_and_receive`
+sets `content` before reclassifying a message to `tool_use` purely because it also carries tool
+calls, so a round that ends with both commentary *and* tool calls (including, often, a subagent's
+actual final answer, if that answer arrived in the same round as its last tool calls rather than a
+trailing text-only round) had its text silently dropped — exactly the fact `klorb.agents.policy.
+_assistant_authored_text` already accounts for when building the text relayed to the creator. Both
+render paths now mount a `tool_use` message's non-empty `content` as a response block ahead of its
+tool calls. Separately, a `"thinking"` message's `content` (the model's plain-text `reasoning`
+delta) and its `reasoning_details` (structured fragments) are populated from two independent
+provider streams that aren't guaranteed to be in sync — a `<Thinking>` block could render as an
+empty label if `content` never arrived even though real text existed in `reasoning_details`. Both
+render paths now call `klorb.tui.formatting.resolve_thinking_body_text(content, reasoning_details)`
+before mounting the `<Thinking>` body, which reconstructs the text from `reasoning_details`'
+`text`/`summary` fields whenever `content` is empty. (The live-streaming render path,
+`PromptSubmissionMixin.handle_thinking_chunk`/`handle_reasoning_details_chunk`, has the same latent
+gap but isn't covered by this fix — mid-stream reconciliation is a materially different, racier
+problem, and a reload/restore of the same session renders correctly either way.)
 
 ## Out of scope
 
-* **A dedicated subagents panel** (TUI/VSCode) showing the live tree, per-subagent selection,
-  and a Stop button — not built. A subagent's own interactive permission asks are routed through
-  whichever UI surface the creating session's current turn is already using (see "Security
-  model"), tagged with the subagent's address/role, rather than a dedicated routing surface.
 * **Waking an idle creator.** If the creating session has no turn of its own in flight when a
   subagent finishes, nothing proactively starts a new turn to deliver the output — delivery
   happens opportunistically, the next time the creating session's own turn polls for it (or via

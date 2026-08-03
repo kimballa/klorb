@@ -8,6 +8,7 @@ from klorb.tui.formatting import (
     crawl_animation_text,
     format_token_count,
     render_diff_content,
+    resolve_thinking_body_text,
     strip_system_interjections,
     summarize_reasoning_details,
 )
@@ -49,6 +50,48 @@ def test_summarize_reasoning_details_singular_block_wording() -> None:
     result = summarize_reasoning_details([{"type": "reasoning.encrypted", "data": "opaque-blob"}])
 
     assert result == "[1 reasoning block preserved, 1 encrypted]"
+
+
+def test_resolve_thinking_body_text_prefers_content_when_present() -> None:
+    result = resolve_thinking_body_text(
+        "actual plain-text reasoning", [{"type": "reasoning.text", "text": "ignored"}])
+
+    assert result == "actual plain-text reasoning"
+
+
+def test_resolve_thinking_body_text_falls_back_to_reasoning_details_when_content_is_empty() -> None:
+    result = resolve_thinking_body_text("", [
+        {"type": "reasoning.text", "text": "first part"},
+        {"type": "reasoning.summary", "summary": "second part"},
+    ])
+
+    assert result == "first part\n\nsecond part"
+
+
+def test_resolve_thinking_body_text_falls_back_when_content_is_only_whitespace() -> None:
+    result = resolve_thinking_body_text("   \n", [{"type": "reasoning.text", "text": "real text"}])
+
+    assert result == "real text"
+
+
+def test_resolve_thinking_body_text_skips_opaque_entries_in_the_fallback() -> None:
+    result = resolve_thinking_body_text("", [
+        {"type": "reasoning.encrypted", "data": "opaque-blob"},
+        {"type": "reasoning.text", "text": "readable"},
+    ])
+
+    assert result == "readable"
+
+
+def test_resolve_thinking_body_text_returns_empty_content_when_nothing_is_readable() -> None:
+    result = resolve_thinking_body_text("", [{"type": "reasoning.encrypted", "data": "opaque-blob"}])
+
+    assert result == ""
+
+
+def test_resolve_thinking_body_text_returns_content_when_no_reasoning_details_at_all() -> None:
+    assert resolve_thinking_body_text("", None) == ""
+    assert resolve_thinking_body_text("", []) == ""
 
 
 def _styles(word: str, position: int) -> list[str]:

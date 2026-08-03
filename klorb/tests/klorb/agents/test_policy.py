@@ -47,8 +47,13 @@ def test_rejects_when_depth_would_exceed_max_depth(tmp_path: Path) -> None:
 
 
 def test_rejects_when_callers_own_role_disallows_subagents(tmp_path: Path) -> None:
+    """A caller whose own `role_name` has no `agents.json` entry at all -- e.g. a typo, or a role
+    retired from the file -- is rejected the same way a role with `allow_subagents: false` would
+    be (both hit `caller_definition is None or not caller_definition.allow_subagents`); both
+    packaged roles (operator, explorer) currently have `allow_subagents: true`, so an unknown role
+    name is what exercises this branch against the real file."""
     process_config = ProcessConfig()
-    session_config = SessionConfig(role_name="explorer", workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(role_name="no_such_role", workspace=Workspace(path=tmp_path))
     tool_registry = ToolRegistry.discover_tools(process_config, session_config)
     session = Session(
         session_config, provider=MagicMock(), process_config=process_config, tool_registry=tool_registry)
@@ -66,6 +71,18 @@ def test_rejects_unknown_role(tmp_path: Path) -> None:
         plan_subagent_creation(context, "no_such_role", None, None)
     # The error names the roles the agent may actually retry with.
     assert "explorer" in str(exc_info.value)
+
+
+def test_operator_cannot_launch_another_operator(tmp_path: Path) -> None:
+    """operator's own agents.json entry names `restrict_to.subagent_roles: ["explorer"]` --
+    even though the root session itself was never narrowed (`effective_subagent_roles is None`),
+    `_effective_parent_subagent_roles` must consult that entry rather than falling back to
+    "every role agents.json defines", or a root operator session could spawn another operator."""
+    context = _operator_context(tmp_path)
+
+    with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
+        plan_subagent_creation(context, "operator", None, None)
+    assert "['explorer']" in str(exc_info.value)
 
 
 def test_rejects_role_outside_the_callers_own_effective_subagent_roles(tmp_path: Path) -> None:
@@ -152,7 +169,7 @@ def test_explorer_plan_session_config_carries_the_explorer_role(tmp_path: Path) 
     plan = plan_subagent_creation(context, "explorer", None, None)
 
     assert plan.session_config.role_name == "explorer"
-    assert plan.role_definition.default_model == "moonshotai/kimi-k2.7-code"
+    assert plan.role_definition.default_model == "xiaomi/mimo-v2.5"
 
 
 def test_allowed_tools_override_replaces_the_roles_own_list(tmp_path: Path) -> None:
@@ -194,6 +211,7 @@ def test_subagent_roles_are_the_explorer_roles_own_restriction_intersected_with_
 
     # explorer's restrict_to.subagent_roles names ["explorer", "vision_assistant"], but
     # "vision_assistant" has no agents.json entry yet (added in a later phase) -- it can't
-    # survive the intersection against the operator (root, unrestricted) parent's own
-    # effective roles, which are every role agents.json currently defines.
+    # survive the intersection against the operator parent's own effective roles (its own
+    # restrict_to.subagent_roles, ["explorer"] -- operator may launch an explorer but not
+    # another operator).
     assert plan.effective_subagent_roles == {"explorer"}

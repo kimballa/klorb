@@ -65,6 +65,40 @@ def format_token_count(count: int) -> str:
     return f"{value}{suffix}"
 
 
+def _readable_entry_text(entry: dict[str, Any]) -> str | None:
+    """One `reasoning_details` entry's own human-readable text, if it has one -- `text` if it's a
+    `str`, else `summary` if *that's* a `str`, else `None` (an opaque entry, e.g. OpenRouter's
+    `reasoning.encrypted` type)."""
+    text = entry.get("text")
+    if isinstance(text, str):
+        return text
+    summary = entry.get("summary")
+    return summary if isinstance(summary, str) else None
+
+
+def resolve_thinking_body_text(content: str, reasoning_details: list[dict[str, Any]] | None) -> str:
+    """The text a `<Thinking>` block should actually show: `content` (the model's plain-text
+    `reasoning` delta) if it has anything, else every `reasoning_details` entry's own `text`/
+    `summary` field joined together. A provider can stream reasoning *only* via structured
+    `reasoning_details` fragments, with no matching plain-text `reasoning` delta ever sent --
+    leaving `content` empty even though real, human-readable reasoning text exists in
+    `reasoning_details`. Returns `content` unchanged (including empty) when there's nothing in
+    `reasoning_details` to fall back to -- a `Message` with genuinely no reasoning of either kind.
+
+    Guaranteeing the `<Thinking>` block shows every entry's own `text`/`summary` is what makes
+    `summarize_reasoning_details`'s own assumption (that such entries are "content the `<Thinking>`
+    block already shows in full") actually hold; call this first, then pass the *original*
+    `reasoning_details` to `summarize_reasoning_details` for the separate "N preserved, M
+    encrypted" note.
+    """
+    if content.strip():
+        return content
+    if not reasoning_details:
+        return content
+    readable = list(filter(None, map(_readable_entry_text, reasoning_details)))
+    return "\n\n".join(readable) if readable else content
+
+
 def summarize_reasoning_details(entries: list[dict[str, Any]]) -> str | None:
     """Return a compact indicator string for a turn's `reasoning_details` payload (see
     `klorb.message.Message.reasoning_details`), or `None` if every entry carries its own

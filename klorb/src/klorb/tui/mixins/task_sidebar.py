@@ -17,7 +17,8 @@ from klorb.tools.tasks.common import (
     fetch_and_sort_issues,
 )
 from klorb.tui._base import ReplAppBase
-from klorb.tui.constants import TASK_SIDEBAR_ID
+from klorb.tui.constants import SUBAGENTS_PANEL_ID, TASK_SIDEBAR_ID
+from klorb.tui.widgets.subagents_panel import SubagentsPanel
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,17 @@ class TaskSidebarMixin(ReplAppBase):
 
     def action_toggle_task_sidebar(self) -> None:
         """Ctrl+T: show or hide the task sidebar. Showing it triggers an immediate refresh,
-        since the list may be stale (or never fetched) from whenever it was last hidden."""
+        since the list may be stale (or never fetched) from whenever it was last hidden. Mutually
+        exclusive with the subagents panel (see `klorb.tui.mixins.subagents_panel.
+        SubagentsPanelMixin.action_toggle_subagents_panel` for the reverse direction): both dock
+        the same right-hand slot, so showing this one hides that one."""
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
         self._task_sidebar_shown = not self._task_sidebar_shown
         sidebar.display = self._task_sidebar_shown
         persist_task_sidebar(self._task_sidebar_shown)
+        if self._task_sidebar_shown and self._subagents_panel_shown:
+            self._subagents_panel_shown = False
+            self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display = False
         if self._task_sidebar_shown:
             self._refresh_task_sidebar()
 

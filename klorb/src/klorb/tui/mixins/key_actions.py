@@ -15,7 +15,7 @@ from klorb.process_config import user_config_path
 from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
-from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID, TASK_SIDEBAR_ID
+from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID, SUBAGENT_HISTORY_ID, TASK_SIDEBAR_ID
 from klorb.tui.formatting import random_greeting
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -111,30 +111,58 @@ class KeyActionsMixin(ReplAppBase):
         event.stop()
         event.prevent_default()
 
+    def _something_abortable_for_selection(self) -> bool:
+        """Whether there's anything for Escape/Ctrl+C to interrupt right now, for whichever
+        session is currently selected: a subagent's own turn (`_selected_handle`) if one is
+        selected, else the root session's turn/shell command (`_turn_in_flight`)."""
+        if self._selected_handle is not None:
+            return self._selected_handle.state == "running"
+        return self._turn_in_flight
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the `abort_response` binding from the footer unless something is currently
-        running (a streaming model turn — including a synchronous Bash tool call inside it — or
-        a `!`-prefixed shell command), since there's nothing for Escape to abort otherwise.
+        running for the selected session (see `_something_abortable_for_selection`), since
+        there's nothing for Escape to abort otherwise.
         """
         if action == "abort_response":
-            return self._turn_in_flight
+            return self._something_abortable_for_selection()
         return True
 
     def action_abort_response(self) -> None:
-        """Escape: interrupt whatever is currently running (an in-flight model turn — including
-        a Bash tool call inside it, see `Session.active_cancel_event` — or a `!`-prefixed shell
-        command), the same as a solitary Ctrl+C (`action_interrupt`) — but Escape only ever does
-        this; it has no copy-text or quit-warning meaning."""
+        """Escape: interrupt whatever is currently running for the selected session (an in-flight
+        model turn — including a Bash tool call inside it, see `Session.active_cancel_event` — a
+        `!`-prefixed shell command, or a selected subagent's own turn), the same as a solitary
+        Ctrl+C (`action_interrupt`) — but Escape only ever does this; it has no copy-text or
+        quit-warning meaning."""
         self._interrupt_running_activity()
 
     def _interrupt_running_activity(self) -> None:
-        """Show the `Interrupting…` notice and signal whatever's currently running to stop:
-        a `!`-prefixed shell command's `_shell_cancel_event`, or an in-flight model turn's
-        `_cancel_event` (`_signal_turn_cancellation`) — which also reaches a synchronous Bash
-        tool call running inside that turn via `Session.active_cancel_event`, causing it to send
-        `SIGINT` to its own child process rather than waiting for the next tool-call boundary.
-        Shared by Escape (`action_abort_response`) and a Ctrl+C that lands on running activity
+        """Show the `Interrupting…` notice and signal whatever's currently running to stop.
+
+        If a subagent is selected (`_selected_handle`), this sets only *its own* `cancel_event`
+        (the subagent's `klorb.agents.runtime._run_subagent_turn` catches the resulting
+        `ResponseAborted` and appends `SUBAGENT_ABORTED_MARKER` to its relayed output) and shows
+        "Sending interrupt…" in `#subagent-history` right away, via
+        `SubagentsPanelMixin._note_subagent_interrupt_requested` -- the abort can take a moment to
+        land, so this is the subagent-view analog of `_note_interrupt_requested`'s
+        `_INTERRUPTING_MESSAGE`, flipping to "Subagent interrupted." once the handle actually
+        finishes (see `_mount_subagent_status_notice`). The root session's own
+        `_cancel_event`/`_shell_cancel_event`, and its own `_INTERRUPTING_MESSAGE` notice (which
+        would otherwise land in the root's own, currently-hidden, `#history`), are left untouched,
+        so aborting a subagent's turn never interrupts or narrates over whatever the root session
+        is doing.
+
+        Otherwise, this shows the `Interrupting…` notice and signals a `!`-prefixed shell
+        command's `_shell_cancel_event`, or an in-flight model turn's `_cancel_event`
+        (`_signal_turn_cancellation`) — which also reaches a synchronous Bash tool call running
+        inside that turn via `Session.active_cancel_event`, causing it to send `SIGINT` to its own
+        child process rather than waiting for the next tool-call boundary. Shared by Escape
+        (`action_abort_response`) and a Ctrl+C that lands on running activity
         (`action_interrupt`)."""
+        if self._selected_handle is not None:
+            self._note_subagent_interrupt_requested(self._selected_handle)
+            self._selected_handle.cancel_event.set()
+            return
         self._note_interrupt_requested()
         if self._shell_cancel_event is not None:
             self._shell_cancel_event.set()
@@ -209,7 +237,7 @@ class KeyActionsMixin(ReplAppBase):
         previous_kind = self._last_ctrl_c_kind
         already_acted_on_this_streak = within_window and previous_kind in ("interrupt", "bare")
 
-        if self._turn_in_flight and not already_acted_on_this_streak:
+        if self._something_abortable_for_selection() and not already_acted_on_this_streak:
             self._last_ctrl_c_at = now
             self._last_ctrl_c_kind = "interrupt"
             self._interrupt_running_activity()
@@ -328,8 +356,10 @@ class KeyActionsMixin(ReplAppBase):
         message routes through the app's log / the session log file rather than leaking to
         raw stderr ahead of the TUI taking over the terminal — see
         docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md. Then label and focus
-        the input box, cap its growth at the configured max height, watch the history's scroll
-        position (see `_on_history_scroll_changed`), show the initial `> palette` hint (the box
+        the input box, cap its growth at the configured max height, watch the history's and
+        subagent-history's scroll positions (see `_on_history_scroll_changed`/
+        `_on_subagent_history_scroll_changed`), start the subagents panel's tick timer (see
+        `_start_subagents_panel_timer`), show the initial `> palette` hint (the box
         starts empty), greet the user with the klorb mascot (see
         `MASCOT_ART`/`MASCOT_GREETING`), note in the history if no per-user config file exists
         yet (see `CONFIG_MISSING_MESSAGE`), reports any config layer that failed to parse (see
@@ -343,6 +373,8 @@ class KeyActionsMixin(ReplAppBase):
         # Initialize task sidebar visibility from config
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
         sidebar.display = self._task_sidebar_shown
+
+        self._start_subagents_panel_timer()
 
         self._watchdog.start()
         if self._watchdog.enabled:
@@ -362,6 +394,9 @@ class KeyActionsMixin(ReplAppBase):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self.watch(history, "scroll_y", self._on_history_scroll_changed, init=False)
+
+        subagent_history = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
+        self.watch(subagent_history, "scroll_y", self._on_subagent_history_scroll_changed, init=False)
 
         history.mount(Static(f"{MASCOT_ART}\n\n{MASCOT_GREETING}", classes="mascot"))
 

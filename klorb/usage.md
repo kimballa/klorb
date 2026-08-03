@@ -31,19 +31,20 @@ starts an interactive, full-screen terminal REPL instead. Passing
 `--interactive` together with `-m`/`--message` starts the REPL with that
 message submitted as the first turn, then keeps the REPL open for more.
 
-Invoked as `klorb init` (only recognized when `init` is the very first
-argument), it instead bootstraps a `klorb-config.json` file and a `klorb`
-Invoked as `klorb system-prompt` (only recognized when `system-prompt` is the
-very first argument), it dumps the resolved system prompt and tool definitions
-to stdout — see COMMANDS below. Invoked as `klorb models` (only recognized
-when `models` is the very first argument), it lists every model klorb has
-discovered — see COMMANDS below. Invoked as `klorb show-config` (only
-recognized when `show-config` is the very first argument), it prints the
-merged config from all config files to stdout as pretty-printed JSON — see
-COMMANDS below. Invoked as `klorb server` (only recognized when `server` is
-the very first argument), it instead runs a persistent process that reads
-newline-delimited JSON commands from stdin and writes newline-delimited JSON
-replies to stdout — see COMMANDS below.
+* Invoked as `klorb init`, it instead bootstraps a `klorb-config.json` file.
+* Invoked as `klorb system-prompt`, it dumps the resolved system prompt and tool
+  definitions to stdout.
+* Invoked as `klorb models`, it lists all the models Klorb is configured to use.
+* Invoked as `klorb show-config` (only recognized when `show-config` is the
+  very first argument), it prints the merged config from all config files to stdout as
+  pretty-printed JSON.
+* Invoked as `klorb server` it instead runs a persistent process that uses the ACP (Agent Context
+  Protocol) JSON-RPC protocol to communicate with IDE plugins over stdin/stdout.
+
+These command words (`init`, `system-prompt`, etc) are only recognized if they
+are the first argument after the `klorb` program name.
+
+See the COMMANDS section for more details about these operating modes.
 
 ## COMMANDS
 

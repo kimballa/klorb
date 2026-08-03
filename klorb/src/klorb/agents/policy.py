@@ -23,7 +23,12 @@ from klorb.agents.intersection import (
     compute_child_tool_set,
 )
 from klorb.agents.registry import get_agent_registry
-from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle, total_active_subagents
+from klorb.agents.runtime import (
+    SUBAGENT_ABORTED_MARKER,
+    SUBAGENT_MGMT_TOOL_NAMES,
+    SubagentHandle,
+    total_active_subagents,
+)
 from klorb.api_provider import ResponseAborted
 from klorb.message import Message
 from klorb.permissions.skill_access import SkillRules, format_fqsn, parse_fqsn
@@ -58,12 +63,20 @@ class SubagentPlan:
 
 
 def _effective_parent_subagent_roles(parent: Session) -> frozenset[str]:
-    """The subagent role names `parent` may itself pass to `CreateSubagent` -- every role
-    `agents.json` defines, for a session that was never itself narrowed
-    (`parent.effective_subagent_roles is None`, e.g. the root session), or the set computed and
-    stored at `parent`'s own creation otherwise."""
+    """The subagent role names `parent` may itself pass to `CreateSubagent`: the set computed and
+    stored at `parent`'s own creation (`parent.effective_subagent_roles`) for a subagent, or --
+    for a session that was never itself narrowed this way (`effective_subagent_roles is None`,
+    e.g. the root session) -- `parent`'s own `agents.json` entry's `restrict_to.subagent_roles`,
+    falling back to every role `agents.json` defines only if that field is itself unset. This is
+    the one place a role's own nominal `restrict_to.subagent_roles` is consulted directly (every
+    other read of it is an intersection against an already-narrowed set, per
+    `compute_child_subagent_roles`) -- necessary because nothing upstream of the root session ever
+    computed a stored `effective_subagent_roles` for it to fall back to instead."""
     if parent.effective_subagent_roles is not None:
         return parent.effective_subagent_roles
+    own_definition = get_agent_registry().get(parent.config.role_name)
+    if own_definition is not None and own_definition.restrict_to.subagent_roles is not None:
+        return frozenset(own_definition.restrict_to.subagent_roles)
     return frozenset(get_agent_registry().names())
 
 
@@ -206,13 +219,22 @@ def plan_subagent_creation(
         tool_classes=tool_classes, effective_subagent_roles=frozenset(subagent_roles))
 
 
-def _tag_permission_ask(address: str, role: str, ask_ctx: PermissionAskContext) -> PermissionAskContext:
-    """Return a copy of `ask_ctx` with its `resource_description` prefixed by the subagent's
-    address/role, so a permission-ask panel routed through the creating session's own
-    interactive UI (see `build_subagent_turn_handlers`) makes clear which subagent the ask is
-    actually for."""
-    return ask_ctx.model_copy(
-        update={"resource_description": f"[subagent {address} ({role})] {ask_ctx.resource_description}"})
+def _subagent_ask_tag(address: str, role: str) -> str:
+    """The `"[subagent 1.1 (explorer)]"`-style prefix every ask-style context's human-readable
+    text field is stamped with, so a permission/question/escalation panel routed through a
+    creating session's own interactive UI (see `build_subagent_turn_handlers`) makes clear which
+    subagent the ask is actually for."""
+    return f"[subagent {address} ({role})]"
+
+
+def _stamp_subagent_origin(origin_session_id: str | None, handle: SubagentHandle) -> str:
+    """The `origin_session_id` an ask-style context should carry once it's forwarded through
+    `handle`'s own `on_*` closure: `handle.session.id` if this is the first (innermost) hop to
+    tag it, else whatever an earlier, deeper hop already stamped -- so a multi-level forward
+    (grandchild -> child -> root) keeps citing the leaf subagent that actually raised the ask,
+    not whichever ancestor's closure last forwarded it. See
+    `klorb.session.events.PermissionAskContext.origin_session_id`."""
+    return origin_session_id or handle.session.id
 
 
 def build_subagent_turn_handlers(
@@ -223,32 +245,44 @@ def build_subagent_turn_handlers(
     every ask-style callback (`on_permission_ask`/`on_ask_user_questions`/
     `on_escalate_privileges`) forwarded to whichever callback `parent`'s own turn is *currently*
     using (captured once, here, from `parent.current_turn_handlers()`), tagged with the
-    subagent's address/role -- so an interactive ask a subagent's turn raises still reaches the
-    user, through today's single-session UI. See docs/specs/subagents.md's "Security model"
-    section.
+    subagent's address/role and stamped with its `origin_session_id` -- so an interactive ask a
+    subagent's turn raises still reaches the user, through today's single-session UI, and a UI
+    that gates showing a panel on which session is currently selected (see
+    `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin`) knows which session to wait for. See
+    docs/specs/subagents.md's "Security model" and "Subagents panel" sections.
 
     `cancel_event` is this subagent's own, dedicated cancellation signal (not shared with
     `parent`'s current turn) -- set by `klorb.agents.runtime.cascade_close_subagents` on
-    shutdown, and (in a later phase) a per-subagent Stop button.
+    shutdown, and by a per-subagent Stop action (`KeyActionsMixin._interrupt_running_activity`).
     """
     parent_handlers = parent.current_turn_handlers() or TurnEventHandlers()
     address = handle.session.address()
     role = handle.role
+    tag = _subagent_ask_tag(address, role)
 
     def on_permission_ask(ask_ctx: PermissionAskContext) -> PermissionDecision:
         if parent_handlers.on_permission_ask is None:
             raise ToolCallError(str(ask_ctx.resource_description), category="permission")
-        return parent_handlers.on_permission_ask(_tag_permission_ask(address, role, ask_ctx))
+        tagged = ask_ctx.model_copy(update={
+            "resource_description": f"{tag} {ask_ctx.resource_description}",
+            "origin_session_id": _stamp_subagent_origin(ask_ctx.origin_session_id, handle)})
+        return parent_handlers.on_permission_ask(tagged)
 
     def on_ask_user_questions(ask_ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
         if parent_handlers.on_ask_user_questions is None:
             return AskUserQuestionsAnswer(cancelled=True)
-        return parent_handlers.on_ask_user_questions(ask_ctx)
+        tagged = ask_ctx.model_copy(update={
+            "header": f"{tag} {ask_ctx.header}",
+            "origin_session_id": _stamp_subagent_origin(ask_ctx.origin_session_id, handle)})
+        return parent_handlers.on_ask_user_questions(tagged)
 
     def on_escalate_privileges(ask_ctx: EscalatePrivilegesContext) -> EscalatePrivilegesDecision:
         if parent_handlers.on_escalate_privileges is None:
             return EscalatePrivilegesDecision(approved=False)
-        return parent_handlers.on_escalate_privileges(ask_ctx)
+        tagged = ask_ctx.model_copy(update={
+            "description": f"{tag} {ask_ctx.description}",
+            "origin_session_id": _stamp_subagent_origin(ask_ctx.origin_session_id, handle)})
+        return parent_handlers.on_escalate_privileges(tagged)
 
     return TurnEventHandlers(
         cancel_event=cancel_event,
@@ -285,7 +319,7 @@ def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers
         return output if output else "The subagent completed its work without saying anything."
     except ResponseAborted:
         output = _assistant_authored_text(child.messages[start_index:])
-        return f"{output}\n\n(Subagent turn aborted by user)".strip()
+        return f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
     except Exception as exc:
         logger.exception("Subagent %s turn failed", child.id)
         return f"(Subagent turn failed: {exc})"

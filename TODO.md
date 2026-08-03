@@ -16,6 +16,18 @@
 
 ### Feature backlog
 
+* Also add to vscode plugin for subagents
+  * context token counts up/down should update based on which agent is shown
+  * history should keep scrolling to the bottom if pinned @ bottom, let the user keep reading in-place
+    if they've moved the scrollbar.
+  * The bottom of the history should say either "Subagent is still working..." or "Subagent task
+    complete." so the user can see the status of the subagent when checking on that history feed.
+
+* WaitForSubagent blocks indefinitely. If the user adds a new msg in the meantime, it just gets queued
+  rather than interrupting the situation. There's probably a new kind of "user-interruptible" nature
+  to this tool to let it get an insta-response from the tool_response ("no agent feedback yet, but
+  here's something new from the user: ...")
+
 * now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
   all files in the repo. The FindFiles tool should take advantage of that for much faster
   performance than actually hitting the filesystem directly. (The "server side" tool should maintain
@@ -134,6 +146,80 @@
   * Start adding system interjections mentioning how many turns the agent has taken, or how
     many tool calls (vs total tool call budget / limit) it has performed.
 
+## TUI
+
+### Bugs
+
+* LLM output is being added to the history in an markdown-aware way and if the LLM
+  itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
+  ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
+  like `</Think>` in the middle of its output.
+
+* I had already explicitly worked to remove the "global" scrollbar so that only the "history"
+  scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
+  are still both present on a long enough session.
+  (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
+  ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
+  done by Textual's draw-over algorithm? This may not be fixable.
+
+* mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
+
+### Feature backlog
+
+* The homedir settings track whether the task panel is open or closed (`ui.taskSidebar.visible`)
+  but now it can be replaced by the agents panel. We should track which of these is actually
+  open/visible. Let's remove that particular field and have `ui.sidebar` be `"tasks"`, `"agents"`,
+  or `null`.
+
+* When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
+  near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
+  to type after ruling out any matches.
+
+* Add tips/suggestions:
+  * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
+    compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
+  * This can actually be an onWorkspaceTrust hook, executed within the Session.
+    * ... we need to define a whole bunch of hookable moments, here.
+  * This can then send a msg / AskUserQuestion to the user, in either TUI or VSCode.
+* Improve Workspace trust msg:
+  * When querying about workspace trust, list any workspace skills auto-allowed by config.
+
+* Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
+  command-palette entries into one Off/Low/Medium/High choice, mirroring the VS Code plugin's
+  merged thinking chip/`klorb.setThinking` QuickPick (see
+  docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md).
+
+## VSCode plugin
+
+### Bugs
+
+* System interjections need to be stripped from user messages shown to the user in the HistoryView
+  when the window is reloaded and the session is restored.
+  * On the backend we should store SystemInterjections separately from the main content, so that
+    we properly throw out all system interjections, but the user typing `<SystemInterjection>` doesn't
+    get cut out.
+
+### Feature backlog
+
+* When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
+  wants to invoke.
+
+* Add a `klorb.logLevel` argument to the VSCode plugin config that accepts
+  DEBUG/INFO/WARNING/ERROR/CRITICAL and if not empty, sets `$KLORB_LOG_LEVEL` in the environment
+  used to spawn the `klorb server` process.
+
+* need to pull in the `history` file (append-only prompt-recall log) from the session dir.
+  (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
+
+* "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
+  or `<table>`, not just a bunch of text.
+
+## Remaining / future work from `plan` epics
+
+Some `plan` documents were only partially implemented; others explicitly mentioned follow-up work
+imagined during the plan but out of scope for the plan itself. These follow-up action items are
+documented in the subsections below.
+
 ### Plan 013: WebFetch
 
 * Third-party malware blocklisting: query external threat lists and auto-deny requests to
@@ -191,62 +277,6 @@
   Maven Central (`cargo`/`go`'s registries are also unlisted) -- add `repo.maven.apache.org` (and
   reconsider `crates.io`/`proxy.golang.org`) once real usage shows they're worth defaulting to
   rather than an ordinary first-use `ask`.
-
-## TUI
-
-### Bugs
-
-* LLM output is being added to the history in an markdown-aware way and if the LLM
-  itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
-  ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
-  like `</Think>` in the middle of its output.
-
-* I had already explicitly worked to remove the "global" scrollbar so that only the "history"
-  scrollbar showed; but it seems like both (slightly differently-sized/aligned) scrollbars
-  are still both present on a long enough session.
-  (See commit: "Bugfix. Remove double scrollbar in TUI history view (#33)")
-  ... this is probably a "ghost paint" based on whatever abuse of the terminal is being
-  done by Textual's draw-over algorithm? This may not be fixable.
-
-* mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
-
-### Feature backlog
-
-* When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
-  near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
-  to type after ruling out any matches.
-
-* Add tips/suggestions:
-  * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
-    compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
-  * This can actually be an onWorkspaceTrust hook, executed within the Session.
-    * ... we need to define a whole bunch of hookable moments, here.
-  * This can then send a msg / AskUserQuestion to the user, in either TUI or VSCode.
-* Improve Workspace trust msg:
-  * When querying about workspace trust, list any workspace skills auto-allowed by config.
-
-* Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
-  command-palette entries into one Off/Low/Medium/High choice, mirroring the VS Code plugin's
-  merged thinking chip/`klorb.setThinking` QuickPick (see
-  docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md).
-
-## VSCode plugin
-
-### Bugs
-
-* System interjections need to be stripped from user messages shown to the user in the HistoryView
-  when the window is reloaded and the session is restored.
-  * On the backend we should store SystemInterjections separately from the main content, so that
-    we properly throw out all system interjections, but the user typing `<SystemInterjection>` doesn't
-    get cut out.
-
-### Feature backlog
-
-* need to pull in the `history` file (append-only prompt-recall log) from the session dir.
-  (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
-
-* "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
-  or `<table>`, not just a bunch of text.
 
 ### Plan 020: Vision / image input
 

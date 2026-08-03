@@ -25,7 +25,9 @@ from textual.app import App
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
+from klorb.agents.runtime import SubagentHandle, SubagentState
 from klorb.message import Message as ChatMessage
+from klorb.message import ToolCallRequest
 from klorb.process_config import ProcessConfig
 from klorb.session import (
     AskUserQuestionsAnswer,
@@ -88,6 +90,16 @@ class ReplAppBase(App[None]):
     _queued_message_widgets: list[Static]
     _active_turn_callbacks: TurnEventHandlers | None
     _file_index: WorkspaceFileIndex | None
+    _selected_session: Session
+    _selected_handle: SubagentHandle | None
+    _attention_needed: dict[str, None]
+    _blink_phase: bool
+    _subagents_panel_shown: bool
+    _subagent_history_pinned_to_bottom: bool
+    _subagent_history_rendered_count: int
+    _subagent_history_rendered_state: SubagentState | None
+    _subagent_transcript_notice: Static | None
+    _subagent_interrupt_pending: str | None
 
     def _start_file_finder_index(self, workspace: Workspace) -> None: ...
 
@@ -192,3 +204,18 @@ class ReplAppBase(App[None]):
 
     @work(thread=True)
     def _refresh_task_sidebar(self) -> None: ...
+
+    def _render_restored_tool_call(
+        self, call: ToolCallRequest, response: ChatMessage | None,
+    ) -> RenderedToolCall:
+        raise NotImplementedError
+
+    def _update_prompt_input_disabled_state(self) -> None: ...
+
+    async def _await_session_selected(self, session_id: str) -> None: ...
+
+    def _start_subagents_panel_timer(self) -> None: ...
+
+    def _on_subagent_history_scroll_changed(self) -> None: ...
+
+    def _note_subagent_interrupt_requested(self, handle: SubagentHandle) -> None: ...

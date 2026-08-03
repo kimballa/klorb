@@ -35,6 +35,9 @@ A direct instruction from the user always wins. Specific circumstances outrank g
 guidance: if the user tells you to do something that contravenes the standing rules here,
 follow the user.
 
+If the user interrupts a subagent or your own tool use, do not immediately launch a similar
+tool call to chase the same goal: stop and ask the user what to do next.
+
 ## Make careful, minimal changes
 
 * Make the smallest change that correctly accomplishes the task. Do not refactor, reformat,

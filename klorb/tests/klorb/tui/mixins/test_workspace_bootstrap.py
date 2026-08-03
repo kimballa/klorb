@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Markdown, Static
 from tui.conftest import (
     TEST_SESSION_ID,
     _focused_id,
@@ -578,6 +578,35 @@ async def test_restores_tool_call_history_from_a_structured_response_envelope(
     async with app.run_test() as pilot:
         await pilot.pause()
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(list(history.query(ToolCallStatic))) == 1
+
+
+async def test_restores_a_tool_use_messages_own_commentary_alongside_its_tool_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `role="tool_use"` message can carry its own non-empty `content` alongside the tool calls
+    it requested -- e.g. the model's final answer, if that arrived in the same round as its last
+    tool calls rather than a trailing text-only round (`Session._send_and_receive` sets `content`
+    before reclassifying the message to `tool_use`). `_mount_restored_history` must render that
+    text, not just the tool calls."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    tool_use = Message(
+        content="Here is the final answer.", role="tool_use", num_tokens=1,
+        processing_state="complete", timestamp=datetime(2026, 7, 12, 0, 0, 0),
+        tool_calls=[ToolCallRequest(id="call-1", name="SampleTool", arguments='{"x": 1}')])
+    tool_response = Message(
+        content="42", role="tool_response", num_tokens=1, processing_state="complete",
+        timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
+    _save_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+
+    app = _repl_app_for_workspace(workspace, trust_manager)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        responses = list(history.query(Markdown))
+        assert any(widget.source == "Here is the final answer." for widget in responses)
         assert len(list(history.query(ToolCallStatic))) == 1
 
 

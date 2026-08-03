@@ -66,7 +66,12 @@ class PermissionAskContext(BaseModel):
     `PermissionAskRequired` ask (that path never has `bash_context` set at all, so there is
     nothing for a command-risk classifier to batch there in the first place). `Session` itself
     never reads this field back — it only threads data it already has for whichever callback
-    consumes it."""
+    consumes it.
+
+    `origin_session_id`, set by `klorb.agents.policy.build_subagent_turn_handlers` when this ask
+    was raised from inside a subagent's turn (`None` for the root session's own turn), identifies
+    which `Session` in the tree actually needs to answer it — see docs/specs/subagents.md's
+    "Subagents panel" section."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -74,6 +79,7 @@ class PermissionAskContext(BaseModel):
     bash_context: BashCommandContext | None = None
     resource_description: str
     sibling_items: list[PermissionAskItem] | None = None
+    origin_session_id: str | None = None
 
 
 class PermissionDecision(BaseModel):
@@ -122,7 +128,8 @@ class AskUserQuestionsItemContext(BaseModel):
     batch, asked about one at a time, in order (see `Session._resolve_ask_user_questions`) —
     mirroring how a `MultiPermissionAskRequired`'s items are asked about one at a time via
     `on_permission_ask`. `index`/`total` (e.g. `1`/`3`) let a UI render "Question 2 of 3"
-    without re-deriving it from a running count of its own calls."""
+    without re-deriving it from a running count of its own calls. `origin_session_id` mirrors
+    `PermissionAskContext.origin_session_id` -- see that field's docstring."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -131,6 +138,7 @@ class AskUserQuestionsItemContext(BaseModel):
     options: list[QuestionOption]
     index: int
     total: int
+    origin_session_id: str | None = None
 
 
 class AskUserQuestionsAnswer(BaseModel):
@@ -151,12 +159,15 @@ class EscalatePrivilegesContext(BaseModel):
     """Passed to `on_escalate_privileges` when the `EscalatePrivileges` tool requests a
     session-only privilege grant (see `klorb.tools.escalate_privileges`). `scope` is the
     requested scope string (today, only `"workspace"`); `description` is a human-readable
-    explanation of what approving would unlock, for a UI to show without re-deriving it."""
+    explanation of what approving would unlock, for a UI to show without re-deriving it.
+    `origin_session_id` mirrors `PermissionAskContext.origin_session_id` -- see that field's
+    docstring."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     scope: str
     description: str
+    origin_session_id: str | None = None
 
 
 class EscalatePrivilegesDecision(BaseModel):

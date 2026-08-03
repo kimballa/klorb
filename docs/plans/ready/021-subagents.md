@@ -523,17 +523,80 @@ state.**
 * System is runnable end-to-end in headless mode and in the TUI (via the existing single-session
   UI); the VSCode plugin is unaffected since it doesn't yet expose the new tools' output specially.
 
-### Phase 3: TUI subagents panel
+### Phase 3: TUI subagents panel — done; read before starting Phase 4
 
-* Add the RHS-docked subagents panel (toggling with the Tasks panel), showing address + title rows
-  and a footer row with the selected agent's role.
-* Wire up up/down and click-to-focus selection, and switch `HistoryView` to the selected
-  (sub)agent's transcript.
-* Add the blinking `(!)` attention indicator (and status-line fallback when the panel is closed)
-  for a subagent awaiting user input, replacing the Phase 2 single-session-UI simplification.
-* Wire the Stop button to abort a running subagent's turn and relay partial output plus the
-  "(Subagent turn aborted by user)" note.
-* Disable the prompt input while a subagent is selected.
+Implemented in `klorb/src/klorb/tui/widgets/subagents_panel.py` and `klorb/src/klorb/tui/mixins/
+subagents_panel.py` (plus small hooks into `interactions.py`, `key_actions.py`,
+`prompt_submission.py`, `status_bar.py`, `task_sidebar.py`); documented in full in
+docs/specs/subagents.md's "Subagents panel (TUI)" section. Phase 4 is a straight visual/framework
+port of this same design to the webview — the bullets below are corrections that came out of
+actual UI review against a running TUI, folded in here so Phase 4 doesn't have to rediscover them
+by going through the same round of feedback again:
+
+* **No depth-based row indentation.** A subagent's dotted-decimal address (`"1.1.1"`) already
+  reads as nested by virtue of being longer than its parent's (`"1.1"`) — don't additionally
+  indent deeper rows, it just wastes horizontal space for no added clarity.
+* **One leading marker character, not several stacked ones.** A row gets exactly one marker
+  before its address: `!` if it has an ask waiting on the user selecting it (wins over the next
+  case), else `*` while its turn is actively running, else a blank. Do not give "needs attention"
+  and "running" each their own separate marker slot — one is enough, and attention always takes
+  visual priority since it's the more actionable state.
+  See `SubagentsPanel._render_row_label` for the exact precedence.
+* **Keep the panel's own chrome minimal — no extra inner border/background box** around the row
+  list distinguishing it from the rest of the panel. The single accent-colored divider between
+  the panel and the main conversation view is the only border; the row list's own default
+  component styling (Textual's `OptionList` ships a border and background of its own, which had
+  to be explicitly cleared — see the `DEFAULT_CSS` comment in `subagents_panel.py`) should not
+  reintroduce a second nested border/background. The *selected-row* highlight and *hover*
+  background are good and worth keeping — the fix here is scoped to the surrounding chrome, not
+  row selection styling.
+* **Selection is global, including the root session**, not "the subagent tree plus a separate
+  root mode": exactly one thing is selected at a time (root or any node in the tree), and every
+  interactive ask (permission/question/escalation — not just a subagent's) only surfaces once its
+  *owning* session is the one currently selected. This turned a Phase-2 simplification ("asks
+  always interrupt whatever's on screen") into the actual, correct behavior — carry the same
+  selection-gates-every-ask model into the webview rather than re-introducing the simplification.
+* **The transcript view needs its own pin-to-bottom tracking**, independent of (and by the same
+  rule as) the main conversation view: follow new content to the bottom only if the reader hadn't
+  already scrolled away from it. A naive "always scroll to bottom on update" reads as broken the
+  moment someone scrolls up mid-turn to reread something.
+* **Any token/usage tally in the UI should reflect the *selected* session**, not always the root
+  — recompute it on selection change and on every transcript update, from whichever session is on
+  screen.
+* **The trailing status line under a subagent's transcript has four states**, not two: "still
+  working" (running) / "task complete" (finished normally) / "interrupted" (finished because of a
+  cancel) / "sending interrupt…" (cancel requested but not yet landed — shown immediately on the
+  keypress, not after the background turn actually unwinds, since that can take a moment). Distinct
+  "task complete" vs. "interrupted" wording matters — don't collapse them into one generic
+  "finished" state.
+* **A Stop/interrupt action must give immediate feedback**, before the thing being stopped has
+  actually stopped: show something like "sending interrupt…" the instant the user acts, not only
+  once the cancellation has taken effect — the underlying operation can take a visible moment to
+  actually wind down, and silence during that gap reads as the keypress having done nothing.
+* **Every other piece of chrome that names "the current session" needs to follow the selection
+  too**, not just the transcript/token-tally/prompt-input pieces called out above — the window
+  title (model name, and its effort/reasoning-mode indicator if applicable) and any "current
+  session title" label both need to read from whichever session is selected, since a subagent can
+  run an entirely different model than the root. Forcing a re-render when the selected session
+  changes may need an explicit nudge if the underlying framework only re-renders on a bound
+  value's own change (the TUI's `Header` only redraws when Textual's `sub_title` reactive value
+  itself changes, so switching *which* session's model to show — without the value happening to
+  differ — needed an explicit redraw call; the debugging equivalent of "the label just doesn't
+  update" is easy to miss without deliberately testing selection changes against two sessions
+  running two different models).
+* **A subagent's transcript must render everything a live turn would, not just tool calls** — in
+  particular, a message reclassified to `tool_use` because it carries tool calls can *also* carry
+  its own plain-text commentary (including, often, the subagent's actual final answer, if that
+  arrived in the same round as its last tool calls); rendering only `tool_calls` and ignoring that
+  message's own text silently drops it. Similarly, a "thinking" message's plain-text content and
+  its structured reasoning-details payload can come from two independent, not-necessarily-in-sync
+  provider streams — a naive render can show an empty thinking block even though real reasoning
+  text exists, recoverable from the structured payload. Both gaps are general properties of
+  rendering a finished `Session.messages` list from scratch (not specific to the TUI or to
+  subagents) — see `klorb.tui.formatting.resolve_thinking_body_text` and the `tool_use`-content
+  handling in `klorb.tui.mixins.subagents_panel._mount_subagent_messages`/`klorb.tui.mixins.
+  rendering._mount_restored_history` for the reference fix; port the same two checks into
+  whatever renders a subagent's transcript from its message list in the webview.
 
 ### Phase 4: VSCode plugin panel parity
 
@@ -541,14 +604,44 @@ state.**
   `vscode-plugin/src/webview/features/tasks/` structure as the reference pattern for a new
   `features/subagents/` feature (barrel `index.ts`, host↔webview message protocol additions in
   `src/shared/`).
-* Same address/title rows, role footer, selection behavior, `HistoryView` switching, attention
-  indicator, and Stop-button semantics as the TUI.
+  * Like the VSCode port of "Tasks", this should be a panel adapted to be docked at the top of
+    the plugin, as opposed to its own column on the right side of the screen as in the TUI.
+* Same selection behavior, `HistoryView` switching, attention indicator, context / token estimate
+  monitor switching, and Stop-button semantics as the TUI — including every correction noted under Phase 3
+  above, which apply here just as much as they did there.
+  * The address/title rows / role footer, etc. should also all update. In the VSCode plugin,
+    the "current model" and thinking level are rendered as clickable buttons; but you cannot
+    change the model for a subagent once it's underway, so these should not be active as buttons
+    when a subagent is selected; the model name and thinking effort behavior should just be
+    informational in a subagent-selected context.
+* Check **transcript completeness** while you're at it. We discovered a preexisting bug in the TUI
+  where a `tool_use`-role message's own `content` (commentary alongside its tool calls — often the
+  actual final answer) was being silently dropped; both the subagent panel and root's
+  restored-history rendering now mount it as a response block. Make sure that these items are being
+  properly rendered in the VSCode plugin as well.
+  * This was fixed by adding `resolve_thinking_body_text` in the TUI code: when a "thinking"
+    message's plain-text `content` is empty but `reasoning_details` carries real `text`/`summary`
+    fields (two independent, not-always-synced provider streams), reconstructs the `<Thinking>` body
+    from those instead of showing an empty block.
 
-### Phase 5: VisionAssistant subagent
+### Phase 5: Operator prompt polish
+
+* Update the Operator role's system prompt to mention subagents as an available capability
+  and mention a `/launch-explorer-subagent` skill.
+* Create an internal `/launch-explorer-subagent` SKILL.md file in klorb/resources/.
+  It should explain when and why to launch a subagent with the `explorer` role.
+  Modify agents.json so this skill is explicitly passed on to the `explorer`, so when it wants
+  to also launch subagents, it sees this skill.
+* The `assigned_task_id` future work described earlier (auto-starting a subagent on a specific
+  todo item) is explicitly out of scope for all of the phases above, since it first requires
+  reworking the todo tools' current greedy auto-assignment behavior; it should be tracked as its
+  own follow-up rather than folded into this phased rollout.
+
+### Phase 6: VisionAssistant subagent
 
 * Add the VisionAssistant role (no tools/skills, `xiaomi/mimo-v2.5` default model) and its system
   prompt.
-* There is an open design question that must be solved before implementing phase 5: if the parent
+* There is an open design question that must be solved before implementing phase 6: if the parent
   agent is not a vision-capable model, how do images get to the parent in such a way that it can
   then convey them to the subagent? Maybe the presence of this subagent capability means that we
   should enable image drag/drop in the VSCode plugin; but then we will need to take care not to
@@ -558,15 +651,9 @@ state.**
   subagent, as well as directions on how to embed it for the child. We probably need a special
   param for CreateSubagent that causes us to format a multimedia multi-fragment Message in this
   case...
-* Extend `agents.json` and the Explorer's `subagent_roles` restriction to permit launching it.
+* Extend `agents.json` and the Operator's and Explorer's `subagent_roles` restriction to permit
+  launching it.
+* Add a `/launch-vision-subagent` internal skill like `/launch-explorer-subagent` and plumb it
+  into the Explorer and Operator in the same way.
 * No panel or tool-plumbing changes needed — this phase is purely a new role definition exercised
-  through the infrastructure already built in Phases 1-4.
-
-### Phase 6: Operator prompt polish
-
-* Update the Operator role's system prompt to mention subagents as an available capability and
-  briefly explain the menu of options (Explorer, VisionAssistant).
-* The `assigned_task_id` future work described earlier (auto-starting a subagent on a specific
-  todo item) is explicitly out of scope for all of the phases above, since it first requires
-  reworking the todo tools' current greedy auto-assignment behavior; it should be tracked as its
-  own follow-up rather than folded into this phased rollout.
+  through the infrastructure already built in Phases 1-5.

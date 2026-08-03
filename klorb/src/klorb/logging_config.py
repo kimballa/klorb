@@ -36,9 +36,9 @@ over the session); this bounds the accumulated *older* logs. The single newest e
 always retained even when it alone exceeds this, so a big log is never deleted merely for being
 big — see `prune_session_logs()`."""
 
-klorb_log_level: int = logging.DEBUG
+klorb_log_level: int = logging.INFO
 """Default level for klorb's root logger, set by `configure_logging()`. Overridable via the
-`KLORB_LOG_LEVEL` environment variable (e.g. `KLORB_LOG_LEVEL=INFO`); an unset or unrecognized
+`KLORB_LOG_LEVEL` environment variable (e.g. `KLORB_LOG_LEVEL=ERROR`); an unset or unrecognized
 value falls back to this default. Also the floor `_THIRD_PARTY_LOG_LEVELS` entries get raised
 to when this level is more terse than their own default — see `_resolve_klorb_log_level()` and
 docs/specs/paths-and-logging.md."""

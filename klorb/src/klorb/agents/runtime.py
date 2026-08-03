@@ -28,6 +28,12 @@ SUBAGENT_MGMT_TOOL_NAMES = frozenset({"CreateSubagent", "WaitForSubagent", "Mess
 """The three subagent-management tools -- omitted from a subagent's own effective tool set
 whenever its role's `AgentDefinition.allow_subagents` is `False`. See docs/specs/subagents.md."""
 
+SUBAGENT_ABORTED_MARKER = "(Subagent turn aborted by user)"
+"""Appended to a subagent's relayed output by `klorb.agents.policy._run_subagent_turn` when its
+turn is cancelled mid-stream -- also the signal `klorb.tui.mixins.subagents_panel.
+SubagentsPanelMixin` checks (`marker in handle.output`) to show "Subagent interrupted." in place
+of the ordinary "Subagent task complete." notice once a cancelled subagent's handle finishes."""
+
 _SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
 """How long `cascade_close_subagents` waits for a still-running subagent's background thread to
 notice `cancel_event` and finish, before giving up and relaying a termination note without it --
@@ -205,6 +211,33 @@ def total_active_subagents(session: "Session") -> int:
         total += current.subagent_tracker.running_count()
         stack.extend(handle.session for handle in current.subagent_tracker.handles())
     return total
+
+
+@dataclass(frozen=True)
+class SessionTreeNode:
+    """One session in a walk of an entire session tree (`walk_session_tree`): `handle` is the
+    `SubagentHandle` its creating session tracks it under, or `None` for the tree's own root
+    (which no `SubagentHandle` describes, since nothing created it)."""
+
+    session: "Session"
+    handle: SubagentHandle | None
+    depth: int
+
+
+def walk_session_tree(root: "Session") -> list[SessionTreeNode]:
+    """Pre-order walk of `root` and every subagent beneath it (at any depth), in creation order
+    at each level. `root` itself is always first, with `handle=None`; mirrors the recursive
+    walk `total_active_subagents`/`cascade_close_subagents` already do, but collecting every node
+    rather than only counting or closing them."""
+    nodes = [SessionTreeNode(session=root, handle=None, depth=0)]
+
+    def _walk(session: "Session", depth: int) -> None:
+        for handle in session.subagent_tracker.handles():
+            nodes.append(SessionTreeNode(session=handle.session, handle=handle, depth=depth))
+            _walk(handle.session, depth + 1)
+
+    _walk(root, 1)
+    return nodes
 
 
 def cascade_close_subagents(session: "Session") -> None:

@@ -14,6 +14,9 @@ OUTPUT_TOKENS_ID = "output-tokens"
 PERMISSION_BADGE_ID = "permission-badge"
 SESSION_NAME_ID = "session-name"
 TASK_SIDEBAR_ID = "task-sidebar"
+SUBAGENTS_PANEL_ID = "subagents-panel"
+SUBAGENT_HISTORY_ID = "subagent-history"
+SUBAGENT_ATTENTION_STATUS_ID = "subagent-attention-status"
 
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
 """The order Shift+Tab cycles `Session.config.permission_framework` through -- see

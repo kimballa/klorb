@@ -28,6 +28,7 @@ from klorb.tui.formatting import (
     render_diff_content,
     render_full_file_content,
     render_read_preview_content,
+    resolve_thinking_body_text,
     strip_system_interjections,
     summarize_reasoning_details,
 )
@@ -406,7 +407,9 @@ class RenderingMixin(ReplAppBase):
         never rendered live either (see `Session._ensure_system_message`/
         `_ensure_tool_defs_message`). A `role="tool_response"` message is rendered together
         with its matching `role="tool_use"` entry, via `_render_restored_tool_call`, rather
-        than on its own.
+        than on its own. A `role="tool_use"` message's own `content`, if non-empty, is rendered
+        as a response widget ahead of its tool calls -- it can carry commentary the model sent
+        alongside those calls (see `klorb.agents.policy._assistant_authored_text`).
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         responses_by_call_id = {
@@ -423,7 +426,7 @@ class RenderingMixin(ReplAppBase):
                     text = f"{text}\n\n*(interrupted)*"
                 self._mount_response_widget(text)
             elif message.role == "thinking":
-                text = message.content
+                text = resolve_thinking_body_text(message.content, message.reasoning_details)
                 if message.processing_state == "aborted":
                     text = f"{text}\n\n(interrupted)"
                 self._mount_thinking_widget(text)
@@ -432,6 +435,14 @@ class RenderingMixin(ReplAppBase):
                     if reasoning_details_text is not None:
                         self._mount_reasoning_details_widget(reasoning_details_text)
             elif message.role == "tool_use":
+                if message.content.strip():
+                    # A `tool_use`-role message can carry commentary alongside the tool calls it
+                    # requested (`Session._send_and_receive` sets `content` before reclassifying
+                    # the message to `tool_use`) -- e.g. the model's final answer, if that answer
+                    # came in the same round as its last tool calls rather than a trailing
+                    # text-only round. See `klorb.agents.policy._assistant_authored_text`, which
+                    # relies on the same fact to relay a subagent's commentary to its creator.
+                    self._mount_response_widget(message.content)
                 for call in message.tool_calls or []:
                     rendered = self._render_restored_tool_call(
                         call, responses_by_call_id.get(call.id))

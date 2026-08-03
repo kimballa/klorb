@@ -114,7 +114,9 @@ def test_configure_logging_writes_log_records_to_file() -> None:
     assert "hello from a test" in log_path.read_text(encoding="utf-8")
 
 
-def test_configure_logging_sets_root_logger_to_default_klorb_log_level() -> None:
+def test_configure_logging_sets_root_logger_to_default_klorb_log_level(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KLORB_LOG_LEVEL", raising=False)
     logging_config.configure_logging(repl_mode=False, log_path=None)
 
     assert logging.getLogger().level == logging_config.klorb_log_level

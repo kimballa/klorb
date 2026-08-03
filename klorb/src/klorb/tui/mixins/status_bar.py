@@ -66,19 +66,25 @@ class StatusBarMixin(ReplAppBase):
         self._history_pinned_to_bottom = pinned_to_bottom(history)
 
     def _update_status_bar(self) -> None:
-        """Refresh both footer token tallies: context usage vs. the model's context window, and
-        total model-output tokens.
+        """Refresh both footer token tallies -- context usage vs. the model's context window, and
+        total model-output tokens -- for whichever session is currently selected
+        (`_selected_session`, the root session by default), not necessarily the root session
+        itself: switching the subagents panel's selection calls this too (see
+        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin._select_session`/
+        `_append_new_subagent_messages`), so the footer always reflects the transcript actually
+        on screen.
         """
+        session = self._selected_session
         status_bar = self.query_one(f"#{STATUS_BAR_ID}", Static)
-        used = format_token_count(self._session.total_tokens_used())
-        limit = self._session.max_context_window()
+        used = format_token_count(session.total_tokens_used())
+        limit = session.max_context_window()
         if limit is None:
             status_bar.update(f"\u2191 {used}")
         else:
             status_bar.update(f"\u2191 {used} / {format_token_count(limit)}")
 
         output_tokens = self.query_one(f"#{OUTPUT_TOKENS_ID}", Static)
-        output_tokens.update(f"\u2193 {format_token_count(self._session.total_output_tokens_used())}")
+        output_tokens.update(f"\u2193 {format_token_count(session.total_output_tokens_used())}")
 
     def _update_session_name_line(self, text: str) -> None:
         """Set the `SESSION_NAME_ID` line to `"Session: <text>"` -- called by

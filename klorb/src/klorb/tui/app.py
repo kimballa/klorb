@@ -20,6 +20,7 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Static
 
+from klorb.agents.runtime import SubagentHandle, SubagentState
 from klorb.logging_config import TuiHistoryNotice
 from klorb.models.model import Model
 from klorb.process_config import ProcessConfig, persist_session_default, persist_theme, user_config_path
@@ -45,6 +46,9 @@ from klorb.tui.constants import (
     PROMPT_INPUT_ID,
     SESSION_NAME_ID,
     STATUS_BAR_ID,
+    SUBAGENT_ATTENTION_STATUS_ID,
+    SUBAGENT_HISTORY_ID,
+    SUBAGENTS_PANEL_ID,
     TASK_SIDEBAR_ID,
 )
 from klorb.tui.formatting import format_workspace_path
@@ -53,12 +57,14 @@ from klorb.tui.mixins.key_actions import KeyActionsMixin
 from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin
 from klorb.tui.mixins.rendering import RenderingMixin
 from klorb.tui.mixins.status_bar import StatusBarMixin
+from klorb.tui.mixins.subagents_panel import SubagentsPanelMixin
 from klorb.tui.mixins.task_sidebar import TaskSidebarMixin
 from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
 from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
+from klorb.tui.widgets.subagents_panel import SubagentsPanel
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic, TurnWaitingStatic
 from klorb.tui.workspace_file_index import WorkspaceFileIndex
@@ -115,6 +121,7 @@ class ReplApp(
     RenderingMixin,
     InteractionsMixin,
     TaskSidebarMixin,
+    SubagentsPanelMixin,
     ReplAppBase,
 ):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
@@ -128,8 +135,20 @@ class ReplApp(
         height: 1fr;
     }
 
+    #subagent-history {
+        height: 1fr;
+        display: none;
+    }
+
     #interaction-panel {
         height: auto;
+    }
+
+    #subagent-attention-status {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+        display: none;
     }
 
     #prompt-input, #prompt-input:focus {
@@ -272,6 +291,7 @@ class ReplApp(
         ("escape", "abort_response", "Abort"),
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
         ("ctrl+t", "toggle_task_sidebar", "Tasks"),
+        ("ctrl+g", "toggle_subagents_panel", "Agents"),
         Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
     ]
     COMMANDS = App.COMMANDS | {
@@ -401,6 +421,51 @@ class ReplApp(
         self._task_sidebar_shown: bool = self._process_config.task_sidebar_shown
         """Whether the `TaskSidebar` panel (Ctrl+T) is currently visible -- see
         `TaskSidebarMixin.action_toggle_task_sidebar`."""
+        self._subagents_panel_shown: bool = False
+        """Whether the `SubagentsPanel` (Ctrl+G) is currently visible -- see
+        `SubagentsPanelMixin.action_toggle_subagents_panel`. Unlike `_task_sidebar_shown`, not
+        persisted to `ProcessConfig`: a fresh process always starts with the root session
+        selected and the panel hidden."""
+        self._selected_session: Session = self._session
+        """Whichever session's transcript `#history`/`#subagent-history` currently displays, and
+        whose asks `InteractionsMixin._await_session_selected` lets through immediately -- the
+        root session by default. See `SubagentsPanelMixin._select_session`."""
+        self._selected_handle: SubagentHandle | None = None
+        """The `SubagentHandle` `_selected_session` was selected via, or `None` when the root
+        session is selected (nothing created it, so there is no handle) -- lets `KeyActionsMixin`
+        route Escape/Ctrl+C to the selected subagent's own `cancel_event` instead of the root
+        session's."""
+        self._attention_needed: dict[str, None] = {}
+        """Session ids with an ask waiting for the user to select them (see `InteractionsMixin.
+        _await_session_selected`), in the order they started waiting -- a `dict` used as an
+        insertion-ordered set. Drives the panel's blinking `(!)` marker and the status-line
+        fallback (`SubagentsPanelMixin._update_subagent_attention_status_line`)."""
+        self._blink_phase: bool = False
+        """Flipped every `_tick_subagents_panel` tick; whether the `(!)` attention marker is
+        currently lit."""
+        self._subagent_history_pinned_to_bottom: bool = True
+        """Whether `#subagent-history` was scrolled to its end the last time its `scroll_y`
+        changed -- the `#subagent-history` analog of `_history_pinned_to_bottom`, kept in sync by
+        `SubagentsPanelMixin._on_subagent_history_scroll_changed`."""
+        self._subagent_history_rendered_count: int = 0
+        """How many of the selected subagent's `Session.messages` `#subagent-history` currently
+        shows -- lets `SubagentsPanelMixin._append_new_subagent_messages` mount only the delta on
+        each tick instead of rebuilding the whole view. Reset whenever selection changes
+        (`_select_session`)."""
+        self._subagent_history_rendered_state: SubagentState | None = None
+        """The selected subagent's `SubagentHandle.state` as of the last `#subagent-history`
+        render -- lets `_append_new_subagent_messages` notice a running/finished transition (and
+        re-render the trailing status notice) even on a tick with no new messages."""
+        self._subagent_transcript_notice: Static | None = None
+        """The trailing status notice currently mounted in `#subagent-history`, if any -- tracked
+        so the next render can remove it before mounting anything new, keeping it last. `None`
+        before any subagent has ever been selected."""
+        self._subagent_interrupt_pending: str | None = None
+        """The id of a subagent whose turn was just aborted (Escape/Ctrl+C while it was
+        selected -- `KeyActionsMixin._interrupt_running_activity`) but whose handle hasn't
+        finished yet, or `None`. Keeps `_mount_subagent_status_notice` showing "Sending
+        interrupt…" across every tick until the abort actually lands. See
+        `SubagentsPanelMixin._note_subagent_interrupt_requested`."""
         self._queued_message_widgets: list[Static] = []
         """History widgets for user messages queued during the agent turn, tracked so
         `_finish_turn` can transition them from italics to regular once delivered."""
@@ -419,12 +484,15 @@ class ReplApp(
     def compose(self) -> ComposeResult:
         yield Header()
         yield TaskSidebar(id=TASK_SIDEBAR_ID)
+        yield SubagentsPanel(id=SUBAGENTS_PANEL_ID)
         yield VerticalScroll(id=HISTORY_ID)
+        yield VerticalScroll(id=SUBAGENT_HISTORY_ID)
         yield Vertical(id=INTERACTION_PANEL_ID)
         yield FileFinderPanel(id=FILE_FINDER_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         yield Static(NEW_SESSION_LABEL, id=SESSION_NAME_ID)
+        yield Static(id=SUBAGENT_ATTENTION_STATUS_ID)
         with Horizontal(id="status-row"):
             yield PaletteHint(id=PALETTE_HINT_ID)
             yield Footer(show_command_palette=False)
@@ -558,20 +626,27 @@ class ReplApp(
     def format_title(self, title: str, sub_title: str) -> Content:
         """Compose the `Header`'s displayed title from the current workspace path (shortened
         per `format_workspace_path` if it's too long to comfortably fit) plus an `"(Untrusted)"`
-        marker when the workspace isn't trusted, followed by `sub_title` (the active model,
-        kept in sync with it by `select_model`) and, if thinking is enabled, its effort level in
+        marker when the workspace isn't trusted, followed by the *selected* session's
+        (`_selected_session` -- the root session by default, or whichever subagent is picked in
+        the subagents panel) own model and, if it has thinking enabled, its effort level in
         parentheses — e.g. `".../path/to/somewhere (Untrusted) - gpt-4o (High)"`. Overrides
         `App.format_title`, which otherwise just joins `title`/`sub_title` with an em dash;
         `title` is ignored here since a bare "klorb" app name isn't useful once every session is
-        tied to a specific workspace directory.
+        tied to a specific workspace directory. `sub_title` (the reactive `App.sub_title`, kept
+        in sync with the *root* session's own model by `select_model`) is likewise not read for
+        its value here -- only its *changes* matter, since those are what make `Header` re-invoke
+        this method at all; `SubagentsPanelMixin._select_session` covers the case where the
+        model that should now be displayed changes without `sub_title` itself changing, via
+        `_refresh_header_title()`.
         """
         workspace = self._session.config.workspace
         workspace_display = format_workspace_path(workspace.path)
         if not workspace.trusted:
             workspace_display += " (Untrusted)"
-        model_display = sub_title
-        if self.get_thinking_enabled():
-            model_display += f" ({self.get_thinking_effort().title()})"
+        selected_config = self._selected_session.config
+        model_display = selected_config.model
+        if selected_config.thinking_enabled:
+            model_display += f" ({selected_config.thinking_effort.title()})"
         return Content.assemble(
             Content(workspace_display),
             (" - ", "dim"),

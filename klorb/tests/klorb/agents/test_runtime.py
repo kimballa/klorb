@@ -11,6 +11,7 @@ from klorb.agents.runtime import (
     build_subagent_interjection_provider,
     cascade_close_subagents,
     total_active_subagents,
+    walk_session_tree,
 )
 from klorb.session import Session, SessionConfig
 
@@ -228,6 +229,36 @@ def test_cascade_close_subagents_terminates_a_still_running_subagent() -> None:
     assert handle.delivered is True
     relayed = parent.messages[-1]
     assert "harness closed before it finished" in relayed.content
+
+
+def test_walk_session_tree_returns_only_the_root_when_it_has_no_subagents() -> None:
+    root = Session(SessionConfig(), provider=MagicMock())
+
+    nodes = walk_session_tree(root)
+
+    assert len(nodes) == 1
+    assert nodes[0].session is root
+    assert nodes[0].handle is None
+    assert nodes[0].depth == 0
+
+
+def test_walk_session_tree_is_a_pre_order_walk_in_creation_order() -> None:
+    root = Session(SessionConfig(), provider=MagicMock())
+    first_child = _child_session(root)
+    grandchild = _child_session(first_child)
+    second_child = _child_session(root)
+    first_handle = _handle(first_child, title="first")
+    grandchild_handle = _handle(grandchild, title="grandchild")
+    second_handle = _handle(second_child, title="second")
+    root.subagent_tracker.register(first_handle)
+    first_child.subagent_tracker.register(grandchild_handle)
+    root.subagent_tracker.register(second_handle)
+
+    nodes = walk_session_tree(root)
+
+    assert [node.session for node in nodes] == [root, first_child, grandchild, second_child]
+    assert [node.handle for node in nodes] == [None, first_handle, grandchild_handle, second_handle]
+    assert [node.depth for node in nodes] == [0, 1, 2, 1]
 
 
 def test_cascade_close_subagents_recurses_into_grandchildren_first() -> None:

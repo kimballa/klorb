@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Literal
 from unittest.mock import MagicMock
@@ -25,6 +26,7 @@ from tui.conftest import (
     _wait_until,
 )
 
+from klorb.agents.runtime import SubagentHandle
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.resource import (
     BashCommandContext,
@@ -40,6 +42,7 @@ from klorb.session import (
     AskUserQuestionsItemContext,
     PermissionAskContext,
     PermissionDecision,
+    Session,
     SessionConfig,
 )
 from klorb.tools.ask.common import QuestionOption
@@ -1352,3 +1355,38 @@ async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_ab
         assert not app.query(PermissionAskPanel)
         tool_response = next(m for m in app._session.messages if m.role == "tool_response")
         assert "Permission denied" in str(tool_response.content)
+
+
+def _subagent_handle(root: Session) -> SubagentHandle:
+    child = Session(SessionConfig(role_name="explorer"), provider=MagicMock(), parent=root)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="find the bug")
+    root.subagent_tracker.register(handle)
+    return handle
+
+
+async def test_permission_ask_panel_waits_for_its_subagent_to_be_selected() -> None:
+    """Per docs/specs/subagents.md's "Subagents panel" section: an ask tagged with a subagent's
+    `origin_session_id` must not show its panel until that subagent is the selected session --
+    it should instead register in `_attention_needed` (driving the panel's blinking `(!)` and the
+    status-line fallback) and only proceed once `_select_session` picks it."""
+    session = _session(MagicMock())
+    handle = _subagent_handle(session)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        ctx = _command_ask_ctx("echo hi").model_copy(update={"origin_session_id": handle.session.id})
+        task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
+        await pilot.pause()
+
+        assert not app.query(PermissionAskPanel)
+        assert handle.session.id in app._attention_needed
+
+        app._select_session(handle.session.id)
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+
+        assert handle.session.id not in app._attention_needed
+
+        await pilot.press("escape")
+        await task

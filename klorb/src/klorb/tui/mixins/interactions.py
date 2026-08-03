@@ -105,11 +105,14 @@ class InteractionsMixin(ReplAppBase):
         `_queue_prompt` instead (see `on_prompt_input_submitted`), and `_turn_in_flight`
         still prevents a second turn from starting. The removed panel's focus is reassigned
         by Textual on its own; focus is moved explicitly onto the input here so the user can
-        immediately start typing."""
+        immediately start typing -- unless a subagent is currently selected, in which case
+        `_update_prompt_input_disabled_state` leaves it disabled (see
+        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin`)."""
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.remove_class("interaction-active")
-        prompt_input.disabled = False
-        prompt_input.focus()
+        self._update_prompt_input_disabled_state()
+        if not prompt_input.disabled:
+            prompt_input.focus()
 
     def _record_interaction_history(self, header_text: str, body: str, decision_text: str) -> None:
         """Leave a permanent record of a just-finished permission ask or ask-user-questions
@@ -192,6 +195,8 @@ class InteractionsMixin(ReplAppBase):
         bounded history, so a later `resolve_item_risk_assessment` call this session can use it as
         calibration context — see that function's own docstring.
         """
+        await self._await_session_selected(ask_ctx.origin_session_id or self._session.id)
+
         # Offload to a worker thread: `resolve_item_risk_assessment` makes a blocking, potentially
         # multi-second HTTP call to the risk-classifier model. Running it inline here would freeze
         # this event-loop thread for the duration, which both hangs the UI and starves the
@@ -278,6 +283,8 @@ class InteractionsMixin(ReplAppBase):
         `_on_ask_user_questions` is what the worker thread actually calls, via
         `call_from_thread`, to get here.
         """
+        await self._await_session_selected(ask_ctx.origin_session_id or self._session.id)
+
         answer_future: asyncio.Future[AskUserQuestionsAnswer] = asyncio.get_running_loop().create_future()
         panel = AskUserQuestionsPanel(
             ask_ctx, on_dismiss=self._register_interaction_future(
@@ -319,6 +326,8 @@ class InteractionsMixin(ReplAppBase):
         `_on_escalate_privileges` is what the worker thread actually calls, via
         `call_from_thread`, to get here.
         """
+        await self._await_session_selected(escalate_ctx.origin_session_id or self._session.id)
+
         decision_future: asyncio.Future[EscalatePrivilegesDecision] = (
             asyncio.get_running_loop().create_future())
         panel = EscalatePrivilegesPanel(
