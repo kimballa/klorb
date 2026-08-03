@@ -131,4 +131,56 @@ describe('StatusRow', () => {
     fireEvent.click(modelChip);
     expect(onPickModel).not.toHaveBeenCalled();
   });
+
+  it('renders task panel toggle button with checklist icon', () => {
+    render(<StatusRow {...NOOP} taskPanelVisible={false} />);
+
+    const button = screen.getByLabelText('Show task panel');
+    expect(button).toBeTruthy();
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('renders subagents panel toggle button with type-hierarchy icon', () => {
+    render(<StatusRow {...NOOP} subagentsPanelVisible={false} />);
+
+    const button = screen.getByLabelText('Show subagents panel');
+    expect(button).toBeTruthy();
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('marks task panel toggle as pressed when panel is visible', () => {
+    render(<StatusRow {...NOOP} taskPanelVisible={true} />);
+
+    const button = screen.getByLabelText('Hide task panel');
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('marks subagents panel toggle as pressed when panel is visible', () => {
+    render(<StatusRow {...NOOP} subagentsPanelVisible={true} />);
+
+    const button = screen.getByLabelText('Hide subagents panel');
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('calls onToggleTaskPanel when the task toggle is clicked', () => {
+    const onToggleTaskPanel = vi.fn();
+    render(<StatusRow {...NOOP} taskPanelVisible={false} onToggleTaskPanel={onToggleTaskPanel} />);
+
+    fireEvent.click(screen.getByLabelText('Show task panel'));
+    expect(onToggleTaskPanel).toHaveBeenCalledOnce();
+  });
+
+  it('calls onToggleSubagentsPanel when the subagents toggle is clicked', () => {
+    const onToggleSubagentsPanel = vi.fn();
+    render(
+      <StatusRow
+        {...NOOP}
+        subagentsPanelVisible={false}
+        onToggleSubagentsPanel={onToggleSubagentsPanel}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText('Show subagents panel'));
+    expect(onToggleSubagentsPanel).toHaveBeenCalledOnce();
+  });
 });

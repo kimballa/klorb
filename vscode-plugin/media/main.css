@@ -79,6 +79,37 @@ body {
   background-color: var(--vscode-button-hoverBackground);
 }
 
+.icon-button-toggle {
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-radius: 4px;
+}
+
+.icon-button-toggle:hover {
+  background-color: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.icon-button-toggle-active {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.icon-button-toggle-active:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.icon-button-outlined {
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-radius: 4px;
+}
+
+.icon-button-outlined:hover {
+  background-color: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
 .panel-header-actions .icon-button {
   margin-left: 5px;
   margin-right: 5px;
@@ -1015,6 +1046,10 @@ button.bash-tool-call-command {
   font-size: 0.85em;
   color: var(--vscode-descriptionForeground);
   overflow: hidden;
+}
+
+.status-row-spacer {
+  flex: 1 1 auto;
 }
 
 .status-chip {

@@ -61,4 +61,45 @@ describe('IconButton', () => {
 
     expect(ref.current).toBe(screen.getByTitle('Ref target'));
   });
+
+  it('applies the outlined variant class and omits aria-pressed', () => {
+    render(
+      <IconButton title="Outlined" variant="outlined" onClick={() => undefined}>
+        <span>icon</span>
+      </IconButton>
+    );
+    const button = screen.getByTitle('Outlined');
+    expect(button.className).toBe('icon-button icon-button-outlined');
+    expect(button.hasAttribute('aria-pressed')).toBe(false);
+  });
+
+  it('applies toggle variant class and toggle-active class when active', () => {
+    const { rerender } = render(
+      <IconButton title="Toggle" variant="toggle" active={false} onClick={() => undefined}>
+        <span>icon</span>
+      </IconButton>
+    );
+    expect(screen.getByTitle('Toggle').className).toBe('icon-button icon-button-toggle');
+    expect(screen.getByTitle('Toggle').getAttribute('aria-pressed')).toBe('false');
+
+    rerender(
+      <IconButton title="Toggle" variant="toggle" active={true} onClick={() => undefined}>
+        <span>icon</span>
+      </IconButton>
+    );
+    expect(screen.getByTitle('Toggle').className).toBe(
+      'icon-button icon-button-toggle icon-button-toggle-active'
+    );
+    expect(screen.getByTitle('Toggle').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('omits aria-pressed for non-toggle variants', () => {
+    render(
+      <IconButton title="Not a toggle" variant="filled" onClick={() => undefined}>
+        <span>icon</span>
+      </IconButton>
+    );
+    const button = screen.getByTitle('Not a toggle');
+    expect(button.hasAttribute('aria-pressed')).toBe(false);
+  });
 });

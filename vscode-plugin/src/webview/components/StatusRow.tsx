@@ -2,6 +2,7 @@
 import { type JSX, useEffect, useRef, useState } from 'react';
 
 import type { ThinkingEffort } from 'shared/webviewMessages';
+import IconButton from 'webview/components/IconButton';
 import StatusMenu from 'webview/components/StatusMenu';
 import { formatTokenCount } from 'webview/formatTokenCount';
 
@@ -164,6 +165,21 @@ export default function StatusRow({
         [{mode}]
       </button>
       {tally !== undefined ? <span className="status-chip status-tokens">{tally}</span> : null}
+      <span className="status-row-spacer" />
+      <IconButton
+        variant="toggle"
+        active={taskPanelVisible}
+        title={taskPanelVisible ? 'Hide task panel' : 'Show task panel'}
+        onClick={onToggleTaskPanel}>
+        <vscode-icon name="checklist" />
+      </IconButton>
+      <IconButton
+        variant="toggle"
+        active={subagentsPanelVisible}
+        title={subagentsPanelVisible ? 'Hide subagents panel' : 'Show subagents panel'}
+        onClick={onToggleSubagentsPanel}>
+        <vscode-icon name="type-hierarchy" />
+      </IconButton>
     </div>
   );
 }

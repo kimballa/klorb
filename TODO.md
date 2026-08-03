@@ -20,6 +20,14 @@
 
 ### Feature backlog
 
+* Subagent roles:
+  * Planner -- develop planning documentation for how to implement a new feature.
+  * Reviewer -- perform adversarial code review on a completed feature.
+  * TaskMaster / ProjectManager -- keep track of fine-grained tasks and ensure that they are all
+    completed by other agents (or keep the Operator parent agent honest about progress). When given
+    a medium-grain task, break it down into additional fine-grained tasks and ensure they're
+    registered with chainlink.
+
 * WaitForSubagent blocks indefinitely. If the user adds a new msg in the meantime, it just gets queued
   rather than interrupting the situation. There's probably a new kind of "user-interruptible" nature
   to this tool to let it get an insta-response from the tool_response ("no agent feedback yet, but
@@ -200,12 +208,6 @@
 
 * need to pull in the `history` file (append-only prompt-recall log) from the session dir.
   (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
-
-* The status bar at the bottom of the plugin should have icon buttons for showing tasks and subagents.
-  They should have a solid-color background when shown, and transparent-to-the-dark-background when
-  the panels in question are hidden, with a rounded rectangle border around the whole thing, like the
-  solid-color chevron StatusMenu button on the left side. The two icon buttons should float to the
-  right-most edge of the StatusBar.
 
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
