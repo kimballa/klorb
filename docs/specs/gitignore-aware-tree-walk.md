@@ -21,24 +21,26 @@ which alternatives were rejected.
   walked with no distinction drawn.
 * **Reporting hidden entries.** Each tool sets `gitignored_hidden: true` (plus a `note` string
   telling the agent it can re-run with `use_gitignore=false`) only when a gitignored entry it
-  *actually cared about* was withheld — a file that matched, not merely a directory that
-  happened to be ignored. `FindFile` sets it when a gitignored file would have matched its glob;
-  `Grep` sets it when a gitignored file it would otherwise have searched (one passing its
-  `file_glob`, if any) was left unsearched. When nothing relevant was hidden, `gitignored_hidden`
-  is `false` and there is no `note`. This keeps the flag meaningful: the agent can distinguish
-  "nothing matches" from "a match exists but was hidden," and an ignored `node_modules/` that has
-  no bearing on the current query never trips it. (Contrast a permission-pruned subtree, which is
-  dropped silently with no flag — see [[permissions]] and
+  *actually cared about* was withheld — a file or directory that matched, not merely one that
+  happened to be ignored. `FindFile` sets it when a gitignored file or directory name would have
+  matched its glob; `Grep` sets it when a gitignored file it would otherwise have searched (one
+  passing its `file_glob`, if any) was left unsearched. When nothing relevant was hidden,
+  `gitignored_hidden` is `false` and there is no `note`. This keeps the flag meaningful: the
+  agent can distinguish "nothing matches" from "a match exists but was hidden," and an ignored
+  `node_modules/` that has no bearing on the current query never trips it. (Contrast a
+  permission-pruned subtree, which is dropped silently with no flag — see [[permissions]] and
   `docs/adrs/prune-non-allow-subdirs-during-recursive-tree-walk.md`.)
 * **`Grep` does not speculatively search ignored files.** It never reads a gitignored file to
   check whether it *would* have matched; it only notes that such a file exists (and passes its
   `file_glob`). `gitignored_hidden` means "some file I would have searched went unsearched," and
   the agent decides whether a follow-up unfiltered `Grep` is worth it.
-* **`FindFile` matches gitignored names without revealing them.** Because a filename glob can be
-  tested without reading the file, `FindFile` *does* test gitignored names against its pattern —
-  but a gitignored match is only counted toward `gitignored_hidden`, never added to the returned
-  `matches` list. The agent learns a hidden match exists and the exact argument to reveal it, but
-  the path stays withheld until it opts in.
+* **`FindFile` matches gitignored names without revealing them.** Because a bare name glob can be
+  tested without reading the file, `FindFile` *does* test gitignored file and directory names
+  against its pattern — but a gitignored match is only counted toward `gitignored_hidden`, never
+  added to the returned `matches` list. The agent learns a hidden match exists and the exact
+  argument to reveal it, but the path stays withheld until it opts in. See
+  `docs/adrs/findfile-matches-directory-names-not-just-files.md` for why directory bare names are
+  matched at all, alongside file bare names.
 * **Single-file `Grep` is never filtered.** When `Grep`'s `path` names one explicit file rather
   than a directory, gitignore filtering does not apply — an explicitly named target is honored
   the way `grep <file>` honors it. `gitignored_hidden` stays `false` for a single-file search.
@@ -46,26 +48,29 @@ which alternatives were rejected.
 ### The shared walk
 
 `walk_readable_tree(context, dirname, *, use_gitignore=True)` yields one
-`(dir_path, subdir_names, file_names, gitignored_file_names)` tuple per directory:
+`(dir_path, subdir_names, file_names, gitignored_file_names, gitignored_subdir_names)` tuple per
+directory:
 
 * `file_names` are the files a caller treats as visible results; `gitignored_file_names` are the
   files in the same directory that `.gitignore` excludes. When `use_gitignore` is false,
-  `gitignored_file_names` is always empty and every file is in `file_names`.
+  both gitignored lists are always empty and every file/directory is in `file_names`/
+  `subdir_names`.
 * `subdir_names` lists only the non-ignored child directories; a gitignored directory's name is
-  omitted from its parent's `subdir_names`.
+  omitted from its parent's `subdir_names` and reported in `gitignored_subdir_names` instead.
 
 Crucially, the walk **still descends into** a gitignored directory — it just reports every file
-inside it under `gitignored_file_names` (and omits the directory from its parent's
-`subdir_names`). Descending is what lets a tool answer "does this ignored subtree actually contain
-a file I care about?" instead of pessimistically assuming it might; that question is exactly what
-`gitignored_hidden` now depends on, and it can't be answered without looking inside. Within an
-already-ignored subtree every entry is ignored regardless of any nested `.gitignore` — matching
-git's rule that you can't re-include a file whose parent directory is excluded — so the walk stops
-consulting `.gitignore` files once inside one.
+inside it under `gitignored_file_names` (and reports the directory's own name in its parent's
+`gitignored_subdir_names` rather than `subdir_names`). Descending is what lets a tool answer "does
+this ignored subtree actually contain a file I care about?" instead of pessimistically assuming it
+might; that question is exactly what `gitignored_hidden` now depends on, and it can't be answered
+without looking inside. Within an already-ignored subtree every entry is ignored regardless of any
+nested `.gitignore` — matching git's rule that you can't re-include a file whose parent directory
+is excluded — so the walk stops consulting `.gitignore` files once inside one, and a gitignored
+directory's own child directories are themselves reported under its `gitignored_subdir_names` too.
 
-The decision of whether a gitignored file *matters* lives in each tool, not the walk: the walk
-only surfaces the ignored files; `FindFileTool`/`GrepTool` apply their own predicate (glob match /
-`file_glob`) and set their own `gitignored_hidden`. See
+The decision of whether a gitignored file or directory *matters* lives in each tool, not the walk:
+the walk only surfaces the ignored entries; `FindFileTool`/`GrepTool` apply their own predicate
+(glob match / `file_glob`) and set their own `gitignored_hidden`. See
 `docs/adrs/gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md`.
 
 ### Evaluating `.gitignore` rules

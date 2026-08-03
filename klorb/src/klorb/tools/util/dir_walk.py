@@ -38,27 +38,30 @@ def walk_readable_tree(
     dirname: str,
     *,
     use_gitignore: bool = True,
-) -> Iterator[tuple[Path, list[str], list[str], list[str]]]:
+) -> Iterator[tuple[Path, list[str], list[str], list[str], list[str]]]:
     """Depth-first walk of the directory tree rooted at `dirname`, yielding
-    `(dir_path, subdir_names, file_names, gitignored_file_names)` for `dir_path` itself and then
-    every directory beneath it that `readDirs` permits. `dir_path` is an absolute, canonicalized
-    `Path`; the three name lists are bare names (not full paths), each sorted alphabetically.
+    `(dir_path, subdir_names, file_names, gitignored_file_names, gitignored_subdir_names)` for
+    `dir_path` itself and then every directory beneath it that `readDirs` permits. `dir_path` is
+    an absolute, canonicalized `Path`; the four name lists are bare names (not full paths), each
+    sorted alphabetically.
 
     `file_names` holds the files a caller should treat as visible results; `gitignored_file_names`
-    holds the files in the same directory that the project's `.gitignore` rules exclude. When
-    `use_gitignore` is true (the default), the walk still **descends into** gitignored
-    directories — so a caller can find out whether a gitignored subtree actually contains a file
-    it cares about — but every file inside a gitignored directory (and every file directly matched
-    by a `.gitignore` rule) is reported under `gitignored_file_names` rather than `file_names`,
-    and a gitignored directory's name is omitted from its parent's `subdir_names`. This split lets
-    each tool decide for itself what a gitignored entry means: `FindFileTool` tests gitignored
-    names against its glob and flags a match without reporting the path, while `GrepTool` skips
-    reading gitignored files but flags that some file it would otherwise have searched was left
-    unsearched. When `use_gitignore` is false, no filtering happens at all: every file is in
-    `file_names` and `gitignored_file_names` is always empty. `.gitignore` files are read from the
-    workspace root down through every directory walked, with a nested file overriding those above
-    it (see `klorb.tools.util.gitignore.GitignoreFilter`). See
-    docs/specs/gitignore-aware-tree-walk.md and
+    holds the files in the same directory that the project's `.gitignore` rules exclude, and
+    `gitignored_subdir_names` holds this directory's own immediate child directories excluded the
+    same way. When `use_gitignore` is true (the default), the walk still **descends into**
+    gitignored directories — so a caller can find out whether a gitignored subtree actually
+    contains a file it cares about — but every file inside a gitignored directory (and every file
+    directly matched by a `.gitignore` rule) is reported under `gitignored_file_names` rather than
+    `file_names`, and a gitignored directory's name is omitted from its parent's `subdir_names` and
+    reported under `gitignored_subdir_names` instead. This split lets each tool decide for itself
+    what a gitignored entry means: `FindFileTool` tests gitignored file and directory names against
+    its glob and flags a match without reporting the path, while `GrepTool` skips reading
+    gitignored files but flags that some file it would otherwise have searched was left
+    unsearched. When `use_gitignore` is false, no filtering happens at all: every file and
+    directory is in `file_names`/`subdir_names` and both gitignored lists are always empty.
+    `.gitignore` files are read from the workspace root down through every directory walked, with
+    a nested file overriding those above it (see `klorb.tools.util.gitignore.GitignoreFilter`).
+    See docs/specs/gitignore-aware-tree-walk.md and
     docs/adrs/gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md.
 
     `dirname` is resolved and checked exactly like `ListDirTool`
@@ -107,7 +110,7 @@ def _walk(
     gitignore: GitignoreFilter | None,
     *,
     parent_ignored: bool,
-) -> Iterator[tuple[Path, list[str], list[str], list[str]]]:
+) -> Iterator[tuple[Path, list[str], list[str], list[str], list[str]]]:
     """Recursion helper for `walk_readable_tree`. `parent_ignored` is `True` once the walk is
     somewhere inside a gitignored directory: everything below an excluded directory is itself
     excluded (git can't re-include a file whose parent directory is excluded), so within such a
@@ -153,7 +156,9 @@ def _walk(
         else:
             kept_subdirs.append(sub)
 
-    yield dir_path, [sub.name for sub in kept_subdirs], kept_files, ignored_files
+    yield (
+        dir_path, [sub.name for sub in kept_subdirs], kept_files, ignored_files,
+        [sub.name for sub in ignored_subdirs])
 
     for sub in kept_subdirs:
         child_gitignore = gitignore.descend(sub) if gitignore is not None else None
