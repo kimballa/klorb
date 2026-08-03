@@ -297,3 +297,105 @@ describe('PromptInput image attachments', () => {
     expect(screen.getByAltText('picked.png')).toBeTruthy();
   });
 });
+
+const HISTORY = ['first prompt', 'second prompt', 'third prompt'];
+
+describe('PromptInput history navigation', () => {
+  it('recalls the most recent entry on ArrowUp from an empty textarea', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={HISTORY} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+
+    expect(promptTextarea(container).value).toBe('third prompt');
+  });
+
+  it('steps backward through history on repeated ArrowUp', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={HISTORY} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+
+    expect(promptTextarea(container).value).toBe('second prompt');
+  });
+
+  it('steps forward on ArrowDown and exits history past the end', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={HISTORY} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+    expect(promptTextarea(container).value).toBe('third prompt');
+
+    // Step forward past the end: textarea should clear (the stashed draft was empty).
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowDown' });
+
+    expect(promptTextarea(container).value).toBe('');
+  });
+
+  it('does nothing on ArrowUp when history is empty', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={[]} onSubmit={() => undefined} {...NOOP} />
+    );
+    typeText(container, 'typed');
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+
+    expect(promptTextarea(container).value).toBe('typed');
+  });
+
+  it('does nothing on ArrowDown when not browsing history', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={HISTORY} onSubmit={() => undefined} {...NOOP} />
+    );
+    typeText(container, 'typed');
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowDown' });
+
+    expect(promptTextarea(container).value).toBe('typed');
+  });
+
+  it('does not enter history on ArrowUp when the textarea is non-empty', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={HISTORY} onSubmit={() => undefined} {...NOOP} />
+    );
+    typeText(container, 'half written');
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+
+    expect(promptTextarea(container).value).toBe('half written');
+  });
+
+  it('detaches from history when the user types while browsing', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={HISTORY} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    // Enter history.
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+    expect(promptTextarea(container).value).toBe('third prompt');
+
+    // Type something: this detaches from history.
+    typeText(container, 'edited prompt');
+
+    // ArrowUp again should NOT re-enter history (textarea is non-empty now).
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+    expect(promptTextarea(container).value).toBe('edited prompt');
+  });
+
+  it('does not go past the oldest entry', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} promptHistory={['only']} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+    expect(promptTextarea(container).value).toBe('only');
+
+    // ArrowUp again: still at oldest.
+    fireEvent.keyDown(promptTextarea(container), { key: 'ArrowUp' });
+    expect(promptTextarea(container).value).toBe('only');
+  });
+});

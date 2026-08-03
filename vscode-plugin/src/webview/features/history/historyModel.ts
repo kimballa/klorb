@@ -405,12 +405,10 @@ export function applyHostMessage(
     case 'sessionReplay':
       return applySessionReplay(message.entries);
     case 'workspaceFiles':
-      // Tracked separately by `App`'s own `workspaceFiles` state, not as a history entry -- the
-      // file finder reads from that state instead.
-      return [...entries];
+    case 'promptHistory':
     case 'imageAttached':
-      // Routed directly to `PromptInput`'s pending attachment tray by `App` (see its own
-      // `onMessage` handler), not tracked as a history entry.
+      // Tracked separately by `App`'s own `workspaceFiles`/`promptHistory` state, not as a
+      // history entry -- the file finder and prompt input read from that state instead.
       return [...entries];
   }
 }

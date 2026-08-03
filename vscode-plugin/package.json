@@ -113,6 +113,11 @@
           "type": "boolean",
           "default": true,
           "description": "When opening the Klorb panel, resume the most recently used session for this workspace instead of always starting a new one."
+        },
+        "klorb.promptHistory.maxItems": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of past prompts retained for up/down-arrow recall in the prompt input."
         }
       }
     }

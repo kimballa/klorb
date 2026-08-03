@@ -88,6 +88,9 @@ export default function App({
   // every time the view resolves (see `KlorbSessionViewProvider._postWorkspaceFiles()`), so a
   // fresh value always follows shortly after a webview reload rather than risking a stale one.
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
+  // Re-pushed by the host on resolve and after each submitted prompt; not persisted via
+  // `vscode.setState()` for the same reason as `workspaceFiles`.
+  const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [taskList, setTaskList] = useState<TaskListSnapshot | undefined>(initialTaskList);
   const [taskPanelVisible, setTaskPanelVisible] = useState(initialTaskPanelVisible ?? true);
   // The subagent tree/transcript/expansion state below is deliberately not persisted -- see
@@ -205,6 +208,9 @@ export default function App({
         sessionId: initialSelectedSubagentId ?? null,
       });
     }
+    // Pulls the current prompt history from the host -- the host also pushes it on view resolve,
+    // but that push may arrive before this listener is registered; this pull is the reliable path.
+    vscode.postMessage({ type: 'requestPromptHistory' });
   }, [initialSubagentsPanelVisible, initialSelectedSubagentId, vscode]);
 
   useEffect(() => {
@@ -267,6 +273,9 @@ export default function App({
       }
       if (message.type === 'workspaceFiles') {
         setWorkspaceFiles(message.files);
+      }
+      if (message.type === 'promptHistory') {
+        setPromptHistory(message.entries);
       }
       if (message.type === 'imageAttached') {
         promptInputRef.current?.addAttachment(message.image);
@@ -536,6 +545,7 @@ export default function App({
         readOnly={isSubagentSelected}
         enqueueMessageCapable={status.enqueueMessageCapable}
         workspaceFiles={workspaceFiles}
+        promptHistory={promptHistory}
         imagesCapable={status.activeModelVision}
         onSubmit={submit}
         onCancel={isSubagentSelected ? cancelSubagentTurn : cancel}

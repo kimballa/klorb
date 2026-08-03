@@ -469,6 +469,14 @@ export interface WorkspaceFilesMessage {
   files: string[];
 }
 
+/** The workspace's past prompt texts for up/down-arrow recall in the prompt input. Pushed once
+ * when the view resolves (mirrors `WorkspaceFilesMessage`'s own repost-on-resolve pattern) and
+ * re-pushed after each new prompt is recorded. Empty when no prompts have been submitted yet. */
+export interface PromptHistoryMessage {
+  type: 'promptHistory';
+  entries: string[];
+}
+
 /** An image the user picked via the status row's "Attach Image…" menu item (see
  * `AttachImageFileMessage`) is ready to add to the prompt input's pending attachment tray --
  * the same shape a drag-drop/paste attachment reaches internally. */
@@ -502,6 +510,7 @@ export type HostMessage =
   | ToggleSubagentsPanelMessage
   | SessionReplayMessage
   | WorkspaceFilesMessage
+  | PromptHistoryMessage
   | ImageAttachedMessage;
 
 /** An attached image's caption-worthy metadata, without its bytes -- what a restored/replayed
@@ -652,6 +661,13 @@ export interface ListRecentSessionsMessage {
   type: 'listRecentSessions';
 }
 
+/** The webview has mounted and its message listener is active -- the host should push the
+ * current prompt history. Sent once on webview mount as a pull mechanism to complement the
+ * host's deferred push in `resolveWebviewView`. */
+export interface RequestPromptHistoryMessage {
+  type: 'requestPromptHistory';
+}
+
 /** The webview's top-level `ErrorBoundary` (`src/webview/components/ErrorBoundary.tsx`) caught
  * an uncaught render error -- the webview's own JS console (VS Code's "Developer: Open Webview
  * Developer Tools") always has the full detail first, but a webview crash is otherwise invisible
@@ -686,6 +702,7 @@ export type WebviewMessage =
   | SetSubagentsPanelVisibleMessage
   | SelectSubagentMessage
   | CancelSubagentMessage
+  | RequestPromptHistoryMessage
   | WebviewErrorMessage;
 
 /** Message `type` values that carry a required string field, keyed by the field's name. */
@@ -719,6 +736,7 @@ const WEBVIEW_BARE_TYPES: readonly string[] = [
   'reloadSkills',
   'listRecentSessions',
   'attachImageFile',
+  'requestPromptHistory',
 ];
 
 function parseMessage(
@@ -1190,6 +1208,16 @@ function parseWorkspaceFiles(record: Record<string, unknown>): WorkspaceFilesMes
   return { type: 'workspaceFiles', files: record.files };
 }
 
+function parsePromptHistory(record: Record<string, unknown>): PromptHistoryMessage | undefined {
+  if (
+    !Array.isArray(record.entries) ||
+    !record.entries.every((entry) => typeof entry === 'string')
+  ) {
+    return undefined;
+  }
+  return { type: 'promptHistory', entries: record.entries };
+}
+
 function parseImageAttached(record: Record<string, unknown>): ImageAttachedMessage | undefined {
   if (!isImageAttachment(record.image)) {
     return undefined;
@@ -1307,6 +1335,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseSessionReplay(record);
     case 'workspaceFiles':
       return parseWorkspaceFiles(record);
+    case 'promptHistory':
+      return parsePromptHistory(record);
     case 'imageAttached':
       return parseImageAttached(record);
     default:

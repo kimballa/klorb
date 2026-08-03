@@ -85,6 +85,9 @@ interface PromptInputProps {
    * file finder (`webview/features/fileFinder`). Empty until the host's `workspaceFiles`
    * message arrives, or when no workspace folder is open. */
   workspaceFiles?: string[];
+  /** Past prompt texts for up/down-arrow recall, oldest-first. Pushed by the host on view
+   * resolve and after each submitted prompt. Empty when no prompts have been submitted yet. */
+  promptHistory?: string[];
   /** Whether the currently active model supports image input (`StatusSnapshot.
    * activeModelVision`) -- gates the drag/paste/file-picker attach affordance entirely; `false`
    * or not-yet-known both hide it, since attaching against a non-vision model can only fail
@@ -148,6 +151,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     muted = false,
     enqueueMessageCapable = false,
     workspaceFiles = [],
+    promptHistory = [],
     imagesCapable = false,
     readOnly = false,
     onSubmit,
@@ -160,6 +164,13 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const [rows, setRows] = useState(MIN_ROWS);
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | undefined>(undefined);
+  // `null` = not browsing history; a number = index into `promptHistory` (0 = oldest).
+  const draftBeforeHistoryRef = useRef('');
+  // Tracks browsing state and current index synchronously (refs update immediately, state is
+  // batched) so that `recallHistory` reads the latest index even when called multiple times
+  // in the same event loop tick without an intervening React render.
+  const historyBrowsingRef = useRef(false);
+  const historyIndexRef = useRef<number | null>(null);
   const textareaRef = useRef<VscodeTextarea>(null);
   const preparedRef = useRef<PreparedText | null>(null);
   const trailingNewlinesRef = useRef(0);
@@ -316,6 +327,9 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     }
     setDraft('');
     setRows(MIN_ROWS);
+
+    historyBrowsingRef.current = false;
+    historyIndexRef.current = null;
     preparedRef.current = null;
     const images = attachments.length > 0 ? attachments : undefined;
     setAttachments([]);
@@ -344,6 +358,70 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     setDraft(selection.text);
     computeRows(selection.text);
     el?.focus();
+  }
+
+  /** Writes `text` into the textarea (both DOM and React state) and recomputes rows. Shared by
+   * history recall and (indirectly) `applyFinderSelection`. */
+  function setTextareaValue(text: string): void {
+    // Temporarily clear the browsing flag so `detachFromHistory()` (called from the `onInput`
+    // handler that may fire from the DOM value change below) is a no-op -- the flag is restored
+    // by the caller (`recallHistory`) immediately after this returns.
+    historyBrowsingRef.current = false;
+    const el = textareaRef.current;
+    if (el !== null) {
+      el.value = text;
+      const wrapped = el.wrappedElement;
+      if (wrapped) {
+        wrapped.selectionStart = text.length;
+        wrapped.selectionEnd = text.length;
+      }
+    }
+    setDraft(text);
+    computeRows(text);
+  }
+
+  /** Steps through prompt history: `direction` is -1 for older, +1 for newer. Entering from
+   * a fresh draft stashes it in `draftBeforeHistoryRef`; stepping past the most recent entry
+   * restores the stash and exits history browse mode. */
+  function recallHistory(direction: number): void {
+    if (promptHistory.length === 0) {
+      return;
+    }
+    let nextIndex: number;
+    if (historyIndexRef.current === null) {
+      // Entering history browse from a fresh draft.
+      if (direction < 0) {
+        draftBeforeHistoryRef.current = textareaRef.current?.value ?? draft;
+        nextIndex = promptHistory.length - 1;
+      } else {
+        return;
+      }
+    } else {
+      nextIndex = historyIndexRef.current + direction;
+      if (nextIndex >= promptHistory.length) {
+        // Past the most recent: restore draft and exit browse.
+        historyBrowsingRef.current = false;
+        historyIndexRef.current = null;
+
+        setTextareaValue(draftBeforeHistoryRef.current);
+        return;
+      }
+    }
+    if (nextIndex < 0) {
+      return;
+    }
+    historyIndexRef.current = nextIndex;
+    setTextareaValue(promptHistory[nextIndex]!);
+    historyBrowsingRef.current = true;
+  }
+
+  /** Detaches from history browse mode (if active) and stashes nothing -- called when the user
+   * types while browsing, abandoning the recall. */
+  function detachFromHistory(): void {
+    if (historyBrowsingRef.current) {
+      historyBrowsingRef.current = false;
+      historyIndexRef.current = null;
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
@@ -380,6 +458,16 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
       if (inFlight) {
         onCancel();
       }
+      return;
+    }
+    if (event.key === 'ArrowUp' && (targetValue(event) === '' || historyBrowsingRef.current)) {
+      event.preventDefault();
+      recallHistory(-1);
+      return;
+    }
+    if (event.key === 'ArrowDown' && historyBrowsingRef.current) {
+      event.preventDefault();
+      recallHistory(1);
       return;
     }
     if (event.key !== 'Enter') {
@@ -427,6 +515,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
             setDraft(value);
             computeRows(value);
             finder.sync(value, cursorPosition(event));
+            detachFromHistory();
           }}
           onKeyUp={(event: KeyboardEvent<HTMLElement>) => {
             if (CARET_MOVE_KEYS.has(event.key)) {

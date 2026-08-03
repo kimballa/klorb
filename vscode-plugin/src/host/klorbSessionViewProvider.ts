@@ -11,6 +11,7 @@ import {
 } from 'host/features/acp';
 import type { SessionControls } from 'host/features/sessionControls';
 import type { SubagentPoller } from 'host/features/subagents';
+import type { PromptHistory } from 'host/promptHistory';
 import { readImageDimensions } from 'shared/imageDimensions';
 import { IMAGE_FILE_EXTENSIONS, IMAGE_MIME_TYPE_BY_EXTENSION } from 'shared/imageFileTypes';
 import {
@@ -57,6 +58,8 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   // `FileSearch.watch()` callback -- re-posted (not re-scanned) on `resolveWebviewView()`, the
   // same "repost cached state to a freshly resolved view" pattern `postSnapshot()` uses.
   private _workspaceFiles: string[] = [];
+  private _promptHistory: PromptHistory | undefined;
+  private _workspaceCwd: string = '';
 
   public constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -86,6 +89,30 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this._subagentPoller = subagentPoller;
   }
 
+  /** Wires the `PromptHistory` this provider appends submitted prompts into and pushes to the
+   * webview on resolve -- set once during activation. If the view is already resolved, pushes
+   * the current history immediately. */
+  public setPromptHistory(promptHistory: PromptHistory): void {
+    this._promptHistory = promptHistory;
+    this._postPromptHistory();
+  }
+
+  /** Sets the workspace cwd so `promptHistory.append()` knows which workspace to key under.
+   * If the view is already resolved, pushes the current history immediately. */
+  public setWorkspaceCwd(cwd: string): void {
+    this._workspaceCwd = cwd;
+    this._postPromptHistory();
+  }
+
+  /** Pushes the current prompt history to the webview. No-op when the view hasn't been
+   * resolved yet or `promptHistory` hasn't been set. */
+  private _postPromptHistory(): void {
+    this.postHostMessage({
+      type: 'promptHistory',
+      entries: this._promptHistory?.loadForWorkspace(this._workspaceCwd) ?? [],
+    });
+  }
+
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
     _context: vscode.WebviewViewResolveContext,
@@ -109,6 +136,9 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this._connection?.client?.repostPendingInteraction();
     this._sessionControls?.postSnapshot();
     this.postHostMessage({ type: 'workspaceFiles', files: this._workspaceFiles });
+    // Deferred to the next tick so the webview's React app has time to mount and register its
+    // message listener -- a synchronous post here arrives before `useEffect` fires.
+    setTimeout(() => this._postPromptHistory(), 0);
   }
 
   public onAgentText(text: string): void {
@@ -216,9 +246,13 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     }
     switch (parsed.type) {
       case 'submitPrompt':
+        this._promptHistory?.append(this._workspaceCwd, parsed.text);
+        this._postPromptHistory();
         await this._runTurn(parsed.text, parsed.images);
         break;
       case 'enqueueMessage':
+        this._promptHistory?.append(this._workspaceCwd, parsed.text);
+        this._postPromptHistory();
         await this._enqueueMessage(parsed.text, parsed.images);
         break;
       case 'cancelTurn':
@@ -296,6 +330,9 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
         } catch (err) {
           this._log(`klorb: cancelSubagent failed: ${errorMessage(err)}`);
         }
+        break;
+      case 'requestPromptHistory':
+        this._postPromptHistory();
         break;
       case 'webviewError':
         this._log(

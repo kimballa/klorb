@@ -20,6 +20,8 @@
 
 ### Feature backlog
 
+* Raise default tool call limit from 50 to 100.
+
 * Subagent roles:
   * Planner -- develop planning documentation for how to implement a new feature.
   * Reviewer -- perform adversarial code review on a completed feature.
@@ -27,11 +29,17 @@
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
     registered with chainlink.
+  * ... The goal of this is to eventually support a "software factory" model where the system is
+    autonomously continuously pulling new tasks out from a queue (e.g. a directory filled with new
+    feature spec documents or bug report documents) and executing them one after the next.
 
 * WaitForSubagent blocks indefinitely. If the user adds a new msg in the meantime, it just gets queued
   rather than interrupting the situation. There's probably a new kind of "user-interruptible" nature
   to this tool to let it get an insta-response from the tool_response ("no agent feedback yet, but
   here's something new from the user: ...")
+
+* We currently disable the user chat to subagents. Should that be the case? Or should we let the user
+  interject? (What's the harm?)
 
 * now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
   all files in the repo. The FindFiles tool should take advantage of that for much faster
@@ -198,6 +206,18 @@
 
 ### Bugs
 
+* There's now a bug where I cannot scroll the HistoryView up. Or, I can, but even if I'm holding the
+  scrollbar in my mouse, it jams itself back to the bottom within a couple of seconds. It basically
+  *always* stays pinned to the bottom of the history scroll. This is a regression that happened after
+  we implemented plan 021 phase 4 (subagents; vscode plugin subagent views). The subagent mechanism
+  has a refresh-poll every 2 seconds, and I think we're getting pulled to the bottom of the view when
+  that poll fires.
+  * Ironically this *only* seems true on the main (root) agent feed. I can scroll up and stay there
+    just fine in one of the subagent views.
+  * This isn't *all* the time. I think it only happens in a main session after that session has
+    launched subagents. if it doesn't launch a subagent first, it's still OK to let the user scroll
+    up.
+
 * System interjections need to be stripped from user messages shown to the user in the HistoryView
   when the window is reloaded and the session is restored.
   * On the backend we should store SystemInterjections separately from the main content, so that
@@ -206,8 +226,8 @@
 
 ### Feature backlog
 
-* need to pull in the `history` file (append-only prompt-recall log) from the session dir.
-  (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
+* Need slightly thicker horizontal rule borders bracketing the task panel, subagent panel, and bottom
+  prompt input area / status bar. The flat view otherwise blurs it into the main chat history too much.
 
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.

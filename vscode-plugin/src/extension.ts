@@ -23,6 +23,7 @@ import {
 import { SubagentPoller } from 'host/features/subagents';
 import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
 import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
+import { PromptHistory, type PromptHistoryVsCode } from 'host/promptHistory';
 
 /** The real `vscode`-backed `EditorIntegrationVsCode` -- the one place `EditorIntegration`'s
  * VS Code calls are actually made, so `editorIntegration.ts` itself never needs a real `vscode`
@@ -119,6 +120,20 @@ async function readServerOptions(apiKeyManager: ApiKeyManager): Promise<KlorbSer
   return { command, env, configPath };
 }
 
+/** The real `vscode`-backed `PromptHistoryVsCode` (see host/promptHistory.ts's own doc comment). */
+function realPromptHistoryVsCode(context: vscode.ExtensionContext): PromptHistoryVsCode {
+  return {
+    globalState: context.globalState,
+    onDidChangeConfiguration: (listener: () => void) =>
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('klorb.promptHistory')) {
+          listener();
+        }
+      }),
+    getConfiguration: (section: string) => vscode.workspace.getConfiguration(section),
+  };
+}
+
 /** The session's working directory: the first workspace folder, or the home directory when
  * no folder is open (ACP requires an absolute cwd for `session/new`). */
 function sessionCwd(): string {
@@ -176,6 +191,13 @@ export function activate(context: vscode.ExtensionContext): void {
   provider.setConnection(connection);
   provider.setSessionControls(sessionControls);
   provider.setSubagentPoller(subagentPoller);
+  const cwd = sessionCwd();
+  const promptHistory = new PromptHistory(
+    realPromptHistoryVsCode(context),
+    vscode.workspace.getConfiguration('klorb').get<number>('promptHistory.maxItems', 100)
+  );
+  provider.setPromptHistory(promptHistory);
+  provider.setWorkspaceCwd(cwd);
   const workspaceTrustBridge = new WorkspaceTrustBridge(
     realWorkspaceTrustVsCode(),
     sessionControls,
