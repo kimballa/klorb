@@ -8,11 +8,11 @@ from textual import work
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from klorb.agents.policy import compute_root_session_grants
 from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config, project_config_path
 from klorb.session import Session
 from klorb.session.restore import try_restore_session
-from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
@@ -67,10 +67,13 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         history.remove_children()
         if restored is None:
             new_config = self._process_config.session.model_copy(update={"workspace": workspace})
+            grants = compute_root_session_grants(self._process_config, new_config, new_config.role_name)
+            new_config.skill_rules = grants.skill_rules
             self._session = Session(
                 new_config, provider=provider, model_registry=model_registry,
                 process_config=self._process_config,
-                tool_registry=ToolRegistry.discover_tools(self._process_config, new_config))
+                tool_registry=grants.tool_registry,
+                effective_subagent_roles=grants.effective_subagent_roles)
             self.show_notice(
                 f"Could not load session {entry.title or entry.session_id!r}: it is locked by "
                 "another process or no longer available. Started a new session instead.",

@@ -87,7 +87,7 @@ class SessionCoreMixin(SessionBase):
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
         parent: "Session | None" = None,
-        effective_subagent_roles: frozenset[str] | None = None,
+        effective_subagent_roles: frozenset[str] = frozenset(),
         max_output_tokens: int | None = None,
     ) -> None:
         self.config = config
@@ -109,12 +109,14 @@ class SessionCoreMixin(SessionBase):
         produce a child whose `depth` exceeds `ProcessConfig.subagents_max_depth`."""
         self.effective_subagent_roles = effective_subagent_roles
         """The subagent role names this session may itself pass to `CreateSubagent`, computed
-        (via `klorb.agents.intersection.compute_child_subagent_roles`) and stored once, at this
-        session's own creation, from its parent's *own* `effective_subagent_roles` -- never a
-        fresh `agents.json` lookup of this session's role, so an intervening level's narrowing
-        can't be recovered further down the chain. `None` means unrestricted -- every role
-        `agents.json` defines -- the case for a top-level session (never itself narrowed by a
-        `restrict_to.subagent_roles`)."""
+        once at this session's own construction: for a subagent, via `klorb.agents.intersection.
+        compute_child_subagent_roles` against its parent's own `effective_subagent_roles`; for a
+        root session, via `klorb.agents.policy.compute_root_session_grants` against every role
+        `agents.json` defines. Never a fresh `agents.json` lookup of this session's own role name
+        at read time, so an intervening level's narrowing can't be recovered further down the
+        chain. Defaults to an empty `frozenset` -- a `Session` constructed without explicitly
+        computing this (e.g. most unit tests) may launch no subagents at all, rather than
+        silently inheriting "everything"."""
         self._max_output_tokens = max_output_tokens
         """Per-request `max_tokens` cap threaded into every `ApiProvider.send_prompt()` call
         this session makes -- `None` (the default) applies no cap beyond the model's own.

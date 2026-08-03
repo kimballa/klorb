@@ -11,13 +11,13 @@ assembled `Session` class itself, which would be circular if it were part of tha
 import base64
 import logging
 
+from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ApiProvider
 from klorb.lockfile import create_lockfile
 from klorb.message import Message
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import ProcessConfig
 from klorb.session import Session
-from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 from klorb.workspace.session_store import (
     RecentSession,
@@ -76,12 +76,15 @@ def try_restore_session(
         return None
 
     restored_config = state.config.model_copy(update={"workspace": workspace})
+    grants = compute_root_session_grants(process_config, restored_config, restored_config.role_name)
+    restored_config.skill_rules = grants.skill_rules
     session = Session(
         restored_config, provider=provider, model_registry=model_registry,
         process_config=process_config,
         session_id=state.session_id, root_id=state.root_id, session_name=state.session_name,
         aliases=state.aliases,
-        tool_registry=ToolRegistry.discover_tools(process_config, restored_config))
+        tool_registry=grants.tool_registry,
+        effective_subagent_roles=grants.effective_subagent_roles)
     session.set_chainlink_task(state.cur_chainlink_task_id)
     _rehydrate_image_fragments(workspace, entry.subdir, state.messages)
     session.load_messages(state.messages)

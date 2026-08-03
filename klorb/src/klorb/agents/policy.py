@@ -8,7 +8,11 @@ creator. See docs/specs/subagents.md's "Security model" and "Subagent session mo
 Every check and computation here runs against the *calling* session's own live,
 already-narrowed effective sets (its `tool_registry`, its `config.skill_rules`, its
 `effective_subagent_roles`) -- never a fresh `agents.json` lookup by role name alone, per the
-"no widening across more than one hop" invariant described there.
+"no widening across more than one hop" invariant described there. `compute_root_session_grants`
+is the one deliberate exception: a root (top-level, user-facing) session has no real parent
+session to narrow from, so it computes its own grants by intersecting its role's `agents.json`
+entry directly against the unrestricted universal catalog -- the same intersection a subagent
+gets against its parent, just with "parent" being "everything" for this one case.
 """
 
 import logging
@@ -32,6 +36,7 @@ from klorb.agents.runtime import (
 from klorb.api_provider import ResponseAborted
 from klorb.message import Message
 from klorb.permissions.skill_access import SkillRules, format_fqsn, parse_fqsn
+from klorb.process_config import ProcessConfig
 from klorb.session import (
     AskUserQuestionsAnswer,
     AskUserQuestionsItemContext,
@@ -44,8 +49,9 @@ from klorb.session import (
     TurnEventHandlers,
 )
 from klorb.tools.exceptions import ToolCallError
+from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.skill.catalog import resolve_session_skill_catalog_registry
+from klorb.tools.skill.catalog import SkillCatalogRegistry, resolve_session_skill_catalog_registry
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -62,28 +68,13 @@ class SubagentPlan:
     effective_subagent_roles: frozenset[str]
 
 
-def _effective_parent_subagent_roles(parent: Session) -> frozenset[str]:
-    """The subagent role names `parent` may itself pass to `CreateSubagent`: the set computed and
-    stored at `parent`'s own creation (`parent.effective_subagent_roles`) for a subagent, or --
-    for a session that was never itself narrowed this way (`effective_subagent_roles is None`,
-    e.g. the root session) -- `parent`'s own `agents.json` entry's `restrict_to.subagent_roles`,
-    falling back to every role `agents.json` defines only if that field is itself unset. This is
-    the one place a role's own nominal `restrict_to.subagent_roles` is consulted directly (every
-    other read of it is an intersection against an already-narrowed set, per
-    `compute_child_subagent_roles`) -- necessary because nothing upstream of the root session ever
-    computed a stored `effective_subagent_roles` for it to fall back to instead."""
-    if parent.effective_subagent_roles is not None:
-        return parent.effective_subagent_roles
-    own_definition = get_agent_registry().get(parent.config.role_name)
-    if own_definition is not None and own_definition.restrict_to.subagent_roles is not None:
-        return frozenset(own_definition.restrict_to.subagent_roles)
-    return frozenset(get_agent_registry().names())
-
-
 def _resolve_role_definition(parent: Session, role: str) -> AgentDefinition:
     """Look up `role`'s `AgentDefinition`, raising `ToolCallError` if it names no role
-    `agents.json` defines, or a role outside `parent`'s own effective `subagent_roles` set."""
-    allowed_roles = _effective_parent_subagent_roles(parent)
+    `agents.json` defines, or a role outside `parent`'s own effective `subagent_roles` set.
+    `parent.effective_subagent_roles` is always a concrete, already-computed set -- for a
+    subagent, from its own creation (`compute_child_subagent_roles`); for a root session, from
+    `compute_root_session_grants`."""
+    allowed_roles = parent.effective_subagent_roles
     if not role:
         raise ToolCallError(
             f"You must specify one of the following subagent roles to launch: role="
@@ -140,17 +131,18 @@ def _check_creation_limits(context: ToolSetupContext, parent: Session, role: str
 
 
 def _child_tool_classes(
-    parent: Session, restrict_to: AgentRestrictions, allow_subagents: bool,
+    parent_tool_registry: ToolRegistry, restrict_to: AgentRestrictions, allow_subagents: bool,
 ) -> "dict[str, type[Tool]]":
-    """Compute the child's effective tool class map: `compute_child_tool_set` intersected
-    against the parent's *live* `tool_registry` (never a fresh full discovery -- an
-    already-narrowed parent must not hand a child back anything it doesn't itself have), then
-    `SUBAGENT_MGMT_TOOL_NAMES` stripped out unless `allow_subagents` is `True` for the child's
-    own role. See docs/specs/subagents.md."""
-    assert parent.tool_registry is not None
-    parent_classes = parent.tool_registry.tool_classes()
+    """Compute a child's effective tool class map: `compute_child_tool_set` intersected against
+    `parent_tool_registry` (never a fresh full discovery -- an already-narrowed registry must not
+    hand a child back anything it doesn't itself have), then `SUBAGENT_MGMT_TOOL_NAMES` stripped
+    out unless `allow_subagents` is `True` for the child's own role. Used both for a subagent (the
+    "parent" is its creator's live `tool_registry`) and for a root session (the "parent" is the
+    unrestricted universal catalog -- see `compute_root_session_grants`). See
+    docs/specs/subagents.md."""
+    parent_classes = parent_tool_registry.tool_classes()
     parent_metadata: dict[str, ToolMetadata] = {}
-    for tool in parent.tool_registry.tools():
+    for tool in parent_tool_registry.tools():
         parent_metadata[tool.name()] = ToolMetadata(
             category=tool.category(), is_read_only=tool.is_read_only())
     effective_names = compute_child_tool_set(parent_metadata, restrict_to)
@@ -160,18 +152,20 @@ def _child_tool_classes(
 
 
 def _child_skill_rules(
-    context: ToolSetupContext, parent_config: SessionConfig, restrict_to: AgentRestrictions,
+    skill_catalog_registry: SkillCatalogRegistry, parent_config: SessionConfig,
+    restrict_to: AgentRestrictions,
 ) -> SkillRules:
-    """Compute the child's effective `SkillRules`: every fully-qualified skill name currently
-    discoverable to the parent (`resolve_session_skill_catalog_registry`, the same catalog
-    `SearchSkills` reads) is intersected via `compute_child_skill_set`; whichever names fall out
-    of that intersection are added to the child's `deny` list on top of whatever the parent's
-    own `skill_rules` already denies -- a snapshot taken at subagent-creation time, matching how
-    the child's own `tool_registry` is likewise a one-time snapshot of the parent's."""
-    registry = resolve_session_skill_catalog_registry(context)
+    """Compute a child's effective `SkillRules`: every fully-qualified skill name currently
+    discoverable in `skill_catalog_registry` (already `ensure()`d by the caller against the
+    parent's own workspace/trust settings) is intersected via `compute_child_skill_set`; whichever
+    names fall out of that intersection are added to the child's `deny` list on top of whatever
+    `parent_config.skill_rules` already denies -- a snapshot taken at creation time, matching how
+    a child's own `tool_registry` is likewise a one-time snapshot. Used both for a subagent (the
+    "parent" is its creator's own skill catalog) and for a root session (the "parent" is every
+    trusted skill we scan -- see `compute_root_session_grants`)."""
     parent_skill_ids = {
         format_fqsn((skill.namespace, skill.name))
-        for skill in registry.canonical().discoverable(parent_config.skill_rules)
+        for skill in skill_catalog_registry.canonical().discoverable(parent_config.skill_rules)
     }
     effective_names = compute_child_skill_set(parent_skill_ids, restrict_to)
     newly_denied = [parse_fqsn(fqsn) for fqsn in parent_skill_ids if fqsn not in effective_names]
@@ -205,9 +199,11 @@ def plan_subagent_creation(
     if allowed_skills is not None:
         restrict_to = restrict_to.model_copy(update={"skills": allowed_skills})
 
-    tool_classes = _child_tool_classes(parent, restrict_to, role_definition.allow_subagents)
-    skill_rules = _child_skill_rules(context, parent.config, restrict_to)
-    subagent_roles = compute_child_subagent_roles(_effective_parent_subagent_roles(parent), restrict_to)
+    assert parent.tool_registry is not None
+    tool_classes = _child_tool_classes(parent.tool_registry, restrict_to, role_definition.allow_subagents)
+    skill_rules = _child_skill_rules(
+        resolve_session_skill_catalog_registry(context), parent.config, restrict_to)
+    subagent_roles = compute_child_subagent_roles(parent.effective_subagent_roles, restrict_to)
 
     child_config = parent.config.model_copy(deep=True)
     child_config.permission_framework_state = parent.config.permission_framework_state
@@ -217,6 +213,54 @@ def plan_subagent_creation(
     return SubagentPlan(
         role_definition=role_definition, session_config=child_config,
         tool_classes=tool_classes, effective_subagent_roles=frozenset(subagent_roles))
+
+
+@dataclass
+class RootSessionGrants:
+    """Everything a root (top-level, user-facing) `Session(...)` construction site needs to build
+    its own tool registry, skill rules, and effective subagent-role set -- computed by
+    `compute_root_session_grants`."""
+
+    tool_registry: ToolRegistry
+    skill_rules: SkillRules
+    effective_subagent_roles: frozenset[str]
+
+
+def compute_root_session_grants(
+    process_config: ProcessConfig, session_config: SessionConfig, role_name: str,
+) -> RootSessionGrants:
+    """Compute the grants a root session running as `role_name` starts with: `role_name`'s own
+    `agents.json` `restrict_to`, intersected -- via the same `_child_tool_classes`/
+    `_child_skill_rules`/`compute_child_subagent_roles` a subagent's own creation uses -- against
+    the unrestricted universal catalog (every tool `ToolRegistry.discover_tools` finds, every
+    skill on disk, every role `agents.json` defines).
+
+    A root session has no real parent `Session` to narrow from, so this is the one place that
+    intersection runs against "everything" rather than a live parent's already-narrowed sets --
+    but it is still the *same* intersection a subagent of this role would get, computed once here
+    rather than left for `plan_subagent_creation` to patch around later. A role with no
+    `agents.json` entry gets an unrestricted `AgentRestrictions()` (today's behavior for an
+    undefined role) but no subagent-launch ability, per `AgentDefinition.allow_subagents`'s
+    default.
+    """
+    universe = ToolRegistry.discover_tools(process_config, session_config)
+    definition = get_agent_registry().get(role_name)
+    restrict_to = definition.restrict_to if definition is not None else AgentRestrictions()
+    allow_subagents = definition is not None and definition.allow_subagents
+
+    tool_classes = _child_tool_classes(universe, restrict_to, allow_subagents)
+    skill_catalog_registry = SkillCatalogRegistry()
+    skill_catalog_registry.ensure(
+        workspace_root=session_config.workspace.path,
+        workspace_trusted=session_config.workspace.trusted,
+        claude_skills_compat=process_config.compatibility_claude_skills)
+    skill_rules = _child_skill_rules(skill_catalog_registry, session_config, restrict_to)
+    subagent_roles = compute_child_subagent_roles(frozenset(get_agent_registry().names()), restrict_to)
+
+    return RootSessionGrants(
+        tool_registry=ToolRegistry(process_config, session_config, tool_classes),
+        skill_rules=skill_rules,
+        effective_subagent_roles=frozenset(subagent_roles))
 
 
 def _subagent_ask_tag(address: str, role: str) -> str:

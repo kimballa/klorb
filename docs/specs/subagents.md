@@ -78,7 +78,12 @@ only; no tool takes an address as an argument.
 
 The core invariant: a subagent must never be able to do anything its creator cannot, and a
 multi-level chain of subagents must never be able to recover a privilege an intervening level
-deliberately stripped.
+deliberately stripped. This invariant starts at the root: a root (top-level, user-facing)
+session's own grants are themselves computed by intersecting its role's `agents.json` entry
+against the unrestricted universal catalog (see "Root session grants" below), rather than the
+root session simply being handed everything unconditionally — so "what a creator has" is always
+a real, `agents.json`-derived quantity, at every level of a session tree, not a special case at
+the top.
 
 `klorb.agents.intersection` (`compute_child_tool_set`/`compute_child_skill_set`/
 `compute_child_subagent_roles`) is the pure, unit-tested engine every narrowing computation runs
@@ -102,15 +107,13 @@ name at each hop could recover privileges an ancestor deliberately stripped.
   added to the child's `SessionConfig.skill_rules.deny` on top of whatever the creator's own
   rules already deny. This is a snapshot taken at creation time, matching how the child's
   `ToolRegistry` is likewise a one-time snapshot.
-* **Subagent roles**: `Session.effective_subagent_roles` (a `frozenset[str] | None`) is computed
-  once, at a subagent's own creation, and stored on it; a later `CreateSubagent` call from that
-  subagent intersects its *own* `effective_subagent_roles` against the requested child role's
-  `restrict_to`, never a fresh lookup of the parent role's nominal `subagent_roles`. It's `None`
-  only for the root session, which was never narrowed this way — `klorb.agents.policy.
-  _effective_parent_subagent_roles` falls back, for that one case, to the root's *own*
-  `agents.json` entry's `restrict_to.subagent_roles` (e.g. operator's is `["explorer"]`, so an
-  operator session may launch an Explorer but not another operator), and only to "every role
-  `agents.json` defines" if that field is itself unset.
+* **Subagent roles**: `Session.effective_subagent_roles` (a `frozenset[str]`, empty by default)
+  is computed once, at a session's own construction, and stored on it: via
+  `compute_child_subagent_roles` for a subagent (intersected against its parent's own
+  `effective_subagent_roles`), or via `compute_root_session_grants` for a root session
+  (intersected against every role `agents.json` defines — see "Root session grants" below). A
+  later `CreateSubagent` call always reads this already-computed field directly, never a fresh
+  lookup of the calling session's own role's nominal `subagent_roles`.
 * `CreateSubagent`/`WaitForSubagent`/`MessageSubagent` all report `is_read_only() == True` — they
   don't mutate file or environment state directly; a subagent's actual capabilities are bounded
   by the intersection above, not by whether these three tools are offered under
@@ -134,6 +137,35 @@ name at each hop could recover privileges an ancestor deliberately stripped.
   uses — ultimately, always the root session's own `ReplApp` callbacks, since every level's
   forwarding closure just relays to its own creator's `current_turn_handlers()` — rather than a
   dedicated per-subagent transport.
+
+### Root session grants
+
+A root session has no real parent `Session` to compute its effective tool/skill/subagent-role
+sets from — every construction site (`klorb.cli.main`, `klorb.tui.app.ReplApp.__init__`,
+`klorb.tui.mixins.prompt_submission.clear_session`,
+`klorb.tui.mixins.workspace_bootstrap.load_recent_session`,
+`klorb.server.klorb_agent.KlorbAcpAgent.new_session`, `klorb.session.restore.
+try_restore_session`) calls `klorb.agents.policy.compute_root_session_grants(process_config,
+session_config, role_name)` first, which:
+
+* Builds `everything` via `ToolRegistry.discover_tools()` — the full, unfiltered package scan.
+* Looks up `role_name`'s own `agents.json` entry (e.g. `"operator"`) and runs its `restrict_to`
+  through the *same* `_child_tool_classes`/`_child_skill_rules`/`compute_child_subagent_roles`
+  a subagent's own creation uses, with `everything` (plus every skill on disk, plus every role
+  `agents.json` defines) standing in for "the parent's own effective sets."
+* Returns a `RootSessionGrants` (`tool_registry`, `skill_rules`, `effective_subagent_roles`) that
+  the caller passes straight into `Session(...)` — the root session's `tool_registry` is
+  therefore already the filtered registry, never the raw `everything` scan, and its
+  `effective_subagent_roles` is populated at construction exactly like a subagent's, never left
+  for `CreateSubagent` to patch around later.
+
+A role with no `agents.json` entry gets an unrestricted `AgentRestrictions()` (today's behavior
+for an undefined role — e.g. a typo'd `--role`) but no subagent-launch ability, since
+`allow_subagents` defaults to `False`. Because `operator`'s own `restrict_to` currently sets only
+`subagent_roles` (no `tools`/`skills`), a root operator session's tool/skill sets are unaffected
+in practice — `restrict_to.tools`/`.skills` being `None` still means "inherit everything" — but
+the mechanism is the uniform one, not a root-only special case, so tightening `operator`'s entry
+in `agents.json` in the future would actually take effect.
 
 ## Subagent session model
 

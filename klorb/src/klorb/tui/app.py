@@ -20,13 +20,13 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Static
 
+from klorb.agents.policy import compute_root_session_grants
 from klorb.agents.runtime import SubagentHandle, SubagentState
 from klorb.logging_config import TuiHistoryNotice
 from klorb.models.model import Model
 from klorb.process_config import ProcessConfig, persist_session_default, persist_theme, user_config_path
 from klorb.session import Session, ThinkingEffort, TurnEventHandlers
 from klorb.session_statistics import SessionStatistics
-from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import InitCommandProvider
 from klorb.tui.commands.model_commands import ModelCommandProvider
@@ -312,10 +312,13 @@ class ReplApp(
         self._process_config = process_config or ProcessConfig()
         if session is None:
             new_config = self._process_config.session.model_copy()
+            grants = compute_root_session_grants(self._process_config, new_config, new_config.role_name)
+            new_config.skill_rules = grants.skill_rules
             session = Session(
                 new_config,
                 process_config=self._process_config,
-                tool_registry=ToolRegistry.discover_tools(self._process_config, new_config),
+                tool_registry=grants.tool_registry,
+                effective_subagent_roles=grants.effective_subagent_roles,
             )
         self._session = session
         self._initial_message = initial_message

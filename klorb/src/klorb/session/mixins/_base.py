@@ -85,7 +85,7 @@ class SessionBase:
     root_id: str
     depth: int
     parent: "Session | None"
-    effective_subagent_roles: frozenset[str] | None
+    effective_subagent_roles: frozenset[str]
     _max_output_tokens: int | None
     _next_child_index: int
     _child_index: int

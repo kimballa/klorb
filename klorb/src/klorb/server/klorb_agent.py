@@ -35,6 +35,7 @@ from acp.schema import (
     TextContentBlock,
 )
 
+from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ApiProvider, ResponseAborted
 from klorb.images.prepare import ImagePipelineConfig, ImageTooLargeError, prepare_image_for_model
 from klorb.message import MessageFragment
@@ -54,7 +55,6 @@ from klorb.session import Session
 from klorb.session.constants import PermissionFramework, ToolCallLimitExceeded
 from klorb.session.events import QueuedMessage
 from klorb.session.restore import try_restore_session
-from klorb.tools.registry import ToolRegistry
 from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.session_store import find_recent_session, read_sessions_index
@@ -170,13 +170,15 @@ class KlorbAcpAgent(acp.Agent):
         workspace = self._trust_manager.resolve_workspace(Path(cwd))
         session_config = self._process_config.session.model_copy()
         session_config.workspace = workspace
-        tool_registry = ToolRegistry.discover_tools(self._process_config, session_config)
+        grants = compute_root_session_grants(self._process_config, session_config, session_config.role_name)
+        session_config.skill_rules = grants.skill_rules
         if self._session is not None:
             logger.debug("session/new replacing live ACP session %s", self._acp_session_id)
             self._session.close()
         session = Session(
             session_config, provider=self._provider, model_registry=self._model_registry,
-            process_config=self._process_config, tool_registry=tool_registry)
+            process_config=self._process_config, tool_registry=grants.tool_registry,
+            effective_subagent_roles=grants.effective_subagent_roles)
         self._session = session
         self._acp_session_id = session.id
         self._turn_bridge = TurnBridge(

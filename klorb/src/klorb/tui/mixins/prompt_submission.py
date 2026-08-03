@@ -10,13 +10,13 @@ from textual import work
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
+from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.session import Session, ToolCallEvent, ToolCallStartedEvent, TurnEventHandlers
 from klorb.session.events import QueuedMessage
 from klorb.session_naming import SessionName
-from klorb.tools.registry import ToolRegistry
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.formatting import summarize_reasoning_details
@@ -253,12 +253,16 @@ class PromptSubmissionMixin(ReplAppBase):
         new_session_config.thinking_enabled = old_session.config.thinking_enabled
 
         # Once the new session_config is ready, wrap it up into the new Session.
+        grants = compute_root_session_grants(
+            self._process_config, new_session_config, new_session_config.role_name)
+        new_session_config.skill_rules = grants.skill_rules
         self._session = Session(
             new_session_config,
             provider=old_session.provider,
             model_registry=old_session.model_registry,
             process_config=self._process_config,
-            tool_registry=ToolRegistry.discover_tools(self._process_config, new_session_config),
+            tool_registry=grants.tool_registry,
+            effective_subagent_roles=grants.effective_subagent_roles,
         )
 
         if self._session_log_enabled:

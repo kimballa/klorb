@@ -12,6 +12,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from klorb import __version__
+from klorb.agents.policy import compute_root_session_grants
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, configure_minimal_logging, session_log_path
 from klorb.models.model import Model
@@ -28,7 +29,6 @@ from klorb.server import AcpServer, ServerStreams
 from klorb.session import Session, SessionConfig, generate_session_id
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens, tool_token_counts
-from klorb.tools.registry import ToolRegistry
 from klorb.tui import run_repl
 from klorb.workspace import TrustManager
 
@@ -302,8 +302,8 @@ def run_system_prompt_cli(argv: list[str]) -> int:
 
     default_prompt = system_prompt.default_prompt()
     role_prompt = system_prompt.role_prompt()
-    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
-    tool_definitions = tool_registry.tool_definitions()
+    grants = compute_root_session_grants(process_config, session_config, args.role)
+    tool_definitions = grants.tool_registry.tool_definitions()
     tools_json = json.dumps(tool_definitions, indent=2, default=str)
 
     _print_section("System Prompt (default_sys.md)", default_prompt)
@@ -737,12 +737,14 @@ def main() -> None:
     session_config = process_config.session.model_copy()
     if args.model is not None:
         session_config.model = args.model
-    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
+    grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
+    session_config.skill_rules = grants.skill_rules
     session = Session(
         session_config,
         provider=provider,
         process_config=process_config,
-        tool_registry=tool_registry,
+        tool_registry=grants.tool_registry,
+        effective_subagent_roles=grants.effective_subagent_roles,
     )
 
     # Replace early-bird logging setup with a full config now that we have terminal / interactivity

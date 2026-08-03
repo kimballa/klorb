@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from tools.subagents.conftest import _FakeProvider
 
+from klorb.agents.policy import compute_root_session_grants
 from klorb.agents.runtime import SubagentHandle
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
@@ -22,9 +23,11 @@ from klorb.workspace import Workspace
 def _operator_context(tmp_path: Path, provider: _FakeProvider) -> ToolSetupContext:
     process_config = ProcessConfig()
     session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
-    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
+    grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
+    session_config.skill_rules = grants.skill_rules
     session = Session(
-        session_config, provider=provider, process_config=process_config, tool_registry=tool_registry)
+        session_config, provider=provider, process_config=process_config,
+        tool_registry=grants.tool_registry, effective_subagent_roles=grants.effective_subagent_roles)
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 

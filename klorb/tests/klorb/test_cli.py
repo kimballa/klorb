@@ -155,15 +155,21 @@ def test_main_passes_a_tool_registry_built_from_process_and_session_config(
 ) -> None:
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
-    sentinel_registry = MagicMock()
+    sentinel_grants = MagicMock()
     with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
-        with patch("klorb.cli.ToolRegistry.discover_tools", return_value=sentinel_registry) as mock_discover:
+        with patch(
+            "klorb.cli.compute_root_session_grants", return_value=sentinel_grants,
+        ) as mock_compute_grants:
             with patch("sys.argv", ["klorb", "-m", "hi"]):
                 cli.main()
 
     session_config = mock_session_cls.call_args.args[0]
-    mock_discover.assert_called_once_with(stub_process_config.return_value, session_config)
-    assert mock_session_cls.call_args.kwargs["tool_registry"] is sentinel_registry
+    mock_compute_grants.assert_called_once_with(
+        stub_process_config.return_value, session_config, session_config.role_name)
+    assert mock_session_cls.call_args.kwargs["tool_registry"] is sentinel_grants.tool_registry
+    assert (
+        mock_session_cls.call_args.kwargs["effective_subagent_roles"]
+        is sentinel_grants.effective_subagent_roles)
 
 
 def test_main_passes_config_flag_path_to_process_config_loader(
