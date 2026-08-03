@@ -20,15 +20,12 @@ _GITIGNORE_HIDDEN_NOTE = (
 
 class FindFileTool(InterruptibleTool):
     """Recursively searches a directory tree for files and directories whose bare name (not full
-    path) matches a glob `pattern` (e.g. `*.py` or `*_context*`), mirroring `find`'s default of
-    matching `-name` against every node type rather than just files. Reuses
+    path) matches a glob `pattern` (e.g. `*.py` or `*_context*`), reusing
     `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory
     level, not just at `dirname` itself — see that function's docstring for how a denied,
-    ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search. A
-    directory match does not stop the walk from descending into it: files and directories inside
-    a matched directory are still checked against the pattern independently. See
-    docs/adrs/findfile-matches-directory-names-not-just-files.md for why this is bare-name
-    matching against both node types rather than glob matching against the whole relative path.
+    ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search. See
+    docs/adrs/findfile-matches-directory-names-not-just-files.md for why directory names are
+    matched too.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -48,15 +45,13 @@ class FindFileTool(InterruptibleTool):
         return (
             "Recursively finds files and directories in a directory tree whose bare name (not "
             "full path) matches a glob pattern, e.g. '*.py' or '*_context*', so you can locate "
-            "something without knowing exactly where it lives. Each result is {\"file\": path} "
-            "or {\"dir\": path}; a directory match doesn't stop the search — contents inside it "
-            "are still checked too. dirname is optional, defaulting to the whole "
-            f"project root. Returns at most {self._max_results} matches per call; a "
+            "a file without knowing exactly where it lives. dirname is optional, defaulting to "
+            f"the whole project root. Returns at most {self._max_results} matches per call; a "
             "'truncated' flag in the result means more matches exist than were returned. A "
             "subdirectory your readDirs permissions deny, or that requires confirmation, is "
             "silently skipped rather than failing the whole search — only dirname itself "
-            "raises if it isn't allowed. Matches excluded by the project's .gitignore rules "
-            "are not listed by default; when a gitignored file or directory would have "
+            "raises if it isn't allowed. Matches whose file is excluded by the project's "
+            ".gitignore rules are not listed by default; when a gitignored file would have "
             "matched, the result sets 'gitignored_hidden' to true and includes a 'note', and "
             "you can re-call with use_gitignore=false to list gitignored matches too."
         )
