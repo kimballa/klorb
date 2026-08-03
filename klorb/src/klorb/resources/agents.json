@@ -30,7 +30,9 @@
           "ReadScratchpad",
           "WebFetch"
         ],
-        "skills": [],
+        "skills": [
+          "internal:launch-explorer-subagent"
+        ],
         "subagent_roles": [
           "explorer"
         ],

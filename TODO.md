@@ -14,6 +14,10 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
+* The FindFile `pattern` argument doesn't match the whole path, just the file. This is insufficient.
+  e.g. `pattern="*system_prompt*"` does not return anything in the `system_prompts.d` folder,
+  just files like `system_prompt.py`.
+
 ### Feature backlog
 
 * WaitForSubagent blocks indefinitely. If the user adds a new msg in the meantime, it just gets queued
@@ -303,3 +307,29 @@ documented in the subsections below.
 * Client-side (webview canvas) pre-downscaling before the postMessage hop, if raw-image transit
   over stdio/postMessage proves to be a practical bottleneck in real use -- the resize pipeline
   is server-authoritative today.
+
+### Plan 021: Subagents
+
+* Subagent `assigned_task_id`: add a field to `CreateSubagent` that lets the parent start the
+  subagent off with a specific todo item. This requires reworking the todo tools' current
+  greedy auto-assignment behavior (which shoves new tasks onto an agent as soon as it closes
+  its last task) so that a subagent isn't automatically chewing through the entire todo list
+  when it may not be equipped to do so.
+  * Right now, TodoUpdate automatically claims the next free task whenever it closes the
+    current task. There is no way to bound the set of tasks considered for this process.
+    Therefore, we cannot reveal task mgmt tools to subagents, because a subagent intended
+    to perform a specific subtask of the project would finish the subtask and be driven
+    to take up tasks intended for other agents, which it may be incapable of doing.
+  * To release task tracking to subagents, we need to add and respect per-subagent label
+    filters and the ability for the parent agent to mark tasks with a filter as a means of
+    delegating the task to the subagent.
+
+* Adding a `VisionAssistant` agent role.
+  * This is marked as 'phase 6' of the plan. This phase was left incomplete.
+  * Ideally, we have a way to delegate to a subagent with vision support when we stumble
+    upon a screenshot or other image file and the parent does not have vision support, or
+    does not want to load the image into its own context.
+  * We don't have a means of giving a blind model an image file in a way it can then tramsit it
+    "as an image_url attachment" into a MessageFragment for the subagent to use; adding this is
+    a blocking feature before this agent role can be produced.
+  * Once available, allow both Operator and Explorer to use VisionAssistant subagents.

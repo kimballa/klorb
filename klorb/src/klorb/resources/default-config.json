@@ -73,7 +73,8 @@
       "deny": [],
       "ask": [],
       "allow": [
-        "internal:create-edit-skill"
+        "internal:create-edit-skill",
+        "internal:launch-explorer-subagent"
       ]
     },
     "commandRules": {

@@ -316,9 +316,9 @@ other in-flight session state.
 whatever it needs to (files, prior decisions, memories, web pages) to answer a bounded question,
 never to modify the codebase or environment, and to end its turn with a report meant to stand on
 its own — that report is its only deliverable; the creator never sees its intermediate tool
-calls or reasoning. Its `agents.json` entry: `enforce_readonly_tools: true`, `skills: []` (no
-skill access at all — moot in practice, since its `tools` list also excludes every skill tool),
-and a `tools` list covering `FindFile`, `Grep`, `ListDir`, `ReadFile`, `ListMemories`,
+calls or reasoning. Its `agents.json` entry: `enforce_readonly_tools: true`, `skills:`
+`["internal:launch-explorer-subagent"]` (the one skill it may use, so it can delegate
+sub-questions to its own Explorer subagents), and a `tools` list covering `FindFile`, `Grep`, `ListDir`, `ReadFile`, `ListMemories`,
 `SearchMemories`, `ReadMemory`, `EditScratchpad`, `ReadScratchpad`, and `WebFetch`.
 `restrict_to.subagent_roles` names `["explorer"]` and `allow_subagents: true`, so an Explorer may
 itself launch further Explorer subagents (bounded by `tools.subagents.maxDepth` like any other
