@@ -194,15 +194,21 @@
 
 ### Feature backlog
 
+* need to pull in the `history` file (append-only prompt-recall log) from the session dir.
+  (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
+
+* The status bar at the bottom of the plugin should have icon buttons for showing tasks and subagents.
+  They should have a solid-color background when shown, and transparent-to-the-dark-background when
+  the panels in question are hidden, with a rounded rectangle border around the whole thing, like the
+  solid-color chevron StatusMenu button on the left side. The two icon buttons should float to the
+  right-most edge of the StatusBar.
+
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
 
 * Add a `klorb.logLevel` argument to the VSCode plugin config that accepts
   DEBUG/INFO/WARNING/ERROR/CRITICAL and if not empty, sets `$KLORB_LOG_LEVEL` in the environment
   used to spawn the `klorb server` process.
-
-* need to pull in the `history` file (append-only prompt-recall log) from the session dir.
-  (`$KLORB_DATA_DIR/projects/<basename>-<token>/history`)
 
 * "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
   or `<table>`, not just a bunch of text.
