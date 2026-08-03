@@ -14,10 +14,6 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
-* The FindFile `pattern` argument doesn't match the whole path, just the file. This is insufficient.
-  e.g. `pattern="*system_prompt*"` does not return anything in the `system_prompts.d` folder,
-  just files like `system_prompt.py`.
-
 ### Feature backlog
 
 * Raise default tool call limit from 50 to 100.

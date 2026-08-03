@@ -1,5 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that recursively finds files in a directory tree whose bare name matches a glob."""
+"""A Tool that recursively finds files and directories in a directory tree whose bare name
+matches a glob."""
 
 import fnmatch
 import logging
@@ -18,11 +19,13 @@ _GITIGNORE_HIDDEN_NOTE = (
 
 
 class FindFileTool(InterruptibleTool):
-    """Recursively searches a directory tree for files whose bare name (not full path) matches
-    a glob `pattern` (e.g. `*.py` or `*_context*`), reusing
+    """Recursively searches a directory tree for files and directories whose bare name (not full
+    path) matches a glob `pattern` (e.g. `*.py` or `*_context*`), reusing
     `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory
     level, not just at `dirname` itself — see that function's docstring for how a denied,
-    ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search.
+    ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search. See
+    docs/adrs/findfile-matches-directory-names-not-just-files.md for why directory names are
+    matched too.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -40,10 +43,10 @@ class FindFileTool(InterruptibleTool):
 
     def description(self) -> str:
         return (
-            "Recursively finds files in a directory tree whose bare name (not full path) "
-            "matches a glob pattern, e.g. '*.py' or '*_context*', so you can locate a file "
-            "without knowing exactly where it lives. dirname is optional, defaulting to the whole "
-            f"project root. Returns at most {self._max_results} matches per call; a "
+            "Recursively finds files and directories in a directory tree whose bare name (not "
+            "full path) matches a glob pattern, e.g. '*.py' or '*_context*', so you can locate "
+            "a file without knowing exactly where it lives. dirname is optional, defaulting to "
+            f"the whole project root. Returns at most {self._max_results} matches per call; a "
             "'truncated' flag in the result means more matches exist than were returned. A "
             "subdirectory your readDirs permissions deny, or that requires confirmation, is "
             "silently skipped rather than failing the whole search — only dirname itself "
@@ -67,8 +70,9 @@ class FindFileTool(InterruptibleTool):
                 "pattern": {
                     "type": "string",
                     "description": (
-                        "Glob pattern matched against each file's bare name, e.g. '*.py' or "
-                        "'*_context*'. A pattern with no wildcard matches only an exact name."
+                        "Glob pattern matched against each file's or directory's bare name, "
+                        "e.g. '*.py' or '*_context*'. A pattern with no wildcard matches only "
+                        "an exact name."
                     ),
                 },
                 "case_insensitive": {
@@ -102,19 +106,24 @@ class FindFileTool(InterruptibleTool):
 
         match_pattern = pattern.lower() if case_insensitive else pattern
 
-        matches: list[str] = []
+        def is_match(name: str) -> bool:
+            candidate = name.lower() if case_insensitive else name
+            return fnmatch.fnmatch(candidate, match_pattern)
+
+        matches: list[dict[str, str]] = []
         truncated = False
         cancelled = False
         root_path: Path | None = None
-        # Set true only once a file that *actually matches the glob* is found among the gitignored
-        # entries — not merely because some gitignored entry exists — so the "hidden matches" note
-        # never fires on a search whose pattern matches nothing that gitignore excluded.
+        # Set true only once a file or directory that *actually matches the glob* is found among
+        # the gitignored entries — not merely because some gitignored entry exists — so the
+        # "hidden matches" note never fires on a search whose pattern matches nothing that
+        # gitignore excluded.
         gitignored_match_found = False
         # Polled between directories so a Ctrl+C/Escape interrupt stops a search over a large tree
         # promptly, returning whatever matches were found so far — see `InterruptibleTool`.
         cancel_event = self._active_cancel_event()
-        for dir_path, _subdirs, filenames, gitignored_filenames in walk_readable_tree(
-                self.context, dirname, use_gitignore=use_gitignore):
+        for dir_path, subdirs, filenames, gitignored_filenames, gitignored_subdirs in (
+                walk_readable_tree(self.context, dirname, use_gitignore=use_gitignore)):
             if root_path is None:
                 root_path = dir_path
             if cancel_event is not None and cancel_event.is_set():
@@ -123,17 +132,30 @@ class FindFileTool(InterruptibleTool):
             if truncated:
                 break
             for filename in filenames:
-                candidate = filename.lower() if case_insensitive else filename
-                if not fnmatch.fnmatch(candidate, match_pattern):
+                if not is_match(filename):
                     continue
                 if len(matches) >= self._max_results:
                     truncated = True
                     break
-                matches.append(str(dir_path / filename))
+                matches.append({"file": str(dir_path / filename)})
+            # A directory match doesn't short-circuit descent: the walk keeps recursing into it
+            # regardless, so files/subdirs inside are still checked on their own merits.
+            if not truncated:
+                for subdir_name in subdirs:
+                    if not is_match(subdir_name):
+                        continue
+                    if len(matches) >= self._max_results:
+                        truncated = True
+                        break
+                    matches.append({"dir": str(dir_path / subdir_name)})
             if not gitignored_match_found:
                 for filename in gitignored_filenames:
-                    candidate = filename.lower() if case_insensitive else filename
-                    if fnmatch.fnmatch(candidate, match_pattern):
+                    if is_match(filename):
+                        gitignored_match_found = True
+                        break
+            if not gitignored_match_found:
+                for subdir_name in gitignored_subdirs:
+                    if is_match(subdir_name):
                         gitignored_match_found = True
                         break
 

@@ -272,8 +272,8 @@ class GrepTool(InterruptibleTool):
                     match_count += len(matched_indices)
         else:
             # Directory tree search (existing recursive walk).
-            for dir_path, _subdirs, filenames, gitignored_filenames in walk_readable_tree(
-                    self.context, search_path, use_gitignore=use_gitignore):
+            for dir_path, _subdirs, filenames, gitignored_filenames, _gitignored_subdirs in (
+                    walk_readable_tree(self.context, search_path, use_gitignore=use_gitignore)):
                 if root_path is None:
                     root_path = dir_path
                 if truncated:
