@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Computes a subagent's effective tool/skill/subagent-role sets from its parent's own
 effective sets plus an `AgentRestrictions`. The safety-critical core of subagent capability
-scoping -- see docs/plans/ready/021-subagents.md's "Tool and skill limits" section -- kept as
+scoping -- see docs/specs/subagents.md's "Security model" section -- kept as
 a standalone, pure function so it can be unit-tested in isolation before any tool-dispatch
 code calls it.
 

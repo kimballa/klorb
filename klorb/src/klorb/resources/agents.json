@@ -3,5 +3,36 @@
     "name": "klorb-agents",
     "version": "1.0.0"
   },
-  "agents": []
+  "agents": [
+    {
+      "name": "operator",
+      "default_model": "xiaomi/mimo-v2.5",
+      "allow_subagents": true
+    },
+    {
+      "name": "explorer",
+      "default_model": "moonshotai/kimi-k2.7-code",
+      "restrict_to": {
+        "tools": [
+          "FindFile",
+          "Grep",
+          "ListDir",
+          "ReadFile",
+          "ListMemories",
+          "SearchMemories",
+          "ReadMemory",
+          "EditScratchpad",
+          "ReadScratchpad",
+          "WebFetch"
+        ],
+        "skills": [],
+        "subagent_roles": [
+          "explorer",
+          "vision_assistant"
+        ],
+        "enforce_readonly_tools": true
+      },
+      "allow_subagents": false
+    }
+  ]
 }

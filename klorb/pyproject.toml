@@ -83,7 +83,7 @@
   # discovers at runtime. See docs/specs/model-framework.md.
   #
   # agents.json ships the subagent role policy table klorb.agents.registry.AgentRegistry reads
-  # once at process start. See docs/plans/ready/021-subagents.md.
+  # once at process start. See docs/specs/subagents.md.
   #
   # skills/**/* ships the built-in (namespace "internal") skills klorb discovers at runtime via
   # importlib.resources -- one directory per skill, each holding at minimum a SKILL.md plus any

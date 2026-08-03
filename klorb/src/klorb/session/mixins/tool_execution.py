@@ -65,7 +65,7 @@ class SessionToolExecutionMixin(SessionBase):
         returned a message, attached as `system_interjections` on the first envelope built in
         this round, so a standing reminder stays visible even deep inside a multi-round tool
         loop that never returns to the user-turn prompt (where the XML `<SystemInterjection>`
-        form is otherwise delivered — see `_wrap_system_interjection`).
+        form is otherwise delivered — see `wrap_system_interjection`).
 
         Before executing each call, checks it against `config.max_tool_calls_per_turn`
         (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`)

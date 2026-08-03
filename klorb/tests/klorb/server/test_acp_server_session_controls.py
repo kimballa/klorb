@@ -36,7 +36,7 @@ def _plain_provider(**reply_kwargs: Any) -> MagicMock:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         if on_chunk is not None:
             on_chunk("hi")
@@ -50,7 +50,8 @@ def _plain_provider(**reply_kwargs: Any) -> MagicMock:
 def _isolate_user_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point `user_config_path()` at a temp location so `persist_session_default` calls in
     `_ext_set_session_config` never touch the developer's real config file."""
-    monkeypatch.setattr("klorb.server.klorb_agent.user_config_path", lambda: tmp_path / "klorb-config.json")
+    monkeypatch.setattr("klorb.server.klorb_agent.user_config_path",
+                        lambda: tmp_path / "klorb-config.json")
 
 
 @pytest.fixture
@@ -307,7 +308,7 @@ async def test_trust_workspace_ext_method_trusts_and_seeds_context_files(
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         captured.append(messages)
         if on_chunk is not None:

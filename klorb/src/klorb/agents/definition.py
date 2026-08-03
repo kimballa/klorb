@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Pydantic models validating one `agents.json` entry's shape, once `klorb.schema_envelope.
 parse_versioned_json` has stripped the file's `schema` envelope. See
-docs/plans/ready/021-subagents.md's "Setup and config files / vars" section."""
+docs/specs/subagents.md's "Configuration" section."""
 
 from pydantic import BaseModel, Field
 
@@ -15,7 +15,7 @@ class AgentRestrictions(BaseModel):
     already has effectively available (see `klorb.agents.intersection`). `None` (the
     default) means "inherit everything the parent has"; an explicit empty list means
     "inherit nothing," a deliberately different value from `None` -- see
-    docs/plans/ready/021-subagents.md's "Tool and skill limits" section.
+    docs/specs/subagents.md's "Security model" section.
     """
 
     tools: list[str] | None = None
@@ -39,7 +39,7 @@ class AgentRestrictions(BaseModel):
     only tools reporting `Tool.is_read_only() == True`, plus anything in the `"SCRATCHPAD"`
     category regardless of `is_read_only()` -- the scratchpad is harness-managed shared
     workspace state, not the user's files, so a read-only role can still collaborate through
-    it. See docs/plans/ready/021-subagents.md's "Tool and skill limits" section."""
+    it. See docs/specs/subagents.md's "Security model" section."""
 
 
 class AgentDefinition(BaseModel):

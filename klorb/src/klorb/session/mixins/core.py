@@ -36,6 +36,7 @@ from klorb.session_naming import (
 )
 from klorb.session_statistics import SessionStatistics
 from klorb.system_prompt import SystemPrompt
+from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import tool_call_logging_enabled
 from klorb.tools.scratchpad.common import Scratchpad
 from klorb.tools.skill.catalog import SkillCatalogRegistry
@@ -60,6 +61,11 @@ if TYPE_CHECKING:
     # `Session` below, since `ToolRegistry.session` is typed against the assembled class, not
     # any one mixin.
     from klorb.session import Session
+    # `klorb.agents.runtime` imports `klorb.session.mixins.turns` (for `wrap_system_interjection`)
+    # -- a real import here, while `klorb.session`'s own `__init__.py` is still assembling this
+    # very mixin, would be circular. See `_create_subagent_tracker`/`close`'s own deferred
+    # imports, which is where this type is actually used for real.
+    from klorb.agents.runtime import SubagentTracker
     # isort: on
 
 
@@ -81,6 +87,8 @@ class SessionCoreMixin(SessionBase):
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
         parent: "Session | None" = None,
+        effective_subagent_roles: frozenset[str] | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
@@ -92,13 +100,27 @@ class SessionCoreMixin(SessionBase):
         workspace.session_store.SessionState.root_id`) like `id`/`session_name`."""
         self.parent = parent
         """The `Session` this one was spawned from as a subagent, or `None` for a top-level
-        session -- see `docs/plans/ready/021-subagents.md`'s "Subagent session model". Not
+        session -- see docs/specs/subagents.md's "Subagent session model". Not
         persisted: a subagent session is never written to its own `sessions/<subdir>/` (see
-        that plan's "Persistence" section), so this only ever needs to be live in-process."""
+        that spec's "Persistence" section), so this only ever needs to be live in-process."""
         self.depth = parent.depth + 1 if parent is not None else 0
         """How many subagent hops below the top-level (user-facing) session this one sits --
-        `0` for that top-level session itself. `CreateSubagent` (Phase 2) rejects a call that
-        would produce a child whose `depth` exceeds `ProcessConfig.subagents_max_depth`."""
+        `0` for that top-level session itself. `CreateSubagent` rejects a call that would
+        produce a child whose `depth` exceeds `ProcessConfig.subagents_max_depth`."""
+        self.effective_subagent_roles = effective_subagent_roles
+        """The subagent role names this session may itself pass to `CreateSubagent`, computed
+        (via `klorb.agents.intersection.compute_child_subagent_roles`) and stored once, at this
+        session's own creation, from its parent's *own* `effective_subagent_roles` -- never a
+        fresh `agents.json` lookup of this session's role, so an intervening level's narrowing
+        can't be recovered further down the chain. `None` means unrestricted -- every role
+        `agents.json` defines -- the case for a top-level session (never itself narrowed by a
+        `restrict_to.subagent_roles`)."""
+        self._max_output_tokens = max_output_tokens
+        """Per-request `max_tokens` cap threaded into every `ApiProvider.send_prompt()` call
+        this session makes -- `None` (the default) applies no cap beyond the model's own.
+        Set from `CreateSubagent`'s `max_output_tokens` arg for a subagent `Session`; not a
+        `klorb-config.json` setting, since it's a one-off per-subagent budget the *creating*
+        agent chooses, not a standing preference. See docs/specs/subagents.md."""
         self._next_child_index = 0
         """Count of subagents this session has ever spawned, monotonically incremented by
         `_allocate_child_index()` and never decremented or reused -- even after a child
@@ -267,6 +289,11 @@ class SessionCoreMixin(SessionBase):
         running. Set at the top of `_dispatch_turn` and cleared in its `finally`. Used by
         `enqueue_queued_message` and `drain_queued_messages` to call the `on_enqueue_message`
         and `on_send_queued_message` hooks."""
+        self.subagent_tracker = self._create_subagent_tracker()
+        """Bookkeeping for the subagents this session has directly created -- see
+        `klorb.agents.runtime.SubagentTracker`. Every `Session` gets its own, fresh and empty,
+        including a subagent's own child `Session` (a subagent may itself create further
+        subagents, up to `ProcessConfig.subagents_max_depth`)."""
         self.scratchpad = Scratchpad(scratchpad_path)
         """This session's scratchpad file (see `klorb.tools.scratchpad.common.Scratchpad`,
         which does all the work of resolving `scratchpad_path` — a caller-supplied path to
@@ -302,6 +329,15 @@ class SessionCoreMixin(SessionBase):
         `klorb.session`."""
         from klorb.tools.util.read_file_core import ReadFileCore
         return ReadFileCore(max_lines, max_line_length)
+
+    @staticmethod
+    def _create_subagent_tracker() -> "SubagentTracker":
+        """Construct a `SubagentTracker`, deferring the import since `klorb.agents.runtime`
+        itself imports `klorb.session.mixins.turns` (for `wrap_system_interjection`) -- a
+        module-level import here, while `klorb.session`'s own `__init__.py` is still assembling
+        this very mixin, would be circular."""
+        from klorb.agents.runtime import SubagentTracker
+        return SubagentTracker()
 
     @staticmethod
     def _create_image_pipeline_config(
@@ -496,7 +532,7 @@ class SessionCoreMixin(SessionBase):
         """Return this session's dotted-decimal display address within its session tree (e.g.
         `"1"` for a top-level session, `"1.2"` for its second subagent, `"1.2.1"` for that
         subagent's first subagent) -- recomputed from the live `parent` chain on every call
-        rather than cached or persisted, per docs/plans/ready/021-subagents.md's "Addressing"
+        rather than cached or persisted, per docs/specs/subagents.md's "Addressing"
         section. Purely a human-facing label for the agents panel; no tool takes an address as
         an argument."""
         if self.parent is None:
@@ -600,7 +636,7 @@ class SessionCoreMixin(SessionBase):
     def register_standing_interjection(self, subject: str, provider: Callable[[], str | None]) -> None:
         """Register `provider` to be polled by every future `send_turn()` call: whenever it
         returns a message (rather than `None`), that message is wrapped in a
-        `<SystemInterjection subject="{subject}">` tag (see `_wrap_system_interjection`) and
+        `<SystemInterjection subject="{subject}">` tag (see `wrap_system_interjection`) and
         prepended onto the next turn's `prompt` — every turn the condition still holds, not just
         once. This is the standing, level-triggered counterpart to
         `_pending_permission_framework_interjection`'s one-shot, edge-triggered field: use this
@@ -616,6 +652,31 @@ class SessionCoreMixin(SessionBase):
         docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md.
         """
         self._standing_interjection_providers[subject] = provider
+
+    def append_system_note(self, content: str) -> None:
+        """Append `content` directly to this session's message history as a `role="user"`
+        message, complete on arrival -- without going through `send_turn()`/`_dispatch_turn()`.
+        For content that must land durably in this session's own persisted transcript but was
+        never actually part of a live turn -- e.g. `klorb.agents.runtime.
+        cascade_close_subagents`'s subagent-termination relay at shutdown, which mirrors the
+        "degenerate user message" `docs/specs/subagents.md`'s "Communicating back to
+        the parent" section describes for delivering a completed subagent's output when this
+        session has no turn of its own in flight to attach it to."""
+        self._messages.append(Message(
+            content=content, role="user", num_tokens=estimate_tokens(content),
+            processing_state="complete", timestamp=datetime.now(),
+        ))
+
+    def current_turn_handlers(self) -> TurnEventHandlers | None:
+        """Return the `TurnEventHandlers` for the turn currently in flight on this session, or
+        `None` if none is. A tool's `apply()` runs synchronously on the same thread as
+        `_dispatch_turn` (see `klorb.tools.interruptible_tool.InterruptibleTool.
+        _active_cancel_event`'s docstring), so this is always set when `CreateSubagent`/
+        `MessageSubagent` read it -- they use it to route a subagent's own permission asks
+        through the same interactive callback this session's own turn is already using, tagged
+        with the subagent's address/role -- see docs/specs/subagents.md's
+        "Permissions" section."""
+        return self._current_turn_handlers
 
     def register_teardown(self, subject: str, teardown: Callable[[], None]) -> None:
         """Register `teardown` to be invoked once by `close()`, keyed by `subject`.
@@ -639,7 +700,15 @@ class SessionCoreMixin(SessionBase):
         call this on the outgoing `Session` first — nothing else tears it down, and a live
         `subprocess.Popen` handle would otherwise leak for the rest of the klorb process's
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
+
+        Before any of that, cascade-closes every subagent this session has directly or
+        indirectly created (see `klorb.agents.runtime.cascade_close_subagents`), relaying each
+        one's not-yet-delivered output (or a termination note, for one still running) into this
+        session's own `messages` first -- so `_finalize_session_persistence()` below captures
+        it in `session.json`, per docs/specs/subagents.md's "Persistence" section.
         """
+        from klorb.agents.runtime import cascade_close_subagents
+        cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()
         for teardown in self._teardown_callbacks.values():
             teardown()

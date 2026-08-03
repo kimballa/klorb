@@ -25,7 +25,7 @@ class PermissionFrameworkState(BaseModel):
     """Mutable holder for a session tree's `permission_framework` value, shared by reference
     (never independently copied) across every `SessionConfig` in one tree -- see
     `SessionConfig.permission_framework_state` and "Shared permission framework state" in
-    docs/plans/ready/021-subagents.md. A plain `PermissionFramework` scalar field can't do
+    docs/specs/subagents.md. A plain `PermissionFramework` scalar field can't do
     this: pydantic's `model_copy()` always produces an independent copy of a scalar attribute,
     so cloning a `SessionConfig` for a subagent would silently diverge its permission
     framework from its parent's. Wrapping the value in this one-field model instead lets

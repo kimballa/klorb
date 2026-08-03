@@ -90,6 +90,9 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "ForgetMemory": "delete",
     "AskUserQuestions": "other",
     "EscalatePrivileges": "other",
+    "CreateSubagent": "other",
+    "WaitForSubagent": "other",
+    "MessageSubagent": "other",
 }
 """Every tool name `ToolRegistry.discover_tools()` can produce today, mapped to its ACP
 `ToolKind` -- see `docs/specs/klorb-server.md`. A name this dict doesn't cover falls back to

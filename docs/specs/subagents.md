@@ -1,0 +1,307 @@
+# Subagents
+
+## Summary
+
+A subagent is a bounded-task specialist session that an agent (the "creator") can launch,
+converse with asynchronously, and receive a report back from — `CreateSubagent`,
+`WaitForSubagent`, and `MessageSubagent` are the three tools that do this
+(`klorb/src/klorb/tools/subagents/`). A subagent runs as its own `Session`, with its own role,
+system prompt, and (usually narrower) tool/skill access, but it is not a standing team member:
+it answers one request and sits dormant until asked a follow-up or the whole session tree closes.
+
+Today only the `explorer` role exists as something a subagent can be launched as
+(`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`), and only the
+`operator` role (the top-level, user-facing session) is permitted to launch one — see
+`klorb/src/klorb/resources/agents.json`.
+
+## Configuration
+
+Three `ProcessConfig` fields, all under the `tools.subagents.*` `klorb-config.json` namespace:
+
+* `subagents_max_depth` (`tools.subagents.maxDepth`, default `2`) — how many subagent hops
+  below the top-level session (`Session.depth == 0`) a tree may nest.
+* `subagents_max_concurrent_per_parent` (`tools.subagents.maxConcurrentPerParent`, default `4`)
+  — the most subagents any single session may have *running* at once (see "Subagent lifecycle"
+  below for what "running" means).
+* `subagents_max_active_total` (`tools.subagents.maxActiveTotal`, default `16`) — the most
+  subagents that may be running simultaneously across an entire session tree, regardless of
+  which session in the tree created each one.
+
+`klorb/resources/agents.json` (schema envelope `klorb-agents`) defines each subagent role's
+capability policy, parsed once at process start into an immutable `AgentRegistry`
+(`klorb.agents.registry.get_agent_registry()`) — a running process never re-reads the file, so
+editing it on disk can't retroactively loosen restrictions already computed for live sessions.
+Each entry is an `AgentDefinition` (`klorb.agents.definition`):
+
+```json
+{
+  "name": "explorer",
+  "default_model": "moonshotai/kimi-k2.7-code",
+  "restrict_to": {
+    "tools": ["ReadFile", "Grep", "..."],
+    "tool_categories": ["..."],
+    "skills": [],
+    "subagent_roles": ["explorer", "vision_assistant"],
+    "enforce_readonly_tools": true
+  },
+  "allow_subagents": false
+}
+```
+
+* `allow_subagents` — whether a session running as this role may itself call `CreateSubagent`.
+  Also drives whether the three subagent-management tools are included in a subagent's own
+  computed tool set at all (see "Security model").
+* `restrict_to` (an `AgentRestrictions`) narrows what a subagent of this role inherits from its
+  creator — every field is optional and, left unset (`None`), means "inherit everything the
+  creator has"; an explicit empty list means "inherit nothing," a deliberately different value
+  from unset:
+  * `tools` — tool names to keep, intersected against the creator's own effective tool set.
+  * `tool_categories` — `Tool.category()` values to keep, applied on top of `tools` (or instead
+    of naming tools individually) — lets a role admit whole categories, including tools that
+    don't exist yet.
+  * `skills` — fully-qualified skill names (`"<namespace>:<name>"`) to keep.
+  * `subagent_roles` — role names this subagent may itself pass to `CreateSubagent`.
+  * `enforce_readonly_tools` — clamp the tool set (after `tools`/`tool_categories`) to only
+    tools reporting `Tool.is_read_only() == True`.
+
+## Addressing
+
+The top-level session has address `"1"`. A session's subagents are numbered `1.1`, `1.2`, `1.3`,
+…, monotonically as `CreateSubagent` succeeds and never reused — `Session._allocate_child_index()`
+increments `_next_child_index` once per subagent ever created, so an address stays a stable
+reference to one specific subagent for as long as the process runs, even after that subagent
+finishes. `Session.address()` recomputes the full dotted-decimal string from the live `parent`
+chain on every call rather than caching or persisting it — it's a human-facing display label
+only; no tool takes an address as an argument.
+
+## Security model
+
+The core invariant: a subagent must never be able to do anything its creator cannot, and a
+multi-level chain of subagents must never be able to recover a privilege an intervening level
+deliberately stripped.
+
+`klorb.agents.intersection` (`compute_child_tool_set`/`compute_child_skill_set`/
+`compute_child_subagent_roles`) is the pure, unit-tested engine every narrowing computation runs
+through. Critically, every call site (`klorb.agents.policy.plan_subagent_creation`) passes the
+*creator's own live, already-narrowed effective sets* — its actual `tool_registry`, its actual
+`config.skill_rules`, its own `Session.effective_subagent_roles` — never a fresh `agents.json`
+lookup of the creator's role name alone. A session's effective sets are already the accumulated
+intersection of every restriction applied since the root session, so re-deriving from a role
+name at each hop could recover privileges an ancestor deliberately stripped.
+
+* **Tools**: `plan_subagent_creation` builds `{tool_name: ToolMetadata(category, is_read_only)}`
+  from the creator's own `tool_registry.tools()`, intersects it via `compute_child_tool_set`,
+  then strips `CreateSubagent`/`WaitForSubagent`/`MessageSubagent`
+  (`klorb.agents.runtime.SUBAGENT_MGMT_TOOL_NAMES`) unless the *child's own role* has
+  `allow_subagents: true`. The child's `ToolRegistry` is then built directly
+  (`ToolRegistry(process_config, child_config, tool_classes)`) from that filtered class map —
+  never a fresh package discovery.
+* **Skills**: the creator's currently-discoverable skills
+  (`resolve_session_skill_catalog_registry(context).canonical().discoverable(...)`) are
+  intersected via `compute_child_skill_set`; whichever names fall out of the intersection are
+  added to the child's `SessionConfig.skill_rules.deny` on top of whatever the creator's own
+  rules already deny. This is a snapshot taken at creation time, matching how the child's
+  `ToolRegistry` is likewise a one-time snapshot.
+* **Subagent roles**: `Session.effective_subagent_roles` (a `frozenset[str] | None`, `None`
+  meaning unrestricted — the case for the root session) is computed once, at a subagent's own
+  creation, and stored on it; a later `CreateSubagent` call from that subagent intersects its
+  *own* `effective_subagent_roles` against the requested child role's `restrict_to`, never a
+  fresh lookup of the parent role's nominal `subagent_roles`.
+* `CreateSubagent`/`WaitForSubagent`/`MessageSubagent` all report `is_read_only() == True` — they
+  don't mutate file or environment state directly; a subagent's actual capabilities are bounded
+  by the intersection above, not by whether these three tools are offered under
+  `enforce_readonly_tools`. `EditScratchpad` also reports `is_read_only() == True` for a related
+  reason: the scratchpad is harness-managed shared workspace state, not the user's own files or
+  environment, so a read-only-enforced role (like Explorer) can still use it to collaborate.
+* **`@mention` skip-fallback**: `Session.send_turn()` takes a `resolve_mentions: bool = True`
+  parameter; `CreateSubagent`'s `initial_message` and `MessageSubagent`'s `message` are sent with
+  `resolve_mentions=False`, leaving any `@filename` text in the message literal rather than
+  resolving it into a file-content fragment. This avoids handing a subagent file content the
+  creator's own `readDirs` rules might not actually allow it to read directly.
+* **Permission asks**: a subagent's background turn runs with `TurnEventHandlers` built by
+  `klorb.agents.policy.build_subagent_turn_handlers` — no streaming/progress callbacks (nothing
+  renders a subagent's turn directly today), but every ask-style callback
+  (`on_permission_ask`/`on_ask_user_questions`/`on_escalate_privileges`) forwarded to whichever
+  callback the *creating* session's own current turn is using (`Session.current_turn_handlers()`,
+  read at dispatch time), with the ask's `resource_description` prefixed
+  `[subagent <address> (<role>)]` so the resulting prompt makes clear which subagent it's for.
+  This routes a subagent's interactive asks through the same single-session UI the creator's own
+  turn already uses, rather than a dedicated per-subagent surface.
+
+## Subagent session model
+
+A subagent's `Session` is constructed directly (never by cloning the parent `Session` object):
+
+* `SessionConfig` is `parent.config.model_copy(deep=True)` — a true, independent copy of every
+  field (so a later grant on one session never retroactively affects the other) — except
+  `permission_framework_state`, restored to the *same* shared-by-reference object the parent
+  holds immediately after the deep copy. This is deliberate: `permission_framework` is a live
+  UI toggle (Shift+Tab in the TUI) the user expects to apply to every session in the tree at
+  once, so it's the one exception to "clone and diverge independently" (see
+  docs/specs/permissions.md).
+* `role_name` is overwritten to the requested subagent role; `model` is the `CreateSubagent`
+  call's `model` argument if given, else the role's `default_model`.
+* `skill_rules` is the computed deny-list from "Security model" above.
+* On the `Session` object itself (not part of the copied config): `parent` is a reference to the
+  creator; `depth = parent.depth + 1`; `effective_subagent_roles` is the computed, stored set;
+  `scratchpad_path` is `str(parent.scratchpad.path)` — the *same* on-disk file, not a fresh one
+  (a subagent's `Scratchpad` therefore never owns or removes that file; only the root session's
+  does); `session_name` is pre-set from `CreateSubagent`'s `session_title` argument, which skips
+  the one-shot session-naming classifier (that only fires when a session is constructed with no
+  name at all) — so a subagent's `id` keeps its timestamp + coolname slug rather than being
+  renamed, while its display `name` comes from the creator-supplied title.
+* `max_output_tokens`, if given to `CreateSubagent`, is threaded straight into the child
+  `Session` and applied as `max_tokens` on every `ApiProvider.send_prompt()` call it makes —
+  a cap on total generated tokens (reasoning plus completion, for a model that bills both
+  against one budget), independent of any `klorb-config.json` setting.
+
+## Subagent lifecycle
+
+A `klorb.agents.runtime.SubagentHandle` tracks one subagent from the creating session's own
+`Session.subagent_tracker` (a `klorb.agents.runtime.SubagentTracker`, one per `Session`, never
+shared): the child `Session`, its background `threading.Thread`, its own dedicated
+`cancel_event`, and two independent axes of state:
+
+* `state`: `"running"` while its background turn is actively processing, `"finished"` once that
+  turn ends. A subagent session is **never destroyed** once finished — it sits dormant,
+  `MessageSubagent` can resume it later (flipping it back to `"running"`), and there is no tool
+  to explicitly close one. Only ending the *creating* session tears a subagent down (see
+  "Persistence" below).
+* `delivered`: whether the subagent's completed output has already been handed to the creating
+  session — via `WaitForSubagent`, the standing interjection relay, or (at shutdown)
+  `cascade_close_subagents`'s direct-append fallback. A `"finished"` subagent is not `delivered`
+  until one of those three actually consumes it, and stays dormant either way.
+
+**"Concurrent" and "active" both mean `state == "running"`, not "undelivered."** A
+finished-but-undelivered subagent consumes no compute and is not "in flight" — it must not
+itself block a new one from being created just because nobody has collected its output yet.
+`SubagentTracker.running_count()` (bounds `maxConcurrentPerParent`) and
+`klorb.agents.runtime.total_active_subagents()` (walks the whole tree, bounds `maxActiveTotal`)
+both count only `"running"` handles accordingly. `klorb.agents.policy.check_concurrency_limits()`
+is the single check both `CreateSubagent` (starting a new subagent) and `MessageSubagent`
+(resuming a dormant one back into `"running"`) run before starting a background turn; it raises
+`ToolCallError(category="transient")` — not `"validation"` — since the fix is to wait for an
+existing subagent to finish (`WaitForSubagent`) and retry, not to change the call's arguments.
+
+`CreateSubagent` also rejects, before constructing any `Session`: exceeding
+`subagents_max_depth`, the calling role lacking `allow_subagents: true`, and a requested role
+outside the caller's own `effective_subagent_roles`.
+
+## Tools
+
+### CreateSubagent
+
+Args: `role`, `session_title`, `initial_message`, `model` (optional override), `allowed_tools`/
+`allowed_skills` (optional per-call overrides of the role's own `restrict_to.tools`/`.skills` —
+still intersected against the caller's own effective sets, never widening them), and
+`max_output_tokens` (optional).
+
+Runs every check in "Subagent lifecycle"/"Security model" above; if all pass, constructs the
+child `Session` and calls `klorb.agents.policy.dispatch_subagent_turn()`, which registers the
+`SubagentHandle` and starts a daemon `threading.Thread` running the subagent's first turn, then
+returns immediately with the subagent's id and a note explaining how its output will be
+delivered. The caller is expected to keep working; it must not expose the returned id to the
+user, since it has no meaning to them — only to a later `WaitForSubagent`/`MessageSubagent` call.
+
+### WaitForSubagent
+
+No arguments. Blocks the calling session's own dispatch thread
+(`SubagentTracker.pop_all_completed()`, polling with a short timeout so it can also notice
+`cancel_event`) until at least one of the caller's own subagents has finished, then returns
+**every** subagent that has finished by that point (not just the first one) as
+`{"completed": [{"subagent_id", "role", "title", "output"}, ...]}`, oldest first — so several
+subagents that finished before the caller got around to waiting are all delivered in one call.
+Fails immediately, without suspending, if the caller currently has no subagents running or
+awaiting delivery (`SubagentTracker.has_undelivered()`).
+
+### MessageSubagent
+
+Args: `id`, `message`. Requires the named subagent to be `"finished"` — an error (with a
+`WaitForSubagent`-first hint) otherwise — then runs `check_concurrency_limits()` (resuming a
+dormant subagent costs a concurrency slot exactly like `CreateSubagent` starting a new one) and
+`dispatch_subagent_turn()` again on the same child `Session`, exactly like `CreateSubagent` ran
+its first turn.
+
+## Communicating back to the parent
+
+`klorb.agents.policy._run_subagent_turn()` is the background thread's top-level call: it runs
+one turn of the child's conversation and returns the text to deliver, concatenating every
+`role="assistant"`/`"tool_use"` message's `content` produced during the turn, in order
+(`_assistant_authored_text`) — a subagent's turn may emit commentary alongside one or more
+tool-call rounds before its final plain-text reply (only the very last message can be plain
+`"assistant"`; `Session._dispatch_turn` loops only while a reply's role is `"tool_use"`), and an
+earlier `"tool_use"`-role reply can itself carry non-empty commentary alongside the tool calls it
+requested — using all of it keeps that commentary from being silently discarded. A turn that
+said nothing at all becomes "The subagent completed its work without saying anything."; one
+aborted mid-stream (`ResponseAborted`, from `cancel_event` firing) appends
+"(Subagent turn aborted by user)"; one whose turn raised becomes
+"(Subagent turn failed: `<exception>`)". This function never itself raises — it's the background
+thread's own top-level call, and an unhandled exception there would silently strand the subagent
+as `"running"` forever.
+
+Once a turn ends, `SubagentTracker.mark_finished()` queues it for delivery via two independent
+channels, whichever the creating session reaches first:
+
+* **`WaitForSubagent`**, described above.
+* **Standing interjection**: `CreateSubagent` registers a provider
+  (`klorb.agents.runtime.build_subagent_interjection_provider`) under subject `"subagent"` via
+  `Session.register_standing_interjection()`. It's polled on every future `send_turn()` call and
+  every tool-call round on the creating session (the same mechanism `BashTool`'s persistent-shell
+  notice uses), popping **at most one** completed subagent per poll and wrapping its body in
+  `<SystemInterjection subject="subagent">id: ...\nrole: ...\ntitle: ...\n\n<output></SystemInterjection>`.
+  Several completions therefore surface one at a time, oldest first, across successive polls —
+  unlike `WaitForSubagent`, which batches everything already done into one response.
+
+## Persistence
+
+Subagent sessions are never separately persisted to their own `sessions/<subdir>/` — a
+subagent's entire durable contribution is whatever relay text lands in its creator's own
+persisted `messages` (either channel above). Restarting klorb does not resume an in-flight
+subagent turn; there is no checkpoint to resume from.
+
+`klorb.agents.runtime.cascade_close_subagents()` runs at the start of every `Session.close()`
+(before `_finalize_session_persistence()`, so its relay lands in `messages` before `session.json`
+is written), recursing deepest-first: for each of `session`'s subagents, first close *its own*
+subagents, then — if it's still `"running"`, signal `cancel_event` and join its thread (up to a
+short timeout; a wedged subagent must not hang process shutdown) — and if its output was never
+delivered, append it directly into `session.messages` as a `role="user"` message wrapping the
+same `<SystemInterjection subject="subagent">` body, with a trailing note that the user provided
+no prompt this turn. A subagent whose thread never finished within the shutdown timeout gets
+"(Subagent terminated: harness closed before it finished)" in place of real output. This only
+runs on a graceful shutdown (quit); a crash loses in-flight subagent work exactly as it loses any
+other in-flight session state.
+
+## Explorer role
+
+`resources/system_prompts.d/roles/explorer/default.md` instructs the Explorer to explore
+whatever it needs to (files, prior decisions, memories, web pages) to answer a bounded question,
+never to modify the codebase or environment, and to end its turn with a report meant to stand on
+its own — that report is its only deliverable; the creator never sees its intermediate tool
+calls or reasoning. Its `agents.json` entry: `default_model` `moonshotai/kimi-k2.7-code`,
+`enforce_readonly_tools: true`, `skills: []` (no skill access at all — moot in practice, since
+its `tools` list also excludes every skill tool), and a `tools` list covering `FindFile`, `Grep`,
+`ListDir`, `ReadFile`, `ListMemories`, `SearchMemories`, `ReadMemory`, `EditScratchpad`,
+`ReadScratchpad`, and `WebFetch`. `restrict_to.subagent_roles` names `["explorer",
+"vision_assistant"]`, but `allow_subagents: false` means an Explorer cannot currently launch
+subagents of its own at all — only `operator`'s `agents.json` entry has `allow_subagents: true`
+today.
+
+## Out of scope
+
+* **A dedicated subagents panel** (TUI/VSCode) showing the live tree, per-subagent selection,
+  and a Stop button — not built. A subagent's own interactive permission asks are routed through
+  whichever UI surface the creating session's current turn is already using (see "Security
+  model"), tagged with the subagent's address/role, rather than a dedicated routing surface.
+* **Waking an idle creator.** If the creating session has no turn of its own in flight when a
+  subagent finishes, nothing proactively starts a new turn to deliver the output — delivery
+  happens opportunistically, the next time the creating session's own turn polls for it (or via
+  an explicit `WaitForSubagent` call). `Session.append_system_note()` (used by
+  `cascade_close_subagents`) is the primitive a future "wake an idle session" mechanism would
+  reuse for the message shape, but nothing calls it for that purpose today.
+* **`VisionAssistant` role** and any other specialist role beyond Explorer.
+* **`@mention` filtering by the creator's `readDirs`.** Today a `@mention` in a message sent to
+  a subagent is left entirely unresolved (see "Security model"); actually resolving it while
+  still applying the creator's own `readDirs` rules is unbuilt.
+* **Starting a subagent pre-assigned to a specific task-tracker item.** `CreateSubagent` always
+  starts from a freeform `initial_message`; there's no argument to hand it a specific tracked
+  task instead.

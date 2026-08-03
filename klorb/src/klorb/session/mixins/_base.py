@@ -65,6 +65,9 @@ if TYPE_CHECKING:
     # so importing it for real here would be circular; needed only to type `parent` below,
     # since a subagent's `parent` is another `Session`.
     from klorb.session import Session
+    # `klorb.agents.runtime` imports `klorb.session.mixins.turns` (for `wrap_system_interjection`),
+    # which itself is part of assembling `Session` -- a real import here would be circular.
+    from klorb.agents.runtime import SubagentTracker
     # isort: on
 
 
@@ -82,6 +85,8 @@ class SessionBase:
     root_id: str
     depth: int
     parent: "Session | None"
+    effective_subagent_roles: frozenset[str] | None
+    _max_output_tokens: int | None
     _next_child_index: int
     _child_index: int
     cur_chainlink_task_id: int | None
@@ -115,6 +120,7 @@ class SessionBase:
     _queued_messages: list[QueuedMessage]
     _current_turn_handlers: TurnEventHandlers | None
     scratchpad: Scratchpad
+    subagent_tracker: "SubagentTracker"
     statistics: SessionStatistics
     _session_lock: Lockfile | None
     _session_subdir: str | None
@@ -223,6 +229,11 @@ class SessionBase:
         tool_use_message: Message,
         callbacks: TurnEventHandlers,
     ) -> None: ...
+
+    def append_system_note(self, content: str) -> None: ...
+
+    def current_turn_handlers(self) -> TurnEventHandlers | None:
+        raise NotImplementedError
 
     def enqueue_queued_message(self, queued_msg: QueuedMessage) -> None: ...
 

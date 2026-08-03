@@ -36,7 +36,8 @@ def _tool_call_reply(call_id: str, name: str, args: dict[str, Any]) -> ProviderR
         message=Message(
             content="", role="assistant", num_tokens=3, processing_state="complete",
             timestamp=datetime.now(), finish_reason="tool_calls",
-            tool_calls=[ToolCallRequest(id=call_id, name=name, arguments=json.dumps(args) if args else "{}")],
+            tool_calls=[ToolCallRequest(id=call_id, name=name,
+                                        arguments=json.dumps(args) if args else "{}")],
         ),
         prompt_tokens=10,
     )
@@ -104,7 +105,7 @@ async def test_enqueue_message_mid_turn_reaches_the_tool_response_envelope(
     def send_prompt_side_effect(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         captured_messages.append(list(messages))
         if len(captured_messages) == 1:
@@ -164,7 +165,7 @@ async def test_message_still_queued_at_turn_end_becomes_the_next_turn(
     def send_prompt_side_effect(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         captured_messages.append(list(messages))
         if len(captured_messages) == 1:

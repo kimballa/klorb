@@ -89,13 +89,6 @@
     initial SystemInterjection should be pruned and only display some top most-relevant
     skills or most-frequently-used skills. Let the agent discover others via SearchSkills.
 
-* Subagent spawning
-  * When an agent spawns a subagent for a different role, the subagent gets a new child
-    `Session` whose `SessionConfig` (and related context) is a *copy* of the parent's, with
-    `role_name` (and thus the `Role` the child session builds) replaced by the
-    subagent-specific one, and with the parent-provided instructions message seeded into the
-    child's message context. Roles and role-tier system prompt resolution already exist
-    (docs/specs/roles-and-system-prompts.md); the spawning/dispatch mechanism does not.
 * Agent teams
   * A team of specialist agents working a larger coding problem in parallel or in series:
     writing specs and ADRs, writing code, system design, writing tests, and reviewing code —

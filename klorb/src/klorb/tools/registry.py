@@ -135,6 +135,12 @@ class ToolRegistry:
         """Return a freshly-instantiated Tool for every tool in this registry."""
         return [self.instantiate_tool(name) for name in self._tool_classes]
 
+    def tool_classes(self) -> dict[str, type[Tool]]:
+        """Return a copy of this registry's name-keyed `Tool` subclass map -- e.g. for
+        `CreateSubagent` to build a subagent's own filtered `ToolRegistry` (via the direct
+        constructor) from a subset of this one's classes, without re-scanning any package."""
+        return dict(self._tool_classes)
+
     def tool_definitions(self) -> list[dict[str, Any]]:
         """Build the OpenAI-style tool definitions to send to the model alongside a prompt."""
         definitions: list[dict[str, Any]] = []

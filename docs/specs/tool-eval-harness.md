@@ -214,11 +214,18 @@ outright.
 
 * The file tools (`ReadFile`, `CreateFile`, `EditFile`, `ReplaceAll`), `ListDir`, and the skill
   tools (`ActivateSkill`/`ReadSkillFile`) are covered today, all under the single `"file-tools"`
-  `EvalSuite`; the harness itself is tool-agnostic (any `klorb.tools` package works) and can grow
-  to cover future tools by adding more `EvalCase`s to that suite, or a new `EvalSuite` entirely
-  for a scenario group that doesn't belong under `file-tools`.
+  `EvalSuite` in `klorb/evals/cases.py`; the harness itself is tool-agnostic (any `klorb.tools`
+  package works) and can grow to cover future tools by adding more `EvalCase`s to that suite, or
+  a new `EvalSuite` entirely for a scenario group that doesn't belong under `file-tools`.
   An `EvalCase` may set `workspace_trusted`/`skill_rules` for a scenario (e.g. a skill case) that
   needs a trusted workspace or a pre-`allow`ed skill.
+* `CreateSubagent`/`WaitForSubagent` (docs/specs/subagents.md) have their own
+  `"subagents"` `EvalSuite` in `klorb/evals/subagent_cases.py` -- a separate module (mirroring
+  `risk_classifier_cases.py`'s precedent below) since the scenario exercises the operator role
+  launching and waiting on a specialist subagent session, not any one file tool. Its case grades
+  on both the resulting workspace file and `session.messages` (via `klorb.evals.harness.
+  tool_call_args`), since filesystem state alone can't tell a genuine CreateSubagent/
+  WaitForSubagent round trip apart from the operator simply doing the work itself.
 * The bash risk classifier (`klorb.permissions.risk_classifier`) has its own eval suite
   (`risk-classifier`) in `klorb/evals/risk_classifier_cases.py`, exercised via
   `RiskClassifierCase`/`run_risk_classifier_evaluation` rather than `EvalCase`/`run_evaluation`.

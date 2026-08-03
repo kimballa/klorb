@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Loads `klorb/resources/agents.json` once into an immutable in-process catalog of
-`AgentDefinition`s -- see docs/plans/ready/021-subagents.md: "agents.json is parsed once, at
+`AgentDefinition`s -- see docs/specs/subagents.md: "agents.json is parsed once, at
 process start, into an immutable in-memory registry. A running process never re-reads it, so
 editing the file on disk cannot retroactively loosen the restrictions already computed for
 sessions that are live in that process."""

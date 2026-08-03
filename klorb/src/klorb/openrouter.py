@@ -134,7 +134,8 @@ class OpenRouterApiProvider(ApiProvider):
         """Read the OpenRouter API key, raising if it isn't configured."""
         api_key = self._api_key or os.environ.get(OPENROUTER_API_KEY_ENV_VAR)
         if not api_key:
-            logger.error("%s is not set; cannot authenticate with OpenRouter.", OPENROUTER_API_KEY_ENV_VAR)
+            logger.error("%s is not set; cannot authenticate with OpenRouter.",
+                         OPENROUTER_API_KEY_ENV_VAR)
             raise RuntimeError(
                 f"{OPENROUTER_API_KEY_ENV_VAR} is not set. Set it to your OpenRouter API key.")
         return api_key
@@ -162,6 +163,7 @@ class OpenRouterApiProvider(ApiProvider):
         on_thinking_chunk: Callable[[str], None] | None = None,
         on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None,
         cancel_event: threading.Event | None = None,
+        max_tokens: int | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history to a model via OpenRouter, streaming the
         reply and invoking `on_chunk` per text delta and `on_thinking_chunk` per
@@ -257,6 +259,8 @@ class OpenRouterApiProvider(ApiProvider):
             create_kwargs["tools"] = tools
         if timeout is not None:
             create_kwargs["timeout"] = timeout
+        if max_tokens is not None:
+            create_kwargs["max_tokens"] = max_tokens
         try:
             stream = client.chat.completions.create(**create_kwargs)
         except Exception as exc:

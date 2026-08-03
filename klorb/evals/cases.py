@@ -30,14 +30,14 @@ up correct either way a case is written, these also inspect `session.messages` f
 argument shape the case exists to prove is reachable, not just the resulting content.
 """
 
-import json
 from pathlib import Path
 
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.session import Session
 
-from .harness import EvalCase, EvalSuite
+from .harness import EvalCase, EvalSuite, tool_call_args
+from .subagent_cases import SUBAGENTS
 
 
 def _read(path: Path) -> str:
@@ -46,18 +46,6 @@ def _read(path: Path) -> str:
 
 def _lines(path: Path) -> list[str]:
     return _read(path).splitlines()
-
-
-def _tool_call_args(session: Session, tool_name: str) -> list[dict]:
-    """Every call to `tool_name` the model made during `session`'s turn, as parsed argument
-    dicts, in the order they were made."""
-    return [
-        json.loads(call.arguments)
-        for message in session.messages
-        if message.role == "tool_use" and message.tool_calls
-        for call in message.tool_calls
-        if call.name == tool_name
-    ]
 
 
 def _first_mismatch(expected: list[str], actual: list[str], filename: str) -> str | None:
@@ -304,14 +292,14 @@ def _check_read_file_paginates_past_max_lines(workspace_root: Path, session: Ses
     if mismatch is not None:
         return mismatch
 
-    read_calls = _tool_call_args(session, "ReadFile")
+    read_calls = tool_call_args(session, "ReadFile")
     if len(read_calls) >= 2:
         return None
 
     # Alternate valid path: locate the marker line directly with Grep instead of paging
     # through ReadFile -- strictly fewer tool calls and just as reliable, so it passes too
     # rather than only rewarding the pagination path.
-    if not read_calls and _tool_call_args(session, "Grep") and _tool_call_args(session, "EditFile"):
+    if not read_calls and tool_call_args(session, "Grep") and tool_call_args(session, "EditFile"):
         return None
 
     return (
@@ -635,7 +623,7 @@ def _check_edit_file_single_line_shortcut(workspace_root: Path, session: Session
     mismatch = _first_mismatch(expected, _lines(workspace_root / "greeting.txt"), "greeting.txt")
     if mismatch is not None:
         return mismatch
-    edit_calls = _tool_call_args(session, "EditFile")
+    edit_calls = tool_call_args(session, "EditFile")
     if not any(
         not call.get("end_text")
         and ("end_line" not in call or call.get("start_line") == call.get("end_line"))
@@ -674,7 +662,7 @@ def _soft_check_edit_file_old_text_small_block(workspace_root: Path, session: Se
     inferred from its line count) is reachable for a short block, so a run that reaches the
     right file via the classic start_text/end_text form instead is still a pass -- just
     flagged conditional rather than treated as a failure."""
-    edit_calls = _tool_call_args(session, "EditFile")
+    edit_calls = tool_call_args(session, "EditFile")
     if any(call.get("old_text") and "end_line" not in call for call in edit_calls):
         return None
     return (
@@ -718,7 +706,7 @@ def _soft_check_edit_file_old_text_drifted(workspace_root: Path, session: Sessio
     numbers, so a run that reaches the right file *without* exercising that (e.g. editing
     bottom-to-top, avoiding drift entirely, or targeting just the changed line directly) is
     still a pass -- just flagged conditional rather than treated as a failure."""
-    edit_calls = _tool_call_args(session, "EditFile")
+    edit_calls = tool_call_args(session, "EditFile")
     if any(call.get("old_text") for call in edit_calls):
         return None
     return (
@@ -827,8 +815,8 @@ FILE_TOOLS_CASES: list[EvalCase] = [
 
 FILE_TOOLS = EvalSuite(name="file-tools", cases=FILE_TOOLS_CASES)
 
-ALL_SUITES: list[EvalSuite] = [FILE_TOOLS]
+ALL_SUITES: list[EvalSuite] = [FILE_TOOLS, SUBAGENTS]
 """Every known `EvalSuite`, keyed by `EvalSuite.name` for `run_evals.py`'s `--suite`/
 `--list-suites` flags -- append a new suite here as one more `EvalSuite` entry when a
-scenario group doesn't belong under `file-tools` (e.g. a future suite covering non-file
-tools)."""
+scenario group doesn't belong under `file-tools` (e.g. `subagent_cases.SUBAGENTS`, covering
+CreateSubagent/WaitForSubagent)."""

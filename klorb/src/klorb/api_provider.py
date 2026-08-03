@@ -78,6 +78,7 @@ class ApiProvider(ABC):
         on_thinking_chunk: Callable[[str], None] | None = None,
         on_reasoning_details: Callable[[list[dict[str, Any]]], None] | None = None,
         cancel_event: threading.Event | None = None,
+        max_tokens: int | None = None,
     ) -> ProviderResponse:
         """Send the given conversation history (plus an optional system prompt) to a model
         and return its reply along with request-level token usage.
@@ -118,4 +119,9 @@ class ApiProvider(ABC):
         If `cancel_event` is given and becomes set while the response is streaming in, the
         provider stops consuming the stream and raises `ResponseAborted` instead of
         returning normally.
+
+        `max_tokens`, if given, caps the total tokens this one request may generate (reasoning
+        plus completion, for a model that bills both against the same budget) -- e.g. a
+        subagent's `CreateSubagent`-supplied output-token budget. Omitted or `None` means the
+        model's own default applies.
         """

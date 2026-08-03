@@ -153,6 +153,21 @@ def _tool_call_log(session: Session) -> list[ToolCallLogEntry]:
     return log
 
 
+def tool_call_args(session: Session, tool_name: str) -> list[dict]:
+    """Every call to `tool_name` the model made during `session`'s turn, as parsed argument
+    dicts, in the order they were made -- for an `EvalCase.check`/`soft_check` that needs to
+    confirm a specific tool (and, often, a specific argument shape) was actually reached for,
+    not just that the workspace ended up in the right state. See docs/adrs/grade-tool-evals-by-
+    filesystem-state.md's "where useful" carve-out."""
+    return [
+        json.loads(call.arguments)
+        for message in session.messages
+        if message.role == "tool_use" and message.tool_calls
+        for call in message.tool_calls
+        if call.name == tool_name
+    ]
+
+
 def run_case(
     case: EvalCase, *, model: str, provider: ApiProvider,
     on_start: Callable[[str], None] | None = None,
@@ -184,7 +199,8 @@ def run_case(
             workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
             read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]),
             skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
-        tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session_config, package=tools_package)
+        tool_registry = ToolRegistry.discover_tools(
+            ProcessConfig(), session_config, package=tools_package)
         session = Session(session_config, provider=provider, tool_registry=tool_registry)
 
         start = time.monotonic()

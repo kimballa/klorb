@@ -1,0 +1,115 @@
+# © Copyright 2026 Aaron Kimball
+"""Tests for klorb.tools.subagents.message.MessageSubagentTool."""
+
+import threading
+from pathlib import Path
+
+import pytest
+from tools.subagents.conftest import _FakeProvider
+
+from klorb.agents.runtime import SubagentHandle
+from klorb.process_config import ProcessConfig
+from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import ToolCallError
+from klorb.tools.registry import ToolRegistry
+from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.subagents.create import CreateSubagentTool
+from klorb.tools.subagents.message import MessageSubagentTool
+from klorb.tools.subagents.wait import WaitForSubagentTool
+from klorb.workspace import Workspace
+
+
+def _operator_context(tmp_path: Path, provider: _FakeProvider) -> ToolSetupContext:
+    process_config = ProcessConfig()
+    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
+    session = Session(
+        session_config, provider=provider, process_config=process_config, tool_registry=tool_registry)
+    return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
+
+
+def test_raises_for_an_unknown_subagent_id(tmp_path: Path) -> None:
+    context = _operator_context(tmp_path, _FakeProvider())
+
+    with pytest.raises(ToolCallError, match="No such subagent"):
+        MessageSubagentTool(context).apply({"id": "no-such-id", "message": "hi"})
+
+
+def test_raises_while_the_subagent_is_still_running(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    # A handle deliberately left "running" (its thread blocks on an Event this test controls
+    # directly), rather than racing a real CreateSubagent-spawned thread's completion. The
+    # event is set (and the thread joined) before the test ends so it doesn't outlive it.
+    never_finishes = threading.Event()
+    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=context.session)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
+        cancel_event=threading.Event(), role="explorer", title="task")
+    context.session.subagent_tracker.register(handle)
+    handle.thread.start()
+
+    try:
+        with pytest.raises(ToolCallError, match="not done its turn yet"):
+            MessageSubagentTool(context).apply({"id": handle.session.id, "message": "hi"})
+    finally:
+        never_finishes.set()
+        handle.thread.join(timeout=5.0)
+
+
+def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    process_config = ProcessConfig(subagents_max_concurrent_per_parent=1)
+    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    tool_registry = ToolRegistry.discover_tools(process_config, session_config)
+    session = Session(
+        session_config, provider=provider, process_config=process_config, tool_registry=tool_registry)
+    context = ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
+    # A handle deliberately left "running" (its thread blocks on an Event this test controls
+    # directly), occupying the one concurrent slot -- see test_raises_while_the_subagent_is_
+    # still_running for why this is built directly rather than via a real CreateSubagent call.
+    # The event is set (and the thread joined) before the test ends so it doesn't outlive it.
+    never_finishes = threading.Event()
+    running_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=session)
+    running_handle = SubagentHandle(
+        session=running_child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
+        cancel_event=threading.Event(), role="explorer", title="first")
+    session.subagent_tracker.register(running_handle)
+    running_handle.thread.start()
+    # A second, already-finished (dormant) subagent this call tries to resume. Its thread was
+    # never started -- state="finished" is set directly -- so there's nothing to join.
+    dormant_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=session)
+    dormant_handle = SubagentHandle(
+        session=dormant_child, thread=threading.Thread(target=lambda: None),
+        cancel_event=threading.Event(), role="explorer", title="second", state="finished",
+        output="done")
+    session.subagent_tracker.register(dormant_handle)
+
+    try:
+        with pytest.raises(ToolCallError, match="Call WaitForSubagent") as exc_info:
+            MessageSubagentTool(context).apply({"id": dormant_child.id, "message": "hi"})
+        assert exc_info.value.category == "transient"
+    finally:
+        never_finishes.set()
+        running_handle.thread.join(timeout=5.0)
+
+
+def test_resumes_a_finished_subagent_and_its_new_output_is_deliverable(tmp_path: Path) -> None:
+    provider = _FakeProvider(reply_text="first answer")
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    CreateSubagentTool(context).apply({
+        "role": "explorer", "session_title": "task", "initial_message": "go",
+    })
+    handle = context.session.subagent_tracker.handles()[0]
+    handle.thread.join(timeout=5.0)
+    WaitForSubagentTool(context).apply({})  # deliver the first turn's output
+
+    provider.reply_text = "second answer"
+    result = MessageSubagentTool(context).apply({"id": handle.session.id, "message": "and then?"})
+    assert result["subagent_id"] == handle.session.id
+    handle.thread.join(timeout=5.0)
+
+    followup = WaitForSubagentTool(context).apply({})
+    assert followup["completed"][0]["output"] == "second answer"

@@ -183,6 +183,29 @@ def test_process_only_fields_are_overridable_via_config_file(tmp_path: Path) -> 
     assert process_config.theme == "nord"
 
 
+def test_subagents_config_defaults() -> None:
+    process_config = ProcessConfig()
+    assert process_config.subagents_max_depth == 2
+    assert process_config.subagents_max_concurrent_per_parent == 4
+    assert process_config.subagents_max_active_total == 16
+
+
+def test_subagents_config_overridable_via_config_file(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "tools.subagents.maxDepth": 5,
+            "tools.subagents.maxConcurrentPerParent": 2,
+            "tools.subagents.maxActiveTotal": 10,
+        },
+    )
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.subagents_max_depth == 5
+    assert process_config.subagents_max_concurrent_per_parent == 2
+    assert process_config.subagents_max_active_total == 10
+
+
 def test_compatibility_claude_markdown_is_overridable_via_config_file(tmp_path: Path) -> None:
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",
@@ -294,7 +317,8 @@ def test_unrecognized_config_key_is_dropped_with_a_warning(
 
 
 def test_project_config_file_overrides_defaults(tmp_path: Path) -> None:
-    _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
+    _write_config(tmp_path / ".klorb" / "klorb-config.json",
+                  {"sessionDefaults": {"model": "project/model"}})
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"
@@ -312,14 +336,16 @@ def test_user_config_overrides_etc_config(tmp_path: Path) -> None:
 def test_project_config_overrides_user_config(tmp_path: Path) -> None:
     _write_config(
         tmp_path / "user-config" / "klorb-config.json", {"sessionDefaults": {"model": "user/model"}})
-    _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
+    _write_config(tmp_path / ".klorb" / "klorb-config.json",
+                  {"sessionDefaults": {"model": "project/model"}})
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"
 
 
 def test_config_flag_path_overrides_project_config(tmp_path: Path) -> None:
-    _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
+    _write_config(tmp_path / ".klorb" / "klorb-config.json",
+                  {"sessionDefaults": {"model": "project/model"}})
     flag_path = tmp_path / "extra-config.json"
     _write_config(flag_path, {"sessionDefaults": {"model": "flag/model"}})
 
@@ -339,7 +365,8 @@ def test_config_layers_merge_rather_than_replace_wholesale(tmp_path: Path) -> No
             "terminal.input.maxLines": 20,
         },
     )
-    _write_config(tmp_path / ".klorb" / "klorb-config.json", {"sessionDefaults": {"model": "project/model"}})
+    _write_config(tmp_path / ".klorb" / "klorb-config.json",
+                  {"sessionDefaults": {"model": "project/model"}})
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
     assert process_config.session.model == "project/model"

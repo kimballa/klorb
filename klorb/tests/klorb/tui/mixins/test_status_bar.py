@@ -72,7 +72,7 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
         messages: Any, system_prompt: Any = None, model: Any = None, session_id: Any = None,
         reasoning: Any = None, tools: Any = None, drop_reasoning: Any = False, on_chunk: Any = None,
         on_thinking_chunk: Any = None, on_reasoning_details: Any = None,
-        cache_mgmt_style: Any = None, cancel_event: Any = None,
+        cache_mgmt_style: Any = None, cancel_event: Any = None, max_tokens: Any = None,
     ) -> Any:
         on_chunk("Hello")
         first_chunk_rendered.set()
@@ -167,7 +167,7 @@ async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes
         messages: Any, system_prompt: Any = None, model: Any = None, session_id: Any = None,
         reasoning: Any = None, tools: Any = None, drop_reasoning: Any = False, on_chunk: Any = None,
         on_thinking_chunk: Any = None, on_reasoning_details: Any = None,
-        cache_mgmt_style: Any = None, cancel_event: Any = None,
+        cache_mgmt_style: Any = None, cancel_event: Any = None, max_tokens: Any = None,
     ) -> Any:
         on_chunk("Hello")
         first_chunk_rendered.set()

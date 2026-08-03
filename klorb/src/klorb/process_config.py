@@ -273,7 +273,18 @@ DEFAULT_SUBAGENTS_MAX_DEPTH = 2
 """Default for `ProcessConfig.subagents_max_depth`: how many levels below the top-level
 (user-facing) session a subagent tree may nest -- depth 1 is the user's agent's own
 subagents, depth 2 their subagents' subagents; `CreateSubagent` rejects a call that would
-exceed it. See docs/plans/ready/021-subagents.md."""
+exceed it. See docs/specs/subagents.md."""
+
+DEFAULT_SUBAGENTS_MAX_CONCURRENT_PER_PARENT = 4
+"""Default for `ProcessConfig.subagents_max_concurrent_per_parent`: the most subagents any
+single agent may have running or finished-but-undelivered at once; `CreateSubagent` rejects a
+call that would exceed it. See docs/specs/subagents.md."""
+
+DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL = 16
+"""Default for `ProcessConfig.subagents_max_active_total`: the most subagents that may be
+simultaneously active (running or finished-but-undelivered) across an entire session tree,
+regardless of which agent created them; `CreateSubagent` rejects a call that would exceed it.
+See docs/specs/subagents.md."""
 
 DEFAULT_SESSION_CLASSIFIER_MODEL = "openai/gpt-5-nano"
 """Last-resort model `klorb.session_naming._default_naming_model` falls back to when
@@ -364,6 +375,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.images.maxBytesRaw": "image_max_bytes_raw",
     "tools.images.preferredFormats": "image_preferred_formats",
     "tools.subagents.maxDepth": "subagents_max_depth",
+    "tools.subagents.maxConcurrentPerParent": "subagents_max_concurrent_per_parent",
+    "tools.subagents.maxActiveTotal": "subagents_max_active_total",
     "classifier.model": "session_classifier_model",
     "classifier.timeout": "session_classifier_timeout_seconds",
     "classifier.e2eTimeout": "session_classifier_e2e_timeout_seconds",
@@ -526,6 +539,10 @@ class ProcessConfig(BaseModel):
     `tools.images.preferredFormats`."""
     subagents_max_depth: int = DEFAULT_SUBAGENTS_MAX_DEPTH
     """See `DEFAULT_SUBAGENTS_MAX_DEPTH` and `tools.subagents.maxDepth`."""
+    subagents_max_concurrent_per_parent: int = DEFAULT_SUBAGENTS_MAX_CONCURRENT_PER_PARENT
+    """See `DEFAULT_SUBAGENTS_MAX_CONCURRENT_PER_PARENT` and `tools.subagents.maxConcurrentPerParent`."""
+    subagents_max_active_total: int = DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL
+    """See `DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL` and `tools.subagents.maxActiveTotal`."""
     session_classifier_model: str | None = None
     """Model `klorb.session_naming.generate_session_name()` sends its request to, via the same
     `ApiProvider` instance the main conversation uses. `None` (the default, and

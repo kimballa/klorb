@@ -260,7 +260,7 @@ async def test_prompt_streams_thinking_then_message_chunks_in_order(
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -301,7 +301,7 @@ async def test_update_ordering_matches_the_order_callbacks_fired(
     def interleaved(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -342,7 +342,7 @@ async def test_cancel_aborts_the_turn_and_keeps_it_in_history(
     def blocking_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         assert on_chunk is not None
         assert cancel_event is not None
@@ -420,7 +420,7 @@ async def test_second_concurrent_prompt_is_a_json_rpc_error(
     def blocking_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ) -> ProviderResponse:
         started.set()
         release.wait(timeout=5)

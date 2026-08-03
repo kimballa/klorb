@@ -18,6 +18,7 @@ from fixtures.sample_models import NO_SUCH_DIR, sample_model_registry
 from PIL import Image
 
 from klorb import process_config as process_config_module
+from klorb.agents.runtime import SubagentHandle
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.message import Message, MessageFragment, ToolCallRequest
 from klorb.models.configured_model import ConfiguredModel
@@ -291,7 +292,7 @@ def test_total_tokens_used_grows_live_as_chunks_stream_in() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         seen_totals.append(session.total_tokens_used())
         assert on_chunk is not None
@@ -318,7 +319,7 @@ def test_aborted_placeholder_still_counts_its_partial_content() -> None:
     def aborting_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         on_chunk("partial rep")
@@ -350,7 +351,7 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
     def first_round_then_cancel(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         # Simulate the turn being cancelled (quit / Ctrl+C) while this round's reply is assembled.
         assert cancel_event is not None
@@ -413,7 +414,7 @@ def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         seen_outputs.append(session.total_output_tokens_used())
         assert on_chunk is not None
@@ -484,7 +485,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
                                "some/model"), model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None)
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None)
     user_msgs_content = [m.content for m in session.messages]
     system_msg = _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/model")
     assert user_msgs_content[0] == system_msg
@@ -610,7 +611,7 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
                                "some/model"), model="some/model",
         session_id="my-session-id", reasoning=None, tools=None, drop_reasoning=False,
         on_chunk=mock.ANY, on_thinking_chunk=mock.ANY, on_reasoning_details=mock.ANY,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None)
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None)
 
 
 # --- session naming: send_turn()'s first-call naming trigger ---
@@ -973,7 +974,7 @@ def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true() -> No
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1000,7 +1001,7 @@ def test_total_tokens_used_includes_thinking_by_default() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1092,7 +1093,7 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1119,7 +1120,7 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1142,7 +1143,7 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1175,7 +1176,7 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1198,7 +1199,7 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         on_chunk("partial")
@@ -1224,7 +1225,7 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_thinking_chunk is not None
         on_thinking_chunk("partial thought")
@@ -1264,7 +1265,7 @@ def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None
     def aborting_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         assert on_thinking_chunk is not None
@@ -1295,7 +1296,7 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         nonlocal calls_made
         calls_made += 1
@@ -1334,7 +1335,7 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     def failing_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         on_chunk("partial")
@@ -2175,6 +2176,53 @@ def test_reregistering_teardown_overwrites_not_accumulates() -> None:
     session.close()
 
     assert calls == ["second"]
+
+
+def test_close_cascades_into_a_live_subagent_and_relays_its_note() -> None:
+    parent = Session(SessionConfig(), provider=MagicMock())
+    child = Session(SessionConfig(role_name="explorer"), provider=MagicMock(), parent=parent)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task")
+    parent.subagent_tracker.register(handle)
+    parent.subagent_tracker.mark_finished(child.id, "done")
+
+    parent.close()
+
+    assert handle.delivered is True
+    assert "done" in parent.messages[-1].content
+
+
+def test_append_system_note_adds_a_complete_user_message() -> None:
+    session = Session(SessionConfig(), provider=MagicMock())
+
+    session.append_system_note("some note")
+
+    assert session.messages[-1].role == "user"
+    assert session.messages[-1].content == "some note"
+    assert session.messages[-1].processing_state == "complete"
+
+
+def test_current_turn_handlers_is_none_outside_a_turn() -> None:
+    session = Session(SessionConfig(), provider=MagicMock())
+
+    assert session.current_turn_handlers() is None
+
+
+def test_send_turn_with_resolve_mentions_false_leaves_at_mentions_literal(tmp_path: Path) -> None:
+    (tmp_path / "f.txt").write_text("secret contents")
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("ok")]
+    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session = Session(config, provider=mock_provider, process_config=ProcessConfig())
+
+    session.send_turn("look at @f.txt", resolve_mentions=False)
+
+    call_kwargs = mock_provider.send_prompt.call_args
+    sent_messages = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs["messages"]
+    assert not any("secret contents" in m.content for m in sent_messages)
+    user_messages = [m for m in session.messages if m.role == "user"]
+    assert user_messages[-1].content.endswith("look at @f.txt")
 
 
 def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_path: Path) -> None:

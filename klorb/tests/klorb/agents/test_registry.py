@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.agents.registry: parsing `agents.json` (schema `klorb-agents`) into an
-`AgentRegistry`. See docs/plans/ready/021-subagents.md's "Setup and config files / vars"
+`AgentRegistry`. See docs/specs/subagents.md's "Configuration"
 section."""
 
 from fixtures.sample_agents import SAMPLE_AGENTS_JSON

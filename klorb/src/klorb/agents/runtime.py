@@ -1,0 +1,242 @@
+# © Copyright 2026 Aaron Kimball
+"""Runtime bookkeeping for the subagents one `Session` has directly created: live handles, a
+FIFO of completions awaiting delivery to that session, and the concurrency accounting
+`CreateSubagent`/`MessageSubagent`'s `maxConcurrentPerParent`/`maxActiveTotal` checks need. See
+docs/specs/subagents.md's "Subagent lifecycle" and "Communicating back to the parent" sections.
+"""
+
+import logging
+import queue
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
+
+from klorb.session.mixins.turns import wrap_system_interjection
+
+if TYPE_CHECKING:
+    from klorb.session import Session
+
+logger = logging.getLogger(__name__)
+
+SUBAGENT_INTERJECTION_SUBJECT = "subagent"
+"""`SystemInterjection subject=` value the subagent-output relay uses -- both the standing
+provider (`build_subagent_interjection_provider`) and `cascade_close_subagents`' direct-append
+fallback."""
+
+SUBAGENT_MGMT_TOOL_NAMES = frozenset({"CreateSubagent", "WaitForSubagent", "MessageSubagent"})
+"""The three subagent-management tools -- omitted from a subagent's own effective tool set
+whenever its role's `AgentDefinition.allow_subagents` is `False`. See docs/specs/subagents.md."""
+
+_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
+"""How long `cascade_close_subagents` waits for a still-running subagent's background thread to
+notice `cancel_event` and finish, before giving up and relaying a termination note without it --
+a graceful shutdown must not hang indefinitely on a wedged subagent turn."""
+
+SubagentState = Literal["running", "finished"]
+"""A subagent's own lifecycle state: `"running"` while its background turn is actively
+processing (consuming a `maxConcurrentPerParent`/`maxActiveTotal` slot), `"finished"` once that
+turn ends -- a finished subagent sits dormant (its `Session` never destroyed, per docs/specs/
+subagents.md) until `MessageSubagent` resumes it, which flips it back to `"running"`."""
+
+
+@dataclass
+class SubagentHandle:
+    """One subagent session a `Session` has directly created, tracked for as long as this
+    process runs -- a subagent session is never destroyed once finished, so this handle outlives
+    any one turn."""
+
+    session: "Session"
+    thread: threading.Thread
+    cancel_event: threading.Event
+    role: str
+    title: str
+    state: SubagentState = "running"
+    delivered: bool = False
+    """Whether this subagent's completed output has already been handed to the creating
+    session -- via `WaitForSubagent`, the standing interjection relay, or (at shutdown)
+    `cascade_close_subagents`'s direct-append fallback. Distinct from `state`: a `"finished"`
+    subagent is not yet `delivered` until one of those three actually consumes it, and stays
+    dormant (not counted by `running_count()`) either way until `MessageSubagent` resumes it."""
+    output: str | None = None
+    """Set once `state == "finished"`: the subagent's conversational output, or a placeholder
+    noting an empty, aborted, or terminated turn."""
+
+
+def _format_relay_body(handle: SubagentHandle) -> str:
+    """Render `handle`'s completed output as the body a `SystemInterjection subject="subagent"`
+    tag carries: the `id`/`role`/`title` metadata lines, a blank line, then the subagent's own
+    output. See docs/specs/subagents.md's "Communicating back to the parent" section for the
+    exact template."""
+    assert handle.output is not None
+    return (
+        f"id: {handle.session.id}\n"
+        f"role: {handle.role}\n"
+        f"title: {handle.title}\n\n"
+        f"{handle.output}"
+    )
+
+
+class SubagentTracker:
+    """Owns one `Session`'s bookkeeping for the subagents it has directly created: a
+    `SubagentHandle` per child (keyed by the child's own `id`), a FIFO of ids that have
+    finished and are awaiting delivery, and the concurrency count `CreateSubagent`/
+    `MessageSubagent` check against `tools.subagents.maxConcurrentPerParent`.
+
+    Constructed once per `Session` (`SessionCoreMixin.__init__`) and never shared -- counting
+    a whole session *tree* (`maxActiveTotal`, see `total_active_subagents`) means walking every
+    session's own tracker, not just one.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._handles: dict[str, SubagentHandle] = {}
+        self._completion_queue: "queue.Queue[str]" = queue.Queue()
+
+    def register(self, handle: SubagentHandle) -> None:
+        """Record a newly-created subagent, before its background turn starts running."""
+        with self._lock:
+            self._handles[handle.session.id] = handle
+        logger.debug("Registered subagent %s (role=%s)", handle.session.id, handle.role)
+
+    def handles(self) -> list[SubagentHandle]:
+        """Every subagent this session has ever directly created, in creation order."""
+        with self._lock:
+            return list(self._handles.values())
+
+    def mark_finished(self, child_id: str, output: str) -> None:
+        """Record `child_id`'s background turn as done and queue it for delivery -- called by
+        the background thread `dispatch_subagent_turn` runs, once the child's own `send_turn()`
+        call returns (or is aborted/fails)."""
+        with self._lock:
+            handle = self._handles[child_id]
+            handle.state = "finished"
+            handle.output = output
+        self._completion_queue.put(child_id)
+        logger.debug("Subagent %s finished; queued for delivery", child_id)
+
+    def running_count(self) -> int:
+        """Subagents this session directly created whose turn is actively processing right now
+        -- what `tools.subagents.maxConcurrentPerParent` bounds. A subagent session is never
+        destroyed once finished (see docs/specs/subagents.md), so a `"finished"` (dormant,
+        possibly still undelivered) subagent does *not* count here -- only `MessageSubagent`
+        turning a dormant one back into a running one consumes a concurrency slot again."""
+        with self._lock:
+            return sum(1 for handle in self._handles.values() if handle.state == "running")
+
+    def has_undelivered(self) -> bool:
+        """Whether this session has at least one subagent still running or awaiting delivery --
+        `WaitForSubagent` fails immediately, rather than suspending forever, when this is
+        `False`."""
+        with self._lock:
+            return any(not handle.delivered for handle in self._handles.values())
+
+    def pop_next_completed(self, timeout: float) -> SubagentHandle | None:
+        """Block up to `timeout` seconds for the next completed-but-undelivered subagent
+        (oldest first), marking it delivered before returning it, or return `None` on timeout.
+        Used by `WaitForSubagent`'s poll loop -- a short `timeout` so it can also check for
+        cancellation between waits, mirroring `BashTool`'s persistent-shell poll loop."""
+        try:
+            child_id = self._completion_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        with self._lock:
+            handle = self._handles[child_id]
+            handle.delivered = True
+            return handle
+
+    def try_pop_completed(self) -> SubagentHandle | None:
+        """Pop and mark delivered at most one completed-but-undelivered subagent, without
+        blocking, or return `None` if none are waiting."""
+        try:
+            child_id = self._completion_queue.get_nowait()
+        except queue.Empty:
+            return None
+        with self._lock:
+            handle = self._handles[child_id]
+            handle.delivered = True
+            return handle
+
+    def pop_all_completed(self, timeout: float) -> list[SubagentHandle]:
+        """Block up to `timeout` seconds for at least one completed-but-undelivered subagent,
+        then drain every *other* one already waiting (without blocking further), returning all
+        of them, oldest first -- or an empty list if none arrived within `timeout`. Used by
+        `WaitForSubagent` so several subagents that finished before the caller got around to
+        waiting are all delivered in one call, rather than forcing a separate `WaitForSubagent`
+        round trip per completion."""
+        first = self.pop_next_completed(timeout=timeout)
+        if first is None:
+            return []
+        drained = [first]
+        while True:
+            more = self.try_pop_completed()
+            if more is None:
+                return drained
+            drained.append(more)
+
+
+def build_subagent_interjection_provider(tracker: "SubagentTracker") -> Callable[[], str | None]:
+    """Build the zero-arg closure `Session.register_standing_interjection` expects: pops at
+    most one completed-but-undelivered subagent from `tracker` and formats its relay body, or
+    returns `None` if none are waiting. Registered by `CreateSubagentTool.apply()` under
+    `SUBAGENT_INTERJECTION_SUBJECT`, so it's polled by every future `send_turn()`/tool-call
+    round on the creating session -- see `klorb.session.mixins.core.
+    register_standing_interjection`."""
+    def provider() -> str | None:
+        handle = tracker.try_pop_completed()
+        if handle is None:
+            return None
+        return _format_relay_body(handle)
+    return provider
+
+
+def total_active_subagents(session: "Session") -> int:
+    """Count every subagent (at any depth) whose turn is actively running right now, across the
+    *entire* session tree `session` belongs to -- what `tools.subagents.maxActiveTotal` bounds,
+    regardless of which agent in the tree created each one. See `SubagentTracker.running_count`
+    for what "running" means -- a dormant, finished-but-undelivered subagent doesn't count."""
+    root = session
+    while root.parent is not None:
+        root = root.parent
+    total = 0
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        total += current.subagent_tracker.running_count()
+        stack.extend(handle.session for handle in current.subagent_tracker.handles())
+    return total
+
+
+def cascade_close_subagents(session: "Session") -> None:
+    """Recursively close every subagent `session` has directly or indirectly created, deepest
+    first, relaying any not-yet-delivered output (or, for one still running, a termination
+    note) directly into `session`'s own message history before returning. See
+    docs/specs/subagents.md's "Persistence" section.
+
+    Called from `Session.close()`, before its own `_finalize_session_persistence()`, so the
+    relayed note lands in `messages` before `session.json` is written -- a subagent's own
+    conversation is never separately persisted (see that section), so this is the only
+    opportunity to keep the parent's persisted transcript from citing a `WaitForSubagent` that
+    can no longer resolve.
+    """
+    for handle in session.subagent_tracker.handles():
+        cascade_close_subagents(handle.session)
+        if handle.state == "running":
+            handle.cancel_event.set()
+            handle.thread.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
+        if not handle.delivered:
+            output = (
+                handle.output if handle.output is not None
+                else "(Subagent terminated: harness closed before it finished)"
+            )
+            body = (
+                f"id: {handle.session.id}\n"
+                f"role: {handle.role}\n"
+                f"title: {handle.title}\n\n"
+                f"{output}\n\n"
+                "The user did not provide a prompt this turn; there is only this system "
+                "interjection with the output of a recently-completed subagent."
+            )
+            session.append_system_note(wrap_system_interjection(SUBAGENT_INTERJECTION_SUBJECT, body))
+            handle.delivered = True
+        handle.session.close()

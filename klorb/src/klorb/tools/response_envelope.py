@@ -22,7 +22,7 @@ class SystemInterjectionPayload(BaseModel):
     """One standing-interjection provider's advisory, attached to a `ToolResponseEnvelope`'s
     `system_interjections` -- the JSON-delivered counterpart to the XML `<SystemInterjection
     subject="...">` block a user-turn prompt carries (see
-    `klorb.session.mixins.turns._wrap_system_interjection`). `subject` mirrors the provider's
+    `klorb.session.mixins.turns.wrap_system_interjection`). `subject` mirrors the provider's
     registration key (`Session.register_standing_interjection`); `body` is the message it
     returned."""
 

@@ -70,8 +70,9 @@ model-specific override like any other.
   (concrete) resolves the role-specific tiers: `roles/<name>/<mangled-model>.md` (skipped
   when `model` is `None`), then `roles/<name>/default.md`, returning `None` when neither
   file exists in either tier. `repertoire() -> list[str]` (concrete, always empty today) is
-  the placeholder hook for the specialist subagents and role-specific tools a role will
-  eventually be able to employ.
+  an unused placeholder hook -- which specialist subagent roles and tools a role may employ
+  is instead governed by `klorb/resources/agents.json` (see docs/specs/subagents.md), a
+  parallel mechanism this method predates.
 * `OperatorRole` is the default top-level role: the lead agent that owns a coding task
   end to end, with full latitude to research, decide, plan, write docs/code/tests, run and
   debug, and review work (its own or another agent's), biased toward an iterative
@@ -89,10 +90,10 @@ model-specific override like any other.
   a session: `Session.__init__` calls `get_role(config.role_name)` itself and exposes the
   result as the `Session.role` property, so a caller can never construct a session whose
   `Role` disagrees with its `config.role_name`. `role_name` is set by code — the default,
-  or a future subagent-spawning call site — and is deliberately *not* a recognized
-  `klorb-config.json` key (absent from `SESSION_KEY_MAP`; see
-  [[process-and-session-config]]), so a config file can't change what kind of agent the
-  user is talking to.
+  or `CreateSubagentTool` setting a child session's role to its requested specialty (see
+  docs/specs/subagents.md) — and is deliberately *not* a recognized `klorb-config.json` key
+  (absent from `SESSION_KEY_MAP`; see [[process-and-session-config]]), so a config file
+  can't change what kind of agent the user is talking to.
 
 ### Resolution order
 
@@ -157,13 +158,15 @@ strings; the bookkeeping system message is likewise always inserted.
 
 ## Out of scope
 
-* **Subagent spawning / agent teams.** The multi-agent design roles exist to serve — a
-  spawned subagent inheriting a copy of the parent's session config with `role_name`
-  swapped to its specialty, plus a parent-provided instructions message — is described in
-  `TODO.md` and not built. `Role.repertoire()` and the `Role` subclass seam
-  (`CodingRole`, `ExploreRole`, `AuditorRole`, ...) are the placeholders.
-* **Role-specific tool access.** A role will eventually constrain or extend which tools a
-  session offers; today `Role` carries no tool information.
+* **Agent teams.** A team of specialist agents collaborating on one larger problem in
+  parallel or in series (writing specs, code, tests, and reviewing each other's work) is
+  still unbuilt. One-off subagent dispatch (an agent launching a bounded-task specialist
+  and getting a report back) is built -- see docs/specs/subagents.md -- but that's a single
+  request/response round trip, not an ongoing team.
+* **Role-specific tool access for a top-level session.** `klorb/resources/agents.json`
+  constrains which tools a *subagent* role receives (see docs/specs/subagents.md), but a
+  top-level session's own role still carries no tool restriction of its own -- it always
+  gets the full discovered catalog regardless of `config.role_name`.
 * **The prompt-dump command** (`TODO.md`): materializing the resolved prompt into the user
   tree as an editable starting point.
 * **Mid-session role switching.** `Session.role` is built once in `__init__`; nothing

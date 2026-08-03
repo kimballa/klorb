@@ -207,7 +207,7 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -244,7 +244,7 @@ async def test_reasoning_details_with_encrypted_entries_renders_a_compact_indica
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_reasoning_details is not None
         assert on_chunk is not None
@@ -282,7 +282,7 @@ async def test_reasoning_details_made_only_of_plain_text_entries_renders_nothing
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_reasoning_details is not None
         assert on_chunk is not None
@@ -312,7 +312,7 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -343,7 +343,7 @@ async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None

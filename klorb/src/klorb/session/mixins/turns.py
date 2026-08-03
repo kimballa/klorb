@@ -72,7 +72,7 @@ def _prompt_mentions_skill(prompt: str) -> bool:
     return bool(_SKILL_WORD_RE.search(prompt))
 
 
-def _wrap_system_interjection(subject: str, message: str) -> str:
+def wrap_system_interjection(subject: str, message: str) -> str:
     """Wrap `message` in a `<SystemInterjection subject="{subject}">...</SystemInterjection>`
     tag pair, so a model can tell an out-of-band harness notice apart from the user's own
     turn content within the same `Message.content` — see `Session.send_turn()`'s handling of
@@ -198,7 +198,7 @@ class SessionTurnsMixin(SessionBase):
                 on_thinking_chunk=handle_thinking_chunk,
                 on_reasoning_details=handle_reasoning_details_chunk,
                 cache_mgmt_style=self._cache_mgmt_style(),
-                cancel_event=callbacks.cancel_event)
+                cancel_event=callbacks.cancel_event, max_tokens=self._max_output_tokens)
         except ResponseAborted:
             if thinking_placeholder is not None:
                 thinking_placeholder.content = "".join(thinking_placeholder.streaming_content or [])
@@ -391,6 +391,7 @@ class SessionTurnsMixin(SessionBase):
         prompt: str,
         callbacks: TurnEventHandlers | None = None,
         image_fragments: list[MessageFragment] | None = None,
+        resolve_mentions: bool = True,
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
@@ -422,6 +423,15 @@ class SessionTurnsMixin(SessionBase):
         plain-text `prompt` either way, for anything that only wants that. See
         docs/specs/at-mention-file-inlining.md.
 
+        `resolve_mentions`, when `False`, skips `resolve_at_mentions()` entirely -- any
+        `@filename` text in `prompt` is left as literal, unresolved text. Used for a message a
+        parent session sends into a subagent's own `send_turn()` call (`CreateSubagent`'s
+        `initial_message`, `MessageSubagent`'s `message`): this doesn't yet filter a resolved
+        mention's file contents through the *parent*'s `readDirs` before exposing it to the
+        (possibly more restricted) child, so mentions are left unresolved there rather than
+        risk leaking a file the child couldn't otherwise read — see docs/specs/subagents.md's
+        "Security model" section.
+
         `image_fragments`, if given (already prepared for the active model by `klorb.images.
         prepare.prepare_image_for_model` before this call), are appended *after* the prompt
         fragment -- per vendor guidance to send the text prompt first, then images -- each
@@ -431,7 +441,7 @@ class SessionTurnsMixin(SessionBase):
 
         If a permission-framework change is pending (`set_permission_framework()` was called
         since the last turn), the queued interjection is wrapped in a `<SystemInterjection
-        subject="PermissionFramework">` tag (see `_wrap_system_interjection`) and prepended
+        subject="PermissionFramework">` tag (see `wrap_system_interjection`) and prepended
         onto `prompt` before it's stored as the user `Message`'s content — see
         docs/specs/permissions.md's "Permission framework change interjection" section — and
         the pending state is cleared, so it's applied exactly once. After that, every provider
@@ -476,42 +486,43 @@ class SessionTurnsMixin(SessionBase):
         active_model = self.active_model()
         mention_fragments = resolve_at_mentions(
             original_prompt, self._mention_read_file_core, self.config.workspace.path,
-            active_model=active_model, image_pipeline_config=self._image_pipeline_config)
+            active_model=active_model, image_pipeline_config=self._image_pipeline_config,
+        ) if resolve_mentions else None
         self._ensure_skill_catalog()
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
         leading_token = _leading_skill_token(original_prompt)
         if leading_token is not None:
             activation = self._build_user_skill_activation_interjection(leading_token)
             if activation is not None:
-                prompt = f"{_wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
+                prompt = f"{wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
                 excluded_skill_ids = frozenset({activation.skill_id})
         if self._pending_permission_framework_interjection is not None:
-            interjection = _wrap_system_interjection(
+            interjection = wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)
             prompt = f"{interjection}\n{prompt}"
             self._pending_permission_framework_interjection = None
         for subject in sorted(self._standing_interjection_providers):
             message = self._standing_interjection_providers[subject]()
             if message is not None:
-                prompt = f"{_wrap_system_interjection(subject, message)}\n{prompt}"
+                prompt = f"{wrap_system_interjection(subject, message)}\n{prompt}"
         skill_mention_tokens = _skill_mention_tokens(original_prompt)
         skill_reference = self._build_skill_reference_interjection(
             skill_mention_tokens, exclude=excluded_skill_ids)
         if skill_reference is not None:
-            prompt = f"{_wrap_system_interjection('SkillReference', skill_reference)}\n{prompt}"
+            prompt = f"{wrap_system_interjection('SkillReference', skill_reference)}\n{prompt}"
         if _prompt_mentions_skill(original_prompt):
             skill_reminder = (
                 "The user's message mentions the word \"skill\" or \"/skill\". Consider whether "
                 "a relevant skill exists that should be loaded first — use SearchSkills to look "
                 "for matching skills, then ActivateSkill to load one before proceeding."
             )
-            prompt = f"{_wrap_system_interjection('SkillReminder', skill_reminder)}\n{prompt}"
+            prompt = f"{wrap_system_interjection('SkillReminder', skill_reminder)}\n{prompt}"
         if not self._skills_seeded:
             self._skills_seeded = True
             skills = self._discover_skills()
             available_skills = self._build_available_skills_interjection(skills)
             if available_skills is not None:
-                prompt = f"{_wrap_system_interjection('AvailableSkills', available_skills)}\n{prompt}"
+                prompt = f"{wrap_system_interjection('AvailableSkills', available_skills)}\n{prompt}"
                 logger.info(
                     "Interjecting with available skills: %d skills, %d tokens",
                     len(skills),
@@ -521,7 +532,7 @@ class SessionTurnsMixin(SessionBase):
             self._context_files_seeded = True
             project_guidance = self._build_context_files_interjection()
             if project_guidance is not None:
-                prompt = f"{_wrap_system_interjection('ProjectGuidance', project_guidance)}\n{prompt}"
+                prompt = f"{wrap_system_interjection('ProjectGuidance', project_guidance)}\n{prompt}"
         if not self._metadata_seeded:
             self._metadata_seeded = True
             started_at = self._session_started_at.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
@@ -550,7 +561,7 @@ class SessionTurnsMixin(SessionBase):
                 metadata_strs.append(f"The current git branch is `{git_branch}`. ")
 
             metadata_body = "\n".join(metadata_strs)
-            prompt = f"{_wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
+            prompt = f"{wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
             # The classifier call below can take several seconds; `_current_turn_handlers` is set

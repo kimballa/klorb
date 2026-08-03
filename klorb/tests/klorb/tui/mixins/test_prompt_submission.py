@@ -344,7 +344,7 @@ async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it() 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         entered_send_prompt.set()
@@ -448,7 +448,7 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         nonlocal calls_made
         calls_made += 1
@@ -487,7 +487,8 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
         # actual time-order: round one drafts, then the tool call runs, then round two drafts.
         children = list(history.children)
         tool_call_index = children.index(history.query_one(ToolCallStatic))
-        assert children.index(response_widgets[0]) < tool_call_index < children.index(response_widgets[1])
+        assert children.index(response_widgets[0]) < tool_call_index < children.index(
+            response_widgets[1])
 
 
 # --- shell commands ("!"-prefixed) ---
@@ -1041,7 +1042,7 @@ async def test_streaming_response_updates_widget_progressively() -> None:
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_chunk is not None
         on_chunk("Hel")
@@ -1077,7 +1078,7 @@ async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_t
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
@@ -1113,7 +1114,7 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
     def fake_send_prompt(
         messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
         drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
-        cache_mgmt_style="AUTOMATIC", cancel_event=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
     ):
         assert on_thinking_chunk is not None
         assert on_chunk is not None
