@@ -68,8 +68,10 @@ replies to stdout — see COMMANDS below.
   token-count summary at the bottom. Output is plain text with
   markdown-style section headers separating the default system prompt
   (`default_sys.md`), the role-specific addendum (inside an `<AgentRole>`
-  tag), and the pretty-printed tool-definition JSON the model receives.
-  `--role` concretizes the system prompt for a specific operating role
+  tag), the pretty-printed tool-definition JSON the model receives, and a
+  per-tool token-count table (each discovered tool's name and the token
+  count of its full function-calling definition, sorted descending, with a
+  total row). `--role` concretizes the system prompt for a specific operating role
   (defaults to `operator`, the same role a default session runs as).
   `--model` resolves model-specific prompt tiers (defaults to the model
   configured via the `klorb-config.json` file stack). `--config` layers an
