@@ -18,6 +18,8 @@
 
 ### Feature backlog
 
+* The user should be allowed to send messages to subagents in the usual direct-send and enqueued ways. The subagent does not differentiate between input from its parent agent vs the actual user. When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets a parent_interested flag when it is expecting a response from the subagent. When the subagent ends its turn, it is conveyed to the parent only if the parent was expecting a msg (at which point the flag is cleared). If the user just separately msgs a stalled subagent and it replies, that doesn't roll up to the parent agent. WaitForSubagents does not watch any subagents whose "parent_interested" flag is False. With this flag implemented, the prompt input can be enabled in the TUI and vscode plugin; but it should send a msg to the active (sun)agent session, not just the root session. And the draft msg is part of the Session-specific UI state. Choose a different subagent from the list and it should reset to empty (or the last draft started there). 
+
 * Raise default tool call limit from 50 to 100.
 
 * Subagent roles:
