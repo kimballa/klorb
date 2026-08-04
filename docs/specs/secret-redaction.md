@@ -85,16 +85,30 @@ API key) is most likely to live. See "Out of scope" for what this deliberately d
   (not a guessed or invented replacement) is what to pass back into `EditFile`'s `start_text`/
   `end_text`/`old_text`/`new_text` to match or preserve that line.
 * `GrepTool` (`klorb/src/klorb/tools/grep.py`) constructs its own `self._secret_redactor =
-  SecretRedactor()` and applies it via a `_redact_lines()` helper, wrapped around every dense-
+  SecretRedactor()` and applies it via a `_redact_strings()` helper, applied to every dense-
   format result line (see docs/specs/tool-framework.md for the `"*42|text"`/`" 41|text"` format)
-  right where each `files[i]["lines"]` entry is built — covering both `outputStyle` values that
-  return line text (`"Matches"`, `"FullContext"`; `"ListFiles"` returns only filenames, so there's
-  nothing to redact). Unlike `ReadFileCore`/`EditFileCore`, matching itself (`match_line_indices`)
-  always runs against the file's real, unredacted content, read earlier in `apply()` — only the
-  rendered `lines` strings returned to the caller are masked, so a query for a secret's own
-  literal value still finds it (search behavior is unchanged), and results written to
-  `results_data_file` via `SpillDir` (large-result spilling) are already redacted, since spilling
-  happens after `_redact_lines()` has run.
+  *before* `_truncate_line()` runs, right where each `files[i]["lines"]` entry is built —
+  covering both `outputStyle` values that return line text (`"Matches"`, `"FullContext"`;
+  `"ListFiles"` returns only filenames, so there's nothing to redact). Redacting before
+  truncating (not after) matters: truncating a raw line to `grep_max_line_length` first could
+  slice a credential in half, leaving a partial fragment that no longer matches any
+  `detect-secrets` pattern and so passes through un-redacted. Unlike `ReadFileCore`/
+  `EditFileCore`, matching itself (`match_line_indices`) always runs against the file's real,
+  unredacted content, read earlier in `apply()` — only the rendered `lines` strings returned to
+  the caller are masked, so a query for a secret's own literal value still finds it (search
+  behavior is unchanged), and results written to `results_data_file` via `SpillDir` (large-result
+  spilling) are already redacted, since spilling happens after `_redact_strings()` has run.
+* `queries` (the `array` argument naming what to search for) round-trips through the same
+  `SecretRedactor` in both directions. Before `compile_queries()` builds the search pattern, each
+  query is passed through `redactor.detokenize(session, query)` into a separate
+  `search_queries` list — so a `[[SECRET:...]]` token echoed back from an earlier `ReadFile`/
+  `Grep` result resolves to the real plaintext for matching against a file's real content, the
+  same way `EditFileCore` detokenizes `start_text`/`old_text`. The *original* `queries` (never
+  `search_queries`) is what gets redacted via `_redact_strings()` and echoed back as
+  `result["queries"]` — covering both a query that was already a token (round-trips unchanged,
+  since `redact()` finds nothing secret-shaped in a `[[SECRET:...]]` string) and a query where the
+  caller typed a real secret's plaintext directly rather than obtaining it via a token (masked
+  before being echoed back, so it isn't handed to the model a second time in the result).
 
 ## Session-state storage
 
