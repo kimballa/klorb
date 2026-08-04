@@ -10,10 +10,13 @@ and edit a file containing real secrets without those secrets ever appearing in 
 `EditFileTool` resolves the same tokens back to their real plaintext when a model echoes one back
 in `start_text`/`end_text`/`old_text`/`context_before`/`context_after`/`new_text`, so the
 read-then-edit loop works even though the model itself never sees the underlying secret.
+`GrepTool` redacts the same way: matching still runs against a file's real content, but every
+line returned in a result is masked before it reaches the model.
 
-This is scoped to `ReadFileTool`/`EditFileTool` only — the two tools that operate on real,
+This is scoped to `ReadFileTool`/`EditFileTool`/`GrepTool` — the tools that operate on real,
 model-named filesystem paths, where a genuine credential (a `.env` file, a config file with an
-API key) is most likely to live. See "Out of scope" for what this deliberately doesn't cover.
+API key) is most likely to live. See "Out of scope" for what this deliberately doesn't cover
+(most notably `Bash`).
 
 ## How it works
 
@@ -77,10 +80,21 @@ API key) is most likely to live. See "Out of scope" for what this deliberately d
   instance per `Tool` for its whole lifetime is just a convenience — the actual map lives in
   `session.tool_state`, so a fresh `SecretRedactor()` on the same session resolves the same
   tokens.
-* `ReadFileTool.description()` tells the model directly that a line may come back with a
-  `[[SECRET:<type>:<hash>]]` token in place of a credential, and that the token (not a guessed
-  or invented replacement) is what to pass back into `EditFile`'s `start_text`/`end_text`/
-  `old_text`/`new_text` to match or preserve that line.
+* `ReadFileTool.description()`/`GrepTool.description()` tell the model directly that a line may
+  come back with a `[[SECRET:<type>:<hash>]]` token in place of a credential, and that the token
+  (not a guessed or invented replacement) is what to pass back into `EditFile`'s `start_text`/
+  `end_text`/`old_text`/`new_text` to match or preserve that line.
+* `GrepTool` (`klorb/src/klorb/tools/grep.py`) constructs its own `self._secret_redactor =
+  SecretRedactor()` and applies it via a `_redact_lines()` helper, wrapped around every dense-
+  format result line (see docs/specs/tool-framework.md for the `"*42|text"`/`" 41|text"` format)
+  right where each `files[i]["lines"]` entry is built — covering both `outputStyle` values that
+  return line text (`"Matches"`, `"FullContext"`; `"ListFiles"` returns only filenames, so there's
+  nothing to redact). Unlike `ReadFileCore`/`EditFileCore`, matching itself (`match_line_indices`)
+  always runs against the file's real, unredacted content, read earlier in `apply()` — only the
+  rendered `lines` strings returned to the caller are masked, so a query for a secret's own
+  literal value still finds it (search behavior is unchanged), and results written to
+  `results_data_file` via `SpillDir` (large-result spilling) are already redacted, since spilling
+  happens after `_redact_lines()` has run.
 
 ## Session-state storage
 
@@ -93,18 +107,29 @@ captured during a session never reach disk through this mechanism. This is the s
 other tools already rely on to hold sensitive or unserializable state (`BashTool`'s live
 persistent-shell subprocess handle, `WebFetchTool`'s spill tmpdir).
 
+## Suppressing false positives (not yet implemented)
+
+`detect-secrets` has a baseline-file convention (typically `.secrets.baseline` at a repository's
+root) for suppressing known false positives, and `SecretRedactor` doesn't wire one up yet — every
+detected match is masked unconditionally, so klorb's own test fixtures and documentation that
+contain AWS-key-shaped example strings (including this feature's own tests) get redacted the same
+as a real secret would.
+
+If/when baseline support is added, the file belongs at `${workspace.path}/.klorb/
+secrets-baseline.json`, not a bare `.secrets.baseline` in the workspace root, for the same reasons
+`.klorb/klorb-config.json` lives there (see docs/specs/projects-and-trust.md): it's project-level,
+human-maintained, meant to be committed alongside the repository it applies to, and — simply by
+living under `.klorb/` — is automatically covered by the existing privileged-path deny
+(`klorb.permissions.directory_access.is_privileged_path`/`KLORB_PROJECT_DIR_NAME`), so a model can
+never read or edit its own allowlist through `ReadFile`/`EditFile`/`Grep`/`Bash` the way it could
+if the file sat in plain workspace-root space.
+
 ## Out of scope
 
-* **Other read paths bypass this filter entirely.** `Grep` and `Bash` (`cat`, `grep`, etc.) read
-  the same files and return literal content straight to the model with no redaction — `Grep` in
-  particular is a more likely real-world leak path than `ReadFile`, since searching for a name
-  like `API_KEY` surfaces the matching value directly in the result. This feature only closes
-  the `ReadFile`/`EditFile` path; it is not a guarantee that a secret in the workspace can never
-  reach the model's context by some other route.
-* **False positives on klorb's own repository are expected and unhandled.** Test fixtures or
-  documentation that contain AWS-key-shaped example strings (including this feature's own tests)
-  get redacted the same as a real secret would. `detect-secrets` has a baseline-file convention
-  (`.secrets.baseline`) for suppressing known false positives; this feature doesn't wire one up.
+* **`Bash` bypasses this filter entirely.** `cat`, `grep`, and any other command run through
+  `BashTool` return literal file content straight to the model with no redaction. This feature
+  only closes the `ReadFile`/`EditFile`/`Grep` paths; it is not a guarantee that a secret in the
+  workspace can never reach the model's context by some other route.
 * **Multi-line secrets are only partially handled.** `PrivateKeyDetector` matches the line
   carrying a PEM boundary marker (e.g. `-----BEGIN PRIVATE KEY-----`), but the key body on
   subsequent lines is not itself flagged or redacted, since detection runs per line

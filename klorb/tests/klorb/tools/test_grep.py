@@ -232,6 +232,56 @@ def test_max_results_exact_count_is_not_truncated(tmp_path: Path) -> None:
     assert result["truncated"] is False
 
 
+# --- Secret redaction (see docs/specs/secret-redaction.md) ---
+
+_AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
+
+
+def test_grep_redacts_a_matched_credential(tmp_path: Path) -> None:
+    (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["AWS_ACCESS_KEY_ID"]})
+
+    assert result["match_count"] == 1
+    lines = result["files"][0]["lines"]
+    assert len(lines) == 1
+    assert _AWS_KEY not in lines[0]
+    assert "[[SECRET:" in lines[0]
+
+
+def test_grep_redacts_credential_in_surrounding_context_too(tmp_path: Path) -> None:
+    """A secret pulled in only as FullContext surrounding another match is masked too, not
+    just the line that actually matched the query."""
+    (tmp_path / "creds.env").write_text(f"before\nAWS_ACCESS_KEY_ID={_AWS_KEY}\nafter\n")
+
+    result = GrepTool(_context(tmp_path, context_lines=1)).apply(
+        {"path": "", "queries": ["before"], "outputStyle": "FullContext"})
+
+    lines = result["files"][0]["lines"]
+    assert any(_AWS_KEY not in line and "[[SECRET:" in line for line in lines)
+    assert not any(_AWS_KEY in line for line in lines)
+
+
+def test_grep_still_matches_a_query_naming_the_secret_itself(tmp_path: Path) -> None:
+    """Matching runs against the file's real content, not the redacted rendering -- searching
+    for the secret's own literal value still finds it, even though the returned line is
+    masked."""
+    (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": [_AWS_KEY]})
+
+    assert result["match_count"] == 1
+    assert _AWS_KEY not in result["files"][0]["lines"][0]
+
+
+def test_grep_without_a_credential_is_unaffected(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["hello"]})
+
+    assert _matched_filenames(result) == {"top.py", "nested.py", "notes.txt"}
+
+
 def test_denied_root_raises_permission_error(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 

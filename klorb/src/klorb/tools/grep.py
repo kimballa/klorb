@@ -16,6 +16,7 @@ from klorb.tools.exceptions import ToolCallError
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import (
+    SecretRedactor,
     SpillDir,
     compile_queries,
     context_lines_for_matches,
@@ -74,6 +75,13 @@ class GrepTool(InterruptibleTool):
     same `klorb.tools.util.spill.SpillDir` mechanism `WebFetchTool` uses for its own response
     bodies, so a session that calls Grep repeatedly reuses one tmpdir rather than accumulating
     one per call. See `_spill_files_if_needed`.
+
+    Every returned line is also passed through `self._secret_redactor` (a
+    `klorb.tools.util.SecretRedactor`, the same type `ReadFileTool` uses), masking likely
+    credentials before they reach the model — see docs/specs/secret-redaction.md. Matching
+    itself still runs against each file's real, unredacted content, so a query naming a
+    known secret's literal value still finds it; only the line text returned in the result is
+    masked.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -83,6 +91,7 @@ class GrepTool(InterruptibleTool):
         self._max_line_length = context.process_config.grep_max_line_length
         self._spill_bytes = context.process_config.grep_spill_bytes
         self._spill_dir = SpillDir("Grep")
+        self._secret_redactor = SecretRedactor()
 
     def name(self) -> str:
         return "Grep"
@@ -123,7 +132,10 @@ class GrepTool(InterruptibleTool):
             f"{self._max_line_length} characters (marked with a trailing "
             f"'{_TRUNCATION_SUFFIX}'). If the 'files' result would be very large, it's "
             "written to a file instead and the result carries 'results_data_file' (a path "
-            "you can ReadFile) in place of 'files'."
+            "you can ReadFile) in place of 'files'. "
+            "A line that looks like it holds a credential may come back with the secret "
+            "replaced by a `[[SECRET:<type>:<hash>]]` token, same convention as ReadFile -- "
+            "copy the token verbatim into EditFile to match or preserve that line."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -187,6 +199,13 @@ class GrepTool(InterruptibleTool):
             "required": ["queries"],
             "additionalProperties": False,
         }
+
+    def _redact_lines(self, lines: list[str]) -> list[str]:
+        """Mask likely credentials out of each dense-format result line before it's returned --
+        see docs/specs/secret-redaction.md. Matching (`match_line_indices`, above) already ran
+        against the file's real content, so this only affects what's rendered back, never
+        whether a line counted as a hit."""
+        return list(map(lambda line: self._secret_redactor.redact(self.context.session, line), lines))
 
     def apply(self, args: dict[str, Any]) -> Any:
         # None or empty-string default searches recursively from ${workspaceRoot}.
@@ -259,15 +278,17 @@ class GrepTool(InterruptibleTool):
                     elif output_style == "Matches":
                         files.append({
                             "filename": str(single_file),
-                            "lines": [_truncate_line(line, self._max_line_length)
-                                      for line in matches_only(all_lines, matched_indices)],
+                            "lines": self._redact_lines(
+                                [_truncate_line(line, self._max_line_length)
+                                 for line in matches_only(all_lines, matched_indices)]),
                         })
                     else:  # FullContext
                         files.append({
                             "filename": str(single_file),
-                            "lines": [_truncate_line(line, self._max_line_length)
-                                      for line in context_lines_for_matches(
-                                          all_lines, matched_indices, self._context_lines)],
+                            "lines": self._redact_lines(
+                                [_truncate_line(line, self._max_line_length)
+                                 for line in context_lines_for_matches(
+                                     all_lines, matched_indices, self._context_lines)]),
                         })
                     match_count += len(matched_indices)
         else:
@@ -314,15 +335,17 @@ class GrepTool(InterruptibleTool):
                     elif output_style == "Matches":
                         files.append({
                             "filename": str(file_path),
-                            "lines": [_truncate_line(line, self._max_line_length)
-                                      for line in matches_only(all_lines, matched_indices)],
+                            "lines": self._redact_lines(
+                                [_truncate_line(line, self._max_line_length)
+                                 for line in matches_only(all_lines, matched_indices)]),
                         })
                     else:  # FullContext
                         files.append({
                             "filename": str(file_path),
-                            "lines": [_truncate_line(line, self._max_line_length)
-                                      for line in context_lines_for_matches(
-                                          all_lines, matched_indices, self._context_lines)],
+                            "lines": self._redact_lines(
+                                [_truncate_line(line, self._max_line_length)
+                                 for line in context_lines_for_matches(
+                                     all_lines, matched_indices, self._context_lines)]),
                         })
                     match_count += len(matched_indices)
                     if truncated:
