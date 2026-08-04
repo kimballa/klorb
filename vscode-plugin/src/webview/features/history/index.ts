@@ -29,6 +29,11 @@ import {
   isHistoryEntry,
   isScrollPinnedToBottom,
 } from './historyModel';
+import {
+  type ParsedPromptWithInterjections,
+  type ParsedSystemInterjection,
+  parseSystemInterjections,
+} from './parseSystemInterjections';
 import { type DiffRow, renderDiffLines } from './renderDiffLines';
 import { renderYamlFrontmatter } from './renderYamlFrontmatter';
 
@@ -38,6 +43,8 @@ export {
   type HistoryEntryKind,
   type HistoryViewProps,
   type MentionHighlightedTextProps,
+  type ParsedPromptWithInterjections,
+  type ParsedSystemInterjection,
   type PendingInteraction,
   type SessionStatsHistoryEntry,
   type TaskListSnapshot,
@@ -58,6 +65,7 @@ export {
   applyTurnFlag,
   isHistoryEntry,
   isScrollPinnedToBottom,
+  parseSystemInterjections,
   renderDiffLines,
   renderYamlFrontmatter,
   HistoryView,

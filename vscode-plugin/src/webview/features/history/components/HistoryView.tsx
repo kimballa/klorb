@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import type { JSX, Ref } from 'react';
+import { Fragment, type JSX, type Ref } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
@@ -7,6 +7,10 @@ import remarkGfm from 'remark-gfm';
 import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
 
 import type { HistoryEntry } from '../historyModel';
+import {
+  type ParsedSystemInterjection,
+  parseSystemInterjections,
+} from '../parseSystemInterjections';
 import { renderYamlFrontmatter } from '../renderYamlFrontmatter';
 
 import BashToolCallChip from './BashToolCallChip';
@@ -28,34 +32,85 @@ export interface HistoryViewProps {
   onRestartServer(): void;
 }
 
-function renderEntry(
-  entry: HistoryEntry,
-  index: number,
-  allThinkingExpanded: boolean,
-  onToggleToolCallExpanded: (callId: string) => void,
-  onRestartServer: () => void
-): JSX.Element {
+/** Props for one <Entry/>. */
+interface EntryProps {
+  /** The actual history entry information to render. */
+  entry: HistoryEntry;
+  /** sorted index in the history feed, lowest-numbers first. */
+  index: number;
+  /** True if thinking block(s) in this entry, if any, should be auto-expanded. */
+  allThinkingExpanded: boolean;
+  onToggleToolCallExpanded: (callId: string) => void;
+  onRestartServer: () => void;
+}
+
+/** Props for one <SystemInterjection/> within an Entry. */
+interface SystemInterjectionProps {
+  interjection: ParsedSystemInterjection;
+}
+
+function SystemInterjection(props: SystemInterjectionProps): JSX.Element {
+  const { interjection } = props;
+  const title = `System interjection (${interjection.subject})`;
+  return (
+    <details className="entry entry-system-interjection">
+      <summary>{title}</summary>
+      <div className="interjection-text">{interjection.body}</div>
+    </details>
+  );
+}
+
+/**
+ * One entry in the history view.
+ *
+ * Renders the specific kind of entry (tool call/response; user message; assistant message; thinking...)
+ * as-appropriate. Some entries are compound entries (e.g. user messages with preceeding system interjections).
+ * This will render all elements of the entire compound entry.
+ */
+function Entry({
+  entry,
+  index,
+  allThinkingExpanded,
+  onToggleToolCallExpanded,
+  onRestartServer,
+}: EntryProps): JSX.Element {
   switch (entry.kind) {
-    case 'prompt':
+    case 'prompt': {
+      const parsed = parseSystemInterjections(entry.text);
+      const interjectionElements = parsed.interjections.map((interjection, i) => (
+        <SystemInterjection key={`${index}-si-${i}`} interjection={interjection} />
+      ));
       return (
-        <div className="bubble bubble-prompt" key={index}>
-          {entry.images !== undefined && entry.images.length > 0 ? (
-            <div className="prompt-attachment-tray">
-              {entry.images.map((image, imageIndex) => (
-                <AttachmentThumbnail key={imageIndex} image={image} />
-              ))}
-            </div>
-          ) : null}
-          <MentionHighlightedText text={entry.text} />
-        </div>
+        <Fragment key={index}>
+          {interjectionElements}
+          <div className="bubble bubble-prompt">
+            {entry.images !== undefined && entry.images.length > 0 ? (
+              <div className="prompt-attachment-tray">
+                {entry.images.map((image, imageIndex) => (
+                  <AttachmentThumbnail key={imageIndex} image={image} />
+                ))}
+              </div>
+            ) : null}
+            <MentionHighlightedText text={parsed.remainingText} />
+          </div>
+        </Fragment>
       );
-    case 'queuedMessage':
+    }
+    case 'queuedMessage': {
+      const parsed = parseSystemInterjections(entry.text);
+      const interjectionElements = parsed.interjections.map((interjection, i) => (
+        <SystemInterjection key={`${index}-si-${i}`} interjection={interjection} />
+      ));
       return (
-        <div className="bubble bubble-prompt bubble-queued" key={index}>
-          <div className="queued-prompt-header">Queued message</div>
-          <MentionHighlightedText text={entry.text} />
-        </div>
+        <Fragment key={index}>
+          {interjectionElements}
+          <div className="bubble bubble-prompt bubble-queued">
+            <div className="queued-prompt-header">Queued message</div>
+            <MentionHighlightedText text={parsed.remainingText} />
+          </div>
+        </Fragment>
       );
+    }
     case 'response':
       return (
         <div className="entry entry-response" key={index}>
@@ -128,9 +183,16 @@ export default function HistoryView({
 }: HistoryViewProps): JSX.Element {
   return (
     <div id="history" ref={historyRef}>
-      {entries.map((entry, index) =>
-        renderEntry(entry, index, allThinkingExpanded, onToggleToolCallExpanded, onRestartServer)
-      )}
+      {entries.map((entry, index) => (
+        <Entry
+          key={index}
+          entry={entry}
+          index={index}
+          allThinkingExpanded={allThinkingExpanded}
+          onToggleToolCallExpanded={onToggleToolCallExpanded}
+          onRestartServer={onRestartServer}
+        />
+      ))}
     </div>
   );
 }

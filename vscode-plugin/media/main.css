@@ -437,6 +437,20 @@ body {
   margin-top: 4px;
 }
 
+.entry-system-interjection {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+.entry-system-interjection summary {
+  cursor: pointer;
+}
+
+.entry-system-interjection .interjection-text {
+  white-space: pre-wrap;
+  margin-top: 4px;
+}
+
 .entry-error {
   color: var(--vscode-errorForeground);
   white-space: pre-wrap;
