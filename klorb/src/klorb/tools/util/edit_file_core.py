@@ -4,11 +4,15 @@
 hold one of these as a member and delegate to it."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from klorb.tools.util.diff_lines import build_diff_hunks
+from klorb.tools.util.secret_redaction import SecretRedactor
+
+if TYPE_CHECKING:
+    from klorb.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +180,7 @@ class EditFileCore:
 
     def apply(
         self, path: Path, args: dict[str, Any], *, subject: str, reread_hint: str, create_hint: str,
+        redactor: SecretRedactor | None = None, session: "Session | None" = None,
     ) -> dict[str, Any]:
         """Apply one row-extent substitution to `path` per `args`, returning
         `requested_start_line`, `requested_end_line`, `start_line`, `end_line`,
@@ -183,6 +188,14 @@ class EditFileCore:
         `klorb.tools.util.diff_lines.build_diff_hunks()`'s full before/after diff, for a `Tool`'s
         `diff_preview()` to parse back into `DiffHunk`s (the caller adds `filename` if it has
         one).
+
+        When `redactor` is given, every anchor/replacement argument (`start_text`, `end_text`,
+        `new_text`, `context_before`, `context_after`, and each line of an `old_text` block) is
+        passed through `redactor.detokenize(session, ...)` before matching or writing -- so a
+        `[[SECRET:...]]` token a model echoes back from an earlier `ReadFile` resolves to the
+        file's real bytes rather than being matched or written literally. `post_edit_content`
+        and `diff` are then re-redacted before being returned, so the result never echoes a
+        plaintext secret back either. See docs/specs/secret-redaction.md.
 
         `args` may take any of the forms `_normalize_edit_args()` accepts: the classic
         `start_line`/`end_line`/`start_text`/`end_text` call; the single-line shortcut
@@ -209,6 +222,8 @@ class EditFileCore:
         caller (`EditFileTool`/`EditScratchpadTool`/`EditMemoryTool`) invoked this.
         """
         normalized = self._normalize_edit_args(args)
+        if redactor is not None:
+            normalized = self._detokenize_normalized_args(normalized, redactor, session)
         start_line = normalized.start_line
         end_line = normalized.end_line
         start_text = normalized.start_text
@@ -286,9 +301,18 @@ class EditFileCore:
         new_total_lines = len(new_lines)
         inserted_line_count = len(new_text.splitlines())
         snippet_end = resolved_start_line + inserted_line_count - 1
-        snippet = "\n".join(
-            f"{resolved_start_line + i}|{line}" for i, line in enumerate(new_text.splitlines()))
+        snippet_lines = new_text.splitlines()
         diff_hunks = build_diff_hunks(all_lines, new_lines)
+        if redactor is not None:
+            # Re-mask the just-written region for display: `content` above is the real bytes
+            # that belong on disk, but nothing that echoes it back to the model should carry a
+            # plaintext secret either -- see docs/specs/secret-redaction.md.
+            snippet_lines = [redactor.redact(session, line) for line in snippet_lines]
+            for hunk in diff_hunks:
+                for diff_line in hunk.lines:
+                    diff_line.text = redactor.redact(session, diff_line.text)
+        snippet = "\n".join(
+            f"{resolved_start_line + i}|{line}" for i, line in enumerate(snippet_lines))
 
         out: dict[str, Any] = {
             "requested_start_line": start_line,
@@ -335,6 +359,30 @@ class EditFileCore:
             out['feedback'] = user_feedback
 
         return out
+
+    @staticmethod
+    def _detokenize_normalized_args(
+        normalized: "_NormalizedEditArgs", redactor: SecretRedactor, session: "Session | None",
+    ) -> "_NormalizedEditArgs":
+        """Substitute any `SecretRedactor` tokens in `normalized`'s anchors/replacement text
+        back to their real plaintext, so `_resolve_line_range_edit` matches against (and
+        `apply()` writes) the file's actual bytes rather than a `[[SECRET:...]]` placeholder --
+        see docs/specs/secret-redaction.md."""
+        return replace(
+            normalized,
+            start_text=redactor.detokenize(session, normalized.start_text),
+            end_text=redactor.detokenize(session, normalized.end_text),
+            new_text=redactor.detokenize(session, normalized.new_text),
+            context_before=(
+                redactor.detokenize(session, normalized.context_before)
+                if normalized.context_before is not None else None),
+            context_after=(
+                redactor.detokenize(session, normalized.context_after)
+                if normalized.context_after is not None else None),
+            block_lines=(
+                [redactor.detokenize(session, line) for line in normalized.block_lines]
+                if normalized.block_lines is not None else None),
+        )
 
     @staticmethod
     def _require_int(label: str, value: Any) -> int:

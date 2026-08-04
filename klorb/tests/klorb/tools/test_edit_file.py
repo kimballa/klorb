@@ -9,15 +9,18 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.edit_file import EditFileTool
+from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
+
+_AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
 
 
 def _context(
     workspace_root: Path, *, read_dirs: DirRules | None = None, write_dirs: DirRules | None = None,
-    process_config: ProcessConfig | None = None,
+    process_config: ProcessConfig | None = None, session: Session | None = None,
 ) -> ToolSetupContext:
     """Defaults both `readDirs`/`writeDirs` to allowing all of `workspace_root`, since
     `evaluate_write()` requires an explicit allow in *both* tables (see
@@ -31,7 +34,15 @@ def _context(
         session_config=SessionConfig(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(allow=[workspace_root]),
-            write_dirs=write_dirs or DirRules(allow=[workspace_root])))
+            write_dirs=write_dirs or DirRules(allow=[workspace_root])),
+        session=session)
+
+
+def _session(tmp_path: Path) -> Session:
+    config = SessionConfig(
+        workspace=Workspace(path=tmp_path), read_dirs=DirRules(allow=[tmp_path]),
+        write_dirs=DirRules(allow=[tmp_path]))
+    return Session(config=config)
 
 
 def _write(path: Path, name: str, content: str) -> Path:
@@ -1574,3 +1585,70 @@ def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
             "start_text": "x", "end_text": "x", "new_text": "y"}
 
     assert tool.diff_preview(args, None, "does not exist") is None
+
+
+# --- Secret redaction (see docs/specs/secret-redaction.md) ---
+
+
+def test_edit_file_token_round_trip_preserves_the_real_secret(tmp_path: Path) -> None:
+    """The read/edit loop: a `[[SECRET:...]]` token echoed back in EditFile's old_text/new_text
+    resolves to the real secret for matching (so the edit succeeds at all), and the real secret
+    -- never the literal token text -- is what ends up written to disk."""
+    session = _session(tmp_path)
+    try:
+        file_path = _write(tmp_path, "creds.env", f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nfoo\n")
+
+        read_result = ReadFileTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(file_path)})
+        token_line = read_result["content"].splitlines()[0].split("|", 1)[1]
+        assert _AWS_KEY not in token_line
+        assert token_line.startswith("AWS_ACCESS_KEY_ID=[[SECRET:")
+
+        edit_result = EditFileTool(_context(tmp_path, session=session)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 2,
+            "old_text": f"{token_line}\nfoo",
+            "new_text": f"{token_line}\nbar",
+        })
+
+        # The real secret, never the literal token, lands on disk.
+        assert file_path.read_text() == f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nbar\n"
+        # The tool result never echoes the plaintext secret back either.
+        assert _AWS_KEY not in edit_result["post_edit_content"]
+        assert _AWS_KEY not in str(edit_result["diff"])
+        assert token_line.split("=", 1)[1] in edit_result["post_edit_content"]
+    finally:
+        session.close()
+
+
+def test_edit_file_matches_a_token_via_start_text_end_text_form(tmp_path: Path) -> None:
+    """The classic start_text/end_text single-line form also resolves a token, not just
+    old_text."""
+    session = _session(tmp_path)
+    try:
+        file_path = _write(tmp_path, "creds.env", f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+        read_result = ReadFileTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(file_path)})
+        token_line = read_result["content"].splitlines()[0].split("|", 1)[1]
+
+        EditFileTool(_context(tmp_path, session=session)).apply({
+            "filename": str(file_path), "start_line": 1, "end_line": 1,
+            "start_text": token_line, "end_text": token_line,
+            "new_text": "AWS_ACCESS_KEY_ID=rotated",
+        })
+
+        assert file_path.read_text() == "AWS_ACCESS_KEY_ID=rotated\n"
+    finally:
+        session.close()
+
+
+def test_edit_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
+    """A redactor is always attached, but an edit that never mentions a token is unaffected."""
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "start_line": 2, "end_line": 2,
+        "start_text": "b", "end_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"

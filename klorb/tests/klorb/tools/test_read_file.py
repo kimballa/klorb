@@ -9,10 +9,12 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINE_LENGTH, DEFAULT_READ_FILE_MAX_LINES, ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
+
+_AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
 
 
 def _context(
@@ -23,6 +25,7 @@ def _context(
     is_workspace_trusted: bool = False,
     read_dirs: DirRules | None = None,
     write_dirs: DirRules | None = None,
+    session: Session | None = None,
 ) -> ToolSetupContext:
     return ToolSetupContext(
         process_config=ProcessConfig(
@@ -34,6 +37,7 @@ def _context(
             read_dirs=read_dirs or DirRules(),
             write_dirs=write_dirs or DirRules(),
         ),
+        session=session,
     )
 
 
@@ -484,3 +488,28 @@ def test_truncation_at_line_boundary_omits_cause(tmp_path: Path) -> None:
     assert result["truncated"] is True
     assert "truncation_cause" not in result
     assert result["next_start_line"] == 4
+
+
+# --- Secret redaction (see docs/specs/secret-redaction.md) ---
+
+
+def test_read_file_redacts_a_likely_credential(tmp_path: Path) -> None:
+    file_path = tmp_path / "creds.env"
+    file_path.write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nordinary line\n")
+
+    result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
+
+    assert _AWS_KEY not in result["content"]
+    assert "[[SECRET:" in result["content"]
+    assert result["content"].splitlines()[1] == "2|ordinary line"
+
+
+def test_read_file_total_lines_unaffected_by_redaction(tmp_path: Path) -> None:
+    """Paging metadata reflects the real file, not the redacted content."""
+    file_path = tmp_path / "creds.env"
+    file_path.write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+    result = ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
+
+    assert result["total_lines"] == 1
+    assert result["truncated"] is False

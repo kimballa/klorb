@@ -42,6 +42,10 @@ result to disk instead of returning it inline — shared by `GrepTool`'s `files`
 `klorb.tools.web.spill` (`WebFetchTool`'s response bodies). Like `walk_readable_tree`, it takes
 a `Session` (only for type-checking, via `TYPE_CHECKING`, not a runtime import), so re-exporting
 it here is cycle-free for the same reason `dir_walk.py` is.
+
+`secret_redaction.py` (`SecretRedactor`) is the credential-masking filter `ReadFileCore`/
+`EditFileCore` apply to file content before it reaches a model — see
+docs/specs/secret-redaction.md. Like `SpillDir`, it takes a `Session` only for type-checking.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
@@ -65,6 +69,7 @@ from klorb.tools.util.search_core import (
     validate_output_style,
     validate_queries,
 )
+from klorb.tools.util.secret_redaction import SecretRedactor
 from klorb.tools.util.spill import SpillDir
 
 __all__ = [
@@ -77,6 +82,7 @@ __all__ = [
     "LineRangeEdit",
     "READ_PREVIEW_MAX_LINES",
     "ReadFileCore",
+    "SecretRedactor",
     "SpillDir",
     "VALID_OUTPUT_STYLES",
     "build_diff_hunks",

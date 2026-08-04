@@ -8,7 +8,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore
+from klorb.tools.util import DiffHunk, EditFileCore, SecretRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,17 @@ class EditFileTool(Tool):
     including any missing parent directories -- see `EditFileCore.apply()`. Any other shape
     against a nonexistent file raises `FileNotFoundError` naming `CreateFile` as the tool to use
     instead, since this mechanic can't create a file at an arbitrary line range.
+
+    `self._secret_redactor` (the same `klorb.tools.util.SecretRedactor` type `ReadFileTool`
+    uses) resolves any `[[SECRET:<type>:<hash>]]` token in the call's arguments back to real
+    plaintext before matching/writing, and re-masks the result before it's returned. See
+    docs/specs/secret-redaction.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
         self.edit_file_core = EditFileCore(context.process_config.edit_file_drift_search_radius)
+        self._secret_redactor = SecretRedactor()
 
     def name(self) -> str:
         return "EditFile"
@@ -90,7 +96,7 @@ class EditFileTool(Tool):
 
         result = self.edit_file_core.apply(
             path, args, subject=filename, reread_hint=f"Use ReadFile on filename={filename}",
-            create_hint="CreateFile")
+            create_hint="CreateFile", redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
 
         logger.debug(

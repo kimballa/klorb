@@ -6,7 +6,12 @@ and delegate to it."""
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import IO, Any, Callable
+from typing import IO, TYPE_CHECKING, Any, Callable
+
+from klorb.tools.util.secret_redaction import SecretRedactor
+
+if TYPE_CHECKING:
+    from klorb.session import Session
 
 READ_PREVIEW_MAX_LINES = 4
 """How many numbered lines a `Tool.read_preview()` override keeps in `ReadPreview.preview_lines`
@@ -122,7 +127,10 @@ class ReadFileCore:
             return open(path, encoding="utf-8")
         return path.open("r", encoding="utf-8")
 
-    def apply(self, path: Traversable, args: dict[str, Any]) -> dict[str, Any]:
+    def apply(
+        self, path: Traversable, args: dict[str, Any], *,
+        redactor: SecretRedactor | None = None, session: "Session | None" = None,
+    ) -> dict[str, Any]:
         """Read `path` per `args`' `start_line`/`end_line`, returning `start_line`, `end_line`,
         `total_lines`, `truncated`, `content` (the caller adds `filename`/`name` if it has one),
         and, when `truncated` is true, `next_start_line` -- the `start_line` to pass on the next
@@ -133,6 +141,11 @@ class ReadFileCore:
         Lines longer than `max_line_length` are wrapped at that width, with each wrapped segment
         counting toward the `max_lines` page-size limit. An unlisted `wrap_width` arg in `args`
         overrides the default wrap width when set to a positive number.
+
+        When `redactor` is given, each raw line is passed through `redactor.redact(session,
+        line)` before wrapping, masking likely credentials out of `content` -- see
+        docs/specs/secret-redaction.md. `total_lines`/`truncated`/`next_start_line` are computed
+        from the real (unredacted) line count either way, so paging stays accurate.
         """
         start_line = args.get("start_line")
         end_line = args.get("end_line")
@@ -175,6 +188,11 @@ class ReadFileCore:
             selected_lines = all_lines[effective_start - 1:capped_end]
         else:
             selected_lines = []
+
+        # Mask likely credentials before wrapping, so a redacted secret can't be split across
+        # two wrapped segments.
+        if redactor is not None:
+            selected_lines = [redactor.redact(session, line) for line in selected_lines]
 
         # Build output lines, wrapping long lines and counting toward max_lines.
         output_segments: list[str] = []
