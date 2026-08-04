@@ -19,17 +19,17 @@ the longest chain of thought that produces a plausible-sounding one.
 
 ## The loop
 
-1. **State one falsifiable hypothesis.** Not "something's wrong with the config merge" — pick
-   the single specific claim you can check next: "`SessionConfig.workspace.trusted` is `False`
-   at the point `build_catalogs()` runs, so the workspace tier is skipped." If you can't state
-   what observation would prove it wrong, you don't have a hypothesis yet, you have a vibe —
-   narrow it until you do.
+1. **State one falsifiable hypothesis.** Not "something's wrong with the retry logic" — pick
+   the single specific claim you can check next: "the retry loop resets `attempt` to 0 before
+   it checks the timeout, so the timeout condition can never fire." If you can't state what
+   observation would prove it wrong, you don't have a hypothesis yet, you have a vibe — narrow
+   it until you do.
 2. **Pick the cheapest check that could falsify it.** In order of preference:
    * A test that already exists and exercises the path — run just that one.
-   * A one-line `logger.debug()` (or `print()` in a throwaway script) at the exact point your
-     hypothesis makes a claim, then run the smallest thing that reaches it.
-   * A tiny reproduction script in the scratchpad, when no existing entry point reaches the
-     code path in isolation.
+   * A one-line log statement (or a `print()`/equivalent in a throwaway script) at the exact
+     point your hypothesis makes a claim, then run the smallest thing that reaches it.
+   * A tiny reproduction script, written with `EditScratchpad` when no existing entry point
+     reaches the code path in isolation.
    Don't reach for a debugger session or a wide instrumentation pass before trying the smallest
    thing that could settle the one claim you just made.
 3. **Run it and read the actual output.** Not what you expect it to say — what it says. A
@@ -42,7 +42,7 @@ the longest chain of thought that produces a plausible-sounding one.
 
 Stop reasoning and go to step 2 the moment you catch yourself building a theory instead of
 checking one. That catch is the signal, the same way second-guessing a settled decision is the
-signal to ask rather than think harder (see `default_sys.md`'s "Deciding vs. asking").
+signal to ask rather than think harder (see the system prompt's guidance on deciding vs. asking).
 
 ## Running things
 
@@ -58,13 +58,13 @@ signal to ask rather than think harder (see `default_sys.md`'s "Deciding vs. ask
 * **Write throwaway reproduction scripts freely.** A five-line script that calls the one
   function you're suspicious of, with the exact input from the bug report, beats reasoning
   about what that function does with that input. Clean it up before declaring the task done —
-  see `default_sys.md`'s "Ground in reality" on using throwaway scripts and temporary code
-  augmentation to learn.
-* **Prefer logging over stepping.** klorb has no interactive debugger tool. A `logger.debug()`
-  (or a temporary `print()`) at a decision point, run once, gives you the same answer a
-  breakpoint would — and the transcript of what you tried stays readable afterward, in the
-  scratchpad or the run's own log output, instead of living only in a debugger session nobody
-  can replay.
+  see the system prompt's guidance on using throwaway scripts and temporary code augmentation
+  to learn.
+* **Prefer logging over stepping.** You have no interactive debugger tool. A log statement (or
+  a temporary `print()`/equivalent) at a decision point, run once, gives you the same answer a
+  breakpoint would — and the transcript of what you tried stays readable afterward, in
+  `EditScratchpad`/`ReadScratchpad` notes or the run's own log output, instead of living only
+  in a debugger session nobody can replay.
 * **Remove throwaway instrumentation once it's answered its question**, the same as any other
   throwaway script — unless the line is worth keeping on its own merits (it marks a
   consequential action: a system-level side effect, a permission decision, a step in a loop
@@ -73,23 +73,32 @@ signal to ask rather than think harder (see `default_sys.md`'s "Deciding vs. ask
 
 ## When you can't run it yourself
 
-Some evidence is outside what a headless agent can gather: a VS Code extension's actual
-behavior inside the VS Code UI, a rendered webview, a browser-only repro, a physical device, or
-anything that needs a human to click through a GUI and describe or screenshot what happened.
-Don't spend tokens theorizing about what a UI probably looks like or does — ask.
+Some evidence is outside what a headless agent can gather on its own, whatever kind of system
+you're debugging:
+
+* **Systems/backend code:** a process that needs to be attached to with `strace`/`ltrace`/a
+  profiler running under a permission level you don't have, or a production incident visible
+  only in a dashboard or log aggregator you can't query directly.
+* **Web frontend:** how a page actually renders, a layout bug, an animation glitch, or a
+  browser devtools console/network error only visible by opening a real browser.
+* **Embedded/MCU:** a device's behavior observed over a serial cable, JTAG/SWD probe, or logic
+  analyzer, or anything that needs a board power-cycled, reflashed, or physically probed.
+
+Don't spend tokens theorizing about what a screen or a device probably shows — ask.
 
 Use `AskUserQuestions` with an empty `options` list (a free-text ask) to hand the step to the
-user as your hands: tell them exactly what to run or click, and exactly what you need back (a
-screenshot, a pasted error, a copy of a panel's content, whether a button was enabled). This is
-not a fallback of last resort to feel bad about — it is the cheapest correct move once you've
-identified that the next piece of evidence genuinely requires eyes or hands you don't have.
-Keep the ask narrow and concrete ("Open the extension in the Extension Development Host, run
-the failing command, and paste the Output panel's `klorb` channel here") rather than a vague
-"can you check if this works."
+user as your hands: tell them exactly what to run, click, or connect, and exactly what you need
+back (a screenshot, a pasted console error, a copy of a captured trace, the text printed to a
+serial console after reset). This is not a fallback of last resort to feel bad about — it is
+the cheapest correct move once you've identified that the next piece of evidence genuinely
+requires eyes or hands you don't have. Keep the ask narrow and concrete — "Reset the board and
+paste the first 20 lines printed to the serial console" or "Open the page in a browser, open
+devtools, and paste any console errors" — rather than a vague "can you check if this works."
 
 ## Recording what you learn
 
-Use the scratchpad to track hypotheses tried and their outcomes on anything longer than a
+Use `EditScratchpad` to track hypotheses tried and their outcomes on anything longer than a
 couple of iterations — "confirmed: X is null at Y" or "ruled out: Z runs before W, not after"
-is worth more than re-deriving the same fact from scratch two iterations later, and keeps a
-long debugging session from silently repeating a check it already ran.
+is worth more than re-deriving the same fact from scratch two iterations later. `ReadScratchpad`
+or `SearchScratchpad` to check what you already ruled out before proposing it again, which keeps
+a long debugging session from silently repeating a check it already ran.
