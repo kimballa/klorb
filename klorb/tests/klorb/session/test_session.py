@@ -490,7 +490,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
     system_msg = _with_metadata(COMPOSED_OPERATOR_PROMPT, "some/model")
     assert user_msgs_content[0] == system_msg
     assert user_msgs_content[1].endswith("hi")
-    assert '<SystemInterjection subject="metadata">' in user_msgs_content[1]
+    assert '<SystemInterjection subject="Metadata">' in user_msgs_content[1]
     assert user_msgs_content[2] == "model reply"
 
 

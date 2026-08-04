@@ -204,7 +204,7 @@ def test_send_turn_no_context_file_interjection_when_untrusted(tmp_path: Path) -
     # still fires regardless of workspace trust, carrying the session start time and root.
     assert '<SystemInterjection subject="ProjectGuidance">' not in user_msgs[0].content
     assert "Be careful with tests." not in user_msgs[0].content
-    assert '<SystemInterjection subject="metadata">' in user_msgs[0].content
+    assert '<SystemInterjection subject="Metadata">' in user_msgs[0].content
     assert "The workspace root is" in user_msgs[0].content
     assert user_msgs[0].content.endswith("do the task")
     assert session._context_files_seeded is True

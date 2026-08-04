@@ -561,7 +561,7 @@ class SessionTurnsMixin(SessionBase):
                 metadata_strs.append(f"The current git branch is `{git_branch}`. ")
 
             metadata_body = "\n".join(metadata_strs)
-            prompt = f"{wrap_system_interjection('metadata', metadata_body)}\n{prompt}"
+            prompt = f"{wrap_system_interjection('Metadata', metadata_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
             # The classifier call below can take several seconds; `_current_turn_handlers` is set

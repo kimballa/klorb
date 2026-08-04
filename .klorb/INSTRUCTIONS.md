@@ -13,5 +13,4 @@ modify your own `ReadFile` tool, for example. But you *can* modify `read_file.py
 tool's source code lives, so that future Klorb instances have access to a new-and-improved
 version of the tool.
 
-It's all a bit confusing, so think carefully about what the user is asking you to perform before
-responding.
+It's all a bit confusing, so think carefully about what the user is asking you to perform before responding.
