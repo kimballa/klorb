@@ -10,6 +10,7 @@ afterEach(cleanup);
 const NOOP = {
   taskPanelVisible: true,
   subagentsPanelVisible: false,
+  allThinkingExpanded: false,
   onPickModel: () => undefined,
   onPickThinking: () => undefined,
   onCyclePermissionMode: () => undefined,
@@ -19,6 +20,7 @@ const NOOP = {
   onReloadSkills: () => undefined,
   onToggleTaskPanel: () => undefined,
   onToggleSubagentsPanel: () => undefined,
+  onToggleAllThinkingExpanded: () => undefined,
   onAttachImage: () => undefined,
 };
 

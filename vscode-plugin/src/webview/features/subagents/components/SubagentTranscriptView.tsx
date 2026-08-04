@@ -16,6 +16,7 @@ export interface SubagentTranscriptViewProps {
    * keypress rather than only once the cancellation actually lands, mirroring the TUI's
    * `_note_subagent_interrupt_requested` optimistic notice. */
   interruptPending: boolean;
+  allThinkingExpanded: boolean;
   onToggleToolCallExpanded(callId: string): void;
 }
 
@@ -48,6 +49,7 @@ export default function SubagentTranscriptView({
   entries,
   state,
   aborted,
+  allThinkingExpanded,
   interruptPending,
   onToggleToolCallExpanded,
 }: SubagentTranscriptViewProps): JSX.Element {
@@ -62,6 +64,7 @@ export default function SubagentTranscriptView({
       <HistoryView
         entries={entries}
         historyRef={containerRef}
+        allThinkingExpanded={allThinkingExpanded}
         onToggleToolCallExpanded={onToggleToolCallExpanded}
         onRestartServer={() => {
           /* A subagent's transcript never carries a 'serverError' entry -- its turn always runs

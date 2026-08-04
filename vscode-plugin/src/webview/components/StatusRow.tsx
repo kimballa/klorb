@@ -16,6 +16,7 @@ export interface StatusRowProps {
   outputTokens?: number;
   taskPanelVisible: boolean;
   subagentsPanelVisible: boolean;
+  allThinkingExpanded: boolean;
   activeModelVision?: boolean;
   /** False while a subagent (not the root session) is selected in the subagents panel: the
    * model/thinking chips render as plain, non-clickable text instead of buttons, since a
@@ -32,6 +33,7 @@ export interface StatusRowProps {
   onReloadSkills(): void;
   onToggleTaskPanel(): void;
   onToggleSubagentsPanel(): void;
+  onToggleAllThinkingExpanded(): void;
   onAttachImage(): void;
 }
 
@@ -96,6 +98,7 @@ export default function StatusRow({
   outputTokens,
   taskPanelVisible,
   subagentsPanelVisible,
+  allThinkingExpanded,
   activeModelVision,
   interactive = true,
   onPickModel,
@@ -107,6 +110,7 @@ export default function StatusRow({
   onReloadSkills,
   onToggleTaskPanel,
   onToggleSubagentsPanel,
+  onToggleAllThinkingExpanded,
   onAttachImage,
 }: StatusRowProps): JSX.Element {
   const [flashing, setFlashing] = useState(false);
@@ -166,6 +170,13 @@ export default function StatusRow({
       </button>
       {tally !== undefined ? <span className="status-chip status-tokens">{tally}</span> : null}
       <span className="status-row-spacer" />
+      <IconButton
+        variant="toggle"
+        active={allThinkingExpanded}
+        title={allThinkingExpanded ? 'Hide thinking details' : 'Expand thinking details'}
+        onClick={onToggleAllThinkingExpanded}>
+        <vscode-icon name="thinking" />
+      </IconButton>
       <IconButton
         variant="toggle"
         active={taskPanelVisible}

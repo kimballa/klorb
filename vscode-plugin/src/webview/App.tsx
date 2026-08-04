@@ -111,6 +111,8 @@ export default function App({
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(
     initialSelectedSubagentId ?? null
   );
+  /** True if all thinking blocks should be auto-expanded. */
+  const [allThinkingExpanded, setAllThinkingExpanded] = useState<boolean>(false);
   const promptInputRef = useRef<PromptInputHandle>(null);
   // Follows new content to the bottom only while the user hasn't scrolled away from it, mirroring
   // the TUI's own `_scroll_if_pinned`/`_subagent_history_pinned_to_bottom` -- two independent
@@ -393,6 +395,10 @@ export default function App({
     setEntries((prev) => applyToolCallExpandedToggle(prev, callId));
   }
 
+  function onToggleAllThinkingExpanded() {
+    setAllThinkingExpanded((curAllThinkingExpanded) => !curAllThinkingExpanded);
+  }
+
   function handleApprovalDecision(decision: ApprovalDecision): void {
     if (pendingInteraction === undefined || pendingInteraction.type !== 'permissionAsk') {
       return;
@@ -513,6 +519,7 @@ export default function App({
           entries={subagentTranscriptEntries(activeSubagentTranscript, subagentExpandedCallIds)}
           state={activeSubagentTranscript?.state}
           aborted={activeSubagentTranscript?.aborted ?? false}
+          allThinkingExpanded={allThinkingExpanded}
           interruptPending={subagentInterruptPending === selectedSubagentId}
           onToggleToolCallExpanded={toggleSubagentToolCallExpanded}
         />
@@ -520,6 +527,7 @@ export default function App({
         <HistoryView
           entries={entries}
           historyRef={historyRef}
+          allThinkingExpanded={allThinkingExpanded}
           onToggleToolCallExpanded={toggleToolCallExpanded}
           onRestartServer={restartServer}
         />
@@ -555,6 +563,7 @@ export default function App({
         {...effectiveStatus}
         taskPanelVisible={taskPanelVisible}
         subagentsPanelVisible={subagentsPanelVisible}
+        allThinkingExpanded={allThinkingExpanded}
         interactive={!isSubagentSelected}
         onPickModel={pickModel}
         onPickThinking={pickThinking}
@@ -565,6 +574,7 @@ export default function App({
         onReloadSkills={reloadSkills}
         onToggleTaskPanel={toggleTaskPanelVisible}
         onToggleSubagentsPanel={toggleSubagentsPanelVisible}
+        onToggleAllThinkingExpanded={onToggleAllThinkingExpanded}
         onAttachImage={attachImage}
       />
     </VsCodeApiProvider>

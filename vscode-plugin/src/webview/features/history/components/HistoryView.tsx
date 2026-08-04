@@ -20,6 +20,8 @@ export interface HistoryViewProps {
   entries: HistoryEntry[];
   /** Ref to the scrolling container, so the owner can keep the newest entry in view. */
   historyRef: Ref<HTMLDivElement>;
+  /** True if thinking blocks should be expanded by default. */
+  allThinkingExpanded: boolean;
   onToggleToolCallExpanded(callId: string): void;
   /** Restarts the `klorb server` child process -- wired to a `'serverError'` entry's "Restart
    * Server" action (see `docs/specs/vscode-plugin.md`'s interrupt-polish section). */
@@ -29,6 +31,7 @@ export interface HistoryViewProps {
 function renderEntry(
   entry: HistoryEntry,
   index: number,
+  allThinkingExpanded: boolean,
   onToggleToolCallExpanded: (callId: string) => void,
   onRestartServer: () => void
 ): JSX.Element {
@@ -65,7 +68,10 @@ function renderEntry(
       );
     case 'thinking':
       return (
-        <details className="entry entry-thinking" key={index}>
+        <details
+          className="entry entry-thinking"
+          key={index}
+          open={allThinkingExpanded ? true : undefined}>
           <summary>Thinking…</summary>
           <div className="thinking-text">{entry.text}</div>
         </details>
@@ -116,13 +122,14 @@ function renderEntry(
 export default function HistoryView({
   entries,
   historyRef,
+  allThinkingExpanded,
   onToggleToolCallExpanded,
   onRestartServer,
 }: HistoryViewProps): JSX.Element {
   return (
     <div id="history" ref={historyRef}>
       {entries.map((entry, index) =>
-        renderEntry(entry, index, onToggleToolCallExpanded, onRestartServer)
+        renderEntry(entry, index, allThinkingExpanded, onToggleToolCallExpanded, onRestartServer)
       )}
     </div>
   );
