@@ -208,6 +208,8 @@
 
 ### Feature backlog
 
+* VSCode should show a custom icon for the plugin in the 'installed plugins' list.
+
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
 
