@@ -1,6 +1,6 @@
 ---
 name: concise-commit-and-pr-summaries
-description: Calibrate the length and content of a commit message or PR description before writing one. Use whenever about to write a commit message body, a PR "Summary"/"Test plan" section, or update a PR description — especially after a multi-step task that touched many files or fixed several incidental bugs along the way, where the instinct is to narrate everything that happened.
+description: MANDATORY before every commit message body and every PR Summary/Test plan section — no exceptions for small, single-purpose, or "obviously simple" changes, which is exactly where this gets skipped and still produces a laundry list. Invoke this BEFORE drafting the message, not as a later editing pass over something already written. Trigger on any git commit, gh pr create, or PR description update.
 ---
 
 # Writing concise commit messages and PR summaries
@@ -9,6 +9,19 @@ The default failure mode is narrating the diff: one bullet per rule/file/decisio
 explaining the reasoning behind each one, and a paragraph-per-bug account of everything that got
 fixed along the way. The diff already shows all of that in full, reviewable detail. The message's
 job is to orient a reader in a few seconds, not re-derive the diff in prose.
+
+## Draft short the first time — don't write long then trim
+
+Writing everything that happened and then editing it down is itself the failure mode, not a fix
+for it: an edit pass rarely cuts far enough, because every bullet feels justified once it's
+already on the page (see the worked example below — even the "trimmed" first draft still needed a
+human editor to cut it *again* before merging). Skip the long draft entirely.
+
+Before writing a single line, answer this out loud to yourself: **if you had one breath to tell a
+teammate what this change does, what would you say?** Write that sentence (or two) first — that's
+the commit message and the PR Summary's spine. Only after that exists, decide whether any
+*additional* bullet clears the bar in "What earns a line" below. Treat that section as a filter on
+candidate bullets, not a checklist to fill in from the diff.
 
 ## Worked example: what actually shipped
 
@@ -82,6 +95,22 @@ that even when every sentence is accurate. If a change needs more than 1-2 sente
 that need is a signal the *code* should carry the explanation (a code comment, a spec, an ADR),
 not that the commit body should grow to compensate.
 
+## Budget, not aspiration
+
+These are hard caps to draft against, not targets to aim near and drift past:
+
+* Commit body: 1-2 sentences. Not "1-2 sentences, plus a few more for this particular case" —
+  every case feels particular while you're writing it.
+* PR Summary: 3-5 bullets. If a change genuinely has more than 5 load-bearing facts, that's rare
+  enough to be worth double-checking rather than the normal case.
+* Test plan: one line per distinct check actually run, no parenthetical explaining what the check
+  covers.
+
+If a draft blows through these, that is not evidence the change was unusually complex — nearly
+every change feels that way while its author is still holding the whole diff in their head. It's
+evidence the draft is still narrating rather than summarizing. Go back and cut; don't write a
+sentence justifying why this instance deserved to be longer.
+
 ## What earns a line, and what doesn't
 
 * One bullet per **user-visible change or target** (a new Makefile target, a new config file, a
@@ -110,8 +139,11 @@ never the one sentence a reviewer actually needs to evaluate risk.
 
 ## Checklist before sending a commit message or PR body
 
+* [ ] Did I write the one-breath summary sentence *first*, before drafting any bullets?
 * [ ] Is each Summary bullet one line naming a change, not a change plus its internal rationale?
 * [ ] Did I enumerate individual bugs/files where one summary line (trusting the diff) would do?
 * [ ] Did I drop bullets for small, self-evident accompanying changes?
 * [ ] Is the commit message itself 1-2 sentences, focused on *why*?
+* [ ] Does the draft fit the budget above (commit: 1-2 sentences; PR Summary: 3-5 bullets)? If not,
+      cut — don't rationalize the overage.
 * [ ] Does anything genuinely risky or non-obvious still get its own explicit line?
