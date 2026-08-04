@@ -104,4 +104,16 @@ describe('KlorbServerProcess', () => {
 
     expect(spawnCwd).toBe('/workspace/project');
   });
+
+  it('passes env through to the spawn function', () => {
+    let spawnEnv: NodeJS.ProcessEnv | undefined;
+    const server = new KlorbServerProcess((_command, _args, env) => {
+      spawnEnv = env;
+      return makeFakeChild();
+    });
+    const env = { KLORB_LOG_LEVEL: 'DEBUG', OPENROUTER_API_KEY: 'key' };
+    server.start({ command: 'klorb', env }, '/workspace');
+
+    expect(spawnEnv).toBe(env);
+  });
 });

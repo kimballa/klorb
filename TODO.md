@@ -211,10 +211,6 @@
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
 
-* Add a `klorb.logLevel` argument to the VSCode plugin config that accepts
-  DEBUG/INFO/WARNING/ERROR/CRITICAL and if not empty, sets `$KLORB_LOG_LEVEL` in the environment
-  used to spawn the `klorb server` process.
-
 * "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
   or `<table>`, not just a bunch of text.
 

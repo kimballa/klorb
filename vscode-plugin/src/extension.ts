@@ -112,10 +112,14 @@ async function readServerOptions(apiKeyManager: ApiKeyManager): Promise<KlorbSer
   const config = vscode.workspace.getConfiguration('klorb');
   const command = config.get<string>('serverPath', 'klorb');
   const configPath = config.get<string>('configPath', '');
+  const logLevel = config.get<string>('logLevel', '');
   const apiKey = await apiKeyManager.resolve();
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (apiKey !== undefined) {
     env.OPENROUTER_API_KEY = apiKey;
+  }
+  if (logLevel.length > 0) {
+    env.KLORB_LOG_LEVEL = logLevel;
   }
   return { command, env, configPath };
 }
