@@ -122,11 +122,28 @@ sentence justifying why this instance deserved to be longer.
   existing lint violations throughout") plus the diff itself is enough — don't re-narrate what
   `git diff` already shows.
 * Skip a bullet entirely for changes small and self-evident enough that a reviewer skimming the
-  diff wouldn't need it flagged (a one-line config tweak riding along with the main change, a
-  now-stale backlog bullet removed). Reserve bullets for things a reviewer would otherwise have to
+  diff wouldn't need it flagged. Reserve bullets for things a reviewer would otherwise have to
   hunt for.
 * Test plan: one short line per check. No parenthetical elaboration of what each check covers —
   the check's own name should already say that.
+
+### Named chaff: cut these even though they're true
+
+These recur often enough to name directly. Each one is a real, accurate fact about the diff — and
+still doesn't earn a bullet on its own:
+
+* **"Removes the now-addressed TODO.md bullet."** Expected side effect of doing the thing the
+  bullet asked for, not something a reviewer needs flagged. This exact line survived a full pass
+  through this skill's own checklist before getting caught and cut from a real PR body — it's the
+  clearest evidence that "did I skip self-evident accompanying changes?" has to be checked against
+  concrete names, not just recalled as a principle.
+* A one-line config/manifest tweak riding along with the main change.
+* A dependency bump or lockfile update that's purely a mechanical side effect of another change,
+  with no behavior of its own to explain.
+
+Before finalizing, check every candidate bullet against this list by name — "is this the TODO.md
+case, or something shaped like it?" — rather than trusting that the principle was internalized
+from a first read.
 
 ## What still earns a line even when it's inconvenient
 
