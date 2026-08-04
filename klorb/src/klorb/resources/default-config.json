@@ -74,7 +74,8 @@
       "ask": [],
       "allow": [
         "internal:create-edit-skill",
-        "internal:launch-explorer-subagent"
+        "internal:launch-explorer-subagent",
+        "internal:debug-with-evidence"
       ]
     },
     "commandRules": {
