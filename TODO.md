@@ -18,7 +18,17 @@
 
 ### Feature backlog
 
-* The user should be allowed to send messages to subagents in the usual direct-send and enqueued ways. The subagent does not differentiate between input from its parent agent vs the actual user. When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets a parent_interested flag when it is expecting a response from the subagent. When the subagent ends its turn, it is conveyed to the parent only if the parent was expecting a msg (at which point the flag is cleared). If the user just separately msgs a stalled subagent and it replies, that doesn't roll up to the parent agent. WaitForSubagents does not watch any subagents whose "parent_interested" flag is False. With this flag implemented, the prompt input can be enabled in the TUI and vscode plugin; but it should send a msg to the active (sun)agent session, not just the root session. And the draft msg is part of the Session-specific UI state. Choose a different subagent from the list and it should reset to empty (or the last draft started there).
+* The user should be allowed to send messages to subagents in the usual direct-send and enqueued
+  ways. The subagent does not differentiate between input from its parent agent vs the actual user.
+  When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets
+  a parent_interested flag when it is expecting a response from the subagent. When the subagent ends
+  its turn, it is conveyed to the parent only if the parent was expecting a msg (at which point the
+  flag is cleared). If the user just separately msgs a stalled subagent and it replies, that doesn't
+  roll up to the parent agent. WaitForSubagents does not watch any subagents whose
+  "parent_interested" flag is False. With this flag implemented, the prompt input can be enabled in
+  the TUI and vscode plugin; but it should send a msg to the active (sun)agent session, not just the
+  root session. And the draft msg is part of the Session-specific UI state. Choose a different
+  subagent from the list and it should reset to empty (or the last draft started there).
 
 * Subagent roles:
   * Planner -- develop planning documentation for how to implement a new feature.
@@ -30,11 +40,6 @@
   * ... The goal of this is to eventually support a "software factory" model where the system is
     autonomously continuously pulling new tasks out from a queue (e.g. a directory filled with new
     feature spec documents or bug report documents) and executing them one after the next.
-
-* WaitForSubagent blocks indefinitely. If the user adds a new msg in the meantime, it just gets queued
-  rather than interrupting the situation. There's probably a new kind of "user-interruptible" nature
-  to this tool to let it get an insta-response from the tool_response ("no agent feedback yet, but
-  here's something new from the user: ...")
 
 * now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
   all files in the repo. The FindFiles tool should take advantage of that for much faster
@@ -201,9 +206,14 @@
 
 ### Bugs
 
+* Does the plugin properly extract SystemInterjections that got worked into tool responses?
+
 ### Feature backlog
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
+
+* The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.
+  How tall is that, exactly? I feel like it should be no more than 5 or 6 rows high.
 
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.

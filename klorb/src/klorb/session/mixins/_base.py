@@ -118,6 +118,7 @@ class SessionBase:
     _standing_interjection_providers: dict[str, Callable[[], str | None]]
     _teardown_callbacks: dict[str, Callable[[], None]]
     _queued_messages: list[QueuedMessage]
+    _user_msg_event: threading.Event
     _current_turn_handlers: TurnEventHandlers | None
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"

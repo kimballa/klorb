@@ -286,6 +286,11 @@ class SessionCoreMixin(SessionBase):
         user turn when the current turn ends. Enqueued by the TUI when the user presses
         Enter while `_turn_in_flight` is `True`; drained by `_finish_turn()` or
         `_run_tool_calls()`. An empty list means no pending messages."""
+        self._user_msg_event: threading.Event = threading.Event()
+        """Signaled by `enqueue_queued_message()` whenever a user message is queued during an
+        active turn. Watched by `UserInterruptibleTool` subclasses (e.g.
+        `WaitForSubagentTool`) so a blocking wait can be interrupted immediately when the user
+        sends a new message, rather than waiting for the next cancel-event poll cycle."""
         self._current_turn_handlers: TurnEventHandlers | None = None
         """The `TurnEventHandlers` for the currently active turn, or `None` when no turn is
         running. Set at the top of `_dispatch_turn` and cleared in its `finally`. Used by
@@ -556,6 +561,7 @@ class SessionCoreMixin(SessionBase):
         `on_enqueue_message` hook, it is called with `queued_msg` so the UI can create the
         italics "queued..." block and save widget references in `queued_msg.history_data`."""
         self._queued_messages.append(queued_msg)
+        self._user_msg_event.set()
         if (self._current_turn_handlers is not None
                 and self._current_turn_handlers.on_enqueue_message is not None):
             self._current_turn_handlers.on_enqueue_message(queued_msg)

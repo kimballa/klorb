@@ -12,12 +12,14 @@ machinery, and `response_envelope.py` depends on this module in one direction on
 
 from typing import Any, Literal
 
-ErrorCategory = Literal["transient", "syntax", "validation", "permission", "business_logic"]
+ErrorCategory = Literal[
+    "transient", "syntax", "validation", "permission", "business_logic", "signaled"]
 """How a failed tool call should be treated by the model: `"transient"` (a network hiccup or
 similar -- retrying might help), `"syntax"` (malformed call arguments -- fix and retry),
 `"validation"` (a bad argument value -- fix and retry), `"permission"` (access was denied --
 retrying won't help without a different approach), `"business_logic"` (the call ran but didn't
-achieve its goal -- e.g. a shell command that exited non-zero). See
+achieve its goal -- e.g. a shell command that exited non-zero), `"signaled"` (the call was
+interrupted by an external signal -- user cancel or similar -- not retryable). See
 `klorb.tools.response_envelope` for how this feeds `ToolResponseEnvelope.is_retryable`."""
 
 
@@ -44,3 +46,33 @@ class ToolCallError(Exception):
         super().__init__(message)
         self.category = category
         self.response_body = response_body
+
+
+class ToolInterruptError(ToolCallError):
+    """Raised from a `Tool.apply()` when the tool is interrupted by an external signal:
+    the user cancelling (`reason="user_cancel"`), the user sending a new message while
+    the tool is blocked (`reason="new_message"`), or a caller-specified timeout expiring
+    (`reason="timeout"`). The `category` is derived from `reason`: `"signaled"` for
+    user cancellation and new-message interrupts (not retryable), `"transient"` for timeout
+    (retryable -- the caller may wait longer). `response_body` is always set to
+    an `{"incomplete": True, "incomplete_reason": <reason>, ...}` dict so the model sees a
+    uniform shape regardless of which interrupt triggered it.
+    """
+
+    def __init__(
+        self,
+        reason: Literal["user_cancel", "new_message", "timeout"],
+        *,
+        details: str | None = None,
+    ) -> None:
+        category: ErrorCategory = "transient" if reason == "timeout" else "signaled"
+        response_body: dict[str, Any] = {"incomplete": True, "incomplete_reason": reason}
+        if details is not None:
+            response_body["details"] = details
+        if reason == "user_cancel":
+            message = "Wait canceled: the user interrupted the tool."
+        elif reason == "new_message":
+            message = "Wait canceled: the user sent a new message while waiting."
+        else:
+            message = details or "Tool interrupted by timeout."
+        super().__init__(message, category=category, response_body=response_body)

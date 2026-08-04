@@ -11,7 +11,8 @@ from klorb.agents.policy import compute_root_session_grants
 from klorb.agents.runtime import SubagentHandle
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
-from klorb.tools.exceptions import ToolCallError
+from klorb.session.events import QueuedMessage
+from klorb.tools.exceptions import ToolCallError, ToolInterruptError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.create import CreateSubagentTool
 from klorb.tools.subagents.wait import WaitForSubagentTool
@@ -93,7 +94,9 @@ def test_second_wait_fails_once_the_only_subagent_was_already_delivered(tmp_path
         WaitForSubagentTool(context).apply({})
 
 
-def test_cancel_event_returns_an_incomplete_result_instead_of_blocking_forever(tmp_path: Path) -> None:
+def test_cancel_event_raises_tool_interrupt_error_instead_of_blocking_forever(
+    tmp_path: Path,
+) -> None:
     provider = _FakeProvider()
     context = _operator_context(tmp_path, provider)
     assert context.session is not None
@@ -105,6 +108,76 @@ def test_cancel_event_returns_an_incomplete_result_instead_of_blocking_forever(t
     context.session.active_cancel_event = threading.Event()
     context.session.active_cancel_event.set()
 
-    result = WaitForSubagentTool(context).apply({})
+    with pytest.raises(ToolInterruptError) as exc_info:
+        WaitForSubagentTool(context).apply({})
 
-    assert result == {"incomplete": True, "incomplete_reason": "user_cancel"}
+    assert exc_info.value.category == "signaled"
+    assert exc_info.value.response_body == {
+        "incomplete": True, "incomplete_reason": "user_cancel"}
+
+
+def test_timeout_raises_tool_interrupt_error_after_timeout_elapses(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    # A subagent whose background thread never finishes on its own within the test.
+    context.session.subagent_tracker.register(SubagentHandle(
+        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        thread=threading.Thread(target=lambda: threading.Event().wait(30)),
+        cancel_event=threading.Event(), role="explorer", title="never finishes"))
+
+    with pytest.raises(ToolInterruptError) as exc_info:
+        WaitForSubagentTool(context).apply({"timeout": 0.3})
+
+    assert exc_info.value.category == "transient"
+    assert exc_info.value.response_body["incomplete"] is True
+    assert exc_info.value.response_body["incomplete_reason"] == "timeout"
+    assert "0.3 seconds elapsed" in exc_info.value.response_body["details"]
+
+
+def test_user_message_interrupts_wait(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    # A subagent whose background thread never finishes on its own within the test.
+    context.session.subagent_tracker.register(SubagentHandle(
+        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        thread=threading.Thread(target=lambda: threading.Event().wait(30)),
+        cancel_event=threading.Event(), role="explorer", title="never finishes"))
+
+    def enqueue_after_delay() -> None:
+        import time
+        time.sleep(0.3)
+        assert context.session is not None
+        context.session.enqueue_queued_message(QueuedMessage(message_text="hello"))
+
+    enqueuer = threading.Thread(target=enqueue_after_delay)
+    enqueuer.start()
+
+    with pytest.raises(ToolInterruptError) as exc_info:
+        WaitForSubagentTool(context).apply({})
+
+    enqueuer.join(timeout=5.0)
+    assert exc_info.value.category == "signaled"
+    assert exc_info.value.response_body == {
+        "incomplete": True, "incomplete_reason": "new_message"}
+
+
+def test_timeout_works_even_when_user_msg_event_is_set(tmp_path: Path) -> None:
+    """A user message set before apply() starts is cleared; the timeout still fires."""
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    context.session.subagent_tracker.register(SubagentHandle(
+        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        thread=threading.Thread(target=lambda: threading.Event().wait(30)),
+        cancel_event=threading.Event(), role="explorer", title="never finishes"))
+    # Simulate a user message being enqueued before the wait starts.
+    context.session._user_msg_event.set()
+
+    with pytest.raises(ToolInterruptError) as exc_info:
+        WaitForSubagentTool(context).apply({"timeout": 0.3})
+
+    # The event was cleared at the start of apply(); timeout fires.
+    assert exc_info.value.category == "transient"
+    assert exc_info.value.response_body["incomplete_reason"] == "timeout"

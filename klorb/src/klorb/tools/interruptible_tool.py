@@ -1,6 +1,11 @@
 # © Copyright 2026 Aaron Kimball
 """`InterruptibleTool`: a `Tool` base class for tools whose `apply()` can run long enough that a
-user's Ctrl+C/Escape should reach it mid-flight rather than only at the next tool-call boundary."""
+user's Ctrl+C/Escape should reach it mid-flight rather than only at the next tool-call boundary.
+
+`UserInterruptibleTool`: extends `InterruptibleTool` for tools that block waiting for external
+events (e.g. `WaitForSubagentTool`) and should also be interrupted when the user sends a new
+message during the wait.
+"""
 
 import threading
 
@@ -30,3 +35,21 @@ class InterruptibleTool(Tool):
         rather than only at the next tool-call/round boundary `Session` itself checks."""
         session = self.context.session
         return session.active_cancel_event if session is not None else None
+
+
+class UserInterruptibleTool(InterruptibleTool):
+    """An `InterruptibleTool` that additionally watches for user messages enqueued during its
+    blocking wait. `Session.enqueue_queued_message()` sets `Session._user_msg_event` when the
+    user types a new message while a turn is in flight; a `UserInterruptibleTool` subclass polls
+    that event alongside the cancel event so the wait is interrupted immediately rather than
+    only once the next tool-call boundary re-checks for cancellation.
+
+    Subclass today: `klorb.tools.subagents.wait.WaitForSubagentTool`.
+    """
+
+    def _user_msg_event(self) -> threading.Event | None:
+        """`Session._user_msg_event`, or `None` when this tool wasn't built from a real
+        `Session`. Set by `Session.enqueue_queued_message()` whenever a user message is queued
+        during an active turn."""
+        session = self.context.session
+        return session._user_msg_event if session is not None else None

@@ -3,26 +3,33 @@
 has something to say.
 """
 
+import time
 from typing import Any
 
 from klorb.agents.runtime import SubagentHandle
-from klorb.tools.exceptions import ToolCallError
-from klorb.tools.interruptible_tool import InterruptibleTool
+from klorb.tools.exceptions import ToolCallError, ToolInterruptError
+from klorb.tools.interruptible_tool import UserInterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.common import SUBAGENT_TOOL_CATEGORY
 
 _POLL_TIMEOUT_SECONDS = 0.2
-"""How often the wait loop re-checks `_active_cancel_event()` between polls of the completion
-queue."""
+"""How often the wait loop re-checks `_active_cancel_event()` and `_user_msg_event()` between
+polls of the completion queue."""
 
 
-class WaitForSubagentTool(InterruptibleTool):
+class WaitForSubagentTool(UserInterruptibleTool):
     """Blocks the calling session's own dispatch thread, polling `context.session.
     subagent_tracker` until at least one completed-but-undelivered subagent arrives or the turn
     is cancelled. Once one arrives, every *other* subagent that also finished in the meantime is
     delivered in the same call (oldest first) rather than forcing a separate `WaitForSubagent`
     round trip per completion. Fails immediately, without suspending, if the caller has no
     outstanding subagents.
+
+    An optional `timeout` parameter (seconds) caps how long the wait runs before raising a
+    retryable `ToolInterruptError(reason="timeout")`. The wait is also interrupted immediately
+    if the user cancels (`ToolInterruptError(reason="user_cancel")`, category `"signaled"`) or
+    sends a new message while the tool is blocked (`ToolInterruptError(reason="new_message")`,
+    category `"signaled"`) -- see `UserInterruptibleTool`.
     """
 
     def name(self) -> str:
@@ -39,19 +46,27 @@ class WaitForSubagentTool(InterruptibleTool):
             "Wait for your own subagents to finish and deliver their output. Suspends until at "
             "least one subagent completes its turn, then returns every subagent that has finished "
             "so far. Fails immediately if you have no subagents currently running or awaiting "
-            "delivery."
+            "delivery. An optional `timeout` caps how long to wait."
         )
 
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "timeout": {
+                    "type": "number",
+                    "description": (
+                        "Maximum seconds to wait for a subagent to finish. "
+                        "Omit or set to null for no limit."
+                    ),
+                },
+            },
             "required": [],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        del args
+        timeout: float | None = args.get("timeout")
         context: ToolSetupContext = self.context
         assert context.session is not None
         tracker = context.session.subagent_tracker
@@ -60,12 +75,29 @@ class WaitForSubagentTool(InterruptibleTool):
                 "You have no subagents currently running or awaiting delivery.",
                 category="validation")
         cancel_event = self._active_cancel_event()
+        user_msg_event = self._user_msg_event()
+        if user_msg_event is not None:
+            user_msg_event.clear()
+        elapsed = 0.0
         while True:
             if cancel_event is not None and cancel_event.is_set():
-                return {"incomplete": True, "incomplete_reason": "user_cancel"}
-            handles: list[SubagentHandle] = tracker.pop_all_completed(timeout=_POLL_TIMEOUT_SECONDS)
+                raise ToolInterruptError(reason="user_cancel")
+            if user_msg_event is not None and user_msg_event.is_set():
+                raise ToolInterruptError(reason="new_message")
+            start = time.monotonic()
+            handles: list[SubagentHandle] = tracker.pop_all_completed(
+                timeout=_POLL_TIMEOUT_SECONDS)
             if handles:
                 return {"completed": [_format_completion(handle) for handle in handles]}
+            elapsed += time.monotonic() - start
+            if timeout is not None and elapsed >= timeout:
+                raise ToolInterruptError(
+                    reason="timeout",
+                    details=(
+                        f"{timeout} seconds elapsed but no subagent was ready with a response. "
+                        "You may retry to wait longer or do something else in the meantime."
+                    ),
+                )
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         if error is not None:
