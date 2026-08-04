@@ -28,6 +28,11 @@ export interface PinnedScroll<T extends HTMLElement> {
    * (`useCallback` with no deps, since it only reads refs), so including it in a caller's own
    * effect dependency array never itself triggers that effect. */
   scrollToBottomIfPinned(): void;
+  /** Scrolls the container to its last child unconditionally and resets pin state to `true` --
+   * use when the view identity changes (e.g. switching between root and subagent transcripts)
+   * and the reader should always land at the bottom regardless of prior scroll position.
+   * Stable across renders for the same reason as `scrollToBottomIfPinned`. */
+  scrollToBottom(): void;
 }
 
 /**
@@ -80,5 +85,11 @@ export default function usePinnedScroll<T extends HTMLElement = HTMLDivElement>(
     }
   }, []);
 
-  return { containerRef, scrollToBottomIfPinned };
+  const scrollToBottom = useCallback(() => {
+    const node = attachedNodeRef.current;
+    node?.lastElementChild?.scrollIntoView({ block: 'end' });
+    pinnedRef.current = true;
+  }, []);
+
+  return { containerRef, scrollToBottomIfPinned, scrollToBottom };
 }

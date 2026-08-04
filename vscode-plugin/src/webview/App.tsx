@@ -118,8 +118,11 @@ export default function App({
   // the TUI's own `_scroll_if_pinned`/`_subagent_history_pinned_to_bottom` -- two independent
   // instances, one per scrolling transcript view (root and subagent), since a reader can scroll
   // either one away from its own bottom independently of the other.
-  const { containerRef: historyRef, scrollToBottomIfPinned: scrollHistoryIfPinned } =
-    usePinnedScroll<HTMLDivElement>();
+  const {
+    containerRef: historyRef,
+    scrollToBottomIfPinned: scrollHistoryIfPinned,
+    scrollToBottom: scrollHistoryToBottom,
+  } = usePinnedScroll<HTMLDivElement>();
 
   /** Flips the subagents panel's shown/hidden state and tells the host, so its `SubagentPoller`
    * starts/stops the tree poll accordingly -- unlike `toggleTaskPanelVisible()` further down,
@@ -193,6 +196,18 @@ export default function App({
     // the history freezing until focus moves away.
     scrollHistoryIfPinned();
   }, [entries, pendingInteraction, status, scrollHistoryIfPinned]);
+
+  // Scroll the root history view to its bottom when switching back from a subagent --
+  // the HistoryView DOM node remounts fresh (scrollTop = 0) after being unmounted while a
+  // subagent was selected, so the content-change effect above doesn't fire and the pinned
+  // state is stale.  Keying on `selectedSubagentId` rather than a derived `isSubagentSelected`
+  // so the effect fires on the exact render where the selection changes, not on every render
+  // where the root happens to be selected.
+  useEffect(() => {
+    if (selectedSubagentId === null) {
+      scrollHistoryToBottom();
+    }
+  }, [selectedSubagentId, scrollHistoryToBottom]);
 
   useEffect(() => {
     // Re-syncs the host's `SubagentPoller` to this webview instance's restored panel-visibility/
@@ -516,6 +531,7 @@ export default function App({
       ) : null}
       {isSubagentSelected ? (
         <SubagentTranscriptView
+          key={selectedSubagentId}
           entries={subagentTranscriptEntries(activeSubagentTranscript, subagentExpandedCallIds)}
           state={activeSubagentTranscript?.state}
           aborted={activeSubagentTranscript?.aborted ?? false}

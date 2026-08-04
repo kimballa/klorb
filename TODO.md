@@ -208,9 +208,6 @@
 
 ### Feature backlog
 
-* When you switch between agents in the Subagents panel, it puts you at the top of the history for
-  whichever one you chose. It should actually start by scrolling you to the bottom.
-
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
 
