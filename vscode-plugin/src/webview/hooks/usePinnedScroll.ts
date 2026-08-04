@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type RefCallback, useCallback, useRef } from 'react';
 
 /** Whether a scrolling container showing `scrollTop`/`scrollHeight`/`clientHeight` is close
  * enough to its bottom edge to count as "pinned" -- duplicated from `webview/features/history/
@@ -17,8 +17,10 @@ function isScrollPinnedToBottom(
 }
 
 export interface PinnedScroll<T extends HTMLElement> {
-  /** Attach to the scrolling container's `ref`. */
-  containerRef: RefObject<T | null>;
+  /** Callback ref for the scrolling container -- attach to the consuming element's `ref` prop.
+   * Re-attaches the internal scroll listener whenever the DOM node changes (mount, unmount,
+   * remount), so the pinned-to-bottom tracking survives the container being replaced. */
+  containerRef: RefCallback<T>;
   /** Scrolls the container to its last child, but only if the reader hadn't already scrolled
    * away from the bottom -- call this from the caller's own `useEffect` keyed on whatever content
    * change should follow the bottom (e.g. `[entries]`), so a reader who scrolled up mid-turn to
@@ -37,31 +39,44 @@ export interface PinnedScroll<T extends HTMLElement> {
  * second call site needed the exact same ref/listener/threshold logic.
  */
 export default function usePinnedScroll<T extends HTMLElement = HTMLDivElement>(): PinnedScroll<T> {
-  const containerRef = useRef<T>(null);
   const pinnedRef = useRef(true);
+  // Tracks the node the scroll listener is currently attached to, so the callback ref can
+  // detach from the old node before attaching to a new one.
+  const attachedNodeRef = useRef<T | null>(null);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (container === null) {
-      return undefined;
+  // Plain function (not an arrow/closure) so the stable callback ref below always reads
+  // current values through refs rather than capturing stale closured values.
+  function onScroll(): void {
+    const node = attachedNodeRef.current;
+    if (node === null) {
+      return;
     }
-    function onScroll(): void {
-      if (container === null) {
-        return;
-      }
+    pinnedRef.current = isScrollPinnedToBottom(
+      node.scrollTop,
+      node.scrollHeight,
+      node.clientHeight
+    );
+  }
+
+  const containerRef = useCallback((node: T | null) => {
+    if (attachedNodeRef.current) {
+      attachedNodeRef.current.removeEventListener('scroll', onScroll);
+    }
+    attachedNodeRef.current = node;
+    if (node !== null) {
       pinnedRef.current = isScrollPinnedToBottom(
-        container.scrollTop,
-        container.scrollHeight,
-        container.clientHeight
+        node.scrollTop,
+        node.scrollHeight,
+        node.clientHeight
       );
+      node.addEventListener('scroll', onScroll);
     }
-    container.addEventListener('scroll', onScroll);
-    return () => container.removeEventListener('scroll', onScroll);
   }, []);
 
   const scrollToBottomIfPinned = useCallback(() => {
+    const node = attachedNodeRef.current;
     if (pinnedRef.current) {
-      containerRef.current?.lastElementChild?.scrollIntoView({ block: 'end' });
+      node?.lastElementChild?.scrollIntoView({ block: 'end' });
     }
   }, []);
 

@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import type { JSX, RefObject } from 'react';
+import type { JSX, Ref } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
@@ -19,7 +19,7 @@ const REMARK_REHYPE_OPTIONS = { handlers: { yaml: renderYamlFrontmatter } };
 export interface HistoryViewProps {
   entries: HistoryEntry[];
   /** Ref to the scrolling container, so the owner can keep the newest entry in view. */
-  historyRef: RefObject<HTMLDivElement | null>;
+  historyRef: Ref<HTMLDivElement>;
   onToggleToolCallExpanded(callId: string): void;
   /** Restarts the `klorb server` child process -- wired to a `'serverError'` entry's "Restart
    * Server" action (see `docs/specs/vscode-plugin.md`'s interrupt-polish section). */

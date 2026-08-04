@@ -323,10 +323,7 @@ function applyToolCallUpdated(
  * kind or start a new one — so a response arriving after thinking (or vice versa) starts its
  * own entry, and interleaved phases stay in order.
  */
-export function applyHostMessage(
-  entries: readonly HistoryEntry[],
-  message: HostMessage
-): HistoryEntry[] {
+export function applyHostMessage(entries: HistoryEntry[], message: HostMessage): HistoryEntry[] {
   switch (message.type) {
     case 'turnStarted':
       return [...entries];
@@ -373,11 +370,11 @@ export function applyHostMessage(
       // ApprovalPanel/QuestionPanel/ToolCallLimitPanel mounts from that state instead, and an
       // `appendInteraction()`/`appendQuestionInteraction()`/`appendToolCallLimitInteraction()`
       // record lands here only once the ask is answered.
-      return [...entries];
+      return entries;
     case 'statusUpdate':
       // Tracked separately by `App`'s own `status` state, not as a history entry -- the
       // StatusRow renders from that state instead.
-      return [...entries];
+      return entries;
     case 'sessionStats':
       return [
         ...entries,
@@ -394,14 +391,14 @@ export function applyHostMessage(
     case 'toggleTaskPanel':
       // Tracked separately by `App`'s own `taskList`/`taskPanelVisible` state, not as a
       // history entry -- the TaskPanel renders from that state instead.
-      return [...entries];
+      return entries;
     case 'subagentTreeUpdate':
     case 'subagentTranscriptUpdate':
     case 'toggleSubagentsPanel':
       // Tracked separately by `App`'s own `subagentNodes`/`subagentTranscript`/
       // `subagentsPanelVisible` state, not as a history entry -- the subagents panel/transcript
       // view render from that state instead (see `webview/features/subagents`).
-      return [...entries];
+      return entries;
     case 'sessionReplay':
       return applySessionReplay(message.entries);
     case 'workspaceFiles':
@@ -409,7 +406,7 @@ export function applyHostMessage(
     case 'imageAttached':
       // Tracked separately by `App`'s own `workspaceFiles`/`promptHistory` state, not as a
       // history entry -- the file finder and prompt input read from that state instead.
-      return [...entries];
+      return entries;
   }
 }
 

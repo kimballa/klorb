@@ -18,7 +18,7 @@
 
 ### Feature backlog
 
-* The user should be allowed to send messages to subagents in the usual direct-send and enqueued ways. The subagent does not differentiate between input from its parent agent vs the actual user. When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets a parent_interested flag when it is expecting a response from the subagent. When the subagent ends its turn, it is conveyed to the parent only if the parent was expecting a msg (at which point the flag is cleared). If the user just separately msgs a stalled subagent and it replies, that doesn't roll up to the parent agent. WaitForSubagents does not watch any subagents whose "parent_interested" flag is False. With this flag implemented, the prompt input can be enabled in the TUI and vscode plugin; but it should send a msg to the active (sun)agent session, not just the root session. And the draft msg is part of the Session-specific UI state. Choose a different subagent from the list and it should reset to empty (or the last draft started there). 
+* The user should be allowed to send messages to subagents in the usual direct-send and enqueued ways. The subagent does not differentiate between input from its parent agent vs the actual user. When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets a parent_interested flag when it is expecting a response from the subagent. When the subagent ends its turn, it is conveyed to the parent only if the parent was expecting a msg (at which point the flag is cleared). If the user just separately msgs a stalled subagent and it replies, that doesn't roll up to the parent agent. WaitForSubagents does not watch any subagents whose "parent_interested" flag is False. With this flag implemented, the prompt input can be enabled in the TUI and vscode plugin; but it should send a msg to the active (sun)agent session, not just the root session. And the draft msg is part of the Session-specific UI state. Choose a different subagent from the list and it should reset to empty (or the last draft started there).
 
 * Raise default tool call limit from 50 to 100.
 
@@ -205,18 +205,6 @@
 ## VSCode plugin
 
 ### Bugs
-
-* There's now a bug where I cannot scroll the HistoryView up. Or, I can, but even if I'm holding the
-  scrollbar in my mouse, it jams itself back to the bottom within a couple of seconds. It basically
-  *always* stays pinned to the bottom of the history scroll. This is a regression that happened after
-  we implemented plan 021 phase 4 (subagents; vscode plugin subagent views). The subagent mechanism
-  has a refresh-poll every 2 seconds, and I think we're getting pulled to the bottom of the view when
-  that poll fires.
-  * Ironically this *only* seems true on the main (root) agent feed. I can scroll up and stay there
-    just fine in one of the subagent views.
-  * This isn't *all* the time. I think it only happens in a main session after that session has
-    launched subagents. if it doesn't launch a subagent first, it's still OK to let the user scroll
-    up.
 
 * System interjections need to be stripped from user messages shown to the user in the HistoryView
   when the window is reloaded and the session is restored.
