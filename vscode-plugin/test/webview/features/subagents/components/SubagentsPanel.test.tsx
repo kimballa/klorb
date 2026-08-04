@@ -110,7 +110,7 @@ describe('SubagentsPanel', () => {
       />
     );
 
-    expect(screen.getByText('Role: explorer')).toBeTruthy();
+    expect(screen.getByText('Agent role: Explorer')).toBeTruthy();
   });
 
   it('calls onToggleVisibility when the pin icon is clicked', () => {

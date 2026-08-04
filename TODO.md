@@ -214,9 +214,6 @@
 
 ### Feature backlog
 
-* Need slightly thicker horizontal rule borders bracketing the task panel, subagent panel, and bottom
-  prompt input area / status bar. The flat view otherwise blurs it into the main chat history too much.
-
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
 

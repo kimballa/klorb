@@ -29,6 +29,14 @@ _RUNNING_MARKER = "*"
 _IDLE_MARKER = " "
 
 
+def _friendly_role_name(role_name: str) -> str:
+    """
+    Convert a role name like "operator" or "project_manager" into a friendlier name for
+    display to user like "Operator" or "Project manager".
+    """
+    return role_name.capitalize().replace('_', ' ', -1)
+
+
 @dataclass(frozen=True)
 class SubagentRowData:
     """One row `SubagentsPanel.show_rows` renders -- a display-layer projection of one
@@ -131,7 +139,7 @@ class SubagentsPanel(Vertical, can_focus=False):
         if rows:
             option_list.highlighted = selected_index
         footer = self.query_one(f"#{_FOOTER_ID}", Static)
-        footer.update(f"Role: {selected_role}" if selected_role else "")
+        footer.update(f"Role: {_friendly_role_name(selected_role)}" if selected_role else "")
 
     @staticmethod
     def _render_row_label(row: SubagentRowData, needs_attention: bool) -> Text:

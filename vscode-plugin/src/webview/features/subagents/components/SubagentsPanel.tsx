@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { type JSX, useEffect, useState } from 'react';
+import { type JSX, useEffect, useMemo, useState } from 'react';
 
 import type { SubagentNodeInfo } from 'shared/webviewMessages';
 
@@ -52,13 +52,27 @@ export default function SubagentsPanel({
 }: SubagentsPanelProps): JSX.Element | null {
   const blinkOn = useBlinkPhase();
 
-  if (nodes.length === 0) {
-    return null;
-  }
-
   const selectedNode = nodes.find((node) =>
     selectedSessionId === null ? node.parentId === null : node.id === selectedSessionId
   );
+
+  // Take the role name attached to the agent and capitalize it (operator => Operator)
+  // and turn any underscores into spaces so e.g. "project_manager" becomes "Project manager".
+  const agentNodeRole = useMemo(() => {
+    if (!selectedNode?.role) {
+      return '...';
+    } else {
+      const roleName: string = selectedNode.role;
+      const upperFirstChar = roleName[0]?.toLocaleUpperCase();
+      const properRoleName = upperFirstChar + roleName.slice(1);
+      const friendlyRoleName = properRoleName.replaceAll('_', ' ');
+      return friendlyRoleName;
+    }
+  }, [selectedNode]);
+
+  if (nodes.length === 0) {
+    return null;
+  }
 
   return (
     <div className="subagents-panel">
@@ -94,7 +108,7 @@ export default function SubagentsPanel({
           );
         })}
       </div>
-      <div className="subagents-panel-footer">Role: {selectedNode?.role ?? '...'}</div>
+      <div className="subagents-panel-footer">Agent role: {agentNodeRole}</div>
     </div>
   );
 }

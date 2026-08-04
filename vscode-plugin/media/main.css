@@ -22,7 +22,7 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-bottom: 2px solid var(--vscode-sideBarSectionHeader-border, transparent);
 }
 
 .panel-header .title {
@@ -128,7 +128,7 @@ body {
 
 .task-panel {
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-bottom: 2px solid var(--vscode-sideBarSectionHeader-border, transparent);
 }
 
 .task-panel-summary {
@@ -216,7 +216,7 @@ body {
 
 .subagents-panel {
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-bottom: 2px solid var(--vscode-sideBarSectionHeader-border, transparent);
 }
 
 .subagents-panel-summary {
@@ -628,7 +628,7 @@ button.bash-tool-call-command {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
-  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-top: 2px solid var(--vscode-sideBarSectionHeader-border, transparent);
   align-items: flex-end;
 }
 
@@ -1024,7 +1024,7 @@ button.bash-tool-call-command {
   box-sizing: border-box;
   padding: 4px 12px;
   border: none;
-  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-top: 2px solid var(--vscode-sideBarSectionHeader-border, transparent);
   background-color: var(--vscode-inputValidation-warningBackground, transparent);
   color: var(--vscode-inputValidation-warningForeground, inherit);
   font: inherit;
