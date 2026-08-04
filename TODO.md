@@ -20,8 +20,6 @@
 
 * The user should be allowed to send messages to subagents in the usual direct-send and enqueued ways. The subagent does not differentiate between input from its parent agent vs the actual user. When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets a parent_interested flag when it is expecting a response from the subagent. When the subagent ends its turn, it is conveyed to the parent only if the parent was expecting a msg (at which point the flag is cleared). If the user just separately msgs a stalled subagent and it replies, that doesn't roll up to the parent agent. WaitForSubagents does not watch any subagents whose "parent_interested" flag is False. With this flag implemented, the prompt input can be enabled in the TUI and vscode plugin; but it should send a msg to the active (sun)agent session, not just the root session. And the draft msg is part of the Session-specific UI state. Choose a different subagent from the list and it should reset to empty (or the last draft started there).
 
-* Raise default tool call limit from 50 to 100.
-
 * Subagent roles:
   * Planner -- develop planning documentation for how to implement a new feature.
   * Reviewer -- perform adversarial code review on a completed feature.
@@ -37,9 +35,6 @@
   rather than interrupting the situation. There's probably a new kind of "user-interruptible" nature
   to this tool to let it get an insta-response from the tool_response ("no agent feedback yet, but
   here's something new from the user: ...")
-
-* We currently disable the user chat to subagents. Should that be the case? Or should we let the user
-  interject? (What's the harm?)
 
 * now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
   all files in the repo. The FindFiles tool should take advantage of that for much faster
