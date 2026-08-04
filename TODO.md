@@ -5,8 +5,6 @@
 
 ### Bugs
 
-* a recent system plan with a phase for vscode plugin UI dev painted it as a straightforward translation of TUI integration. But it completely overlooked the need to build ACP server / protocol integration for the feature. The TUI bypasses this comms requirement. Add a vscode-tech-planning skill to ensure we don't miss that step in the future.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
