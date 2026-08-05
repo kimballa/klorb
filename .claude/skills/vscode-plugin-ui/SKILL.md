@@ -7,8 +7,8 @@ description: Build or review webview UI in vscode-plugin/src/webview -- choosing
 
 Every new piece of webview UI raises three independent questions: which control primitive to
 build it from, which icon system to draw from, and which folder it belongs in. This skill covers
-all three; `docs/specs/vscode-plugin.md`'s "Component library" section and `AGENTS.md`'s
-"vscode-plugin source tree" section are the underlying references this skill operationalizes.
+all three; `docs/specs/vscode-plugin.md`'s "Component library" section and the
+`vscode-plugin-architecture` skill are the underlying references this skill operationalizes.
 
 ## 1. Control primitive: vscode-element, plain HTML, or hand-rolled
 
@@ -91,7 +91,7 @@ for a new icon-only bare-button control rather than rediscovering this per call 
 
 ## 4. Component placement: `webview/components/` vs. `webview/features/<name>/components/`
 
-`AGENTS.md`'s "vscode-plugin source tree" section is the authoritative rule; the tell in practice
+The `vscode-plugin-architecture` skill is the authoritative rule; the tell in practice
 is: **would this component make sense imported from a feature it isn't already part of?**
 
 * If yes, it belongs in the top-level `webview/components/` (no feature folder) -- imported

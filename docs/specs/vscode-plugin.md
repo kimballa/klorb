@@ -45,11 +45,11 @@ the command palette.
 
 `vscode-plugin/src/` splits by JavaScript runtime at the top level — `src/host/` (extension
 host, Node/CommonJS), `src/webview/` (webview UI, sandboxed browser document), `src/shared/`
-(types/utilities included by both) — with `test/` mirroring that tree file-for-file. See
-`AGENTS.md`'s "vscode-plugin source tree" section for the full directory-layout and import
-conventions (the `features/<name>/` barrel pattern, the `shared/*`/`webview/*`/`host/*` rooted
-import aliases, and the React default-export convention); this spec covers how those pieces fit
-together for this extension specifically.
+(types/utilities included by both) — with `test/` mirroring that tree file-for-file. See the
+`vscode-plugin-architecture` skill for the full directory-layout and import conventions (the
+`features/<name>/` barrel pattern, the `shared/*`/`webview/*`/`host/*` rooted import aliases, and
+the React default-export convention); this spec covers how those pieces fit together for this
+extension specifically.
 
 * `vscode-plugin/src/extension.ts` is the extension's activation entry point
   (`package.json`'s `main`, bundled to `out/extension.js`). `activate()` constructs one
@@ -369,7 +369,7 @@ together for this extension specifically.
   pure diff-hunk-to-row-model helper `ToolCallChip` maps over, and `components/HistoryView.tsx`/
   `components/ToolCallChip.tsx` render them. `index.ts` is the feature's barrel — the only
   module anyone outside `features/history/` may import (as `webview/features/history`, per this
-  repo's absolute-import convention — see `AGENTS.md`'s "vscode-plugin source tree" section).
+  repo's absolute-import convention — see the `vscode-plugin-architecture` skill).
   * `HistoryEntry` is `TextHistoryEntry | ToolCallHistoryEntry`. `TextHistoryEntry` is
     `{kind: 'prompt' | 'response' | 'thinking' | 'error' | 'notice' | 'interaction', text,
     streaming: boolean}` — an `'interaction'` entry is always `streaming: false`, a compact
@@ -1443,8 +1443,8 @@ all, not just type-checked):
   `paths` aliases at all; no script ever invokes these two files directly.
 * Both configs' `paths` aliases are what let source anywhere in `vscode-plugin/src/` use rooted
   imports (`shared/webviewMessages`, `webview/App`, `host/klorbServerProcess`, ...) instead of
-  relative `../../` chains — see `AGENTS.md`'s "vscode-plugin source tree" section for the full
-  convention (including the one exception: relative imports within the same `features/<name>/`
+  relative `../../` chains — see the `vscode-plugin-architecture` skill for the full convention
+  (including the one exception: relative imports within the same `features/<name>/`
   folder). `esbuild` resolves and inlines these at bundle time regardless of what Node's own
   `require()` resolution would do with the same bare specifier — the reason the host needs
   bundling in the first place (see the ADR referenced above).
@@ -1578,8 +1578,8 @@ of two.
   never engages; the explicit `afterEach(cleanup)` in `test/webview/App.test.tsx` is genuinely
   required, not redundant); and `eslint-plugin-prettier`/`eslint-config-prettier` so formatting
   violations surface as lint errors. `no-restricted-imports` blocks deep imports into a feature's
-  internals from outside it (`webview/features/*/**`, `host/features/*/**`) — see `AGENTS.md`'s
-  "vscode-plugin source tree" section.
+  internals from outside it (`webview/features/*/**`, `host/features/*/**`) — see the
+  `vscode-plugin-architecture` skill.
 * `test` runs `vitest run` over `test/` (see "Test tree" above for how it resolves the same
   rooted aliases as application code).
 * `typecheck` runs `tsgo` against both tsconfigs (see "Build" above for why `tsgo`, not `tsc`).
