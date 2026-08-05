@@ -270,6 +270,8 @@ redaction by generating a baseline file and placing it at
 detect-secrets scan > .klorb/secrets-baseline.json
 ```
 
+This command must be run from the root of the git repo
+
 The file is the standard `detect-secrets` baseline format. Review the output and remove entries for
 real secrets, keeping only the known-safe ones. Klorb extracts the `hashed_secret` values (SHA-1
 digests) and skips redaction for any secret whose hash matches.
