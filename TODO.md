@@ -16,6 +16,13 @@
 
 ### Feature backlog
 
+* `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
+
+* If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
+  masks out a secret, put the file on a list of sensitive files. This file list should be fed to
+  the BashTool command classifier and if it appears that a bash command could gain unmasked access
+  to the file contents, it should be marked as 9/10+ risk (credential extraction attempt).
+
 * The user should be allowed to send messages to subagents in the usual direct-send and enqueued
   ways. The subagent does not differentiate between input from its parent agent vs the actual user.
   When it creates a subagent or uses MessageSubagent to resume a conversation, the parent agent sets
@@ -157,11 +164,7 @@
   * Start adding system interjections mentioning how many turns the agent has taken, or how
     many tool calls (vs total tool call budget / limit) it has performed.
 
-* Apply `klorb.tools.util.SecretRedactor` (or the underlying `detect-secrets` scan it wraps --
-  see docs/specs/secret-redaction.md) to what klorb's own `logger` instances write out, so a
-  tool call that captures a real credential (e.g. `BashTool`'s captured stdout/stderr, or a
-  debug log of a file's content) doesn't write that plaintext secret into klorb's own log files
-  on disk.
+* Apply `detect-secrets` to Klorb's `logger` outputs so we don't accidentally log credentials.
 
 ## TUI
 
@@ -213,6 +216,8 @@
 * Does the plugin properly extract SystemInterjections that got worked into tool responses?
 
 ### Feature backlog
+
+* The @mention chips for files, when clicked should open the file in vscode in preview mode.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 

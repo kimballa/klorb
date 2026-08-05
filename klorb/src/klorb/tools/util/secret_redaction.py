@@ -23,7 +23,7 @@ _TOKEN_MAP_KEY = "token_to_secret"
 
 _TOKEN_PATTERN = re.compile(r"\[\[SECRET:[a-z0-9_]+:[0-9a-f]{12}\]\]")
 
-_PLUGINS = (
+SECRET_DETECTION_PLUGINS: tuple[str, ...] = (
     "AWSKeyDetector", "ArtifactoryDetector", "AzureStorageKeyDetector", "BasicAuthDetector",
     "CloudantDetector", "DiscordBotTokenDetector", "GitHubTokenDetector", "GitLabTokenDetector",
     "IbmCloudIamDetector", "IbmCosHmacDetector", "JwtTokenDetector", "KeywordDetector",
@@ -36,7 +36,7 @@ vendor/format detector it ships, deliberately excluding `Base64HighEntropyString
 `HexHighEntropyString` (trip constantly on ordinary hashes, UUIDs, and base64 blobs) and
 `IPPublicDetector` (an IP address isn't a credential). See docs/specs/secret-redaction.md."""
 
-_scan_lock = threading.Lock()
+SECRET_DETECTION_SCAN_LOCK = threading.Lock()
 """`detect-secrets` keeps its plugin/filter configuration in a process-wide
 `functools.lru_cache` singleton (`detect_secrets.settings.get_settings()`); serializes
 `SecretRedactor.redact()` calls so two sessions scanning concurrently in the same process
@@ -64,8 +64,8 @@ class SecretRedactor:
         if not text:
             return text
         token_map = self._token_map(session)
-        with _scan_lock, transient_settings(
-            {"plugins_used": [{"name": name} for name in _PLUGINS]},
+        with SECRET_DETECTION_SCAN_LOCK, transient_settings(
+            {"plugins_used": [{"name": name} for name in SECRET_DETECTION_PLUGINS]},
         ):
             lines = [self._redact_line(line, token_map) for line in text.split("\n")]
         return "\n".join(lines)

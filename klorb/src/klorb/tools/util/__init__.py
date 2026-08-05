@@ -69,7 +69,11 @@ from klorb.tools.util.search_core import (
     validate_output_style,
     validate_queries,
 )
-from klorb.tools.util.secret_redaction import SecretRedactor
+from klorb.tools.util.secret_redaction import (
+    SECRET_DETECTION_PLUGINS,
+    SECRET_DETECTION_SCAN_LOCK,
+    SecretRedactor,
+)
 from klorb.tools.util.spill import SpillDir
 
 __all__ = [
@@ -82,6 +86,8 @@ __all__ = [
     "LineRangeEdit",
     "READ_PREVIEW_MAX_LINES",
     "ReadFileCore",
+    "SECRET_DETECTION_PLUGINS",
+    "SECRET_DETECTION_SCAN_LOCK",
     "SecretRedactor",
     "SpillDir",
     "VALID_OUTPUT_STYLES",

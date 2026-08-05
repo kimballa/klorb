@@ -65,7 +65,8 @@
         ["git", "log", "--oneline", "--all", "--", "*"],
         ["git", "log", "**"],
         ["git", "-C", "*", "log", "--oneline", "-15", "--", "**"],
-        ["find", "/home/aaron/src/klorb/*", "-name", "*"]
+        ["find", "/home/aaron/src/klorb/*", "-name", "*"],
+        [".venv/bin/python", "-m", "pytest", "tests/klorb/*", "-x", "-q"]
       ]
     },
     "shareEnv": [

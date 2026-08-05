@@ -18,6 +18,10 @@ model-named filesystem paths, where a genuine credential (a `.env` file, a confi
 API key) is most likely to live. See "Out of scope" for what this deliberately doesn't cover
 (most notably `Bash`).
 
+`SecretRedactionFilter` (`logging_config.py`) applies the same detection to every log handler
+installed by `configure_logging()`, so credentials that pass through `logger.log()` are replaced
+with `[REDACTED]` before they reach stderr, the TUI conversation history, or the session log file.
+
 ## How it works
 
 * `klorb.tools.util.secret_redaction.SecretRedactor` (`klorb/src/klorb/tools/util/
@@ -38,7 +42,7 @@ API key) is most likely to live. See "Out of scope" for what this deliberately d
   whether it's re-read in a later `ReadFile` call or appears at a second location in the same
   read. This is what makes the token stable enough for a model to reuse verbatim across separate
   tool calls.
-* `_PLUGINS` (`secret_redaction.py`) is every `detect-secrets` vendor/format-specific plugin
+* `SECRET_DETECTION_PLUGINS` (`secret_redaction.py`) is every `detect-secrets` vendor/format-specific plugin
   (`AWSKeyDetector`, `PrivateKeyDetector`, `GitHubTokenDetector`, `SlackDetector`, `JwtTokenDetector`,
   `KeywordDetector`, ...), deliberately excluding `Base64HighEntropyString`/`HexHighEntropyString`
   (trip constantly on ordinary hashes, UUIDs, and base64 blobs found in everyday source) and
@@ -47,7 +51,7 @@ API key) is most likely to live. See "Out of scope" for what this deliberately d
   underneath this plugin selection, further cutting down on false positives.
 * `detect-secrets` keeps its plugin/filter configuration in a process-wide
   `functools.lru_cache` singleton (`detect_secrets.settings.get_settings()`). `SecretRedactor`
-  serializes every scan through a module-level `threading.Lock` (`_scan_lock`) so two sessions
+  serializes every scan through a module-level `threading.Lock` (`SECRET_DETECTION_SCAN_LOCK`) so two sessions
   redacting concurrently in the same process can't race on that shared global state.
 * `ReadFileCore.apply()` (`klorb/src/klorb/tools/util/read_file_core.py`) takes optional
   `redactor: SecretRedactor | None` and `session: Session | None` keyword arguments. When

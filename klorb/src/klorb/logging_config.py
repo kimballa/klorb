@@ -15,11 +15,14 @@ from types import TracebackType
 from typing import TextIO
 
 import acp
+from detect_secrets.core.scan import scan_line
+from detect_secrets.settings import transient_settings
 from textual._context import active_app
 from textual.logging import TextualHandler
 from textual.message import Message
 
 from klorb.paths import SESSION_LOGS_DIR
+from klorb.tools.util.secret_redaction import SECRET_DETECTION_PLUGINS, SECRET_DETECTION_SCAN_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +246,29 @@ class AcpBackgroundTaskErrorFilter(logging.Filter):
         return False
 
 
+class SecretRedactionFilter(logging.Filter):
+    """Scans each formatted log message with `detect-secrets` and replaces detected credentials
+    with `[REDACTED]`, using the same plugin set as `SecretRedactor`. Installed on every handler
+    in the `handlers` list so credentials that pass through `logger.log()` never reach stderr, the
+    TUI conversation history, or the session log file. See docs/specs/secret-redaction.md."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        formatted = record.getMessage()
+        if not formatted:
+            return True
+        with SECRET_DETECTION_SCAN_LOCK, transient_settings(
+            {"plugins_used": [{"name": name} for name in SECRET_DETECTION_PLUGINS]},
+        ):
+            for line in formatted.split("\n"):
+                for secret in scan_line(line):
+                    if secret.secret_value:
+                        formatted = formatted.replace(secret.secret_value, "[REDACTED]")
+        # Replace the message's args so the formatter re-rendering produces redacted text.
+        record.msg = formatted
+        record.args = None
+        return True
+
+
 def configure_minimal_logging(is_server: bool = False) -> None:
     """Install a bare-bones stderr text handler as a stopgap until `configure_logging()` runs.
 
@@ -297,6 +323,10 @@ def configure_logging(
     Also installs `AcpBackgroundTaskErrorFilter` on the root logger (idempotent across repeated
     calls) so the ACP SDK's own full-traceback log for an already-handled `RequestError` is
     replaced with one concise line instead.
+
+    Also installs a `SecretRedactionFilter` on every handler so detected credentials are
+    replaced with `[REDACTED]` before they reach stderr, the TUI conversation history, or
+    the session log file.
     """
     console_handler: logging.Handler = TextualHandler() if repl_mode else logging.StreamHandler()
     console_handler.setFormatter(logging.Formatter(
@@ -317,6 +347,10 @@ def configure_logging(
         file_handler = logging.FileHandler(log_path, encoding="utf-8")
         file_handler.setFormatter(JsonLogFormatter(datefmt=TEXT_LOG_DATEFMT))
         handlers.append(file_handler)
+
+    secret_filter = SecretRedactionFilter()
+    for h in handlers:
+        h.addFilter(secret_filter)
 
     root_level = _resolve_klorb_log_level()
     logging.basicConfig(level=root_level, handlers=handlers, force=True)

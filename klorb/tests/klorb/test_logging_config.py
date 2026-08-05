@@ -403,3 +403,54 @@ def test_crash_log_tee_unsupported_operations_raise(method_name: str, args: tupl
 
     with pytest.raises(io.UnsupportedOperation):
         getattr(tee, method_name)(*args)
+
+
+_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+
+
+def test_secret_redaction_filter_redacts_an_aws_key() -> None:
+    f = logging_config.SecretRedactionFilter()
+    record = logging.LogRecord(
+        "klorb.somewhere", logging.INFO, __file__, 1, f"id={_AWS_KEY}", None, None)
+
+    f.filter(record)
+
+    assert _AWS_KEY not in record.getMessage()
+    assert "[REDACTED]" in record.getMessage()
+
+
+def test_secret_redaction_filter_leaves_non_secret_text_unchanged() -> None:
+    f = logging_config.SecretRedactionFilter()
+    record = logging.LogRecord(
+        "klorb.somewhere", logging.INFO, __file__, 1, "nothing secret here", None, None)
+
+    f.filter(record)
+
+    assert record.getMessage() == "nothing secret here"
+
+
+def test_secret_redaction_filter_clears_record_args() -> None:
+    f = logging_config.SecretRedactionFilter()
+    record = logging.LogRecord(
+        "klorb.somewhere", logging.INFO, __file__, 1, "id=%s", (_AWS_KEY,), None)
+
+    f.filter(record)
+
+    assert _AWS_KEY not in record.msg
+    assert record.args is None
+
+
+def test_configure_logging_installs_secret_redaction_filter_on_all_handlers() -> None:
+    logging_config.configure_logging(repl_mode=False, log_path=None)
+
+    for handler in logging.getLogger().handlers:
+        assert any(isinstance(f, logging_config.SecretRedactionFilter) for f in handler.filters)
+
+
+def test_configure_logging_installs_secret_redaction_filter_on_file_handler(tmp_path: Path) -> None:
+    log_path = tmp_path / "session-logs" / "test.log"
+    logging_config.configure_logging(repl_mode=False, log_path=log_path)
+
+    file_handler = next(
+        h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler))
+    assert any(isinstance(f, logging_config.SecretRedactionFilter) for f in file_handler.filters)
