@@ -225,9 +225,6 @@
 * When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
   wants to invoke.
 
-* "Per-tool breakdown" stats within Session Statistics should be rendered as an aligned grid
-  or `<table>`, not just a bunch of text.
-
 ## Remaining / future work from `plan` epics
 
 *Some `plan` documents were only partially implemented; others explicitly mentioned follow-up work*

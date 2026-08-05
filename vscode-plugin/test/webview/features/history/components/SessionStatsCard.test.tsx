@@ -30,16 +30,18 @@ describe('SessionStatsCard', () => {
   it('renders message counts with comma-grouped, right-aligned values', () => {
     render(<SessionStatsCard entry={ENTRY} />);
     expect(screen.getByText('User messages')).toBeTruthy();
-    expect(screen.getAllByText('3')).toHaveLength(2);
+    expect(screen.getAllByText('3')).toHaveLength(3);
     expect(screen.getAllByText('22,558')).toHaveLength(2);
   });
 
-  it('renders the per-tool breakdown when present, aligned to the shared value/note columns', () => {
+  it('renders the per-tool breakdown as a table with aligned columns', () => {
     render(<SessionStatsCard entry={ENTRY} />);
     expect(screen.getByText('Per-tool breakdown')).toBeTruthy();
     expect(screen.getByText('Bash')).toBeTruthy();
-    expect(screen.getByText('3 succeeded, 1 failed')).toBeTruthy();
-    expect(screen.getByText('(4 total)')).toBeTruthy();
+    expect(screen.getByText('Tool')).toBeTruthy();
+    expect(screen.getByText('Succeeded')).toBeTruthy();
+    expect(screen.getByText('Failed')).toBeTruthy();
+    expect(screen.getByText('Total')).toBeTruthy();
   });
 
   it('omits the per-tool breakdown section when no tools ran', () => {

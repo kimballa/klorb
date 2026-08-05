@@ -1144,6 +1144,23 @@ button.status-chip:hover {
   padding-right: 12px;
 }
 
+/* Per-tool breakdown table -- columns align independently of the surrounding grid rows. */
+.session-stats-tool-table {
+  grid-column: 1 / -1;
+  border-collapse: collapse;
+  margin-top: 2px;
+}
+
+.session-stats-tool-table th,
+.session-stats-tool-table td {
+  padding: 1px 12px 1px 0;
+}
+
+.session-stats-tool-table th {
+  font-weight: 600;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.7));
+}
+
 /* A spacer cell that goes across a column to create a horizontal rule in the table. */
 .session-stats-rule-cell {
   border-top: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.7));

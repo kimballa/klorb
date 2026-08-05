@@ -35,27 +35,32 @@ function StatRow({ label, value, note, formatValue }: StatRowProps): JSX.Element
   );
 }
 
-interface ToolStatRowProps {
-  name: string;
-  succeeded: number;
-  failed: number;
+interface ToolBreakdownTableProps {
+  tools: { name: string; succeeded: number; failed: number }[];
 }
 
-/** Same five-cell shape as StatRow, so a tool's name/count columns land in the same grid
- * columns as every other row instead of the wrapping flex div this used to be. */
-function ToolStatRow({ name, succeeded, failed }: ToolStatRowProps): JSX.Element {
+function ToolBreakdownTable({ tools }: ToolBreakdownTableProps): JSX.Element {
   return (
-    <>
-      <span className="session-stats-label">{name}</span>
-      <span></span>
-      <span className="session-stats-value">
-        {succeeded} succeeded, {failed} failed
-      </span>
-      <span className="session-stats-note session-stats-tool-note">
-        ({succeeded + failed} total)
-      </span>
-      <span></span>
-    </>
+    <table className="session-stats-tool-table">
+      <thead>
+        <tr>
+          <th className="session-stats-label">Tool</th>
+          <th className="session-stats-value">Succeeded</th>
+          <th className="session-stats-value">Failed</th>
+          <th className="session-stats-value">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {tools.map((tool) => (
+          <tr key={tool.name}>
+            <td className="session-stats-label">{tool.name}</td>
+            <td className="session-stats-value">{tool.succeeded}</td>
+            <td className="session-stats-value">{tool.failed}</td>
+            <td className="session-stats-value">{tool.succeeded + tool.failed}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -86,14 +91,7 @@ export default function SessionStatsCard({ entry }: SessionStatsCardProps): JSX.
             <div className="session-stats-title session-stats-section-spaced">
               Per-tool breakdown
             </div>
-            {entry.toolBreakdown.map((tool) => (
-              <ToolStatRow
-                key={tool.name}
-                name={tool.name}
-                succeeded={tool.succeeded}
-                failed={tool.failed}
-              />
-            ))}
+            <ToolBreakdownTable tools={entry.toolBreakdown} />
           </>
         ) : null}
         <div className="session-stats-title session-stats-section-spaced">Token Usage</div>
