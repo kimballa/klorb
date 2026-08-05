@@ -157,6 +157,12 @@
   * Start adding system interjections mentioning how many turns the agent has taken, or how
     many tool calls (vs total tool call budget / limit) it has performed.
 
+* Apply `klorb.tools.util.SecretRedactor` (or the underlying `detect-secrets` scan it wraps --
+  see docs/specs/secret-redaction.md) to what klorb's own `logger` instances write out, so a
+  tool call that captures a real credential (e.g. `BashTool`'s captured stdout/stderr, or a
+  debug log of a file's content) doesn't write that plaintext secret into klorb's own log files
+  on disk.
+
 ## TUI
 
 ### Bugs

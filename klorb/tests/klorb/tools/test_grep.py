@@ -232,6 +232,92 @@ def test_max_results_exact_count_is_not_truncated(tmp_path: Path) -> None:
     assert result["truncated"] is False
 
 
+# --- Secret redaction (see docs/specs/secret-redaction.md) ---
+
+_AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
+
+
+def test_grep_redacts_a_matched_credential(tmp_path: Path) -> None:
+    (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["AWS_ACCESS_KEY_ID"]})
+
+    assert result["match_count"] == 1
+    lines = result["files"][0]["lines"]
+    assert len(lines) == 1
+    assert _AWS_KEY not in lines[0]
+    assert "[[SECRET:" in lines[0]
+
+
+def test_grep_redacts_credential_in_surrounding_context_too(tmp_path: Path) -> None:
+    """A secret pulled in only as FullContext surrounding another match is masked too, not
+    just the line that actually matched the query."""
+    (tmp_path / "creds.env").write_text(f"before\nAWS_ACCESS_KEY_ID={_AWS_KEY}\nafter\n")
+
+    result = GrepTool(_context(tmp_path, context_lines=1)).apply(
+        {"path": "", "queries": ["before"], "outputStyle": "FullContext"})
+
+    lines = result["files"][0]["lines"]
+    assert any(_AWS_KEY not in line and "[[SECRET:" in line for line in lines)
+    assert not any(_AWS_KEY in line for line in lines)
+
+
+def test_grep_still_matches_a_query_naming_the_secret_itself(tmp_path: Path) -> None:
+    """Matching runs against the file's real content, not the redacted rendering -- searching
+    for the secret's own literal value still finds it, even though the returned line is
+    masked. The echoed `queries` value is masked too, in case the caller typed the plaintext
+    secret directly rather than obtaining it via a token."""
+    (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": [_AWS_KEY]})
+
+    assert result["match_count"] == 1
+    assert _AWS_KEY not in result["files"][0]["lines"][0]
+    assert _AWS_KEY not in result["queries"][0]
+    assert "[[SECRET:" in result["queries"][0]
+
+
+def test_grep_redacts_before_truncating_not_after(tmp_path: Path) -> None:
+    """Truncating a line before redacting it could slice a credential in half, leaving a real
+    fragment un-redacted (detect-secrets can't match a partial pattern) -- redaction must run
+    on the full line before max_line_length truncation ever touches it."""
+    (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+
+    result = GrepTool(_context(tmp_path, max_line_length=35)).apply(
+        {"path": "", "queries": ["AWS_ACCESS_KEY_ID"]})
+
+    line = result["files"][0]["lines"][0]
+    # No 8+ character fragment of the real key leaked into the (possibly truncated) output.
+    assert not any(_AWS_KEY[i:i + 8] in line for i in range(len(_AWS_KEY) - 8))
+
+
+def test_grep_query_token_resolves_to_the_real_secret_for_matching(tmp_path: Path) -> None:
+    """A `[[SECRET:...]]` token echoed back from an earlier Grep/ReadFile result is resolved to
+    the real plaintext before matching, so re-searching with the token still finds the secret
+    in real file content -- and the result echoes the token back, never the plaintext."""
+    (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
+    session, context = _context_with_session(tmp_path)
+    try:
+        first = GrepTool(context).apply({"path": "", "queries": ["AWS_ACCESS_KEY_ID"]})
+        token = first["files"][0]["lines"][0].split("=", 1)[1]
+        assert token.startswith("[[SECRET:")
+
+        second = GrepTool(context).apply({"path": "", "queries": [token]})
+
+        assert second["match_count"] == 1
+        assert second["queries"] == [token]
+    finally:
+        session.close()
+
+
+def test_grep_without_a_credential_is_unaffected(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["hello"]})
+
+    assert _matched_filenames(result) == {"top.py", "nested.py", "notes.txt"}
+
+
 def test_denied_root_raises_permission_error(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 

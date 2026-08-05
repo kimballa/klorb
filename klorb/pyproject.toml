@@ -36,6 +36,7 @@
     "watchdog >= 6.0.0, < 7.0.0",
     "Pillow >= 11.0.0, < 12.0.0",
     "filetype >= 1.2.0, < 2.0.0",
+    "detect-secrets >= 1.5.0, < 2.0.0",
   ]
 
 [project.scripts]

@@ -45,6 +45,8 @@ coolname==5.0.0
     # via klorb (pyproject.toml)
 defusedxml==0.7.1
     # via markitdown
+detect-secrets==1.5.0
+    # via klorb (pyproject.toml)
 distro==1.9.0
     # via openai
 filetype==1.2.0
@@ -136,7 +138,7 @@ numpy==2.5.1
     #   onnxruntime
 onnxruntime==1.28.0
     # via magika
-openai==2.52.0
+openai==2.53.0
     # via klorb (pyproject.toml)
 packaging==26.2
     # via
@@ -197,11 +199,14 @@ python-dotenv==1.2.2
     #   klorb (pyproject.toml)
     #   magika
 pyyaml==6.0.3
-    # via klorb (pyproject.toml)
+    # via
+    #   klorb (pyproject.toml)
+    #   detect-secrets
 regex==2026.7.19
     # via tiktoken
 requests==2.34.2
     # via
+    #   detect-secrets
     #   markitdown
     #   tiktoken
 rich==15.0.0

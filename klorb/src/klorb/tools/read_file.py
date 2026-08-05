@@ -12,6 +12,7 @@ from klorb.tools.util import (
     READ_PREVIEW_MAX_LINES,
     FullFileView,
     ReadFileCore,
+    SecretRedactor,
     parse_numbered_content,
     read_full_file_lines,
 )
@@ -27,6 +28,11 @@ class ReadFileTool(Tool):
     `filename` is resolved and checked against `readDirs` (see
     `klorb.permissions.workspace.resolve_and_evaluate_read`) before the file is opened —
     confined to `SessionConfig.workspace.path` unless `SessionConfig.workspace.trusted`.
+
+    `content` is passed through `self._secret_redactor` (a `klorb.tools.util.SecretRedactor`),
+    masking likely credentials as `[[SECRET:<type>:<hash>]]` tokens before they reach the model
+    -- `EditFileTool` detokenizes the same tokens back to the real bytes when they're echoed
+    back. See docs/specs/secret-redaction.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -35,6 +41,7 @@ class ReadFileTool(Tool):
             context.process_config.read_file_max_lines,
             context.process_config.read_file_max_line_length,
         )
+        self._secret_redactor = SecretRedactor()
 
     def name(self) -> str:
         return "ReadFile"
@@ -68,7 +75,13 @@ class ReadFileTool(Tool):
             "the end of the file (e.g. -1 does not mean 'last line'). To find or read the "
             "last line of a file whose length you don't already know, call with no "
             "start_line/end_line (or start_line=1): the result's total_lines tells you the "
-            "last line's number, which you can then target directly if needed. "
+            "last line's number, which you can then target directly if needed. \n"
+            "A line that looks like it holds a credential may come back with the secret "
+            "replaced by a `[[SECRET:<type>:<hash>]]` token -- that's not part of the file's "
+            "real content. Copy the token itself (verbatim) into EditFile's start_text/"
+            "end_text/old_text/new_text to match or preserve that line; EditFile resolves it "
+            "back to the real value before writing. Never invent your own replacement for a "
+            "token or guess at the secret's real value."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -97,7 +110,8 @@ class ReadFileTool(Tool):
         path, verdict = resolve_and_evaluate_read(self.context, filename)
         raise_if_not_allowed(verdict, resource_description=f"read {path}", path=path, is_write=False)
 
-        result = self.read_file_core.apply(path, args)
+        result = self.read_file_core.apply(
+            path, args, redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
         logger.debug(
             "ReadFile %s returned lines %d-%d of %d (truncated=%s)",
