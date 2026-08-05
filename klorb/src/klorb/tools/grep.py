@@ -20,6 +20,7 @@ from klorb.tools.util import (
     SpillDir,
     compile_queries,
     context_lines_for_matches,
+    load_secrets_baseline,
     match_line_indices,
     matches_only,
     validate_output_style,
@@ -94,7 +95,12 @@ class GrepTool(InterruptibleTool):
         self._max_line_length = context.process_config.grep_max_line_length
         self._spill_bytes = context.process_config.grep_spill_bytes
         self._spill_dir = SpillDir("Grep")
-        self._secret_redactor = SecretRedactor()
+        self._secret_redactor = SecretRedactor(
+            baseline_hashes=load_secrets_baseline(
+                context.session_config.workspace.path,
+                trusted=context.session_config.workspace.trusted,
+            ),
+        )
 
     def name(self) -> str:
         return "Grep"

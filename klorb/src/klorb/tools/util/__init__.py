@@ -43,9 +43,12 @@ result to disk instead of returning it inline — shared by `GrepTool`'s `files`
 a `Session` (only for type-checking, via `TYPE_CHECKING`, not a runtime import), so re-exporting
 it here is cycle-free for the same reason `dir_walk.py` is.
 
-`secret_redaction.py` (`SecretRedactor`) is the credential-masking filter `ReadFileCore`/
-`EditFileCore` apply to file content before it reaches a model — see
-docs/specs/secret-redaction.md. Like `SpillDir`, it takes a `Session` only for type-checking.
+`secret_redaction.py` (`SecretRedactor`, `load_secrets_baseline`) is the
+credential-masking filter `ReadFileCore`/`EditFileCore` apply to file content before it
+reaches a model — see docs/specs/secret-redaction.md. Like `SpillDir`, it takes a `Session`
+only for type-checking. `load_secrets_baseline()` loads an optional
+`.klorb/secrets-baseline.json` allowlist for known false positives (only for trusted
+workspaces).
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
@@ -73,6 +76,7 @@ from klorb.tools.util.secret_redaction import (
     SECRET_DETECTION_PLUGINS,
     SECRET_DETECTION_SCAN_LOCK,
     SecretRedactor,
+    load_secrets_baseline,
 )
 from klorb.tools.util.spill import SpillDir
 
@@ -95,6 +99,7 @@ __all__ = [
     "compile_queries",
     "context_lines_for_matches",
     "format_match_line",
+    "load_secrets_baseline",
     "match_line_indices",
     "matches_only",
     "parse_numbered_content",

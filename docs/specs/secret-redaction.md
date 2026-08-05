@@ -125,22 +125,42 @@ captured during a session never reach disk through this mechanism. This is the s
 other tools already rely on to hold sensitive or unserializable state (`BashTool`'s live
 persistent-shell subprocess handle, `WebFetchTool`'s spill tmpdir).
 
-## Suppressing false positives (not yet implemented)
+## Suppressing false positives with a secrets baseline
 
-`detect-secrets` has a baseline-file convention (typically `.secrets.baseline` at a repository's
-root) for suppressing known false positives, and `SecretRedactor` doesn't wire one up yet — every
-detected match is masked unconditionally, so klorb's own test fixtures and documentation that
-contain AWS-key-shaped example strings (including this feature's own tests) get redacted the same
-as a real secret would.
+`SecretRedactor` supports a baseline file for suppressing known false positives — strings that `detect-secrets` flags but the workspace owner has verified are not real credentials (documentation examples, test fixtures, etc.).
 
-If/when baseline support is added, the file belongs at `${workspace.path}/.klorb/
-secrets-baseline.json`, not a bare `.secrets.baseline` in the workspace root, for the same reasons
-`.klorb/klorb-config.json` lives there (see docs/specs/projects-and-trust.md): it's project-level,
-human-maintained, meant to be committed alongside the repository it applies to, and — simply by
-living under `.klorb/` — is automatically covered by the existing privileged-path deny
-(`klorb.permissions.directory_access.is_privileged_path`/`KLORB_PROJECT_DIR_NAME`), so a model can
-never read or edit its own allowlist through `ReadFile`/`EditFile`/`Grep`/`Bash` the way it could
-if the file sat in plain workspace-root space.
+### File location and naming
+
+The baseline file lives at `${workspace.path}/.klorb/secrets-baseline.json`, not a bare `.secrets.baseline` in the workspace root, for the same reasons `.klorb/klorb-config.json` lives there (see docs/specs/projects-and-trust.md): it's project-level, human-maintained, meant to be committed alongside the repository it applies to, and — simply by living under `.klorb/` — is automatically covered by the existing privileged-path deny (`klorb.permissions.directory_access.is_privileged_path`/`KLORB_PROJECT_DIR_NAME`). A model's default tools (`ReadFile`/`EditFile`/`Grep`/`Bash`) cannot access that path; reaching it requires `EscalatePrivileges`.
+
+### Trust gate
+
+The baseline file is only loaded when `workspace.trusted` is `True`. An untrusted workspace may be a hostile, downloaded-and-unzipped repository that ships a crafted `.klorb/secrets-baseline.json` to suppress detection of its own planted secrets. `load_secrets_baseline()` takes a `trusted` parameter and returns an empty frozenset when it is `False`.
+
+### Format
+
+The file is the literal output of `detect-secrets scan > .klorb/secrets-baseline.json` — the standard `detect-secrets` baseline format, with `version`, `plugins_used`, `filters_used`, and `results` keys. No klorb-specific parsing or schema envelope is applied. It already contains a `version` field tracking the `detect-secrets` library version that produced it.
+
+```json
+{
+  "version": "1.5.0",
+  "plugins_used": [{"name": "AWSKeyDetector"}, ...],
+  "filters_used": [{"path": "detect_secrets.filters.heuristic.is_likely_id_string"}, ...],
+  "results": {
+    "path/to/fixture.env": [
+      {"type": "AWS Access Key", "filename": "path/to/fixture.env", "hashed_secret": "abac545fc3bf803134bc8f78fb6160a5c6a87b26", "is_verified": false}
+    ]
+  }
+}
+```
+
+The `hashed_secret` values are SHA-1 digests (the same hashing algorithm `detect-secrets` uses internally), so a baseline can suppress a secret without holding the plaintext: `load_secrets_baseline()` reads the file and returns only the hashes; during scanning, `SecretRedactor` computes the SHA-1 of each detected secret and skips it if that hash is in the set.
+
+### How baseline filtering works
+
+`load_secrets_baseline(workspace_path, trusted=...)` reads the file at `workspace_path/.klorb/secrets-baseline.json`, extracts all `hashed_secret` values, and returns them as a `frozenset[str]`.  `ReadFileTool`, `EditFileTool`, and `GrepTool` each call `load_secrets_baseline()` once in `__init__()` and pass the resulting frozenset to `SecretRedactor(baseline_hashes=...)`.  During `redact()`, for each potential secret the scan flags, `SecretRedactor` checks whether `PotentialSecret.hash_secret(secret_value)` is in the frozenset — if so, the secret is skipped rather than masked.  Secrets whose hash is not in the set are redacted as before.
+
+The baseline is evaluated per secret value, not per filename or line number — if the same secret value appears somewhere the baseline doesn't name, it still passes through unredacted, because the hash is all that's checked.
 
 ## Out of scope
 

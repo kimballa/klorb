@@ -254,6 +254,31 @@ first); the model uses the priority tag to decide which file wins on conflict:
 None of the workspace files are read (or even stat-ed) when the workspace is untrusted.
 See `docs/specs/workspace-context-files.md` for details.
 
+### Secrets baseline
+
+klorb detects likely credentials (AWS keys, private keys, API tokens, etc.) in
+file content read via `ReadFile`, `EditFile`, and `Grep`, and replaces each one
+with a `[[SECRET:<type>:<hash>]]` token before the content reaches the model.
+See `docs/specs/secret-redaction.md` for the full design.
+
+If your workspace contains strings that look like credentials but aren't
+(fixtures, documentation examples, test data), you can suppress false-positive
+redaction by generating a baseline file and placing it at
+`<workspace>/.klorb/secrets-baseline.json`:
+
+```bash
+detect-secrets scan > .klorb/secrets-baseline.json
+```
+
+The file is the standard `detect-secrets` baseline format. Review the output and remove entries for
+real secrets, keeping only the known-safe ones. Klorb extracts the `hashed_secret` values (SHA-1
+digests) and skips redaction for any secret whose hash matches.
+
+The baseline is only loaded for trusted workspaces. The file lives under `.klorb/`, which is a
+privileged path by default.
+
+See `docs/specs/secret-redaction.md` for the full design.
+
 ## EXAMPLES
 
 Start the interactive REPL with the default model:

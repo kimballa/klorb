@@ -8,7 +8,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore, SecretRedactor
+from klorb.tools.util import DiffHunk, EditFileCore, SecretRedactor, load_secrets_baseline
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,12 @@ class EditFileTool(Tool):
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
         self.edit_file_core = EditFileCore(context.process_config.edit_file_drift_search_radius)
-        self._secret_redactor = SecretRedactor()
+        self._secret_redactor = SecretRedactor(
+            baseline_hashes=load_secrets_baseline(
+                context.session_config.workspace.path,
+                trusted=context.session_config.workspace.trusted,
+            ),
+        )
 
     def name(self) -> str:
         return "EditFile"

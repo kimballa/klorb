@@ -1,11 +1,13 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.util.secret_redaction.SecretRedactor."""
 
+import json
 from pathlib import Path
 
-from klorb.permissions.directory_access import DirRules
+from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
 from klorb.session import Session, SessionConfig
 from klorb.tools.util import SecretRedactor
+from klorb.tools.util.secret_redaction import load_secrets_baseline
 from klorb.workspace import Workspace
 
 _AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
@@ -110,3 +112,79 @@ def test_token_map_lives_only_in_session_tool_state_never_elsewhere(tmp_path: Pa
         assert _AWS_KEY in session.tool_state["SecretRedaction"]["token_to_secret"].values()
     finally:
         session.close()
+
+
+def _write_baseline(tmp_path: Path, hashes: list[str]) -> None:
+    """Write a minimal `.klorb/secrets-baseline.json` in `detect-secrets` baseline format."""
+    klorb_dir = tmp_path / KLORB_PROJECT_DIR_NAME
+    klorb_dir.mkdir(parents=True, exist_ok=True)
+    data: dict[str, object] = {
+        "version": "1.5.0",
+        "plugins_used": [],
+        "filters_used": [],
+        "results": {
+            "test-fixture.txt": [{"type": "AWS Access Key", "hashed_secret": h} for h in hashes],
+        },
+    }
+    (klorb_dir / "secrets-baseline.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_load_secrets_baseline_returns_hashes(tmp_path: Path) -> None:
+    hashes = ["aaa", "bbb"]
+    _write_baseline(tmp_path, hashes)
+    result = load_secrets_baseline(tmp_path, trusted=True)
+    assert result == frozenset({"aaa", "bbb"})
+
+
+def test_load_secrets_baseline_returns_empty_when_file_missing(tmp_path: Path) -> None:
+    assert load_secrets_baseline(tmp_path, trusted=True) == frozenset()
+
+
+def test_load_secrets_baseline_returns_empty_on_malformed_json(tmp_path: Path) -> None:
+    klorb_dir = tmp_path / KLORB_PROJECT_DIR_NAME
+    klorb_dir.mkdir(parents=True, exist_ok=True)
+    (klorb_dir / "secrets-baseline.json").write_text("not json", encoding="utf-8")
+    assert load_secrets_baseline(tmp_path, trusted=True) == frozenset()
+
+
+def test_load_secrets_baseline_returns_empty_when_results_missing(tmp_path: Path) -> None:
+    klorb_dir = tmp_path / KLORB_PROJECT_DIR_NAME
+    klorb_dir.mkdir(parents=True, exist_ok=True)
+    (klorb_dir / "secrets-baseline.json").write_text(json.dumps({
+        "version": "1.5.0",
+        "plugins_used": [],
+        "filters_used": [],
+    }), encoding="utf-8")
+    assert load_secrets_baseline(tmp_path, trusted=True) == frozenset()
+
+
+def test_load_secrets_baseline_returns_empty_when_untrusted(tmp_path: Path) -> None:
+    """An untrusted workspace must never load a baseline -- it could be attacker-controlled."""
+    _write_baseline(tmp_path, ["aaa", "bbb"])
+    assert load_secrets_baseline(tmp_path, trusted=False) == frozenset()
+
+
+def test_baseline_hash_skips_redaction() -> None:
+    """A secret whose SHA-1 hash appears in `baseline_hashes` is left unredacted."""
+    import hashlib
+    secret_value = "AKIAABCDEFGHIJKLMNOP"
+    sha1 = hashlib.sha1(secret_value.encode("utf-8")).hexdigest()
+    redactor = SecretRedactor(baseline_hashes=frozenset({sha1}))
+    text = f"AWS_ACCESS_KEY_ID={secret_value}"
+    assert redactor.redact(None, text) == text
+
+
+def test_baseline_does_not_skip_non_baseline_secrets() -> None:
+    """Secrets not in the baseline are still redacted even when a baseline is loaded."""
+    import hashlib
+    secret_value = "AKIAABCDEFGHIJKLMNOP"
+    unrelated_hash = hashlib.sha1(b"some-other-value").hexdigest()
+    redactor = SecretRedactor(baseline_hashes=frozenset({unrelated_hash}))
+    text = f"AWS_ACCESS_KEY_ID={secret_value}"
+    assert secret_value not in redactor.redact(None, text)
+
+
+def test_empty_baseline_redacts_normally() -> None:
+    """An empty baseline (the default) does not change redaction behavior."""
+    redactor = SecretRedactor()
+    assert redactor.redact(None, _AWS_KEY) != _AWS_KEY
