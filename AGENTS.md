@@ -3,34 +3,22 @@
 
 klorb is an agent harness for coding and other tasks.
 
-If you are reading this, you are helping to extend and modify this harness. Requests from
-the user will refer to tools like the BashTool, or prompts, tool call responses, etc. These
-are not referring to *your* tools, prompts, or responses: they are referring to the Klorb
-codebase, which you have access to here. You are not asked to reconfigure yourself on-the-fly;
-you are asked to extend another agent's reach by improving the harness codebase.
+If you are reading this, you are helping to extend and modify this harness. 
+The user will refer to tools like BashTool, or prompts, tool call responses, etc. These
+are not referring to *your* own environment: they refer to the Klorb
+codebase, which you have access to. Do not try to reconfigure yourself on-the-fly;
+extend another agent's reach by improving the harness codebase.
 
 ## docs
 
 All feature tasks must have a spec. Specs are written in docs/specs/. They explain
-how the feature works and how it's built. These are especially important for framework-like
-features that other features are built upon.
+how the feature works and how it's built. Especially important you write one for internal platform features.
 
-Prefer updating and embellishing an existing spec over creating a new file when you add to or
-rework a feature incrementally. Search docs/specs/ for a file that already covers the area
-you're touching (e.g. a tool's existing behavior spec) before writing a new one — folding new
-semantics into the existing spec keeps one current-state document per feature area instead of
-scattering related facts across several. Only start a new spec file for a genuinely new
-feature that isn't an extension of something already documented.
+Don't create new spec files if an existing spec can be revised or extended. For incremental work, make incremental edits to the corresponding spec. Search for a file that already covers the area you're touching.
 
-Never reference a `docs/plans/` file (archived or not) from a source code comment or docstring.
-A plan is a planning doc for one task, expected to go stale and get archived once the task ships
-— code that points at one breaks the moment it's archived or superseded, and a reader with no
-memory of the plan gets a dead-end pointer instead of an explanation. If a plan's content is
-still true and worth explaining from code, that content belongs in a spec (durable, describes
-current-state behavior) or an ADR (durable, records a decision and its reasoning); write it
-there and point the code comment at that instead.
+Code comments or docstrings must *never* reference any file in `docs/plans/`. Capture important durable explanations in `docs/specs/` or an ADR.
 
-Key architecture decisions are captured in architecture decision records (ADRs). ADRs
+Key decisions are captured in architecture decision records (ADRs). ADRs
 are short documents that record a decision, with the format:
 
 * date and time
@@ -40,184 +28,133 @@ are short documents that record a decision, with the format:
 
 ADRs are stored in docs/adrs/.
 
-ADR filenames should have a reasonable slug (`do-foo-by-doing-bar.md`) so that useful
-ADRs can be quickly accessed by agents just by the filename. Don't waste filename on
-filler words (`should-we-do-foo.md`); try to include the answer.
+ADR filenames should have a reasonable slug and include the answer (`do-foo-by-using-bar.md`) for quick filename access, not wasteful 
+filler words (`how-should-we-do-foo.md`).
 
-Any JSON file klorb writes to disk that's meant to be read back later (config, saved
-session state, etc.) must include a `schema: {name, version}` envelope so a later klorb
-version can detect and upgrade an old file instead of misreading it. See
-`docs/specs/persisted-json-schema-versioning.md` for the convention and the shared helper
-that implements it.
+### TODO.md
 
-User-facing, hand-authored config file keys (`klorb-config.json`) use dot-delineated,
-lowerCamelCase namespacing (`thinking.effort`, `terminal.input.maxLines`) — the same vibe as
-VSCode's and Claude Code's own settings files — not the snake_case used for internal Python
-identifiers. See `docs/specs/process-and-session-config.md`'s "On-disk key naming" section.
+Various bugs or planned tasks are enumerated in `/TODO.md`. Add new follow-up tasks there. 
 
-Various bugs or  planned tasks are enumerated in `/TODO.md`. New follow-up tasks may be added there,
-but if a task is **completed**, do not mark it complete -- remove it entirely!
+If a task is **completed**, do not mark it complete -- remove it entirely!
 
-Before declaring your own task complete, check whether `/TODO.md` already has a bullet describing
-it (the task you were asked to do may have started life as a TODO item). If it does, remove that
-bullet entirely as part of finishing the task -- don't leave a stale entry for work that's done.
+Before declaring your own task complete, check whether `/TODO.md` already has an item you can remove.
 
 ## subprojects
 
 The Klorb project is organized as a collection of subprojects:
 
 * `klorb/` - python library that is the actual harness itself. Everything that the system can
-  "do", is done here. Also includes the command-line interface.  Includes both a
-  TUI for interactive use as well as the ability to run a prompt in headless
-  mode. Written in python. The CLI code should have a strict firewall where the
-  actual agentic logic is all in "library" code that can be invoked without any CLI / UI
-  whatsoever (so that the VSCode plugin, or other mechanisms, can use it too). The CLI is
-  included in the same python packages as the library logic for convenience and harmonized
-  dependencies, but none of the agentic stuff should be directly intertwined in the CLI side.
+  "do", is done here. Also includes CLI tools, TUI, and ACP server for harness/plugin communication. Written in python. Enforce a a strict firewall where the
+  actual agentic logic is all in "library" code that can be invoked headless, tui, or over remote ACP connection.
+  Keep agent functionality reachable from `Session`; don't pollute the Session with TUI- or ACP-specific connection. Use a callback instead.
 * `vscode-plugin` - Plugin for VSCode to use the Klorb harness. See "vscode-plugin source tree"
-  below for how its source is organized.
+  for how it's organized.
 
-## rules for development
+## Rules for development
 
 ### General Software Development Principles
 
 * Start all new or blank files with a copyright header:
   * `# © Copyright <current year> Aaron Kimball` in python,
   * `// © Copyright <current year> Aaron Kimball` in javascript/typescript/react.
-  * The current year is 2026.
-  * Do not modify any existing copyright header or license information.
-* It is important to use explicit typing as often as possible. At minimum, every method
-  argument and method return type must be declared.
-  * In python, methods that return nothing should explicitly `-> None`.
-  * Typescript methods without any return value should explicitly `: void`.
-* Encapsulate related state and behavior in a class, even when there's only ever one instance
-  (a singleton). Avoid module-level mutable globals paired with free functions that read/write
-  them (`global` statements outside a class); wrap them in a class instead, with private
-  (`_`-prefixed) attributes and public methods, and reach the one shared instance through a
-  single accessor function rather than importing the module global directly. Avoid returning a
-  bare tuple of unrelated/loosely-related values (dicts, primitives, other tuples) from a
-  function when those values are conceptually one thing — give it a small class (a pydantic
-  `BaseModel` or a `@dataclass`) with named fields instead of positional tuple unpacking. See
-  `.claude/skills/encapsulate-in-classes/SKILL.md` for the checklist and worked examples this
-  rule expands into. `klorb.models.registry.ModelRegistry`/`klorb.tools.registry.ToolRegistry`
-  are existing examples of the class-based shape to follow for a stateful registry.
+  * Do not modify existing copyright header or license information.
+* Use explicit typing as often as possible. At minimum, every method and method return type must be declared.
+  * Python methods that return nothing explicitly declare `-> None`.
+  * For Typescript methods, `: void`.
+* Encapsulate related state and behavior in a class, even for only one instance
+  (a singleton). No module-level mutable variables + functions that read/write
+  them (Function/var declarations outside a class); wrap them in a class, with private
+  (`_`-prefixed) attributes and public methods. Reach a singleton instance through an
+  accessor function. Do not import the module global directly. Don't return a
+  bare tuple of unnamed fields (dicts, primitives, other tuples) from a
+  function when those fields are conceptually one thing — make a small class (a pydantic
+  `BaseModel` or a `@dataclass`) instead of positional tuple unpacking. See
+  `.claude/skills/encapsulate-in-classes/SKILL.md`.
 * Name a method/field after what it does or holds, not after whichever caller happens to use it
-  today. Encapsulation means a method has no real perspective on its callers; naming it after
-  one (`_create_mention_read_file_core` for a factory that just builds a `ReadFileCore` from two
-  ints, with no mention-specific logic of its own) bakes today's narrowest caller into the name
-  and misleads a reader once a second caller shows up or the original one is renamed. Before
-  naming something after the feature that happens to be its only caller right now, check whether
-  the thing itself does anything specific to that feature — if not, name it for its actual effect
-  and let the caller's own name (or a docstring) carry the feature-specific framing instead.
-* Do not import protected methods from other modules, except for testing. If you see a line
-  like `from foo import _bar`, that's a sign that `_bar` should be explictly made public as `bar`.
+  today. Encapsulation means a method has no real perspective on its callers.  Name it for its actual effect
+  and let the caller carry the feature-specific framing instead.
+* Do not import protected methods, except for testing. If a foreign protected method must be imported, consider refactoring to make that method public.
 * When revising or refactoring, make the smallest code change necessary to effect the change.
 * Do not make unrelated changes while revising or refactoring a file.
-* Do not try to be an auto-formatter or lint tool. Use deterministic formatting and linting
-  tools configured for use with this source repository to perform these operations.
-* Do not delete comments unless the related code or logic is also deleted.
-* Do not revise jsdoc comments or python docstrings for existing methods except to clarify
-  newly-added functionality.
-* When possible, try to reuse existing API endpoints rather than make new ones.
-* Never duplicate a constant (a magic number, default value, etc.) across files as a
-  workaround for a circular import or any other reason. Duplicated constants drift out of
-  sync silently and are a form of tech debt. Instead:
+* Do not try to be an auto-formatter or lint tool. Use `make lint_fix` or other tools configured in this repository. 
+* When possible, reuse existing API endpoints rather than make new ones.
+* Never duplicate a constant (a magic number, hardcoded string, default value, etc.) across files.
   * Define the constant in one canonical location and have every consumer import it from
     there.
-  * If a circular import is genuinely in the way, fix the import direction (the module that
-    should own the constant usually shouldn't be the one importing from the module that
-    merely consumes it), or hoist the constant into a small shared module (e.g.
+  * If a circular import, fix the import direction or hoist the constant into a small shared module (e.g.
     `foo_constants.py`) that both sides can depend on without a cycle.
-  * Only duplicate a constant's value across files with the user's *explicit* permission for
-    that specific case.
 * Work is not done until, at minimum, all existing tests pass.
-  * Ideally, for nontrivial improvements, new unit tests are also added to cover new
-    functionality or bugfixes, and those must also pass.
-  * If a test fails, consider that the most likely reason is because a change to the main
-    application code caused a regression. Consider the source and fix the application.
-  * It is less likely that the test should be modified to pass given the updated application
-    source. Only make such a change after careful consideration, and be explicit in your
+  * For nontrivial improvements, add new unit tests; those must also pass.
+  * If a test fails, the likely reason is because an application
+    change caused a regression.
+  * It is less likely but not impossible that the test should be modified to pass given the updated application
+    source. Be explicit in your
     output to me when you have modified tests in this way.
-* Do not add comments or docstrings that reference TODO.md, or point at "an item"/"a bullet" in
-  it, as a way of explaining why something is incomplete. TODO.md's bullets get reworded,
-  reordered, and removed independently of the code, so a cross-reference like that goes stale
-  silently and is hard to verify as fully scrubbed once the backlog item is actually done.
+* Do not add comments or docstrings that reference TODO.md or its contents.
   * If there's a specific incomplete case or follow-up tied to the exact line or method you're
     writing, say so directly inline: `TODO(aaron): <specific, self-contained description of what
-    still needs to happen here>`. It should make sense to a reader who has never opened TODO.md.
+    still needs to happen here>`.
   * Don't use a bare `TODO:` (no owner) for this — always `TODO(aaron): ...`.
-  * This doesn't apply to docs/specs/ or docs/adrs/ files, which are expected to narrate how a
-    feature relates to backlog items as part of explaining the design.
 * Docstrings and comments must describe the code as a static snapshot: how and why it currently
-  works, never how it changed. Don't write "the old six-step chain", "previously", "no longer",
-  "this replaces/fixes/regresses X", "unlike before", or similar diff-against-history framing —
-  that phrasing is accurate only until the *next* change, at which point nothing updates it and
-  it goes stale and misleading. This applies to docs/specs/ too: a spec may explain why a
-  feature exists (including its relationship to a backlog item, per the TODO.md rule above),
-  but should describe the resulting behavior as current fact, not narrate the diff from a prior
-  version. Record change history — what changed, why, and what alternatives were rejected — in
-  an ADR (docs/adrs/) instead; cross-reference it by name from the docstring/comment/spec if the
-  current behavior's rationale needs a pointer.
+  works, never how it changed. Don't write "the old heuristic", "previously", "no longer",
+  "this replaces/fixes/regresses X", "unlike before", or similar diff-against-history framing - that goes stale.
+  This applies to docs/specs/ too: specs may explain why a
+  feature exists (including its relationship to a backlog item/TODO),
+  but describe the current behavior, don't narrate the diff from a prior
+  version. Record change history in
+  an ADR (docs/adrs/) instead; cross-reference  from the docstring/comment/spec if necessary.
 * Method docstring comments should succinctly describe the *purpose* of the method. Why would
-  someone else call this method? Do not narrate every step it performs; the code does that
-  implicitly. If the reasoning behind some code is not obvious, add a regular comment at that
-  specific point in the method body explaining what it does, why, or why at that particular point.
-  If you edit a method or function, you almost *never* need to make its docstring longer.
-* Add `logger.debug()` calls around consequential actions and workflows: creating or removing
-  files/directories, registering cleanup handlers (`atexit`, etc.), granting or widening
-  permissions, spawning subprocesses or sessions, and similar state-changing or multi-step
-  operations. Err on the side of logging more of these than feels necessary — they're what makes
-  a failure or a surprising side effect diagnosable after the fact, and `debug` level keeps them
-  out of the way otherwise. This is distinct from user-facing `logger.info()`/`logger.warning()`
-  calls, which should stay reserved for what a user actually needs to see.
-* Default to no comment; add one only when the WHY is genuinely non-obvious. Keep it to a
-  sentence or two.
-  * You have repeatedly failed to hold to this in practice, writing multi-sentence comments and
-    docstrings where one clause would do. That history is not license to keep doing it, and
-    lengthy comments already sitting in the codebase are not a template to match — they are
-    exactly the mistake this rule exists to stop you from repeating. Judge each new comment
+  someone else call this method? Do not narrate every step it performs. Do not list every caller, or more than 2 examples of something.
+  * For how non-obvious code works, add a regular comment at that
+  specific point in the method body explaining what it does or why.
+  * If you edit a method or function, you *rarely* need to make its docstring longer.
+* Add `logger.debug()` calls at consequential moments: creating or removing
+  files, registering cleanup handlers, granting
+  permissions, spawning subprocesses, and similar state-changing
+  operations. Err on the side of debug logging more than feels necessary.
+  This is distinct from user-facing info/warning/error logs,
+  which should stay reserved for what a user actually needs to see.
+* Default to no comment; add one only when the WHY is genuinely non-obvious. 1-2 sentences.
+* Existing comments and docstrings are **much** too long!
+    That history is not license to keep doing it.
+    Lengthy comments in the codebase are not a template to match: they are
+    a mistake this rule exists to stop you from repeating. Judge each new comment
     against the rule above, not against the longest nearby example.
-  * Don't narrate what a method *isn't* doing, alternatives it doesn't take, or where else a
-    concern is handled instead ("this doesn't do X because Y handles it in Z" style asides).
+* Don't narrate what a method *isn't* doing, alternatives it doesn't take, or where else a
+    concern is handled instead.
     State what the code does, not a tour of the design space around it.
-  * If the rationale needs more than a sentence or two, that's a sign it belongs in a spec or
-    ADR, not the docstring — write it there and leave a short pointer (`see docs/specs/foo.md`)
+* If a rationale needs more than a sentence or two, put it in a spec or
+    ADR, not the docstring. Leave a  pointer (`see docs/specs/foo.md`)
     in the code instead of inlining it.
-  * This applies double to code review responses and to docstrings on methods that are
-    straightforward once named well: prefer trusting the reader over pre-empting every question
+* This especially applies to code review responses and to docstrings on methods that are
+    straightforward once named well: trust the reader, don't pre-empt questions
     they might not even ask.
-  * State your own invariants; don't cite another class's behavior as evidence for them. `"raises
+* State your invariants; don't cite another class's behavior as evidence for them. `"raises
     ValueError if session is None, the same contract BashTool._execute_persistent enforces"` is
-    dumping "how klorb works" research into a comment — the reader doesn't need or want a pointer
-    to an unrelated tool's implementation to understand *this* one's precondition. Only reference
-    another symbol when it names the actual call/construction flow that leads to *this* code
-    running (e.g. "constructed fresh by each tool's `apply()`, mirroring how `ToolRegistry.
-    instantiate_tool()` builds a `Tool`" is fine — it's describing this object's own lifecycle,
-    not borrowing a justification from elsewhere).
-  * Never enumerate every item a rule applies to. If a comment needs to illustrate that a rule
-    covers several things (several config keys, several call sites, several directories), name
-    *one or two* concrete examples and stop — `"lists and maps like readDirs and shareEnv are
-    merged..."`, not `"readDirs/writeDirs/readFiles/writeFiles/commandRules/skillRules/webDomains/
-    bashDomains/shareEnv are merged..."`. The complete list is already in the code right next to
-    the comment; retyping it into prose is pure duplication that goes stale the next time an item
-    is added or removed, and a reader who wants the exact set reads the code, not the comment.
-    This applies with extra force to a comment that already named the full set once (in a type
-    signature, a preceding sentence, a dict literal) — do not immediately repeat the same
-    enumeration a second time in the very next sentence.
-  * Never repeat an explanation. If you have already stated *why* something works a certain way —
-    anywhere in the same file, the same docstring, or earlier in the same patch — do not restate
-    it again at the next place that happens to touch the same fact, even in different words. Point
-    at the one place that says it (`webDomains is independent of bashDomains — see
-    SessionConfig.web_domain_rules`) instead of re-explaining the independence there too. Before
-    writing a sentence that justifies *why*, grep the file (and the rest of the patch) for whether
-    that justification already exists; if it does, delete the new sentence and leave the pointer.
-    A patch that says the same thing three times in three docstrings is not being thorough, it is
-    wasting the reader's time three times over — trim on sight, don't wait to be asked twice.
-  * Prefer `map()`/`filter()` (wrapped in `list()`/`set()` as needed) over bracket-notation
+    bad. Explanations are self-contained. Only reference
+    another symbol when it is directly coupled to the current method and its invariants. 
+* Do **not** enumerate every item a rule applies to! If a comment needs to illustrate that a rule
+    covers several things (config keys,  call sites, directories...), name
+    *one or two* concrete examples and stop.
+    Some lists are already too long. Make them shorter as you see them.
+* Never repeat an explanation. If you have already stated *why* something is
+    anywhere in the same file, docstring, or commit, do not restate
+    it at the next place it comes up. Before
+    writing a sentence that justifies something, Grep for whether
+    that justification already exists; if it does, just leave a pointer.
+* Prefer `map()`/`filter()` (wrapped in `list()`/`set()` as needed) over bracket-notation
     comprehensions for a plain transform-only or filter-only list/set build — e.g.
-    `list(filter(lambda x: x.is_open, items))` over `[x for x in items if x.is_open]`. A
-    comprehension that combines a transform *and* a filter (or builds a dict) is fine as-is;
-    forcing that into nested `map(filter(...))` calls is less readable, not more.
+    `list(filter(lambda x: x.is_open, items))` over `[x for x in items if x.is_open]`.
+
+### Json file format and style 
+
+Any JSON file klorb writes must include a `schema: {name, version}` envelope to detect out-of-date persisted data. See
+`docs/specs/persisted-json-schema-versioning.md` for the convention and shared implementation. But do not explicitly bump a schema version or add code for backward compatibility unless explicitly requested by the user.
+
+User-facing, hand-authored config file keys (`klorb-config.json`) use dot-delineated,
+lowerCamelCase namespacing (`thinking.effort`, `terminal.input.maxLines`) - same vibe as
+VSCode's and Claude Code's own settings files - not the snake_case used for internal Python
+identifiers. See `docs/specs/process-and-session-config.md`: "On-disk key naming". 
 
 ### Important SDLC CI/CD commands
 
@@ -227,7 +164,7 @@ pytest, prettier, etc. directly!
 Here are the officially-sanctioned CI commands:
 
 * use `make lint` for linting.
-  * Within the `vscode-plugin/` dir, use `make lint_fix` to reformat files and attempt to
+  * Within `vscode-plugin/`, use `make lint_fix` to reformat files and
     auto-fix issues identified by `eslint`.
 * use `make typecheck` for typechecking.
 * use `make test` to invoke test suites.
@@ -266,11 +203,11 @@ Here are the officially-sanctioned CI commands:
   including the `features/` nesting described below.
 
 `src/webview/tsconfig.json` and `test/webview/tsconfig.json` are tiny pointer files
-(`{"extends": "../../tsconfig.webview.json"}`) that exist purely so VS Code's editor tooling
+(`{"extends": "../../tsconfig.webview.json"}`) purely so VSCode's editor tooling
 picks the right project: it only auto-discovers a file literally named `tsconfig.json` by
 walking up from whatever file is open, so without these, opening a file under `src/webview/` or
 `test/webview/` would find the *host* `tsconfig.json` (which excludes that subtree entirely) and
-fall back to an "orphan file" with no `paths` aliases at all — the actual `tsc`/`tsgo`/`esbuild`
+fall back to an "orphan file" with no `paths` aliases at all. The actual `tsc`/`tsgo`/`esbuild`
 invocations always pass `-p tsconfig.webview.json` (or `-p ./`) explicitly, so these two files
 are never referenced by any script and exist only for the editor's benefit.
 
@@ -279,22 +216,26 @@ Within `src/host/` and `src/webview/`, most code lives under a `features/<name>/
 react" style: a feature's `index.ts` is the *only* module anyone outside that feature may
 import — never deep-import a file from inside another feature
 (`webview/features/history/historyModel` from outside `features/history/` is wrong; import
-`webview/features/history` and let its `index.ts` re-export what's needed). This is enforced by
+`webview/features/history` and let its `index.ts` re-export what's needed). Enforced by
 `eslint.config.mjs`'s `no-restricted-imports` rule. Inside a feature, organize submodules
-however the feature needs (`components/`, `hooks.ts`/`hooks/`, `types.ts`/`types/`, or plain
-files) — the barrel is what's contractual, not the internal shape. A top-level `src/webview/
-components/` and `src/webview/hooks/` (outside any `features/` folder) hold pieces that are
+as-needed (`components/`, `hooks.ts`/`hooks/`, `types.ts`/`types/`, or plain
+files). The barrel is what's contractual, not the internal shape.
+
+Top-level `src/webview/
+components/` and `src/webview/hooks/` (outside any `features/` folder) hold only pieces
 genuinely universal across features (e.g. `VsCodeApiProvider`/`useVsCodeApi`), not specific to
 one.
 
 Every tsconfig (`tsconfig.json` for the host, `tsconfig.webview.json` for the webview) declares
 `paths` aliases rooted at `src/`: `shared/*`, plus `host/*` (host tsconfig only) or `webview/*`
-(webview tsconfig only) — never both in the same config, since the host and webview must not
-import each other's code. Applying this repo's general Import Rules (above) to vscode-plugin
-specifically: relative imports (`./foo`, `../foo`) are reserved for imports between files inside
-the *same* `features/<name>/` folder; every other import — including between two top-level,
-non-feature files in the same directory — uses the rooted alias form (`import PromptInput from
-'webview/components/PromptInput'`, not `'./components/PromptInput'`). `vitest.config.mts` uses
+(webview tsconfig only). Never both in the same config. The host and webview must not
+import each other's code. Applying the general Import Rules to vscode-plugin
+specifically: relative imports (`./foo`, `../foo`) are reserved for imports inside
+the *same* `features/<name>/` folder; every other import — including between top-level
+non-feature files — uses the rooted alias form (`import PromptInput from
+'webview/components/PromptInput'`, not `'./components/PromptInput'`).
+
+`vitest.config.mts` uses
 the `vite-tsconfig-paths` plugin (pointed at both tsconfigs via its `projects` option) so tests
 resolve the same aliases; adding a new subtree under `test/` also requires adding it to the
 matching tsconfig's `include` (see that file's comments) or the alias won't resolve for tests
@@ -302,6 +243,6 @@ rooted there.
 
 React component/hook files (not plain utility/model modules like `historyModel.ts` or
 `keyHandling.ts`, which keep named exports) export their component or hook as `export default`.
-A feature's `index.ts` barrel re-exports a default-exported piece by name (`export { default as
-HistoryView } from './components/HistoryView';`) so consumers still get a named import from the
+A feature's `index.ts` barrel re-exports a default-exported item by name (`export 
+HistoryView from './components/HistoryView';`). Consumers still get a named import from the
 barrel.
