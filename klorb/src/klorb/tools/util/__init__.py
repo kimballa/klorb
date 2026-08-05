@@ -76,6 +76,8 @@ from klorb.tools.util.secret_redaction import (
     SECRET_DETECTION_PLUGINS,
     SECRET_DETECTION_SCAN_LOCK,
     SecretRedactor,
+    clear_cached_redactor,
+    get_or_create_secret_redactor,
     load_secrets_baseline,
 )
 from klorb.tools.util.spill import SpillDir
@@ -96,9 +98,11 @@ __all__ = [
     "SpillDir",
     "VALID_OUTPUT_STYLES",
     "build_diff_hunks",
+    "clear_cached_redactor",
     "compile_queries",
     "context_lines_for_matches",
     "format_match_line",
+    "get_or_create_secret_redactor",
     "load_secrets_baseline",
     "match_line_indices",
     "matches_only",

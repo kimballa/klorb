@@ -6,7 +6,7 @@ from pathlib import Path
 
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
 from klorb.session import Session, SessionConfig
-from klorb.tools.util import SecretRedactor
+from klorb.tools.util import SecretRedactor, get_or_create_secret_redactor
 from klorb.tools.util.secret_redaction import load_secrets_baseline
 from klorb.workspace import Workspace
 
@@ -15,7 +15,7 @@ _AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
 
 def _session(tmp_path: Path) -> Session:
     config = SessionConfig(
-        workspace=Workspace(path=tmp_path), read_dirs=DirRules(), write_dirs=DirRules())
+        workspace=Workspace(path=tmp_path, trusted=True), read_dirs=DirRules(), write_dirs=DirRules())
     return Session(config=config)
 
 
@@ -188,3 +188,39 @@ def test_empty_baseline_redacts_normally() -> None:
     """An empty baseline (the default) does not change redaction behavior."""
     redactor = SecretRedactor()
     assert redactor.redact(None, _AWS_KEY) != _AWS_KEY
+
+
+def test_get_or_create_caches_redactor_in_session_tool_state(tmp_path: Path) -> None:
+    """`get_or_create_secret_redactor` caches the `SecretRedactor` instance in
+    `session.tool_state` so subsequent calls return the same object."""
+    session = _session(tmp_path)
+    try:
+        first = get_or_create_secret_redactor(session)
+        second = get_or_create_secret_redactor(session)
+        assert first is second
+        assert "SecretRedaction" in session.tool_state
+        assert session.tool_state["SecretRedaction"]["redactor"] is first
+    finally:
+        session.close()
+
+
+def test_get_or_create_returns_fresh_instance_when_session_is_none() -> None:
+    """A `None` session (unit tests with no real Session) returns a fresh uncached instance."""
+    first = get_or_create_secret_redactor(None)
+    second = get_or_create_secret_redactor(None)
+    assert first is not second
+
+
+def test_get_or_create_uses_baseline_hashes(tmp_path: Path) -> None:
+    """The cached redactor applies baseline hashes the same as a manually-constructed one."""
+    import hashlib
+    secret_value = "AKIAABCDEFGHIJKLMNOP"
+    sha1 = hashlib.sha1(secret_value.encode("utf-8")).hexdigest()
+    _write_baseline(tmp_path, [sha1])
+    session = _session(tmp_path)
+    try:
+        redactor = get_or_create_secret_redactor(session)
+        text = f"AWS_ACCESS_KEY_ID={secret_value}"
+        assert redactor.redact(session, text) == text
+    finally:
+        session.close()

@@ -16,8 +16,9 @@
 
 ### Feature backlog
 
-* The SecretDetector for all the various tools should be cached in the session tool state so that
-  we aren't processing an exempt secrets file repeatedly on every read.
+* The CreateFile tool should also have a SecretRedactor process the agent-supplied initial contents
+  so that if an agent tries to move some lines w/ an embedded secret into a new file, the actual
+  secret is migrated, not the privacy token.
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 

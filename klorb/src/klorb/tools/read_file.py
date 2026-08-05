@@ -12,8 +12,7 @@ from klorb.tools.util import (
     READ_PREVIEW_MAX_LINES,
     FullFileView,
     ReadFileCore,
-    SecretRedactor,
-    load_secrets_baseline,
+    get_or_create_secret_redactor,
     parse_numbered_content,
     read_full_file_lines,
 )
@@ -42,12 +41,7 @@ class ReadFileTool(Tool):
             context.process_config.read_file_max_lines,
             context.process_config.read_file_max_line_length,
         )
-        self._secret_redactor = SecretRedactor(
-            baseline_hashes=load_secrets_baseline(
-                context.session_config.workspace.path,
-                trusted=context.session_config.workspace.trusted,
-            ),
-        )
+        self._secret_redactor = get_or_create_secret_redactor(context.session)
 
     def name(self) -> str:
         return "ReadFile"

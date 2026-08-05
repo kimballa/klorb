@@ -16,11 +16,10 @@ from klorb.tools.exceptions import ToolCallError
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import (
-    SecretRedactor,
     SpillDir,
     compile_queries,
     context_lines_for_matches,
-    load_secrets_baseline,
+    get_or_create_secret_redactor,
     match_line_indices,
     matches_only,
     validate_output_style,
@@ -95,12 +94,7 @@ class GrepTool(InterruptibleTool):
         self._max_line_length = context.process_config.grep_max_line_length
         self._spill_bytes = context.process_config.grep_spill_bytes
         self._spill_dir = SpillDir("Grep")
-        self._secret_redactor = SecretRedactor(
-            baseline_hashes=load_secrets_baseline(
-                context.session_config.workspace.path,
-                trusted=context.session_config.workspace.trusted,
-            ),
-        )
+        self._secret_redactor = get_or_create_secret_redactor(context.session)
 
     def name(self) -> str:
         return "Grep"

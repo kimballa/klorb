@@ -13,6 +13,7 @@ from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config, project_config_path
 from klorb.session import Session
 from klorb.session.restore import try_restore_session
+from klorb.tools.util.secret_redaction import clear_cached_redactor
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
@@ -262,6 +263,8 @@ class WorkspaceBootstrapMixin(ReplAppBase):
 
         self._session.config.workspace = workspace
         self._process_config.session.workspace = workspace
+
+        clear_cached_redactor(self._session)
 
         self._session.config.read_dirs = concat_dir_rules(
             self._session.config.read_dirs, reloaded.session.read_dirs)

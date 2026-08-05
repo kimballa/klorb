@@ -178,3 +178,40 @@ class SecretRedactor:
             return {}
         state: dict[str, Any] = session.tool_state.setdefault(_TOOL_STATE_KEY, {})
         return state.setdefault(_TOKEN_MAP_KEY, {})  # type: ignore[no-any-return]
+
+
+_REDACTOR_CACHE_KEY = "redactor"
+
+
+def get_or_create_secret_redactor(session: "Session | None") -> SecretRedactor:
+    """Return a session-cached `SecretRedactor`, creating and caching one on first call.
+
+    Reads `workspace.path` and `workspace.trusted` from `session.config.workspace` to load
+    `.klorb/secrets-baseline.json`.  When `session` is `None` (unit tests that build a
+    `ToolSetupContext` directly), a fresh uncached instance with no baseline is returned.
+    """
+    if session is None:
+        return SecretRedactor()
+    state: dict[str, Any] = session.tool_state.setdefault(_TOOL_STATE_KEY, {})
+    cached: SecretRedactor | None = state.get(_REDACTOR_CACHE_KEY)
+    if cached is not None:
+        return cached
+    workspace = session.config.workspace
+    logger.debug("Creating and caching SecretRedactor for session (workspace=%s).", workspace.path)
+    redactor = SecretRedactor(
+        baseline_hashes=load_secrets_baseline(workspace.path, trusted=workspace.trusted),
+    )
+    state[_REDACTOR_CACHE_KEY] = redactor
+    return redactor
+
+
+def clear_cached_redactor(session: "Session") -> None:
+    """Drop the session-cached `SecretRedactor` so the next tool instantiation rebuilds it.
+
+    Called by `_apply_workspace_config()` when workspace trust changes, since the cached
+    instance's `baseline_hashes` were derived from the old trust state.
+    """
+    state: dict[str, Any] | None = session.tool_state.get(_TOOL_STATE_KEY)
+    if state is not None:
+        state.pop(_REDACTOR_CACHE_KEY, None)
+        logger.debug("Cleared cached SecretRedactor for session.")
