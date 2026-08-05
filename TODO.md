@@ -16,6 +16,9 @@
 
 ### Feature backlog
 
+* The SecretDetector for all the various tools should be cached in the session tool state so that
+  we aren't processing an exempt secrets file repeatedly on every read.
+
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
@@ -185,11 +188,6 @@
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
 ### Feature backlog
-
-* The homedir settings track whether the task panel is open or closed (`ui.taskSidebar.visible`)
-  but now it can be replaced by the agents panel. We should track which of these is actually
-  open/visible. Let's remove that particular field and have `ui.sidebar` be `"tasks"`, `"agents"`,
-  or `null`.
 
 * When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
   near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing

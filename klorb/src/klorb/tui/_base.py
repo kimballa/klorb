@@ -86,7 +86,7 @@ class ReplAppBase(App[None]):
     _tool_call_detail_shown: bool
     _history_pinned_to_bottom: bool
     _turn_waiting_widget: TurnWaitingStatic | None
-    _task_sidebar_shown: bool
+    _active_sidebar: str | None
     _queued_message_widgets: list[Static]
     _active_turn_callbacks: TurnEventHandlers | None
     _file_index: WorkspaceFileIndex | None
@@ -94,7 +94,6 @@ class ReplAppBase(App[None]):
     _selected_handle: SubagentHandle | None
     _attention_needed: dict[str, None]
     _blink_phase: bool
-    _subagents_panel_shown: bool
     _subagent_history_pinned_to_bottom: bool
     _subagent_history_rendered_count: int
     _subagent_history_rendered_state: SubagentState | None

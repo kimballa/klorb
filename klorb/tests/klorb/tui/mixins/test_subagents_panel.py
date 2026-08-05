@@ -84,13 +84,12 @@ async def test_ctrl_g_hides_the_task_sidebar_if_shown() -> None:
         await pilot.press("ctrl+t")
         await app.workers.wait_for_complete()
         await pilot.pause()
-        assert bool(app._task_sidebar_shown) is True
+        assert app._active_sidebar == "tasks"
 
         await pilot.press("ctrl+g")
         await pilot.pause()
 
-        assert bool(app._subagents_panel_shown) is True
-        assert bool(app._task_sidebar_shown) is False
+        assert app._active_sidebar == "agents"
         assert bool(app.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar).display) is False
 
 
@@ -100,14 +99,13 @@ async def test_ctrl_t_hides_the_subagents_panel_if_shown() -> None:
     async with app.run_test() as pilot:
         await pilot.press("ctrl+g")
         await pilot.pause()
-        assert bool(app._subagents_panel_shown) is True
+        assert app._active_sidebar == "agents"
 
         await pilot.press("ctrl+t")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert bool(app._task_sidebar_shown) is True
-        assert bool(app._subagents_panel_shown) is False
+        assert app._active_sidebar == "tasks"
         assert bool(app.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display) is False
 
 

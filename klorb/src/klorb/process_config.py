@@ -120,9 +120,9 @@ THEME_CONFIG_KEY = "ui.theme"
 shared by `PROCESS_KEY_MAP` (reading it back) and `persist_theme` (writing it), so the two
 never drift apart."""
 
-TASK_SIDEBAR_CONFIG_KEY = "ui.taskSidebar.visible"
-"""On-disk `klorb-config.json` key for `ProcessConfig.task_sidebar_shown` — the sole canonical
-spelling, shared by `PROCESS_KEY_MAP` (reading it back) and `persist_task_sidebar` (writing it),
+SIDEBAR_CONFIG_KEY = "ui.sidebar"
+"""On-disk `klorb-config.json` key for `ProcessConfig.sidebar` — the sole canonical spelling,
+shared by `PROCESS_KEY_MAP` (reading it back) and `persist_sidebar` (writing it),
 so the two never drift apart."""
 
 DEFAULT_PROMPT_INPUT_MAX_LINES = 12
@@ -384,7 +384,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "compatibility.claudeSkills": "compatibility_claude_skills",
     LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
     THEME_CONFIG_KEY: "theme",
-    TASK_SIDEBAR_CONFIG_KEY: "task_sidebar_shown",
+    SIDEBAR_CONFIG_KEY: "sidebar",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
 process-only `ProcessConfig` attribute it sets."""
@@ -579,11 +579,11 @@ class ProcessConfig(BaseModel):
     `klorb.tui.commands.theme_commands`), persisted to the per-user config file under `THEME_CONFIG_KEY`
     so it's restored on the next klorb session. `None` (the default) means no persisted choice
     exists yet; `ReplApp` falls back to Textual's own built-in default theme in that case."""
-    task_sidebar_shown: bool = False
-    """Whether the task sidebar (Ctrl+T) is shown by default when klorb starts, persisted to the
-    per-user config file under `TASK_SIDEBAR_CONFIG_KEY` so it's restored on the next klorb session.
-    `False` (the default) means the sidebar is hidden initially; toggling it with Ctrl+T updates
-    this setting for future sessions."""
+    sidebar: str | None = None
+    """Which sidebar panel is shown by default when klorb starts: ``"tasks"`` for the task
+    sidebar (Ctrl+T), ``"agents"`` for the subagents panel (Ctrl+G), or ``None`` (the default)
+    for none. Persisted to the per-user config file under `SIDEBAR_CONFIG_KEY` so it's restored
+    on the next klorb session. Toggling either panel updates this setting for future sessions."""
     config_warnings: list[str] = Field(default_factory=list)
     """Human-readable messages describing any config layer `load_process_config()` had to skip
     over while assembling this `ProcessConfig` — today, only a layer whose file isn't valid
@@ -666,18 +666,19 @@ def project_config_path(cwd: Path) -> Path:
     return cwd / KLORB_PROJECT_DIR_NAME / CONFIG_FILENAME
 
 
-def persist_task_sidebar(shown: bool, path: Path | None = None) -> None:
-    """Write `shown` to the config file at `path` (defaults to `user_config_path()`) under
-    `TASK_SIDEBAR_CONFIG_KEY`, preserving every other key already in that file untouched. Auto-creates
+def persist_sidebar(sidebar: str | None, path: Path | None = None) -> None:
+    """Write `sidebar` to the config file at `path` (defaults to `user_config_path()`) under
+    `SIDEBAR_CONFIG_KEY`, preserving every other key already in that file untouched. Auto-creates
     the file and its parent directory with a minimal schema envelope if it doesn't exist yet.
-    Called by `TaskSidebarMixin.action_toggle_task_sidebar` so a sidebar visibility choice survives to
-    the next klorb session.
+    Called by `TaskSidebarMixin.action_toggle_task_sidebar` and
+    `SubagentsPanelMixin.action_toggle_subagents_panel` so a sidebar visibility choice survives
+    to the next klorb session.
     """
     if path is None:
         path = user_config_path()
     raw = read_versioned_json(path, expected_schema_name=CONFIG_SCHEMA_NAME)
     new_contents = dict(raw)
-    new_contents[TASK_SIDEBAR_CONFIG_KEY] = shown
+    new_contents[SIDEBAR_CONFIG_KEY] = sidebar
     write_versioned_json(
         path, new_contents, schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)
 

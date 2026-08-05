@@ -851,58 +851,58 @@ def test_compatibility_claude_skills_defaults_false(tmp_path: Path) -> None:
     assert process_config.compatibility_claude_skills is False
 
 
-# --- ui.taskSidebar.visible (task sidebar persistence) ---
+# --- ui.sidebar (sidebar persistence) ---
 
 
-def test_persist_task_sidebar_creates_a_missing_file(tmp_path: Path) -> None:
+def test_persist_sidebar_creates_a_missing_file(tmp_path: Path) -> None:
     path = tmp_path / "klorb-config.json"
 
-    process_config_module.persist_task_sidebar(True, path)
+    process_config_module.persist_sidebar("tasks", path)
 
     written = json.loads(path.read_text(encoding="utf-8"))
-    assert written["ui.taskSidebar.visible"] is True
+    assert written["ui.sidebar"] == "tasks"
     assert written["schema"] == {"name": "klorb-config", "version": "1.0.0"}
 
 
-def test_persist_task_sidebar_preserves_other_keys(tmp_path: Path) -> None:
+def test_persist_sidebar_preserves_other_keys(tmp_path: Path) -> None:
     path = tmp_path / "klorb-config.json"
     _write_config(path, {
         "ui.theme": "monokai",
         "shell.command": "/bin/zsh",
     })
 
-    process_config_module.persist_task_sidebar(True, path)
+    process_config_module.persist_sidebar("tasks", path)
 
     written = json.loads(path.read_text(encoding="utf-8"))
-    assert written["ui.taskSidebar.visible"] is True
+    assert written["ui.sidebar"] == "tasks"
     assert written["ui.theme"] == "monokai"
     assert written["shell.command"] == "/bin/zsh"
 
 
-def test_persist_task_sidebar_is_picked_up_by_a_later_load(tmp_path: Path) -> None:
+def test_persist_sidebar_is_picked_up_by_a_later_load(tmp_path: Path) -> None:
     path = tmp_path / ".klorb" / "klorb-config.json"
-    process_config_module.persist_task_sidebar(True, path)
+    process_config_module.persist_sidebar("tasks", path)
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
-    assert process_config.task_sidebar_shown is True
+    assert process_config.sidebar == "tasks"
 
 
-def test_persist_task_sidebar_can_toggle_back_to_false(tmp_path: Path) -> None:
+def test_persist_sidebar_can_toggle_back_to_none(tmp_path: Path) -> None:
     path = tmp_path / "klorb-config.json"
-    process_config_module.persist_task_sidebar(True, path)
-    process_config_module.persist_task_sidebar(False, path)
+    process_config_module.persist_sidebar("tasks", path)
+    process_config_module.persist_sidebar(None, path)
 
     written = json.loads(path.read_text(encoding="utf-8"))
-    assert written["ui.taskSidebar.visible"] is False
+    assert written["ui.sidebar"] is None
 
 
-def test_task_sidebar_shown_defaults_false(tmp_path: Path) -> None:
+def test_sidebar_defaults_none(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
-    assert process_config.task_sidebar_shown is False
+    assert process_config.sidebar is None
 
 
-def test_task_sidebar_shown_maps_from_config_key(tmp_path: Path) -> None:
-    _write_config(tmp_path / "etc" / "klorb-config.json", {"ui.taskSidebar.visible": True})
+def test_sidebar_maps_from_config_key(tmp_path: Path) -> None:
+    _write_config(tmp_path / "etc" / "klorb-config.json", {"ui.sidebar": "agents"})
     process_config = load_process_config(cwd=tmp_path)
-    assert process_config.task_sidebar_shown is True
+    assert process_config.sidebar == "agents"

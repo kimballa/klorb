@@ -370,9 +370,9 @@ class KeyActionsMixin(ReplAppBase):
         """
         configure_tiktoken_cache_env()
 
-        # Initialize task sidebar visibility from config
+        # Initialize sidebar visibility from config
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
-        sidebar.display = self._task_sidebar_shown
+        sidebar.display = self._active_sidebar == "tasks"
 
         self._start_subagents_panel_timer()
 

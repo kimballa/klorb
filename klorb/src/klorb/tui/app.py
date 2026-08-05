@@ -421,14 +421,10 @@ class ReplApp(
         and in between turns."""
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
-        self._task_sidebar_shown: bool = self._process_config.task_sidebar_shown
-        """Whether the `TaskSidebar` panel (Ctrl+T) is currently visible -- see
-        `TaskSidebarMixin.action_toggle_task_sidebar`."""
-        self._subagents_panel_shown: bool = False
-        """Whether the `SubagentsPanel` (Ctrl+G) is currently visible -- see
-        `SubagentsPanelMixin.action_toggle_subagents_panel`. Unlike `_task_sidebar_shown`, not
-        persisted to `ProcessConfig`: a fresh process always starts with the root session
-        selected and the panel hidden."""
+        self._active_sidebar: str | None = self._process_config.sidebar
+        """Which sidebar panel is currently visible -- `None`, `"tasks"`, or `"agents"`.
+        See `TaskSidebarMixin.action_toggle_task_sidebar` and
+        `SubagentsPanelMixin.action_toggle_subagents_panel`."""
         self._selected_session: Session = self._session
         """Whichever session's transcript `#history`/`#subagent-history` currently displays, and
         whose asks `InteractionsMixin._await_session_selected` lets through immediately -- the

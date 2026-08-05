@@ -11,6 +11,7 @@ from textual.widgets import Markdown, OptionList, Static
 
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SessionTreeNode, SubagentHandle, walk_session_tree
 from klorb.message import Message as ChatMessage
+from klorb.process_config import persist_sidebar
 from klorb.session import Session
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import (
@@ -67,15 +68,18 @@ class SubagentsPanelMixin(ReplAppBase):
         the reverse direction) -- since both dock the same right-hand slot and the plan calls for
         "either tasks or subagents ... visible at once."."""
         panel = self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
-        self._subagents_panel_shown = not self._subagents_panel_shown
-        panel.display = self._subagents_panel_shown
-        if self._subagents_panel_shown and self._task_sidebar_shown:
-            self._task_sidebar_shown = False
-            self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar).display = False
-        if self._subagents_panel_shown:
+        if self._active_sidebar == "agents":
+            self._active_sidebar = None
+            panel.display = False
+        else:
+            if self._active_sidebar == "tasks":
+                self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar).display = False
+            self._active_sidebar = "agents"
+            panel.display = True
             self._refresh_subagents_panel()
             self.query_one(f"#{SUBAGENTS_LIST_ID}", OptionList).focus()
-        else:
+        persist_sidebar(self._active_sidebar)
+        if self._active_sidebar != "agents":
             self._update_subagent_attention_status_line()
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -332,7 +336,7 @@ class SubagentsPanelMixin(ReplAppBase):
         (first-added) pending session when several are waiting at once, matching
         `_attention_needed`'s insertion order."""
         status = self.query_one(f"#{SUBAGENT_ATTENTION_STATUS_ID}", Static)
-        if self._subagents_panel_shown or not self._attention_needed:
+        if self._active_sidebar == "agents" or not self._attention_needed:
             status.display = False
             return
         oldest_id = next(iter(self._attention_needed))
@@ -353,7 +357,7 @@ class SubagentsPanelMixin(ReplAppBase):
         self._blink_phase = not self._blink_phase
         if self._selected_handle is not None:
             self._append_new_subagent_messages(self._selected_session, self._selected_handle)
-        if self._subagents_panel_shown:
+        if self._active_sidebar == "agents":
             self._refresh_subagents_panel()
 
     def _start_subagents_panel_timer(self) -> None:

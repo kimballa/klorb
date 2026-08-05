@@ -6,7 +6,7 @@ from typing import Any
 
 from textual import work
 
-from klorb.process_config import persist_task_sidebar
+from klorb.process_config import persist_sidebar
 from klorb.session import ToolCallEvent
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import (
@@ -36,20 +36,22 @@ class TaskSidebarMixin(ReplAppBase):
         SubagentsPanelMixin.action_toggle_subagents_panel` for the reverse direction): both dock
         the same right-hand slot, so showing this one hides that one."""
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
-        self._task_sidebar_shown = not self._task_sidebar_shown
-        sidebar.display = self._task_sidebar_shown
-        persist_task_sidebar(self._task_sidebar_shown)
-        if self._task_sidebar_shown and self._subagents_panel_shown:
-            self._subagents_panel_shown = False
-            self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display = False
-        if self._task_sidebar_shown:
+        if self._active_sidebar == "tasks":
+            self._active_sidebar = None
+            sidebar.display = False
+        else:
+            if self._active_sidebar == "agents":
+                self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display = False
+            self._active_sidebar = "tasks"
+            sidebar.display = True
             self._refresh_task_sidebar()
+        persist_sidebar(self._active_sidebar)
 
     def _maybe_refresh_task_sidebar_after_tool_call(self, event: ToolCallEvent) -> None:
         """Refresh the task sidebar after a finished tool call that could have changed what it
         shows, but only while it's actually visible -- called from `PromptSubmissionMixin.
         handle_tool_call` for every finished tool call in a turn."""
-        if self._task_sidebar_shown and event.name in TASK_TOOL_NAMES:
+        if self._active_sidebar == "tasks" and event.name in TASK_TOOL_NAMES:
             self._refresh_task_sidebar()
 
     @work(thread=True)
