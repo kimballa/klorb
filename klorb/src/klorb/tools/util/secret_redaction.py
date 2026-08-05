@@ -13,9 +13,10 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from detect_secrets.core.baseline import UnableToReadBaselineError, load_from_file
+from detect_secrets.core.baseline import load_from_file
 from detect_secrets.core.potential_secret import PotentialSecret
 from detect_secrets.core.scan import scan_line
+from detect_secrets.exceptions import UnableToReadBaselineError
 from detect_secrets.settings import transient_settings
 
 if TYPE_CHECKING:
