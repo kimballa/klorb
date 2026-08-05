@@ -1,7 +1,9 @@
 // © Copyright 2026 Aaron Kimball
 import { Fragment, type JSX } from 'react';
 
+import type { OpenLocationMessage } from 'shared/webviewMessages';
 import { findMentionSpans } from 'webview/features/fileFinder';
+import useVsCodeApi from 'webview/hooks/useVsCodeApi';
 
 export interface MentionHighlightedTextProps {
   text: string;
@@ -13,6 +15,7 @@ export interface MentionHighlightedTextProps {
  * trailing-punctuation trimming, rather than a looser approximation. Used for `HistoryView`'s
  * `'prompt'`/`'queuedMessage'` entries. */
 export default function MentionHighlightedText({ text }: MentionHighlightedTextProps): JSX.Element {
+  const vscode = useVsCodeApi();
   const spans = findMentionSpans(text);
   if (spans.length === 0) {
     return <>{text}</>;
@@ -24,7 +27,13 @@ export default function MentionHighlightedText({ text }: MentionHighlightedTextP
       pieces.push(<Fragment key={`text-${index}`}>{text.slice(cursor, span.start)}</Fragment>);
     }
     pieces.push(
-      <span className="mention-chip" key={`mention-${index}`}>
+      <span
+        className="mention-chip"
+        key={`mention-${index}`}
+        onClick={(): void => {
+          const message: OpenLocationMessage = { type: 'openLocation', path: span.filename };
+          vscode.postMessage(message);
+        }}>
         {text.slice(span.start, span.end)}
       </span>
     );

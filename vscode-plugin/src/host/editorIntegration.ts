@@ -109,7 +109,7 @@ export class EditorIntegration {
         this._vscode.revealLine(editor, line);
       }
     } catch {
-      this._vscode.showWarningMessage(`Klorb: could not open ${filePath}`);
+      this._vscode.showWarningMessage(`Klorb: could not open '${filePath}'`);
     }
   }
 

@@ -364,6 +364,7 @@ body {
   background-color: #e6dcfb;
   border-radius: 3px;
   padding: 0 2px;
+  cursor: pointer;
 }
 
 /* Agent-produced entries (markdown responses, thinking, errors, notices) render full-width

@@ -217,8 +217,6 @@
 
 ### Feature backlog
 
-* The @mention chips for files, when clicked should open the file in vscode in preview mode.
-
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.
@@ -232,9 +230,9 @@
 
 ## Remaining / future work from `plan` epics
 
-Some `plan` documents were only partially implemented; others explicitly mentioned follow-up work
-imagined during the plan but out of scope for the plan itself. These follow-up action items are
-documented in the subsections below.
+*Some `plan` documents were only partially implemented; others explicitly mentioned follow-up work*
+*imagined during the plan but out of scope for the plan itself. These follow-up action items are*
+*documented in the subsections below.*
 
 ### Plan 013: WebFetch
 

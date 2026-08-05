@@ -106,7 +106,7 @@ describe('EditorIntegration', () => {
 
     await integration.openLocation('/tmp/missing.py');
 
-    expect(fake.warnings).toEqual(['Klorb: could not open /tmp/missing.py']);
+    expect(fake.warnings).toEqual(["Klorb: could not open '/tmp/missing.py'"]);
   });
 
   it('openDiff shows a real diff for a recorded payload', async () => {

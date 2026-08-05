@@ -1,4 +1,6 @@
 // © Copyright 2026 Aaron Kimball
+import * as path from 'path';
+
 import * as vscode from 'vscode';
 
 import type { EditorIntegration } from 'host/editorIntegration';
@@ -261,9 +263,13 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       case 'restartServer':
         await vscode.commands.executeCommand('klorb.restartServer');
         break;
-      case 'openLocation':
-        await this._editorIntegration.openLocation(parsed.path, parsed.line);
+      case 'openLocation': {
+        const filePath = path.isAbsolute(parsed.path)
+          ? parsed.path
+          : path.join(this._workspaceCwd, parsed.path);
+        await this._editorIntegration.openLocation(filePath, parsed.line);
         break;
+      }
       case 'openDiff':
         await this._editorIntegration.openDiff(parsed.callId, parsed.path);
         break;
