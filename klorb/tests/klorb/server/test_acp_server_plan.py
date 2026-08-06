@@ -205,33 +205,23 @@ async def test_todo_create_then_close_emits_two_plan_updates_tracking_fake_state
 
     assert response.stop_reason == "end_turn"
     plan_updates = _plan_updates(harness)
-    # A root `Session` now eagerly constructs a `ChainlinkClient` at construction time (see
-    # `klorb.session.mixins.core.SessionCoreMixin._maybe_eagerly_initialize_chainlink`), which
-    # itself creates `.chainlink/issues.db` for this real (unfaked) workspace -- so `session/new`
-    # emits an initial empty snapshot before either scripted Todo* call runs.
-    assert len(plan_updates) == 3
-    assert plan_updates[0].entries == []
+    assert len(plan_updates) == 2
 
-    after_create = plan_updates[1]
+    after_create = plan_updates[0]
     assert len(after_create.entries) == 1
     assert after_create.entries[0].content == "#1 Write the spec"
     # TodoCreate auto-activates the new issue as the session's current tracked task since none
     # was set yet -- see klorb.tools.tasks._util.maybe_activate_task.
     assert after_create.entries[0].status == "in_progress"
 
-    after_close = plan_updates[2]
+    after_close = plan_updates[1]
     assert len(after_close.entries) == 1
     assert after_close.entries[0].status == "completed"
 
 
-@requires_chainlink
-async def test_turn_with_no_task_tool_calls_emits_only_the_initial_snapshot(
+async def test_turn_with_no_task_tool_calls_emits_no_plan_updates(
     make_harness: Callable[..., Any], tmp_path: Path,
 ) -> None:
-    """A root `Session`'s eager `ChainlinkClient` initialization (see the comment in
-    `test_todo_create_then_close_emits_two_plan_updates_tracking_fake_state` above) means
-    `session/new` always emits one empty initial snapshot once chainlink is available, even
-    though this turn itself calls no `Todo*` tool and so triggers no further update."""
     (tmp_path / "workspace").mkdir()
     workspace = tmp_path / "workspace"
 
@@ -244,9 +234,7 @@ async def test_turn_with_no_task_tool_calls_emits_only_the_initial_snapshot(
     await harness.client.prompt(
         session_id=session_response.session_id, prompt=[acp.text_block("hello")])
 
-    plan_updates = _plan_updates(harness)
-    assert len(plan_updates) == 1
-    assert plan_updates[0].entries == []
+    assert _plan_updates(harness) == []
 
 
 @requires_chainlink
@@ -274,15 +262,9 @@ async def test_new_session_with_a_pre_existing_db_emits_the_initial_snapshot(
     assert plan_updates[0].entries[0].content == "#1 Pre-existing task"
 
 
-@requires_chainlink
-async def test_new_session_without_a_pre_existing_db_emits_an_empty_initial_snapshot(
+async def test_new_session_without_a_pre_existing_db_emits_no_initial_snapshot(
     make_harness: Callable[..., Any], tmp_path: Path,
 ) -> None:
-    """A root `Session`'s eager `ChainlinkClient` initialization creates `.chainlink/issues.db`
-    for this real (unfaked) workspace before `_maybe_send_initial_plan_snapshot`'s own
-    `chainlink_db_exists` check runs -- so "no pre-existing db" no longer means "no initial
-    snapshot" once chainlink is available; it's simply an empty one instead. See the comment in
-    `test_todo_create_then_close_emits_two_plan_updates_tracking_fake_state` above."""
     (tmp_path / "workspace").mkdir()
     workspace = tmp_path / "workspace"
 
@@ -290,9 +272,7 @@ async def test_new_session_without_a_pre_existing_db_emits_an_empty_initial_snap
     await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
     await harness.client.new_session(cwd=str(workspace), mcp_servers=[])
 
-    plan_updates = _plan_updates(harness)
-    assert len(plan_updates) == 1
-    assert plan_updates[0].entries == []
+    assert _plan_updates(harness) == []
 
 
 @requires_chainlink

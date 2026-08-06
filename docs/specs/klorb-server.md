@@ -280,11 +280,7 @@ richer view from that same detail.
     own `tool_call_update`.
   * Once per `session/new`, `KlorbAcpAgent._maybe_send_initial_plan_snapshot` sends one plan
     snapshot, but only if `klorb.tools.tasks.common.chainlink_db_exists(workspace.path)` is
-    already true by the time it checks. This trigger itself never runs `chainlink init` to make
-    that true — but `Session.__init__` (`SessionCoreMixin._maybe_eagerly_initialize_chainlink`,
-    see docs/specs/chainlink-task-tracking.md's "Setup" section) already has, moments earlier,
-    for any session whose role has `TASKS` tools and a `chainlink` binary is available — so in
-    practice the initial snapshot fires on nearly every `session/new` today, usually empty.
+    already true — never triggers `chainlink init`'s scaffolding just to report an empty plan.
     Runs off the event loop (`asyncio.to_thread`), since chainlink shells out synchronously.
   * Either trigger is silently skipped (no `session/update` sent, reason logged at `debug`) if
     chainlink is unavailable or `ChainlinkClient`/`fetch_and_sort_issues()` raises

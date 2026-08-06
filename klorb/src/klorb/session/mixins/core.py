@@ -337,7 +337,10 @@ class SessionCoreMixin(SessionBase):
         self._session_claimed = False
         """Whether this session currently owns a `sessions/<subdir>/` directory (holds its
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
-        self._maybe_eagerly_initialize_chainlink()
+        self._chainlink_client_ensured = False
+        """Whether `ensure_chainlink_client()` has already run for this session -- set
+        unconditionally the first time it's called, so every later call is a cheap flag check
+        rather than re-attempting binary discovery or construction."""
 
     @staticmethod
     def _create_read_file_core(max_lines: int, max_line_length: int) -> "ReadFileCore":
@@ -541,31 +544,27 @@ class SessionCoreMixin(SessionBase):
         "Task assignment" section."""
         return f"group:{self.root_id}"
 
-    def _maybe_eagerly_initialize_chainlink(self) -> None:
-        """For a root session whose own tool set actually includes a `TASKS`-category tool,
-        eagerly construct a throwaway `klorb.tools.tasks.common.ChainlinkClient` right away,
-        rather than waiting for the first `Todo*` tool call -- `ChainlinkClient.__init__` is the
-        one place that registers this session's group-wide close-time cleanup
-        (`register_teardown`), and only a root session (`parent is None`) ever registers it, so a
-        root session that never itself calls a `Todo*` tool (e.g. only its subagents do) still
-        gets that teardown wired up. A no-op for a subagent, for a session with no
-        `ProcessConfig`/`ToolRegistry` (most unit tests), or when the chainlink binary isn't
-        available -- exactly the same conditions that already keep `TASKS` tools out of a
-        session's tool set (see `klorb.tools.registry.ToolRegistry.discover_tools`). Any
-        exception the construction itself raises (e.g. a synthetic workspace path that doesn't
-        exist on disk, common in unit tests) is logged at `debug` and swallowed rather than
-        propagated -- this is best-effort setup, and a `Todo*` tool call will surface the same
-        failure for real later if the workspace is genuinely unusable. Deferred imports
-        throughout: `klorb.tools.setup_context`/`klorb.tools.tasks.common` both reach back into
-        `klorb.session`, so a module-level import here would be circular while `klorb.session`'s
-        own `__init__.py` is still assembling this mixin -- see `_create_subagent_tracker`'s
-        docstring for the same constraint."""
-        if self.parent is not None or self._process_config is None or self._tool_registry is None:
+    def ensure_chainlink_client(self) -> None:
+        """Ensure a `klorb.tools.tasks.common.ChainlinkClient` has been constructed for this
+        session at least once -- idempotent and cheap after the first call (a plain flag check,
+        no filesystem or subprocess work). Only a *root* session's own construction actually
+        registers the group's close-time cleanup (`ChainlinkClient.__init__`'s `session.parent is
+        None` check); calling this on a non-root session only pays `_ensure_setup()`'s cost, which
+        is harmless since the group's teardown was already registered when the root created its
+        first task-tracking subagent -- the only session a task-tracking subagent can ultimately
+        descend from. Used by `CreateSubagentTool` right before dispatching a new subagent whose
+        own tool set includes a `TASKS` tool, so the teardown gets wired up even if the creating
+        session never itself calls a `Todo*` tool -- see docs/specs/chainlink-task-tracking.md's
+        "Setup" section. A no-op if this session has no `ProcessConfig` (most unit tests) or the
+        chainlink binary isn't available; any construction failure is logged at `debug` and
+        swallowed -- a real `Todo*` tool call will surface the same failure for real later.
+        Deferred imports: `klorb.tools.setup_context`/`klorb.tools.tasks.common` both reach back
+        into `klorb.session`, so a module-level import here would be circular."""
+        if self._chainlink_client_ensured or self._process_config is None:
             return
-        from klorb.tools.tasks.common import TASK_TOOL_NAMES, chainlink_available
+        self._chainlink_client_ensured = True
+        from klorb.tools.tasks.common import chainlink_available
         if not chainlink_available():
-            return
-        if not (set(self._tool_registry.tool_classes()) & TASK_TOOL_NAMES):
             return
         from klorb.tools.setup_context import ToolSetupContext
         from klorb.tools.tasks.common import ChainlinkClient
@@ -576,17 +575,17 @@ class SessionCoreMixin(SessionBase):
             ChainlinkClient(context)
         except Exception:
             logger.debug(
-                "Eager ChainlinkClient initialization failed for session %s; a Todo* tool call "
-                "will retry it later.", self.id, exc_info=True)
+                "Best-effort ChainlinkClient init failed for session %s.", self.id, exc_info=True)
 
     def _build_agent_group_interjection(self) -> str | None:
         """Build the one-shot `AgentGroup` `<SystemInterjection>` body for a subagent's first
         turn: a markdown table of every agent in the same session tree the *creating* session can
         currently see -- role, id, and title, plus a `Relationship` column marking this session's
         own row `"(This is you)"` and its parent's row `"(Your parent)"`. `None` for a root
-        session (`self.parent is None`), which has no group to report. Deferred import for the
-        same reason `_maybe_eagerly_initialize_chainlink` needs one: `klorb.agents.runtime`
-        itself imports `klorb.session.mixins.turns` at module level."""
+        session (`self.parent is None`), which has no group to report. Deferred import: `klorb.
+        agents.runtime` itself imports `klorb.session.mixins.turns` at module level, so a
+        module-level import here (while `klorb.session`'s own `__init__.py` is still assembling
+        this mixin) would be circular."""
         if self.parent is None:
             return None
         from klorb.agents.runtime import walk_session_tree

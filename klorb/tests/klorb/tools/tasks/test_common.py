@@ -329,6 +329,52 @@ def test_teardown_is_only_registered_for_a_root_session(tmp_path: Path) -> None:
     assert "ChainlinkClient" not in root._teardown_callbacks
 
 
+def _root_session_with_process_config(tmp_path: Path) -> Session:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(exist_ok=True)
+    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    return Session(config=config, process_config=ProcessConfig())
+
+
+@requires_chainlink
+def test_ensure_chainlink_client_registers_teardown_for_a_root_session(tmp_path: Path) -> None:
+    session = _root_session_with_process_config(tmp_path)
+
+    session.ensure_chainlink_client()
+
+    assert "ChainlinkClient" in session._teardown_callbacks
+    assert session._chainlink_client_ensured is True
+
+
+@requires_chainlink
+def test_ensure_chainlink_client_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _root_session_with_process_config(tmp_path)
+
+    calls: list[None] = []
+    real_init = ChainlinkClient.__init__
+
+    def counting_init(self, ctx):  # type: ignore[no-untyped-def]
+        calls.append(None)
+        real_init(self, ctx)
+
+    monkeypatch.setattr(ChainlinkClient, "__init__", counting_init)
+
+    session.ensure_chainlink_client()
+    session.ensure_chainlink_client()
+
+    assert len(calls) == 1
+
+
+def test_ensure_chainlink_client_is_a_noop_without_a_process_config(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+
+    session.ensure_chainlink_client()  # no raise, no attempt
+
+    assert session._chainlink_client_ensured is False
+
+
 @requires_chainlink
 def test_add_label_and_remove_label_round_trip(tmp_path: Path) -> None:
     session = _session(tmp_path)

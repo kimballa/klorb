@@ -258,7 +258,9 @@ still intersected against the caller's own effective sets, never widening them),
 `max_output_tokens` (optional).
 
 Runs every check in "Subagent lifecycle"/"Security model" above; if all pass, constructs the
-child `Session` and calls `klorb.agents.policy.dispatch_subagent_turn()`, which registers the
+child `Session`, calls `Session.ensure_chainlink_client()` on the *creating* session if the new
+subagent's own tool set includes a `TASKS` tool (see docs/specs/chainlink-task-tracking.md's
+"Setup" section), and calls `klorb.agents.policy.dispatch_subagent_turn()`, which registers the
 `SubagentHandle` and starts a daemon `threading.Thread` running the subagent's first turn, then
 returns immediately with the subagent's id and a note explaining how its output will be
 delivered. The caller is expected to keep working; it must not expose the returned id to the

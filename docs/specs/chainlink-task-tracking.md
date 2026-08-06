@@ -89,15 +89,29 @@ exists. The first time it doesn't, it runs `chainlink --json init` and then:
   `agent.json` *within* `.chainlink/`, but that file does not cover `.chainlink/` itself or
   `issues.db`, so the workspace's own top-level `.gitignore` still needs the entry.)
 
-`Session.__init__` (`klorb.session.mixins.core.SessionCoreMixin._maybe_eagerly_initialize_chainlink`)
-also constructs a throwaway `ChainlinkClient` right away for a *root* session whose own tool set
-already includes a `TASKS`-category tool -- a no-op for a subagent, a session with no
-`ProcessConfig`/`ToolRegistry` (most unit tests), or a workspace where the binary isn't
-available. This is the one place `ChainlinkClient.__init__` registers the group's close-time
-cleanup (see "Session close-time cleanup", below), so it runs whether or not the root session
-itself ever calls a `Todo*` tool -- e.g. a root session whose subagents do all the task-tracking
-work still gets that cleanup wired up, and `_ensure_setup()`'s scaffolding runs once, up front,
-rather than lazily on whichever `Todo*` tool call happens first.
+There is otherwise no separate "run this before the first user message" hook wired into
+`cli.py`/the TUI's several `Session`-construction call sites: every `Tool` in the `TASKS`
+category constructs a fresh `ChainlinkClient` in its own `apply()` (see "Tools", below), so setup
+happens lazily, exactly once, on whichever `Todo*` tool call happens first -- deliberately not
+run eagerly at every session's construction, since running `chainlink init` for a fresh workspace
+is comparatively expensive (a real subprocess call) and most sessions never call a `Todo*` tool
+at all.
+
+The one exception: `CreateSubagentTool.apply()` calls `Session.ensure_chainlink_client()` on the
+*creating* session right before dispatching a new subagent's turn, but only if that subagent's
+own resolved tool set actually includes a `TASKS`-category tool. `ensure_chainlink_client()`
+constructs a `ChainlinkClient` for the session it's called on at most once (memoized via
+`Session._chainlink_client_ensured`, a plain flag check on every later call); only when that
+session is itself the root does the construction register the group's close-time cleanup (see
+"Session close-time cleanup", below). No walk up to the root is needed: a subagent can only ever
+be created by a session that was itself already created the same way (`CreateSubagent` is the
+only way a non-root session comes to exist at all), so the root always ends up with its own
+`ensure_chainlink_client()` called the first time *it* creates a task-tracking subagent, before
+any descendant several hops down could go on to create one of its own. A no-op (and so no
+`chainlink init` cost) for a subagent role with no `TASKS` tool in its tool set -- today, every
+subagent role -- or when the chainlink binary isn't available; any construction failure is
+logged at `debug` and swallowed, since a real `Todo*` tool call will surface the same failure
+later if the workspace is genuinely unusable.
 
 ## `ChainlinkClient`
 
