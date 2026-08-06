@@ -203,7 +203,7 @@ class JsonLogFormatter(logging.Formatter):
             "log": record.name,
             "msg": message,
         }
-        return json.dumps(payload)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 class AcpBackgroundTaskErrorFilter(logging.Filter):

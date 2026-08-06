@@ -81,9 +81,10 @@ def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | Non
         path.parent.mkdir(parents=True, exist_ok=True)
         file_has_contents = path.is_file() and path.stat().st_size > 0
 
-        request_json = json.dumps({"name": name, "arguments": args}, indent=2, default=str)
+        request_json = json.dumps(
+            {"name": name, "arguments": args}, indent=2, default=str, ensure_ascii=False)
         response_payload = {"error": error} if error is not None else {"result": result}
-        response_json = json.dumps(response_payload, indent=2, default=str)
+        response_json = json.dumps(response_payload, indent=2, default=str, ensure_ascii=False)
 
         entry_lines = [
             "---", datetime.now().isoformat(), "Request:", request_json, "Response:", response_json]

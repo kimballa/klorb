@@ -484,7 +484,7 @@ class RenderingMixin(ReplAppBase):
                 if parsed["is_error"]:
                     error = parsed.get("error_message")
                     if error is None:
-                        error = json.dumps(parsed.get("response_body"))
+                        error = json.dumps(parsed.get("response_body"), ensure_ascii=False)
                 else:
                     result = parsed.get("response_body")
             elif response.content.startswith("Error: "):

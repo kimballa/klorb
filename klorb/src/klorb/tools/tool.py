@@ -41,7 +41,7 @@ def default_tool_call_detail(
     """
     payload: dict[str, Any] = {"name": name, "args": args}
     payload["error" if error is not None else "result"] = error if error is not None else result
-    return json.dumps(payload, indent=2, default=str)
+    return json.dumps(payload, indent=2, default=str, ensure_ascii=False)
 
 
 def default_invalid_tool_call_summary(name: str, error: str) -> str:

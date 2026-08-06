@@ -213,6 +213,6 @@ class SessionSkillsMixin(SessionBase):
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
             "the user's prompt, then apply this skill:\n"
-            + json.dumps(payload)
+            + json.dumps(payload, ensure_ascii=False)
         )
         return UserSkillActivation(body=body, skill_id=skill_id)

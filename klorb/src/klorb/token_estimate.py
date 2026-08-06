@@ -61,7 +61,8 @@ def tool_token_counts(tool_definitions: list[dict[str, Any]]) -> dict[str, int]:
     independent of which tools a particular turn actually calls.
     """
     return {
-        definition["function"]["name"]: estimate_tokens(json.dumps(definition, default=str))
+        definition["function"]["name"]: estimate_tokens(
+            json.dumps(definition, default=str, ensure_ascii=False))
         for definition in tool_definitions
     }
 

@@ -733,7 +733,7 @@ def _replay_tool_call_entry(
                 parsed.get("error_message") if failed else parsed.get("response_body")
             )
             if content_text is not None and not isinstance(content_text, str):
-                content_text = json.dumps(content_text)
+                content_text = json.dumps(content_text, ensure_ascii=False)
         elif response.content.startswith("Error: "):
             failed = True
             content_text = response.content[len("Error: "):]

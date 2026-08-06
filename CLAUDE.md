@@ -1,5 +1,7 @@
 @AGENTS.md
 
+--------
+
 The content in AGENTS.md (inlined above) is equally important as the content in this file —
 do not treat it as lower-priority background. This file only adds Claude-specific advice /
 overrides that are particular to Claude Code, on top of everything AGENTS.md already says.

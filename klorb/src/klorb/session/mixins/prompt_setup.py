@@ -100,7 +100,7 @@ class SessionPromptSetupMixin(SessionBase):
         definitions = self._tool_registry.tool_definitions()
         if not definitions:
             return
-        definitions_json = json.dumps(definitions)
+        definitions_json = json.dumps(definitions, ensure_ascii=False)
         insert_index = 1 if self._messages and self._messages[0].role == "system" else 0
         self._messages.insert(insert_index, Message(
             content=definitions_json,

@@ -304,8 +304,8 @@ def run_system_prompt_cli(argv: list[str]) -> int:
     role_prompt = system_prompt.role_prompt()
     grants = compute_root_session_grants(process_config, session_config, args.role)
     tool_definitions = grants.tool_registry.tool_definitions()
-    tools_json_display = json.dumps(tool_definitions, indent=2, default=str)
-    tools_json_wire = json.dumps(tool_definitions, default=str)
+    tools_json_display = json.dumps(tool_definitions, indent=2, default=str, ensure_ascii=False)
+    tools_json_wire = json.dumps(tool_definitions, default=str, ensure_ascii=False)
 
     _print_section("System Prompt (default_sys.md)", default_prompt)
     if role_prompt is not None:
@@ -492,7 +492,7 @@ def run_models_cli(argv: list[str]) -> int:
     if args.brief:
         names = [model.name() for model in models]
         if args.json:
-            print(json.dumps(names, indent=2))
+            print(json.dumps(names, indent=2, ensure_ascii=False))
         else:
             for name in names:
                 print(name)
@@ -507,7 +507,7 @@ def run_models_cli(argv: list[str]) -> int:
         for model in models:
             pricing = costs.get(model.name()) if costs is not None else None
             model_dicts.append(_model_to_dict(model, pricing, include_costs=args.costs))
-        print(json.dumps(model_dicts, indent=2))
+        print(json.dumps(model_dicts, indent=2, ensure_ascii=False))
         return 0
 
     print(_render_models_table(models, costs))
@@ -565,7 +565,7 @@ def run_show_config_cli(argv: list[str]) -> int:
     config_dict = process_config_to_disk_dict(process_config)
     print(json.dumps(
         _wrap_compact_list_elements(config_dict), indent=2, sort_keys=True,
-        cls=_ConfigJSONEncoder))
+        cls=_ConfigJSONEncoder, ensure_ascii=False))
     return 0
 
 

@@ -90,7 +90,8 @@ class _ConfigJSONEncoder(json.JSONEncoder):
     def default(self, o: Any) -> Any:
         if isinstance(o, _OneLine):
             index = len(self._compact_blobs)
-            self._compact_blobs.append(json.dumps(o.value, sort_keys=self.sort_keys))
+            self._compact_blobs.append(
+                json.dumps(o.value, sort_keys=self.sort_keys, ensure_ascii=False))
             return f"@@klorb-oneline:{self._token}:{index}@@"
         return super().default(o)
 
@@ -210,7 +211,9 @@ def write_versioned_json(
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
-            tmp_file.write(json.dumps(_wrap_compact_list_elements(payload), indent=2, cls=_ConfigJSONEncoder))
+            tmp_file.write(json.dumps(
+                _wrap_compact_list_elements(payload), indent=2, cls=_ConfigJSONEncoder,
+                ensure_ascii=False))
             tmp_file.write("\n")
         os.replace(tmp_name, path)
     except BaseException:

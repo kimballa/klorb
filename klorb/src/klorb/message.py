@@ -161,7 +161,8 @@ class Message(BaseModel):
         that just want "the text of this message" -- e.g. token-count estimation, debug
         char-count totals -- without each having to duplicate that precedence themselves."""
         if self.fragments is not None:
-            return json.dumps([fragment.model_dump() for fragment in self.fragments])
+            return json.dumps(
+                [fragment.model_dump() for fragment in self.fragments], ensure_ascii=False)
         if self.streaming_content is not None:
             return "".join(self.streaming_content)
         return self.content

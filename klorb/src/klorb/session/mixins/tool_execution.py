@@ -269,7 +269,7 @@ class SessionToolExecutionMixin(SessionBase):
                     error, category=category, response_body=response_body,
                     system_interjections=first_call_interjections,
                     user_interjections=first_call_user_interjections)
-            content = json.dumps(envelope.to_wire_dict())
+            content = json.dumps(envelope.to_wire_dict(), ensure_ascii=False)
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)
             if callbacks.on_tool_call is not None:

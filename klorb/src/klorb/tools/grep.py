@@ -415,7 +415,7 @@ class GrepTool(InterruptibleTool):
         Raises `ToolCallError` if this `GrepTool` wasn't constructed with a live `Session`
         (`self.context.session`), since the tmpdir is tracked in `Session.tool_state`.
         """
-        encoded = json.dumps(result["files"]).encode("utf-8")
+        encoded = json.dumps(result["files"], ensure_ascii=False).encode("utf-8")
         if len(encoded) <= self._spill_bytes:
             return
         session = self.context.session
