@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Secret-detection redaction filter shared by `ReadFileCore` and `EditFileCore` -- masks
-likely credentials (AWS keys, private keys, vendor API tokens, etc, via `detect-secrets`) out
-of file content before it reaches a model, and reverses the masking so `EditFileCore` can still
-match/write the file's real bytes when a token is echoed back. See
-docs/specs/secret-redaction.md.
+"""Secret-detection redaction filter shared by `ReadFileCore`, `EditFileCore`, and
+`CreateFileCore` -- masks likely credentials (AWS keys, private keys, vendor API tokens, etc,
+via `detect-secrets`) out of file content before it reaches a model, and reverses the masking
+so `EditFileCore`/`CreateFileCore` can still match/write the file's real bytes when a token is
+echoed back. See docs/specs/secret-redaction.md.
 """
 
 import hashlib

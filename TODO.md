@@ -16,10 +16,6 @@
 
 ### Feature backlog
 
-* The CreateFile tool should also have a SecretRedactor process the agent-supplied initial contents
-  so that if an agent tries to move some lines w/ an embedded secret into a new file, the actual
-  secret is migrated, not the privacy token.
-
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`

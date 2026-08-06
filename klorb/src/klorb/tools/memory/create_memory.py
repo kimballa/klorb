@@ -14,7 +14,7 @@ from klorb.tools.memory.common import (
 )
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool
-from klorb.tools.util import CreateFileCore, DiffHunk
+from klorb.tools.util import CreateFileCore, DiffHunk, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ class CreateMemoryTool(Tool):
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
         self.create_file_core = CreateFileCore()
+        self._secret_redactor = get_or_create_secret_redactor(context.session)
 
     def name(self) -> str:
         return "CreateMemory"
@@ -104,7 +105,9 @@ class CreateMemoryTool(Tool):
         namespace_dir = memory_namespace_dir(self.context, namespace)
         path = validate_memory_filename(filename, namespace_dir)
 
-        result = self.create_file_core.apply(path, args, subject=subject, edit_hint="EditMemory")
+        result = self.create_file_core.apply(
+            path, args, subject=subject, edit_hint="EditMemory",
+            redactor=self._secret_redactor, session=self.context.session)
         result["namespace"] = namespace
         result["filename"] = filename
 

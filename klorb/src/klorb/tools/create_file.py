@@ -8,7 +8,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool
-from klorb.tools.util import CreateFileCore, DiffHunk
+from klorb.tools.util import CreateFileCore, DiffHunk, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +24,16 @@ class CreateFileTool(Tool):
     `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
     `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
     `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
+
+    `self._secret_redactor` resolves any `[[SECRET:<type>:<hash>]]` token in the call's
+    `content` back to real plaintext before writing, and re-masks the diff before it's returned.
+    See docs/specs/secret-redaction.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
         self.create_file_core = CreateFileCore()
+        self._secret_redactor = get_or_create_secret_redactor(context.session)
 
     def name(self) -> str:
         return "CreateFile"
@@ -78,7 +83,9 @@ class CreateFileTool(Tool):
         raise_if_not_allowed(
             verdict, resource_description=f"write to {path}", path=path, is_write=True)
 
-        result = self.create_file_core.apply(path, args, subject=filename, edit_hint="EditFile")
+        result = self.create_file_core.apply(
+            path, args, subject=filename, edit_hint="EditFile",
+            redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
 
         logger.debug("CreateFile %s created (%d lines)", filename, result["total_lines"])

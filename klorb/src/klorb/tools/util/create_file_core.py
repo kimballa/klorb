@@ -4,9 +4,13 @@
 delegates to it."""
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from klorb.tools.util.diff_lines import build_diff_hunks
+from klorb.tools.util.secret_redaction import SecretRedactor
+
+if TYPE_CHECKING:
+    from klorb.session import Session
 
 
 class CreateFileCore:
@@ -26,7 +30,10 @@ class CreateFileCore:
             },
         }
 
-    def apply(self, path: Path, args: dict[str, Any], *, subject: str, edit_hint: str) -> dict[str, Any]:
+    def apply(
+        self, path: Path, args: dict[str, Any], *, subject: str, edit_hint: str,
+        redactor: SecretRedactor | None = None, session: "Session | None" = None,
+    ) -> dict[str, Any]:
         """Create `path` with `args["content"]`, returning `total_lines`, `created`, and `diff` --
         a jsonable rendering of `klorb.tools.util.diff_lines.build_diff_hunks()`'s all-insert
         diff against an empty old subject, for a `Tool`'s `diff_preview()` to parse back into
@@ -35,8 +42,16 @@ class CreateFileCore:
         `subject` names the thing being created, for the "already exists" error message (e.g.
         a filename, or a memory's namespace/filename pair); `edit_hint` names the tool to use
         instead (e.g. `"EditFile"` or `"EditMemory"`).
+
+        When `redactor` is given, `content` is detokenized before writing -- so a
+        `[[SECRET:...]]` token echoed from an earlier `ReadFile` resolves to the file's real
+        bytes rather than being written literally. The returned `diff` is then re-redacted so
+        the result never carries a plaintext secret either. See
+        docs/specs/secret-redaction.md.
         """
         content = args["content"]
+        if redactor is not None:
+            content = redactor.detokenize(session, content)
         if path.exists():
             raise FileExistsError(f"{subject} already exists; use {edit_hint} to modify it instead")
 
@@ -45,6 +60,10 @@ class CreateFileCore:
 
         new_lines = content.splitlines()
         diff_hunks = build_diff_hunks([], new_lines)
+        if redactor is not None:
+            for hunk in diff_hunks:
+                for diff_line in hunk.lines:
+                    diff_line.text = redactor.redact(session, diff_line.text)
         return {
             "total_lines": len(new_lines),
             "created": True,

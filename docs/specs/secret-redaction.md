@@ -2,21 +2,21 @@
 
 ## Summary
 
-`ReadFileTool` and `EditFileTool` pass file content through `klorb.tools.util.SecretRedactor`,
-which detects likely credentials (AWS keys, private keys, vendor API tokens, and other
-credential-shaped strings, via the third-party `detect-secrets` library) and replaces each one
-with a `[[SECRET:<type>:<hash>]]` token before the content reaches a model — so a model can read
-and edit a file containing real secrets without those secrets ever appearing in its context.
-`EditFileTool` resolves the same tokens back to their real plaintext when a model echoes one back
-in `start_text`/`end_text`/`old_text`/`context_before`/`context_after`/`new_text`, so the
-read-then-edit loop works even though the model itself never sees the underlying secret.
-`GrepTool` redacts the same way: matching still runs against a file's real content, but every
-line returned in a result is masked before it reaches the model.
+`ReadFileTool`, `EditFileTool`, and `CreateFileTool` pass file content through
+`klorb.tools.util.SecretRedactor`, which detects likely credentials (AWS keys, private keys,
+vendor API tokens, and other credential-shaped strings, via the third-party `detect-secrets`
+library) and replaces each one with a `[[SECRET:<type>:<hash>]]` token before the content
+reaches a model — so a model can read and edit a file containing real secrets without those
+secrets ever appearing in its context. `EditFileTool` and `CreateFileTool` resolve the same
+tokens back to their real plaintext when a model echoes one back in the call's arguments, so
+the read-then-edit and read-then-create loops work even though the model itself never sees the
+underlying secret. `GrepTool` redacts the same way: matching still runs against a file's real
+content, but every line returned in a result is masked before it reaches the model.
 
-This is scoped to `ReadFileTool`/`EditFileTool`/`GrepTool` — the tools that operate on real,
-model-named filesystem paths, where a genuine credential (a `.env` file, a config file with an
-API key) is most likely to live. See "Out of scope" for what this deliberately doesn't cover
-(most notably `Bash`).
+This is scoped to `ReadFileTool`/`EditFileTool`/`CreateFileTool`/`GrepTool` — the tools that
+operate on real, model-named filesystem paths, where a genuine credential (a `.env` file, a
+config file with an API key) is most likely to live. See "Out of scope" for what this
+deliberately doesn't cover (most notably `Bash`).
 
 `SecretRedactionFilter` (`logging_config.py`) applies the same detection to every log handler
 installed by `configure_logging()`, so credentials that pass through `logger.log()` are replaced
@@ -78,12 +78,18 @@ with `[REDACTED]` before they reach stderr, the TUI conversation history, or the
     only the tool result echoed back to the model is masked again. Re-redacting reuses the same
     `session`-scoped token map, so a secret that was already assigned a token earlier in the
     session gets that same token back in the diff, rather than a fresh one.
-* `ReadFileTool`/`EditFileTool` each construct one `self._secret_redactor = SecretRedactor()` in
-  `__init__` and pass it (with `self.context.session`) into `self.read_file_core.apply()`/
-  `self.edit_file_core.apply()`. Since `SecretRedactor` holds no state of its own, holding one
-  instance per `Tool` for its whole lifetime is just a convenience — the actual map lives in
-  `session.tool_state`, so a fresh `SecretRedactor()` on the same session resolves the same
-  tokens.
+* `ReadFileTool`/`EditFileTool`/`CreateFileTool` each construct one
+  `self._secret_redactor = SecretRedactor()` in `__init__` and pass it (with
+  `self.context.session`) into their core's `apply()`. Since `SecretRedactor` holds no state
+  of its own, holding one instance per `Tool` for its whole lifetime is just a convenience —
+  the actual map lives in `session.tool_state`, so a fresh `SecretRedactor()` on the same
+  session resolves the same tokens.
+* `CreateFileCore.apply()` (`create_file_core.py`) takes the same optional `redactor`/`session`
+  arguments. When `redactor` is given, `content` is passed through `redactor.detokenize(session,
+  ...)` before writing — so a `[[SECRET:...]]` token echoed from an earlier `ReadFile` resolves
+  to the file's real bytes rather than being written literally. After the file is created, the
+  returned `diff` is re-redacted (`redactor.redact(session, ...)`) before being returned, so the
+  result never carries a plaintext secret either.
 * `ReadFileTool.description()`/`GrepTool.description()` tell the model directly that a line may
   come back with a `[[SECRET:<type>:<hash>]]` token in place of a credential, and that the token
   (not a guessed or invented replacement) is what to pass back into `EditFile`'s `start_text`/

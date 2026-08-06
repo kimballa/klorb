@@ -44,9 +44,9 @@ a `Session` (only for type-checking, via `TYPE_CHECKING`, not a runtime import),
 it here is cycle-free for the same reason `dir_walk.py` is.
 
 `secret_redaction.py` (`SecretRedactor`, `load_secrets_baseline`) is the
-credential-masking filter `ReadFileCore`/`EditFileCore` apply to file content before it
-reaches a model — see docs/specs/secret-redaction.md. Like `SpillDir`, it takes a `Session`
-only for type-checking. `load_secrets_baseline()` loads an optional
+credential-masking filter `ReadFileCore`/`EditFileCore`/`CreateFileCore` apply to file
+content before it reaches a model — see docs/specs/secret-redaction.md. Like `SpillDir`, it
+takes a `Session` only for type-checking. `load_secrets_baseline()` loads an optional
 `.klorb/secrets-baseline.json` allowlist for known false positives (only for trusted
 workspaces).
 """

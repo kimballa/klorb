@@ -8,8 +8,9 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
 from klorb.tools.create_file import CreateFileTool
+from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import CreateFileCore
 from klorb.workspace import Workspace
@@ -17,6 +18,7 @@ from klorb.workspace import Workspace
 
 def _context(
     workspace_root: Path, *, read_dirs: DirRules | None = None, write_dirs: DirRules | None = None,
+    session: Session | None = None,
 ) -> ToolSetupContext:
     """Defaults both `readDirs`/`writeDirs` to allowing all of `workspace_root`, since
     `evaluate_write()` requires an explicit allow in *both* tables (see
@@ -28,7 +30,8 @@ def _context(
         session_config=SessionConfig(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(allow=[workspace_root]),
-            write_dirs=write_dirs or DirRules(allow=[workspace_root])))
+            write_dirs=write_dirs or DirRules(allow=[workspace_root])),
+        session=session)
 
 
 def test_creates_a_new_file(tmp_path: Path) -> None:
@@ -222,3 +225,53 @@ def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
     tool = CreateFileTool(_context(tmp_path))
 
     assert tool.diff_preview({"filename": "existing.txt"}, None, "already exists") is None
+
+
+# --- Secret redaction (see docs/specs/secret-redaction.md) ---
+
+_AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
+
+
+def _session(tmp_path: Path) -> Session:
+    config = SessionConfig(
+        workspace=Workspace(path=tmp_path), read_dirs=DirRules(allow=[tmp_path]),
+        write_dirs=DirRules(allow=[tmp_path]))
+    return Session(config=config)
+
+
+def test_create_file_token_round_trip_preserves_the_real_secret(tmp_path: Path) -> None:
+    """The read/create loop: a `[[SECRET:...]]` token echoed in CreateFile's content resolves
+    to the real secret before writing, and the real secret -- never the literal token text --
+    is what ends up on disk."""
+    session = _session(tmp_path)
+    try:
+        # Write a source file containing a secret, then read it to get a token.
+        src = tmp_path / "creds.env"
+        src.write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nfoo\n")
+        read_result = ReadFileTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(src)})
+        token_line = read_result["content"].splitlines()[0].split("|", 1)[1]
+        assert _AWS_KEY not in token_line
+        assert token_line.startswith("AWS_ACCESS_KEY_ID=[[SECRET:")
+
+        # Create a new file carrying the token -- the real secret must land on disk.
+        dest = tmp_path / "copy.env"
+        result = CreateFileTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(dest), "content": f"{token_line}\nbar\n"})
+
+        assert dest.read_text() == f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nbar\n"
+        # The tool result must not echo the plaintext secret.
+        assert _AWS_KEY not in str(result["diff"])
+    finally:
+        session.close()
+
+
+def test_create_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
+    """A redactor is always attached, but a create that never mentions a token is unaffected."""
+    file_path = tmp_path / "new.txt"
+
+    result = CreateFileTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "content": "a\nb\nc\n"})
+
+    assert file_path.read_text() == "a\nb\nc\n"
+    assert result["total_lines"] == 3
