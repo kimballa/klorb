@@ -101,6 +101,7 @@ class CreateSubagentTool(Tool):
             tool_registry=child_tool_registry,
             scratchpad_path=str(context.session.scratchpad.path),
             parent=context.session,
+            root_id=context.session.root_id,
             effective_subagent_roles=plan.effective_subagent_roles,
             max_output_tokens=args.get("max_output_tokens"),
         )

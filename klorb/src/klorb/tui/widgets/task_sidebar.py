@@ -71,8 +71,8 @@ class TaskSidebar(VerticalScroll, can_focus=False):
 
     def show_tasks(self, issues: list[dict[str, Any]], cur_task_id: int | None) -> None:
         """Replace the displayed rows with `issues` (expected already sorted, per
-        `klorb.tools.tasks.common.fetch_and_sort_issues`), starring whichever one's `id` matches
-        `cur_task_id`."""
+        `klorb.tools.tasks.common.ChainlinkClient.fetch_and_sort_issues`), starring whichever
+        one's `id` matches `cur_task_id`."""
         body = self.query_one(f"#{_BODY_ID}", Static)
         if not issues:
             body.update(_EMPTY_MESSAGE)

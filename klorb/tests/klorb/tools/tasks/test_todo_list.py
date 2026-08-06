@@ -7,6 +7,7 @@ import pytest
 
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import chainlink_available
 from klorb.tools.tasks.todo_create import TodoCreateTool
@@ -19,10 +20,10 @@ requires_chainlink = pytest.mark.skipif(
     reason="chainlink binary not found on PATH or ~/.cargo/bin")
 
 
-def _context(tmp_path: Path) -> ToolSetupContext:
+def _context(tmp_path: Path, role_name: str = "operator") -> ToolSetupContext:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = SessionConfig(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
     session = Session(config=config)
     return ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
 
@@ -127,6 +128,36 @@ def test_a_closed_blockers_blocked_issue_no_longer_counts_as_blocked(tmp_path: P
 
     ids = [issue["id"] for issue in result["issues"]]
     assert ids == [blocked["id"]]
+
+
+@requires_chainlink
+def test_self_scope_is_the_default_and_excludes_an_all_labeled_issue(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    TodoCreateTool(context).apply({"title": "Mine"})
+    TodoCreateTool(context).apply({"title": "Unclaimed", "assign_to": "all"})
+
+    result = TodoListTool(context).apply({})
+
+    assert [issue["title"] for issue in result["issues"]] == ["Mine"]
+
+
+@requires_chainlink
+def test_group_scope_returns_every_issue_regardless_of_assignment(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    TodoCreateTool(context).apply({"title": "Mine"})
+    TodoCreateTool(context).apply({"title": "Unclaimed", "assign_to": "all"})
+
+    result = TodoListTool(context).apply({"scope": "group"})
+
+    assert {issue["title"] for issue in result["issues"]} == {"Mine", "Unclaimed"}
+
+
+@requires_chainlink
+def test_group_scope_requires_see_group_tasks_capability(tmp_path: Path) -> None:
+    context = _context(tmp_path, role_name="explorer")
+
+    with pytest.raises(ToolCallError, match="may not view the whole group's tasks"):
+        TodoListTool(context).apply({"scope": "group"})
 
 
 @requires_chainlink

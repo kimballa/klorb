@@ -112,6 +112,7 @@ class SessionBase:
     _skills_seeded: bool
     _context_files_seeded: bool
     _metadata_seeded: bool
+    _agent_group_seeded: bool
     _session_naming_pending: bool
     _session_started_at: datetime
     _pending_permission_framework_interjection: str | None
@@ -169,6 +170,9 @@ class SessionBase:
         raise NotImplementedError
 
     def _build_context_files_interjection(self) -> str | None:
+        raise NotImplementedError
+
+    def _build_agent_group_interjection(self) -> str | None:
         raise NotImplementedError
 
     def _build_available_skills_interjection(self, skills: list[Skill]) -> str | None:

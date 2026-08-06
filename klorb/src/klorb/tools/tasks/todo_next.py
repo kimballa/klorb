@@ -5,38 +5,40 @@ current task."""
 import logging
 from typing import Any
 
-from klorb.tools.tasks._util import set_current_task
-from klorb.tools.tasks.common import (
-    ChainlinkClient,
-    ChainlinkError,
-    fetch_and_sort_issues,
-    open_blocker_count,
-)
+from klorb.agents.registry import get_agent_capabilities
+from klorb.tools.exceptions import ToolCallError
+from klorb.tools.tasks._util import claim_next_ready_task, set_current_task
+from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, open_blocker_count
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
 
 
 class TodoNextTool(Tool):
-    """Picks the next ready (zero open blockers) todo item under this session's label, in
-    `fetch_and_sort_issues`'s sort order, and sets it as `Session.cur_chainlink_task_id`.
+    """Picks the next ready (zero open blockers) todo item this agent is eligible for -- either
+    already labeled for it, or `ALL_LABEL`-labeled and successfully claimed (see
+    `klorb.tools.tasks._util.claim_next_ready_task`) -- in `ChainlinkClient.
+    fetch_and_sort_issues`'s sort order, and sets it as `Session.cur_chainlink_task_id`. Raises
+    `ToolCallError` (category `"validation"`) if this session's role lacks the `accepts_tasks`
+    capability (`klorb.agents.registry.get_agent_capabilities`) -- such a role may create or
+    assign tasks but never hold one itself.
 
     If a current task is already tracked and still open, that same task is returned again
     (nothing new is picked) along with a `message` telling the model to finish and close it
     first -- `TodoNext` never silently abandons a task the model hasn't closed yet.
 
     Returns `work_exists=False, project_complete=True, task=None` when there are no open issues
-    at all under this label. Returns `work_exists=True, project_complete=False, task=None` when
-    open issues remain but none are ready yet (every one is still blocked) -- there's nothing
+    at all under this group's label. Returns `work_exists=True, project_complete=False, task=None`
+    when open issues remain but none are both ready (zero open blockers) and eligible for this
+    agent (already labeled for it, or `ALL_LABEL`-labeled and claimable) -- there's nothing
     actionable to hand back right now, but the project isn't done either. Otherwise returns the
-    top-sorted ready issue and registers a standing `<SystemInterjection>` (see
+    picked (or claimed) issue and registers a standing `<SystemInterjection>` (see
     `klorb.tools.tasks._util.standing_interjection_provider`) reminding the model of it on every
     subsequent turn, not just this one.
 
-    Only ever reads from chainlink (`issue list`/`issue show`) -- picking a task (or re-returning
-    the current one) mutates `Session.cur_chainlink_task_id` and the standing interjection
-    registry, both in-memory session state that's never written to chainlink itself, so
-    `is_read_only()` is `True`.
+    `is_read_only()` is `False`: claiming an `ALL_LABEL` issue writes chainlink labels
+    (`ChainlinkClient.add_label`/`remove_label`), unlike picking one already labeled for this
+    agent or re-returning the current one, which only reads.
     """
 
     def name(self) -> str:
@@ -46,7 +48,7 @@ class TodoNextTool(Tool):
         return "TASKS"
 
     def is_read_only(self) -> bool:
-        return True
+        return False
 
     def description(self) -> str:
         return (
@@ -68,6 +70,10 @@ class TodoNextTool(Tool):
         session = self.context.session
         if session is None:
             raise ValueError("TodoNext requires an active Session.")
+        if not get_agent_capabilities(session.config.role_name).accepts_tasks:
+            raise ToolCallError(
+                f"The {session.config.role_name!r} role may not be assigned tasks.",
+                category="validation")
         client = ChainlinkClient(self.context)
 
         current_id = session.cur_chainlink_task_id
@@ -86,7 +92,7 @@ class TodoNextTool(Tool):
                     ),
                 }
 
-        issues = fetch_and_sort_issues(client, include_closed=False)
+        issues = client.fetch_and_sort_issues(include_closed=False)
 
         if not issues:
             set_current_task(session, self.context, None)
@@ -95,13 +101,14 @@ class TodoNextTool(Tool):
 
         open_ids = {issue["id"] for issue in issues}
         ready = [issue for issue in issues if open_blocker_count(issue, open_ids) == 0]
-        task = ready[0] if ready else None
+        task = claim_next_ready_task(client, ready, session.id)
         set_current_task(session, self.context, task["id"] if task is not None else None)
 
         if task is not None:
             logger.debug("TodoNext: next task is #%d", task["id"])
         else:
-            logger.debug("TodoNext: %d open issue(s), none ready (all blocked)", len(issues))
+            logger.debug(
+                "TodoNext: %d open issue(s), none ready and eligible for %r", len(issues), session.id)
 
         return {"work_exists": True, "project_complete": False, "task": task}
 

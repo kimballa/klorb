@@ -35,6 +35,21 @@ PRIORITY_ORDER: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 
 first, so `critical` (weight 0) comes before `low` (weight 3). Also the canonical set of valid
 priority strings, checked by `validate_priority`."""
 
+ALL_LABEL = "all"
+"""The chainlink label marking an issue as group-wide and unclaimed -- see `agent_label()` and
+docs/specs/chainlink-task-tracking.md's "Task assignment" section."""
+
+AGENT_LABEL_PREFIX = "agent:"
+"""Prefix of the chainlink label naming one agent's claim on an issue -- see `agent_label()`."""
+
+
+def agent_label(agent_id: str) -> str:
+    """The chainlink label naming `agent_id`'s claim on an issue, e.g. `"agent:<session-id>"`.
+    An issue carries at most one such label at a time (or `ALL_LABEL` instead, while unclaimed)
+    -- see docs/specs/chainlink-task-tracking.md's "Task assignment" section."""
+    return f"{AGENT_LABEL_PREFIX}{agent_id}"
+
+
 TASK_TOOL_NAMES: frozenset[str] = frozenset({"TodoList", "TodoNext", "TodoCreate", "TodoUpdate"})
 """Every klorb tool name that can change the chainlink task list or the session's current
 tracked task -- shared by the TUI's task sidebar refresh
@@ -206,7 +221,13 @@ class ChainlinkClient:
         self._session = session
         self._label = session.get_chainlink_label()
         self._ensure_setup()
-        session.register_teardown("ChainlinkClient", self._close_all_on_teardown)
+        if session.parent is None:
+            # Only the root session's own close-time cleanup closes every group issue -- a
+            # subagent that happens to construct a ChainlinkClient must not also register this,
+            # since every session in a group shares the same group label (see
+            # `Session.get_chainlink_label()`) and `cascade_close_subagents` already closes every
+            # subagent `Session` before the root's own teardown runs.
+            session.register_teardown("ChainlinkClient", self._close_all_on_teardown)
 
     def _ensure_setup(self) -> None:
         """Run `chainlink init` and ensure `.chainlink/` is gitignored, but only the first time
@@ -383,6 +404,16 @@ class ChainlinkClient:
     def comment(self, issue_id: int, text: str, *, kind: CommentKind = "note") -> None:
         self._run(["issue", "comment", str(issue_id), text, "--kind", kind], quiet=True)
 
+    def add_label(self, issue_id: int, label: str) -> None:
+        """Add `label` to `issue_id` -- idempotent (a no-op, not an error, if already present;
+        verified against the installed binary)."""
+        self._run(["issue", "label", str(issue_id), label], quiet=True)
+
+    def remove_label(self, issue_id: int, label: str) -> None:
+        """Remove `label` from `issue_id` -- idempotent (a no-op, not an error, if not present;
+        verified against the installed binary)."""
+        self._run(["issue", "unlabel", str(issue_id), label], quiet=True)
+
     def close_all(self) -> None:
         """Close every open issue under this client's label -- see `_close_all_on_teardown`,
         the only caller. Also always `--no-changelog`, for the same reason `close_issue` is."""
@@ -402,14 +433,14 @@ class ChainlinkClient:
                 "Failed to close-all chainlink issues for label %r on session close.",
                 self._label, exc_info=True)
 
-
-def fetch_and_sort_issues(client: ChainlinkClient, *, include_closed: bool) -> list[dict[str, Any]]:
-    """Fetch every issue under `client`'s label (`--status all` if `include_closed`, else just
-    `--status open`), enrich each with its full `show_issue` detail (needed for `blocked_by`,
-    which `list` alone doesn't return), and sort per `issue_sort_key`. Shared by `TodoList` and
-    `TodoNext` so both use the exact same fetch-enrich-sort pipeline."""
-    base = client.list_issues(status="all" if include_closed else "open")
-    issues = list(map(lambda entry: client.show_issue(entry["id"]), base))
-    open_ids = {issue["id"] for issue in issues if issue.get("status") == "open"}
-    issues.sort(key=issue_sort_key(open_ids))
-    return issues
+    def fetch_and_sort_issues(self, *, include_closed: bool) -> list[dict[str, Any]]:
+        """Fetch every issue under this client's label (`--status all` if `include_closed`, else
+        just `--status open`), enrich each with its full `show_issue` detail (needed for
+        `blocked_by`/`labels`, which `list` alone doesn't return), and sort per
+        `issue_sort_key`. Shared by `TodoList` and `TodoNext` so both use the exact same
+        fetch-enrich-sort pipeline."""
+        base = self.list_issues(status="all" if include_closed else "open")
+        issues = list(map(lambda entry: self.show_issue(entry["id"]), base))
+        open_ids = {issue["id"] for issue in issues if issue.get("status") == "open"}
+        issues.sort(key=issue_sort_key(open_ids))
+        return issues

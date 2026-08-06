@@ -3,7 +3,7 @@
 particularly the "None means unspecified/inherit-all, [] means explicitly nothing" distinction
 `klorb.agents.intersection` depends on."""
 
-from klorb.agents.definition import AgentDefinition, AgentRestrictions
+from klorb.agents.definition import AgentCapabilities, AgentDefinition, AgentRestrictions
 
 
 def test_agent_restrictions_defaults_to_unspecified_everywhere() -> None:
@@ -28,6 +28,31 @@ def test_agent_definition_restrict_to_defaults_to_unrestricted() -> None:
 
     assert definition.restrict_to == AgentRestrictions()
     assert definition.allow_subagents is False
+    assert definition.agent_capabilities == AgentCapabilities()
+
+
+def test_agent_capabilities_default_to_false() -> None:
+    capabilities = AgentCapabilities()
+
+    assert capabilities.accepts_tasks is False
+    assert capabilities.assigns_tasks is False
+    assert capabilities.see_group_tasks is False
+
+
+def test_agent_definition_round_trips_agent_capabilities_from_json_shaped_dict() -> None:
+    definition = AgentDefinition.model_validate({
+        "name": "operator",
+        "default_model": "some/model",
+        "agent_capabilities": {
+            "accepts_tasks": True,
+            "assigns_tasks": True,
+            "see_group_tasks": True,
+        },
+    })
+
+    assert definition.agent_capabilities.accepts_tasks is True
+    assert definition.agent_capabilities.assigns_tasks is True
+    assert definition.agent_capabilities.see_group_tasks is True
 
 
 def test_agent_definition_round_trips_from_json_shaped_dict() -> None:

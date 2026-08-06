@@ -82,6 +82,24 @@ def test_subagent_session_gets_the_explorer_role_and_scratchpad_path(tmp_path: P
     handle.thread.join(timeout=5.0)
 
 
+def test_subagent_session_shares_the_parents_root_id(tmp_path: Path) -> None:
+    """A subagent's `root_id` must match its creator's, not default to its own `id` -- otherwise
+    it would scope its chainlink issues to a group of its own rather than sharing its creator's
+    (see `Session.get_chainlink_label()` and docs/specs/chainlink-task-tracking.md's "Session
+    state" section)."""
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    tool = CreateSubagentTool(context)
+
+    tool.apply({"role": "explorer", "session_title": "task", "initial_message": "go"})
+
+    handle = context.session.subagent_tracker.handles()[0]
+    assert handle.session.root_id == context.session.root_id
+    assert handle.session.get_chainlink_label() == context.session.get_chainlink_label()
+    handle.thread.join(timeout=5.0)
+
+
 def test_apply_raises_without_constructing_a_session_when_validation_fails(tmp_path: Path) -> None:
     provider = _FakeProvider()
     context = _operator_context(tmp_path, provider)

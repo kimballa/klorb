@@ -10,6 +10,7 @@ from klorb.agents.runtime import (
     SubagentTracker,
     build_subagent_interjection_provider,
     cascade_close_subagents,
+    find_session_in_group,
     total_active_subagents,
     walk_session_tree,
 )
@@ -259,6 +260,32 @@ def test_walk_session_tree_is_a_pre_order_walk_in_creation_order() -> None:
     assert [node.session for node in nodes] == [root, first_child, grandchild, second_child]
     assert [node.handle for node in nodes] == [None, first_handle, grandchild_handle, second_handle]
     assert [node.depth for node in nodes] == [0, 1, 2, 1]
+
+
+def test_find_session_in_group_finds_the_root_itself() -> None:
+    root = Session(SessionConfig(), provider=MagicMock())
+
+    assert find_session_in_group(root, root.id) is root
+
+
+def test_find_session_in_group_finds_a_subagent_from_any_member_session() -> None:
+    root = Session(SessionConfig(), provider=MagicMock())
+    child = _child_session(root)
+    grandchild = _child_session(child)
+    root.subagent_tracker.register(_handle(child))
+    child.subagent_tracker.register(_handle(grandchild))
+
+    assert find_session_in_group(root, grandchild.id) is grandchild
+    assert find_session_in_group(child, grandchild.id) is grandchild
+    assert find_session_in_group(grandchild, child.id) is child
+
+
+def test_find_session_in_group_returns_none_for_an_unknown_id() -> None:
+    root = Session(SessionConfig(), provider=MagicMock())
+    child = _child_session(root)
+    root.subagent_tracker.register(_handle(child))
+
+    assert find_session_in_group(root, "no-such-agent") is None
 
 
 def test_cascade_close_subagents_recurses_into_grandchildren_first() -> None:

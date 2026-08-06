@@ -315,6 +315,70 @@ def test_close_all_on_teardown_closes_this_labels_open_issues(tmp_path: Path) ->
 
 
 @requires_chainlink
+def test_teardown_is_only_registered_for_a_root_session(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    root = Session(config=config, session_id="root-id")
+    child = Session(config=config, session_id="child-id", parent=root, root_id=root.root_id)
+    child_context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=child)
+
+    ChainlinkClient(child_context)
+
+    assert "ChainlinkClient" not in child._teardown_callbacks
+    assert "ChainlinkClient" not in root._teardown_callbacks
+
+
+@requires_chainlink
+def test_add_label_and_remove_label_round_trip(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Label me")
+
+    client.add_label(issue_id, "agent:someone")
+    assert "agent:someone" in client.show_issue(issue_id)["labels"]
+
+    client.remove_label(issue_id, "agent:someone")
+    assert "agent:someone" not in client.show_issue(issue_id)["labels"]
+
+
+@requires_chainlink
+def test_add_label_is_idempotent(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Label me twice")
+
+    client.add_label(issue_id, "agent:someone")
+    client.add_label(issue_id, "agent:someone")  # no raise
+
+    assert client.show_issue(issue_id)["labels"].count("agent:someone") == 1
+
+
+@requires_chainlink
+def test_remove_label_is_a_noop_when_absent(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Nothing to remove")
+
+    client.remove_label(issue_id, "agent:never-added")  # no raise
+
+
+@requires_chainlink
+def test_fetch_and_sort_issues_is_a_chainlink_client_method(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    client.create_issue("Only issue")
+
+    issues = client.fetch_and_sort_issues(include_closed=False)
+
+    assert [issue["title"] for issue in issues] == ["Only issue"]
+
+
+@requires_chainlink
 def test_client_scopes_issues_by_root_id_not_by_session_id(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()

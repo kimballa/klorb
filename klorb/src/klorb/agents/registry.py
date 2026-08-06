@@ -8,7 +8,7 @@ sessions that are live in that process."""
 import importlib.resources
 from importlib.resources.abc import Traversable
 
-from klorb.agents.definition import AGENT_SCHEMA_NAME, AgentDefinition
+from klorb.agents.definition import AGENT_SCHEMA_NAME, AgentCapabilities, AgentDefinition
 from klorb.schema_envelope import parse_versioned_json
 
 AGENTS_RESOURCE_PACKAGE = "klorb.resources"
@@ -64,3 +64,12 @@ def get_agent_registry() -> AgentRegistry:
     own (tests aside, which may construct a standalone `AgentRegistry` to isolate from
     whatever this process-wide instance has already cached)."""
     return _registry
+
+
+def get_agent_capabilities(role_name: str) -> AgentCapabilities:
+    """Return `role_name`'s `AgentCapabilities` from the process-wide registry, or an
+    all-`False` default if `role_name` names no defined role -- the same "undefined means most
+    restrictive" fallback `plan_subagent_creation`/`compute_root_session_grants` already apply
+    to `AgentRestrictions`/`allow_subagents` for an undefined role."""
+    definition = get_agent_registry().get(role_name)
+    return definition.agent_capabilities if definition is not None else AgentCapabilities()

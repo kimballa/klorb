@@ -5,7 +5,8 @@ section."""
 
 from fixtures.sample_agents import SAMPLE_AGENTS_JSON
 
-from klorb.agents.registry import AgentRegistry, get_agent_registry
+from klorb.agents.definition import AgentCapabilities
+from klorb.agents.registry import AgentRegistry, get_agent_capabilities, get_agent_registry
 
 
 def test_get_returns_agent_definition_by_name() -> None:
@@ -55,3 +56,15 @@ def test_agents_json_is_read_at_most_once() -> None:
 
 def test_get_agent_registry_returns_the_same_instance_every_call() -> None:
     assert get_agent_registry() is get_agent_registry()
+
+
+def test_get_agent_capabilities_reads_the_packaged_operator_and_explorer_roles() -> None:
+    operator = get_agent_capabilities("operator")
+    explorer = get_agent_capabilities("explorer")
+
+    assert operator == AgentCapabilities(accepts_tasks=True, assigns_tasks=True, see_group_tasks=True)
+    assert explorer == AgentCapabilities()
+
+
+def test_get_agent_capabilities_defaults_to_all_false_for_an_undefined_role() -> None:
+    assert get_agent_capabilities("no_such_role") == AgentCapabilities()

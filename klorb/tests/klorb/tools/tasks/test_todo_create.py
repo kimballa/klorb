@@ -1,12 +1,15 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.tasks.todo_create."""
 
+import threading
 from pathlib import Path
 
 import pytest
 
+from klorb.agents.runtime import SubagentHandle
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import ChainlinkClient, chainlink_available
 from klorb.tools.tasks.todo_create import TodoCreateTool
@@ -19,12 +22,30 @@ requires_chainlink = pytest.mark.skipif(
     reason="chainlink binary not found on PATH or ~/.cargo/bin")
 
 
-def _context(tmp_path: Path) -> ToolSetupContext:
+def _context(tmp_path: Path, role_name: str = "operator") -> ToolSetupContext:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = SessionConfig(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
     session = Session(config=config)
     return ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
+
+
+def _child_context(parent_context: ToolSetupContext) -> ToolSetupContext:
+    """A second `ToolSetupContext` for a real subagent of `parent_context`'s session -- sharing
+    the same workspace/root, registered on the parent's `subagent_tracker` so `find_session_in_group`
+    can resolve it, for tests exercising `assign_to` against another agent."""
+    parent_session = parent_context.session
+    assert parent_session is not None
+    child_session = Session(
+        config=parent_context.session_config.model_copy(deep=True), parent=parent_session,
+        root_id=parent_session.root_id)
+    handle = SubagentHandle(
+        session=child_session, thread=threading.Thread(target=lambda: None),
+        cancel_event=threading.Event(), role=child_session.config.role_name, title="child")
+    parent_session.subagent_tracker.register(handle)
+    return ToolSetupContext(
+        process_config=parent_context.process_config, session_config=child_session.config,
+        session=child_session)
 
 
 @requires_chainlink
@@ -188,6 +209,104 @@ def test_auto_activation_skipped_when_the_new_task_is_not_ready(tmp_path: Path) 
 
     assert context.session.cur_chainlink_task_id is None
     assert "active_task_note" not in blocked
+
+
+@requires_chainlink
+def test_assign_to_defaults_to_self_label(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    assert context.session is not None
+
+    result = TodoCreateTool(context).apply({"title": "New task"})
+
+    assert f"agent:{context.session.id}" in result["labels"]
+
+
+@requires_chainlink
+def test_assign_to_all_labels_it_unclaimed(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+
+    # activate=False: otherwise auto-activation would immediately claim this (the only, ready)
+    # issue for the creating session -- see maybe_activate_task's ALL_LABEL-claiming branch --
+    # leaving nothing "all"-labeled to assert on.
+    result = TodoCreateTool(context).apply({
+        "title": "New task", "assign_to": "all", "activate": False,
+    })
+
+    assert "all" in result["labels"]
+
+
+@requires_chainlink
+def test_assign_to_all_is_claimed_by_auto_activation_when_ready(tmp_path: Path) -> None:
+    """`maybe_activate_task` claims an `ALL_LABEL` task for this session at the moment it becomes
+    the current tracked task -- otherwise it would stay up for grabs for another agent's
+    `TodoNext` even while this session already treats it as current."""
+    context = _context(tmp_path)
+    assert context.session is not None
+
+    result = TodoCreateTool(context).apply({"title": "New task", "assign_to": "all"})
+
+    assert f"agent:{context.session.id}" in result["labels"]
+    assert "all" not in result["labels"]
+    assert context.session.cur_chainlink_task_id == result["id"]
+
+
+@requires_chainlink
+def test_assign_to_self_without_accepts_tasks_raises(tmp_path: Path) -> None:
+    context = _context(tmp_path, role_name="explorer")
+
+    with pytest.raises(ToolCallError, match="may not be assigned tasks"):
+        TodoCreateTool(context).apply({"title": "New task"})
+
+    assert TodoListTool(context).apply({"include_closed": True})["issues"] == []
+
+
+@requires_chainlink
+def test_assign_to_another_agent_requires_assigns_tasks_capability(tmp_path: Path) -> None:
+    context = _context(tmp_path, role_name="explorer")
+
+    with pytest.raises(ToolCallError, match="may not assign tasks to other agents"):
+        TodoCreateTool(context).apply({"title": "New task", "assign_to": "some-other-agent"})
+
+
+@requires_chainlink
+def test_assign_to_unknown_agent_id_raises(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+
+    with pytest.raises(ToolCallError, match="No such agent in this group"):
+        TodoCreateTool(context).apply({"title": "New task", "assign_to": "no-such-agent"})
+
+
+@requires_chainlink
+def test_assign_to_another_agent_labels_it_for_them(tmp_path: Path) -> None:
+    parent_context = _context(tmp_path)
+    child_context = _child_context(parent_context)
+    assert child_context.session is not None
+
+    result = TodoCreateTool(parent_context).apply({
+        "title": "For the subagent", "assign_to": child_context.session.id,
+    })
+
+    assert f"agent:{child_context.session.id}" in result["labels"]
+
+
+@requires_chainlink
+def test_assign_to_another_agent_requires_the_target_to_accept_tasks(tmp_path: Path) -> None:
+    parent_context = _context(tmp_path)
+    child_context = _child_context(parent_context)
+    assert child_context.session is not None
+    child_context.session_config.role_name = "explorer"
+
+    with pytest.raises(ToolCallError, match="may not be assigned"):
+        TodoCreateTool(parent_context).apply({
+            "title": "For the subagent", "assign_to": child_context.session.id,
+        })
+
+
+@requires_chainlink
+def test_todo_write_is_an_alias_for_todo_create(tmp_path: Path) -> None:
+    tool = TodoCreateTool(_context(tmp_path))
+
+    assert "TodoWrite" in (tool.aliases() or [])
 
 
 @requires_chainlink

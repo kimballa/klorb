@@ -60,9 +60,9 @@ async def test_ctrl_t_lists_open_and_closed_tasks_starring_the_current_one() -> 
 
     with (
         patch("klorb.tui.mixins.task_sidebar.chainlink_available", return_value=True),
-        patch("klorb.tui.mixins.task_sidebar.ChainlinkClient"),
-        patch("klorb.tui.mixins.task_sidebar.fetch_and_sort_issues", return_value=issues),
+        patch("klorb.tui.mixins.task_sidebar.ChainlinkClient") as mock_client_cls,
     ):
+        mock_client_cls.return_value.fetch_and_sort_issues.return_value = issues
         async with app.run_test() as pilot:
             await pilot.press("ctrl+t")
             await app.workers.wait_for_complete()
@@ -79,12 +79,10 @@ async def test_relevant_tool_call_refreshes_sidebar_while_shown() -> None:
 
     with (
         patch("klorb.tui.mixins.task_sidebar.chainlink_available", return_value=True),
-        patch("klorb.tui.mixins.task_sidebar.ChainlinkClient"),
-        patch(
-            "klorb.tui.mixins.task_sidebar.fetch_and_sort_issues",
-            return_value=[_issue(1, "First fetch")],
-        ) as mock_fetch,
+        patch("klorb.tui.mixins.task_sidebar.ChainlinkClient") as mock_client_cls,
     ):
+        mock_fetch = mock_client_cls.return_value.fetch_and_sort_issues
+        mock_fetch.return_value = [_issue(1, "First fetch")]
         async with app.run_test() as pilot:
             await pilot.press("ctrl+t")
             await app.workers.wait_for_complete()
@@ -107,11 +105,10 @@ async def test_irrelevant_tool_call_does_not_refresh_sidebar() -> None:
 
     with (
         patch("klorb.tui.mixins.task_sidebar.chainlink_available", return_value=True),
-        patch("klorb.tui.mixins.task_sidebar.ChainlinkClient"),
-        patch(
-            "klorb.tui.mixins.task_sidebar.fetch_and_sort_issues", return_value=[],
-        ) as mock_fetch,
+        patch("klorb.tui.mixins.task_sidebar.ChainlinkClient") as mock_client_cls,
     ):
+        mock_fetch = mock_client_cls.return_value.fetch_and_sort_issues
+        mock_fetch.return_value = []
         async with app.run_test() as pilot:
             await pilot.press("ctrl+t")
             await app.workers.wait_for_complete()

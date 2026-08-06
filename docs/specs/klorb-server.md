@@ -256,7 +256,7 @@ richer view from that same detail.
 
 * **Mapping** (`klorb.server.plan_updates.build_plan_update(issues, cur_task_id)`, pure): one
   `PlanEntry` per issue, in the same order `issues` was given (already fetched and sorted by
-  `klorb.tools.tasks.common.fetch_and_sort_issues` — this function never re-sorts).
+  `ChainlinkClient.fetch_and_sort_issues` — this method never re-sorts).
   * `content` — `"#<id> <title>"`, the same row format the TUI's `TaskSidebar` uses.
   * `priority` — chainlink's four-level `PRIORITY_ORDER` collapses onto ACP's three-level
     `PlanEntryPriority` via a fixed dict: `critical`/`high` → `"high"`, `medium` → `"medium"`,
@@ -274,16 +274,20 @@ richer view from that same detail.
   cheap:
   * After any finished tool call whose name is in `klorb.tools.tasks.common.TASK_TOOL_NAMES`
     (`TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate`), `TurnBridge.on_tool_call` calls
-    `TurnBridge.fetch_plan_update()` — a fresh `ChainlinkClient`/`fetch_and_sort_issues(
+    `TurnBridge.fetch_plan_update()` — a fresh `ChainlinkClient.fetch_and_sort_issues(
     include_closed=True)` fetch, on the same worker thread `on_tool_call` itself already runs
     on — and enqueues the result onto the turn's ordered outbound queue, right after that call's
     own `tool_call_update`.
   * Once per `session/new`, `KlorbAcpAgent._maybe_send_initial_plan_snapshot` sends one plan
     snapshot, but only if `klorb.tools.tasks.common.chainlink_db_exists(workspace.path)` is
-    already true — never triggers `chainlink init`'s scaffolding just to report an empty plan.
+    already true by the time it checks. This trigger itself never runs `chainlink init` to make
+    that true — but `Session.__init__` (`SessionCoreMixin._maybe_eagerly_initialize_chainlink`,
+    see docs/specs/chainlink-task-tracking.md's "Setup" section) already has, moments earlier,
+    for any session whose role has `TASKS` tools and a `chainlink` binary is available — so in
+    practice the initial snapshot fires on nearly every `session/new` today, usually empty.
     Runs off the event loop (`asyncio.to_thread`), since chainlink shells out synchronously.
   * Either trigger is silently skipped (no `session/update` sent, reason logged at `debug`) if
-    chainlink is unavailable or `ChainlinkClient`/`fetch_and_sort_issues` raises
+    chainlink is unavailable or `ChainlinkClient`/`fetch_and_sort_issues()` raises
     `ChainlinkError`/`ValueError` — a turn is never failed by a plan-refresh failure.
 
 ## How it works

@@ -240,6 +240,20 @@ def walk_session_tree(root: "Session") -> list[SessionTreeNode]:
     return nodes
 
 
+def find_session_in_group(session: "Session", agent_id: str) -> "Session | None":
+    """Return the `Session` with `id == agent_id` anywhere in `session`'s own group (the entire
+    tree rooted at its top-level session), or `None` if no such agent exists in the group. Used
+    by `TodoCreate`'s `assign_to` validation to resolve a target agent id to a live `Session`
+    whose role capabilities can then be checked."""
+    root = session
+    while root.parent is not None:
+        root = root.parent
+    for node in walk_session_tree(root):
+        if node.session.id == agent_id:
+            return node.session
+    return None
+
+
 def cascade_close_subagents(session: "Session") -> None:
     """Recursively close every subagent `session` has directly or indirectly created, deepest
     first, relaying any not-yet-delivered output (or, for one still running, a termination

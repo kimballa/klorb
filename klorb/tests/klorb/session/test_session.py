@@ -187,11 +187,11 @@ def test_session_uses_explicitly_given_root_id() -> None:
     assert session.root_id == "root-id"
 
 
-def test_get_chainlink_label_returns_root_id_not_id() -> None:
+def test_get_chainlink_label_returns_group_prefixed_root_id_not_id() -> None:
     config = SessionConfig()
     session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
 
-    assert session.get_chainlink_label() == "root-id"
+    assert session.get_chainlink_label() == "group:root-id"
 
 
 def test_set_id_updates_root_id_too_when_not_diverged() -> None:
