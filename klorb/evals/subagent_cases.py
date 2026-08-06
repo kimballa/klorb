@@ -14,6 +14,7 @@ carve-out).
 
 from pathlib import Path
 
+from klorb.permissions.skill_access import SkillRules
 from klorb.session import Session
 
 from .harness import EvalCase, EvalSuite, tool_call_args
@@ -56,8 +57,12 @@ CREATE_SUBAGENT_AND_WAIT_FOR_ANSWER = EvalCase(
         "in the workspace root."
     ),
     setup_files={"notes/log.txt": _MARKER_FILE_CONTENT},
+    # The operator's system prompt points it at this skill for delegating research to an
+    # explorer subagent; pre-allow it since a headless eval has no ask surface to approve
+    # its first activation.
+    skill_rules=SkillRules(allow=[("internal", "launch-explorer-subagent")]),
     check=_check_create_subagent_and_wait_for_answer,
-    expected_tool_calls=3,  # CreateSubagent, WaitForSubagent, CreateFile
+    expected_tool_calls=4,  # ActivateSkill, CreateSubagent, WaitForSubagent, CreateFile
 )
 
 SUBAGENT_CASES: list[EvalCase] = [

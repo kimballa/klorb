@@ -5,8 +5,6 @@
 
 ### Bugs
 
-* The eval case for `CreateSubagent` seems doomed to fail, because no subagent roles are permitted?
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment

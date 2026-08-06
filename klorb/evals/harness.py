@@ -16,6 +16,7 @@ from pathlib import Path
 import tiktoken
 
 import klorb.tools as tools_package
+from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ApiProvider
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.skill_access import SkillRules
@@ -199,9 +200,12 @@ def run_case(
             workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
             read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]),
             skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
-        tool_registry = ToolRegistry.discover_tools(
-            ProcessConfig(), session_config, package=tools_package)
-        session = Session(session_config, provider=provider, tool_registry=tool_registry)
+        process_config = ProcessConfig()
+        grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
+        session_config.skill_rules = grants.skill_rules
+        session = Session(
+            session_config, provider=provider, process_config=process_config,
+            tool_registry=grants.tool_registry, effective_subagent_roles=grants.effective_subagent_roles)
 
         start = time.monotonic()
         final_response = ""
