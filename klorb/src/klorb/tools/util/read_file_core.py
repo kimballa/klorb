@@ -104,16 +104,13 @@ class ReadFileCore:
             "start_line": {
                 "type": "integer",
                 "description": (
-                    "1-indexed line to start reading from, counted from the beginning — never "
-                    "negative or relative to the end (there is no -1). 0 or omitted means start "
-                    "at the beginning."
+                    "Line number to start reading from. Omitted starts at the beginning."
                 ),
             },
             "end_line": {
                 "type": "integer",
                 "description": (
-                    "1-indexed, inclusive line to stop reading at. Omitted means read up to "
-                    f"{self._max_lines} lines from start_line."
+                    f"Line to stop reading at. Omitted reads {self._max_lines} lines."
                 ),
             },
         }

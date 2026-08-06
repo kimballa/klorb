@@ -56,9 +56,9 @@ class ReadMemoryTool(Tool):
     def description(self) -> str:
         return (
             "Reads a memory file (see ListMemories/SearchMemories) and returns up to "
-            f"{self.read_file_core.max_lines} of its lines, each prefixed with its 1-indexed "
+            f"{self.read_file_core.max_lines} of its lines, each prefixed with its "
             "line number followed by '|', same as ReadFile. Use start_line and end_line to "
-            "page through a memory larger than the per-call limit."
+            "page through a long memory."
         )
 
     def parameters(self) -> dict[str, Any]:

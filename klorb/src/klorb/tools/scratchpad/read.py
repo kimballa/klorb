@@ -45,12 +45,12 @@ class ReadScratchpadTool(Tool):
 
     def description(self) -> str:
         return (
-            "Reads a range of lines from your scratchpad: a plain-text scratch file for "
+            "Reads from your scratchpad: a plain-text scratch file for "
             "running notes and anything else you want to track outside your own context, or "
-            "share with other agents working alongside you in the same team, if configured "
-            "that way. Not for tasks or todo items -- use TodoCreate for those, when it's "
-            f"offered. Returns up to {self.read_file_core.max_lines} of its lines, each "
-            "prefixed with its 1-indexed line number followed by '|', same as ReadFile."
+            "share with other agents working alongside you. "
+            "Not for tasks or todo items -- use TodoCreate for those. "
+            f"Returns up to {self.read_file_core.max_lines} lines at a time, "
+            "prefixed with line numbers followed by '|', same as ReadFile."
         )
 
     def parameters(self) -> dict[str, Any]:

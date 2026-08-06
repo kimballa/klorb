@@ -16,6 +16,31 @@
 
 ### Feature backlog
 
+* Improved read/edit file tools:
+  * ReadFileCore should do less unicode escaping; emdash in particular should be sent up literally
+    rather than as \u2014, as the latter confuses the model into generating escape sequences like
+    `\\u2014` for the subsequent EditFile match, which doesn't actually match.
+  * If the old_text provided by the model to EditFileCore isn't an exact match, it should try
+    forgiving fuzzy-matching on all the different types of dashes and hyphens. If there's a unique
+    match and it just used an endash instead of an emdash or vice versa, etc., then just roll with it.
+  * Drastically simplify EditFileCore interface:
+    * Method 1: old_text / new_text. The old_text must be unique and must be a set of one or more
+      complete lines to replace. If it's not unique, reply with all the
+      possible matches with increasing numbers of lines of context before/after until they are unique.
+    * Method 2: old_text_start / old_text_end / new_text. The old_text start/end phrases must be
+      unique, and everything between them is replaced with new_text. The phrases must be one or
+      more complete lines, not line fragments. If they're not unique, reply with a set of candidate
+      old_text_starts / old_text_ends with longer and longer bidirectional extensions of old_text_start
+      and old_text_end until each candidate in the reply list is unique.
+    * Avoid the separate context_before / context_after. Just require longer and longer old_texts,
+      with the context recapitulated in the new_text.
+    * Drop the start_line / end_line / line_number fields. Don't make the model do math. Just provide
+      unique
+
+* Make the `ReplaceAll` tool not part of the initial tool advertisement. (It's still accepted if the
+  agent reaches for it, but don't waste the tokens advertising it.)
+  *
+
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
