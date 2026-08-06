@@ -65,6 +65,37 @@ class ToolRegistry:
         (discovery only needs a throwaway `Tool` instance to read its `name()`, never
         `apply()`)."""
         self._tool_classes: dict[str, type[Tool]] = dict(tool_classes)
+        self._alias_map: dict[str, str] = {}
+        """Maps each alias to the canonical tool name, built by scanning every registered
+        tool class's `aliases()`. Used by `instantiate_tool` so the model can invoke a tool
+        by an alternative name without those names appearing in tool definitions."""
+
+        self._build_alias_map()
+
+    def _build_alias_map(self) -> None:
+        """
+        Populates the alias map with alias -> tool_name mappings.
+        """
+        self._alias_map = {}
+        for tool_cls in self._tool_classes.values():
+            tool = tool_cls(self._context())
+            name = tool.name()
+            if name in self._alias_map:
+                logger.warning(
+                    "Canonical tool name %r already in alias map? Overriding with named tool.",
+                    name)
+            # Each canonical name binds to itself.
+            self._alias_map[name] = name
+
+            for alias in (tool.aliases() or ()):
+                if alias in self._alias_map:
+                    logger.warning(
+                        "Alias %r already maps to %r; ignoring duplicate from %r",
+                        alias, self._alias_map[alias], tool.name())
+                    continue
+                self._alias_map[alias] = tool.name()
+        if self._alias_map:
+            logger.debug("Tool aliases registered: %s", self._alias_map)
 
     @classmethod
     def discover_tools(
@@ -125,9 +156,14 @@ class ToolRegistry:
         `NoSuchToolException` if no tool with that name is in this registry.
         `permission_override`, if given, is threaded onto that `ToolSetupContext` — see
         `ToolSetupContext.permission_override`.
+
+        If `name` is not a canonical tool name, it is checked against every registered tool's
+        `aliases()` before raising — see `Tool.aliases`.
         """
+        canonical_name = self._alias_map.get(name, name)
         try:
-            return self._tool_classes[name](self._context(permission_override=permission_override))
+            return self._tool_classes[canonical_name](
+                self._context(permission_override=permission_override))
         except KeyError:
             raise NoSuchToolException(name)
 

@@ -2,6 +2,7 @@
 """A Tool that creates a new text file for a model. Refuses to overwrite an existing file."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -37,6 +38,9 @@ class CreateFileTool(Tool):
 
     def name(self) -> str:
         return "CreateFile"
+
+    def aliases(self) -> Sequence[str]:
+        return ("WriteFile",)
 
     def category(self) -> str:
         return "FILES"

@@ -4,6 +4,7 @@ matches a glob."""
 
 import fnmatch
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,9 @@ class FindFileTool(InterruptibleTool):
 
     def name(self) -> str:
         return "FindFile"
+
+    def aliases(self) -> Sequence[str]:
+        return ("Glob",)
 
     def category(self) -> str:
         return "FILES"

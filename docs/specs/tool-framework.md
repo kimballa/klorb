@@ -47,6 +47,11 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     a raw JSON schema dict or a pydantic `BaseModel` subclass.
   * `apply(args: dict[str, Any]) -> Any` — runs the tool given a dict of arguments (as
     returned by the model) and returns the result.
+  * `aliases() -> Sequence[str] | None` — alternative names this tool can be invoked by.
+    Defaults to `None`. Aliases are not advertised to the model in tool definitions, but if
+    the model guesses one, `ToolRegistry.instantiate_tool` resolves it to the canonical tool
+    as if called by `name()`. Currently assigned: `CreateFile` accepts `WriteFile`,
+    `CreateMemory` accepts `WriteMemory`, `FindFile` accepts `Glob`.
 
   Two further methods are concrete, not abstract, so every `Tool` has a usable default and a
   subclass only overrides them for a nicer rendering:
@@ -108,9 +113,10 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   * `instantiate_tool(name: str) -> Tool` — the factory method: builds a fresh
     `ToolSetupContext` from the registry's current `process_config`/`session_config` and
     constructs a brand new instance of the named tool's class, raising `KeyError` if no tool
-    with that name was discovered. Called once per requested tool call by
-    `Session._run_tool_calls` (see [[session-and-turns]]), so a tool never carries state over
-    between calls. See
+    with that name (or alias) was discovered. If `name` is not a canonical tool name, it is
+    checked against every registered tool's `aliases()` before raising. Called once per
+    requested tool call by `Session._run_tool_calls` (see [[session-and-turns]]), so a tool
+    never carries state over between calls. See
     [the fresh-instance-per-call ADR](../adrs/tool-registry-instantiates-a-fresh-tool-per-call.md).
   * `tools() -> list[Tool]` — a freshly-instantiated `Tool` for every discovered tool.
   * `tool_definitions() -> list[dict[str, Any]]` — builds the OpenAI/OpenRouter

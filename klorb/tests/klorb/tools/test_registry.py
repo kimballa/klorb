@@ -155,3 +155,48 @@ def test_init_holds_its_own_copy_of_the_tool_classes_dict() -> None:
         pass
     else:  # pragma: no cover - the registry must not have picked up the caller's mutation
         raise AssertionError("registry should not observe caller-side dict mutations")
+
+
+def test_alias_map_is_empty_when_no_tools_have_aliases() -> None:
+    registry = _registry()
+    assert registry._alias_map == {}
+
+
+def test_instantiate_tool_resolves_alias_to_canonical_tool() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    # WriteFile is an alias for CreateFile.
+    tool = registry.instantiate_tool("WriteFile")
+    assert tool.name() == "CreateFile"
+
+
+def test_instantiate_tool_resolves_glob_alias_to_find_file() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("Glob")
+    assert tool.name() == "FindFile"
+
+
+def test_instantiate_tool_resolves_write_memory_alias() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("WriteMemory")
+    assert tool.name() == "CreateMemory"
+
+
+def test_instantiate_tool_still_raises_for_unknown_name() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    try:
+        registry.instantiate_tool("BogusTool")
+    except NoSuchToolException:
+        pass
+    else:
+        raise AssertionError("expected NoSuchToolException for unknown tool name")
+
+
+def test_canonical_name_still_works_when_aliases_exist() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("CreateFile")
+    assert tool.name() == "CreateFile"

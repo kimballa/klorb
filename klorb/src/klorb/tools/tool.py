@@ -3,6 +3,7 @@
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -195,6 +196,13 @@ class Tool(ABC):
     @abstractmethod
     def parameters(self) -> dict[str, Any] | type[BaseModel]:
         """Return a JSON schema dict, or a pydantic BaseModel class, describing this tool's arguments."""
+
+    def aliases(self) -> Sequence[str] | None:
+        """Return alternative names this tool can be invoked by, or `None` (the default).
+        Aliases are not advertised to the model, but if it guesses one, the tool is dispatched
+        as if called by its canonical `name()`.
+        """
+        return None
 
     @abstractmethod
     def apply(self, args: dict[str, Any]) -> Any:

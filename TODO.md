@@ -21,8 +21,6 @@
   * Mechanism: add a `default_visible` flag to tools, and the tool json we send only includes those
     where default_visible is True.
 
-* Rename `CreateFile` to `WriteFile`. Other harnesses use this term; models are trained on it.
-
 * When no subagent roles are permitted, `CreateSubagent` should explicitly say subagent spawning
   is not allowed in its error msg.
 

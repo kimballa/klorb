@@ -44,6 +44,13 @@ def test_subclass_constructor_takes_only_a_tool_setup_context() -> None:
     assert tool.context is context
 
 
+def test_default_aliases_returns_none() -> None:
+    context = ToolSetupContext(process_config=ProcessConfig(), session_config=SessionConfig())
+    tool = EchoTool(context)
+
+    assert tool.aliases() is None
+
+
 def test_default_summary_on_success_is_just_the_tool_name() -> None:
     context = ToolSetupContext(process_config=ProcessConfig(), session_config=SessionConfig())
     tool = EchoTool(context)

@@ -2,6 +2,7 @@
 """A Tool that creates a new memory file for a model. Refuses to overwrite an existing one."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -43,6 +44,9 @@ class CreateMemoryTool(Tool):
 
     def name(self) -> str:
         return "CreateMemory"
+
+    def aliases(self) -> Sequence[str]:
+        return ("WriteMemory",)
 
     def category(self) -> str:
         return "MEMORY"
