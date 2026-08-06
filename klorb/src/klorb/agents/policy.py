@@ -75,6 +75,10 @@ def _resolve_role_definition(parent: Session, role: str) -> AgentDefinition:
     subagent, from its own creation (`compute_child_subagent_roles`); for a root session, from
     `compute_root_session_grants`."""
     allowed_roles = parent.effective_subagent_roles
+    if not allowed_roles:
+        raise ToolCallError(
+            f"The {parent.config.role_name!r} role may not create subagents.",
+            category="validation")
     if not role:
         raise ToolCallError(
             f"You must specify one of the following subagent roles to launch: role="
@@ -200,7 +204,8 @@ def plan_subagent_creation(
         restrict_to = restrict_to.model_copy(update={"skills": allowed_skills})
 
     assert parent.tool_registry is not None
-    tool_classes = _child_tool_classes(parent.tool_registry, restrict_to, role_definition.allow_subagents)
+    tool_classes = _child_tool_classes(parent.tool_registry, restrict_to,
+                                       role_definition.allow_subagents)
     skill_rules = _child_skill_rules(
         resolve_session_skill_catalog_registry(context), parent.config, restrict_to)
     subagent_roles = compute_child_subagent_roles(parent.effective_subagent_roles, restrict_to)

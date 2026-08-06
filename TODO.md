@@ -21,9 +21,6 @@
   * Mechanism: add a `default_visible` flag to tools, and the tool json we send only includes those
     where default_visible is True.
 
-* When no subagent roles are permitted, `CreateSubagent` should explicitly say subagent spawning
-  is not allowed in its error msg.
-
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`

@@ -37,6 +37,21 @@ def _operator_context(
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 
+def _no_child_roles_context(
+    tmp_path: Path, *, max_concurrent: int = 4, max_active: int = 16, max_depth: int = 2,
+) -> ToolSetupContext:
+    process_config = ProcessConfig(
+        subagents_max_concurrent_per_parent=max_concurrent,
+        subagents_max_active_total=max_active, subagents_max_depth=max_depth)
+    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
+    session_config.skill_rules = grants.skill_rules
+    session = Session(
+        session_config, provider=MagicMock(), process_config=process_config,
+        tool_registry=grants.tool_registry, effective_subagent_roles=[])
+    return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
+
+
 def test_rejects_when_depth_would_exceed_max_depth(tmp_path: Path) -> None:
     context = _operator_context(tmp_path, max_depth=1)
     assert context.session is not None
@@ -86,6 +101,17 @@ def test_operator_cannot_launch_another_operator(tmp_path: Path) -> None:
     with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
         plan_subagent_creation(context, "operator", None, None)
     assert "['explorer']" in str(exc_info.value)
+
+
+def test_informed_cannot_launch_subagents_when_empty_roles_list(tmp_path: Path) -> None:
+    """When the agent's allowed subagent roles list is the empty list, it is explicitly
+    told in the CreateSubagent error message that it may not create subagents.
+    """
+    context = _no_child_roles_context(tmp_path)
+
+    with pytest.raises(ToolCallError, match="may not create subagents") as exc_info:
+        plan_subagent_creation(context, "explorer", None, None)
+    assert "may not create subagents" in str(exc_info.value)
 
 
 def test_rejects_role_outside_the_callers_own_effective_subagent_roles(tmp_path: Path) -> None:
