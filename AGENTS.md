@@ -3,7 +3,7 @@
 
 klorb is an agent harness for coding and other tasks.
 
-If you are reading this, you are helping to extend and modify this harness. 
+If you are reading this, you are helping to extend and modify this harness.
 The user will refer to tools like BashTool, or prompts, tool call responses, etc. These
 are not referring to *your* own environment: they refer to the Klorb
 codebase, which you have access to. Do not try to reconfigure yourself on-the-fly;
@@ -28,12 +28,12 @@ are short documents that record a decision, with the format:
 
 ADRs are stored in docs/adrs/.
 
-ADR filenames should have a reasonable slug and include the answer (`do-foo-by-using-bar.md`) for quick filename access, not wasteful 
+ADR filenames should have a reasonable slug and include the answer (`do-foo-by-using-bar.md`) for quick filename access, not wasteful
 filler words (`how-should-we-do-foo.md`).
 
 ### TODO.md
 
-Various bugs or planned tasks are enumerated in `/TODO.md`. Add new follow-up tasks there. 
+Various bugs or planned tasks are enumerated in `/TODO.md`. Add new follow-up tasks there.
 
 If a task is **completed**, do not mark it complete -- remove it entirely!
 
@@ -47,8 +47,8 @@ The Klorb project is organized as a collection of subprojects:
   "do", is done here. Also includes CLI tools, TUI, and ACP server for harness/plugin communication. Written in python. Enforce a a strict firewall where the
   actual agentic logic is all in "library" code that can be invoked headless, tui, or over remote ACP connection.
   Keep agent functionality reachable from `Session`; don't pollute the Session with TUI- or ACP-specific connection. Use a callback instead.
-* `vscode-plugin` - Plugin for VSCode to use the Klorb harness. See "vscode-plugin source tree"
-  for how it's organized.
+* `vscode-plugin` - Plugin for VSCode to use the Klorb harness. See the `vscode-plugin-architecture`
+  skill for how it's organized.
 
 ## Rules for development
 
@@ -76,7 +76,7 @@ The Klorb project is organized as a collection of subprojects:
 * Do not import protected methods, except for testing. If a foreign protected method must be imported, consider refactoring to make that method public.
 * When revising or refactoring, make the smallest code change necessary to effect the change.
 * Do not make unrelated changes while revising or refactoring a file.
-* Do not try to be an auto-formatter or lint tool. Use `make lint_fix` or other tools configured in this repository. 
+* Do not try to be an auto-formatter or lint tool. Use `make lint_fix` or other tools configured in this repository.
 * When possible, reuse existing API endpoints rather than make new ones.
 * Never duplicate a constant (a magic number, hardcoded string, default value, etc.) across files.
   * Define the constant in one canonical location and have every consumer import it from
@@ -90,6 +90,18 @@ The Klorb project is organized as a collection of subprojects:
   * It is less likely but not impossible that the test should be modified to pass given the updated application
     source. Be explicit in your
     output to me when you have modified tests in this way.
+* Add `logger.debug()` calls at consequential moments: creating or removing
+  files, registering cleanup handlers, granting
+  permissions, spawning subprocesses, and similar state-changing
+  operations. Err on the side of debug logging more than feels necessary.
+  This is distinct from user-facing info/warning/error logs,
+  which should stay reserved for what a user actually needs to see.
+* Prefer `map()`/`filter()` (wrapped in `list()`/`set()` as needed) over bracket-notation
+    comprehensions for a plain transform-only or filter-only list/set build — e.g.
+    `list(filter(lambda x: x.is_open, items))` over `[x for x in items if x.is_open]`.
+
+### Comments and Docstrings
+
 * Do not add comments or docstrings that reference TODO.md or its contents.
   * If there's a specific incomplete case or follow-up tied to the exact line or method you're
     writing, say so directly inline: `TODO(aaron): <specific, self-contained description of what
@@ -108,12 +120,6 @@ The Klorb project is organized as a collection of subprojects:
   * For how non-obvious code works, add a regular comment at that
   specific point in the method body explaining what it does or why.
   * If you edit a method or function, you *rarely* need to make its docstring longer.
-* Add `logger.debug()` calls at consequential moments: creating or removing
-  files, registering cleanup handlers, granting
-  permissions, spawning subprocesses, and similar state-changing
-  operations. Err on the side of debug logging more than feels necessary.
-  This is distinct from user-facing info/warning/error logs,
-  which should stay reserved for what a user actually needs to see.
 * Default to no comment; add one only when the WHY is genuinely non-obvious. 1-2 sentences.
 * Existing comments and docstrings are **much** too long!
     That history is not license to keep doing it.
@@ -132,7 +138,7 @@ The Klorb project is organized as a collection of subprojects:
 * State your invariants; don't cite another class's behavior as evidence for them. `"raises
     ValueError if session is None, the same contract BashTool._execute_persistent enforces"` is
     bad. Explanations are self-contained. Only reference
-    another symbol when it is directly coupled to the current method and its invariants. 
+    another symbol when it is directly coupled to the current method and its invariants.
 * Do **not** enumerate every item a rule applies to! If a comment needs to illustrate that a rule
     covers several things (config keys,  call sites, directories...), name
     *one or two* concrete examples and stop.
@@ -142,11 +148,8 @@ The Klorb project is organized as a collection of subprojects:
     it at the next place it comes up. Before
     writing a sentence that justifies something, Grep for whether
     that justification already exists; if it does, just leave a pointer.
-* Prefer `map()`/`filter()` (wrapped in `list()`/`set()` as needed) over bracket-notation
-    comprehensions for a plain transform-only or filter-only list/set build — e.g.
-    `list(filter(lambda x: x.is_open, items))` over `[x for x in items if x.is_open]`.
 
-### Json file format and style 
+### Json file format and style
 
 Any JSON file klorb writes must include a `schema: {name, version}` envelope to detect out-of-date persisted data. See
 `docs/specs/persisted-json-schema-versioning.md` for the convention and shared implementation. But do not explicitly bump a schema version or add code for backward compatibility unless explicitly requested by the user.
@@ -154,7 +157,7 @@ Any JSON file klorb writes must include a `schema: {name, version}` envelope to 
 User-facing, hand-authored config file keys (`klorb-config.json`) use dot-delineated,
 lowerCamelCase namespacing (`thinking.effort`, `terminal.input.maxLines`) - same vibe as
 VSCode's and Claude Code's own settings files - not the snake_case used for internal Python
-identifiers. See `docs/specs/process-and-session-config.md`: "On-disk key naming". 
+identifiers. See `docs/specs/process-and-session-config.md`: "On-disk key naming".
 
 ### Important SDLC CI/CD commands
 
@@ -189,60 +192,7 @@ Here are the officially-sanctioned CI commands:
 
 ### vscode-plugin source tree
 
-`vscode-plugin/src/` is split by JavaScript runtime, not by feature, at the top level:
-
-* `src/host/` — extension-host code (runs under Node, `require()`d by VS Code). The activation
-  entry point (`extension.ts`, matching `package.json`'s `main`) stays directly under `src/`,
-  sibling to `host/`, the same way the webview's entry point (`main.tsx`) stays directly under
-  `src/webview/` rather than nested in a feature.
-* `src/webview/` — webview UI code (runs in a sandboxed `vscode-webview://` document; React).
-* `src/shared/` — types/utilities included by both the host and webview tsconfigs
-  (`tsconfig.json` and `tsconfig.webview.json`) — e.g. the host↔webview message protocol.
-* `types/` — ambient `.d.ts` declarations (e.g. the vendored `vscode-elements` JSX typings).
-* `test/` mirrors the `src/` tree file-for-file (`test/host/`, `test/webview/`, `test/shared/`),
-  including the `features/` nesting described below.
-
-`src/webview/tsconfig.json` and `test/webview/tsconfig.json` are tiny pointer files
-(`{"extends": "../../tsconfig.webview.json"}`) purely so VSCode's editor tooling
-picks the right project: it only auto-discovers a file literally named `tsconfig.json` by
-walking up from whatever file is open, so without these, opening a file under `src/webview/` or
-`test/webview/` would find the *host* `tsconfig.json` (which excludes that subtree entirely) and
-fall back to an "orphan file" with no `paths` aliases at all. The actual `tsc`/`tsgo`/`esbuild`
-invocations always pass `-p tsconfig.webview.json` (or `-p ./`) explicitly, so these two files
-are never referenced by any script and exist only for the editor's benefit.
-
-Within `src/host/` and `src/webview/`, most code lives under a `features/<name>/` folder
-(`src/webview/features/history/`, `src/host/features/acp/`, ...), following the "bulletproof
-react" style: a feature's `index.ts` is the *only* module anyone outside that feature may
-import — never deep-import a file from inside another feature
-(`webview/features/history/historyModel` from outside `features/history/` is wrong; import
-`webview/features/history` and let its `index.ts` re-export what's needed). Enforced by
-`eslint.config.mjs`'s `no-restricted-imports` rule. Inside a feature, organize submodules
-as-needed (`components/`, `hooks.ts`/`hooks/`, `types.ts`/`types/`, or plain
-files). The barrel is what's contractual, not the internal shape.
-
-Top-level `src/webview/
-components/` and `src/webview/hooks/` (outside any `features/` folder) hold only pieces
-genuinely universal across features (e.g. `VsCodeApiProvider`/`useVsCodeApi`), not specific to
-one.
-
-Every tsconfig (`tsconfig.json` for the host, `tsconfig.webview.json` for the webview) declares
-`paths` aliases rooted at `src/`: `shared/*`, plus `host/*` (host tsconfig only) or `webview/*`
-(webview tsconfig only). Never both in the same config. The host and webview must not
-import each other's code. Applying the general Import Rules to vscode-plugin
-specifically: relative imports (`./foo`, `../foo`) are reserved for imports inside
-the *same* `features/<name>/` folder; every other import — including between top-level
-non-feature files — uses the rooted alias form (`import PromptInput from
-'webview/components/PromptInput'`, not `'./components/PromptInput'`).
-
-`vitest.config.mts` uses
-the `vite-tsconfig-paths` plugin (pointed at both tsconfigs via its `projects` option) so tests
-resolve the same aliases; adding a new subtree under `test/` also requires adding it to the
-matching tsconfig's `include` (see that file's comments) or the alias won't resolve for tests
-rooted there.
-
-React component/hook files (not plain utility/model modules like `historyModel.ts` or
-`keyHandling.ts`, which keep named exports) export their component or hook as `export default`.
-A feature's `index.ts` barrel re-exports a default-exported item by name (`export 
-HistoryView from './components/HistoryView';`). Consumers still get a named import from the
-barrel.
+See the `vscode-plugin-architecture` skill (`.claude/skills/vscode-plugin-architecture/SKILL.md`)
+for how `vscode-plugin/src/` and `vscode-plugin/test/` are organized: the host/webview/shared
+split, the `features/<name>/` barrel pattern, tsconfig path aliases, and the React
+default-export convention.
