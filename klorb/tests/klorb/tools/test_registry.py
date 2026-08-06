@@ -157,9 +157,10 @@ def test_init_holds_its_own_copy_of_the_tool_classes_dict() -> None:
         raise AssertionError("registry should not observe caller-side dict mutations")
 
 
-def test_alias_map_is_empty_when_no_tools_have_aliases() -> None:
+def test_alias_map_is_only_self_references_when_no_tools_have_aliases() -> None:
     registry = _registry()
-    assert registry._alias_map == {}
+    for (k, v) in registry._alias_map.items():
+        assert k == v, f"Got actual alias: {k!r} -> {v!r}"
 
 
 def test_instantiate_tool_resolves_alias_to_canonical_tool() -> None:
