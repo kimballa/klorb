@@ -197,6 +197,13 @@ class Tool(ABC):
     def parameters(self) -> dict[str, Any] | type[BaseModel]:
         """Return a JSON schema dict, or a pydantic BaseModel class, describing this tool's arguments."""
 
+    def default_visible(self) -> bool:
+        """Return whether this tool should be advertised to the model in tool definitions.
+        Tools that return `False` are still accepted if the model calls them by name (see
+        `ToolRegistry.instantiate_tool`), but they don't consume tokens in every prompt.
+        """
+        return True
+
     def aliases(self) -> Sequence[str] | None:
         """Return alternative names this tool can be invoked by, or `None` (the default).
         Aliases are not advertised to the model, but if it guesses one, the tool is dispatched

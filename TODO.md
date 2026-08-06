@@ -16,11 +16,6 @@
 
 ### Feature backlog
 
-* Make the `ReplaceAll` tool not part of the initial tool advertisement. (It's still accepted if the
-  agent reaches for it, but don't waste the tokens advertising it.)
-  * Mechanism: add a `default_visible` flag to tools, and the tool json we send only includes those
-    where default_visible is True.
-
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`

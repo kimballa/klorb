@@ -48,7 +48,7 @@ def _no_child_roles_context(
     session_config.skill_rules = grants.skill_rules
     session = Session(
         session_config, provider=MagicMock(), process_config=process_config,
-        tool_registry=grants.tool_registry, effective_subagent_roles=[])
+        tool_registry=grants.tool_registry, effective_subagent_roles=frozenset())
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 

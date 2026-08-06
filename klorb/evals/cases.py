@@ -131,6 +131,7 @@ REPLACE_ALL_LITERAL = EvalCase(
     setup_files={"notes.txt": "The quick brown fox startled the dog. The dog ran away.\n"},
     check=_check_replace_all_literal,
     expected_tool_calls=2,
+    extra_tool_names=frozenset({"ReplaceAll"}),
 )
 
 
@@ -392,6 +393,7 @@ REPLACE_ALL_CASE_INSENSITIVE = EvalCase(
     },
     check=_check_replace_all_case_insensitive,
     expected_tool_calls=2,
+    extra_tool_names=frozenset({"ReplaceAll"}),
 )
 
 

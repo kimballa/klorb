@@ -63,6 +63,10 @@ class EvalCase:
     (which tool-call form the model reached for) is a yellow flag rather than a failure, e.g.
     proving a long-span edit used `old_text_start`/`old_text_end` rather than a token-wasteful
     `old_text`. `None` (the default) means no shape check runs for this case."""
+    extra_tool_names: frozenset[str] | None = None
+    """Tool names that should be advertised to the model for this case even though their
+    `Tool.default_visible()` returns `False` -- e.g. `ReplaceAll`. Wired to
+    `ToolRegistry.extra_visible_tools` in `run_case()`."""
 
 
 @dataclass(frozen=True)
@@ -202,6 +206,8 @@ def run_case(
             skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
         process_config = ProcessConfig()
         grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
+        if case.extra_tool_names:
+            grants.tool_registry.extra_visible_tools = case.extra_tool_names
         session_config.skill_rules = grants.skill_rules
         session = Session(
             session_config, provider=provider, process_config=process_config,

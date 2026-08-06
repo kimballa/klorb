@@ -31,6 +31,9 @@ class ReplaceAllTool(Tool):
     def is_read_only(self) -> bool:
         return False
 
+    def default_visible(self) -> bool:
+        return False
+
     def description(self) -> str:
         return (
             "Replaces every occurrence of search in filename with new_text. "

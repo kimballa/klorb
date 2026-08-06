@@ -69,6 +69,10 @@ class ToolRegistry:
         """Maps each alias to the canonical tool name, built by scanning every registered
         tool class's `aliases()`. Used by `instantiate_tool` so the model can invoke a tool
         by an alternative name without those names appearing in tool definitions."""
+        self.extra_visible_tools: frozenset[str] = frozenset()
+        """Tool names that should be included in `tool_definitions()` even though their
+        `Tool.default_visible()` returns `False`. Used by the eval harness to advertise
+        hidden tools for specific eval cases."""
 
         self._build_alias_map()
 
@@ -178,9 +182,14 @@ class ToolRegistry:
         return dict(self._tool_classes)
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        """Build the OpenAI-style tool definitions to send to the model alongside a prompt."""
+        """Build the OpenAI-style tool definitions to send to the model alongside a prompt.
+        Only tools whose `default_visible()` returns `True`, or whose name is in
+        `extra_visible_tools`, are included.
+        """
         definitions: list[dict[str, Any]] = []
         for tool in self.tools():
+            if not tool.default_visible() and tool.name() not in self.extra_visible_tools:
+                continue
             parameters = tool.parameters()
             if isinstance(parameters, type) and issubclass(parameters, BaseModel):
                 schema = parameters.model_json_schema()

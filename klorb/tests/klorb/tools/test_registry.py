@@ -201,3 +201,27 @@ def test_canonical_name_still_works_when_aliases_exist() -> None:
 
     tool = registry.instantiate_tool("CreateFile")
     assert tool.name() == "CreateFile"
+
+
+def test_default_visible_excludes_replace_all_from_tool_definitions() -> None:
+    """ReplaceAllTool.default_visible() returns False, so it must not appear in the
+    tool definitions advertised to the model by default."""
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    definition_names = {d["function"]["name"] for d in registry.tool_definitions()}
+
+    assert "ReplaceAll" not in definition_names
+    # Confirm the tool is still in the registry itself (instantiate_tool still works).
+    tool = registry.instantiate_tool("ReplaceAll")
+    assert tool.name() == "ReplaceAll"
+
+
+def test_extra_visible_tools_includes_non_default_visible_in_definitions() -> None:
+    """Setting `extra_visible_tools` on a registry makes those tools appear in
+    `tool_definitions()` even when `default_visible()` returns `False`."""
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    registry.extra_visible_tools = frozenset({"ReplaceAll"})
+
+    definition_names = {d["function"]["name"] for d in registry.tool_definitions()}
+
+    assert "ReplaceAll" in definition_names
