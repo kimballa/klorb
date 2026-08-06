@@ -304,7 +304,8 @@ def run_system_prompt_cli(argv: list[str]) -> int:
     role_prompt = system_prompt.role_prompt()
     grants = compute_root_session_grants(process_config, session_config, args.role)
     tool_definitions = grants.tool_registry.tool_definitions()
-    tools_json = json.dumps(tool_definitions, indent=2, default=str)
+    tools_json_display = json.dumps(tool_definitions, indent=2, default=str)
+    tools_json_wire = json.dumps(tool_definitions, default=str)
 
     _print_section("System Prompt (default_sys.md)", default_prompt)
     if role_prompt is not None:
@@ -313,13 +314,13 @@ def run_system_prompt_cli(argv: list[str]) -> int:
         print(f"## Role-Specific Prompt (role: {args.role})\n")
         print("(none — no prompt file found for this role)")
         print()
-    _print_section("Tool Definitions", tools_json)
+    _print_section("Tool Definitions", tools_json_display)
     _print_section("Tool Token Breakdown", _render_tool_token_table(tool_token_counts(tool_definitions)))
 
-    # Token-count summary.
+    # Token-count summary (compact JSON matches the wire format the session sends).
     default_tokens = estimate_tokens(default_prompt)
     role_tokens = estimate_tokens(role_prompt) if role_prompt is not None else 0
-    tools_tokens = estimate_tokens(tools_json)
+    tools_tokens = estimate_tokens(tools_json_wire)
     total = default_tokens + role_tokens + tools_tokens
     print("## Token Count Summary\n")
     print(f"  default_sys.md:        {default_tokens:>8,} tokens")

@@ -164,8 +164,6 @@
   * Start adding system interjections mentioning how many turns the agent has taken, or how
     many tool calls (vs total tool call budget / limit) it has performed.
 
-* Apply `detect-secrets` to Klorb's `logger` outputs so we don't accidentally log credentials.
-
 ## TUI
 
 ### Bugs
