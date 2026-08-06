@@ -203,10 +203,7 @@ def test_finished_update_emits_diff_content_for_a_successful_edit_file_call(tmp_
     registry = _registry(tmp_path)
     (tmp_path / "foo.txt").write_text("a\nb\nc\n")
     tool = registry.instantiate_tool("EditFile")
-    args = {
-        "filename": "foo.txt", "start_line": 2, "end_line": 2,
-        "start_text": "b", "end_text": "b", "new_text": "B",
-    }
+    args = {"filename": "foo.txt", "old_text": "b", "new_text": "B"}
     result = tool.apply(args)
     event = ToolCallEvent(call_id="1", name="EditFile", args=args, result=result, error=None)
 

@@ -316,7 +316,7 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`,
   `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
-  `tools.readFile.maxLines`, `tools.editFile.driftSearchRadius`, `tools.grep.maxResults`,
+  `tools.readFile.maxLines`, `tools.grep.maxResults`,
   `tools.grep.contextLines`, `tools.grep.maxLineLength`, `tools.grep.spillBytes`,
   `tools.findFile.maxResults`, `tools.scratchpad.contextLines`,
   `providers.openrouter.baseUrl`, `shell.command`,
@@ -361,11 +361,6 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `DEFAULT_READ_FILE_MAX_LINES` in `process_config.py` is its sole canonical default;
   `klorb.tools.read_file` has no constant of its own — see
   [the ToolSetupContext ADR](../adrs/tool-setup-context-carries-process-and-session-config.md).
-* `edit_file_drift_search_radius` (`tools.editFile.driftSearchRadius`) is consumed the same way
-  by `EditFileTool` via `context.process_config.edit_file_drift_search_radius`;
-  `DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS` in `process_config.py` is its sole canonical default —
-  see [[tool-framework]] and
-  [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
 * `grep_max_results` (`tools.grep.maxResults`), `grep_context_lines` (`tools.grep.contextLines`),
   `grep_max_line_length` (`tools.grep.maxLineLength`), `grep_spill_bytes`
   (`tools.grep.spillBytes`), and `find_file_max_results` (`tools.findFile.maxResults`) are

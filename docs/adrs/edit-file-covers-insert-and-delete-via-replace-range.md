@@ -1,5 +1,10 @@
 # EditFile covers insert and delete via its replace-range semantics, not dedicated tools
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — insert/delete are
+  still expressed by folding the anchor's original text into `new_text` (insert) or passing an
+  empty `new_text` (delete), unchanged in spirit; only the anchor itself changed, from a
+  `start_line`/`end_line` span to `old_text`/`old_text_start`/`old_text_end`. The decision that
+  no dedicated insert/delete tool is needed still holds.
 * Date: 2026-07-01 15:00
 * Question: Alongside a line-range-replace tool (`EditFile`) and a search/replace tool
   (`ReplaceAll`), does the model also need dedicated "insert a line" and "delete a line

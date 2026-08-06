@@ -65,10 +65,10 @@ with `[REDACTED]` before they reach stderr, the TUI conversation history, or the
 * `EditFileCore.apply()` (`edit_file_core.py`) takes the same optional `redactor`/`session`
   arguments. When `redactor` is given:
   * Immediately after `_normalize_edit_args()` resolves the call's arguments,
-    `_detokenize_normalized_args()` runs `redactor.detokenize(session, ...)` over `start_text`,
-    `end_text`, `new_text`, `context_before`, `context_after`, and each line of an `old_text`
-    block — so anchor matching and the eventual `path.write_text()` both operate on the file's
-    real bytes, never on a literal `[[SECRET:...]]` string. This is what stops a redacted secret
+    `_detokenize_normalized_args()` runs `redactor.detokenize(session, ...)` over `old_text`,
+    `old_text_start`, `old_text_end`, and `new_text` — so anchor matching and the eventual
+    `path.write_text()` both operate on the file's real bytes, never on a literal
+    `[[SECRET:...]]` string. This is what stops a redacted secret
     from being destroyed: without this step, an edit that carries a token in `new_text` (e.g.
     "move this line, keep its content as-is") would write the token's literal text to disk in
     place of the real secret.
@@ -92,8 +92,8 @@ with `[REDACTED]` before they reach stderr, the TUI conversation history, or the
   result never carries a plaintext secret either.
 * `ReadFileTool.description()`/`GrepTool.description()` tell the model directly that a line may
   come back with a `[[SECRET:<type>:<hash>]]` token in place of a credential, and that the token
-  (not a guessed or invented replacement) is what to pass back into `EditFile`'s `start_text`/
-  `end_text`/`old_text`/`new_text` to match or preserve that line.
+  (not a guessed or invented replacement) is what to pass back into `EditFile`'s
+  `old_text`/`old_text_start`/`old_text_end`/`new_text` to match or preserve that line.
 * `GrepTool` (`klorb/src/klorb/tools/grep.py`) constructs its own `self._secret_redactor =
   SecretRedactor()` and applies it via a `_redact_strings()` helper, applied to every dense-
   format result line (see docs/specs/tool-framework.md for the `"*42|text"`/`" 41|text"` format)
@@ -113,7 +113,7 @@ with `[REDACTED]` before they reach stderr, the TUI conversation history, or the
   query is passed through `redactor.detokenize(session, query)` into a separate
   `search_queries` list — so a `[[SECRET:...]]` token echoed back from an earlier `ReadFile`/
   `Grep` result resolves to the real plaintext for matching against a file's real content, the
-  same way `EditFileCore` detokenizes `start_text`/`old_text`. The *original* `queries` (never
+  same way `EditFileCore` detokenizes `old_text`. The *original* `queries` (never
   `search_queries`) is what gets redacted via `_redact_strings()` and echoed back as
   `result["queries"]` — covering both a query that was already a token (round-trips unchanged,
   since `redact()` finds nothing secret-shaped in a `[[SECRET:...]]` string) and a query where the

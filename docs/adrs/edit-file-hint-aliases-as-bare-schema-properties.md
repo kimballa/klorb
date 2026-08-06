@@ -1,5 +1,7 @@
 # EditFile's line-hint aliases are bare no-description schema properties, not an additionalProperties relaxation
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — there is no line
+  hint at all anymore, so the aliases this ADR justified no longer exist.
 * Date: 2026-07-18 16:00
 * Question: `EditFileCore`'s `old_text` form accepts `line`/`line_num`/`line_no`/`line_number` as
   alternate spellings of the line hint (a model reaching for a different name than the

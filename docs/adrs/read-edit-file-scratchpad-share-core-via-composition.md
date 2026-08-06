@@ -1,5 +1,11 @@
 # ReadFile/ReadScratchpad and EditFile/EditScratchpad share mechanics via a composed *Core class
 
+* Amended by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — `EditFileCore` no
+  longer takes a `drift_search_radius` constructor argument or holds any instance state at all
+  (matching is now unconditionally whole-subject), so the class-vs-free-function reasoning below
+  about closing over `self._drift_search_radius` no longer applies; the composition-over-
+  inheritance decision itself, and the shared `parameter_properties()`/`apply()` shape, are
+  unaffected.
 * Date: 2026-07-10 04:00
 * Question: `ReadScratchpadTool`/`EditScratchpadTool` need almost the same line-range read and
   drift-tolerant row-extent substitution mechanics as `ReadFileTool`/`EditFileTool` — the only

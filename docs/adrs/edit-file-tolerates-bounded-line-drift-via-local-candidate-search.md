@@ -1,5 +1,11 @@
 # EditFile tolerates bounded line drift via a local candidate search, not a batch-edit API
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — `EditFile` no
+  longer accepts a `start_line`/`end_line` hint at all, so there is no position for content to
+  drift *from*; matching is by content alone, which is unaffected by earlier edits shifting
+  what's below them. The adaptive-context-growth idea this ADR introduced for disambiguating an
+  ambiguous match survives, folded directly into `old_text`/`old_text_start`/`old_text_end`
+  instead of a separate `context_before`/`context_after` pair.
 * Date: 2026-07-02 21:10
 * Question: A tool eval (`edit_file_many_ops_bottom_to_top`) showed a model applying several
   single-line `EditFile` insertions to one file top-to-bottom instead of bottom-to-top. Each

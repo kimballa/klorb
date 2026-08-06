@@ -14,22 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 class EditFileTool(Tool):
-    """Replaces the inclusive line range `[start_line, end_line]` of a text file with
-    `new_text` — delegating that mechanic to `self.edit_file_core` (a
-    `klorb.tools.util.EditFileCore`), the same one `EditScratchpadTool` uses, so it's written
-    and tested once. See your system prompt's guidance on `EditFile`/`EditScratchpad` for the
-    `start_text`/`end_text`/`old_text`/`context_before`/`context_after` conventions, drift
-    tolerance, and "Ambiguous match" handling.
+    """Replaces a block of a text file's current content with `new_text` — delegating that
+    mechanic to `self.edit_file_core` (a `klorb.tools.util.EditFileCore`), the same one
+    `EditScratchpadTool` uses, so it's written and tested once. See your system prompt's
+    guidance on `EditFile`/`EditScratchpad` for the `old_text`/`old_text_start`/`old_text_end`
+    conventions and "Ambiguous match" handling.
 
     `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
     `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
     `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
 
-    A nonexistent `filename` doesn't need a separate `CreateFile` call first: the empty-subject
-    insert shape (`start_line=1, end_line=0, start_text="", end_text=""`) creates it directly,
-    including any missing parent directories -- see `EditFileCore.apply()`. Any other shape
-    against a nonexistent file raises `FileNotFoundError` naming `CreateFile` as the tool to use
-    instead, since this mechanic can't create a file at an arbitrary line range.
+    A nonexistent `filename` doesn't need a separate `CreateFile` call first: `old_text=""`
+    creates it directly, including any missing parent directories -- see `EditFileCore.apply()`.
+    Any other shape against a nonexistent file raises `FileNotFoundError` naming `CreateFile` as
+    the tool to use instead.
 
     `self._secret_redactor` (the same `klorb.tools.util.SecretRedactor` type `ReadFileTool`
     uses) resolves any `[[SECRET:<type>:<hash>]]` token in the call's arguments back to real
@@ -39,7 +37,7 @@ class EditFileTool(Tool):
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
-        self.edit_file_core = EditFileCore(context.process_config.edit_file_drift_search_radius)
+        self.edit_file_core = EditFileCore()
         self._secret_redactor = get_or_create_secret_redactor(context.session)
 
     def name(self) -> str:
@@ -53,15 +51,10 @@ class EditFileTool(Tool):
 
     def description(self) -> str:
         return (
-            "Replaces the inclusive 1-indexed line range [start_line, end_line] of a text "
-            "file with new_text.\n"
-            "See your system prompt's guidance on EditFile "
-            "for how start_text/end_text/context_before/context_after work, drift "
-            "tolerance and 'Ambiguous match' errors, and the empty-file/insert/delete "
-            "conventions. \n"
-            "To assert nothing precedes/follows the target line, send "
-            "`\"context_before_start\": true` / `\"context_after_end\": true`. Use the boolean "
-            "arguments instead of passing empty string to context_before/context_after.\n"
+            "Replaces a block of a text file's current content with new_text, located by "
+            "old_text (or old_text_start/old_text_end) rather than a line number.\n"
+            "See your system prompt's guidance on EditFile for the empty-file/insert/delete "
+            "conventions and 'Ambiguous match' errors.\n"
             "The response includes a `post_edit_content` field showing the edited region "
             "with line numbers, and a total line count in `new_total_lines` "
             "— no follow-up ReadFile is needed to verify."
@@ -87,8 +80,7 @@ class EditFileTool(Tool):
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'filename'. Provide the path of the file to edit.")
-        logger.debug("EditFile %s (start_line=%s, end_line=%s)",
-                     filename, args.get("start_line"), args.get("end_line"))
+        logger.debug("EditFile %s", filename)
 
         path, verdict = resolve_and_evaluate_write(self.context, filename)
         raise_if_not_allowed(
@@ -100,32 +92,23 @@ class EditFileTool(Tool):
         result["filename"] = filename
 
         logger.debug(
-            "EditFile %s replaced lines %d-%d (now %d-%d) of what is now a %d-line file",
-            filename, result["requested_start_line"], result["requested_end_line"],
-            result["start_line"], result["end_line"], result["new_total_lines"],
+            "EditFile %s replaced %d line(s) at line %d of what is now a %d-line file",
+            filename, result["replaced_lines"], result["start_line"], result["new_total_lines"],
         )
         return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts are computed from
-        `start_line`/`end_line`/`new_text` -- preferring `result`'s `requested_start_line`/
-        `requested_end_line` (the call's line hint after normalization: alias-resolved, and, for
-        an `old_text` call that omitted `end_line`, inferred from its line count) when a `result`
-        is available, and falling back to the call's own raw args otherwise (a failed call has
-        no `result`, and `_normalize_edit_args()` may have raised before resolving either value).
-        Unaffected by drift relocation either way, which preserves the requested span's length.
-        """
+        """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts come from
+        `result`'s `replaced_lines` and the call's `new_text` -- only available on success, since
+        a failed match never resolves a location to count lines removed from."""
         filename = args.get("filename", "?")
         diff = ""
-        if isinstance(result, dict):
-            start_line, end_line = result.get("requested_start_line"), result.get("requested_end_line")
-        else:
-            start_line, end_line = args.get("start_line"), args.get("end_line")
         new_text = args.get("new_text")
-        if isinstance(start_line, int) and isinstance(end_line, int) and isinstance(new_text, str):
-            removed = end_line - start_line + 1
-            added = new_text.count("\n") + 1 if new_text else 0
-            diff = f" (+{added}/-{removed})"
+        if isinstance(result, dict) and isinstance(new_text, str):
+            removed = result.get("replaced_lines")
+            if isinstance(removed, int):
+                added = new_text.count("\n") + 1 if new_text else 0
+                diff = f" (+{added}/-{removed})"
         base = f"Edit file: {filename}{diff}"
         return base if error is None else f"{base} failed: {error}"
 

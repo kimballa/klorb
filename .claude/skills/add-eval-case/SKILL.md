@@ -78,9 +78,8 @@ Two helpers already in `cases.py` cover almost every case's needs:
 * `_tool_call_args(session: Session, tool_name: str) -> list[dict]` — every call to `tool_name`
   the model made, as parsed argument dicts, in call order. Use this (in addition to, never
   instead of, a filesystem check) only when the filesystem outcome alone can't distinguish a
-  genuinely correct approach from a lucky one — e.g. the `EditFile` ambiguous-match cases check
-  that the model actually supplied `context_before`/`context_after` to disambiguate, not just that
-  the file ended up right.
+  genuinely correct approach from a lucky one — e.g. `edit_file_single_line_shortcut` checks
+  that an `EditFile` call actually used `old_text`, not just that the file ended up right.
 
 ## 4. Verify
 

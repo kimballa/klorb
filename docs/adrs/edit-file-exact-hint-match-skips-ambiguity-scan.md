@@ -1,5 +1,8 @@
 # EditFile accepts an exact start_line/anchor match immediately, without an ambiguity scan
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — there is no line
+  hint at all anymore, so the "exact hint match" fast path this ADR describes no longer exists;
+  every match search is now a full, unconditional scan for uniqueness.
 * Date: 2026-07-18 20:17
 * Question: [the drift-tolerance ADR](edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md)
   established that `EditFile` never trusts an anchor match at the hint in isolation — even when

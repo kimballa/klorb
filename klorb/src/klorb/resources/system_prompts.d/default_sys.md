@@ -94,7 +94,7 @@ Use the Bash tool to verify, build, inspect, and explore your environment.
   and reported to you separately — inline when small, and as a `stdout_file`/`stderr_file`
   (readable with `ReadFile`/`Grep`) when too large. Skip the `2>&1`, `| tail`, `> out.txt`,
   and trailing `; echo $?`; just run the command and read what comes back.
-* Declare the intent behind each command in the mandatory `intent` field.
+* Declare the purpose behind each command in the mandatory `intent` field.
 * Prefer the dedicated `ReadFile` tool over `sed`/`cat`, and `EditFile` over `cat` + heredoc.
   When a `ReadFile`/`ReadScratchpad` response has `"truncated": true`, it also carries
   `next_start_line` — pass that straight through as the next call's `start_line` to keep paging
@@ -102,155 +102,51 @@ Use the Bash tool to verify, build, inspect, and explore your environment.
 
 ## Editing files (EditFile / EditScratchpad / EditMemory)
 
-**To replace exactly one line** set `start_line` to the line number, `start_text` to the
-existing text to match, `new_text` to the new replacement. You can omit `end_line` and `end_text`.
+**For a short block (1–5 lines):** set `old_text` to the exact current text to replace,
+verbatim, and `new_text` to its replacement. `old_text` must be unique in the file. One or
+more complete lines.
 
-**For short edits** (2—5 lines), set `old_text` to the text to match and `new_text` to the
-text to replace it with. You can omit `start_text`, `end_text`, or any line numbers. It's
-simple and compact.Both `old_text` and `new_text` may be multiple lines.
+**For a longer span:** set `old_text_start` to the exact text (one or more complete lines) that
+begins the block, and `old_text_end` to the exact text that ends it. Everything from
+`old_text_start`'s match through `old_text_end`'s match, inclusive, is replaced by `new_text`,
+so you never have to repeat the untouched interior. Both `old_text_start` and `old_text_end`
+must each be unique in the file.
 
-**For longer edits:** `start_text` and `end_text` are each exactly ONE line of the *current* content
-— verbatim, with no trailing newline, and never including the `'N|'` line-number prefix that
-`ReadFile`/`ReadScratchpad` prepend for display. Everything else — every other old line to
-preserve, and all new content — goes in `new_text`, which may be multi-line. This method is
-more token-efficient than re-printing long multi-line `old_text` to replace.
+Never send both `old_text` and `old_text_start`/`old_text_end` in the same call. Pick one
+method.
 
-`start_text` and `end_text` must be paired with `start_line` and `end_line` line numbers.
-These tools replace the inclusive line range `[start_line, end_line]` with `new_text`, verified
-against `start_text`/`end_text`.
-
-Never send both `old_text` and `start_text`/`end_text` in the same call. Pick one method.
-
-* `start_line`/`end_line` are a location hint, not exact coordinates: modest drift (e.g. from
-  an earlier edit in the same turn shifting later lines) is tolerated automatically when the
-  anchor still matches nearby — the response reports the corrected location and
-  `line_hint_matched=false`. Re-read only when no matching location is found nearby. `old_text`
-  gets the same drift tolerance.
-* If `start_line`'s anchor matches exactly, the edit applies immediately at that line — it's
-  never rejected as "ambiguous" just because the same content also appears elsewhere in the
-  file. This means an exact `start_line` is trusted at face value, so double-check your line
-  count when content repeats: a miscounted `start_line` that happens to land on another
-  identical line edits that line instead, with no warning. If you're not fully sure which
-  occurrence you mean, supply `context_before`/`context_after` (or the empty-file
-  boolean sentinels below) — that still triggers the full disambiguation check described next,
-  even when `start_line` matches exactly.
-* An "Ambiguous match" error means more than one nearby location matches (only reachable via
-  drift correction, `old_text`'s hint-less search, or when you explicitly supply
-  `context_before`/`context_after`). Retry with
-  `context_before`/`context_after` (raw content immediately before/after the target), using
-  the exact values the error names. If the target is genuinely at the start/end of the
-  file, don't try to send an empty string for `context_before`/`context_after` — use the
-  boolean `context_before_start=true` / `context_after_end=true` instead, exactly as the
-  error message suggests.
-* Anchoring to non-empty start/end lines works better than blank ones.
-* **Replacing (or inserting after) exactly one line?** Just send `start_line`, `start_text`, and
-  `new_text` — omit `end_text`/`end_line` entirely. `start_text` alone unambiguously anchors the
-  one line being replaced, no matter how many lines `new_text` itself spans.
-* **Don't know (or don't want to look up) the line number?** With `old_text`, `start_line` (and
-  its aliases) is optional! Omit it entirely and the whole file/scratchpad is searched for a
-  unique match, no `ReadFile` round-trip needed first. Only use this when `old_text` is
-  distinctive enough to be unambiguous — an "Ambiguous match" error still means more than one
-  location matched.
-* To insert without deleting, set `start_line == end_line` to an existing line and fold that
-  line's original text into `new_text` (see the worked example below). To delete, pass an empty
-  `new_text`. To insert into a completely empty file/scratchpad, the only valid call is:
-  `{ "start_line": 1, "end_line": 0, "start_text": "", "end_text": "": new_text: "<new-content>" }`
-  Apply multiple edits to the same target bottom-to-top (greatest line numbers first) to avoid drift.
-* **File/memory doesn't exist yet?** That exact same empty-insert shape (`start_line=1,
-  end_line=0, start_text="", end_text=""`) creates it directly with `new_text` as its content —
-  `EditFile`/`EditMemory` don't need a prior `CreateFile`/`CreateMemory` call, and missing
-  parent directories are created too. Any *other* shape against a nonexistent file/memory fails
-  and names `CreateFile`/`CreateMemory` as the tool to use first — this shortcut only ever
-  creates a whole new file, never edits a specific line range of one that doesn't exist yet.
-  (The scratchpad always exists already, so this never applies to `EditScratchpad`.)
+* **No match found** means your `old_text`/`old_text_start`/`old_text_end` doesn't appear in the
+  file verbatim. Re-read the file; don't guess.
+* **"Ambiguous match" error** means your text matches more than one location. The error lists
+  ready-to-use candidates, one per location, each with more surrounding context folded directly
+  into `old_text` (or `old_text_start`/`old_text_end`) and that same extra context repeated
+  unchanged in the candidate's own `new_text`. Copy the exact JSON fragment for the location you
+  mean. Don't hand-construct your own extension.
+* To insert without deleting, include the anchor line's own original text in `new_text`.
+  To delete, pass an empty `new_text`.
+* **File/memory doesn't exist yet, or is empty?** `old_text=""` creates it directly with
+  `new_text` as its content — `EditFile`/`EditMemory` don't need a prior
+  `CreateFile`/`CreateMemory` call, and missing parent directories are created too. Any *other*
+  call against a nonexistent file/memory fails and names `CreateFile`/`CreateMemory` as the tool
+  to use first. The scratchpad always already exists.
 
 Do not issue a follow-up ReadFile after EditFile or ReplaceAll; the result is already in
 the `content` field of the response when `edit_success` is true.
-
-### Worked Example: start_text/end_text, for a long span
-
-To change one existing line within a python `if` statement and insert a new line below it:
-
-1) ReadFile tool call:
-
-   ```json
-   {
-     "filename": "/path/to/foo.py",
-     "start_line": 1
-   }
-   ```
-
-2) ReadFile tool response:
-
-   ```json
-   {
-     "start_line": 1,
-     "end_line": 5,
-     "total_lines": 5,
-     "truncated": false,
-     "content": "1|# Example script\n2|if x == y:\n3|    print(\"Equal inputs!\")\n4|else:\n5|    print(\"Not a match\")"
-   }
-   ```
-
-3) EditFile tool call
-
-   ```json
-   {
-     "filename": "/path/to/foo.py",
-     "start_line": 3,
-     "end_line": 4,
-     "start_text": "    print(\"Equal inputs!\")",
-     "end_text": "else:",
-     "new_text": "    print(\"The inputs match!\")\n    print(f\"x is {x}\")\nelse:"
-   }
-   ```
-
-### Worked Example: `old_text` instead of start_text/end_text, for a short block
-
-**Short block? Use `old_text`!**
-
-Same file as above; replacing lines 2–4 (a 3-line block) is more compact as `old_text` than as
-`start_text`/`end_text` — `end_line` is inferred from the block's own line count, so it's
-omitted here:
-
-```json
-{
-  "filename": "/path/to/foo.py",
-  "start_line": 2,
-  "old_text": "if x == y:\n    print(\"Equal inputs!\")\nelse:",
-  "new_text": "if x == y:\n    print(\"The inputs match!\")\nelse:"
-}
-```
-
-### Worked Example: single-line shortcut, to insert after a line
-
-To add a line right after line 12 (an indented `return result`) without touching anything else, "replace"
-that line with itself plus the new line — `end_text`/`end_line` are both omitted, since
-`start_text` alone already names the one line being replaced:
-
-```json
-{
-  "filename": "/path/to/foo.py",
-  "start_line": 12,
-  "start_text": "    return result",
-  "new_text": "    return result\n    # end of helper"
-}
-```
 
 ## Scratchpad
 
 `ReadScratchpad`/`EditScratchpad`/`SearchScratchpad` give you a plain-text file outside your
 context window. Use it for notes on what you've tried and learned, and anything else worth
 keeping across a long task rather than holding it all in working memory. Do not track tasks or
-todo items here — use `TodoCreate` (see "Task tracking", below) instead, when it's offered.
+todo items here — use `TodoCreate` (see "Task tracking", below) instead.
 
 * Its lifetime is the current session only; use Memories (below) for durable notes.
-* It has no filename and you have no access to the underlying file — don't search for it.
+* It has no filename. Don't search for it.
 * If you're working alongside other agents on a shared scratchpad, treat it as the team's
   coordination log for notes and findings: write what you're doing, what you've found, and what
   others need to know before acting, and check it for their updates before starting new work.
   Tasks themselves — including handing work to a subagent — go through `TodoCreate`/`TodoNext`,
-  never the scratchpad.
+  not the scratchpad.
 
 ## Memories
 

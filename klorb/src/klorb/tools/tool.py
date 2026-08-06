@@ -64,7 +64,7 @@ def default_invalid_tool_call_detail(name: str, raw_arguments: str, error: str) 
     )
 
 
-_EDIT_ARG_NAMES = ("start_text", "end_text", "old_text", "new_text")
+_EDIT_ARG_NAMES = ("old_text", "old_text_start", "old_text_end", "new_text")
 
 _COMMON_JSON_MISTAKES = (
     "Common JSON mistakes:\n"
@@ -76,22 +76,18 @@ _COMMON_JSON_MISTAKES = (
     "- Mismatched quotes: a string opened with `\"` and never closed, or single quotes used "
     "for a JSON string: `'x'` -> `\"x\"`.\n"
     "- Failing to record an empty string value: "
-    "`{\"requires_empty\": }` -> `{\"requires_empty\": \"\"}` "
-    "(common for EditFile `context_before` arg at start of file / `context_after` at end of file)\n"
+    "`{\"requires_empty\": }` -> `{\"requires_empty\": \"\"}`\n"
 )
 
-_XML_JSON_EXAMPLE = '{ "filename": "foo.py", "start_line": 12, "new_text": "..." }'
+_XML_JSON_EXAMPLE = '{ "filename": "foo.py", "old_text": "...", "new_text": "..." }'
 
 _EDIT_ARG_ESCAPE_HINT = (
     "Common EditFile mistakes:\n"
-    "This looks like an edit tool call (it mentions start_text/end_text/old_text/new_text) "
-    "carrying file content.\n"
+    "This looks like an edit tool call (it mentions old_text/old_text_start/old_text_end/"
+    "new_text) carrying file content.\n"
     "- Embedded double quotes and backslashes break JSON "
     "when they aren't escaped. Double-check the quoting/escaping of those argument values "
-    "specifically.\n"
-    "- Instead of sending empty string context_before / context_after, we recommend the "
-    "following JSON, which agents typically find easier to correctly generate: "
-    "`{ \"context_before_start\": true, ... }` or `{ \"context_after_end\": true, ... }`"
+    "specifically."
 )
 
 

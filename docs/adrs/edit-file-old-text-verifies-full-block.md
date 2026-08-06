@@ -1,5 +1,9 @@
 # EditFile's old_text form verifies the entire block, not just its endpoints
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — the classic
+  endpoints-only `start_text`/`end_text` form this ADR contrasted `old_text` against no longer
+  exists, so full-block verification isn't a choice for `old_text` anymore, it's the only way
+  `EditFileCore` ever matches a single-block anchor.
 * Date: 2026-07-18 16:00
 * Question: `EditFileCore`'s classic `start_text`/`end_text` form anchors a replacement span on
   only its first and last line, by design — see

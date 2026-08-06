@@ -32,14 +32,6 @@ DEFAULT_READ_FILE_MAX_LINES = 200
 `klorb.tools.read_file` has no constant of its own, it reads `ProcessConfig.read_file_max_lines`
 via `ToolSetupContext` at construction time instead."""
 
-DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS = 20
-"""`EditFileTool`'s bounded-search radius default (in lines) for locating a drifted
-`start_line`/`end_line` hint; the canonical source of this value — `klorb.tools.edit_file` has
-no constant of its own, it reads `ProcessConfig.edit_file_drift_search_radius` via
-`ToolSetupContext` at construction time instead. Chosen relative to a typical number of
-single-line edits an agent makes to one file per turn, not file size; see
-docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md."""
-
 DEFAULT_GREP_MAX_RESULTS = 100
 """`GrepTool`'s per-call match cap default; the canonical source of this value —
 `klorb.tools.grep` has no constant of its own, it reads `ProcessConfig.grep_max_results` via
@@ -338,7 +330,6 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.readFile.maxLines": "read_file_max_lines",
     "tools.readFile.maxLineLength": "read_file_max_line_length",
     "tools.@mention.maxLines": "mention_max_lines",
-    "tools.editFile.driftSearchRadius": "edit_file_drift_search_radius",
     "tools.grep.maxResults": "grep_max_results",
     "tools.grep.contextLines": "grep_context_lines",
     "tools.grep.maxLineLength": "grep_max_line_length",
@@ -416,7 +407,6 @@ class ProcessConfig(BaseModel):
     mention_max_lines: int = DEFAULT_MENTION_MAX_LINES
     """Per-file line cap for `@mention` file inlining in user prompts -- see
     `klorb.session.mixins.mentions` and docs/specs/at-mention-file-inlining.md."""
-    edit_file_drift_search_radius: int = DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS
     grep_max_results: int = DEFAULT_GREP_MAX_RESULTS
     grep_context_lines: int = DEFAULT_GREP_CONTEXT_LINES
     """Number of lines of surrounding context `GrepTool` shows on each side of a matching

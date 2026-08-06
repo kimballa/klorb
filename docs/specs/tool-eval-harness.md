@@ -53,8 +53,8 @@ make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite ris
     `soft_check` (same signature as `check`, default `None`): run only when `check` itself
     passes, for a case whose file-state outcome is correct but whose *shape* (which tool-call
     form the model reached for) is a yellow flag rather than a failure — e.g. proving a long-span
-    `EditFile` call used `start_text`/`end_text` rather than a token-wasteful `old_text` (see
-    docs/specs/tool-framework.md). A non-`None` `soft_check` return also flags the
+    `EditFile` call used `old_text_start`/`old_text_end` rather than a token-wasteful `old_text`
+    (see docs/specs/tool-framework.md). A non-`None` `soft_check` return also flags the
     result `CaseResult.conditional`, via `CaseResult.soft_failure_reason`, without flipping
     `passed` to `False`.
   * `CaseResult` — the outcome of running one `EvalCase`: `passed`, `duration_s`,

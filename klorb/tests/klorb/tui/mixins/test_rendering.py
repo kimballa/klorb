@@ -375,8 +375,7 @@ async def test_edit_file_call_renders_a_colored_diff_preview_clickable_to_full_o
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "EditFile", json.dumps({
-            "filename": str(file_path), "start_line": 2, "end_line": 2,
-            "start_text": "b", "end_text": "b", "new_text": "B",
+            "filename": str(file_path), "old_text": "b", "new_text": "B",
         }))]),
         _reply("edited"),
     ]
@@ -420,8 +419,7 @@ async def test_ctrl_o_shows_the_full_diff_for_an_edit_file_call(tmp_path: Path) 
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "EditFile", json.dumps({
-            "filename": str(file_path), "start_line": 15, "end_line": 15,
-            "start_text": "15", "end_text": "15", "new_text": "X",
+            "filename": str(file_path), "old_text": "15", "new_text": "X",
         }))]),
         _reply("edited"),
     ]

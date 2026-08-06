@@ -102,8 +102,8 @@ class SecretRedactor:
     """Detects likely credentials in file content and replaces each occurrence with a stable
     `[[SECRET:<type>:<hash>]]` token, reversible via `detokenize()` -- so a model never sees a
     plaintext secret via `ReadFile`, but `EditFile` can still match and write the file's real
-    bytes when a token is echoed back in `start_text`/`end_text`/`old_text`/`context_before`/
-    `context_after`/`new_text`. Holds no state of its own; the token<->plaintext map lives in
+    bytes when a token is echoed back in `old_text`/`old_text_start`/`old_text_end`/`new_text`.
+    Holds no state of its own; the token<->plaintext map lives in
     `session.tool_state`, so a `Tool` can share one `SecretRedactor()` across its whole
     lifetime, the same shape as `klorb.tools.util.spill.SpillDir`. See
     docs/specs/secret-redaction.md.
@@ -160,9 +160,9 @@ class SecretRedactor:
     def detokenize(self, session: "Session | None", text: str) -> str:
         """Substitute every known token in `text` back to its real plaintext -- `EditFileCore`'s
         hook for matching/writing the file's real bytes when a model echoes a token from an
-        earlier `ReadFile` back into `start_text`/`end_text`/`old_text`/`context_before`/
-        `context_after`/`new_text`. A token with no known mapping (a different session, or one
-        the model fabricated) is left as literal text rather than raising."""
+        earlier `ReadFile` back into `old_text`/`old_text_start`/`old_text_end`/`new_text`. A
+        token with no known mapping (a different session, or one the model fabricated) is left
+        as literal text rather than raising."""
         if "[[SECRET:" not in text:
             return text
         token_map = self._token_map(session)

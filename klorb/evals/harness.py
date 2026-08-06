@@ -60,7 +60,7 @@ class EvalCase:
     `conditional` with that string as `CaseResult.soft_failure_reason`, without flipping
     `passed` to `False` -- for a case whose file-state outcome is correct but whose *shape*
     (which tool-call form the model reached for) is a yellow flag rather than a failure, e.g.
-    proving a long-span edit used `start_text`/`end_text` rather than a token-wasteful
+    proving a long-span edit used `old_text_start`/`old_text_end` rather than a token-wasteful
     `old_text`. `None` (the default) means no shape check runs for this case."""
 
 

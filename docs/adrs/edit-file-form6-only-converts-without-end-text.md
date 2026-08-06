@@ -1,5 +1,8 @@
 # EditFile reinterprets a multi-line start_text as old_text only when end_text is absent
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — `start_text`/
+  `end_text` no longer exist as arguments at all, so there's no implicit-conversion case to
+  arbitrate between; `old_text` is simply the argument a caller sends directly.
 * Date: 2026-07-18 16:00
 * Question: Before the `old_text` form existed, `EditFileCore` already tolerated a model pasting
   a multi-line block into `start_text` by truncating it to its first line (with an advisory

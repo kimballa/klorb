@@ -1,5 +1,9 @@
 # EditFile/EditMemory auto-create a nonexistent file via the empty-subject insert shape
 
+* Superseded by: [[edit-file-locates-blocks-by-text-anchor-not-line-number]] — the sentinel
+  itself is now `old_text=""` (there's no `start_line`/`end_line` at all), but the underlying
+  decision — a missing/empty subject is recoverable in one call, via the one shape with nothing
+  to anchor against — is unchanged.
 * Date: 2026-07-18 21:40
 * Question: `EditFileCore.apply()` never created files — a nonexistent `path` made
   `path.read_text()` raise a bare `FileNotFoundError: [Errno 2] No such file or directory:

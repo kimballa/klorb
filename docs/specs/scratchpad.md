@@ -90,20 +90,17 @@ scope") coordinate through one shared file rather than each keeping a private on
     `parameter_properties()` returns the shared `start_line`/`end_line` JSON-schema properties,
     so each tool's own `parameters()` only adds `filename` (or not) and its own `required` list
     around it.
-  * `EditFileCore` (constructed with `drift_search_radius: int`) implements the full
-    drift-tolerant row-extent substitution mechanic — argument validation, the line-range
-    search/substitution algorithm (formerly a standalone `klorb.tools.line_range_edit` module,
-    now folded in here since only `EditFileCore` calls it), and the result dict — behind one
-    `apply(path, args, *, subject, reread_hint) -> dict[str, Any]` method. `EditFileTool` and
-    `EditScratchpadTool` each hold one as `self.edit_file_core`, resolve their own `path` (a
-    workspace-confined, permission-checked `filename` for `EditFileTool`; the fixed, unchecked
-    `session.scratchpad.path` for `EditScratchpadTool`), and delegate to it — passing a
-    `reread_hint` string substituted into error messages so they say "re-ReadFile foo.py" for
-    `EditFileTool` or "re-ReadScratchpad your scratchpad" for `EditScratchpadTool`, as
-    appropriate. Same `parameter_properties()` pattern as `ReadFileCore` for the shared
-    `start_line`/`end_line`/`start_text`/`end_text`/`new_text`/`context_before`/`context_after`
-    schema.
-  * The lengthy "most common mistake"/drift/`"Ambiguous match"` explanation that used to live in
+  * `EditFileCore` implements the full text-anchored block-substitution mechanic — argument
+    validation, the match-and-substitute algorithm, and the result dict — behind one
+    `apply(path, args, *, subject, reread_hint, create_hint) -> dict[str, Any]` method.
+    `EditFileTool` and `EditScratchpadTool` each hold one as `self.edit_file_core`, resolve
+    their own `path` (a workspace-confined, permission-checked `filename` for `EditFileTool`;
+    the fixed, unchecked `session.scratchpad.path` for `EditScratchpadTool`), and delegate to
+    it — passing a `reread_hint` string substituted into error messages so they say "re-ReadFile
+    foo.py" for `EditFileTool` or "re-ReadScratchpad your scratchpad" for
+    `EditScratchpadTool`, as appropriate. Same `parameter_properties()` pattern as
+    `ReadFileCore` for the shared `old_text`/`old_text_start`/`old_text_end`/`new_text` schema.
+  * The lengthy `"Ambiguous match"` explanation that used to live in
     both `EditFileTool.description()` and `EditScratchpadTool.description()` now lives once, in
     the default system prompt's "Editing with EditFile/EditScratchpad" section — each tool's own
     `description()` is a short pointer to it, not a restatement.

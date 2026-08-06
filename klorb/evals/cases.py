@@ -16,18 +16,15 @@ actually made (see docs/adrs/grade-tool-evals-by-filesystem-state.md's "where us
 carve-out), not just the resulting file content.
 
 Another handful use repeated, identical lines at or near a file's first/last line, where
-`EditFile`'s drift search (see
-docs/adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md) necessarily
-returns more than one candidate — these check that the model actually recovers by supplying
-`context_before`/`context_after` (inspecting `session.messages` for those arguments, not just
-the resulting content), rather than passing only because it stumbled onto the right file state
-some other way.
+`old_text` necessarily matches more than one location and `EditFile` raises an "Ambiguous
+match" `ValueError` naming ready-to-use `old_text`/`new_text` candidates extended with more
+surrounding context (see docs/specs/tool-framework.md) — these check that the model actually
+recovers and edits the one intended occurrence, rather than passing only because it stumbled
+onto the right file state some other way.
 
-A further handful cover the widened `EditFile` argument matrix (see
-docs/specs/tool-framework.md): the single-line shortcut (`start_line == end_line`,
-`end_text` omitted) and `old_text` (the whole replacement block verbatim). Since the file ends
-up correct either way a case is written, these also inspect `session.messages` for the specific
-argument shape the case exists to prove is reachable, not just the resulting content.
+A further handful cover the `old_text_start`/`old_text_end` form of `EditFile` (see
+docs/specs/tool-framework.md), used for a longer span where repeating the interior as `old_text`
+would be wasteful.
 """
 
 from pathlib import Path
@@ -332,10 +329,9 @@ READ_FILE_PAGINATES_PAST_MAX_LINES = EvalCase(
 
 _MANY_EDITS_FILE_TOTAL_LINES = 300
 _MANY_EDITS_INSERT_AFTER_LINES = [10, 90, 150, 210, 260, 295]
-"""Original (pre-edit) line numbers to insert a new line after. Each insertion shifts every
-line below it down by one, so applying these top-to-bottom without re-reading in between
-targets the wrong line for every insertion after the first — see EditFileTool's docstring
-recommendation to instead go bottom-to-top."""
+"""Line numbers (in the prompt's own description of the file, not an `EditFile` argument) to
+insert a new line after. Each `item NNN` line is anchored by its own unique text, so the six
+inserts are order-independent regardless of how earlier ones shift what's below them."""
 
 
 def _check_edit_file_many_ops_bottom_to_top(workspace_root: Path, session: Session) -> str | None:
@@ -364,8 +360,8 @@ EDIT_FILE_MANY_OPS_BOTTOM_TO_TOP = EvalCase(
         ) + "\n",
     },
     check=_check_edit_file_many_ops_bottom_to_top,
-    # +2: a competent run may re-ReadFile around a line whose EditFile response reports
-    # line_hint_matched=False, to confirm the drift search landed on the right target.
+    # +2: the 300-line file exceeds DEFAULT_READ_FILE_MAX_LINES, so a competent run pages
+    # through it with more than one ReadFile call before the six EditFile calls.
     expected_tool_calls=len(_MANY_EDITS_INSERT_AFTER_LINES) + 2,
 )
 
@@ -624,15 +620,10 @@ def _check_edit_file_single_line_shortcut(workspace_root: Path, session: Session
     if mismatch is not None:
         return mismatch
     edit_calls = tool_call_args(session, "EditFile")
-    if not any(
-        not call.get("end_text")
-        and ("end_line" not in call or call.get("start_line") == call.get("end_line"))
-        for call in edit_calls
-    ):
+    if not any("old_text" in call for call in edit_calls):
         return (
-            "expected at least one EditFile call to use the single-line shortcut "
-            "(end_text omitted or empty, with end_line either omitted entirely or equal to "
-            "start_line) rather than repeating start_text as end_text"
+            "expected at least one EditFile call to use old_text (the direct form for a "
+            "single line) rather than old_text_start/old_text_end"
         )
     return None
 
@@ -658,18 +649,16 @@ def _check_edit_file_old_text_small_block(workspace_root: Path, session: Session
 
 
 def _soft_check_edit_file_old_text_small_block(workspace_root: Path, session: Session) -> str | None:
-    """The file state is correct either way; this case exists to prove old_text (with end_line
-    inferred from its line count) is reachable for a short block, so a run that reaches the
-    right file via the classic start_text/end_text form instead is still a pass -- just
-    flagged conditional rather than treated as a failure."""
+    """The file state is correct either way; this case exists to prove old_text is reachable
+    for a short block, so a run that reaches the right file via old_text_start/old_text_end
+    instead is still a pass -- just flagged conditional rather than treated as a failure."""
     edit_calls = tool_call_args(session, "EditFile")
-    if any(call.get("old_text") and "end_line" not in call for call in edit_calls):
+    if any("old_text" in call for call in edit_calls):
         return None
     return (
-        "no EditFile call replaced the block with old_text (end_line omitted, inferred from "
-        "its line count) -- this case exists to prove that form is reachable for a short "
-        "block; a different-but-valid strategy (e.g. classic start_text/end_text) reached the "
-        "right file without exercising it"
+        "no EditFile call replaced the block with old_text -- this case exists to prove that "
+        "form is reachable for a short block; a different-but-valid strategy (e.g. "
+        "old_text_start/old_text_end) reached the right file without exercising it"
     )
 
 
@@ -692,7 +681,7 @@ EDIT_FILE_OLD_TEXT_SMALL_BLOCK = EvalCase(
 )
 
 
-def _check_edit_file_old_text_drifted(workspace_root: Path, session: Session) -> str | None:
+def _check_edit_file_old_text_after_prior_edit(workspace_root: Path, session: Session) -> str | None:
     expected = [
         "# HEADER", "# inserted by edit", "def greet(name):", "    msg = 'Hi ' + name",
         "    return msg", "", "print(greet('world'))",
@@ -700,24 +689,24 @@ def _check_edit_file_old_text_drifted(workspace_root: Path, session: Session) ->
     return _first_mismatch(expected, _lines(workspace_root / "app.py"), "app.py")
 
 
-def _soft_check_edit_file_old_text_drifted(workspace_root: Path, session: Session) -> str | None:
+def _soft_check_edit_file_old_text_after_prior_edit(workspace_root: Path, session: Session) -> str | None:
     """The file state is correct either way; this case exists to prove `old_text` still
-    resolves via drift + full-block verification after an earlier insertion shifts its line
-    numbers, so a run that reaches the right file *without* exercising that (e.g. editing
-    bottom-to-top, avoiding drift entirely, or targeting just the changed line directly) is
-    still a pass -- just flagged conditional rather than treated as a failure."""
+    resolves the greet() body correctly after an earlier edit in the same turn inserted a line
+    above it (content-anchored matching is unaffected by that shift), so a run that reaches the
+    right file *without* exercising `old_text` for the second edit is still a pass -- just
+    flagged conditional rather than treated as a failure."""
     edit_calls = tool_call_args(session, "EditFile")
-    if any(call.get("old_text") for call in edit_calls):
+    if any("old_text" in call for call in edit_calls):
         return None
     return (
         "no EditFile call used old_text -- this case exists to prove old_text still resolves "
-        "via drift + full-block verification after an earlier insertion shifts its line "
-        "numbers; a different-but-valid strategy reached the right file without exercising it"
+        "correctly after an earlier edit in the same turn shifted the surrounding content; a "
+        "different-but-valid strategy reached the right file without exercising it"
     )
 
 
-EDIT_FILE_OLD_TEXT_DRIFTED = EvalCase(
-    name="edit_file_old_text_drifted",
+EDIT_FILE_OLD_TEXT_AFTER_PRIOR_EDIT = EvalCase(
+    name="edit_file_old_text_after_prior_edit",
     prompt=(
         "app.py has a header comment on line 1, then a 3-line greet() function definition, a "
         "blank line, and a print statement. Make two changes: first, insert a new line right "
@@ -732,16 +721,16 @@ EDIT_FILE_OLD_TEXT_DRIFTED = EvalCase(
             "print(greet('world'))\n"
         ),
     },
-    check=_check_edit_file_old_text_drifted,
-    soft_check=_soft_check_edit_file_old_text_drifted,
+    check=_check_edit_file_old_text_after_prior_edit,
+    soft_check=_soft_check_edit_file_old_text_after_prior_edit,
     expected_tool_calls=4,
 )
 
 
 _REPEATED_BLOCK_FILLER_LINES = 25
-"""More filler lines than EditFile's default drift search radius (20, see
-DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS), so a start_line hint near the first configure() block
-can't accidentally also reach the second, identical one."""
+"""Enough filler lines that the two configure() blocks' surrounding content differs well before
+either candidate's growing-context window would reach a file boundary, so the "Ambiguous match"
+error's candidates resolve on content alone."""
 
 _REPEATED_BLOCK_CONTENT = (
     "# top marker\n"
@@ -809,7 +798,7 @@ FILE_TOOLS_CASES: list[EvalCase] = [
     READ_SKILL_FILE_EXTRACTS_MARKER,
     EDIT_FILE_SINGLE_LINE_SHORTCUT,
     EDIT_FILE_OLD_TEXT_SMALL_BLOCK,
-    EDIT_FILE_OLD_TEXT_DRIFTED,
+    EDIT_FILE_OLD_TEXT_AFTER_PRIOR_EDIT,
     EDIT_FILE_OLD_TEXT_REPEATED_BLOCK,
 ]
 

@@ -140,7 +140,7 @@ The `tool_response` text (and the UI's `default_invalid_tool_call_detail()` rend
 * **Common JSON mistakes** — a fixed, multi-line primer (unescaped inner quotes, unbalanced
   brackets, comma problems, mismatched quotes), each as a bad → good contrast.
 * **Edit-argument escaping hint** — gated on whether the raw string contains the literal
-  substring `start_text`, `end_text`, `old_text`, or `new_text`: since the edit tools are the
+  substring `old_text`, `old_text_start`, `old_text_end`, or `new_text`: since the edit tools are the
   biggest producers of large, heavily-escaped string arguments, a call that mentions one of
   those names gets an extra, targeted reminder to double-check quoting/escaping in that field
   specifically. This is the only tool-aware piece of the helper; a malformed call to any other
@@ -168,157 +168,73 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   and the returned line range; `detail_view()` caps `content` to 8 lines via `truncate_lines()`,
   since a full result can be up to `read_file_max_lines` (200 by default) lines.
 * `klorb.tools.edit_file.EditFileTool` (`klorb/src/klorb/tools/edit_file.py`), name
-  `EditFile`. Replaces the inclusive 1-indexed line range `start_line`..`end_line` of an
-  existing text file with `new_text`, after locating an anchor (`start_text`/`end_text`, or the
-  whole-block `old_text` form described below) at or near those lines. When a real line hint is
-  given (not `old_text`'s hint-less `unbounded` search mode — see below) and the anchor already
-  matches exactly at that hint, with no `context_before`/`context_after` supplied, the edit
-  applies immediately — no scan for other nearby candidates at all, even if the same content
-  also occurs elsewhere within the drift radius; a caller who names a specific, correct location
-  doesn't need it cross-checked against lookalikes. See
-  [the exact-hint-match ADR](../adrs/edit-file-exact-hint-match-skips-ambiguity-scan.md) for why,
-  and for the deliberate tradeoff this makes against the drift-tolerance ADR's original
-  "never silently edit the wrong location" guarantee. Otherwise, `start_line`/`end_line` are a
-  location hint, not a hard requirement: if the anchor doesn't match exactly, `apply()`
-  searches within `context.process_config.edit_file_drift_search_radius` lines (default
-  `process_config.DEFAULT_EDIT_FILE_DRIFT_SEARCH_RADIUS`, 20 — the sole canonical source of
-  this default) for a unique nearby location where it still matches at the same relative span,
-  and edits there instead, reporting the correction back (see the response shape below). No
-  match within that radius still raises `ValueError` naming the actual content at the hint,
-  signaling stale line numbers (e.g. from an earlier edit shifting everything below it) rather
-  than corrupting the file; more than one match raises a distinctly-worded `"Ambiguous match"`
-  `ValueError` listing the candidate lines along with each one's actual nearby content as a
-  ready-to-use `context_before=...`/`context_after=...` value, adaptively as many lines on each
-  side as needed to tell every candidate apart (fewer near a file's start/end, and no fixed cap
-  — see `_minimal_disambiguating_window`), resolvable by retrying with a closer `start_line` or
-  the optional `context_before`/`context_after` arguments (checked against every candidate
-  whenever supplied) — the preview lets a model copy that value verbatim for the location it
-  means rather than reconstruct it from a separate `ReadFile` call. Omitting
-  `context_before`/`context_after` means "don't check this side"; passing the empty string `""`
-  instead is a distinct, checked assertion that there's genuinely nothing on that side (the
-  target is the file's actual first/last line) — but a model reliably fumbles sending a
-  genuinely empty string (often as bare, unquoted whitespace in the tool-call JSON, producing a
-  parse error rather than the intended call), so `context_before_start`/`context_after_end`
-  (booleans) are offered as an easier-to-send equivalent: `context_before_start=true` with no
-  `context_before` behaves exactly like `context_before=""`, and likewise for
-  `context_after_end`/`context_after`. `_normalize_edit_args()` only consults the boolean when
-  the corresponding string argument is entirely absent — an explicit `context_before`/
-  `context_after` (even `""`) always wins. Both mechanisms produce the identical downstream
-  assertion; the boolean form exists purely because it's easier for a model to get right, not
-  because it means something different. An out-of-bounds hint (`end_line` past the file's end,
-  etc.) raises immediately with no search attempted. See
-  [the drift-tolerance ADR](../adrs/edit-file-tolerates-bounded-line-drift-via-local-candidate-search.md).
-  There is no separate insert or delete tool: insert without deleting by setting
-  `start_line == end_line` and folding that line's original text into `new_text`; delete by
-  passing an empty `new_text`. The one exception is an empty file (`total_lines == 0`), which
-  has no anchor line to replace — the only valid call there is `start_line=1, end_line=0,
-  start_text="", end_text=""`. See
-  [the insert/delete ADR](../adrs/edit-file-covers-insert-and-delete-via-replace-range.md).
-  That same empty-subject shape also covers a `filename` that doesn't exist yet at all: a
-  missing file is treated exactly like an existing-but-empty one, `EditFileCore.apply()`
-  creates it (and any missing parent directories, mirroring `CreateFileTool`) instead of
-  raising, and the result gains `created: true`. Any other shape against a nonexistent file
-  raises `FileNotFoundError` naming `CreateFile` (or `CreateMemory`, for `EditMemory`) as the
-  tool to create it with first, rather than the bare OS `[Errno 2]` text — this mechanic can
-  only ever create a *whole new* file, never edit a specific line range of one that isn't there
-  yet. `EditMemoryTool` supports the same auto-create (see docs/specs/memories.md);
-  `EditScratchpadTool` never hits this path, since the scratchpad file is harness-managed and
-  always exists. See
-  [the auto-create ADR](../adrs/edit-file-auto-creates-via-empty-subject-insert-shape.md).
-  Trailing-newline handling: an edit that doesn't touch the file's last line preserves whatever
-  trailing-newline state the file already had; an edit whose `end_line` reaches the end of the
-  file (including the empty-file case) always terminates the file with a single trailing `\n`
-  if any content remains, none otherwise. The result is a dict: `filename`,
-  `requested_start_line`/`requested_end_line` (echoing the input — `requested_end_line` echoes
-  an `end_line` *inferred* from `old_text` when the call didn't supply one, see below), the
-  edited region's `start_line`/`end_line` (where the edit actually landed, renumbered to reflect
-  what was actually written — possibly different from what was requested), `line_hint_matched`
-  (false if a drift relocation happened), the file's new `new_total_lines`, and `content` — the
-  changed region in `ReadFile`'s `"N|text"` format, so the model can see the result without a
-  follow-up `ReadFile` call. `summary()` reports a `"+A/-R"` line-diff count computed from the
-  call's own `start_line`/`end_line`/`new_text` args (identical on success and failure, and
-  unaffected by drift relocation, which preserves the requested span's length); `detail_view()`
-  caps `content` to 8 lines via `truncate_lines()`, same as `ReadFile`.
+  `EditFile`. Replaces a block of an existing text file's current content with `new_text`,
+  locating that block by an exact text match rather than a line number — no `start_line`/
+  `end_line`/line-number argument exists anywhere in this tool's schema; the model never does
+  line arithmetic. Two mutually exclusive forms locate the block:
+  * `old_text` alone — the entire replacement block, verbatim, as one string (one or more
+    complete lines; never a sub-line fragment, since matching is always against whole file
+    lines). Must match exactly one location in the subject.
+  * `old_text_start`/`old_text_end` together — each must itself match exactly one location;
+    everything from `old_text_start`'s match through `old_text_end`'s match, inclusive, is
+    replaced by `new_text`. Use this instead of `old_text` for a longer span, so the untouched
+    interior doesn't have to be repeated.
 
-  **The accepted argument matrix.** `EditFileCore.apply()` (`klorb/src/klorb/tools/util/
-  edit_file_core.py` — the mechanic `EditFileTool`, `EditScratchpadTool`, and `EditMemoryTool`
-  all delegate to, see [[read-edit-file-scratchpad-share-core-via-composition]]) accepts several
-  argument shapes, all resolved into the same concrete `start_line`/`end_line`/
-  `start_text`/`end_text` tuple by a normalization step (`_normalize_edit_args()`) before any of
-  the drift-search machinery above ever runs — that machinery stays almost unchanged regardless
-  of which form a call used. "Line hint" below means `start_line`, or one of its aliases —
-  `line`, `line_num`, `line_no`, or `line_number` (bare, no-description schema properties — see
-  [the alias-schema ADR](../adrs/edit-file-hint-aliases-as-bare-schema-properties.md)) —
-  accepted in *every* form, not just `old_text`, since the schema advertises them
-  unconditionally; `start_line` and an alias with the *same* value is not a conflict, but
-  differing values raise `ValueError`. Because an alias can always stand in for `start_line`,
-  no edit tool's schema lists `start_line` itself as `required` either — see the required-list
-  bullet below. Every form still requires `new_text` and a line hint:
-  * *Classic* — `end_line`, `start_text`, `end_text` required (plus a line hint). Still the most
-    token-efficient form for a long replacement span, since it never repeats the interior.
-  * *Single-line shortcut* — when `start_line == end_line`, `end_text` may be omitted or empty;
-    `start_text` alone anchors the one line being replaced. `end_line` must still be present and
-    equal to `start_line` *unless it's omitted entirely too*: when both `end_text` and `end_line`
-    are absent, `_normalize_edit_args()` imputes `end_line = start_line` and `end_text =
-    start_text` — `start_text` unambiguously names the single line being replaced regardless of
-    how many lines `new_text` spans, so a multi-line `new_text` in this shape is an ordinary
-    insert (the one line growing into several), not an error.
-  * *`old_text`* — instead of `start_text`/`end_text`, the caller supplies `old_text`: the
-    entire contiguous replacement block, verbatim, as one multi-line string. `end_line` is
-    optional, inferred by counting `old_text`'s lines; if supplied, it must agree with that
-    count or `_normalize_edit_args()` raises, naming both counts. A 1-line `old_text` is a
-    natural instance of this form and converges in
-    effect (not argument shape) with the single-line shortcut. `old_text` is verified against
-    the file *in full* — every line of the candidate span, not just its first and last — a
-    strict superset of the classic form's endpoints-only check; see
-    [the full-block-verification ADR](../adrs/edit-file-old-text-verifies-full-block.md). A
-    zero-candidate match names the first interior line that actually differs, not just
-    "start/end didn't match." The line hint itself is optional in this form too: when `old_text`
-    is given with no `start_line` and no alias, the drift search scans the *entire* subject for a
-    unique match instead of a window within `edit_file_drift_search_radius` lines of a hint —
-    `requested_start_line`/`requested_end_line` then echo the `1`/`len(old_text)`-derived seed
-    the search used rather than a real caller-supplied hint, and `line_hint_matched` is always
-    `False` in this mode (there was no hint to match). Supplying `end_line` with no line hint is
-    an error (`end_line` needs something to be relative to); omit both to search unbounded, or
-    supply `start_line` (or an alias) to bound the search as usual.
-  * *Implicit `start_text` → `old_text` conversion* — a multi-line `start_text` with `end_text`
-    omitted or empty is reinterpreted as `old_text` (so pasting the whole block into
-    `start_text` still produces a useful edit instead of the classic form's lossy
-    truncate-to-first-line fallback below), *only* when `end_text` is absent — see
-    [the form-6-precedence ADR](../adrs/edit-file-form6-only-converts-without-end-text.md). A
-    multi-line `start_text` *with* a non-empty `end_text` keeps the pre-existing behavior:
-    `start_text` is truncated to its first line (with an advisory `feedback` note) and
-    `end_text` anchors the end.
-  * Every edit tool's `required` schema list is relaxed to just the fields every form needs
-    (`new_text`, plus `filename`/`namespace` where applicable) — `start_line` itself is never
-    `required` either, since an alias can always substitute for it. The cross-field rules
-    distinguishing accepted from rejected combinations live entirely in
-    `_normalize_edit_args()`, not in the JSON schema (no `anyOf`/`oneOf`); see
-    [the required-relaxed ADR](../adrs/edit-file-required-relaxed-not-anyof.md). A rejected
-    combination (`old_text` alongside a meaningful `start_text`/`end_text`, neither `old_text`
-    nor `start_text` present, no line hint in any spelling outside `old_text` mode, `end_line`
-    given with no line hint, etc.) raises a specific `ValueError` naming the problem.
-  * The legacy empty-subject insert form (`start_line=1, end_line=0, start_text=""`, `end_text`
-    either omitted or `""`) is untouched and not re-expressed in `old_text` terms — there's no
-    block to anchor. Because that pair would otherwise route through the single-line-shortcut
-    path (which requires `end_line == start_line`), `_normalize_edit_args()` carries an explicit
-    carve-out keyed on the exact `start_line=1, end_line=0` pair (not merely on `start_text`/
-    `end_text` being empty, which would let an unrelated multi-line call with blank anchors at
-    both endpoints skip anchor verification entirely): when `start_line == 1 and end_line == 0
-    and start_text == ""`, the shortcut's equality check is skipped so this legacy call still
-    reaches `_resolve_line_range_edit()`'s own validation.
-  * `apply()`'s `feedback` list gains two advisory-only entries beyond the pre-existing
-    multi-line-truncation note: one when the implicit `start_text` → `old_text` conversion fired
-    (naming `old_text` as the more direct spelling for next time), and one when the line hint
-    came from an alias rather than `start_line` (naming which alias was accepted). A clean use
-    of any other first-class form gets no feedback, so a supported idiom isn't nudged as if it
-    were off-pattern.
-  * The prose teaching an agent *when* to prefer each form (the decision rule, and worked
-    examples for the long-span, `old_text`, and single-line-shortcut cases) lives in the system
-    prompt's "Editing files" section (`klorb/src/klorb/resources/system_prompts.d/
-    default_sys.md`), not in `EditFileCore.parameter_properties()`'s per-argument descriptions —
-    that schema is inlined into every edit tool's definition and paid for on every turn, so it
-    stays terse.
+  Matching is always exact-first, falling back to a whitespace/punctuation-tolerant comparison
+  (leading/trailing whitespace ignored; em/en dash and minus sign folded to a plain hyphen,
+  curly double/single quotes folded to their straight equivalents) only when the exact search
+  finds nothing — and only honored if that fallback resolves to exactly one location. A
+  successful fallback match sets `fuzzy_whitespace_match: true` in the result, with a
+  `whitespace` string describing what was tolerated.
+
+  No match at all raises `ValueError` naming the anchor that failed and pointing at
+  `reread_hint` (e.g. "re-ReadFile foo.py"), signaling stale content (e.g. from an earlier edit
+  in the same turn) rather than corrupting the file. More than one match raises a
+  distinctly-worded `"Ambiguous match"` `ValueError` listing ready-to-use candidate JSON
+  fragments — one per matching location — each extending the anchor(s) with more surrounding
+  context (grown outward, as many lines as needed, until every candidate is uniquely
+  distinguishable — see `_minimal_disambiguating_n`) and recapitulating that same extra context,
+  unchanged, in the candidate's own `new_text`, so a model can retry by copying one candidate
+  verbatim rather than reconstruct it from a separate `ReadFile` call. There is no separate
+  `context_before`/`context_after` argument, and no bounded search radius: every match search
+  spans the whole subject.
+
+  There is no separate insert or delete tool: insert without deleting by folding the anchor
+  line's original text into `new_text` alongside the new content; delete by passing an empty
+  `new_text`. The one exception is a missing or empty file (`total_lines == 0`), which has no
+  content to anchor on — the only valid call there is `old_text=""`, which also covers a
+  `filename` that doesn't exist yet at all: a missing file is treated exactly like an
+  existing-but-empty one, `EditFileCore.apply()` creates it (and any missing parent
+  directories, mirroring `CreateFileTool`) instead of raising, and the result gains
+  `created: true`. Any other shape against a nonexistent file raises `FileNotFoundError` naming
+  `CreateFile` (or `CreateMemory`, for `EditMemory`) as the tool to create it with first, rather
+  than the bare OS `[Errno 2]` text. `EditMemoryTool` supports the same auto-create (see
+  docs/specs/memories.md); `EditScratchpadTool` never hits this path, since the scratchpad file
+  is harness-managed and always exists.
+
+  Trailing-newline handling: an edit that doesn't touch the file's last line preserves whatever
+  trailing-newline state the file already had; an edit that reaches the end of the file
+  (including the empty-file case) always terminates the file with a single trailing `\n` if any
+  content remains, none otherwise. The result is a dict: `filename`, the edited region's
+  `start_line`/`end_line` (1-indexed, renumbered to reflect `new_text`'s own line count),
+  `replaced_lines` (the line count of the block that was matched and replaced — possibly
+  different from `end_line - start_line + 1`, since `end_line` reflects `new_text`'s length,
+  not the original match's), the file's new `new_total_lines`, and `content` — the changed
+  region in `ReadFile`'s `"N|text"` format, so the model can see the result without a follow-up
+  `ReadFile` call. `summary()` reports a `"+A/-R"` line-diff count computed from `replaced_lines`
+  and `new_text`'s own line count — available only on success, since a failed match never
+  resolves a location to count lines removed from; `detail_view()` caps `content` to 8 lines via
+  `truncate_lines()`, same as `ReadFile`.
+
+  `EditFileCore.apply()` (`klorb/src/klorb/tools/util/edit_file_core.py` — the mechanic
+  `EditFileTool`, `EditScratchpadTool`, and `EditMemoryTool` all delegate to, see
+  [[read-edit-file-scratchpad-share-core-via-composition]]) rejects any other argument
+  combination (`old_text` alongside a meaningful `old_text_start`/`old_text_end`, only one of
+  `old_text_start`/`old_text_end`, neither form present) with a specific `ValueError` naming the
+  problem. `new_text` is the only field every edit tool's schema lists as `required` (plus
+  `filename`/`namespace` where applicable) — `old_text`/`old_text_start`/`old_text_end` aren't,
+  since the accepted combinations are cross-field rules `_normalize_edit_args()` enforces, not
+  something a JSON-schema `anyOf`/`oneOf` can express cleanly.
 * `klorb.tools.replace_all.ReplaceAllTool` (`klorb/src/klorb/tools/replace_all.py`), name
   `ReplaceAll`. Replaces every occurrence of `search` in a single `filename` with `new_text`.
   `search` is matched as a literal substring by default; `is_regex` treats it as a Python
@@ -326,7 +242,7 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `multiline` (which maps to `re.MULTILINE`, only meaningful with `is_regex`) are both
   optional and default to `false`. The file is only rewritten if at least one replacement was
   made. The result is a dict: `filename`, `replacements_made` (the match count, returned as a
-  blast-radius signal analogous to `EditFile`'s drift check), and `is_regex`. `summary()` names
+  blast-radius signal analogous to `EditFile`'s ambiguous-match check), and `is_regex`. `summary()` names
   the file, the match count, and whether the match was literal or regex; no `detail_view()`
   override — the result is a few small scalars, so the default pretty-printed JSON is
   already a good fit.
@@ -334,7 +250,8 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `CreateFile`. Creates a new text file at `filename` with the given `content` (may be `""`),
   raising `FileExistsError` if the file already exists — file creation is always an explicit
   tool call, never an implicit side effect of `EditFile`. A full-file rewrite of an existing
-  file goes through `EditFile` with `start_line=1, end_line=total_lines` instead. Missing
+  file goes through `EditFile` with `old_text` set to the file's entire current content
+  instead. Missing
   parent directories are created automatically. The result is a dict: `filename`,
   `total_lines`, and `created: true`. `summary()` names the file and its line count; no
   `detail_view()` override, same reasoning as `ReplaceAll`.

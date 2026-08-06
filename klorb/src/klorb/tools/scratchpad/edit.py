@@ -14,19 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 class EditScratchpadTool(Tool):
-    """Replaces the inclusive line range `[start_line, end_line]` of the active session's
-    scratchpad file with `new_text` — delegating that mechanic to `self.edit_file_core` (the
-    same `klorb.tools.util.EditFileCore` `EditFileTool` uses) -- but pinned to the scratchpad
-    file, so there is no `filename` argument and no `writeDirs` permission check to perform: the
+    """Replaces a block of the active session's scratchpad file's current content with
+    `new_text` — delegating that mechanic to `self.edit_file_core` (the same
+    `klorb.tools.util.EditFileCore` `EditFileTool` uses) -- but pinned to the scratchpad file,
+    so there is no `filename` argument and no `writeDirs` permission check to perform: the
     scratchpad is harness-managed session state, not a model-nameable path. See your system
-    prompt's guidance on `EditFile`/`EditScratchpad` for the `start_text`/`end_text`/
-    `context_before`/`context_after` conventions, drift tolerance, and "Ambiguous match"
-    handling.
+    prompt's guidance on `EditFile`/`EditScratchpad` for the `old_text`/`old_text_start`/
+    `old_text_end` conventions and "Ambiguous match" handling.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
-        self.edit_file_core = EditFileCore(context.process_config.edit_file_drift_search_radius)
+        self.edit_file_core = EditFileCore()
 
     def name(self) -> str:
         return "EditScratchpad"
@@ -43,10 +42,10 @@ class EditScratchpadTool(Tool):
 
     def description(self) -> str:
         return (
-            "Replaces the inclusive 1-indexed line range [start_line, end_line] of your "
-            "scratchpad with new_text -- same mechanics as EditFile, but for the scratchpad "
-            "rather than a named file, so there is no filename argument. See the system "
-            "prompt's guidance on EditFile and EditScratchpad."
+            "Replaces a block of your scratchpad's current content with new_text -- same "
+            "mechanics as EditFile, but for the scratchpad rather than a named file, so there "
+            "is no filename argument. See the system prompt's guidance on EditFile and "
+            "EditScratchpad."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -58,37 +57,28 @@ class EditScratchpadTool(Tool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        logger.debug("EditScratchpad (start_line=%s, end_line=%s)",
-                     args.get("start_line"), args.get("end_line"))
+        logger.debug("EditScratchpad")
         path = scratchpad_path(self.context)
         result = self.edit_file_core.apply(
             path, args, subject="the scratchpad", reread_hint="re-ReadScratchpad your scratchpad",
             create_hint="(unexpected -- the scratchpad is harness-managed and should always exist)")
         logger.debug(
-            "EditScratchpad replaced lines %d-%d (now %d-%d) of what is now a %d-line "
-            "scratchpad", result["requested_start_line"], result["requested_end_line"],
-            result["start_line"], result["end_line"], result["new_total_lines"],
+            "EditScratchpad replaced %d line(s) at line %d of what is now a %d-line scratchpad",
+            result["replaced_lines"], result["start_line"], result["new_total_lines"],
         )
         return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts prefer `result`'s
-        `requested_start_line`/`requested_end_line` (the call's line hint after normalization --
-        alias-resolved, and, for an `old_text` call that omitted `end_line`, inferred from its
-        line count) when a `result` is available, falling back to the call's own raw args
-        otherwise (a failed call has no `result`). Unaffected by drift relocation either way,
-        which preserves the requested span's length.
-        """
+        """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts come from `result`'s
+        `replaced_lines` and the call's `new_text` -- only available on success, since a failed
+        match never resolves a location to count lines removed from."""
         diff = ""
-        if isinstance(result, dict):
-            start_line, end_line = result.get("requested_start_line"), result.get("requested_end_line")
-        else:
-            start_line, end_line = args.get("start_line"), args.get("end_line")
         new_text = args.get("new_text")
-        if isinstance(start_line, int) and isinstance(end_line, int) and isinstance(new_text, str):
-            removed = end_line - start_line + 1
-            added = new_text.count("\n") + 1 if new_text else 0
-            diff = f" (+{added}/-{removed})"
+        if isinstance(result, dict) and isinstance(new_text, str):
+            removed = result.get("replaced_lines")
+            if isinstance(removed, int):
+                added = new_text.count("\n") + 1 if new_text else 0
+                diff = f" (+{added}/-{removed})"
         base = f"Edit scratchpad{diff}"
         return base if error is None else f"{base} failed: {error}"
 

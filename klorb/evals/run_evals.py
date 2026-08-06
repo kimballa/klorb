@@ -96,7 +96,9 @@ def _resolve_cases(suite_name: str) -> list[EvalCase] | None:
 
 def _resolve_risk_classifier_cases(suite_name: str) -> list[RiskClassifierCase] | None:
     """The `RiskClassifierCase`s `--suite=suite_name` selects, or `None` if it doesn't match."""
-    if suite_name in (ALL_SUITES_ARG, RISK_CLASSIFIER_SUITE_NAME):
+    # Risk classifier suite is held back from "all" because it's typically run against
+    # a different model than the primary tool-calling model.
+    if suite_name in (RISK_CLASSIFIER_SUITE_NAME,):
         return RISK_CLASSIFIER_CASES
     return None
 
