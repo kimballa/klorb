@@ -117,6 +117,20 @@ export interface BashToolMeta {
   exitStatus?: number;
   /** Wall-clock runtime in seconds (omit when not yet finished). */
   runtime?: number;
+  /** Captured stdout (omit when not yet finished, or when output was spilled to a file). */
+  stdout?: string;
+  /** Captured stderr (omit when not yet finished, or when output was spilled to a file). */
+  stderr?: string;
+}
+
+/** Structured metadata for a ReadFile tool call, carried in `_meta.klorb.readFile` on ACP
+ * `tool_call_update` updates so the webview can render line-numbered content instead of
+ * parsing the JSON `detail_view()` text block. */
+export interface ReadFileMeta {
+  /** The file that was read. */
+  filename: string;
+  /** Line-numbered content (each line prefixed with `N|`), truncated to 8 lines. */
+  content: string;
 }
 
 /** A tool call was just started (ACP `tool_call` update): `kind` and `status` are left as
@@ -146,6 +160,7 @@ export interface ToolCallUpdatedMessage {
   diff?: ToolCallDiff;
   locations?: ToolCallLocation[];
   bashMeta?: BashToolMeta;
+  readFileMeta?: ReadFileMeta;
 }
 
 /** One selectable option in a permission-ask option grid, flattened from an ACP
@@ -435,6 +450,7 @@ export interface SessionReplayToolCallEntry {
   locations: ToolCallLocation[];
   contentText?: string | null;
   bashMeta?: BashToolMeta;
+  readFileMeta?: ReadFileMeta;
   expanded: boolean;
 }
 

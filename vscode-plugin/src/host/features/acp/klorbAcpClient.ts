@@ -25,6 +25,7 @@ import type {
   PermissionAskOption,
   QuestionAskMessage,
   QuestionAskOption,
+  ReadFileMeta,
   SessionReplayEntry,
   TaskInfo,
   TaskListSummary,
@@ -265,7 +266,32 @@ function parseBashMeta(
   if (typeof b.runtime === 'number') {
     result.runtime = b.runtime;
   }
+  if (typeof b.stdout === 'string') {
+    result.stdout = b.stdout;
+  }
+  if (typeof b.stderr === 'string') {
+    result.stderr = b.stderr;
+  }
   return result;
+}
+
+/** Extract `_meta.klorb.readFile` from an ACP update's `_meta`, returning `undefined` when
+ * absent or malformed -- the client doesn't assume every agent is klorb. */
+function parseReadFileMeta(
+  meta: { [key: string]: unknown } | null | undefined
+): ReadFileMeta | undefined {
+  const klorb = klorbMetaOf(meta);
+  const rf = klorb.readFile;
+  if (
+    rf == null ||
+    typeof rf !== 'object' ||
+    typeof (rf as Record<string, unknown>).filename !== 'string' ||
+    typeof (rf as Record<string, unknown>).content !== 'string'
+  ) {
+    return undefined;
+  }
+  const r = rf as Record<string, unknown>;
+  return { filename: r.filename as string, content: r.content as string };
 }
 
 function toolCallStartedMessage(update: ToolCall): ToolCallStartedMessage {
@@ -317,6 +343,10 @@ function toolCallUpdatedMessage(update: ToolCallUpdate): ToolCallUpdatedMessage 
   const bashMeta = parseBashMeta(update._meta);
   if (bashMeta !== undefined) {
     message.bashMeta = bashMeta;
+  }
+  const readFileMeta = parseReadFileMeta(update._meta);
+  if (readFileMeta !== undefined) {
+    message.readFileMeta = readFileMeta;
   }
   return message;
 }

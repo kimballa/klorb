@@ -1,10 +1,12 @@
 // (c) Copyright 2026 Aaron Kimball
 
+import BashToolCallChip from './components/BashToolCallChip';
 import HistoryView, { type HistoryViewProps } from './components/HistoryView';
 import MentionHighlightedText, {
   type MentionHighlightedTextProps,
 } from './components/MentionHighlightedText';
 import SessionStatsCard from './components/SessionStatsCard';
+import ToolCallChip from './components/ToolCallChip';
 import {
   type HistoryEntryKind,
   type HistoryEntry,
@@ -68,7 +70,9 @@ export {
   parseSystemInterjections,
   renderDiffLines,
   renderYamlFrontmatter,
+  BashToolCallChip,
   HistoryView,
   MentionHighlightedText,
   SessionStatsCard,
+  ToolCallChip,
 };

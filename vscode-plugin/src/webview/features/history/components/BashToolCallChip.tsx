@@ -133,6 +133,24 @@ export default function BashToolCallChip({
                 Open diff
               </vscode-button>
             </>
+          ) : (entry.bashMeta?.stdout !== undefined && entry.bashMeta.stdout.length > 0) ||
+            (entry.bashMeta?.stderr !== undefined && entry.bashMeta.stderr.length > 0) ? (
+            <div className="bash-tool-output">
+              {entry.bashMeta.stdout !== undefined && entry.bashMeta.stdout.length > 0 && (
+                <div className="bash-tool-output-section">
+                  <div className="bash-tool-output-label">stdout</div>
+                  <pre className="bash-tool-output-content">{entry.bashMeta.stdout}</pre>
+                </div>
+              )}
+              {entry.bashMeta.stderr !== undefined && entry.bashMeta.stderr.length > 0 && (
+                <div className="bash-tool-output-section">
+                  <div className="bash-tool-output-label">stderr</div>
+                  <pre className="bash-tool-output-content bash-tool-output-stderr">
+                    {entry.bashMeta.stderr}
+                  </pre>
+                </div>
+              )}
+            </div>
           ) : (
             entry.contentText !== undefined && (
               <div className="tool-call-content-text">{entry.contentText}</div>

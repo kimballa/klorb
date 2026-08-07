@@ -7,6 +7,29 @@ import useVsCodeApi from 'webview/hooks/useVsCodeApi';
 import type { ToolCallHistoryEntry } from '../historyModel';
 import { renderDiffLines } from '../renderDiffLines';
 
+/** One parsed line from a `ReadFileMeta.content` string (`N|text` format). */
+interface ReadFileLine {
+  lineno: number;
+  text: string;
+}
+
+/** Parse `ReadFileMeta.content` (line-numbered, `N|text` per line) into structured rows. */
+function parseNumberedContent(content: string): ReadFileLine[] {
+  const result: ReadFileLine[] = [];
+  for (const line of content.split('\n')) {
+    const pipeIdx = line.indexOf('|');
+    if (pipeIdx <= 0) {
+      continue;
+    }
+    const lineno = parseInt(line.substring(0, pipeIdx), 10);
+    if (Number.isNaN(lineno)) {
+      continue;
+    }
+    result.push({ lineno, text: line.substring(pipeIdx + 1) });
+  }
+  return result;
+}
+
 /** ACP `ToolKind` (see docs/specs/klorb-server.md's `TOOL_KIND_MAP`) to the codicon shown in a
  * chip's collapsed row -- a kind this table doesn't cover (a future `ToolKind` klorb's own
  * server doesn't emit yet) falls back to the generic `tools` icon at lookup time. */
@@ -46,6 +69,21 @@ function DiffLines({ hunks }: DiffLinesProps): JSX.Element {
           </div>
         )
       )}
+    </div>
+  );
+}
+
+/** Renders `ReadFileMeta.content` as a line-numbered inset card, similar to the diff view. */
+function ReadFileContent({ content }: { content: string }): JSX.Element {
+  const lines = parseNumberedContent(content);
+  return (
+    <div className="readfile-content">
+      {lines.map((line, index) => (
+        <div className="readfile-line" key={index}>
+          <span className="readfile-gutter">{line.lineno}</span>
+          <span className="readfile-text">{line.text}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -130,6 +168,8 @@ export default function ToolCallChip({ entry, onToggleExpanded }: ToolCallChipPr
                 Open diff
               </vscode-button>
             </>
+          ) : entry.readFileMeta !== undefined ? (
+            <ReadFileContent content={entry.readFileMeta.content} />
           ) : (
             entry.contentText !== undefined && (
               <div className="tool-call-content-text">{entry.contentText}</div>

@@ -6,6 +6,7 @@ import type {
   ImageAttachment,
   PermissionAskMessage,
   QuestionAskMessage,
+  ReadFileMeta,
   SessionReplayEntry,
   SessionStatsCounts,
   SessionStatsToolRow,
@@ -67,6 +68,7 @@ export interface ToolCallHistoryEntry {
   contentText?: string;
   diff?: ToolCallDiff;
   bashMeta?: BashToolMeta;
+  readFileMeta?: ReadFileMeta;
   expanded: boolean;
 }
 
@@ -300,6 +302,7 @@ function applyToolCallUpdated(
       contentText: message.contentText,
       diff: message.diff,
       bashMeta: message.bashMeta,
+      readFileMeta: message.readFileMeta,
       expanded: false,
     };
     return [...entries, entry];
@@ -313,6 +316,7 @@ function applyToolCallUpdated(
     contentText: message.contentText ?? previous.contentText,
     diff: message.diff ?? previous.diff,
     bashMeta: message.bashMeta ?? previous.bashMeta,
+    readFileMeta: message.readFileMeta ?? previous.readFileMeta,
   };
   return [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
 }

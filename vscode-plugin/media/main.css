@@ -592,6 +592,66 @@ button.bash-tool-call-command {
   font-family: var(--vscode-editor-font-family, monospace);
 }
 
+.bash-tool-output {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bash-tool-output-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bash-tool-output-label {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.bash-tool-output-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: var(--vscode-textCodeBlock-background, transparent);
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.bash-tool-output-stderr {
+  color: var(--vscode-errorForeground);
+}
+
+.readfile-content {
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow-x: auto;
+}
+
+.readfile-line {
+  display: flex;
+  gap: 8px;
+  white-space: pre;
+}
+
+.readfile-gutter {
+  flex: 0 0 auto;
+  width: 3em;
+  text-align: right;
+  color: var(--vscode-descriptionForeground);
+  user-select: none;
+}
+
+.readfile-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .tool-call-diff {
   font-family: var(--vscode-editor-font-family, monospace);
   overflow-x: auto;

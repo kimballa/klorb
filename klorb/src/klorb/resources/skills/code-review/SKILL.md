@@ -17,15 +17,15 @@ something to report. A clean bill of health is a legitimate, useful outcome.
 
 Figure out the target before doing anything else:
 
-- No target given, working copy has uncommitted changes -- review those (`git status`,
+* No target given, working copy has uncommitted changes -- review those (`git status`,
   `git diff HEAD`).
-- No target given, working copy is clean -- review the most recent commit (`git show HEAD` /
+* No target given, working copy is clean -- review the most recent commit (`git show HEAD` /
   `git log -1 -p`).
-- On a branch that has diverged from the mainline (`git merge-base main HEAD` differs from
+* On a branch that has diverged from the mainline (`git merge-base main HEAD` differs from
   `HEAD`) -- review every commit on the branch (`git diff <merge-base>..HEAD`). `git fetch`
   first if the local mainline ref might be stale, and `git branch -vv` to confirm what the
   branch is tracking.
-- The user names a PR by number or URL -- use `gh pr diff <number>` (or the URL directly) to get
+* The user names a PR by number or URL -- use `gh pr diff <number>` (or the URL directly) to get
   the diff, and `gh pr view <number> --json title,body,baseRefName` for its description and base
   branch. `gh pr checkout` only if you need a working copy to run tests against, not just to read
   the diff.
@@ -48,13 +48,13 @@ Activate `launch-explorer-subagent` for the mechanics of `CreateSubagent`. Launc
 parallel where they don't depend on each other's findings -- each is a bounded question with its
 own report:
 
-- **Logic bugs.** Point it at `review.patch` (or paste the diff directly if it's small) and ask
+* **Logic bugs.** Point it at `review.patch` (or paste the diff directly if it's small) and ask
   it to trace each changed function's logic for correctness: off-by-ones, wrong operators,
   unhandled branches, mismatched types, state that's mutated in the wrong order. Ask for file and
   line citations, not summaries.
 
 * **Architectural coherence.** This one needs more than the diff: point it at the changed files'
-  _surrounding_ code (class hierarchies, method signatures other callers depend on,
+  *surrounding* code (class hierarchies, method signatures other callers depend on,
   encapsulation boundaries) and ask whether the patch actually fits the file it landed in, or fights
   the existing design -- a new method that duplicates (or nearly duplicates) an existing one, struct
   / interface types that are actual- or near-duplicates, a class reaching into another's internals,
@@ -63,7 +63,7 @@ own report:
   crossed without validation, secrets or credentials handled carelessly, and newly-introduced
   attack surface -- with the same file/line citation requirement.
 
-- **Plan or spec conformance**, only if one exists. If the change references a
+* **Plan or spec conformance**, only if one exists. If the change references a
   `docs/plans/PLAN-*` document, a spec under `docs/specs/`, or a set of tracked tasks, launch an
   Explorer to compare what the plan called for against what actually landed, and report gaps in
   either direction (unimplemented pieces, or scope that crept in beyond the plan).
@@ -85,15 +85,15 @@ A subagent's report is a lead, not a verdict. Before including a finding in your
 your own evidence for it -- the same discipline as `debug-with-evidence`: state the specific
 failure you think occurs, then check it rather than reasoning about it further.
 
-- Read the flagged code yourself.
-- If a bug is plausible but not obviously certain, reproduce it: a throwaway script, a temporary
+* Read the flagged code yourself.
+* If a bug is plausible but not obviously certain, reproduce it: a throwaway script, a temporary
   test, or a small deliberate edit that would make an existing test catch the bug if your theory
   is right. Run the project's real test/lint/typecheck commands to confirm or rule things out --
   don't shell out to ad hoc tooling the project doesn't use.
-- Unwind anything temporary you added to confirm a finding -- a probe edit, a scratch script, an
+* Unwind anything temporary you added to confirm a finding -- a probe edit, a scratch script, an
   instrumented log line -- before you finish. You're auditing the patch, not contributing to it;
   the working tree should be exactly as you found it, plus nothing.
-- Only report a finding once you're confident it's real (roughly: you could explain the concrete
+* Only report a finding once you're confident it's real (roughly: you could explain the concrete
   input or state that triggers it, not just that the code "looks wrong").
 
 ## 5. Check test coverage
@@ -101,10 +101,10 @@ failure you think occurs, then check it rather than reasoning about it further.
 For each changed or added method/class, check whether the test suite actually exercises it --
 not just the happy path. Ask specifically:
 
-- Is there a test at all for new logic, or only for the code paths it happened to pass through?
-- Do the tests cover the edge cases the change itself makes newly possible -- empty input, the
+* Is there a test at all for new logic, or only for the code paths it happened to pass through?
+* Do the tests cover the edge cases the change itself makes newly possible -- empty input, the
   boundary of a new conditional, an error path a new branch introduced?
-- Did an existing test get weakened (a loosened assertion, a skipped case) to make the change
+* Did an existing test get weakened (a loosened assertion, a skipped case) to make the change
   pass, rather than the change being made to satisfy the existing test?
 
 ## 6. Report

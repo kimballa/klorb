@@ -18,6 +18,8 @@
   WaitForSubagent repeatedly until it completes.
   * Likewise, Reviewer should be told by /code-review that its explorer children will also run > 2 mins each.
 
+* (#agent) When BashTool sets up the environment for its commands to execute, export `NO_COLOR=true` too.
+
 ### Feature backlog
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
@@ -197,22 +199,23 @@
 * jsdom does not register custom elements like the `<vscode-textarea>` so unit tests are not
   a faithful representation of the in-vscode plugin environment. Can we fix this?
 
-* Remove redundant `@deprecated` `Finder*` type definitions in FileFinder/SkillFinder code.
+* (#agent) Remove redundant `@deprecated` `Finder*` type definitions in FileFinder/SkillFinder code.
 
 ### Feature backlog
 
-* (#agent) The BashTool short summary is good but when you click the `>` it should pretty-print
-  the longer data (i.e., it's more important that the user can read stdout and stderr logs
-  than showing all the complete raw json.)
-  * (Strip out tty color control sequences too.)
-  * (#agent) Likewise, `ReadFile` should show the set of lines actually read, with line numbers
-    in an inset card, much like how the `EditFile` tool shows the diff lines with old and new line
-    numbers in an inline `<details>` panel/card.
+* (#agent) The "Subagent is still working…" line should include a small animated spinner of some kind, maybe
+  just updating the ellipses: "" -> "." -> ".." -> "..." -> (repeat)
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.
   How tall is that, exactly? I feel like it should be no more than 5 or 6 rows high.
+
+* (#agent) ReadScratchpad/ReadMemory tool output cards should use the `<ReadFileContent>` ability to
+  display numbered lines, like ReadFile.
+
+* (#agent) EditScratchpad/EditMemory tool output cards should use the `<DiffLines>` format like
+  EditFile.
 
 ## Remaining / future work from `plan` epics
 

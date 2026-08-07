@@ -23,6 +23,10 @@ choose one. When choosing yourself, prefer tasks that are:
 - Self-contained — no open questions or external blockers.
 - Small enough to finish in one session.
 
+Note the top-level section the task is listed under: VSCode, TUI, Harness, etc. The bullet-points
+for TUI or VSCode on their own may look very similar as they're both user interfaces for the same
+system. The section header gives the context as to which interface the task refers to.
+
 Read the full task text carefully, including any indented sub-items. Note any referenced specs
 (`docs/specs/...`), ADRs (`docs/adrs/...`), or plans (`docs/plans/...`) — read those before
 starting implementation.
@@ -83,6 +87,9 @@ your own self-review and pass that off as good enough. You must get the output f
 sign-off.
 
 ## 5. Fix and re-review
+
+Once you receive the review from the subagent, re-print out the code reviewer's output for the
+user in your conversation, then announce your next steps.
 
 For each finding the reviewer reports:
 

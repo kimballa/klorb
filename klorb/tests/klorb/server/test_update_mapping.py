@@ -2,6 +2,7 @@
 """Tests for `klorb.server.update_mapping` -- pure klorb-event-to-ACP-tool-call-update mapping.
 See docs/specs/klorb-server.md's tool-call update mapping section."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -256,6 +257,42 @@ def test_finished_update_bash_meta_carries_command_alongside_result_fields(tmp_p
     assert bash_meta["success"] is True
     assert bash_meta["exitStatus"] == 0
     assert bash_meta["runtime"] == 1.23
+    assert bash_meta["stdout"] == "hi\n"
+
+
+def test_finished_update_bash_meta_omits_stdout_stderr_when_spilled(tmp_path: Path) -> None:
+    """When stdout/stderr are `None` (spilled to file), they should not appear in bash meta."""
+    registry = _registry(tmp_path)
+    args = {"command": "cat bigfile", "intent": "read big"}
+    result = {"success": True, "exit_status": 0, "runtime": 0.5,
+              "stdout": None, "stderr": None, "stdout_file": "/tmp/x", "stderr_file": "/tmp/y"}
+    event = ToolCallEvent(call_id="1", name="Bash", args=args, result=result, error=None)
+
+    update = tool_call_finished_update(event, registry, tmp_path)
+
+    assert update.field_meta is not None
+    bash_meta = update.field_meta["klorb"]["bash"]
+    assert "stdout" not in bash_meta
+    assert "stderr" not in bash_meta
+
+
+def test_finished_update_readfile_meta_carries_content_and_filename(tmp_path: Path) -> None:
+    """A finished ReadFile call should include `_meta.klorb.readFile` with truncated content."""
+    registry = _registry(tmp_path)
+    (tmp_path / "hello.txt").write_text("a\nb\nc\n")
+    tool = registry.instantiate_tool("ReadFile")
+    args = {"filename": "hello.txt"}
+    result = tool.apply(args)
+    event = ToolCallEvent(call_id="1", name="ReadFile", args=args, result=result, error=None)
+
+    update = tool_call_finished_update(event, registry, tmp_path)
+
+    assert update.field_meta is not None
+    readfile_meta = update.field_meta["klorb"]["readFile"]
+    assert readfile_meta["filename"] == "hello.txt"
+    assert "a" in readfile_meta["content"]
+    assert "b" in readfile_meta["content"]
+    assert "c" in readfile_meta["content"]
 
 
 def test_finished_update_reports_failure_text_and_status(tmp_path: Path) -> None:
@@ -775,3 +812,28 @@ class TestBuildSessionReplay:
         entries = build_session_replay(session, None, tmp_path)
 
         assert entries == [{"kind": "thinking", "text": "pondering...", "streaming": False}]
+
+    def test_replayed_readfile_call_includes_readfile_meta(self, tmp_path: Path) -> None:
+        (tmp_path / "hello.txt").write_text("line one\nline two\n")
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", tool_calls=[
+            ToolCallRequest(id="call-1", name="ReadFile",
+                            arguments='{"filename": "hello.txt"}')])
+        tool_response = _msg("tool_response", content=json.dumps({
+            "is_error": False, "is_retryable": False, "error_category": None,
+            "error_message": None,
+            "response_body": {
+                "content": "1|line one\n2|line two",
+                "filename": "hello.txt", "start_line": 1, "end_line": 2,
+                "total_lines": 2, "truncated": False,
+            },
+        }), tool_call_id="call-1")
+        session.load_messages([tool_use, tool_response])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert len(entries) == 1
+        assert entries[0]["kind"] == "toolCall"
+        assert entries[0]["readFileMeta"]["filename"] == "hello.txt"
+        assert "line one" in entries[0]["readFileMeta"]["content"]
+        assert "line two" in entries[0]["readFileMeta"]["content"]

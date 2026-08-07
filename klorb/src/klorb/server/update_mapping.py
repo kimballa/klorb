@@ -57,7 +57,13 @@ from klorb.session.events import (
 from klorb.tools.ask.common import QuestionOption, format_answer
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.registry import ToolRegistry
-from klorb.tools.tool import DiffPreview, Tool, default_tool_call_detail, default_tool_call_summary
+from klorb.tools.tool import (
+    DiffPreview,
+    Tool,
+    default_tool_call_detail,
+    default_tool_call_summary,
+    truncate_lines,
+)
 from klorb.tools.util.diff_lines import DiffHunk
 
 logger = logging.getLogger(__name__)
@@ -318,7 +324,34 @@ def _bash_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
             meta["runtime"] = round(float(event.result["runtime"]), 2)
         except (TypeError, ValueError):
             pass
+    for key in ("stdout", "stderr"):
+        value = event.result.get(key)
+        if isinstance(value, str):
+            meta[key] = truncate_lines(value, 20)
     return meta if meta else None
+
+
+_READFILE_MAX_META_LINES = 8
+"""Maximum content lines included in `_meta.klorb.readFile.content` — matches
+`ReadFile.detail_view()`'s own truncation so the metadata doesn't carry more
+than the content text block already does."""
+
+
+def _readfile_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
+    """Return `_meta.klorb.readFile` for a finished `ReadFile` call, or `None` for other
+    tools or when the result lacks content.  The `content` field carries the truncated
+    line-numbered content (same format as `detail_view()`), so the webview can render it
+    as a structured line-numbered card instead of parsing JSON."""
+    if event.name != "ReadFile" or not isinstance(event.result, dict):
+        return None
+    content = event.result.get("content")
+    if not isinstance(content, str):
+        return None
+    filename = event.args.get("filename")
+    if not isinstance(filename, str):
+        filename = event.result.get("filename", "?")
+    content = truncate_lines(content, _READFILE_MAX_META_LINES)
+    return {"filename": filename, "content": content}
 
 
 def tool_call_finished_update(
@@ -335,11 +368,17 @@ def tool_call_finished_update(
         _failure_content(event) if event.error is not None
         else _success_content(event, tool_registry, workspace_root))
     bash_meta = _bash_meta_finish(event)
+    readfile_meta = _readfile_meta_finish(event)
     result = acp.update_tool_call(
         event.call_id, status=status, content=content,
         raw_output=_json_safe_result(event.result))
+    klorb_meta: dict[str, Any] = {}
     if bash_meta is not None:
-        result.field_meta = {"klorb": {"bash": bash_meta}}
+        klorb_meta["bash"] = bash_meta
+    if readfile_meta is not None:
+        klorb_meta["readFile"] = readfile_meta
+    if klorb_meta:
+        result.field_meta = {"klorb": klorb_meta}
     return result
 
 
@@ -698,6 +737,26 @@ def _replay_bash_meta(
     return meta if meta else None
 
 
+def _replay_readfile_meta(
+    call: ToolCallRequest, args: dict[str, Any],
+    parsed: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Build `readFileMeta` for a replayed tool-call entry from the restored call/response pair."""
+    if call.name != "ReadFile" or parsed is None:
+        return None
+    body = parsed.get("response_body")
+    if not isinstance(body, dict):
+        return None
+    content = body.get("content")
+    if not isinstance(content, str):
+        return None
+    filename = args.get("filename")
+    if not isinstance(filename, str):
+        filename = body.get("filename", "?")
+    content = truncate_lines(content, _READFILE_MAX_META_LINES)
+    return {"filename": filename, "content": content}
+
+
 def _replay_tool_call_entry(
     call: ToolCallRequest, response: Message | None,
     tool_registry: ToolRegistry | None, workspace_root: Path,
@@ -754,6 +813,9 @@ def _replay_tool_call_entry(
     bash_meta = _replay_bash_meta(call, args, parsed if isinstance(parsed, dict) else None, failed)
     if bash_meta is not None:
         entry["bashMeta"] = bash_meta
+    readfile_meta = _replay_readfile_meta(call, args, parsed if isinstance(parsed, dict) else None)
+    if readfile_meta is not None:
+        entry["readFileMeta"] = readfile_meta
     return entry
 
 
