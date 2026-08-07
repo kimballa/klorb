@@ -160,9 +160,10 @@
 
 ### Feature backlog
 
-* When the user types `/` at start or after whitespace, it should have a little fuzzy-finder pop-up
-  near the cursor to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing
-  to type after ruling out any matches.
+* When the user types `/` at start or after whitespace, it should have a fuzzy-finder pop-up
+  to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing to type
+  after ruling out any matches. This should use the same layout / style as the file @mention
+  fuzzy-finder panel that shows up over the prompt input area.
 
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and

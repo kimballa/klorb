@@ -61,6 +61,7 @@ _THIRD_PARTY_LOG_LEVELS: dict[str, int] = {
     "httpcore": logging.WARNING,
     "httpx": logging.WARNING,
     "openai": logging.INFO,
+    "watchdog.observers.inotify_buffer": logging.INFO,
 }
 """Default levels for chatty third-party loggers, applied by `configure_logging()`. Each is
 raised to `klorb_log_level` (env-overridden) instead when that level is more terse (a higher
