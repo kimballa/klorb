@@ -3,15 +3,22 @@
 interjection that reminds the model of it on every turn, and the steps that put a task into
 that role -- used by `TodoNext` when it picks or re-returns a task, and by `TodoUpdate`/
 `TodoCreate`'s auto-activation (`maybe_activate_task`) so a task can become the current one as a
-side effect of editing or creating it, without a separate `TodoNext` call. See
-docs/specs/chainlink-task-tracking.md.
+side effect of editing or creating it, without a separate `TodoNext` call. Also the per-agent
+task-claiming logic (`claim_next_ready_task`) `TodoNext` uses to pick only a ready issue this
+agent is actually eligible for. See docs/specs/chainlink-task-tracking.md.
 """
 
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, open_blocker_count
+from klorb.tools.tasks.common import (
+    ALL_LABEL,
+    ChainlinkClient,
+    ChainlinkError,
+    agent_label,
+    open_blocker_count,
+)
 
 if TYPE_CHECKING:
     from klorb.session import Session
@@ -63,6 +70,45 @@ def set_current_task(
             STANDING_INTERJECTION_SUBJECT, standing_interjection_provider(session, context))
 
 
+def claim_next_ready_task(
+    client: ChainlinkClient, ready: list[dict[str, Any]], own_id: str,
+) -> dict[str, Any] | None:
+    """Pick the next ready issue this agent (`own_id`) may work on: whichever ready issue
+    already carries this agent's own `agent_label(own_id)` (in `ready`'s given order), or --
+    failing that -- the first `ALL_LABEL`-labeled ready issue this agent successfully claims (see
+    `_claim_one`). Returns `None` if nothing is both ready and eligible: every ready issue is
+    labeled for a different agent, or every `ALL_LABEL` candidate was already claimed by another
+    agent first. `ready` is expected to already be sorted (`issue_sort_key`)
+    and every issue in it to carry a `labels` list (i.e. fetched via
+    `ChainlinkClient.fetch_and_sort_issues`, never the bare `list_issues` shape)."""
+    own_label = agent_label(own_id)
+    for issue in ready:
+        if own_label in issue.get("labels", []):
+            return issue
+    for issue in ready:
+        if ALL_LABEL not in issue.get("labels", []):
+            continue
+        claimed = _claim_one(client, issue["id"], own_label)
+        if claimed is not None:
+            return claimed
+    return None
+
+
+def _claim_one(client: ChainlinkClient, issue_id: int, own_label: str) -> dict[str, Any] | None:
+    """Attempt to claim one `ALL_LABEL`-labeled issue under `own_label`. Removing `ALL_LABEL` is
+    the compare-and-swap: `ChainlinkClient.remove_label`'s return value tells us whether this
+    call is the one that actually removed it, so only the winner of a same-instant race with
+    another agent goes on to add `own_label` -- the loser returns `None` immediately, no retry.
+    See docs/specs/chainlink-task-tracking.md's "Task assignment" section."""
+    issue = client.show_issue(issue_id)
+    if ALL_LABEL not in issue.get("labels", []):
+        return None
+    if not client.remove_label(issue_id, ALL_LABEL):
+        return None
+    client.add_label(issue_id, own_label)
+    return client.show_issue(issue_id)
+
+
 def task_is_ready(client: ChainlinkClient, task: dict[str, Any]) -> bool:
     """Whether `task` (a full `issue show` detail) has zero still-open blockers -- the same
     readiness test `TodoNext`/`fetch_and_sort_issues` apply, computed for one already-fetched
@@ -88,12 +134,26 @@ def maybe_activate_task(
     None` ("auto mode") activates only if, in addition, the session has no current tracked task
     already and `task` has zero still-open blockers (`task_is_ready`) -- the same state `TodoNext`
     itself requires before ever handing a task back.
+
+    If `task` still carries `ALL_LABEL` (unclaimed) at this point, activation also claims it for
+    this session (`_claim_one`, the same claim `TodoNext` performs for a ready `ALL_LABEL` issue)
+    before setting it current -- otherwise it would stay up for grabs for another agent's
+    `TodoNext` even while this session already treats it as its own current task. `task["labels"]`
+    is updated in place to reflect the claim, so a caller returning `task` as its own result (e.g.
+    `TodoCreateTool.apply()`) doesn't hand back stale label state. If the claim is lost to a
+    same-instant race, activation doesn't happen at all -- `task` isn't really this session's to
+    track.
     """
     if activate is False or task.get("status") != "open":
         return None
     if activate is None:
         if session.cur_chainlink_task_id is not None or not task_is_ready(client, task):
             return None
+    if ALL_LABEL in task.get("labels", []):
+        claimed = _claim_one(client, task["id"], agent_label(session.id))
+        if claimed is None:
+            return None
+        task["labels"] = claimed["labels"]
     set_current_task(session, context, task["id"])
     logger.debug("Auto-activated task #%d as the session's current tracked task.", task["id"])
     return (

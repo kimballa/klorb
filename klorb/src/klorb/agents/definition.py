@@ -42,6 +42,26 @@ class AgentRestrictions(BaseModel):
     it. See docs/specs/subagents.md's "Security model" section."""
 
 
+class AgentCapabilities(BaseModel):
+    """Capabilities gating how a subagent role may use tools it otherwise has access to --
+    distinct from `AgentRestrictions`, which narrows tool/skill/subagent-role *inheritance*, not
+    in-tool behavior. All default `False`: a role must opt in to each, the same "undefined means
+    most restrictive" default `allow_subagents` already uses.
+    """
+
+    accepts_tasks: bool = False
+    """Whether a session running as this role may hold a chainlink issue as its own current
+    tracked task -- `TodoNext` refuses to pick or claim one otherwise, and `TodoCreate` refuses
+    `assign_to="self"` (or omitted). See docs/specs/chainlink-task-tracking.md's "Task
+    assignment" section."""
+    assigns_tasks: bool = False
+    """Whether a session running as this role may `TodoCreate` an issue with `assign_to` naming
+    a *different* agent's id."""
+    see_group_tasks: bool = False
+    """Whether a session running as this role may `TodoList` with `scope="group"` to see every
+    issue in the group, not just its own."""
+
+
 class AgentDefinition(BaseModel):
     """One `agents.json` entry: the capability policy for a named subagent role."""
 
@@ -58,3 +78,4 @@ class AgentDefinition(BaseModel):
     simply omitting `CreateSubagent`/`WaitForSubagent`/`MessageSubagent` from the tool catalog
     offered to a role for which this is `False`, rather than offering the tools and failing at
     call time."""
+    agent_capabilities: AgentCapabilities = Field(default_factory=AgentCapabilities)

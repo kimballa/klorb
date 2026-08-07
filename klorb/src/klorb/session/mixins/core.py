@@ -3,6 +3,7 @@
 loading, teardown/standing-interjection registration, and the active-model/token-accounting
 helpers every other mixin builds on."""
 
+import logging
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -66,7 +67,13 @@ if TYPE_CHECKING:
     # very mixin, would be circular. See `_create_subagent_tracker`/`close`'s own deferred
     # imports, which is where this type is actually used for real.
     from klorb.agents.runtime import SubagentTracker
+    # `klorb.tools.tasks.common` reaches back into `klorb.session` (via `ToolSetupContext`), so
+    # importing it for real here would be circular; needed only to type `ensure_chainlink_client`'s
+    # return value, which is constructed via a deferred import where it's actually used.
+    from klorb.tools.tasks.common import ChainlinkClient
     # isort: on
+
+logger = logging.getLogger(__name__)
 
 
 class SessionCoreMixin(SessionBase):
@@ -253,6 +260,12 @@ class SessionCoreMixin(SessionBase):
         """Whether `send_turn()` has already prepended the one-shot `Metadata`
         `<SystemInterjection>` carrying the session start time and workspace root name onto
         the very first turn's prompt. Set unconditionally the first time it's checked."""
+        self._agent_group_seeded = False
+        """Whether `send_turn()` has already prepended the one-shot `AgentGroup`
+        `<SystemInterjection>` (a markdown table of every agent in this session's group) onto
+        the very first turn's prompt -- see `_build_agent_group_interjection()`. Set
+        unconditionally the first time it's checked, even for a root session (which has no
+        group to report, so nothing is ever prepended for it)."""
         self._session_naming_pending = self._session_name is None
         """Whether `send_turn()` still needs to run the one-shot session-naming classifier (see
         `_run_session_naming`) on its first call. Seeded `False` when a `session_name` was
@@ -522,11 +535,78 @@ class SessionCoreMixin(SessionBase):
 
     def get_chainlink_label(self) -> str:
         """Return the `chainlink` label every `klorb.tools.tasks.common.ChainlinkClient`
-        operation for this session is scoped to: `root_id`, not `id` -- a future subagent's
-        `Session` shares its root's `id` here, so a subagent's issues stay associated with the
-        same task tree its root session tracks rather than being scoped to the subagent's own,
-        narrower `id`. See docs/specs/chainlink-task-tracking.md."""
-        return self.root_id
+        list/close-all operation for this session is scoped to: `"group:<root_id>"`."""
+        return f"group:{self.root_id}"
+
+    def ensure_chainlink_client(self) -> "ChainlinkClient | None":
+        """Return this session's `klorb.tools.tasks.common.ChainlinkClient`, constructing it on
+        first call and caching it in `tool_state` -- idempotent and cheap after that, a plain
+        dict lookup rather than re-attempting binary discovery or construction. Only a *root*
+        session's own construction actually registers the group's close-time cleanup
+        (`ChainlinkClient.__init__`'s `session.parent is None` check); calling this on a
+        non-root session only pays `_ensure_setup()`'s cost, which is harmless since the group's
+        teardown was already registered when the root created its first task-tracking subagent --
+        the only session a task-tracking subagent can ultimately descend from. Used by
+        `CreateSubagentTool` right before dispatching a new subagent whose own tool set includes a
+        `TASKS` tool, so the teardown gets wired up even if the creating session never itself
+        calls a `Todo*` tool -- see docs/specs/chainlink-task-tracking.md's "Setup" section.
+        `None` if this session has no `ProcessConfig` (most unit tests), the chainlink binary
+        isn't available, or construction failed -- any construction failure is logged at `debug`
+        and swallowed, since a real `Todo*` tool call will surface the same failure for real
+        later. Deferred imports: `klorb.tools.setup_context`/`klorb.tools.tasks.common` both
+        reach back into `klorb.session`, so a module-level import here would be circular."""
+        from klorb.tools.tasks.common import CHAINLINK_CLIENT_TOOL_STATE_KEY
+        tasks_state = self.tool_state.get(CHAINLINK_CLIENT_TOOL_STATE_KEY)
+        if tasks_state is not None and "client" in tasks_state:
+            return cast("ChainlinkClient | None", tasks_state["client"])
+        if self._process_config is None:
+            return None
+        from klorb.tools.tasks.common import chainlink_available
+        tasks_state = self.tool_state.setdefault(CHAINLINK_CLIENT_TOOL_STATE_KEY, {})
+        if not chainlink_available():
+            tasks_state["client"] = None
+            return None
+        from klorb.tools.setup_context import ToolSetupContext
+        from klorb.tools.tasks.common import ChainlinkClient
+        context = ToolSetupContext(
+            process_config=self._process_config, session_config=self.config,
+            session=cast("Session", self))
+        try:
+            client: "ChainlinkClient | None" = ChainlinkClient(context)
+        except Exception:
+            logger.debug(
+                "Best-effort ChainlinkClient init failed for session %s.", self.id, exc_info=True)
+            client = None
+        tasks_state["client"] = client
+        return client
+
+    def _build_agent_group_interjection(self) -> str | None:
+        """Build the one-shot `AgentGroup` `<SystemInterjection>` body for a subagent's first
+        turn: a markdown table of every agent in the same session tree the *creating* session can
+        currently see -- role, id, and title, plus a `Relationship` column marking this session's
+        own row `"(This is you)"` and its parent's row `"(Your parent)"`. `None` for a root
+        session (`self.parent is None`), which has no group to report. Deferred import: `klorb.
+        agents.runtime` itself imports `klorb.session.mixins.turns` at module level, so a
+        module-level import here (while `klorb.session`'s own `__init__.py` is still assembling
+        this mixin) would be circular."""
+        if self.parent is None:
+            return None
+        from klorb.agents.runtime import walk_session_tree
+        root = self.parent
+        while root.parent is not None:
+            root = root.parent
+        rows = ["| Role | Id | Title | Relationship |", "| --- | --- | --- | --- |"]
+        for node in walk_session_tree(root):
+            session = node.session
+            if session.id == self.id:
+                relationship = "(This is you)"
+            elif session.id == self.parent.id:
+                relationship = "(Your parent)"
+            else:
+                relationship = ""
+            title = session.name or ""
+            rows.append(f"| {session.config.role_name} | {session.id} | {title} | {relationship} |")
+        return "\n".join(rows)
 
     def _allocate_child_index(self) -> int:
         """Return the next `_child_index` for a subagent about to be constructed with

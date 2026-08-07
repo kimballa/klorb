@@ -14,6 +14,7 @@ from klorb.session import Session
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.common import SUBAGENT_TOOL_CATEGORY
+from klorb.tools.tasks.common import TASK_TOOL_NAMES
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -101,12 +102,19 @@ class CreateSubagentTool(Tool):
             tool_registry=child_tool_registry,
             scratchpad_path=str(context.session.scratchpad.path),
             parent=context.session,
+            root_id=context.session.root_id,
             effective_subagent_roles=plan.effective_subagent_roles,
             max_output_tokens=args.get("max_output_tokens"),
         )
         logger.debug(
             "Created subagent %s (role=%s, model=%s) under %s",
             child.id, args["role"], model, context.session.id)
+        if not TASK_TOOL_NAMES.isdisjoint(plan.tool_classes.keys()):
+            # The new subagent's own tool set includes a TASKS tool, so it could plausibly
+            # create/track chainlink issues -- ensure the creating session has a ChainlinkClient
+            # of its own, so the group's close-time cleanup gets registered even if the creator
+            # never calls a Todo* tool itself. See Session.ensure_chainlink_client().
+            context.session.ensure_chainlink_client()
         dispatch_subagent_turn(
             context.session, child, args["role"], args["session_title"], args["initial_message"])
         return {

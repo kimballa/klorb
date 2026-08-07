@@ -7,9 +7,10 @@ import pytest
 
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks import todo_next as todo_next_module
-from klorb.tools.tasks.common import chainlink_available
+from klorb.tools.tasks.common import ALL_LABEL, ChainlinkClient, agent_label, chainlink_available
 from klorb.tools.tasks.todo_create import TodoCreateTool
 from klorb.tools.tasks.todo_next import TodoNextTool
 from klorb.tools.tasks.todo_update import TodoUpdateTool
@@ -20,10 +21,10 @@ requires_chainlink = pytest.mark.skipif(
     reason="chainlink binary not found on PATH or ~/.cargo/bin")
 
 
-def _context(tmp_path: Path) -> ToolSetupContext:
+def _context(tmp_path: Path, role_name: str = "operator") -> ToolSetupContext:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = SessionConfig(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
     session = Session(config=config)
     return ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
 
@@ -62,9 +63,9 @@ def test_open_issues_but_none_ready_reports_no_task(
     ready issue -- this branch is exercised by faking `fetch_and_sort_issues`'s return value
     rather than trying to construct genuinely-impossible chainlink state."""
     context = _context(tmp_path)
-    fake_issue = {"id": 1, "status": "open", "priority": "medium", "blocked_by": [2]}
+    fake_issue = {"id": 1, "status": "open", "priority": "medium", "blocked_by": [2], "labels": []}
     monkeypatch.setattr(
-        todo_next_module, "fetch_and_sort_issues", lambda client, include_closed: [fake_issue])
+        ChainlinkClient, "fetch_and_sort_issues", lambda self, include_closed: [fake_issue])
     monkeypatch.setattr(
         todo_next_module, "open_blocker_count", lambda issue, open_ids: 1)
 
@@ -144,12 +145,57 @@ def test_advances_to_the_next_task_once_the_current_one_is_closed(tmp_path: Path
 
 
 @requires_chainlink
+def test_accepts_tasks_capability_gate_raises_before_fetching_anything(tmp_path: Path) -> None:
+    context = _context(tmp_path, role_name="explorer")
+
+    with pytest.raises(ToolCallError, match="may not be assigned tasks"):
+        TodoNextTool(context).apply({})
+
+
+@requires_chainlink
+def test_claims_an_all_labeled_ready_issue(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    # activate=False: without it, TodoCreate's own auto-activation would immediately claim this
+    # (the only, ready) issue for itself -- see maybe_activate_task's ALL_LABEL-claiming branch --
+    # leaving nothing here for TodoNext's own claim path to exercise.
+    created = TodoCreateTool(context).apply({
+        "title": "Unclaimed task", "assign_to": "all", "activate": False,
+    })
+    assert context.session is not None
+    own_label = agent_label(context.session.id)
+    assert ALL_LABEL in created["labels"]
+    assert own_label not in created["labels"]
+
+    result = TodoNextTool(context).apply({})
+
+    assert result["task"]["id"] == created["id"]
+    claimed = ChainlinkClient(context).show_issue(created["id"])
+    assert own_label in claimed["labels"]
+    assert ALL_LABEL not in claimed["labels"]
+
+
+@requires_chainlink
+def test_skips_a_ready_issue_labeled_for_a_different_agent(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    created = TodoCreateTool(context).apply({
+        "title": "Someone else's task", "assign_to": "all", "activate": False,
+    })
+    client = ChainlinkClient(context)
+    client.remove_label(created["id"], ALL_LABEL)
+    client.add_label(created["id"], agent_label("some-other-agent"))
+
+    result = TodoNextTool(context).apply({})
+
+    assert result == {"work_exists": True, "project_complete": False, "task": None}
+
+
+@requires_chainlink
 def test_name_and_parameters(tmp_path: Path) -> None:
     tool = TodoNextTool(_context(tmp_path))
 
     assert tool.name() == "TodoNext"
     assert tool.category() == "TASKS"
-    assert tool.is_read_only() is True
+    assert tool.is_read_only() is False
     assert tool.parameters()["required"] == []
 
 

@@ -312,18 +312,17 @@
 ### Plan 021: Subagents
 
 * Subagent `assigned_task_id`: add a field to `CreateSubagent` that lets the parent start the
-  subagent off with a specific todo item. This requires reworking the todo tools' current
-  greedy auto-assignment behavior (which shoves new tasks onto an agent as soon as it closes
-  its last task) so that a subagent isn't automatically chewing through the entire todo list
-  when it may not be equipped to do so.
-  * Right now, TodoUpdate automatically claims the next free task whenever it closes the
-    current task. There is no way to bound the set of tasks considered for this process.
-    Therefore, we cannot reveal task mgmt tools to subagents, because a subagent intended
-    to perform a specific subtask of the project would finish the subtask and be driven
-    to take up tasks intended for other agents, which it may be incapable of doing.
-  * To release task tracking to subagents, we need to add and respect per-subagent label
-    filters and the ability for the parent agent to mark tasks with a filter as a means of
-    delegating the task to the subagent.
+  subagent off with a specific todo item pre-claimed, instead of the subagent having to call
+  `TodoCreate`/`TodoNext` itself once it starts. Per-agent task labels and `TodoCreate`'s
+  `assign_to` (see docs/specs/chainlink-task-tracking.md's "Task assignment" section) already
+  let a parent delegate a task to a specific subagent id; this would just fold that into
+  `CreateSubagent` itself as a convenience.
+
+* Notify subagents in a group when a new subagent is created or one is removed from the group,
+  and broadcast active/idle state changes -- the `AgentGroup` interjection (see
+  docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section) is a one-shot
+  snapshot sent only on a subagent's first turn, so it goes stale the moment the group's
+  membership or activity changes afterward.
 
 * Adding a `VisionAssistant` agent role.
   * This is marked as 'phase 6' of the plan. This phase was left incomplete.

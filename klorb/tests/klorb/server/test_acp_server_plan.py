@@ -75,16 +75,38 @@ class _FakeChainlinkClient:
     def show_issue(self, issue_id: int) -> dict[str, Any]:
         return dict(self._issues[issue_id])
 
+    def fetch_and_sort_issues(self, *, include_closed: bool) -> list[dict[str, Any]]:
+        return [
+            dict(issue) for issue in self._issues.values()
+            if include_closed or issue["status"] == "open"
+        ]
+
     def create_issue(
         self, title: str, *, description: str | None = None, priority: str = "medium",
+        extra_label: str | None = None,
     ) -> int:
         issue_id = self._next_id
         type(self)._next_id += 1
         self._issues[issue_id] = {
             "id": issue_id, "title": title, "description": description, "priority": priority,
             "status": "open", "blocked_by": [], "comments": [],
+            "labels": [extra_label] if extra_label is not None else [],
         }
         return issue_id
+
+    def add_label(self, issue_id: int, label: str) -> bool:
+        labels = self._issues[issue_id]["labels"]
+        if label in labels:
+            return False
+        labels.append(label)
+        return True
+
+    def remove_label(self, issue_id: int, label: str) -> bool:
+        labels = self._issues[issue_id]["labels"]
+        if label not in labels:
+            return False
+        labels.remove(label)
+        return True
 
     def update_issue(
         self, issue_id: int, *, title: str | None = None, description: str | None = None,

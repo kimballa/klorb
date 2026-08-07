@@ -256,7 +256,7 @@ richer view from that same detail.
 
 * **Mapping** (`klorb.server.plan_updates.build_plan_update(issues, cur_task_id)`, pure): one
   `PlanEntry` per issue, in the same order `issues` was given (already fetched and sorted by
-  `klorb.tools.tasks.common.fetch_and_sort_issues` — this function never re-sorts).
+  `ChainlinkClient.fetch_and_sort_issues` — this method never re-sorts).
   * `content` — `"#<id> <title>"`, the same row format the TUI's `TaskSidebar` uses.
   * `priority` — chainlink's four-level `PRIORITY_ORDER` collapses onto ACP's three-level
     `PlanEntryPriority` via a fixed dict: `critical`/`high` → `"high"`, `medium` → `"medium"`,
@@ -274,7 +274,7 @@ richer view from that same detail.
   cheap:
   * After any finished tool call whose name is in `klorb.tools.tasks.common.TASK_TOOL_NAMES`
     (`TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate`), `TurnBridge.on_tool_call` calls
-    `TurnBridge.fetch_plan_update()` — a fresh `ChainlinkClient`/`fetch_and_sort_issues(
+    `TurnBridge.fetch_plan_update()` — a fresh `ChainlinkClient.fetch_and_sort_issues(
     include_closed=True)` fetch, on the same worker thread `on_tool_call` itself already runs
     on — and enqueues the result onto the turn's ordered outbound queue, right after that call's
     own `tool_call_update`.
@@ -283,7 +283,7 @@ richer view from that same detail.
     already true — never triggers `chainlink init`'s scaffolding just to report an empty plan.
     Runs off the event loop (`asyncio.to_thread`), since chainlink shells out synchronously.
   * Either trigger is silently skipped (no `session/update` sent, reason logged at `debug`) if
-    chainlink is unavailable or `ChainlinkClient`/`fetch_and_sort_issues` raises
+    chainlink is unavailable or `ChainlinkClient`/`fetch_and_sort_issues()` raises
     `ChainlinkError`/`ValueError` — a turn is never failed by a plan-refresh failure.
 
 ## How it works

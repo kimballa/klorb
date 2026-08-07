@@ -9,13 +9,7 @@ from textual import work
 from klorb.process_config import persist_sidebar
 from klorb.session import ToolCallEvent
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tasks.common import (
-    TASK_TOOL_NAMES,
-    ChainlinkClient,
-    ChainlinkError,
-    chainlink_available,
-    fetch_and_sort_issues,
-)
+from klorb.tools.tasks.common import TASK_TOOL_NAMES, ChainlinkClient, ChainlinkError, chainlink_available
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import SUBAGENTS_PANEL_ID, TASK_SIDEBAR_ID
 from klorb.tui.widgets.subagents_panel import SubagentsPanel
@@ -70,7 +64,7 @@ class TaskSidebarMixin(ReplAppBase):
                 process_config=self._process_config, session_config=self._session.config,
                 session=self._session)
             client = ChainlinkClient(context)
-            issues = fetch_and_sort_issues(client, include_closed=True)
+            issues = client.fetch_and_sort_issues(include_closed=True)
         except (ChainlinkError, ValueError):
             logger.debug("Failed to refresh the task sidebar.", exc_info=True)
             self.call_from_thread(self._show_task_sidebar_unavailable)

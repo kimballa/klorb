@@ -51,7 +51,7 @@ from klorb.session.events import (
 )
 from klorb.session_naming import SessionName
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tasks.common import TASK_TOOL_NAMES, ChainlinkClient, ChainlinkError, fetch_and_sort_issues
+from klorb.tools.tasks.common import TASK_TOOL_NAMES, ChainlinkClient, ChainlinkError
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,7 @@ class TurnBridge:
             session=self._session)
         try:
             client = ChainlinkClient(context)
-            issues = fetch_and_sort_issues(client, include_closed=True)
+            issues = client.fetch_and_sort_issues(include_closed=True)
         except (ChainlinkError, ValueError):
             logger.debug("Failed to fetch chainlink issues for a plan update.", exc_info=True)
             return None

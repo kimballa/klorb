@@ -315,6 +315,116 @@ def test_close_all_on_teardown_closes_this_labels_open_issues(tmp_path: Path) ->
 
 
 @requires_chainlink
+def test_teardown_is_only_registered_for_a_root_session(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    root = Session(config=config, session_id="root-id")
+    child = Session(config=config, session_id="child-id", parent=root, root_id=root.root_id)
+    child_context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=child)
+
+    ChainlinkClient(child_context)
+
+    assert "ChainlinkClient" not in child._teardown_callbacks
+    assert "ChainlinkClient" not in root._teardown_callbacks
+
+
+def _root_session_with_process_config(tmp_path: Path) -> Session:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(exist_ok=True)
+    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    return Session(config=config, process_config=ProcessConfig())
+
+
+@requires_chainlink
+def test_ensure_chainlink_client_registers_teardown_for_a_root_session(tmp_path: Path) -> None:
+    session = _root_session_with_process_config(tmp_path)
+
+    session.ensure_chainlink_client()
+
+    assert "ChainlinkClient" in session._teardown_callbacks
+    assert session.tool_state["tasks"]["client"] is not None
+
+
+@requires_chainlink
+def test_ensure_chainlink_client_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _root_session_with_process_config(tmp_path)
+
+    calls: list[None] = []
+    real_init = ChainlinkClient.__init__
+
+    def counting_init(self, ctx):  # type: ignore[no-untyped-def]
+        calls.append(None)
+        real_init(self, ctx)
+
+    monkeypatch.setattr(ChainlinkClient, "__init__", counting_init)
+
+    session.ensure_chainlink_client()
+    session.ensure_chainlink_client()
+
+    assert len(calls) == 1
+
+
+def test_ensure_chainlink_client_is_a_noop_without_a_process_config(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+
+    session.ensure_chainlink_client()  # no raise, no attempt
+
+    assert "tasks" not in session.tool_state
+
+
+@requires_chainlink
+def test_add_label_and_remove_label_round_trip(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Label me")
+
+    assert client.add_label(issue_id, "agent:someone") is True
+    assert "agent:someone" in client.show_issue(issue_id)["labels"]
+
+    assert client.remove_label(issue_id, "agent:someone") is True
+    assert "agent:someone" not in client.show_issue(issue_id)["labels"]
+
+
+@requires_chainlink
+def test_add_label_is_idempotent(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Label me twice")
+
+    assert client.add_label(issue_id, "agent:someone") is True
+    assert client.add_label(issue_id, "agent:someone") is False  # already there
+
+    assert client.show_issue(issue_id)["labels"].count("agent:someone") == 1
+
+
+@requires_chainlink
+def test_remove_label_is_a_noop_when_absent(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    issue_id = client.create_issue("Nothing to remove")
+
+    assert client.remove_label(issue_id, "agent:never-added") is False
+
+
+@requires_chainlink
+def test_fetch_and_sort_issues_is_a_chainlink_client_method(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    client.create_issue("Only issue")
+
+    issues = client.fetch_and_sort_issues(include_closed=False)
+
+    assert [issue["title"] for issue in issues] == ["Only issue"]
+
+
+@requires_chainlink
 def test_client_scopes_issues_by_root_id_not_by_session_id(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()

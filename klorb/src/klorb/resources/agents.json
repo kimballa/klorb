@@ -12,7 +12,12 @@
           "explorer"
         ]
       },
-      "allow_subagents": true
+      "allow_subagents": true,
+      "agent_capabilities": {
+        "accepts_tasks": true,
+        "assigns_tasks": true,
+        "see_group_tasks": true
+      }
     },
     {
       "name": "explorer",
@@ -38,7 +43,12 @@
         ],
         "enforce_readonly_tools": true
       },
-      "allow_subagents": true
+      "allow_subagents": true,
+      "agent_capabilities": {
+        "accepts_tasks": false,
+        "assigns_tasks": false,
+        "see_group_tasks": false
+      }
     }
   ]
 }

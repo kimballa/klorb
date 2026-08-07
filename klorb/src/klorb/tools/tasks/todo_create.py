@@ -2,11 +2,24 @@
 """A Tool that creates a new todo item tracked in chainlink for this session."""
 
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
+from klorb.agents.registry import get_agent_capabilities
+from klorb.agents.runtime import find_session_in_group
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.tasks._util import maybe_activate_task
-from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, validate_priority
+from klorb.tools.tasks.common import (
+    ALL_LABEL,
+    ChainlinkClient,
+    ChainlinkError,
+    agent_label,
+    validate_priority,
+)
 from klorb.tools.tool import Tool
+
+if TYPE_CHECKING:
+    from klorb.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +43,18 @@ class TodoCreateTool(Tool):
     `activate` (see `maybe_activate_task`) may pick up the new issue as the session's current
     tracked task — the same thing a `TodoNext` call would do — and adds an `active_task_note`
     field to the returned detail explaining that this happened.
+
+    `assign_to` (see `_resolve_assignment_label`) picks which agent's chainlink label the new
+    issue carries — this session itself (the default), `"all"` for a group-wide unclaimed task,
+    or another agent's session id — raising `ToolCallError` if the requested assignment isn't
+    permitted for either agent's role capabilities. See docs/specs/chainlink-task-tracking.md's
+    "Task assignment" section.
+
+    Aliased as `TodoWrite`.
     """
+
+    def aliases(self) -> Sequence[str] | None:
+        return ["TodoWrite"]
 
     def name(self) -> str:
         return "TodoCreate"
@@ -86,6 +110,14 @@ class TodoCreateTool(Tool):
                         "if) you don't already have a current task."
                     ),
                 },
+                "assign_to": {
+                    "type": "string",
+                    "description": (
+                        "Which agent should own the new task? Omit for yourself. \"all\" for "
+                        "any eligible agent to pick up, or another agent's id to assign "
+                        "directly to them."
+                    ),
+                },
             },
             "required": ["title"],
             "additionalProperties": False,
@@ -112,7 +144,9 @@ class TodoCreateTool(Tool):
 
         client = ChainlinkClient(self.context)
         assert session is not None  # ChainlinkClient() above already requires one
-        new_id = client.create_issue(title, description=description, priority=priority)
+        assignment_label = self._resolve_assignment_label(session, args.get("assign_to"))
+        new_id = client.create_issue(
+            title, description=description, priority=priority, extra_label=assignment_label)
         logger.debug("TodoCreate created issue #%d %r", new_id, title)
 
         try:
@@ -149,3 +183,39 @@ class TodoCreateTool(Tool):
         if not isinstance(result, dict):
             return f"Create todo: {title!r}"
         return f"Create todo: #{result.get('id')} {result.get('title', title)}"
+
+    def _resolve_assignment_label(self, session: "Session", assign_to_raw: Any) -> str:
+        """Validate `assign_to` and return the chainlink label the new issue should carry:
+        `agent_label(id)` for a specific agent (this session itself, or another one in its
+        group), or `ALL_LABEL` for a group-wide, unclaimed task. Raises `ToolCallError`
+        (category `"validation"`) if the requested assignment isn't permitted -- see
+        docs/specs/chainlink-task-tracking.md's "Task assignment" section.
+
+        `assign_to_raw` of `None`/`""`/`"self"` targets this session itself, requiring its own
+        role to have `accepts_tasks`. `"all"` (`ALL_LABEL`) always succeeds. Anything else names
+        another agent's session id, requiring this session's role to have `assigns_tasks`, that
+        id to resolve to a live session in the same group (`find_session_in_group`), and that
+        agent's own role to have `accepts_tasks`.
+        """
+        role_name = session.config.role_name
+        if assign_to_raw in (None, "", "self"):
+            if not get_agent_capabilities(role_name).accepts_tasks:
+                raise ToolCallError(
+                    f"The {role_name!r} role may not be assigned tasks; pass assign_to=\"all\" "
+                    "or another agent's id instead.", category="validation")
+            return agent_label(session.id)
+        if assign_to_raw == ALL_LABEL:
+            return ALL_LABEL
+        if not get_agent_capabilities(role_name).assigns_tasks:
+            raise ToolCallError(
+                f"The {role_name!r} role may not assign tasks to other agents.",
+                category="validation")
+        target = find_session_in_group(session, assign_to_raw)
+        if target is None:
+            raise ToolCallError(
+                f"No such agent in this group: {assign_to_raw!r}", category="validation")
+        if not get_agent_capabilities(target.config.role_name).accepts_tasks:
+            raise ToolCallError(
+                f"Agent {assign_to_raw!r} (role {target.config.role_name!r}) may not be "
+                "assigned tasks.", category="validation")
+        return agent_label(assign_to_raw)

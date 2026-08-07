@@ -44,7 +44,12 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
     "subagent_roles": ["explorer", "vision_assistant"],
     "enforce_readonly_tools": true
   },
-  "allow_subagents": false
+  "allow_subagents": false,
+  "agent_capabilities": {
+    "accepts_tasks": false,
+    "assigns_tasks": false,
+    "see_group_tasks": false
+  }
 }
 ```
 
@@ -63,6 +68,15 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
   * `subagent_roles` — role names this subagent may itself pass to `CreateSubagent`.
   * `enforce_readonly_tools` — clamp the tool set (after `tools`/`tool_categories`) to only
     tools reporting `Tool.is_read_only() == True`.
+* `agent_capabilities` (an `AgentCapabilities`, `klorb.agents.definition`) — task-tracking
+  capabilities for this role, all defaulting `False`: `accepts_tasks` (may hold a chainlink issue
+  as its own current task), `assigns_tasks` (may `TodoCreate` an issue assigned to a *different*
+  agent), `see_group_tasks` (may `TodoList` with `scope="group"`). Read via `klorb.agents.
+  registry.get_agent_capabilities()`. Distinct from `restrict_to`, which narrows tool/skill/
+  subagent-role *inheritance* rather than task-tracking behavior — a role can hold `TASKS` tools
+  in its effective tool set yet still be refused a task, e.g. a future role that creates and
+  assigns work to other agents but never does any itself. See docs/specs/chainlink-task-
+  tracking.md's "Task assignment" section.
 
 ## Addressing
 
@@ -73,6 +87,14 @@ reference to one specific subagent for as long as the process runs, even after t
 finishes. `Session.address()` recomputes the full dotted-decimal string from the live `parent`
 chain on every call rather than caching or persisting it — it's a human-facing display label
 only; no tool takes an address as an argument.
+
+## AgentGroup interjection
+
+A subagent's very first turn is prepended with a one-shot `<SystemInterjection
+subject="AgentGroup">` naming every agent in its session tree (role, id, title) — see
+docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section for the full mechanism.
+This is how a subagent learns the session ids it needs for `TodoCreate`'s `assign_to` or a
+`MessageSubagent` target, without a dedicated lookup tool.
 
 ## Security model
 
@@ -236,7 +258,9 @@ still intersected against the caller's own effective sets, never widening them),
 `max_output_tokens` (optional).
 
 Runs every check in "Subagent lifecycle"/"Security model" above; if all pass, constructs the
-child `Session` and calls `klorb.agents.policy.dispatch_subagent_turn()`, which registers the
+child `Session`, calls `Session.ensure_chainlink_client()` on the *creating* session if the new
+subagent's own tool set includes a `TASKS` tool (see docs/specs/chainlink-task-tracking.md's
+"Setup" section), and calls `klorb.agents.policy.dispatch_subagent_turn()`, which registers the
 `SubagentHandle` and starts a daemon `threading.Thread` running the subagent's first turn, then
 returns immediately with the subagent's id and a note explaining how its output will be
 delivered. The caller is expected to keep working; it must not expose the returned id to the
