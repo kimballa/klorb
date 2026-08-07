@@ -69,7 +69,7 @@
   could start from the common symlink side when picking things to remove and also clean up dead
   symlinks.
 
-* `klorb system-prompt` should have a `--export` option
+* (#agent) `klorb system-prompt` should have a `--export` option
   that dumps the *resolved* system prompt files for the current role + model into the
   user's editable tree (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same
   relative path the resolver would read it back from), so the user has a real
@@ -78,7 +78,7 @@
   `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
   docs/specs/roles-and-system-prompts.md.
 
-* Need a ProviderFactory
+* Need a ProviderFactory, to support connections other than openrouter.ai?
   * Produces ApiProviders from a string
   * Currently only openrouter api provider is supported from "openrouter" string.
   * model names now can be fully-qualified model name (fqmn): e.g.: "openrouter:gpt-4o-mini"
@@ -95,7 +95,7 @@
     get moved into Session. This will set up a clean mechanism for restricting skill availability
     for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
-  * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
+  * (#agent) When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
       privileged directory requiring `EscalatePrivileges(scope="workspace")` the same as
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
       into a directory klorb itself trusts and auto-discovers deserves the same escalation
@@ -112,7 +112,7 @@
     between that check and the actual file I/O, so a rename/symlink swap in that window could
     redirect an approved operation. Closing this needs os.open()-based fd-relative I/O
     (O_NOFOLLOW/O_DIRECTORY), not path-string re-resolution. See docs/specs/permissions.md.
-  * Per-file allow/ask/deny is only partially implemented — add wildcard/glob support
+  * (#agent) Per-file allow/ask/deny is only partially implemented — add wildcard/glob support
     like `*.pem`.
   * Path macros: support expanding `${home}`/`${workspaceRoot}` (maybe also `${configDir}`)
     inside `readDirs`/`writeDirs` (and any other future path-shaped config value), alongside the
@@ -160,10 +160,10 @@
 
 ### Feature backlog
 
-* When the user types `/` at start or after whitespace, it should have a fuzzy-finder pop-up
-  to help find the skill they want. ESC dismisses fuzzy-finder, as does continuing to type
-  after ruling out any matches. This should use the same layout / style as the file @mention
-  fuzzy-finder panel that shows up over the prompt input area.
+* (#agent) In the TUI, When the user types `/` at start or after whitespace, it should have a
+  fuzzy-finder pop-up to help find the skill they want. ESC dismisses fuzzy-finder, as does
+  continuing to type after ruling out any matches. This should use the same layout / style as the
+  file @mention fuzzy-finder panel that shows up over the prompt input area.
 
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
@@ -171,10 +171,10 @@
   * This can actually be an onWorkspaceTrust hook, executed within the Session.
     * ... we need to define a whole bunch of hookable moments, here.
   * This can then send a msg / AskUserQuestion to the user, in either TUI or VSCode.
-* Improve Workspace trust msg:
+* (#agent) Improve Workspace trust msg:
   * When querying about workspace trust, list any workspace skills auto-allowed by config.
 
-* Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
+* (#agent) Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
   command-palette entries into one Off/Low/Medium/High choice, mirroring the VS Code plugin's
   merged thinking chip/`klorb.setThinking` QuickPick (see
   docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md).
@@ -190,7 +190,7 @@
   respond to it. If the turn is complete, you can send a new message / start a new turn and
   that seems to work fine though.
 
-* fuzzy-finders for files and skills do properly insert the full path or skill name at the
+* (#agent) fuzzy-finders for files and skills do properly insert the full path or skill name at the
   right position in the prompt. But then they try to move the user's cursor forward, and they
   push the cursor all the way to the very end of the text input. Which is incorrect if the
   user backed up into the middle of a longer passage and typed `@` or `/` there to trigger
@@ -198,10 +198,12 @@
 
 ### Feature backlog
 
-* The BashTool short summary is good but when you click the `>` it should pretty-print
+* (#agent) The BashTool short summary is good but when you click the `>` it should pretty-print
   the longer data (i.e., it's more important that the user can read stdout and stderr logs
   than showing all the complete raw json.)
-  * Likewise, `ReadFile` should show the set of raw lines actually read.
+  * (#agent) Likewise, `ReadFile` should show the set of lines actually read, with line numbers
+    in an inset card, much like how the `EditFile` tool shows the diff lines with old and new line
+    numbers in an inline `<details>` panel/card.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
@@ -236,13 +238,14 @@
 * Show a relative recency timestamp ("2 hours ago") in the Load Session picker (shown when
   you click the "Session History" button) -- today's design deliberately has no timestamp field on
   `RecentSession`, only list order; adding one is backwards-compatible.
-  * Add a lastModifiedTimestamp field to Session, stored in the session.json, and also stored in
+* (#agent) Add a lastModifiedTimestamp field to Session, stored in the session.json, and also stored in
     the RecentSession model. The field is serialized as an ISO-8601 datetime in both places.
     If this timestamp is provided, then the quickpick shows a relative age for the entry,
     like `<session_title> (2 hours ago)`. The relative age should be approximate: `just now` if
     it's less than 2 minutes old. `<n> minutes ago` within the last hour, `<n> hours ago` if
     it's within the last 24 hours, `<n> day(s) ago`, `last week`, `last month`, then a
-    month-and-year format for older: `April, 2025`.
+    month-and-year format for older: `April, 2025`. The font for the age should be subtly dimmed
+    or otherwise deemphasized relative to the main headline title for the session.
 * `docs/specs/klorb-server.md`'s `fork_session`/`resume_session` stubs are unaffected by this
   plan; a future plan could build genuine session forking on top of this same `sessions/`
   directory layout.
@@ -301,14 +304,17 @@
 
 ### Plan 021: Subagents
 
-* Subagent `assigned_task_id`: add a field to `CreateSubagent` that lets the parent start the
+* (#agent) Subagent `assigned_task_id`: add a field to `CreateSubagent` that lets the parent start the
   subagent off with a specific todo item pre-claimed, instead of the subagent having to call
   `TodoCreate`/`TodoNext` itself once it starts. Per-agent task labels and `TodoCreate`'s
   `assign_to` (see docs/specs/chainlink-task-tracking.md's "Task assignment" section) already
   let a parent delegate a task to a specific subagent id; this would just fold that into
-  `CreateSubagent` itself as a convenience.
+  `CreateSubagent` itself as a convenience. If the task was labeled `all`, claim it first by
+  removing the `all` label so no other subagent poaches it while the new subagent is starting up.
+  Somewhere in there (the parent? the child?) should explicitly put the `agent:(id)` label for the
+  subagent onto the task in chainlink.
 
-* Notify subagents in a group when a new subagent is created or one is removed from the group,
+* (#agent) Notify subagents in a group when a new subagent is created or one is removed from the group,
   and broadcast active/idle state changes -- the `AgentGroup` interjection (see
   docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section) is a one-shot
   snapshot sent only on a subagent's first turn, so it goes stale the moment the group's
