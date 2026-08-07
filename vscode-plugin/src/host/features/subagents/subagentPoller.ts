@@ -88,6 +88,17 @@ export class SubagentPoller {
     await this._connection.extMethod('_klorb/subagentCancel', { subagentId: sessionId });
   }
 
+  /** Sends `text` directly to `sessionId` (`_klorb/subagentPrompt`), bypassing the parent agent
+   * entirely -- see docs/specs/vscode-plugin.md's "Subagents panel" section. Polls the transcript
+   * immediately afterward, rather than waiting up to `TRANSCRIPT_POLL_INTERVAL_MS`, so the sent
+   * message shows up without a visible delay -- mirrors `selectSubagent`'s own immediate poll. */
+  public async sendPrompt(sessionId: string, text: string): Promise<void> {
+    await this._connection.extMethod('_klorb/subagentPrompt', { subagentId: sessionId, text });
+    if (this._selectedSubagentId === sessionId) {
+      void this._pollTranscript();
+    }
+  }
+
   /** Re-evaluates both timers against `_connection.subagentsCapable`'s current value, without
    * changing this poller's own tracked visibility/selection state -- call once the connection's
    * `initialize()` handshake resolves. `setPanelVisible(true)` can arrive (from the webview's own

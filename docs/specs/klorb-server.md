@@ -153,6 +153,19 @@ ACP's own extensibility rules. Later increments grow this section as they land.
   (an unknown/root `subagentId` is `invalid params`). Result: `{cancelled: true}`. The
   subagent's background thread only notices the event at its next stream/tool-call boundary, same
   latency as the TUI's own per-subagent Stop.
+* **`_klorb/subagentPrompt`** — sends `text` directly to a subagent from the user, bypassing the
+  parent agent entirely (`klorb.agents.policy.dispatch_direct_message`; see docs/specs/
+  subagents.md's "Direct user messaging" section). Params: `{sessionId: string, subagentId:
+  string, text: string}` (an unknown/root `subagentId`, or an empty/missing `text`, is `invalid
+  params`). Result: `{mode: "queued" | "started"}` — `"queued"` if the subagent's turn was
+  already running (folded into it at its next tool-call round boundary, exactly like
+  `_klorb/enqueueMessage`), `"started"` if it was dormant (a fresh turn dispatched immediately,
+  exactly like `MessageSubagent`). Unlike `session/prompt`/`_klorb/enqueueMessage`'s split, a
+  single call always succeeds regardless of the subagent's busy state. A `"started"` call is
+  still bound by `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal` — a JSON-RPC error
+  (code `-32000`) if resuming would exceed either. The output is never delivered to the parent
+  via `WaitForSubagent` or the standing interjection relay unless the parent separately calls
+  `MessageSubagent` on it later.
 
 One *client*-advertised extension method exists, called server → client:
 
@@ -629,8 +642,9 @@ unexpected call fails loudly instead of silently returning nothing. `ext_notific
 one exception: an unrecognized extension *notification* is ignored, per ACP's own extensibility
 rules. The one live `Session` may itself have created subagents (`CreateSubagent`, see
 docs/specs/subagents.md) — those are never separate ACP sessions of their own (no `session/new`
-call names one), but are exposed read-only via `_klorb/subagentTree`/`_klorb/subagentTranscript`/
-`_klorb/subagentCancel` above.
+call names one, and neither `session/prompt` nor `_klorb/enqueueMessage` can address one), but are
+reachable via `_klorb/subagentTree`/`_klorb/subagentTranscript`/`_klorb/subagentCancel`/
+`_klorb/subagentPrompt` above.
 
 ### Queued messages
 

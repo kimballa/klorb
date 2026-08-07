@@ -93,6 +93,7 @@ class ReplAppBase(App[None]):
     _selected_session: Session
     _selected_handle: SubagentHandle | None
     _attention_needed: dict[str, None]
+    _subagent_drafts: dict[str, str]
     _blink_phase: bool
     _subagent_history_pinned_to_bottom: bool
     _subagent_history_rendered_count: int

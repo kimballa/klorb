@@ -67,6 +67,15 @@ class SubagentHandle:
     output: str | None = None
     """Set once `state == "finished"`: the subagent's conversational output, or a placeholder
     noting an empty, aborted, or terminated turn."""
+    parent_interested: bool = True
+    """Whether the session that dispatched the turn this handle currently represents was the
+    parent itself (`CreateSubagent`/`MessageSubagent` -- the only producers of `True`), versus a
+    human addressing this subagent directly on a dormant turn, bypassing the parent
+    (`klorb.agents.policy.dispatch_direct_message`'s fresh-turn branch, the only producer of
+    `False`). Fixed at construction: a human's mid-turn interjection into an already-running,
+    parent-dispatched turn does not change it. `mark_finished` only queues a completion for
+    parent delivery when this is `True` -- see docs/specs/subagents.md's "Direct user messaging"
+    section."""
 
 
 def _format_relay_body(handle: SubagentHandle) -> str:
@@ -85,9 +94,9 @@ def _format_relay_body(handle: SubagentHandle) -> str:
 
 class SubagentTracker:
     """Owns one `Session`'s bookkeeping for the subagents it has directly created: a
-    `SubagentHandle` per child (keyed by the child's own `id`), a FIFO of ids that have
-    finished and are awaiting delivery, and the concurrency count `CreateSubagent`/
-    `MessageSubagent` check against `tools.subagents.maxConcurrentPerParent`.
+    `SubagentHandle` per child (keyed by the child's own `id`), a FIFO of parent-interested
+    handles that have finished and are awaiting delivery, and the concurrency count
+    `CreateSubagent`/`MessageSubagent` check against `tools.subagents.maxConcurrentPerParent`.
 
     Constructed once per `Session` (`SessionCoreMixin.__init__`) and never shared -- counting
     a whole session *tree* (`maxActiveTotal`, see `total_active_subagents`) means walking every
@@ -97,7 +106,7 @@ class SubagentTracker:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._handles: dict[str, SubagentHandle] = {}
-        self._completion_queue: "queue.Queue[str]" = queue.Queue()
+        self._completion_queue: "queue.Queue[SubagentHandle]" = queue.Queue()
 
     def register(self, handle: SubagentHandle) -> None:
         """Record a newly-created subagent, before its background turn starts running."""
@@ -111,15 +120,22 @@ class SubagentTracker:
             return list(self._handles.values())
 
     def mark_finished(self, child_id: str, output: str) -> None:
-        """Record `child_id`'s background turn as done and queue it for delivery -- called by
-        the background thread `dispatch_subagent_turn` runs, once the child's own `send_turn()`
-        call returns (or is aborted/fails)."""
+        """Record `child_id`'s background turn as done -- called by the background thread
+        `dispatch_subagent_turn` runs, once the child's own `send_turn()` call returns (or is
+        aborted/fails). Only queues it for delivery to the parent when `handle.parent_interested`
+        is `True`; an uninterested completion (a human messaged this subagent directly) still gets
+        `state`/`output` set, so it stays visible to the panel and a later `MessageSubagent`, but
+        is never handed to `WaitForSubagent`."""
         with self._lock:
             handle = self._handles[child_id]
             handle.state = "finished"
             handle.output = output
-        self._completion_queue.put(child_id)
-        logger.debug("Subagent %s finished; queued for delivery", child_id)
+            interested = handle.parent_interested
+        if interested:
+            self._completion_queue.put(handle)
+        logger.debug(
+            "Subagent %s finished (parent_interested=%s); %s", child_id, interested,
+            "queued for delivery" if interested else "not queued (human-addressed turn)")
 
     def running_count(self) -> int:
         """Subagents this session directly created whose turn is actively processing right now
@@ -131,35 +147,44 @@ class SubagentTracker:
             return sum(1 for handle in self._handles.values() if handle.state == "running")
 
     def has_undelivered(self) -> bool:
-        """Whether this session has at least one subagent still running or awaiting delivery --
-        `WaitForSubagent` fails immediately, rather than suspending forever, when this is
-        `False`."""
+        """Whether this session has at least one *parent-interested* subagent still running or
+        awaiting delivery -- `WaitForSubagent` fails immediately, rather than suspending forever,
+        when this is `False`. An uninterested (human-addressed) handle is never delivered to
+        anyone, so it's excluded here regardless of its own `delivered` value -- otherwise this
+        would report outstanding work forever for a subagent nothing will ever pop."""
         with self._lock:
-            return any(not handle.delivered for handle in self._handles.values())
+            return any(
+                handle.parent_interested and not handle.delivered
+                for handle in self._handles.values())
 
     def pop_next_completed(self, timeout: float) -> SubagentHandle | None:
-        """Block up to `timeout` seconds for the next completed-but-undelivered subagent
-        (oldest first), marking it delivered before returning it, or return `None` on timeout.
-        Used by `WaitForSubagent`'s poll loop -- a short `timeout` so it can also check for
-        cancellation between waits, mirroring `BashTool`'s persistent-shell poll loop."""
+        """Block up to `timeout` seconds for the next completed-but-undelivered, parent-interested
+        subagent (oldest first), marking it delivered before returning it, or return `None` on
+        timeout. Used by `WaitForSubagent`'s poll loop -- a short `timeout` so it can also check
+        for cancellation between waits, mirroring `BashTool`'s persistent-shell poll loop.
+
+        Pops the `SubagentHandle` object the completion queue itself carries, rather than
+        re-resolving `child_id` through `self._handles` -- `register()` replaces that dict entry
+        on every dispatch (including a later human message to the same subagent), so a re-lookup
+        here could return a different, still-running handle than the one that actually finished
+        and was queued."""
         try:
-            child_id = self._completion_queue.get(timeout=timeout)
+            handle = self._completion_queue.get(timeout=timeout)
         except queue.Empty:
             return None
         with self._lock:
-            handle = self._handles[child_id]
             handle.delivered = True
             return handle
 
     def try_pop_completed(self) -> SubagentHandle | None:
-        """Pop and mark delivered at most one completed-but-undelivered subagent, without
-        blocking, or return `None` if none are waiting."""
+        """Pop and mark delivered at most one completed-but-undelivered, parent-interested
+        subagent, without blocking, or return `None` if none are waiting. See `pop_next_completed`
+        for why this pops the queued `SubagentHandle` directly rather than re-resolving by id."""
         try:
-            child_id = self._completion_queue.get_nowait()
+            handle = self._completion_queue.get_nowait()
         except queue.Empty:
             return None
         with self._lock:
-            handle = self._handles[child_id]
             handle.delivered = True
             return handle
 
@@ -271,7 +296,7 @@ def cascade_close_subagents(session: "Session") -> None:
         if handle.state == "running":
             handle.cancel_event.set()
             handle.thread.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
-        if not handle.delivered:
+        if not handle.delivered and handle.parent_interested:
             output = (
                 handle.output if handle.output is not None
                 else "(Subagent terminated: harness closed before it finished)"

@@ -109,7 +109,7 @@ async def test_ctrl_t_hides_the_subagents_panel_if_shown() -> None:
         assert bool(app.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display) is False
 
 
-async def test_selecting_a_subagent_swaps_history_visibility_and_disables_prompt_input() -> None:
+async def test_selecting_a_subagent_swaps_history_visibility_and_keeps_prompt_input_enabled() -> None:
     session = _session(MagicMock())
     handle = _add_subagent(session)
     app = ReplApp(session=session)
@@ -122,10 +122,12 @@ async def test_selecting_a_subagent_swaps_history_visibility_and_disables_prompt
         assert app._selected_handle is handle
         assert not app.query_one(f"#{HISTORY_ID}", VerticalScroll).display
         assert app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll).display
-        assert app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
+        # A submission while a subagent is selected addresses it directly instead of the root
+        # session -- see docs/specs/subagents.md's "Direct user messaging" section.
+        assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
-async def test_reselecting_the_root_restores_history_and_re_enables_prompt_input() -> None:
+async def test_reselecting_the_root_restores_history_and_prompt_input_stays_enabled() -> None:
     session = _session(MagicMock())
     handle = _add_subagent(session)
     app = ReplApp(session=session)
@@ -142,6 +144,57 @@ async def test_reselecting_the_root_restores_history_and_re_enables_prompt_input
         assert app.query_one(f"#{HISTORY_ID}", VerticalScroll).display
         assert not app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll).display
         assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
+
+
+async def test_selecting_a_different_session_saves_and_restores_prompt_draft_text() -> None:
+    session = _session(MagicMock())
+    handle = _add_subagent(session)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "a root draft"
+
+        app._select_session(handle.session.id)
+        await pilot.pause()
+
+        assert prompt_input.text == ""  # the subagent has no draft of its own yet
+        prompt_input.text = "a subagent draft"
+
+        app._select_session(session.id)
+        await pilot.pause()
+
+        assert prompt_input.text == "a root draft"
+
+        app._select_session(handle.session.id)
+        await pilot.pause()
+
+        assert prompt_input.text == "a subagent draft"
+
+
+async def test_tick_refreshes_a_stale_selected_handle_after_a_resume() -> None:
+    """A resume (a direct message or `MessageSubagent`) replaces the tracker's handle for the
+    same session id; `_tick_subagents_panel` must re-resolve `_selected_handle` from the tree
+    each tick rather than keep pointing at the orphaned original, or the trailing status notice
+    would freeze at whatever state it was in when the subagent was first selected."""
+    session = _session(MagicMock())
+    handle = _add_subagent(session)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        app._select_session(handle.session.id)
+        await pilot.pause()
+        assert app._selected_handle is handle
+
+        # Simulate a resume: a fresh handle replaces the old one under the same session id,
+        # exactly like `dispatch_subagent_turn`'s `SubagentTracker.register()` does.
+        new_handle = _handle(handle.session)
+        session.subagent_tracker.register(new_handle)
+
+        app._tick_subagents_panel()
+        await pilot.pause()
+
+        assert app._selected_handle is new_handle
 
 
 async def test_selecting_a_row_via_the_option_list_switches_selection() -> None:

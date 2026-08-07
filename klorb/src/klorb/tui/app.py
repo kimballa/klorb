@@ -439,6 +439,10 @@ class ReplApp(
         _await_session_selected`), in the order they started waiting -- a `dict` used as an
         insertion-ordered set. Drives the panel's blinking `(!)` marker and the status-line
         fallback (`SubagentsPanelMixin._update_subagent_attention_status_line`)."""
+        self._subagent_drafts: dict[str, str] = {}
+        """Prompt-input draft text saved per session id, restored on reselecting a session that
+        was blurred away from with unsubmitted text still in the box -- see
+        `SubagentsPanelMixin._select_session`."""
         self._blink_phase: bool = False
         """Flipped every `_tick_subagents_panel` tick; whether the `(!)` attention marker is
         currently lit."""

@@ -17,10 +17,13 @@ from klorb.agents.runtime import (
 from klorb.session import Session, SessionConfig
 
 
-def _handle(session: Session, role: str = "explorer", title: str = "task") -> SubagentHandle:
+def _handle(
+    session: Session, role: str = "explorer", title: str = "task", *,
+    parent_interested: bool = True,
+) -> SubagentHandle:
     return SubagentHandle(
         session=session, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role=role, title=title)
+        role=role, title=title, parent_interested=parent_interested)
 
 
 def _child_session(parent: Session) -> Session:
@@ -142,6 +145,82 @@ def test_pop_all_completed_drains_every_completion_already_waiting() -> None:
     assert first.delivered is True
     assert second.delivered is True
     assert third.delivered is False  # never finished -- not drained
+
+
+def test_mark_finished_does_not_queue_an_uninterested_completion() -> None:
+    """A subagent a human messaged directly (`parent_interested=False`) still records its own
+    `state`/`output` on finishing, but must never be handed to `WaitForSubagent` -- the parent
+    never asked for this reply."""
+    parent = Session(SessionConfig(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent), parent_interested=False)
+    tracker.register(handle)
+
+    tracker.mark_finished(handle.session.id, "the answer")
+
+    assert handle.state == "finished"
+    assert handle.output == "the answer"
+    assert handle.delivered is False
+    assert tracker.has_undelivered() is False  # nothing will ever pop this
+    assert tracker.try_pop_completed() is None
+
+
+def test_has_undelivered_ignores_uninterested_handles_even_alongside_an_interested_one() -> None:
+    parent = Session(SessionConfig(), provider=MagicMock())
+    tracker = SubagentTracker()
+    uninterested = _handle(_child_session(parent), title="uninterested", parent_interested=False)
+    tracker.register(uninterested)
+    tracker.mark_finished(uninterested.session.id, "human-addressed output")
+
+    assert tracker.has_undelivered() is False  # the only handle is uninterested
+
+    interested = _handle(_child_session(parent), title="interested")
+    tracker.register(interested)
+    tracker.mark_finished(interested.session.id, "parent-addressed output")
+
+    assert tracker.has_undelivered() is True
+    assert tracker.try_pop_completed() is interested
+
+
+def test_completion_queue_survives_register_replacing_the_handle_dict_entry() -> None:
+    """`register()` replaces `_handles[child_id]` on every dispatch, including while an older
+    completion for that same id still sits in the queue (e.g. a human resumes a dormant,
+    still-undelivered subagent before its parent calls WaitForSubagent). Popping must still
+    return the handle that actually finished, not whatever now occupies the dict entry."""
+    parent = Session(SessionConfig(), provider=MagicMock())
+    tracker = SubagentTracker()
+    child = _child_session(parent)
+    original = _handle(child, title="original")
+    tracker.register(original)
+    tracker.mark_finished(child.id, "original output")
+
+    replacement = _handle(child, title="replacement")
+    tracker.register(replacement)  # overwrites _handles[child.id]
+
+    popped = tracker.pop_next_completed(timeout=1.0)
+
+    assert popped is original
+    assert popped.output == "original output"
+    assert original.delivered is True
+    assert replacement.delivered is False  # untouched -- its own turn hasn't finished
+
+
+def test_cascade_close_subagents_does_not_relay_an_uninterested_handles_output() -> None:
+    """A subagent a human messaged directly must not have its final output force-injected into
+    the parent's persisted transcript at shutdown -- the parent was never expecting it. The
+    subagent is still recursively closed either way."""
+    parent = Session(SessionConfig(), provider=MagicMock())
+    child = _child_session(parent)
+    handle = _handle(child, role="explorer", title="find the bug", parent_interested=False)
+    parent.subagent_tracker.register(handle)
+    parent.subagent_tracker.mark_finished(child.id, "human-addressed output")
+    message_count_before = len(parent.messages)
+
+    cascade_close_subagents(parent)
+
+    assert handle.delivered is False
+    assert len(parent.messages) == message_count_before
+    assert not any("human-addressed output" in m.content for m in parent.messages)
 
 
 def test_build_subagent_interjection_provider_formats_id_role_title_and_output() -> None:

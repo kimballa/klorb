@@ -48,6 +48,7 @@ from klorb.session import (
     SessionConfig,
     TurnEventHandlers,
 )
+from klorb.session.events import QueuedMessage
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
@@ -93,21 +94,22 @@ def _resolve_role_definition(parent: Session, role: str) -> AgentDefinition:
     return definition
 
 
-def check_concurrency_limits(context: ToolSetupContext, session: Session) -> None:
+def check_concurrency_limits(process_config: ProcessConfig, session: Session) -> None:
     """Raise `ToolCallError` (category `"transient"`) if starting one more subagent turn on
-    `session` -- via `CreateSubagent`, or `MessageSubagent` resuming a dormant one back into
-    `"running"` -- would exceed `tools.subagents.maxConcurrentPerParent` or `maxActiveTotal`.
-    `"transient"` (not `"validation"`): both limits bound how many subagent turns may run *at
-    once*, not the request itself, so retrying once an existing subagent finishes (`
-    WaitForSubagent`) is the correct recovery, not fixing the call's arguments. See
-    `klorb.agents.runtime.SubagentTracker.running_count` for what "running" means here."""
-    max_concurrent = context.process_config.subagents_max_concurrent_per_parent
+    `session` -- via `CreateSubagent`, `MessageSubagent`, or a human's `dispatch_direct_message`,
+    each resuming a dormant one back into `"running"` -- would exceed
+    `tools.subagents.maxConcurrentPerParent` or `maxActiveTotal`. `"transient"` (not
+    `"validation"`): both limits bound how many subagent turns may run *at once*, not the request
+    itself, so retrying once an existing subagent finishes (`WaitForSubagent`) is the correct
+    recovery, not fixing the call's arguments. See `klorb.agents.runtime.SubagentTracker.
+    running_count` for what "running" means here."""
+    max_concurrent = process_config.subagents_max_concurrent_per_parent
     if session.subagent_tracker.running_count() >= max_concurrent:
         raise ToolCallError(
             f"This agent already has {max_concurrent} subagent(s) running -- the most allowed "
             f"at once. Call WaitForSubagent so one finishes, then try again.",
             category="transient")
-    max_active_total = context.process_config.subagents_max_active_total
+    max_active_total = process_config.subagents_max_active_total
     if total_active_subagents(session) >= max_active_total:
         raise ToolCallError(
             f"This session tree already has {max_active_total} subagent(s) running in total -- "
@@ -130,7 +132,7 @@ def _check_creation_limits(context: ToolSetupContext, parent: Session, role: str
             f"The {parent.config.role_name!r} role may not create subagents.",
             category="validation")
     role_definition = _resolve_role_definition(parent, role)
-    check_concurrency_limits(context, parent)
+    check_concurrency_limits(context.process_config, parent)
     return role_definition
 
 
@@ -376,13 +378,16 @@ def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers
 
 def dispatch_subagent_turn(
     parent: Session, child: Session, role: str, title: str, message: str,
+    *, parent_interested: bool = True,
 ) -> SubagentHandle:
     """Register `child` with `parent.subagent_tracker` and start a daemon thread running one
     turn of its conversation, returning the `SubagentHandle` immediately -- the subagent runs
     asynchronously with respect to `parent`, which is expected to keep going about its own turn.
     `parent.subagent_tracker.mark_finished()` is called once the background turn ends, however
     it ends, queuing its output for delivery via `WaitForSubagent` or the standing
-    `SUBAGENT_INTERJECTION_SUBJECT` interjection.
+    `SUBAGENT_INTERJECTION_SUBJECT` interjection -- but only when `parent_interested` (see
+    `SubagentHandle`). `CreateSubagentTool`/`MessageSubagentTool` call this with the default
+    `True`; `dispatch_direct_message` passes `False` for a turn a human started directly.
     """
     cancel_event = threading.Event()
 
@@ -391,11 +396,36 @@ def dispatch_subagent_turn(
         parent.subagent_tracker.mark_finished(child.id, output)
 
     thread = threading.Thread(target=worker, name=f"subagent-{child.id}", daemon=True)
-    handle = SubagentHandle(session=child, thread=thread,
-                            cancel_event=cancel_event, role=role, title=title)
+    handle = SubagentHandle(session=child, thread=thread, cancel_event=cancel_event, role=role,
+                            title=title, parent_interested=parent_interested)
     # `handlers` (referenced by `worker`, above) is resolved via closure late-binding -- safe
     # since `worker` never runs until `thread.start()`, after this assignment.
     handlers = build_subagent_turn_handlers(parent, handle, cancel_event)
     parent.subagent_tracker.register(handle)
     thread.start()
     return handle
+
+
+def dispatch_direct_message(
+    process_config: ProcessConfig, child: Session, handle: SubagentHandle, message: str,
+) -> None:
+    """Send `message` from a human user directly to `child`, an existing subagent anywhere in the
+    session tree -- never from the parent agent. If `child`'s turn is already running, enqueues
+    into it (`Session.enqueue_queued_message`) without touching `handle.parent_interested`: that
+    turn was dispatched by whoever started it (usually the parent), and a human steering it
+    mid-turn doesn't change who's expecting the outcome. If `child` is dormant, starts a fresh turn
+    (`dispatch_subagent_turn`, `parent_interested=False`): this turn belongs to the human alone,
+    and the parent must not have its output rolled into its own context.
+
+    Raises `ToolCallError` (category `"transient"`, see `check_concurrency_limits`) if `child` is
+    dormant and resuming it would exceed `tools.subagents.maxConcurrentPerParent`/
+    `maxActiveTotal` -- a human resuming a subagent from a UI consumes the same `"running"` slot a
+    tool-driven `MessageSubagent` resume does, and is bound by the same limit.
+    """
+    assert child.parent is not None
+    if handle.state == "running":
+        child.enqueue_queued_message(QueuedMessage(message_text=message))
+        return
+    check_concurrency_limits(process_config, child.parent)
+    dispatch_subagent_turn(
+        child.parent, child, handle.role, handle.title, message, parent_interested=False)

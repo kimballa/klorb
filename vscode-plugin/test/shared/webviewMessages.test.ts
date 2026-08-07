@@ -508,6 +508,7 @@ describe('parseWebviewMessage', () => {
         text: 'what is in this screenshot?',
         images: [{ mimeType: 'image/png', dataBase64: 'abcd', name: 'shot.png' }],
       },
+      { type: 'submitPrompt', text: 'steer it', subagentId: 'subagent-1' },
       {
         type: 'enqueueMessage',
         text: 'also this one',
@@ -555,6 +556,9 @@ describe('parseWebviewMessage', () => {
     ).toBeUndefined();
     expect(
       parseWebviewMessage({ type: 'submitPrompt', text: 'hi', images: [{ mimeType: 'image/png' }] })
+    ).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'submitPrompt', text: 'hi', subagentId: 7 })
     ).toBeUndefined();
     expect(
       parseWebviewMessage({

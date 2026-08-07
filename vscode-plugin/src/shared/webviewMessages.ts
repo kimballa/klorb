@@ -537,10 +537,13 @@ export interface ImageAttachment extends AttachedImageMeta {
   dataBase64: string;
 }
 
-/** The user submitted a prompt from the input box. */
+/** The user submitted a prompt from the input box. When `subagentId` is present, this targets
+ * that subagent directly via `_klorb/subagentPrompt` -- regardless of its own busy state --
+ * instead of the root session (see docs/specs/vscode-plugin.md's "Subagents panel" section). */
 export interface SubmitPromptMessage {
   type: 'submitPrompt';
   text: string;
+  subagentId?: string;
   images?: ImageAttachment[];
 }
 
@@ -1358,7 +1361,17 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
   switch (record.type) {
     case 'submitPrompt': {
       const parsed = parseTextWithImages(record);
-      return parsed === undefined ? undefined : { type: 'submitPrompt', ...parsed };
+      if (parsed === undefined) {
+        return undefined;
+      }
+      if (record.subagentId !== undefined && typeof record.subagentId !== 'string') {
+        return undefined;
+      }
+      return {
+        type: 'submitPrompt',
+        ...parsed,
+        ...(record.subagentId !== undefined ? { subagentId: record.subagentId as string } : {}),
+      };
     }
     case 'enqueueMessage': {
       const parsed = parseTextWithImages(record);

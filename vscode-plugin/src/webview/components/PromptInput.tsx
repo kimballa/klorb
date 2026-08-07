@@ -93,14 +93,13 @@ interface PromptInputProps {
    * or not-yet-known both hide it, since attaching against a non-vision model can only fail
    * server-side. */
   imagesCapable?: boolean;
-  /** True whenever a subagent (not the root session) is selected in the subagents panel: the
-   * user cannot address a subagent directly, so the textarea and Send button are hidden
-   * entirely -- distinct from `inFlight`'s ordinary disabled-while-running state, which still
-   * allows typing (or shows enabled once the turn ends). The Stop button is unaffected by this
-   * flag (see `inFlight`'s own doc comment): while a subagent is selected, `inFlight`/`onCancel`
-   * are wired by the caller to that subagent's own running state/cancellation instead of the
-   * root session's. */
-  readOnly?: boolean;
+  /** Identifies which session `draft`/`attachments` belong to -- `'root'` for the root session,
+   * a subagent's own session id otherwise. Switching this value swaps the visible draft text for
+   * the one last typed for that session (or empty, the first time), rather than carrying stale
+   * text across a selection change -- see docs/specs/vscode-plugin.md's "Subagents panel"
+   * section. Attachments are intentionally not carried across a switch. Defaults to `'root'` for
+   * a caller that doesn't multiplex sessions. */
+  sessionKey?: string;
   onSubmit(text: string, images?: ImageAttachment[]): void;
   onCancel(): void;
   onCyclePermissionMode(): void;
@@ -153,7 +152,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     workspaceFiles = [],
     promptHistory = [],
     imagesCapable = false,
-    readOnly = false,
+    sessionKey = 'root',
     onSubmit,
     onCancel,
     onCyclePermissionMode,
@@ -175,8 +174,25 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const preparedRef = useRef<PreparedText | null>(null);
   const trailingNewlinesRef = useRef(0);
   const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
-  const disabled = readOnly || (inFlight && !enqueueMessageCapable);
+  const disabled = inFlight && !enqueueMessageCapable;
   const finder = useFileFinder(workspaceFiles);
+  // Per-session draft persistence: swaps `draft` when `sessionKey` changes, stashing the
+  // outgoing session's current text first -- so switching the subagents-panel selection away and
+  // back restores whatever was being typed, rather than losing it or leaking it into the wrong
+  // session's box. Deliberately keyed only on `sessionKey`, not `draft` itself (which would fire
+  // this effect on every keystroke); the outgoing draft is read from `draft` via closure at the
+  // moment the key actually changes.
+  const draftsBySessionRef = useRef<Record<string, string>>({});
+  const prevSessionKeyRef = useRef(sessionKey);
+  useEffect(() => {
+    if (prevSessionKeyRef.current === sessionKey) {
+      return;
+    }
+    draftsBySessionRef.current[prevSessionKeyRef.current] = draft;
+    prevSessionKeyRef.current = sessionKey;
+    setTextareaValue(draftsBySessionRef.current[sessionKey] ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey]);
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
@@ -525,7 +541,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           onClick={(event: SyntheticEvent) => finder.sync(draft, cursorPosition(event))}
           onPaste={handlePaste}
         />
-        {!readOnly && (!inFlight || enqueueMessageCapable) ? (
+        {!inFlight || enqueueMessageCapable ? (
           <vscode-button
             id="submit-button"
             iconOnly

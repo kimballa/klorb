@@ -11,8 +11,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tools.subagents.conftest import _FakeProvider
 
-from klorb.agents.policy import compute_root_session_grants, plan_subagent_creation
+from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message, plan_subagent_creation
 from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
@@ -244,3 +245,87 @@ def test_subagent_roles_are_the_explorer_roles_own_restriction_intersected_with_
     # restrict_to.subagent_roles, ["explorer"] -- operator may launch an explorer but not
     # another operator).
     assert plan.effective_subagent_roles == {"explorer"}
+
+
+def test_dispatch_direct_message_enqueues_into_a_running_turn(tmp_path: Path) -> None:
+    """A human messaging a still-running subagent just enqueues into its current turn -- it does
+    not start a second, competing one, and (per SubagentHandle's own docstring) never touches
+    `parent_interested` on the handle that turn was originally dispatched under."""
+    provider = _FakeProvider()
+    process_config = ProcessConfig()
+    parent = Session(SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    never_finishes = threading.Event()
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
+        cancel_event=threading.Event(), role="explorer", title="task")
+    parent.subagent_tracker.register(handle)
+    handle.thread.start()
+
+    try:
+        dispatch_direct_message(process_config, child, handle, "keep going, also check lint")
+        drained = child.drain_queued_messages()
+    finally:
+        never_finishes.set()
+        handle.thread.join(timeout=5.0)
+
+    assert [m.message_text for m in drained] == ["keep going, also check lint"]
+    assert handle.parent_interested is True  # untouched -- this turn was parent-dispatched
+    assert parent.subagent_tracker.handles() == [handle]  # no second handle was registered
+
+
+def test_dispatch_direct_message_starts_a_fresh_uninterested_turn_on_a_dormant_subagent(
+    tmp_path: Path,
+) -> None:
+    provider = _FakeProvider(reply_text="direct reply")
+    process_config = ProcessConfig()
+    parent = Session(SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    dormant_handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task", state="finished", output="earlier output")
+    parent.subagent_tracker.register(dormant_handle)
+
+    dispatch_direct_message(process_config, child, dormant_handle, "poking in directly")
+
+    new_handle = parent.subagent_tracker.handles()[0]
+    new_handle.thread.join(timeout=5.0)
+    assert new_handle is not dormant_handle
+    assert new_handle.parent_interested is False
+    assert new_handle.state == "finished"
+    assert new_handle.output == "direct reply"
+    assert parent.subagent_tracker.has_undelivered() is False  # uninterested -- never queued
+
+
+def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the_concurrent_limit(
+    tmp_path: Path,
+) -> None:
+    provider = _FakeProvider()
+    process_config = ProcessConfig(subagents_max_concurrent_per_parent=1)
+    parent = Session(SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    never_finishes = threading.Event()
+    running_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    running_handle = SubagentHandle(
+        session=running_child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
+        cancel_event=threading.Event(), role="explorer", title="first")
+    parent.subagent_tracker.register(running_handle)
+    running_handle.thread.start()
+    dormant_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    dormant_handle = SubagentHandle(
+        session=dormant_child, thread=threading.Thread(target=lambda: None),
+        cancel_event=threading.Event(), role="explorer", title="second", state="finished",
+        output="done")
+    parent.subagent_tracker.register(dormant_handle)
+
+    try:
+        with pytest.raises(ToolCallError, match="Call WaitForSubagent") as exc_info:
+            dispatch_direct_message(process_config, dormant_child, dormant_handle, "hi")
+        assert exc_info.value.category == "transient"
+        # Rejected before anything was dispatched -- the dormant handle is untouched.
+        assert parent.subagent_tracker.handles() == [running_handle, dormant_handle]
+    finally:
+        never_finishes.set()
+        running_handle.thread.join(timeout=5.0)

@@ -10,13 +10,14 @@ from textual import work
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from klorb.agents.policy import compute_root_session_grants
+from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import configure_logging, session_log_path
 from klorb.process_config import apply_cli_flags_to_session, load_process_config
 from klorb.session import Session, ToolCallEvent, ToolCallStartedEvent, TurnEventHandlers
 from klorb.session.events import QueuedMessage
 from klorb.session_naming import SessionName
+from klorb.tools.exceptions import ToolCallError
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.formatting import summarize_reasoning_details
@@ -42,9 +43,10 @@ class PromptSubmissionMixin(ReplAppBase):
         that ruled out every palette option, dispatched as an ordinary prompt like any other
         (see `docs/specs/command-palette-from-prompt.md`).
 
-        When a turn is already in flight (`_turn_in_flight`), the prompt is queued rather
-        than dispatched — see `_queue_prompt` — and will be delivered as a
-        `UserInterjectionPayload` on the next tool-response envelope.
+        When a subagent (not the root session) is selected, the prompt is sent directly to it
+        instead — see `_submit_subagent_prompt`. Otherwise, when a turn is already in flight
+        (`_turn_in_flight`), the prompt is queued rather than dispatched — see `_queue_prompt` —
+        and will be delivered as a `UserInterjectionPayload` on the next tool-response envelope.
         """
         prompt_text = event.value.strip()
         if not prompt_text:
@@ -59,11 +61,28 @@ class PromptSubmissionMixin(ReplAppBase):
             self._submit_shell_command(prompt_text[1:].lstrip())
             return
 
+        if self._selected_handle is not None:
+            self._submit_subagent_prompt(prompt_text)
+            return
+
         if self._turn_in_flight:
             self._queue_prompt(prompt_text)
             return
 
         self._submit_prompt(prompt_text)
+
+    def _submit_subagent_prompt(self, prompt_text: str) -> None:
+        """Send `prompt_text` directly to the selected subagent (`dispatch_direct_message`),
+        bypassing the parent agent entirely -- called instead of `_submit_prompt`/`_queue_prompt`
+        whenever `_selected_handle is not None`. Synchronous: `dispatch_direct_message` never
+        blocks (it either enqueues or hands off to a daemon thread), unlike `_send_prompt`'s
+        worker, which runs an entire root turn to completion."""
+        assert self._selected_handle is not None
+        try:
+            dispatch_direct_message(
+                self._process_config, self._selected_session, self._selected_handle, prompt_text)
+        except ToolCallError as exc:
+            self.show_notice(str(exc), error=True)
 
     def _submit_shell_command(self, command: str) -> None:
         """Echo `!command` into the history, disable the input, and dispatch it to a worker
@@ -672,9 +691,9 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None:
         """Scroll the history into view (iff `was_pinned`, see `_scroll_if_pinned`), refresh the
-        token tally, and re-enable and refocus the input box -- unless a subagent is currently
-        selected, in which case `_update_prompt_input_disabled_state` leaves it disabled (see
-        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin`). Also clears the in-flight turn's
+        token tally, and re-enable and refocus the input box (see
+        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin._update_prompt_input_disabled_state`).
+        Also clears the in-flight turn's
         cancel event and pending-prompt tracking (model turn) and the shell command's cancel
         event (`_run_shell_command`), since neither Escape nor Ctrl+C has anything left to
         abort/interrupt once a turn is done (successfully, in error, or aborted) — shared by

@@ -185,6 +185,51 @@ describe('SubagentPoller', () => {
     });
   });
 
+  it('sendPrompt calls the subagentPrompt ext method with the given id and text', async () => {
+    const connection = fakeConnection();
+    const poller = new SubagentPoller(connection, vi.fn(), vi.fn(), vi.fn());
+
+    await poller.sendPrompt('subagent-1', 'steer it');
+
+    expect(connection.extMethod).toHaveBeenCalledWith('_klorb/subagentPrompt', {
+      subagentId: 'subagent-1',
+      text: 'steer it',
+    });
+  });
+
+  it('sendPrompt polls the transcript immediately when targeting the selected subagent', async () => {
+    const connection = fakeConnection();
+    const poller = new SubagentPoller(connection, vi.fn(), vi.fn(), vi.fn());
+    poller.setPanelVisible(true);
+    poller.selectSubagent('subagent-1');
+    await vi.advanceTimersByTimeAsync(0);
+    (connection.extMethod as ReturnType<typeof vi.fn>).mockClear();
+
+    await poller.sendPrompt('subagent-1', 'steer it');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(connection.extMethod).toHaveBeenCalledWith('_klorb/subagentTranscript', {
+      subagentId: 'subagent-1',
+    });
+  });
+
+  it('sendPrompt does not poll the transcript for a subagent that is not selected', async () => {
+    const connection = fakeConnection();
+    const poller = new SubagentPoller(connection, vi.fn(), vi.fn(), vi.fn());
+    poller.setPanelVisible(true);
+    poller.selectSubagent('subagent-1');
+    await vi.advanceTimersByTimeAsync(0);
+    (connection.extMethod as ReturnType<typeof vi.fn>).mockClear();
+
+    await poller.sendPrompt('subagent-2', 'steer it');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(connection.extMethod).not.toHaveBeenCalledWith(
+      '_klorb/subagentTranscript',
+      expect.objectContaining({ subagentId: 'subagent-2' })
+    );
+  });
+
   it('dispose stops both timers', async () => {
     const connection = fakeConnection();
     const poller = new SubagentPoller(connection, vi.fn(), vi.fn(), vi.fn());

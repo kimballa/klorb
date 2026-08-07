@@ -379,6 +379,20 @@ export default function App({
   }
 
   function submit(text: string, images?: ImageAttachment[]): void {
+    if (selectedSubagentId !== null) {
+      // Addresses the selected subagent directly (`_klorb/subagentPrompt`), bypassing the root
+      // session entirely -- the server decides direct-send-vs-enqueue from the subagent's own
+      // live state, so there's no `inFlight` gate to check here the way there is for root (see
+      // docs/specs/vscode-plugin.md's "Subagents panel" section). The subagent's own transcript
+      // poller picks up the sent message; nothing here needs to touch `entries`/`inFlight`.
+      vscode.postMessage({
+        type: 'submitPrompt',
+        text,
+        subagentId: selectedSubagentId,
+        ...(images ? { images } : {}),
+      });
+      return;
+    }
     if (inFlight) {
       // Mid-turn submit: queues into the running turn (`_klorb/enqueueMessage`) rather than
       // starting a new one. The history entry itself is created from the host's own
@@ -566,8 +580,12 @@ export default function App({
         ref={promptInputRef}
         inFlight={isSubagentSelected ? activeSubagentTranscript?.state === 'running' : inFlight}
         muted={interactionVisible}
-        readOnly={isSubagentSelected}
-        enqueueMessageCapable={status.enqueueMessageCapable}
+        // While a subagent is selected, `_klorb/subagentPrompt` decides direct-send-vs-enqueue
+        // itself from the subagent's own live state (see `submit()`), so the input must stay
+        // enabled regardless of that subagent's `inFlight` value above -- forcing
+        // `enqueueMessageCapable` true here is what keeps it enabled either way.
+        enqueueMessageCapable={isSubagentSelected ? true : status.enqueueMessageCapable}
+        sessionKey={selectedSubagentId ?? 'root'}
         workspaceFiles={workspaceFiles}
         promptHistory={promptHistory}
         imagesCapable={status.activeModelVision}

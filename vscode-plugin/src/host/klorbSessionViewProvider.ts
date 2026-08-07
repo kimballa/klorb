@@ -248,6 +248,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     }
     switch (parsed.type) {
       case 'submitPrompt':
+        if (parsed.subagentId !== undefined) {
+          await this._sendSubagentPrompt(parsed.subagentId, parsed.text, parsed.images);
+          break;
+        }
         this._promptHistory?.append(this._workspaceCwd, parsed.text);
         this._postPromptHistory();
         await this._runTurn(parsed.text, parsed.images);
@@ -415,6 +419,38 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     }
     try {
       await connection.enqueueMessage(text);
+    } catch (err) {
+      this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
+    }
+  }
+
+  /** Sends `text` directly to `subagentId` (`_klorb/subagentPrompt`), bypassing the parent agent
+   * entirely -- called for a `submitPrompt` the webview posted while a subagent was selected (see
+   * docs/specs/vscode-plugin.md's "Subagents panel" section). Unlike `_runTurn`/`_enqueueMessage`,
+   * this never touches the root session's own prompt history or turn state: the subagent's own
+   * transcript is what the poller re-fetches, not `postHostMessage`d history. */
+  private async _sendSubagentPrompt(
+    subagentId: string,
+    text: string,
+    images?: ImageAttachment[]
+  ): Promise<void> {
+    const connection = this._connection;
+    if (connection === undefined || !connection.isReady || !connection.subagentsCapable) {
+      this.postHostMessage({
+        type: 'turnError',
+        message: 'klorb server does not support messaging subagents.',
+      });
+      return;
+    }
+    if (images !== undefined && images.length > 0) {
+      this.postHostMessage({
+        type: 'turnError',
+        message: 'Image attachments cannot be sent to a subagent.',
+      });
+      return;
+    }
+    try {
+      await this._subagentPoller?.sendPrompt(subagentId, text);
     } catch (err) {
       this.postHostMessage({ type: 'turnError', message: errorMessage(err) });
     }

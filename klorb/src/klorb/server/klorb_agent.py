@@ -35,7 +35,7 @@ from acp.schema import (
     TextContentBlock,
 )
 
-from klorb.agents.policy import compute_root_session_grants
+from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, walk_session_tree
 from klorb.api_provider import ApiProvider, ResponseAborted
 from klorb.images.prepare import ImagePipelineConfig, ImageTooLargeError, prepare_image_for_model
@@ -57,6 +57,7 @@ from klorb.session import Session
 from klorb.session.constants import PermissionFramework, ToolCallLimitExceeded
 from klorb.session.events import QueuedMessage
 from klorb.session.restore import try_restore_session
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.tasks.common import chainlink_available, chainlink_db_exists
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.session_store import find_recent_session, read_sessions_index
@@ -460,6 +461,32 @@ class KlorbAcpAgent(acp.Agent):
         logger.debug("_klorb/subagentCancel signaled cancel_event for subagent %s", subagent_id)
         return {"cancelled": True}
 
+    def _ext_subagent_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Send `params["text"]` from a human user directly to a subagent -- see
+        `_klorb/subagentPrompt` in docs/specs/klorb-server.md and docs/specs/subagents.md's
+        "Direct user messaging" section. `mode` is read from `handle.state` *before* dispatching:
+        `dispatch_direct_message` may replace the tracker's entry for `subagent_id`, so a
+        post-call read would be stale."""
+        self._require_session_id(params)
+        subagent_id = params.get("subagentId")
+        if not isinstance(subagent_id, str):
+            raise acp.RequestError.invalid_params({"reason": "subagentId is required"})
+        text = params.get("text")
+        if not isinstance(text, str) or not text:
+            raise acp.RequestError.invalid_params({"reason": "text is required"})
+        found = self._find_subagent(subagent_id)
+        if found is None:
+            raise acp.RequestError.invalid_params(
+                {"subagentId": subagent_id, "reason": "unknown subagent"})
+        child, handle = found
+        mode = "queued" if handle.state == "running" else "started"
+        try:
+            dispatch_direct_message(self._process_config, child, handle, text)
+        except ToolCallError as exc:
+            raise acp.RequestError(-32000, str(exc)) from exc
+        logger.debug("_klorb/subagentPrompt %s a message for subagent %s", mode, subagent_id)
+        return {"mode": mode}
+
     def _ext_trust_workspace(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
@@ -595,6 +622,8 @@ class KlorbAcpAgent(acp.Agent):
             return self._ext_subagent_transcript(params)
         if method == "klorb/subagentCancel":
             return self._ext_subagent_cancel(params)
+        if method == "klorb/subagentPrompt":
+            return self._ext_subagent_prompt(params)
         raise acp.RequestError.method_not_found(f"_{method}")
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:

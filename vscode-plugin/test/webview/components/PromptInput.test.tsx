@@ -92,6 +92,44 @@ describe('PromptInput', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('persists draft text per sessionKey across a selection change and back', () => {
+    const { container, rerender } = render(
+      <PromptInput inFlight={false} sessionKey="root" onSubmit={() => undefined} {...NOOP} />
+    );
+
+    typeText(container, 'a root draft');
+
+    rerender(
+      <PromptInput inFlight={false} sessionKey="subagent-1" onSubmit={() => undefined} {...NOOP} />
+    );
+
+    expect(promptTextarea(container).value).toBe(''); // no draft of its own yet
+
+    typeText(container, 'a subagent draft');
+
+    rerender(
+      <PromptInput inFlight={false} sessionKey="root" onSubmit={() => undefined} {...NOOP} />
+    );
+
+    expect(promptTextarea(container).value).toBe('a root draft');
+
+    rerender(
+      <PromptInput inFlight={false} sessionKey="subagent-1" onSubmit={() => undefined} {...NOOP} />
+    );
+
+    expect(promptTextarea(container).value).toBe('a subagent draft');
+  });
+
+  it('defaults to a single shared draft when sessionKey is not provided', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    typeText(container, 'no session multiplexing here');
+
+    expect(promptTextarea(container).value).toBe('no session multiplexing here');
+  });
+
   it('exposes an imperative focus() that focuses the underlying textarea', () => {
     const ref = createRef<PromptInputHandle>();
     const { container } = render(

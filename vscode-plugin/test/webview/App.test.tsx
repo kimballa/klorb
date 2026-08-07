@@ -745,7 +745,7 @@ describe('App', () => {
       expect(screen.queryByText('Agent 1.1 needs your input')).toBeNull();
     });
 
-    it('disables the prompt input and shows the subagent transcript once a row is selected', () => {
+    it('keeps the prompt input enabled once a subagent row is selected', () => {
       const { vscode } = makeVsCode();
       const { container } = render(<App vscode={vscode} initialEntries={[]} />);
 
@@ -753,7 +753,28 @@ describe('App', () => {
       postHostMessage({ type: 'toggleSubagentsPanel' });
       fireEvent.click(screen.getByText('find the bug'));
 
-      expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
+      // Selecting a subagent no longer disables the input -- submitting addresses it directly
+      // instead of the root session (see docs/specs/vscode-plugin.md's "Subagents panel"
+      // section).
+      expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+    });
+
+    it('submitting while a subagent is selected posts submitPrompt with its subagentId', () => {
+      const { vscode, posted } = makeVsCode();
+      const { container } = render(<App vscode={vscode} initialEntries={[]} />);
+
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: TREE_NODES });
+      postHostMessage({ type: 'toggleSubagentsPanel' });
+      fireEvent.click(screen.getByText('find the bug'));
+      posted.length = 0;
+
+      typeAndSubmit(container, 'steer the subagent');
+
+      expect(posted).toEqual([
+        { type: 'submitPrompt', text: 'steer the subagent', subagentId: 'subagent-1' },
+      ]);
+      // Neither the root session's own turn state nor its history is touched by this submit.
+      expect(screen.queryByText('steer the subagent')).toBeNull();
     });
 
     it('resets the selection back to root on sessionReset', () => {

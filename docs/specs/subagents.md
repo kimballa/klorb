@@ -221,17 +221,25 @@ A subagent's `Session` is constructed directly (never by cloning the parent `Ses
 A `klorb.agents.runtime.SubagentHandle` tracks one subagent from the creating session's own
 `Session.subagent_tracker` (a `klorb.agents.runtime.SubagentTracker`, one per `Session`, never
 shared): the child `Session`, its background `threading.Thread`, its own dedicated
-`cancel_event`, and two independent axes of state:
+`cancel_event`, and three independent axes of state:
 
 * `state`: `"running"` while its background turn is actively processing, `"finished"` once that
   turn ends. A subagent session is **never destroyed** once finished — it sits dormant,
-  `MessageSubagent` can resume it later (flipping it back to `"running"`), and there is no tool
-  to explicitly close one. Only ending the *creating* session tears a subagent down (see
-  "Persistence" below).
+  `MessageSubagent` (or a human, see "Direct user messaging" below) can resume it later (flipping
+  it back to `"running"`), and there is no tool to explicitly close one. Only ending the
+  *creating* session tears a subagent down (see "Persistence" below).
 * `delivered`: whether the subagent's completed output has already been handed to the creating
-  session — via `WaitForSubagent`, the standing interjection relay, or (at shutdown)
-  `cascade_close_subagents`'s direct-append fallback. A `"finished"` subagent is not `delivered`
-  until one of those three actually consumes it, and stays dormant either way.
+  session — via `WaitForSubagent` or (at shutdown) `cascade_close_subagents`'s direct-append
+  fallback. A `"finished"` subagent is not `delivered` until one of those actually consumes it,
+  and stays dormant either way.
+* `parent_interested`: whether the session that dispatched the turn this handle currently
+  represents was the creating session itself (`CreateSubagent`, `MessageSubagent` — the only
+  producers of `True`) versus a human addressing this subagent directly, bypassing the parent
+  (`klorb.agents.policy.dispatch_direct_message`'s fresh-turn branch — the only producer of
+  `False`). Fixed at construction: a human's mid-turn interjection into an already-running,
+  parent-dispatched turn does not change it (see "Direct user messaging"). Only a
+  `parent_interested` completion is ever queued for delivery to the parent — see "Communicating
+  back to the parent".
 
 **"Concurrent" and "active" both mean `state == "running"`, not "undelivered."** A
 finished-but-undelivered subagent consumes no compute and is not "in flight" — it must not
@@ -283,7 +291,32 @@ Args: `id`, `message`. Requires the named subagent to be `"finished"` — an err
 `WaitForSubagent`-first hint) otherwise — then runs `check_concurrency_limits()` (resuming a
 dormant subagent costs a concurrency slot exactly like `CreateSubagent` starting a new one) and
 `dispatch_subagent_turn()` again on the same child `Session`, exactly like `CreateSubagent` ran
-its first turn.
+its first turn — always with `parent_interested=True` (the default), since `MessageSubagent` is
+only ever called by the parent agent itself, even when resuming a subagent a human most recently
+addressed directly (see "Direct user messaging").
+
+## Direct user messaging
+
+A human using the TUI or vscode-plugin addresses a subagent directly through
+`klorb.agents.policy.dispatch_direct_message(process_config, child, handle, message)` — never
+through a tool call, so never subject to `SUBAGENT_MGMT_TOOL_NAMES`'s role-based restrictions.
+Which of the two branches runs is chosen from `handle.state`, mirroring the same duality the root
+session's own prompt input already has:
+
+* **Running**: `message` is enqueued into the live turn (`Session.enqueue_queued_message()`),
+  exactly like a human queuing a message into their own root session mid-turn. `parent_interested`
+  on the handle is left untouched — that turn was dispatched by whoever started it (ordinarily the
+  parent), and a human steering it mid-turn doesn't change who's expecting the outcome.
+* **Finished (dormant)**: a fresh turn is dispatched (`dispatch_subagent_turn(...,
+  parent_interested=False)`), after the same `check_concurrency_limits()` check
+  `MessageSubagent`/`CreateSubagent` run — a human resuming a subagent from a UI consumes a
+  `"running"` slot exactly like a tool-driven resume does, and is bound by the same
+  `maxConcurrentPerParent`/`maxActiveTotal` limits.
+
+The subagent itself never distinguishes a message that arrived this way from one its parent sent:
+both simply become the next user turn (or mid-turn interjection) in the child `Session`'s own
+conversation. Only `parent_interested` differs, and only that flag decides whether the eventual
+completion is ever handed to the parent (see "Communicating back to the parent").
 
 ## Communicating back to the parent
 
@@ -302,37 +335,40 @@ aborted mid-stream (`ResponseAborted`, from `cancel_event` firing) appends
 thread's own top-level call, and an unhandled exception there would silently strand the subagent
 as `"running"` forever.
 
-Once a turn ends, `SubagentTracker.mark_finished()` queues it for delivery via two independent
-channels, whichever the creating session reaches first:
+Once a turn ends, `SubagentTracker.mark_finished()` sets `state`/`output` on the handle, then —
+only if the handle is `parent_interested` — queues it for delivery via `WaitForSubagent`,
+described above. An uninterested completion (a human addressed this subagent directly, see
+"Direct user messaging") still gets `state`/`output` set, so it stays visible to the subagents
+panel and a later `MessageSubagent`, but is never queued: nothing pops it, and it is never handed
+to the parent.
 
-* **`WaitForSubagent`**, described above.
-* **Standing interjection**: `CreateSubagent` registers a provider
-  (`klorb.agents.runtime.build_subagent_interjection_provider`) under subject `"subagent"` via
-  `Session.register_standing_interjection()`. It's polled on every future `send_turn()` call and
-  every tool-call round on the creating session (the same mechanism `BashTool`'s persistent-shell
-  notice uses), popping **at most one** completed subagent per poll and wrapping its body in
-  `<SystemInterjection subject="subagent">id: ...\nrole: ...\ntitle: ...\n\n<output></SystemInterjection>`.
-  Several completions therefore surface one at a time, oldest first, across successive polls —
-  unlike `WaitForSubagent`, which batches everything already done into one response.
+`klorb.agents.runtime.build_subagent_interjection_provider()` builds an equivalent
+zero-arg provider closure, in the same shape `Session.register_standing_interjection()` expects
+(the mechanism `BashTool`'s persistent-shell notice uses) — wrapping a popped completion's body in
+`<SystemInterjection subject="subagent">id: ...\nrole: ...\ntitle: ...\n\n<output></SystemInterjection>`.
+No production tool call site registers it today; `WaitForSubagent` is the only channel that
+currently delivers a subagent's output to its creator.
 
 ## Persistence
 
 Subagent sessions are never separately persisted to their own `sessions/<subdir>/` — a
 subagent's entire durable contribution is whatever relay text lands in its creator's own
-persisted `messages` (either channel above). Restarting klorb does not resume an in-flight
+persisted `messages` via `WaitForSubagent`. Restarting klorb does not resume an in-flight
 subagent turn; there is no checkpoint to resume from.
 
 `klorb.agents.runtime.cascade_close_subagents()` runs at the start of every `Session.close()`
 (before `_finalize_session_persistence()`, so its relay lands in `messages` before `session.json`
 is written), recursing deepest-first: for each of `session`'s subagents, first close *its own*
 subagents, then — if it's still `"running"`, signal `cancel_event` and join its thread (up to a
-short timeout; a wedged subagent must not hang process shutdown) — and if its output was never
-delivered, append it directly into `session.messages` as a `role="user"` message wrapping the
-same `<SystemInterjection subject="subagent">` body, with a trailing note that the user provided
-no prompt this turn. A subagent whose thread never finished within the shutdown timeout gets
-"(Subagent terminated: harness closed before it finished)" in place of real output. This only
-runs on a graceful shutdown (quit); a crash loses in-flight subagent work exactly as it loses any
-other in-flight session state.
+short timeout; a wedged subagent must not hang process shutdown) — and if it is `parent_interested`
+and its output was never delivered, append it directly into `session.messages` as a `role="user"`
+message wrapping the same `<SystemInterjection subject="subagent">` body, with a trailing note
+that the user provided no prompt this turn. An uninterested subagent (a human addressed it
+directly, see "Direct user messaging") is still recursively closed but never force-appended this
+way — its final output was never the parent's to receive. A subagent whose thread never finished
+within the shutdown timeout gets "(Subagent terminated: harness closed before it finished)" in
+place of real output. This only runs on a graceful shutdown (quit); a crash loses in-flight
+subagent work exactly as it loses any other in-flight session state.
 
 ## Explorer role
 
@@ -402,10 +438,15 @@ its next stream/tool-call boundary, `KeyActionsMixin._interrupt_running_activity
 `SubagentsPanelMixin._note_subagent_interrupt_requested` to immediately show "Sending interrupt…"
 in `#subagent-history` — tracked via `_subagent_interrupt_pending` so every tick in between keeps
 showing it rather than reverting to "still working" — until the handle actually finishes and the
-notice flips to "Subagent interrupted.". **The prompt input is disabled whenever a subagent is
-selected** (`SubagentsPanelMixin._update_prompt_input_disabled_state`, consulted by every site that
-used to unconditionally set `PromptInput.disabled = False`) — the user cannot address a subagent
-directly. **The footer token tallies** (`StatusBarMixin._update_status_bar`) also follow the
+notice flips to "Subagent interrupted.". **The prompt input stays enabled for any selection, root
+or subagent alike** (`SubagentsPanelMixin._update_prompt_input_disabled_state`; only an open
+permission/ask panel's own `interaction-active` class disables it) — submitting while a subagent is
+selected routes the message to it directly via `dispatch_direct_message` instead of the root
+session (`PromptSubmissionMixin._submit_subagent_prompt`, see docs/specs/subagents.md's "Direct
+user messaging" section). Unsubmitted draft text is tracked per session id in
+`ReplApp._subagent_drafts`, saved and restored around every selection change
+(`SubagentsPanelMixin._select_session`) so switching away and back doesn't lose it. **The footer
+token tallies** (`StatusBarMixin._update_status_bar`) also follow the
 selection — they report `_selected_session.total_tokens_used()`/`max_context_window()`/
 `total_output_tokens_used()`, not always the root's, so they read correctly for whichever
 transcript is actually on screen.

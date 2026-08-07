@@ -17,15 +17,29 @@ from tui.conftest import (
     _wait_until,
 )
 
+from klorb.agents.runtime import SubagentHandle
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.process_config import ProcessConfig
-from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, SessionConfig
+from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, Session, SessionConfig
 from klorb.session_naming import SessionName, rename_session_id
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, ToolCallStatic, TurnWaitingStatic
+
+
+def _add_running_subagent(root: Session, provider: MagicMock) -> SubagentHandle:
+    """A subagent whose background thread never finishes on its own within the test -- mirrors
+    the pattern `tests/klorb/tools/subagents/test_wait.py` uses for a deliberately-`"running"`
+    handle, so a test can exercise `dispatch_direct_message`'s enqueue branch without a real
+    turn ever completing."""
+    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=root)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: threading.Event().wait(30)),
+        cancel_event=threading.Event(), role="explorer", title="task")
+    root.subagent_tracker.register(handle)
+    return handle
 
 
 async def test_submitting_an_empty_prompt_does_nothing() -> None:
@@ -40,6 +54,62 @@ async def test_submitting_an_empty_prompt_does_nothing() -> None:
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         assert len(history.query(Static).exclude(".mascot")) == 0
+
+    mock_provider.send_prompt.assert_not_called()
+
+
+async def test_submitting_while_a_subagent_is_selected_addresses_it_not_the_root() -> None:
+    """A submission while a subagent is selected routes to it directly via
+    `dispatch_direct_message`, never touching the root session's own turn state -- see
+    docs/specs/subagents.md's "Direct user messaging" section."""
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    handle = _add_running_subagent(session, mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        app._select_session(handle.session.id)
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "steer the subagent"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        drained = handle.session.drain_queued_messages()
+        assert [m.message_text for m in drained] == ["steer the subagent"]
+        assert app._turn_in_flight is False
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(".prompt")) == 0  # nothing echoed into the root's own history
+
+    mock_provider.send_prompt.assert_not_called()
+
+
+async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurrency_limit() -> None:
+    """A human resuming a dormant subagent from the panel is bound by the same
+    `maxConcurrentPerParent` limit a tool-driven `MessageSubagent` resume is -- surfaced as a
+    notice rather than silently dropped or crashing the app."""
+    mock_provider = MagicMock()
+    process_config = ProcessConfig(subagents_max_concurrent_per_parent=0)
+    session = _session(mock_provider)
+    child = Session(SessionConfig(role_name="explorer"), provider=mock_provider, parent=session)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task", state="finished", output="earlier output")
+    session.subagent_tracker.register(handle)
+    app = ReplApp(session=session, process_config=process_config)
+
+    async with app.run_test() as pilot:
+        app._select_session(handle.session.id)
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "poke it again"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert any("most allowed at once" in str(w.render()) for w in history.query(Static))
 
     mock_provider.send_prompt.assert_not_called()
 

@@ -1167,14 +1167,16 @@ VSCode adaptation of the TUI's Ctrl+G right-hand panel
 (`klorb.tui.widgets.subagents_panel.SubagentsPanel`, see docs/specs/subagents.md's "Subagents
 panel (TUI)" section). Unlike the TUI, which holds every `Session` object directly in-process,
 the webview never speaks ACP itself (`docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-
-messages.md`), so this feature is built on three new `_klorb/*` ext methods
+messages.md`), so this feature is built on four new `_klorb/*` ext methods
 ([[klorb-server]]'s own "Extension methods" section documents the wire contract in full):
 `_klorb/subagentTree` (a snapshot of the whole tree), `_klorb/subagentTranscript` (one
-subagent's message history), and `_klorb/subagentCancel` (per-subagent Stop). None of the three
-push unprompted -- a subagent's turn never streams at all (see docs/specs/subagents.md's
-"Security model" section) and nothing wakes an idle creator when one finishes (that section's
-"Out of scope" also covers the ACP layer) -- so this feature is poll-driven end to end, unlike
-every other host↔webview data flow in this document, which rides an ACP push.
+subagent's message history), `_klorb/subagentCancel` (per-subagent Stop), and
+`_klorb/subagentPrompt` (sends a message directly to a subagent, see below). None of the read/
+control methods push unprompted -- a subagent's turn never streams at all (see
+docs/specs/subagents.md's "Security model" section) and nothing wakes an idle creator when one
+finishes (that section's "Out of scope" also covers the ACP layer) -- so tree/transcript/state are
+poll-driven end to end, unlike every other host↔webview data flow in this document, which rides an
+ACP push; `subagentPrompt` itself is a one-shot call, not polled.
 
 * **`SubagentPoller`** (`src/host/features/subagents/subagentPoller.ts`) owns two independent
   `setInterval` timers against the live `AcpConnection`: a tree poll (`_klorb/subagentTree`,
@@ -1194,12 +1196,18 @@ every other host↔webview data flow in this document, which rides an ACP push.
   `setPanelVisible`'s own gate would see `subagentsCapable` still `false` at that moment and never
   start the timer, leaving the panel flagged open with nothing polling until the user manually
   toggled it closed and back open. `cancelSubagent(sessionId)` calls `_klorb/subagentCancel`
-  directly (no timer involved).
+  directly (no timer involved), and `sendPrompt(sessionId, text)` calls `_klorb/subagentPrompt`
+  directly, then polls the transcript immediately afterward (rather than waiting up to
+  `TRANSCRIPT_POLL_INTERVAL_MS`) when `sessionId` is the one currently selected, so the sent
+  message shows up without a visible delay.
   `KlorbSessionViewProvider` owns one `SubagentPoller` instance (constructed in `extension.ts`
   alongside `SessionControls`) and routes the webview's `setSubagentsPanelVisible`/
-  `selectSubagent`/`cancelSubagent` messages into it; its two callbacks post
-  `subagentTreeUpdate`/`subagentTranscriptUpdate` host messages back, mirroring how
-  `SessionControls`'s own status callback posts `statusUpdate`.
+  `selectSubagent`/`cancelSubagent` messages into it, and a `submitPrompt` carrying a
+  `subagentId` into `sendPrompt` (`_sendSubagentPrompt`, rejecting an image attachment with a
+  `turnError` -- a subagent's turn has no content-block channel of its own, same constraint
+  `_klorb/enqueueMessage` already has); its two poll callbacks post `subagentTreeUpdate`/
+  `subagentTranscriptUpdate` host messages back, mirroring how `SessionControls`'s own status
+  callback posts `statusUpdate`.
 * **`SubagentNodeInfo`** (`src/shared/webviewMessages.ts`) is the wire shape for one tree node --
   `{id, parentId, address, title, role, state: "running" | "finished" | null, aborted, model,
   thinkingEnabled, thinkingEffort, usedTokens, maxTokens, outputTokens}` -- the same fields
@@ -1246,11 +1254,19 @@ every other host↔webview data flow in this document, which rides an ACP push.
     "Subagent task complete." / "Subagent interrupted." / "Sending interrupt…" (the last shown
     immediately on a Stop click, via `App`'s own `subagentInterruptPending` state, until a poll
     confirms `state: "finished"`) -- matching the TUI's own four-state notice one-for-one.
-  * **The prompt input is disabled whenever a subagent is selected** (`PromptInput`'s `readOnly`
-    prop hides the textarea and Send button entirely) -- the user cannot address a subagent
-    directly. The Stop button is unaffected by `readOnly`: while a subagent is selected, `App`
-    wires `inFlight`/`onCancel` to that subagent's own running state/`cancelSubagentTurn()`
-    instead of the root session's, so Stop still cancels whichever turn is actually on screen.
+  * **The prompt input stays enabled for any selection, root or subagent alike.** `App`'s
+    `submit()` posts `{type: 'submitPrompt', text, subagentId, images?}` when a subagent is
+    selected, routing to `_sendSubagentPrompt`/`_klorb/subagentPrompt` instead of the root
+    session's `_runTurn`/`_klorb/enqueueMessage` -- `enqueueMessageCapable` is forced `true`
+    whenever a subagent is selected (regardless of the server's own root-session advertisement)
+    so `PromptInput` never disables itself on that subagent's own busy state, matching
+    `_klorb/subagentPrompt`'s own "always accept, decide direct-send-vs-enqueue server-side"
+    contract. `PromptInput`'s `sessionKey` prop (`selectedSubagentId ?? 'root'`) tracks a draft
+    per session internally, restoring whatever was typed for a session on reselecting it rather
+    than losing or leaking it into the wrong box. The Stop button is unaffected: while a subagent
+    is selected, `App` still wires `inFlight`/`onCancel` to that subagent's own running
+    state/`cancelSubagentTurn()` instead of the root session's, so Stop still cancels whichever
+    turn is actually on screen.
   * **The status row's model/thinking chips follow the selection** and go non-interactive:
     `StatusRow`'s `interactive` prop (`false` while a subagent is selected) swaps the model/
     thinking chips from `<button>` to plain `<span>` -- a subagent's `SessionConfig` is fixed at

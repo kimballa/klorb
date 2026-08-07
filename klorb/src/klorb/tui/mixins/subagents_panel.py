@@ -114,15 +114,18 @@ class SubagentsPanelMixin(ReplAppBase):
         return None
 
     def _select_session(self, session_id: str) -> None:
-        """Make `session_id` the currently displayed (sub)agent: swap `#history`/
-        `#subagent-history` visibility, update the prompt input's disabled state, refresh the
-        status bar's token tally, the header's model (and thinking-effort) display, and the
-        `#session-name` line for the newly selected session, and refresh the panel's
-        highlight/footer. A no-op if `session_id` doesn't name a live node (see
+        """Make `session_id` the currently displayed (sub)agent: save the outgoing session's
+        prompt-input draft and restore the incoming one's (`_subagent_drafts`, keyed by session
+        id), swap `#history`/`#subagent-history` visibility, update the prompt input's disabled
+        state, refresh the status bar's token tally, the header's model (and thinking-effort)
+        display, and the `#session-name` line for the newly selected session, and refresh the
+        panel's highlight/footer. A no-op if `session_id` doesn't name a live node (see
         `_find_tree_node`)."""
         node = self._find_tree_node(session_id)
         if node is None:
             return
+        prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        self._subagent_drafts[self._selected_session.id] = prompt_input.text
         self._selected_session = node.session
         self._selected_handle = node.handle
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -134,6 +137,7 @@ class SubagentsPanelMixin(ReplAppBase):
             self._render_full_subagent_transcript(node.session, node.handle)
             history.display = False
             subagent_history.display = True
+        prompt_input.text = self._subagent_drafts.get(node.session.id, "")
         self._update_prompt_input_disabled_state()
         self._update_status_bar()
         self._refresh_header_title()
@@ -356,6 +360,14 @@ class SubagentsPanelMixin(ReplAppBase):
         effect (see `on_option_list_option_highlighted`'s docstring)."""
         self._blink_phase = not self._blink_phase
         if self._selected_handle is not None:
+            # Re-resolve the handle from the tree before using it: `register()` replaces the
+            # tracker's entry for this session on every resume (a direct message or
+            # MessageSubagent), so a `_selected_handle` cached from selection time can point at
+            # an orphaned, permanently-"running" object whose `state` never again matches the
+            # live turn -- see `_select_session`, the only other place this field is set.
+            node = self._find_tree_node(self._selected_session.id)
+            if node is not None and node.handle is not None:
+                self._selected_handle = node.handle
             self._append_new_subagent_messages(self._selected_session, self._selected_handle)
         if self._active_sidebar == "agents":
             self._refresh_subagents_panel()
@@ -366,19 +378,20 @@ class SubagentsPanelMixin(ReplAppBase):
         self.set_interval(_PANEL_TICK_INTERVAL_SECONDS, self._tick_subagents_panel)
 
     def _update_prompt_input_disabled_state(self) -> None:
-        """Recompute the prompt input's `disabled` flag from whichever session is currently
-        selected -- disabled whenever a subagent (not the root session) is selected, since "the
-        user cannot communicate with subagents directly" (docs/plans/ready/021-subagents.md's
-        "Prompt input" section). A no-op while `interaction-active` is set: an open permission/
-        ask-user-questions/escalate-privileges panel (`InteractionsMixin._enter_interaction_mode`/
-        `_exit_interaction_mode`) already owns the flag for its own duration, and by construction
-        only ever shows for the currently-selected session anyway (see
-        `_await_session_selected`), so there's nothing this method would change while it's up.
+        """Recompute the prompt input's `disabled` flag -- enabled for any selection, root or
+        subagent alike (see docs/specs/subagents.md's "Direct user messaging" section: a
+        submission while a subagent is selected routes to it via `dispatch_direct_message`
+        instead of the root session). A no-op while `interaction-active` is set: an open
+        permission/ask-user-questions/escalate-privileges panel
+        (`InteractionsMixin._enter_interaction_mode`/`_exit_interaction_mode`) already owns the
+        flag for its own duration, and by construction only ever shows for the currently-selected
+        session anyway (see `_await_session_selected`), so there's nothing this method would
+        change while it's up.
         """
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         if prompt_input.has_class("interaction-active"):
             return
-        prompt_input.disabled = self._selected_session is not self._session
+        prompt_input.disabled = False
 
     async def _await_session_selected(self, session_id: str) -> None:
         """Block the calling coroutine until `session_id` is the currently selected session,

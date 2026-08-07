@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from tools.subagents.conftest import _FakeProvider
 
-from klorb.agents.policy import compute_root_session_grants
+from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message
 from klorb.agents.runtime import SubagentHandle
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
@@ -181,3 +181,59 @@ def test_timeout_works_even_when_user_msg_event_is_set(tmp_path: Path) -> None:
     # The event was cleared at the start of apply(); timeout fires.
     assert exc_info.value.category == "transient"
     assert exc_info.value.response_body["incomplete_reason"] == "timeout"
+
+
+def test_never_returns_a_completion_from_a_subagent_a_human_messaged_directly(
+    tmp_path: Path,
+) -> None:
+    """A subagent a human resumed directly (`dispatch_direct_message` on a dormant handle,
+    `parent_interested=False`) must never surface through WaitForSubagent -- the parent never
+    asked for that reply."""
+    provider = _FakeProvider(reply_text="human-addressed reply")
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    CreateSubagentTool(context).apply({
+        "role": "explorer", "session_title": "task", "initial_message": "go",
+    })
+    handle = context.session.subagent_tracker.handles()[0]
+    handle.thread.join(timeout=5.0)
+    WaitForSubagentTool(context).apply({})  # deliver the first, parent-dispatched turn
+
+    dispatch_direct_message(context.process_config, handle.session, handle, "poking in directly")
+    new_handle = context.session.subagent_tracker.handles()[0]
+    new_handle.thread.join(timeout=5.0)
+
+    with pytest.raises(ToolCallError, match="no subagents"):
+        WaitForSubagentTool(context).apply({})
+
+
+def test_a_direct_message_enqueued_into_a_running_parent_dispatched_turn_still_delivers(
+    tmp_path: Path,
+) -> None:
+    """A human steering an already-running, parent-dispatched subagent turn (`dispatch_direct_
+    message`'s enqueue branch) doesn't opt the parent out of a reply it already expects --
+    `parent_interested` stays `True`, and WaitForSubagent still receives it once the turn actually
+    finishes."""
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    never_finishes = threading.Event()
+    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=context.session)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
+        cancel_event=threading.Event(), role="explorer", title="task")
+    context.session.subagent_tracker.register(handle)
+    handle.thread.start()
+
+    dispatch_direct_message(context.process_config, child, handle, "steering it mid-turn")
+    drained = child.drain_queued_messages()
+    assert [m.message_text for m in drained] == ["steering it mid-turn"]
+
+    never_finishes.set()
+    handle.thread.join(timeout=5.0)
+    context.session.subagent_tracker.mark_finished(child.id, "final answer")
+
+    result = WaitForSubagentTool(context).apply({})
+
+    assert handle.parent_interested is True
+    assert result["completed"][0]["output"] == "final answer"

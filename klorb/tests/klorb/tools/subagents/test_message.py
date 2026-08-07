@@ -116,3 +116,31 @@ def test_resumes_a_finished_subagent_and_its_new_output_is_deliverable(tmp_path:
 
     followup = WaitForSubagentTool(context).apply({})
     assert followup["completed"][0]["output"] == "second answer"
+
+
+def test_always_produces_a_parent_interested_handle_even_resuming_a_directly_messaged_one(
+    tmp_path: Path,
+) -> None:
+    """MessageSubagent is only ever called by the parent agent itself -- unlike a human's direct
+    message (`dispatch_direct_message`), its resume must always mark the parent as expecting a
+    reply, even when the subagent it's resuming was last messaged directly by a human (i.e. its
+    current handle has `parent_interested=False`)."""
+    provider = _FakeProvider(reply_text="human-addressed reply")
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    dormant_child = Session(
+        SessionConfig(role_name="explorer"), provider=provider, parent=context.session)
+    handle = SubagentHandle(
+        session=dormant_child, thread=threading.Thread(target=lambda: None),
+        cancel_event=threading.Event(), role="explorer", title="task", state="finished",
+        output="earlier, human-addressed output", parent_interested=False)
+    context.session.subagent_tracker.register(handle)
+
+    provider.reply_text = "parent-addressed reply"
+    MessageSubagentTool(context).apply({"id": dormant_child.id, "message": "any news?"})
+
+    new_handle = context.session.subagent_tracker.handles()[0]
+    new_handle.thread.join(timeout=5.0)
+    assert new_handle.parent_interested is True
+    followup = WaitForSubagentTool(context).apply({})
+    assert followup["completed"][0]["output"] == "parent-addressed reply"

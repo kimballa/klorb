@@ -57,7 +57,7 @@ class MessageSubagentTool(Tool):
                 "it to finish first.", category="validation")
         # Resuming a dormant (finished) subagent turns it back into a running one, so it costs
         # a concurrency slot exactly like CreateSubagent starting a new one does.
-        check_concurrency_limits(context, context.session)
+        check_concurrency_limits(context.process_config, context.session)
         dispatch_subagent_turn(
             context.session, handle.session, handle.role, handle.title, args["message"])
         return {
