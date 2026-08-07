@@ -25,7 +25,6 @@
 
 * Subagent roles:
   * Planner -- develop planning documentation for how to implement a new feature.
-  * Reviewer -- perform adversarial code review on a completed feature.
   * TaskMaster / ProjectManager -- keep track of fine-grained tasks and ensure that they are all
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
@@ -97,7 +96,6 @@
     get moved into Session. This will set up a clean mechanism for restricting skill availability
     for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
-  * Add skill for code review
   * When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
       privileged directory requiring `EscalatePrivileges(scope="workspace")` the same as
       `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content

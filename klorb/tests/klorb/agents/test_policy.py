@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.agents.policy: the CreateSubagent rejection checks and the tool/skill/role
 intersection wiring that produces a subagent's SessionConfig and tool registry -- driven
-against the real, packaged agents.json ("operator"/"explorer" entries) rather than a fixture,
-since these are exactly the entries CreateSubagent consults in production. See
+against the real, packaged agents.json ("operator"/"explorer"/"reviewer" entries) rather than a
+fixture, since these are exactly the entries CreateSubagent consults in production. See
 docs/specs/subagents.md.
 """
 
@@ -92,16 +92,17 @@ def test_rejects_unknown_role(tmp_path: Path) -> None:
 
 
 def test_operator_cannot_launch_another_operator(tmp_path: Path) -> None:
-    """operator's own agents.json entry names `restrict_to.subagent_roles: ["explorer"]`.
-    `_operator_context` builds its root session via `compute_root_session_grants`, the same path
-    every real root `Session` construction site uses, so `effective_subagent_roles` is already
-    `{"explorer"}` by the time `plan_subagent_creation` reads it -- not "every role agents.json
-    defines" -- so a root operator session can't spawn another operator."""
+    """operator's own agents.json entry names `restrict_to.subagent_roles: ["explorer",
+    "reviewer"]`. `_operator_context` builds its root session via `compute_root_session_grants`,
+    the same path every real root `Session` construction site uses, so `effective_subagent_roles`
+    is already `{"explorer", "reviewer"}` by the time `plan_subagent_creation` reads it -- not
+    "every role agents.json defines" -- so a root operator session can't spawn another
+    operator."""
     context = _operator_context(tmp_path)
 
     with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
         plan_subagent_creation(context, "operator", None, None)
-    assert "['explorer']" in str(exc_info.value)
+    assert "['explorer', 'reviewer']" in str(exc_info.value)
 
 
 def test_informed_cannot_launch_subagents_when_empty_roles_list(tmp_path: Path) -> None:

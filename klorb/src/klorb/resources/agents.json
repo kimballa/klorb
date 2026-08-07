@@ -9,12 +9,28 @@
       "default_model": "xiaomi/mimo-v2.5-pro",
       "restrict_to": {
         "subagent_roles": [
-          "explorer"
+          "explorer",
+          "reviewer"
         ]
       },
       "allow_subagents": true,
       "agent_capabilities": {
         "accepts_tasks": true,
+        "assigns_tasks": true,
+        "see_group_tasks": true
+      }
+    },
+    {
+      "name": "reviewer",
+      "default_model": "xiaomi/mimo-v2.5-pro",
+      "restrict_to": {
+        "subagent_roles": [
+          "explorer"
+        ]
+      },
+      "allow_subagents": true,
+      "agent_capabilities": {
+        "accepts_tasks": false,
         "assigns_tasks": true,
         "see_group_tasks": true
       }

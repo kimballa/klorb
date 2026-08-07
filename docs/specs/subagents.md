@@ -9,10 +9,10 @@ converse with asynchronously, and receive a report back from — `CreateSubagent
 system prompt, and (usually narrower) tool/skill access, but it is not a standing team member:
 it answers one request and sits dormant until asked a follow-up or the whole session tree closes.
 
-Today only the `explorer` role exists as something a subagent can be launched as
-(`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`), and only the
-`operator` role (the top-level, user-facing session) is permitted to launch one — see
-`klorb/src/klorb/resources/agents.json`.
+Today two roles exist as something a subagent can be launched as -- `explorer`
+(`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`) and `reviewer`
+(`.../roles/reviewer/default.md`) -- and only the `operator` role (the top-level, user-facing
+session) is permitted to launch either — see `klorb/src/klorb/resources/agents.json`.
 
 ## Configuration
 
@@ -382,8 +382,30 @@ sub-questions to its own Explorer subagents), and a `tools` list covering `FindF
 `SearchMemories`, `ReadMemory`, `EditScratchpad`, `ReadScratchpad`, and `WebFetch`.
 `restrict_to.subagent_roles` names `["explorer"]` and `allow_subagents: true`, so an Explorer may
 itself launch further Explorer subagents (bounded by `tools.subagents.maxDepth` like any other
-nesting) — operator's own `restrict_to.subagent_roles` names only `["explorer"]` too, so neither
-role can ever launch an `operator` subagent (see "Security model" above).
+nesting) — operator's own `restrict_to.subagent_roles` names `["explorer", "reviewer"]`, so
+neither role can ever launch an `operator` subagent (see "Security model" above).
+
+## Reviewer role
+
+`resources/system_prompts.d/roles/reviewer/default.md` instructs the Reviewer to audit a
+completed change (via the `internal:code-review` skill) and report back to whoever launched it,
+never to keep developing the change itself. Unlike Explorer, its `agents.json` entry sets no
+`restrict_to.tools`/`.skills` at all and `enforce_readonly_tools` is left at its `false` default
+— a Reviewer inherits its creator's full tool set, including `Bash` and the file-edit tools, so
+it can reproduce a suspected bug (a throwaway script, a temporary probe edit, an actual test run)
+rather than only reading code and guessing. It's still expected to leave the working tree exactly
+as it found it — that discipline lives in the role's prompt and the `code-review` skill, not in a
+tool restriction, since confirming a bug sometimes requires the same tools that would let it fix
+one. See [[grant-reviewer-full-tools-not-enforce-readonly]] for why this deliberately diverges
+from Explorer's `enforce_readonly_tools: true` pattern.
+
+`restrict_to.subagent_roles` names `["explorer"]` and `allow_subagents: true`, so a Reviewer may
+launch Explorer subagents to read a diff and its surrounding code in parallel. Its
+`agent_capabilities` are `accepts_tasks: false` (it never holds a tracked task of its own — a
+review is a bounded request/response, not ongoing work), `assigns_tasks: true` (it may file
+follow-up work it finds but decides is out of scope, assigned to the parent or another agent in
+the group), and `see_group_tasks: true` (it may see everything the group is tracking, for
+context on what the change was supposed to accomplish).
 
 ## Subagents panel (TUI)
 
@@ -495,7 +517,7 @@ problem, and a reload/restore of the same session renders correctly either way.)
   an explicit `WaitForSubagent` call). `Session.append_system_note()` (used by
   `cascade_close_subagents`) is the primitive a future "wake an idle session" mechanism would
   reuse for the message shape, but nothing calls it for that purpose today.
-* **`VisionAssistant` role** and any other specialist role beyond Explorer.
+* **`VisionAssistant` role** and any other specialist role beyond Explorer and Reviewer.
 * **`@mention` filtering by the creator's `readDirs`.** Today a `@mention` in a message sent to
   a subagent is left entirely unresolved (see "Security model"); actually resolving it while
   still applying the creator's own `readDirs` rules is unbuilt.
