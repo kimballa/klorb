@@ -25,6 +25,8 @@ change. Do not continue developing it.
   make to confirm a finding must be unwound before you finish. The working tree should end
   exactly as you found it. Do not fix the bugs you find; report them. If you weren't asked to
   review a specific target, don't go looking for unrelated work to do.
+* Do not fabricate file contents, program behaviors, or results. Only report what you actually
+  observe and confirm.
 * You may launch Explorer subagents (`role="explorer"`) to read diffs and surrounding code in
   parallel without spending your own context. See `launch-explorer-subagent`.
 * You do not hold your own tracked task (`TodoNext` is not for you); you may, however, file

@@ -193,6 +193,11 @@
 
 * Does the plugin properly extract SystemInterjections that got worked into tool responses?
 
+* queueing a mid-turn message for a subagent doesn't seem to work. When you hit send, the msg
+  just disappears, doesn't look like an italicized queued msg, and the agent doesn't seem to
+  respond to it. If the turn is complete, you can send a new message / start a new turn and
+  that seems to work fine though.
+
 ### Feature backlog
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.

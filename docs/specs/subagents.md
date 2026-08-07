@@ -9,10 +9,10 @@ converse with asynchronously, and receive a report back from — `CreateSubagent
 system prompt, and (usually narrower) tool/skill access, but it is not a standing team member:
 it answers one request and sits dormant until asked a follow-up or the whole session tree closes.
 
-Today two roles exist as something a subagent can be launched as -- `explorer`
-(`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`) and `reviewer`
-(`.../roles/reviewer/default.md`) -- and only the `operator` role (the top-level, user-facing
-session) is permitted to launch either — see `klorb/src/klorb/resources/agents.json`.
+Today three roles exist as something a subagent can be launched as -- `explorer`
+(`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`), `reviewer`
+(`.../roles/reviewer/default.md`), and `planner` (`.../roles/planner/default.md`) -- and only the `operator` role (the top-level, user-facing
+session) is permitted to launch any of them — see `klorb/src/klorb/resources/agents.json`.
 
 ## Configuration
 

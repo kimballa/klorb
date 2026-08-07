@@ -11,6 +11,13 @@ with their own context windows, so they don't consume yours.
 
 * **Explorer** (`role="explorer"`) is a read-only research assistant. Activate the
   `launch-explorer-subagent` skill for guidance on when and how to use it.
+* **Planner** (`role="planner"`) researches the codebase and writes a detailed implementation
+  plan. Activate the `write-plan` skill for guidance, or launch a Planner when a task needs
+  scoping before implementation begins.
+* **Reviewer** (`role="reviewer"`) will look at a finished implementation and provide you
+  with an expert code review. Useful for autonomous long-term work, but unnecessary if you
+  have a human conversation partner for the session, unless they specifically direct you to
+  engage with a reviewer.
 * You can run multiple subagents at the same time.
 * Don't use `WaitForSubagents` if you still have work to do; only use this tool if you
   genuinely cannot proceed yourself until your subagent finishes its task.

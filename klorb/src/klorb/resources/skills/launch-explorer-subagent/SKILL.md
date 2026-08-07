@@ -42,7 +42,8 @@ Call `CreateSubagent` with:
 The Explorer will work asynchronously. You can:
 
 * Continue working and let the result arrive as a `SystemInterjection` when it's done.
-* Call `WaitForSubagent` if you need the answer before continuing. This tool will pause your session so use it only if you do not have anything else to do in the meantime.
+* Call `WaitForSubagent` if you need the answer before continuing. This tool will pause your session
+  so use it only if you do not have anything else to do in the meantime.
 * Call `MessageSubagent` to send a follow-up question after the Explorer finishes.
 
 ## Composing the initial message
@@ -56,7 +57,10 @@ The Explorer only sees what you tell it — it has no memory of your conversatio
 * Tell it what format you want the answer in (e.g. "list the files and their roles", "explain
   the data flow", "summarize the differences between X and Y").
 * If there are constraints (e.g. "only look at Python files", "ignore tests"), say so.
-* Be specific about the level of detail you require. If you only need a filename and line number where some piece of primary information can be found, say so. If you want greater exposition, state what kind of extra content is helpful. If you need a report, state a word or token limit budget for the Explorer to fill.
+* Be specific about the level of detail you require.
+  * Give the Explorer a word count or token limit budget for its output.
+  * If you only need a filename and line number where some piece of primary information can be found, say so.
+  * If you want greater exposition, state what kind of extra content is helpful.
 
 ## Example
 
