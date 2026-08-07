@@ -70,9 +70,7 @@ class TodoListTool(Tool):
                     "type": "string",
                     "enum": ["self", "group"],
                     "description": (
-                        "\"self\" (default) lists only issues assigned to you. \"group\" lists "
-                        "every issue in your group, regardless of assignment -- requires the "
-                        "ability to see the whole group's tasks."
+                        "\"self\" for just your issues, \"group\" for all in the project."
                     ),
                 },
             },
@@ -89,8 +87,8 @@ class TodoListTool(Tool):
             role_name = session.config.role_name if session is not None else None
             if role_name is None or not get_agent_capabilities(role_name).see_group_tasks:
                 raise ToolCallError(
-                    f"The {role_name!r} role may not view the whole group's tasks.",
-                    category="validation")
+                    f"The {role_name!r} role may not view the whole group's tasks. You must "
+                    "set \"scope\": \"self\".", category="validation")
         client = ChainlinkClient(self.context)
 
         if len(ids) == 1:

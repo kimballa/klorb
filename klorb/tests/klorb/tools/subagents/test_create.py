@@ -118,7 +118,7 @@ def test_apply_does_not_touch_chainlink_when_child_has_no_task_tool(tmp_path: Pa
 
     tool.apply({"role": "explorer", "session_title": "task", "initial_message": "go"})
 
-    assert context.session._chainlink_client_ensured is False
+    assert "tasks" not in context.session.tool_state
     context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
 
 
@@ -137,7 +137,7 @@ def test_apply_ensures_the_creators_chainlink_client_when_child_has_a_task_tool(
 
     tool.apply({"role": "explorer", "session_title": "task", "initial_message": "go"})
 
-    assert context.session._chainlink_client_ensured is True
+    assert context.session.tool_state["tasks"]["client"] is not None
     assert "ChainlinkClient" in context.session._teardown_callbacks
     context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
 

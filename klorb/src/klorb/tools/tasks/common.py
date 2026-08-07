@@ -50,6 +50,10 @@ def agent_label(agent_id: str) -> str:
     return f"{AGENT_LABEL_PREFIX}{agent_id}"
 
 
+CHAINLINK_CLIENT_TOOL_STATE_KEY = "tasks"
+"""`session.tool_state["tasks"]["client"]` key under which `Session.ensure_chainlink_client()`
+caches the `ChainlinkClient` it constructs for its own close-time-teardown bookkeeping."""
+
 TASK_TOOL_NAMES: frozenset[str] = frozenset({"TodoList", "TodoNext", "TodoCreate", "TodoUpdate"})
 """Every klorb tool name that can change the chainlink task list or the session's current
 tracked task -- shared by the TUI's task sidebar refresh
@@ -354,12 +358,18 @@ class ChainlinkClient:
 
     def create_issue(
         self, title: str, *, description: str | None = None, priority: Priority = "medium",
+        extra_label: str | None = None,
     ) -> int:
-        """Create a new issue under this client's label and return its new id. `chainlink issue
-        create` doesn't emit JSON regardless of `--json` (verified against the installed
-        binary), so the new id is parsed from `--quiet`'s bare-value stdout instead."""
+        """Create a new issue under this client's label and return its new id. `extra_label`, if
+        given, is attached as a second label alongside it -- e.g. the per-agent assignment label
+        `TodoCreate` gives a new issue up front, rather than a separate `add_label` call right
+        after creation. `chainlink issue create` doesn't emit JSON regardless of `--json`
+        (verified against the installed binary), so the new id is parsed from `--quiet`'s
+        bare-value stdout instead."""
         validate_priority(priority)
         args = ["issue", "create", title, "--priority", priority, "--label", self._label]
+        if extra_label is not None:
+            args.extend(["--label", extra_label])
         if description is not None:
             args.extend(["--description", description])
         result = self._run(args, quiet=True)
@@ -404,15 +414,20 @@ class ChainlinkClient:
     def comment(self, issue_id: int, text: str, *, kind: CommentKind = "note") -> None:
         self._run(["issue", "comment", str(issue_id), text, "--kind", kind], quiet=True)
 
-    def add_label(self, issue_id: int, label: str) -> None:
-        """Add `label` to `issue_id` -- idempotent (a no-op, not an error, if already present;
-        verified against the installed binary)."""
-        self._run(["issue", "label", str(issue_id), label], quiet=True)
+    def add_label(self, issue_id: int, label: str) -> bool:
+        """Add `label` to `issue_id`, returning whether this call actually added it (`True`) as
+        opposed to it already being present (`False`) -- idempotent either way, but `chainlink`
+        reports `"Added label ..."` vs `"Label ... already exists ..."` on the same exit status
+        (verified against the installed binary), so a caller racing another agent to claim a
+        label needs the stdout text, not just a successful exit code, to know who actually won."""
+        result = self._run(["issue", "label", str(issue_id), label], quiet=True)
+        return "Added" in result.stdout
 
-    def remove_label(self, issue_id: int, label: str) -> None:
-        """Remove `label` from `issue_id` -- idempotent (a no-op, not an error, if not present;
-        verified against the installed binary)."""
-        self._run(["issue", "unlabel", str(issue_id), label], quiet=True)
+    def remove_label(self, issue_id: int, label: str) -> bool:
+        """Remove `label` from `issue_id`, returning whether this call actually removed it
+        (`True`) as opposed to it already being absent (`False`) -- see `add_label`."""
+        result = self._run(["issue", "unlabel", str(issue_id), label], quiet=True)
+        return "Removed" in result.stdout
 
     def close_all(self) -> None:
         """Close every open issue under this client's label -- see `_close_all_on_teardown`,

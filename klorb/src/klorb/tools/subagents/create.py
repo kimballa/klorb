@@ -109,7 +109,7 @@ class CreateSubagentTool(Tool):
         logger.debug(
             "Created subagent %s (role=%s, model=%s) under %s",
             child.id, args["role"], model, context.session.id)
-        if set(plan.tool_classes) & TASK_TOOL_NAMES:
+        if not TASK_TOOL_NAMES.isdisjoint(plan.tool_classes.keys()):
             # The new subagent's own tool set includes a TASKS tool, so it could plausibly
             # create/track chainlink issues -- ensure the creating session has a ChainlinkClient
             # of its own, so the group's close-time cleanup gets registered even if the creator

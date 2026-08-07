@@ -343,7 +343,7 @@ def test_ensure_chainlink_client_registers_teardown_for_a_root_session(tmp_path:
     session.ensure_chainlink_client()
 
     assert "ChainlinkClient" in session._teardown_callbacks
-    assert session._chainlink_client_ensured is True
+    assert session.tool_state["tasks"]["client"] is not None
 
 
 @requires_chainlink
@@ -372,7 +372,7 @@ def test_ensure_chainlink_client_is_a_noop_without_a_process_config(tmp_path: Pa
 
     session.ensure_chainlink_client()  # no raise, no attempt
 
-    assert session._chainlink_client_ensured is False
+    assert "tasks" not in session.tool_state
 
 
 @requires_chainlink
@@ -382,10 +382,10 @@ def test_add_label_and_remove_label_round_trip(tmp_path: Path) -> None:
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Label me")
 
-    client.add_label(issue_id, "agent:someone")
+    assert client.add_label(issue_id, "agent:someone") is True
     assert "agent:someone" in client.show_issue(issue_id)["labels"]
 
-    client.remove_label(issue_id, "agent:someone")
+    assert client.remove_label(issue_id, "agent:someone") is True
     assert "agent:someone" not in client.show_issue(issue_id)["labels"]
 
 
@@ -396,8 +396,8 @@ def test_add_label_is_idempotent(tmp_path: Path) -> None:
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Label me twice")
 
-    client.add_label(issue_id, "agent:someone")
-    client.add_label(issue_id, "agent:someone")  # no raise
+    assert client.add_label(issue_id, "agent:someone") is True
+    assert client.add_label(issue_id, "agent:someone") is False  # already there
 
     assert client.show_issue(issue_id)["labels"].count("agent:someone") == 1
 
@@ -409,7 +409,7 @@ def test_remove_label_is_a_noop_when_absent(tmp_path: Path) -> None:
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Nothing to remove")
 
-    client.remove_label(issue_id, "agent:never-added")  # no raise
+    assert client.remove_label(issue_id, "agent:never-added") is False
 
 
 @requires_chainlink
