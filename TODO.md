@@ -23,12 +23,16 @@
   the BashTool command classifier and if it appears that a bash command could gain unmasked access
   to the file contents, it should be marked as 9/10+ risk (credential extraction attempt).
 
-* Subagent roles:
-  * Planner -- develop planning documentation for how to implement a new feature.
+* New Subagent roles:
   * TaskMaster / ProjectManager -- keep track of fine-grained tasks and ensure that they are all
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
     registered with chainlink.
+  * May also want an "Implementer" role which is basically like Operator but only for the implementation
+    part; doesn't itself spawn planners, reviewers, etc. Its job is to just implement plans already
+    written. It may create tasks for itself but not others, see group-wide tasks, and receive tasks.
+  * Add a skill for Operator to manage a Planner, one or more Implementers, and Reviewer(s) to
+    deliver a complete feature.
   * ... The goal of this is to eventually support a "software factory" model where the system is
     autonomously continuously pulling new tasks out from a queue (e.g. a directory filled with new
     feature spec documents or bug report documents) and executing them one after the next.
@@ -65,11 +69,6 @@
   could start from the common symlink side when picking things to remove and also clean up dead
   symlinks.
 
-* ReadFile security: Put everything thru a filter that recognizes AWS access key id fields, etc, and
-  just anonymizes those fields before passing to the LLM. (figure out a special replacement token so
-  that readfile and editfile can interact in a loop even with field masking making literal context
-  matching in EditFile impossible.)
-
 * `klorb system-prompt` should have a `--export` option
   that dumps the *resolved* system prompt files for the current role + model into the
   user's editable tree (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same
@@ -104,14 +103,6 @@
   * Eventually when we have a lot of skills, the skill list that is auto-advertised in the
     initial SystemInterjection should be pruned and only display some top most-relevant
     skills or most-frequently-used skills. Let the agent discover others via SearchSkills.
-
-* Agent teams
-  * A team of specialist agents working a larger coding problem in parallel or in series:
-    writing specs and ADRs, writing code, system design, writing tests, and reviewing code —
-    the latter possibly its own team of specialists (correctness, performance,
-    cybersecurity, ...). `Role` subclasses (`klorb/src/klorb/role.py`) and
-    `Role.repertoire()` are the placeholder hooks for this.
-* Need a Planning Tool or Planning Mode agent
 
 * Permissions
   * BashTool / bubblewrap sandbox follow-ups: a `--seccomp` defense-in-depth
