@@ -477,6 +477,21 @@ export interface PromptHistoryMessage {
   entries: string[];
 }
 
+/** One discoverable skill, flattened from the klorb server's `_klorb/listSkills` result. */
+export interface SkillEntry {
+  namespace: string;
+  name: string;
+  description: string;
+}
+
+/** The session's discoverable skill catalog, pushed once when the view resolves and re-pushed
+ * after a `_klorb/reloadSkills` completes. Backs the prompt input's `/`-mention skill finder
+ * (`webview/features/skillFinder`). Empty when no skills are discoverable. */
+export interface SkillsMessage {
+  type: 'skills';
+  entries: SkillEntry[];
+}
+
 /** An image the user picked via the status row's "Attach Image…" menu item (see
  * `AttachImageFileMessage`) is ready to add to the prompt input's pending attachment tray --
  * the same shape a drag-drop/paste attachment reaches internally. */
@@ -511,6 +526,7 @@ export type HostMessage =
   | SessionReplayMessage
   | WorkspaceFilesMessage
   | PromptHistoryMessage
+  | SkillsMessage
   | ImageAttachedMessage;
 
 /** An attached image's caption-worthy metadata, without its bytes -- what a restored/replayed
@@ -1221,6 +1237,25 @@ function parsePromptHistory(record: Record<string, unknown>): PromptHistoryMessa
   return { type: 'promptHistory', entries: record.entries };
 }
 
+function isSkillEntry(value: unknown): value is SkillEntry {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.namespace === 'string' &&
+    typeof v.name === 'string' &&
+    typeof v.description === 'string'
+  );
+}
+
+function parseSkills(record: Record<string, unknown>): SkillsMessage | undefined {
+  if (!Array.isArray(record.entries) || !record.entries.every(isSkillEntry)) {
+    return undefined;
+  }
+  return { type: 'skills', entries: record.entries };
+}
+
 function parseImageAttached(record: Record<string, unknown>): ImageAttachedMessage | undefined {
   if (!isImageAttachment(record.image)) {
     return undefined;
@@ -1340,6 +1375,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseWorkspaceFiles(record);
     case 'promptHistory':
       return parsePromptHistory(record);
+    case 'skills':
+      return parseSkills(record);
     case 'imageAttached':
       return parseImageAttached(record);
     default:

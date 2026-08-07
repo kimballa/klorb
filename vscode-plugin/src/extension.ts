@@ -316,9 +316,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('klorb.showSessionStats', () =>
       showSessionStatsCommand(sessionControls, commandsVsCode)
     ),
-    vscode.commands.registerCommand('klorb.reloadSkills', () =>
-      reloadSkillsCommand(sessionControls, commandsVsCode)
-    ),
+    vscode.commands.registerCommand('klorb.reloadSkills', async () => {
+      await reloadSkillsCommand(sessionControls, commandsVsCode);
+      void provider.refreshSkills();
+    }),
     vscode.commands.registerCommand('klorb.setOpenRouterApiKey', () =>
       apiKeyManager.setApiKeyCommand()
     ),

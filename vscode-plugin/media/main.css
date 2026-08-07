@@ -794,6 +794,17 @@ button.bash-tool-call-command {
   white-space: nowrap;
 }
 
+.skill-finder-row-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
 .approval-panel {
   flex: 0 0 auto;
   display: flex;

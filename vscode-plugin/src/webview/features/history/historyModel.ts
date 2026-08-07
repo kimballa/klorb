@@ -403,6 +403,7 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
       return applySessionReplay(message.entries);
     case 'workspaceFiles':
     case 'promptHistory':
+    case 'skills':
     case 'imageAttached':
       // Tracked separately by `App`'s own `workspaceFiles`/`promptHistory` state, not as a
       // history entry -- the file finder and prompt input read from that state instead.

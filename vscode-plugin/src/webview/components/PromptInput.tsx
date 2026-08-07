@@ -16,10 +16,11 @@ import {
 
 import { readImageDimensions } from 'shared/imageDimensions';
 import { IMAGE_FILE_MIME_TYPES } from 'shared/imageFileTypes';
-import type { ImageAttachment } from 'shared/webviewMessages';
+import type { ImageAttachment, SkillEntry } from 'shared/webviewMessages';
 import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
 import { StopMediaIcon } from 'webview/components/klorbIcons';
 import { FileFinderPanel, useFileFinder } from 'webview/features/fileFinder';
+import { SkillFinderPanel, useSkillFinder } from 'webview/features/skillFinder';
 import { classifyEnterKey } from 'webview/keyHandling';
 
 const MIN_ROWS = 1;
@@ -85,6 +86,9 @@ interface PromptInputProps {
    * file finder (`webview/features/fileFinder`). Empty until the host's `workspaceFiles`
    * message arrives, or when no workspace folder is open. */
   workspaceFiles?: string[];
+  /** The discoverable skill catalog (see `App`'s `skills` state), backing the `/`-mention
+   * skill finder (`webview/features/skillFinder`). Empty when no skills are discoverable. */
+  skills?: SkillEntry[];
   /** Past prompt texts for up/down-arrow recall, oldest-first. Pushed by the host on view
    * resolve and after each submitted prompt. Empty when no prompts have been submitted yet. */
   promptHistory?: string[];
@@ -150,6 +154,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     muted = false,
     enqueueMessageCapable = false,
     workspaceFiles = [],
+    skills = [],
     promptHistory = [],
     imagesCapable = false,
     sessionKey = 'root',
@@ -176,6 +181,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
   const disabled = inFlight && !enqueueMessageCapable;
   const finder = useFileFinder(workspaceFiles);
+  const skillFinder = useSkillFinder(skills);
   // Per-session draft persistence: swaps `draft` when `sessionKey` changes, stashing the
   // outgoing session's current text first -- so switching the subagents-panel selection away and
   // back restores whatever was being typed, rather than losing it or leaking it into the wrong
@@ -376,6 +382,25 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     el?.focus();
   }
 
+  function applySkillFinderSelection(index?: number): void {
+    const selection = skillFinder.select(draft, index);
+    if (selection === undefined) {
+      return;
+    }
+    const el = textareaRef.current;
+    if (el !== null) {
+      el.value = selection.text;
+      const wrapped = el.wrappedElement;
+      if (wrapped) {
+        wrapped.selectionStart = selection.cursor;
+        wrapped.selectionEnd = selection.cursor;
+      }
+    }
+    setDraft(selection.text);
+    computeRows(selection.text);
+    el?.focus();
+  }
+
   /** Writes `text` into the textarea (both DOM and React state) and recomputes rows. Shared by
    * history recall and (indirectly) `applyFinderSelection`. */
   function setTextareaValue(text: string): void {
@@ -463,6 +488,28 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         return;
       }
     }
+    if (skillFinder.isOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        skillFinder.dismiss();
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        skillFinder.moveActive(1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        skillFinder.moveActive(-1);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        applySkillFinderSelection();
+        return;
+      }
+    }
     if (event.key === 'Tab' && event.shiftKey) {
       // Claims Shift+Tab for the permission-mode cycle (mirroring the TUI's own Shift+Tab)
       // instead of letting it fall through to the browser's default tab-order navigation.
@@ -518,6 +565,14 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
             onSelect={applyFinderSelection}
           />
         ) : null}
+        {skillFinder.isOpen ? (
+          <SkillFinderPanel
+            matches={skillFinder.matches}
+            activeIndex={skillFinder.activeIndex}
+            onHover={skillFinder.setActiveIndex}
+            onSelect={applySkillFinderSelection}
+          />
+        ) : null}
         <vscode-textarea
           ref={textareaRef}
           id="prompt-input"
@@ -531,14 +586,19 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
             setDraft(value);
             computeRows(value);
             finder.sync(value, cursorPosition(event));
+            skillFinder.sync(value, cursorPosition(event));
             detachFromHistory();
           }}
           onKeyUp={(event: KeyboardEvent<HTMLElement>) => {
             if (CARET_MOVE_KEYS.has(event.key)) {
               finder.sync(draft, cursorPosition(event));
+              skillFinder.sync(draft, cursorPosition(event));
             }
           }}
-          onClick={(event: SyntheticEvent) => finder.sync(draft, cursorPosition(event))}
+          onClick={(event: SyntheticEvent) => {
+            finder.sync(draft, cursorPosition(event));
+            skillFinder.sync(draft, cursorPosition(event));
+          }}
           onPaste={handlePaste}
         />
         {!inFlight || enqueueMessageCapable ? (

@@ -189,15 +189,22 @@
   respond to it. If the turn is complete, you can send a new message / start a new turn and
   that seems to work fine though.
 
+* fuzzy-finders for files and skills do properly insert the full path or skill name at the
+  right position in the prompt. But then they try to move the user's cursor forward, and they
+  push the cursor all the way to the very end of the text input. Which is incorrect if the
+  user backed up into the middle of a longer passage and typed `@` or `/` there to trigger
+  the relevant fuzzy-finder.
+
 ### Feature backlog
+
+* The BashTool short summary is good but when you click the `>` it should pretty-print
+  the longer data (i.e., it's more important that the user can read stdout and stderr logs
+  than showing all the complete raw json.)
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.
   How tall is that, exactly? I feel like it should be no more than 5 or 6 rows high.
-
-* When the user types `/` it should pop up a fuzzy-finder panel to hone in on the skill the user
-  wants to invoke.
 
 ## Remaining / future work from `plan` epics
 

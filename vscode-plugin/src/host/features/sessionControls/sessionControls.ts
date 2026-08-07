@@ -1,6 +1,6 @@
 // © Copyright 2026 Aaron Kimball
 import { errorMessage, type AcpConnection, type LogFn, type SessionInfo } from 'host/features/acp';
-import type { ThinkingEffort } from 'shared/webviewMessages';
+import type { SkillEntry, ThinkingEffort } from 'shared/webviewMessages';
 
 /** Every `PermissionFramework` value, in the order the badge cycles through -- mirrors
  * `klorb.tui.constants.PERMISSION_FRAMEWORK_CYCLE`. */
@@ -257,6 +257,16 @@ export class SessionControls {
       throw new Error('klorb server returned a malformed _klorb/reloadSkills result');
     }
     return count;
+  }
+
+  /** Fetches every discoverable skill's namespace, name, and description (`_klorb/listSkills`). */
+  public async listSkills(): Promise<SkillEntry[]> {
+    const raw = await this._connection.extMethod('_klorb/listSkills', {});
+    const entries = raw.skills;
+    if (!Array.isArray(entries)) {
+      throw new Error('klorb server returned a malformed _klorb/listSkills result');
+    }
+    return entries as SkillEntry[];
   }
 
   private _setCurrentMode(modeId: string): void {

@@ -394,6 +394,19 @@ class KlorbAcpAgent(acp.Agent):
             self._acp_session_id, len(catalogs.canonical))
         return {"skillCount": len(catalogs.canonical)}
 
+    def _ext_list_skills(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_session_id(params)
+        assert self._session is not None
+        skills = self._session._discover_skills()
+        entries = [
+            {"namespace": skill.namespace, "name": skill.name, "description": skill.description}
+            for skill in skills
+        ]
+        logger.debug(
+            "_klorb/listSkills returning %d skill(s) for ACP session %s",
+            len(entries), self._acp_session_id)
+        return {"skills": entries}
+
     def _ext_enqueue_message(self, params: dict[str, Any]) -> dict[str, Any]:
         """Queue `params["text"]` as a `QueuedMessage` for delivery into the running turn --
         see `_klorb/enqueueMessage` in docs/specs/klorb-server.md. Only valid while a
@@ -612,6 +625,8 @@ class KlorbAcpAgent(acp.Agent):
             return self._ext_session_stats(params)
         if method == "klorb/reloadSkills":
             return self._ext_reload_skills(params)
+        if method == "klorb/listSkills":
+            return self._ext_list_skills(params)
         if method == "klorb/trustWorkspace":
             return self._ext_trust_workspace(params)
         if method == "klorb/enqueueMessage":

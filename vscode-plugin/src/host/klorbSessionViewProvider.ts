@@ -23,6 +23,7 @@ import {
   type PermissionAskMessage,
   type QuestionAskMessage,
   type SessionReplayEntry,
+  type SkillEntry,
   type TaskListUpdateMessage,
   type ToolCallLimitAskMessage,
   type ToolCallStartedMessage,
@@ -60,6 +61,9 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   // `FileSearch.watch()` callback -- re-posted (not re-scanned) on `resolveWebviewView()`, the
   // same "repost cached state to a freshly resolved view" pattern `postSnapshot()` uses.
   private _workspaceFiles: string[] = [];
+  // Cached skill entries from `_klorb/listSkills`, re-posted on resolve (same pattern as
+  // `_workspaceFiles`).
+  private _skills: SkillEntry[] = [];
   private _promptHistory: PromptHistory | undefined;
   private _workspaceCwd: string = '';
 
@@ -138,9 +142,13 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this._connection?.client?.repostPendingInteraction();
     this._sessionControls?.postSnapshot();
     this.postHostMessage({ type: 'workspaceFiles', files: this._workspaceFiles });
+    this.postHostMessage({ type: 'skills', entries: this._skills });
     // Deferred to the next tick so the webview's React app has time to mount and register its
     // message listener -- a synchronous post here arrives before `useEffect` fires.
     setTimeout(() => this._postPromptHistory(), 0);
+    // Also deferred: skill catalog fetch needs a live session (the first `session/new` may
+    // not have completed yet when the view resolves).
+    setTimeout(() => void this.refreshSkills(), 0);
   }
 
   public onAgentText(text: string): void {
@@ -167,6 +175,9 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
 
   public onSessionInfo(info: SessionInfo): void {
     this._sessionControls?.applySessionInfo(info);
+    // Session just became ready (new or loaded) -- fetch the skill catalog now that
+    // `_klorb/listSkills` can succeed.
+    void this.refreshSkills();
   }
 
   public onModeChanged(modeId: string): void {
@@ -493,6 +504,20 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   public setWorkspaceFiles(files: string[]): void {
     this._workspaceFiles = files;
     this.postHostMessage({ type: 'workspaceFiles', files });
+  }
+
+  /** Fetches the discoverable skill catalog from the server and caches/pushes it to the
+   * webview. Called on view resolve (deferred) and after a `_klorb/reloadSkills` completes. */
+  public async refreshSkills(): Promise<void> {
+    try {
+      const skills = await this._sessionControls?.listSkills();
+      if (skills !== undefined) {
+        this._skills = skills;
+        this.postHostMessage({ type: 'skills', entries: skills });
+      }
+    } catch (err) {
+      this._log(`klorb: failed to fetch skill list: ${errorMessage(err)}`);
+    }
   }
 
   /**

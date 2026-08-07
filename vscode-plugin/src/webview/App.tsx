@@ -5,6 +5,7 @@ import {
   parseHostMessage,
   type ImageAttachment,
   type QuestionAskMessage,
+  type SkillEntry,
   type StatusUpdateMessage,
   type SubagentNodeInfo,
 } from 'shared/webviewMessages';
@@ -88,6 +89,9 @@ export default function App({
   // every time the view resolves (see `KlorbSessionViewProvider._postWorkspaceFiles()`), so a
   // fresh value always follows shortly after a webview reload rather than risking a stale one.
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
+  // Re-pushed by the host on resolve and after a reload; not persisted via `vscode.setState()`
+  // for the same reason as `workspaceFiles`.
+  const [skills, setSkills] = useState<SkillEntry[]>([]);
   // Re-pushed by the host on resolve and after each submitted prompt; not persisted via
   // `vscode.setState()` for the same reason as `workspaceFiles`.
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
@@ -290,6 +294,9 @@ export default function App({
       }
       if (message.type === 'workspaceFiles') {
         setWorkspaceFiles(message.files);
+      }
+      if (message.type === 'skills') {
+        setSkills(message.entries);
       }
       if (message.type === 'promptHistory') {
         setPromptHistory(message.entries);
@@ -587,6 +594,7 @@ export default function App({
         enqueueMessageCapable={isSubagentSelected ? true : status.enqueueMessageCapable}
         sessionKey={selectedSubagentId ?? 'root'}
         workspaceFiles={workspaceFiles}
+        skills={skills}
         promptHistory={promptHistory}
         imagesCapable={status.activeModelVision}
         onSubmit={submit}
