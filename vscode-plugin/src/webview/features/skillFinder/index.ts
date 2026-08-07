@@ -22,3 +22,5 @@ export {
   type SkillInsertion,
   type SkillMentionContext,
 };
+
+export type { Finder, FinderSelection } from '../fileFinder';

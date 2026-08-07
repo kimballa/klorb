@@ -119,9 +119,9 @@ function needsQuotedMention(relPath: string): boolean {
   return TRAILING_MENTION_PUNCTUATION.has(relPath.slice(-1));
 }
 
-/** The result of splicing a selected file into the prompt's text: the full new text, and where
- * the cursor should land afterward. */
-export interface MentionInsertion {
+/** The result of splicing a selected finder match into the prompt's text: the full new text, and
+ * where the cursor should land afterward. */
+export interface FinderSelection {
   text: string;
   cursor: number;
 }
@@ -136,7 +136,7 @@ export function buildMentionInsertion(
   mentionStart: number,
   cursor: number,
   relPath: string
-): MentionInsertion {
+): FinderSelection {
   const insertion = needsQuotedMention(relPath)
     ? `@"${escapeQuotedMentionPath(relPath)}" `
     : `@${escapeMentionPath(relPath)} `;
@@ -155,7 +155,7 @@ export function buildDirectoryInsertion(
   mentionStart: number,
   cursor: number,
   relPath: string
-): MentionInsertion {
+): FinderSelection {
   const insertion = `@${escapeMentionPath(relPath)}/`;
   return {
     text: text.slice(0, mentionStart) + insertion + text.slice(cursor),

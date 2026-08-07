@@ -10,8 +10,8 @@ import {
   pathDepth,
   splitQueryDirectory,
   type FinderMatch,
+  type FinderSelection,
   type MentionContext,
-  type MentionInsertion,
 } from './fileFinderModel';
 
 /** How many ranked matches the popup keeps, scrollable within its fixed on-screen height (see
@@ -30,16 +30,17 @@ const DIRECTORY_SCORE_BUMP = 0.1;
  * workspace root outranks one nested many levels deep. */
 const DIRECTORY_DEPTH_PENALTY = 0.02;
 
-export type FileFinderSelection = MentionInsertion;
+/** @deprecated Use `FinderSelection` from `fileFinderModel`. */
+export type FileFinderSelection = FinderSelection;
 
 interface FinderState {
   mention: MentionContext;
   matches: FinderMatch[];
 }
 
-export interface FileFinder {
+export interface Finder<M> {
   isOpen: boolean;
-  matches: FinderMatch[];
+  matches: M[];
   activeIndex: number;
   /** Recomputes the finder's mention/matches from the textarea's current text and cursor
    * position -- call on every keystroke and cursor move (input, navigation keyup, click). */
@@ -54,8 +55,11 @@ export interface FileFinder {
    * into that subtree (`buildDirectoryInsertion`) and leaves the finder open, re-synced against
    * the narrowed text -- a directory isn't a valid mention target on its own. Returns the new
    * text and cursor position either way, or `undefined` if there's nothing to select. */
-  select(text: string, index?: number): FileFinderSelection | undefined;
+  select(text: string, index?: number): FinderSelection | undefined;
 }
+
+/** @deprecated Use `Finder`. */
+export type FileFinder = Finder<FinderMatch>;
 
 /**
  * Drives the `@`-mention file finder popup for `PromptInput`: tracks whether the textarea's
@@ -66,7 +70,7 @@ export interface FileFinder {
  * `MAX_MATCHES`) matches. `files` is the workspace's file list as pushed by the extension host
  * (see `App`'s `workspaceFiles` state) -- this hook does no fetching of its own.
  */
-export default function useFileFinder(files: string[]): FileFinder {
+export default function useFileFinder(files: string[]): Finder<FinderMatch> {
   const [state, setState] = useState<FinderState | undefined>(undefined);
   const [activeIndex, setActiveIndex] = useState(0);
   // The mention `start` Escape last dismissed -- while `sync()` keeps seeing that same start
@@ -208,7 +212,7 @@ export default function useFileFinder(files: string[]): FileFinder {
     setState({ mention: state.mention, matches: [] });
   }
 
-  function select(text: string, index: number = activeIndex): FileFinderSelection | undefined {
+  function select(text: string, index: number = activeIndex): FinderSelection | undefined {
     if (state === undefined) {
       return undefined;
     }

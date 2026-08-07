@@ -34,6 +34,11 @@ function promptTextarea(container: HTMLElement): HTMLElement & { value: string }
 function typeText(container: HTMLElement, text: string): void {
   const textarea = promptTextarea(container);
   textarea.value = text;
+  // Position the cursor at end-of-text so caret-dependent features (file/skill finder sync)
+  // see the same state a real user keystroke would produce.
+  const el = textarea as HTMLTextAreaElement;
+  el.selectionStart = text.length;
+  el.selectionEnd = text.length;
   fireEvent(textarea, new Event('input', { bubbles: true }));
 }
 
@@ -232,6 +237,54 @@ describe('PromptInput file finder', () => {
     typeText(container, '@Appzzzznomatch');
 
     expect(screen.queryByText('/App.tsx')).toBeNull();
+  });
+
+  it('places the cursor after the inserted mention, not at end-of-text, when the @ is mid-sentence', async () => {
+    const { container } = render(
+      <PromptInput
+        inFlight={false}
+        workspaceFiles={WORKSPACE_FILES}
+        onSubmit={() => undefined}
+        {...NOOP}
+      />
+    );
+
+    // Type text with the @mention in the middle.
+    typeText(container, 'see @App here');
+
+    // Move the cursor to sit right after "@App" (position 8) so the finder sees a clean query.
+    const textarea = promptTextarea(container);
+    const ta = textarea as HTMLTextAreaElement;
+    ta.selectionStart = 8;
+    ta.selectionEnd = 8;
+    fireEvent(textarea, new Event('input', { bubbles: true }));
+
+    // In production, <vscode-textarea> exposes wrappedElement (the inner <textarea> in shadow
+    // DOM) and updateComplete (a LitElement Promise that resolves after re-render).  jsdom
+    // doesn't register custom elements, so mock both to exercise the real code path.
+    Object.defineProperty(textarea, 'wrappedElement', {
+      get: () => textarea,
+      configurable: true,
+    });
+    Object.defineProperty(textarea, 'updateComplete', {
+      get: () => Promise.resolve(false),
+      configurable: true,
+    });
+
+    // Select the first match.
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    // The cursor is set inside an updateComplete .then() callback; flush the microtask.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ta.value).toBe('see @src/App.tsx  here');
+    // The cursor should sit right after the inserted mention (after the trailing space),
+    // not at the end of the full text.
+    const expectedCursor = 'see @src/App.tsx '.length;
+    expect(ta.selectionStart).toBe(expectedCursor);
+    expect(ta.selectionEnd).toBe(expectedCursor);
   });
 });
 

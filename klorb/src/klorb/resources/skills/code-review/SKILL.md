@@ -52,14 +52,17 @@ own report:
   it to trace each changed function's logic for correctness: off-by-ones, wrong operators,
   unhandled branches, mismatched types, state that's mutated in the wrong order. Ask for file and
   line citations, not summaries.
-- **Architectural coherence.** This one needs more than the diff: point it at the changed files'
+
+* **Architectural coherence.** This one needs more than the diff: point it at the changed files'
   _surrounding_ code (class hierarchies, method signatures other callers depend on,
-  encapsulation boundaries) and ask whether the patch actually fits the file it landed in, or
-  fights the existing design -- a new public method that duplicates an existing one, a class
-  reaching into another's internals, a signature that doesn't match its siblings.
-- **Security.** Ask it to look for injection (shell, SQL, path traversal), trust boundaries
+  encapsulation boundaries) and ask whether the patch actually fits the file it landed in, or fights
+  the existing design -- a new method that duplicates (or nearly duplicates) an existing one, struct
+  / interface types that are actual- or near-duplicates, a class reaching into another's internals,
+  a signature that doesn't match its siblings.
+* **Security.** Ask it to look for injection (shell, SQL, path traversal), trust boundaries
   crossed without validation, secrets or credentials handled carelessly, and newly-introduced
   attack surface -- with the same file/line citation requirement.
+
 - **Plan or spec conformance**, only if one exists. If the change references a
   `docs/plans/PLAN-*` document, a spec under `docs/specs/`, or a set of tracked tasks, launch an
   Explorer to compare what the plan called for against what actually landed, and report gaps in

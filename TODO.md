@@ -14,6 +14,10 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
+* The auto-agent skill should tell the operator that the review will take more than 2 mins and it must
+  WaitForSubagent repeatedly until it completes.
+  * Likewise, Reviewer should be told by /code-review that its explorer children will also run > 2 mins each.
+
 ### Feature backlog
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
@@ -190,17 +194,17 @@
   respond to it. If the turn is complete, you can send a new message / start a new turn and
   that seems to work fine though.
 
-* (#agent) fuzzy-finders for files and skills do properly insert the full path or skill name at the
-  right position in the prompt. But then they try to move the user's cursor forward, and they
-  push the cursor all the way to the very end of the text input. Which is incorrect if the
-  user backed up into the middle of a longer passage and typed `@` or `/` there to trigger
-  the relevant fuzzy-finder.
+* jsdom does not register custom elements like the `<vscode-textarea>` so unit tests are not
+  a faithful representation of the in-vscode plugin environment. Can we fix this?
+
+* Remove redundant `@deprecated` `Finder*` type definitions in FileFinder/SkillFinder code.
 
 ### Feature backlog
 
 * (#agent) The BashTool short summary is good but when you click the `>` it should pretty-print
   the longer data (i.e., it's more important that the user can read stdout and stderr logs
   than showing all the complete raw json.)
+  * (Strip out tty color control sequences too.)
   * (#agent) Likewise, `ReadFile` should show the set of lines actually read, with line numbers
     in an inset card, much like how the `EditFile` tool shows the diff lines with old and new line
     numbers in an inline `<details>` panel/card.

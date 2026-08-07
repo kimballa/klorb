@@ -4,6 +4,8 @@ import { useMemo, useRef, useState } from 'react';
 
 import type { SkillEntry } from 'shared/webviewMessages';
 
+import type { Finder } from '../fileFinder/useFileFinder';
+
 import {
   buildSkillInsertion,
   detectSkillMention,
@@ -19,20 +21,12 @@ interface SkillFinderState {
   matches: SkillFinderMatch[];
 }
 
+/** @deprecated Use `Finder<SkillFinderMatch>`. */
+export type SkillFinder = Finder<SkillFinderMatch>;
+
 export type SkillFinderSelection = SkillInsertion;
 
-export interface SkillFinder {
-  isOpen: boolean;
-  matches: SkillFinderMatch[];
-  activeIndex: number;
-  sync(text: string, cursor: number): void;
-  setActiveIndex(index: number): void;
-  moveActive(delta: number): void;
-  dismiss(): void;
-  select(text: string, index?: number): SkillFinderSelection | undefined;
-}
-
-export default function useSkillFinder(skills: SkillEntry[]): SkillFinder {
+export default function useSkillFinder(skills: SkillEntry[]): Finder<SkillFinderMatch> {
   const [state, setState] = useState<SkillFinderState | undefined>(undefined);
   const [activeIndex, setActiveIndex] = useState(0);
   const escapedStartRef = useRef<number | null>(null);

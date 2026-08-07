@@ -2,6 +2,8 @@
 
 import type { SkillEntry } from 'shared/webviewMessages';
 
+import type { FinderSelection } from '../fileFinder/fileFinderModel';
+
 /** The `/`-mention context: where the active `/<name>` reference starts in the full text and
  * the query typed so far (everything after `/` up to the cursor). */
 export interface SkillMentionContext {
@@ -48,10 +50,7 @@ export interface SkillFinderMatch {
 
 /** The result of splicing a selected skill into the prompt text: the full new text and where
  * the cursor should land afterward. */
-export interface SkillInsertion {
-  text: string;
-  cursor: number;
-}
+export type SkillInsertion = FinderSelection;
 
 /** Replaces the `/<query>` mention spanning `[mentionStart, cursor)` in `text` with `/` followed
  * by `skill.name` and a trailing space. */
@@ -60,7 +59,7 @@ export function buildSkillInsertion(
   mentionStart: number,
   cursor: number,
   skill: SkillEntry
-): SkillInsertion {
+): FinderSelection {
   const insertion = `/${skill.name} `;
   return {
     text: text.slice(0, mentionStart) + insertion + text.slice(cursor),

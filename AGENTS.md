@@ -78,6 +78,10 @@ The Klorb project is organized as a collection of subprojects:
   today. Name it for its effects, not its current consumer.
 * Do not import protected methods, except for testing. If a foreign protected method must be
   imported, consider refactoring to make that method public.
+* When adding new functionality, if it's very similar to another existing piece of functionality, consider
+  refactoring the existing code to admit the additional use case. Creating methods or classes / interfaces
+  that are clones or near-clones of one another is a bad architectural practice. Doing this right may
+  mean expanding the set of files touched.
 * When revising or refactoring, make the smallest code change necessary to effect the change. But **do** do
   what needs to be done to actually make the change.
 * Do not make unrelated changes while revising or refactoring a file.

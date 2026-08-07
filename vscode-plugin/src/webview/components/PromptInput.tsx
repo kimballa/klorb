@@ -19,7 +19,7 @@ import { IMAGE_FILE_MIME_TYPES } from 'shared/imageFileTypes';
 import type { ImageAttachment, SkillEntry } from 'shared/webviewMessages';
 import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
 import { StopMediaIcon } from 'webview/components/klorbIcons';
-import { FileFinderPanel, useFileFinder } from 'webview/features/fileFinder';
+import { FileFinderPanel, type Finder, useFileFinder } from 'webview/features/fileFinder';
 import { SkillFinderPanel, useSkillFinder } from 'webview/features/skillFinder';
 import { classifyEnterKey } from 'webview/keyHandling';
 
@@ -194,7 +194,9 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     if (prevSessionKeyRef.current === sessionKey) {
       return;
     }
-    draftsBySessionRef.current[prevSessionKeyRef.current] = draft;
+    const el = textareaRef.current;
+    const domValue = typeof el?.value === 'string' ? el.value : draft;
+    draftsBySessionRef.current[prevSessionKeyRef.current] = domValue;
     prevSessionKeyRef.current = sessionKey;
     setTextareaValue(draftsBySessionRef.current[sessionKey] ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -337,15 +339,20 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   }, []);
 
   function submit(): void {
-    const text = draft.trim();
+    const el = textareaRef.current;
+    const domValue = typeof el?.value === 'string' ? el.value : draft;
+    if (domValue !== draft) {
+      console.error(
+        'PromptInput: textarea DOM value diverged from draft state. ' +
+          `DOM=${JSON.stringify(domValue)}, draft=${JSON.stringify(draft)}`
+      );
+    }
+    const text = domValue.trim();
     if (text.length === 0 || disabled) {
       return;
     }
-    // Clearing the underlying element directly, not just React's `value` prop, guarantees the
-    // textarea is empty before it's disabled below, regardless of how the custom element
-    // reconciles a prop update against its own internal state.
-    if (textareaRef.current !== null) {
-      textareaRef.current.value = '';
+    if (el !== null) {
+      el.value = '';
     }
     setDraft('');
     setRows(MIN_ROWS);
@@ -363,7 +370,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
    * underlying DOM element (so the caret lands in the right place immediately) and `draft`
    * state (so React's own render stays in sync) -- mirrors `submit()`'s "write the DOM element
    * directly, then mirror into state" approach. */
-  function applyFinderSelection(index?: number): void {
+  function applyFinderSelection(finder: Finder<unknown>, index?: number): void {
     const selection = finder.select(draft, index);
     if (selection === undefined) {
       return;
@@ -371,29 +378,17 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     const el = textareaRef.current;
     if (el !== null) {
       el.value = selection.text;
-      const wrapped = el.wrappedElement;
-      if (wrapped) {
-        wrapped.selectionStart = selection.cursor;
-        wrapped.selectionEnd = selection.cursor;
-      }
-    }
-    setDraft(selection.text);
-    computeRows(selection.text);
-    el?.focus();
-  }
-
-  function applySkillFinderSelection(index?: number): void {
-    const selection = skillFinder.select(draft, index);
-    if (selection === undefined) {
-      return;
-    }
-    const el = textareaRef.current;
-    if (el !== null) {
-      el.value = selection.text;
-      const wrapped = el.wrappedElement;
-      if (wrapped) {
-        wrapped.selectionStart = selection.cursor;
-        wrapped.selectionEnd = selection.cursor;
+      // Use `updateComplete` promise to update cursor position after re-render
+      // from updating controlled text state finishes.
+      const postRender = el.updateComplete;
+      if (postRender !== undefined) {
+        void postRender.then(() => {
+          const wrapped = el.wrappedElement;
+          if (wrapped) {
+            wrapped.selectionStart = selection.cursor;
+            wrapped.selectionEnd = selection.cursor;
+          }
+        });
       }
     }
     setDraft(selection.text);
@@ -484,7 +479,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
-        applyFinderSelection();
+        applyFinderSelection(finder);
         return;
       }
     }
@@ -506,7 +501,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
-        applySkillFinderSelection();
+        applyFinderSelection(skillFinder);
         return;
       }
     }
@@ -562,7 +557,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
             matches={finder.matches}
             activeIndex={finder.activeIndex}
             onHover={finder.setActiveIndex}
-            onSelect={applyFinderSelection}
+            onSelect={(index) => applyFinderSelection(finder, index)}
           />
         ) : null}
         {skillFinder.isOpen ? (
@@ -570,7 +565,7 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
             matches={skillFinder.matches}
             activeIndex={skillFinder.activeIndex}
             onHover={skillFinder.setActiveIndex}
-            onSelect={applySkillFinderSelection}
+            onSelect={(index) => applyFinderSelection(skillFinder, index)}
           />
         ) : null}
         <vscode-textarea
@@ -579,7 +574,6 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           rows={rows}
           resize="none"
           placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
-          value={draft}
           disabled={disabled}
           onInput={(event: SyntheticEvent) => {
             const value = targetValue(event);

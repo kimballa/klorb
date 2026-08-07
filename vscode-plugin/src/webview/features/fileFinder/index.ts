@@ -11,8 +11,8 @@ import {
   splitQueryDirectory,
   type FinderMatch,
   type FinderPathParts,
+  type FinderSelection,
   type MentionContext,
-  type MentionInsertion,
   type QueryDirectorySplit,
 } from './fileFinderModel';
 import {
@@ -22,15 +22,20 @@ import {
   unescapeMentionFilename,
   type MentionSpan,
 } from './mentionParser';
-import useFileFinder, { type FileFinder, type FileFinderSelection } from './useFileFinder';
+import useFileFinder, {
+  type FileFinder,
+  type FileFinderSelection,
+  type Finder,
+} from './useFileFinder';
 
 export {
   type FileFinder,
   type FileFinderSelection,
+  type Finder,
   type FinderMatch,
   type FinderPathParts,
+  type FinderSelection,
   type MentionContext,
-  type MentionInsertion,
   type MentionSpan,
   type QueryDirectorySplit,
   ancestorDirectories,
