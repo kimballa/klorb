@@ -58,8 +58,8 @@ class TodoListTool(Tool):
                     "type": "array",
                     "items": {"type": "integer"},
                     "description": (
-                        "Limit the result to these issue ids. A single id returns that issue's "
-                        "full detail, comments included. Omit to list every issue."
+                        "Limit to these issue ids. A single id returns that issue's "
+                        "full detail with comments. Omit to list all."
                     ),
                 },
                 "include_closed": {
@@ -70,7 +70,7 @@ class TodoListTool(Tool):
                     "type": "string",
                     "enum": ["self", "group"],
                     "description": (
-                        "\"self\" for just your issues, \"group\" for all in the project."
+                        "\"self\" for just your issues, \"group\" for all in project."
                     ),
                 },
             },

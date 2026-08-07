@@ -67,8 +67,8 @@ class TodoCreateTool(Tool):
 
     def description(self) -> str:
         return (
-            "Creates a new todo item for this session and returns its full detail. Use "
-            "blocked_by/blocks_current_issue/blocks_issues to record dependencies up front. "
+            "Creates a new todo item for this session and returns its details. Use "
+            "blocked_by/blocks_current_issue/blocks_issues to record dependencies. "
             "The new item may be auto-activated as your current tracked task (as if by "
             "TodoNext) if you don't already have one and it's ready; pass activate=true/false "
             "to force or suppress this."
@@ -106,7 +106,7 @@ class TodoCreateTool(Tool):
                     "type": "boolean",
                     "description": (
                         "Force (true) or suppress (false) picking up the new item as your "
-                        "current tracked task. Omit for auto mode: activates it if (and only "
+                        "current tracked task. Omit for auto mode: activates if (and only "
                         "if) you don't already have a current task."
                     ),
                 },
@@ -114,8 +114,7 @@ class TodoCreateTool(Tool):
                     "type": "string",
                     "description": (
                         "Which agent should own the new task? Omit for yourself. \"all\" for "
-                        "any eligible agent to pick up, or another agent's id to assign "
-                        "directly to them."
+                        "any eligible agent, or another agent's id to assign directly."
                     ),
                 },
             },

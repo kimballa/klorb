@@ -78,8 +78,8 @@ class TodoUpdateTool(Tool):
         return (
             "Updates a todo item: title/description/priority, dependencies (depends_on/"
             "drop_dependency), a comment, and/or closing or reopening it. Every field besides "
-            "id is optional; omitted ones are left unchanged. Closing it also picks up whatever "
-            "is next as your current tracked task (as if you'd called TodoNext), reported back "
+            "id is optional; omitted are unchanged. Closing also picks up whatever "
+            "is next as your current tracked task (as if you called TodoNext), reported back "
             "as next_task_id/next_task_title. Otherwise, this item itself may be auto-activated "
             "as your current tracked task if you don't already have one and it's ready. Pass "
             "activate=true/false to force or suppress either behavior."
@@ -90,19 +90,19 @@ class TodoUpdateTool(Tool):
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Id of the task to update."},
-                "close": {"type": "boolean", "description": "If true, close the issue."},
-                "reopen": {"type": "boolean", "description": "If true, reopen a closed issue."},
+                "close": {"type": "boolean", "description": "Close issue if true."},
+                "reopen": {"type": "boolean", "description": "Reopen issue if true."},
                 "depends_on": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "Ids to add as blockers of this task.",
+                    "description": "Ids to add as blockers of task.",
                 },
                 "drop_dependency": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "Ids to remove as blockers of this task.",
+                    "description": "Ids to remove as blockers of task.",
                 },
-                "add_comment": {"type": "string", "description": "Comment text to add."},
+                "add_comment": {"type": "string", "description": "Comment to add."},
                 "new_title": {"type": "string", "description": "Replacement title."},
                 "new_description": {"type": "string", "description": "Replacement description."},
                 "new_priority": {
@@ -116,8 +116,8 @@ class TodoUpdateTool(Tool):
                         "If closing: false suppresses picking up whatever's next as your "
                         "current tracked task (omit or true to pick it up). Otherwise: force "
                         "(true) or suppress (false) picking up this item itself as your current "
-                        "tracked task; omit for auto mode, which activates it only if you don't "
-                        "already have a current task."
+                        "tracked task; omit for auto mode, which activates only if you have no "
+                        "current task."
                     ),
                 },
             },

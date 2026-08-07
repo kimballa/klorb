@@ -153,8 +153,7 @@
   * ... and then do vectordb indexing of the codebase, too.
 
 * Integrate with `chainlink init --db-only`, once merged. Then we don't need to include the code
-  to remove all the extraneous stuff it adds.
-  (see docs/specs/chainlink-task-tracking.md)
+  to remove all the extraneous stuff it adds. (see docs/specs/chainlink-task-tracking.md)
 * Integrate with `chainlink`'s `blocked_by_open` field, once merged. Then we don't have to look
   up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
