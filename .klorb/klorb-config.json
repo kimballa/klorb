@@ -64,7 +64,8 @@
         ["grep", "-A", "*", "*"],
         ["tail", "*", "*"],
         ["markdownlint-cli2", "--config", "*", "*"],
-        ["find", "/home/aaron/src/klorb/*", "-name", "*"]
+        ["find", "/home/aaron/src/klorb/*", "-name", "*"],
+        ["git", "show", "**"]
       ]
     },
     "shareEnv": [
@@ -76,7 +77,8 @@
       "allow": [
         "workspace:implement-plan",
         "workspace:add-python-dependency",
-        "workspace:add-cli-flag"
+        "workspace:add-cli-flag",
+        "internal:code-review"
       ]
     },
     "webDomains": {

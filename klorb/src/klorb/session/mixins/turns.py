@@ -525,7 +525,7 @@ class SessionTurnsMixin(SessionBase):
             prompt = f"{wrap_system_interjection('SkillReminder', skill_reminder)}\n{prompt}"
         if not self._skills_seeded:
             self._skills_seeded = True
-            skills = self._discover_skills()
+            skills = self.discover_skills()
             available_skills = self._build_available_skills_interjection(skills)
             if available_skills is not None:
                 prompt = f"{wrap_system_interjection('AvailableSkills', available_skills)}\n{prompt}"

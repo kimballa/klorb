@@ -200,6 +200,7 @@
 * The BashTool short summary is good but when you click the `>` it should pretty-print
   the longer data (i.e., it's more important that the user can read stdout and stderr logs
   than showing all the complete raw json.)
+  * Likewise, `ReadFile` should show the set of raw lines actually read.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 

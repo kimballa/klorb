@@ -113,7 +113,7 @@ class SessionSkillsMixin(SessionBase):
             claude_skills_compat=claude_skills_compat,
         )
 
-    def _discover_skills(self) -> list[Skill]:
+    def discover_skills(self) -> list[Skill]:
         """Every currently non-`deny`-verdicted skill, precedence-deduped by name, from this
         session's catalog and its live `skill_rules`. No disk access -- see
         `klorb.tools.skill.catalog.SkillCatalog.discoverable` and docs/specs/skills.md."""

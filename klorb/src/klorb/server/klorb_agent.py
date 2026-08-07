@@ -397,7 +397,7 @@ class KlorbAcpAgent(acp.Agent):
     def _ext_list_skills(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
-        skills = self._session._discover_skills()
+        skills = self._session.discover_skills()
         entries = [
             {"namespace": skill.namespace, "name": skill.name, "description": skill.description}
             for skill in skills

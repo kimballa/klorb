@@ -4,6 +4,7 @@ has something to say.
 """
 
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.agents.runtime import SubagentHandle
@@ -34,6 +35,9 @@ class WaitForSubagentTool(UserInterruptibleTool):
 
     def name(self) -> str:
         return "WaitForSubagent"
+
+    def aliases(self) -> Sequence[str]:
+        return ("WaitForSubagents",)
 
     def category(self) -> str:
         return SUBAGENT_TOOL_CATEGORY

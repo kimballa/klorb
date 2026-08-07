@@ -7,15 +7,12 @@ import type { SkillEntry } from 'shared/webviewMessages';
 import {
   buildSkillInsertion,
   detectSkillMention,
+  type SkillFinderMatch,
   type SkillInsertion,
   type SkillMentionContext,
 } from './skillFinderModel';
 
 const MAX_MATCHES = 25;
-
-export interface SkillFinderMatch {
-  skill: SkillEntry;
-}
 
 interface SkillFinderState {
   mention: SkillMentionContext;

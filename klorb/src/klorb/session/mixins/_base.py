@@ -166,7 +166,7 @@ class SessionBase:
 
     def _ensure_skill_catalog(self) -> None: ...
 
-    def _discover_skills(self) -> list[Skill]:
+    def discover_skills(self) -> list[Skill]:
         raise NotImplementedError
 
     def _build_context_files_interjection(self) -> str | None:
