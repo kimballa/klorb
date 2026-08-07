@@ -360,10 +360,11 @@ class ChainlinkClient:
         self, title: str, *, description: str | None = None, priority: Priority = "medium",
         extra_label: str | None = None,
     ) -> int:
-        """Create a new issue under this client's label and return its new id. `extra_label`, if
-        given, is attached as a second label alongside it -- e.g. the per-agent assignment label
-        `TodoCreate` gives a new issue up front, rather than a separate `add_label` call right
-        after creation. `chainlink issue create` doesn't emit JSON regardless of `--json`
+        """Create a new issue under this client's label and return its new id.
+
+        `extra_label`, if given, is attached as a second label alongside it.
+
+        `chainlink issue create` doesn't emit JSON regardless of `--json`
         (verified against the installed binary), so the new id is parsed from `--quiet`'s
         bare-value stdout instead."""
         validate_priority(priority)
