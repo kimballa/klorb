@@ -147,6 +147,8 @@
 
 ### Feature backlog
 
+* (#agent) Add a "Rename Session" cmd palette action to change the title.
+  
 * (#agent) In the TUI, When the user types `/` at start or after whitespace, it should have a
   fuzzy-finder pop-up to help find the skill they want. ESC dismisses fuzzy-finder, as does
   continuing to type after ruling out any matches. This should use the same layout / style as the
