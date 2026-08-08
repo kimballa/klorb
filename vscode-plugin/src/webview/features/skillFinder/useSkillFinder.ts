@@ -21,9 +21,6 @@ interface SkillFinderState {
   matches: SkillFinderMatch[];
 }
 
-/** @deprecated Use `Finder<SkillFinderMatch>`. */
-export type SkillFinder = Finder<SkillFinderMatch>;
-
 export type SkillFinderSelection = SkillInsertion;
 
 export default function useSkillFinder(skills: SkillEntry[]): Finder<SkillFinderMatch> {

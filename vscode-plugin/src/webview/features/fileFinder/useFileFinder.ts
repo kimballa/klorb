@@ -30,9 +30,6 @@ const DIRECTORY_SCORE_BUMP = 0.1;
  * workspace root outranks one nested many levels deep. */
 const DIRECTORY_DEPTH_PENALTY = 0.02;
 
-/** @deprecated Use `FinderSelection` from `fileFinderModel`. */
-export type FileFinderSelection = FinderSelection;
-
 interface FinderState {
   mention: MentionContext;
   matches: FinderMatch[];
@@ -57,9 +54,6 @@ export interface Finder<M> {
    * text and cursor position either way, or `undefined` if there's nothing to select. */
   select(text: string, index?: number): FinderSelection | undefined;
 }
-
-/** @deprecated Use `Finder`. */
-export type FileFinder = Finder<FinderMatch>;
 
 /**
  * Drives the `@`-mention file finder popup for `PromptInput`: tracks whether the textarea's

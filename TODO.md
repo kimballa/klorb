@@ -192,8 +192,6 @@
 * jsdom does not register custom elements like the `<vscode-textarea>` so unit tests are not
   a faithful representation of the in-vscode plugin environment. Can we fix this?
 
-* (#agent) Remove redundant `@deprecated` `Finder*` type definitions in FileFinder/SkillFinder code.
-
 ### Feature backlog
 
 * You should be able to edit the session title after it's auto-assigned. This should persist down

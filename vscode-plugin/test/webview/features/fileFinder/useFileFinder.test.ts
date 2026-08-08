@@ -3,7 +3,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { useFileFinder, type FileFinderSelection } from 'webview/features/fileFinder';
+import { useFileFinder, type FinderSelection } from 'webview/features/fileFinder';
 
 const FILES = ['src/App.tsx', 'src/AppStyles.ts', 'README.md', 'docs/specs/vscode-plugin.md'];
 
@@ -103,7 +103,7 @@ describe('useFileFinder', () => {
     const { result } = renderHook(() => useFileFinder(FILES));
     act(() => result.current.sync('check @App please', 10));
 
-    let selection: FileFinderSelection | undefined;
+    let selection: FinderSelection | undefined;
     act(() => {
       selection = result.current.select('check @App please', 0);
     });
@@ -219,7 +219,7 @@ describe('useFileFinder', () => {
     act(() => result.current.sync('@src', 4));
     expect(result.current.matches[0]).toEqual({ path: 'src', isDir: true });
 
-    let selection: FileFinderSelection | undefined;
+    let selection: FinderSelection | undefined;
     act(() => {
       selection = result.current.select('@src', 0);
     });

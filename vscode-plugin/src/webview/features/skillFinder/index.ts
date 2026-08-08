@@ -8,7 +8,7 @@ import {
   type SkillInsertion,
   type SkillMentionContext,
 } from './skillFinderModel';
-import useSkillFinder, { type SkillFinder, type SkillFinderSelection } from './useSkillFinder';
+import useSkillFinder, { type SkillFinderSelection } from './useSkillFinder';
 
 export {
   SkillFinderPanel,
@@ -16,7 +16,6 @@ export {
   detectSkillMention,
   splitSkillDisplay,
   useSkillFinder,
-  type SkillFinder,
   type SkillFinderMatch,
   type SkillFinderSelection,
   type SkillInsertion,

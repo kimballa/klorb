@@ -22,15 +22,9 @@ import {
   unescapeMentionFilename,
   type MentionSpan,
 } from './mentionParser';
-import useFileFinder, {
-  type FileFinder,
-  type FileFinderSelection,
-  type Finder,
-} from './useFileFinder';
+import useFileFinder, { type Finder } from './useFileFinder';
 
 export {
-  type FileFinder,
-  type FileFinderSelection,
   type Finder,
   type FinderMatch,
   type FinderPathParts,
