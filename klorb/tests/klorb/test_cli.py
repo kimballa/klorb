@@ -352,8 +352,18 @@ def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -
     assert config.interactive is True
     mock_run_repl.assert_called_once_with(
         mock_session, process_config=mock.ANY, initial_message="hi", session_log_enabled=True,
-        trust_manager=mock.ANY, config_flag_path=None, skip_session_restore=False,
+        trust_manager=mock.ANY, config_flag_path=None, skip_session_restore=True,
         quit_on_success=False)
+
+
+def test_main_message_implies_new_session() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl") as mock_run_repl:
+            with patch("sys.argv", ["klorb", "--interactive", "-m", "hi"]):
+                cli.main()
+
+    assert mock_run_repl.call_args.kwargs["skip_session_restore"] is True
 
 
 def test_main_new_flag_skips_session_restore() -> None:

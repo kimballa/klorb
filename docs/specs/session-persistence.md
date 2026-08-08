@@ -227,8 +227,9 @@ The TUI's `WorkspaceBootstrapMixin._maybe_restore_latest_session(workspace)` run
 input-history store, and only when the resolved workspace is trusted and `ReplApp` wasn't
 constructed with `skip_session_restore=True` (`klorb --new`) — passing `--new` always starts the
 REPL from the freshly-constructed `Session`, even in a trusted workspace with a saved session on
-disk. Otherwise, this runs before any `initial_message` is submitted, so a `klorb -m "..."`
-invocation's message becomes the next turn of the restored conversation rather than racing it.
+disk. `klorb -m "..."`/`--message` implies `--new` (`cli.py`'s `skip_session_restore=args.new_session
+or args.prompt is not None`), so a submitted prompt always becomes the first turn of a fresh
+session rather than the next turn of a restored one.
 
 If `workspace`'s `sessions.json` has no entries yet, this is a no-op — the freshly-constructed
 `Session` stays as-is. Otherwise it attempts to lock and rebuild the top (most-recently-touched)

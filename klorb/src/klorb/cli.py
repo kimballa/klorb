@@ -104,8 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Skip restoring the workspace's most recently touched saved session on startup; "
-            "always start the REPL with a fresh session. No effect on a one-shot --message "
-            "prompt without --interactive, which never restores a saved session anyway."
+            "always start the REPL with a fresh session. Implied by --message/-m, so a "
+            "submitted prompt always starts a fresh session rather than joining a restored "
+            "one. No effect on a one-shot --message prompt without --interactive, which "
+            "never restores a saved session anyway."
         ),
     )
     parser.add_argument(
@@ -785,7 +787,7 @@ def main() -> None:
             session_log_enabled=session_log,
             trust_manager=trust_manager,
             config_flag_path=config_flag_path,
-            skip_session_restore=args.new_session,
+            skip_session_restore=args.new_session or args.prompt is not None,
             quit_on_success=args.quit_on_success,
         )
     else:

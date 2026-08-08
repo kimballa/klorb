@@ -123,7 +123,8 @@ See the COMMANDS section for more details about these operating modes.
 * `-m` *PROMPT*, `--message` *PROMPT*
 
   The prompt to send to the model. If omitted, klorb starts the interactive
-  REPL instead of sending a one-shot prompt.
+  REPL instead of sending a one-shot prompt. Implies `--new`: a submitted
+  prompt always starts a fresh session rather than joining a restored one.
 
 * `--model` *MODEL*
 
@@ -150,9 +151,11 @@ See the COMMANDS section for more details about these operating modes.
 * `--new`
 
   In the REPL, skip restoring the workspace's most recently touched saved
-  session on startup; always start from a fresh session. Has no effect on a
-  one-shot `-m`/`--message` prompt without `--interactive`, which never
-  restores a saved session anyway (see `docs/specs/session-persistence.md`).
+  session on startup; always start from a fresh session. Implied by
+  `-m`/`--message`, so a submitted prompt always starts a fresh session
+  rather than joining a restored one. Has no effect on a one-shot
+  `-m`/`--message` prompt without `--interactive`, which never restores a
+  saved session anyway (see `docs/specs/session-persistence.md`).
 
 * `--quit-on-success`, `--no-quit-on-success`
 
