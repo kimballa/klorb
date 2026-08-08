@@ -14,6 +14,8 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
+* (#agent) chore: look at docs/adrs/, sort the files by creation timestamp and git mv them to 12345-existing-title.md in order. Start at 00001. Update agent guidance to keep files numbered.
+  
 ### Feature backlog
 
 * Add a session-specific env file in the session state dir. It's preloaded into every bash cmd. Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an env var when running hooks, so they can customize the env. 
