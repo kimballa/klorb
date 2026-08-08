@@ -326,7 +326,7 @@ class SessionPermissionsMixin(SessionBase):
             f"and {KLORB_CONFIG_DIR} for the rest of this session."
         ) if scope == "homedir" else str(escalate_exc)
         decision = callbacks.on_escalate_privileges(EscalatePrivilegesContext(
-            scope=scope, description=description))
+            scope=scope, description=description, reason=escalate_exc.reason))
         if decision.approved:
             self.config.approved_scopes.add(scope)
             logger.info("Escalation approved for scope '%s'", scope)

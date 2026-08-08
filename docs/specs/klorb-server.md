@@ -546,8 +546,9 @@ short-circuits before ever calling back, exactly as it does for the TUI.
   `ItemRiskAssessment.rationale`, present exactly when `riskLevel` is).
 * **`_meta.klorb` on an escalation request**
   (`klorb.server.update_mapping.escalate_privileges_meta`): `escalation.scope`/
-  `escalation.description`, so the client can render this as its own distinct flow (e.g. a
-  red-border panel) rather than an ordinary permission grid.
+  `escalation.description`/`escalation.reason` (the model-supplied explanation passed as the
+  `EscalatePrivileges` tool call's `reason` argument), so the client can render this as its own
+  distinct flow (e.g. a red-border panel) rather than an ordinary permission grid.
 * **`originSessionId`** (both `permission_ask_meta` and `escalate_privileges_meta`): present only
   when the ask was raised by a subagent's turn rather than the root session's own
   (`PermissionAskContext.origin_session_id`/`EscalatePrivilegesContext.origin_session_id`,

@@ -33,10 +33,10 @@ function metaGrantPatterns(klorbMeta: Record<string, unknown>): string[][] | und
 
 function metaEscalation(
   klorbMeta: Record<string, unknown>
-): { scope?: string; description?: string } | undefined {
+): { scope?: string; description?: string; reason?: string } | undefined {
   const value = klorbMeta.escalation;
   return typeof value === 'object' && value !== null
-    ? (value as { scope?: string; description?: string })
+    ? (value as { scope?: string; description?: string; reason?: string })
     : undefined;
 }
 
@@ -195,6 +195,9 @@ export default function ApprovalPanel({ ask, onDecision }: ApprovalPanelProps): 
         ) : null}
         {escalation?.description !== undefined ? (
           <div className="approval-description">{escalation.description}</div>
+        ) : null}
+        {escalation?.reason !== undefined ? (
+          <div className="approval-description">{`Reason: ${escalation.reason}`}</div>
         ) : null}
         {itemCommandText !== undefined ? (
           <>

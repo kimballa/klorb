@@ -69,8 +69,15 @@ class EscalatePrivilegesTool(Tool):
                         "KLORB_CONFIG_DIR, and KLORB_STATE_DIR."
                     ),
                 },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "A short explanation of why this escalation is needed. Shown to the user "
+                        "in the approval panel."
+                    ),
+                },
             },
-            "required": ["scope"],
+            "required": ["scope", "reason"],
             "additionalProperties": False,
         }
 
@@ -78,8 +85,11 @@ class EscalatePrivilegesTool(Tool):
         scope = args.get("scope")
         if scope is None:
             raise ValueError("Missing required argument 'scope'.")
+        reason = args.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("Missing required argument 'reason'.")
         validate_scope(scope)
-        raise EscalatePrivilegesRequired(scope)
+        raise EscalatePrivilegesRequired(scope, reason)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         if error is not None:

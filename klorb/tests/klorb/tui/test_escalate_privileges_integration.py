@@ -61,8 +61,10 @@ def _tool_call_reply(calls: list[tuple[str, str, str]]) -> ProviderResponse:
     )
 
 
-def _escalate_call(id_: str, scope: str = "workspace") -> tuple[str, str, str]:
-    return id_, "EscalatePrivileges", json.dumps({"scope": scope})
+def _escalate_call(
+    id_: str, scope: str = "workspace", reason: str = "need it for the task",
+) -> tuple[str, str, str]:
+    return id_, "EscalatePrivileges", json.dumps({"scope": scope, "reason": reason})
 
 
 def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> tuple[Session, ProcessConfig]:

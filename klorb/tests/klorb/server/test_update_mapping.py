@@ -493,11 +493,18 @@ def test_permission_ask_meta_prefers_the_risk_classifiers_suggested_pattern(tmp_
 
 
 def test_escalate_privileges_meta_carries_scope_and_description(tmp_path: Path) -> None:
-    ctx = EscalatePrivilegesContext(scope="workspace", description="Grant .klorb/ access")
+    ctx = EscalatePrivilegesContext(
+        scope="workspace", description="Grant .klorb/ access", reason="need to write a log file")
 
     meta = escalate_privileges_meta(ctx)
 
-    assert meta == {"escalation": {"scope": "workspace", "description": "Grant .klorb/ access"}}
+    assert meta == {
+        "escalation": {
+            "scope": "workspace",
+            "description": "Grant .klorb/ access",
+            "reason": "need to write a log file",
+        },
+    }
 
 
 def test_permission_ask_meta_omits_origin_session_id_when_unset(tmp_path: Path) -> None:
@@ -523,7 +530,8 @@ def test_permission_ask_meta_carries_origin_session_id_for_a_subagent_ask(tmp_pa
 
 def test_escalate_privileges_meta_carries_origin_session_id_for_a_subagent_ask() -> None:
     ctx = EscalatePrivilegesContext(
-        scope="workspace", description="Grant .klorb/ access", origin_session_id="child-1")
+        scope="workspace", description="Grant .klorb/ access", reason="need it",
+        origin_session_id="child-1")
 
     meta = escalate_privileges_meta(ctx)
 

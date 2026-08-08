@@ -41,8 +41,10 @@ def _reply(content: str = "done") -> ProviderResponse:
     )
 
 
-def _escalate_call(id_: str, scope: str = "workspace") -> tuple[str, str, str]:
-    return id_, "EscalatePrivileges", json.dumps({"scope": scope})
+def _escalate_call(
+    id_: str, scope: str = "workspace", reason: str = "need it for the task",
+) -> tuple[str, str, str]:
+    return id_, "EscalatePrivileges", json.dumps({"scope": scope, "reason": reason})
 
 
 def _tool_call_reply(calls: list[tuple[str, str, str]]) -> ProviderResponse:
@@ -121,7 +123,7 @@ def test_invalid_scope_reports_error_without_invoking_callback() -> None:
 def test_approved_records_scope_into_session_config() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
-        _tool_call_reply([_escalate_call("call_1")]),
+        _tool_call_reply([_escalate_call("call_1", reason="need to write session state")]),
         _reply(),
     ]
     process_config = ProcessConfig()
@@ -141,6 +143,7 @@ def test_approved_records_scope_into_session_config() -> None:
     assert isinstance(ctx, EscalatePrivilegesContext)
     assert ctx.scope == "workspace"
     assert ".klorb" in ctx.description
+    assert ctx.reason == "need to write session state"
 
 
 def test_homedir_approved_records_scope_into_session_config() -> None:

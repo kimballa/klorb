@@ -15,6 +15,7 @@ from klorb.session import EscalatePrivilegesContext, EscalatePrivilegesDecision
 
 ESCALATE_PRIVILEGES_HEADER_ID = "escalate-privileges-header"
 ESCALATE_PRIVILEGES_TEXT_ID = "escalate-privileges-text"
+ESCALATE_PRIVILEGES_REASON_ID = "escalate-privileges-reason"
 ESCALATE_PRIVILEGES_ROW_APPROVE_ID = "escalate-privileges-row-approve"
 ESCALATE_PRIVILEGES_ROW_DENY_ID = "escalate-privileges-row-deny"
 
@@ -67,6 +68,11 @@ class EscalatePrivilegesPanel(Vertical):
 
     #escalate-privileges-text {
         text-style: bold;
+        width: 1fr;
+    }
+
+    #escalate-privileges-reason {
+        color: $text-muted;
         width: 1fr;
     }
 
@@ -123,7 +129,9 @@ class EscalatePrivilegesPanel(Vertical):
         widgets: list[Widget] = [
             Static(self.header_text(), id=ESCALATE_PRIVILEGES_HEADER_ID, markup=False)]
         widgets.append(Static(
-            self._escalate_ctx.description, id=ESCALATE_PRIVILEGES_TEXT_ID,
+            self._escalate_ctx.description, id=ESCALATE_PRIVILEGES_TEXT_ID, markup=False))
+        widgets.append(Static(
+            f"Reason: {self._escalate_ctx.reason}", id=ESCALATE_PRIVILEGES_REASON_ID,
             classes=_SECTION_END_CLASS, markup=False))
         widgets.append(Vertical(
             Static("Approve", id=ESCALATE_PRIVILEGES_ROW_APPROVE_ID),

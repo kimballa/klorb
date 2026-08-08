@@ -16,9 +16,6 @@
 
 ### Feature backlog
 
-* The `EscalatePrivileges` tool should take a `reason` arg that the agent has to supply, which is
-  shown to the user in the approval panel.
-
 * Add a session-specific env file in the session state dir. It's preloaded into every bash cmd. Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an env var when running hooks, so they can customize the env.
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.

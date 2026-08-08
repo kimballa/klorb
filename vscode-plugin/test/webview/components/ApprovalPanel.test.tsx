@@ -64,7 +64,11 @@ const ESCALATION_ASK: PermissionAskMessage = {
     { id: 'deny:once', name: 'Deny', kind: 'reject_once', scope: 'once' },
   ],
   klorbMeta: {
-    escalation: { scope: 'homedir', description: 'Grant home-directory write access' },
+    escalation: {
+      scope: 'homedir',
+      description: 'Grant home-directory write access',
+      reason: 'need to cache a large model file',
+    },
   },
 };
 
@@ -194,10 +198,11 @@ describe('ApprovalPanel', () => {
     });
   });
 
-  it('renders the escalation header and description distinctly', () => {
+  it('renders the escalation header, description, and reason distinctly', () => {
     render(<ApprovalPanel ask={ESCALATION_ASK} onDecision={() => undefined} />);
 
     expect(screen.getByText('Privilege escalation')).toBeTruthy();
     expect(screen.getByText('Grant home-directory write access')).toBeTruthy();
+    expect(screen.getByText('Reason: need to cache a large model file')).toBeTruthy();
   });
 });

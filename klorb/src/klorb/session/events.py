@@ -160,6 +160,8 @@ class EscalatePrivilegesContext(BaseModel):
     session-only privilege grant (see `klorb.tools.escalate_privileges`). `scope` is the
     requested scope string (today, only `"workspace"`); `description` is a human-readable
     explanation of what approving would unlock, for a UI to show without re-deriving it.
+    `reason` is the model-supplied explanation of why it needs the grant, passed to the
+    `EscalatePrivileges` tool call and shown to the user alongside `description`.
     `origin_session_id` mirrors `PermissionAskContext.origin_session_id` -- see that field's
     docstring."""
 
@@ -167,6 +169,7 @@ class EscalatePrivilegesContext(BaseModel):
 
     scope: str
     description: str
+    reason: str
     origin_session_id: str | None = None
 
 

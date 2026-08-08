@@ -14,13 +14,14 @@ Scope = Literal["workspace", "homedir"]
 
 class EscalatePrivilegesRequired(Exception):
     """Raised by `EscalatePrivilegesTool.apply()` when the user needs to approve escalation.
-    Carries the scope that was requested, for `Session._run_tool_calls` to ask about via
-    `on_escalate_privileges`.
+    Carries the scope and the model-supplied reason for the request, for
+    `Session._run_tool_calls` to ask about via `on_escalate_privileges`.
     """
 
-    def __init__(self, scope: Scope) -> None:
-        super().__init__(f"Escalate privileges for {scope}")
+    def __init__(self, scope: Scope, reason: str) -> None:
+        super().__init__(f"Escalate privileges for {scope}: {reason}")
         self.scope = scope
+        self.reason = reason
 
 
 def validate_scope(scope: object) -> Scope:

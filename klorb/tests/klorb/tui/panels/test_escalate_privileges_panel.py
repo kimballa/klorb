@@ -10,6 +10,7 @@ from textual.widgets import Static
 from klorb.session import EscalatePrivilegesContext, EscalatePrivilegesDecision
 from klorb.tui.panels.escalate_privileges_panel import (
     ESCALATE_PRIVILEGES_HEADER_ID,
+    ESCALATE_PRIVILEGES_REASON_ID,
     ESCALATE_PRIVILEGES_ROW_APPROVE_ID,
     ESCALATE_PRIVILEGES_ROW_DENY_ID,
     ESCALATE_PRIVILEGES_TEXT_ID,
@@ -17,8 +18,11 @@ from klorb.tui.panels.escalate_privileges_panel import (
 )
 
 
-def _ctx(*, scope: str = "workspace", description: str = "Grant write access.") -> EscalatePrivilegesContext:
-    return EscalatePrivilegesContext(scope=scope, description=description)
+def _ctx(
+    *, scope: str = "workspace", description: str = "Grant write access.",
+    reason: str = "need to write a config file",
+) -> EscalatePrivilegesContext:
+    return EscalatePrivilegesContext(scope=scope, description=description, reason=reason)
 
 
 def _find_child(container: object, widget_id: str) -> object:
@@ -48,6 +52,16 @@ def test_body_shows_the_context_description() -> None:
 
     assert isinstance(text, Static)
     assert str(text.render()) == "Grant write access to /etc."
+
+
+def test_body_shows_the_context_reason() -> None:
+    panel = EscalatePrivilegesPanel(_ctx(reason="need to write session state"))
+
+    body = next(iter(panel.compose()))
+    reason = _find_child(body, ESCALATE_PRIVILEGES_REASON_ID)
+
+    assert isinstance(reason, Static)
+    assert str(reason.render()) == "Reason: need to write session state"
 
 
 def test_action_move_row_wraps_around_between_approve_and_deny() -> None:

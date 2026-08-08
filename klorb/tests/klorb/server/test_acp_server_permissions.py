@@ -203,7 +203,8 @@ async def test_escalate_privileges_ask_maps_decision_both_ways(
     workspace.mkdir()
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
-        _tool_call_reply([("call_1", "EscalatePrivileges", {"scope": "workspace"})]),
+        _tool_call_reply(
+            [("call_1", "EscalatePrivileges", {"scope": "workspace", "reason": "need it"})]),
         _reply("done"),
     ]
     harness = await make_harness(provider=mock_provider)
@@ -212,6 +213,7 @@ async def test_escalate_privileges_ask_maps_decision_both_ways(
 
     def answer(request: RecordedPermissionRequest) -> RequestPermissionResponse:
         assert request.meta["klorb"]["escalation"]["scope"] == "workspace"
+        assert request.meta["klorb"]["escalation"]["reason"] == "need it"
         return _allow_once(option_id)
 
     harness.harness_client.on_request_permission = answer

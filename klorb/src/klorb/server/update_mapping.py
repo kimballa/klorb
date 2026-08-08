@@ -525,10 +525,13 @@ def permission_ask_meta(
 
 def escalate_privileges_meta(ctx: EscalatePrivilegesContext) -> dict[str, Any]:
     """The `_meta.klorb` payload for an `EscalatePrivilegesContext` ask's `session/
-    request_permission` request: `escalation.scope`/`escalation.description`, so the client can
-    render this as its own distinct (e.g. red-border) flow rather than an ordinary permission
-    grid. `originSessionId` is included when set -- see `permission_ask_meta`'s own doc comment."""
-    meta: dict[str, Any] = {"escalation": {"scope": ctx.scope, "description": ctx.description}}
+    request_permission` request: `escalation.scope`/`escalation.description`/`escalation.reason`,
+    so the client can render this as its own distinct (e.g. red-border) flow rather than an
+    ordinary permission grid. `originSessionId` is included when set -- see `permission_ask_meta`'s
+    own doc comment."""
+    meta: dict[str, Any] = {
+        "escalation": {
+            "scope": ctx.scope, "description": ctx.description, "reason": ctx.reason}}
     if ctx.origin_session_id is not None:
         meta["originSessionId"] = ctx.origin_session_id
     return meta

@@ -34,39 +34,56 @@ def test_apply_raises_for_well_formed_workspace_scope() -> None:
     tool = _tool()
 
     with pytest.raises(EscalatePrivilegesRequired) as excinfo:
-        tool.apply({"scope": "workspace"})
+        tool.apply({"scope": "workspace", "reason": "need to write a config file"})
 
     assert excinfo.value.scope == "workspace"
+    assert excinfo.value.reason == "need to write a config file"
 
 
 def test_apply_raises_for_well_formed_homedir_scope() -> None:
     tool = _tool()
 
     with pytest.raises(EscalatePrivilegesRequired) as excinfo:
-        tool.apply({"scope": "homedir"})
+        tool.apply({"scope": "homedir", "reason": "need to read a cached model file"})
 
     assert excinfo.value.scope == "homedir"
+    assert excinfo.value.reason == "need to read a cached model file"
 
 
 def test_apply_rejects_missing_scope() -> None:
     tool = _tool()
 
     with pytest.raises(ValueError, match="Missing required argument 'scope'"):
-        tool.apply({})
+        tool.apply({"reason": "some reason"})
 
 
 def test_apply_rejects_invalid_scope() -> None:
     tool = _tool()
 
     with pytest.raises(ValueError, match="Valid scopes"):
-        tool.apply({"scope": "invalid_scope"})
+        tool.apply({"scope": "invalid_scope", "reason": "some reason"})
 
 
-def test_parameters_requires_scope_and_forbids_extras() -> None:
+def test_apply_rejects_missing_reason() -> None:
+    tool = _tool()
+
+    with pytest.raises(ValueError, match="Missing required argument 'reason'"):
+        tool.apply({"scope": "workspace"})
+
+
+def test_apply_rejects_blank_reason() -> None:
+    tool = _tool()
+
+    with pytest.raises(ValueError, match="Missing required argument 'reason'"):
+        tool.apply({"scope": "workspace", "reason": "   "})
+
+
+def test_parameters_requires_scope_and_reason_and_forbids_extras() -> None:
     schema = _tool().parameters()
-    assert schema["required"] == ["scope"]
+    assert schema["required"] == ["scope", "reason"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["scope"]["enum"] == ["workspace", "homedir"]
+    assert schema["properties"]["reason"]["type"] == "string"
 
 
 def test_summary_names_the_scope() -> None:
