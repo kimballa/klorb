@@ -16,6 +16,8 @@
 
 ### Feature backlog
 
+* Add a session-specific env file in the session state dir. It's preloaded into every bash cmd. Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an env var when running hooks, so they can customize the env. 
+  
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
