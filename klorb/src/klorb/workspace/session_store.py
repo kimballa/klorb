@@ -30,6 +30,7 @@ release) -- see that mixin.
 import logging
 import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
@@ -94,6 +95,10 @@ class RecentSession(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     """Every prior `Session.id` this session was renamed from, oldest first. Empty in files
     written by an older klorb version that predates id aliasing."""
+    last_modified_timestamp: datetime | None = None
+    """When this session was last saved, mirroring `Session.last_modified_at` -- drives the
+    relative-age display ("2 hours ago") in the VS Code "Load session" picker. Absent (`None`)
+    in files written by an older klorb version that predates this field."""
 
 
 class SessionsIndexState(BaseModel):
@@ -128,6 +133,9 @@ class SessionState(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     """The saved session's `Session.aliases` (every prior id it was renamed from, oldest
     first). Empty in files written by an older klorb version that predates id aliasing."""
+    last_modified_timestamp: datetime | None = None
+    """The saved session's `Session.last_modified_at`, persisted so it can be restored on
+    reload. Absent (`None`) in files written by an older klorb version that predates it."""
 
 
 def sessions_dir(workspace: Workspace) -> Path:
@@ -245,7 +253,7 @@ def _prune_sessions_index(workspace: Workspace, index: SessionsIndexState) -> No
 
 def touch_recent_session(
     workspace: Workspace, session_id: str, subdir: str, title: str | None,
-    aliases: list[str] | None = None,
+    aliases: list[str] | None = None, last_modified_timestamp: datetime | None = None,
 ) -> None:
     """Move (or insert) the `session_id`/`subdir`/`title` entry to the front of `workspace`'s
     `sessions.json`, replacing any existing entry for the same `subdir` -- `subdir`, not
@@ -274,7 +282,8 @@ def touch_recent_session(
             entry for entry in index.recent_sessions if entry.subdir != subdir]
         index.recent_sessions.insert(
             0, RecentSession(
-                session_id=session_id, subdir=subdir, title=title, aliases=aliases or []))
+                session_id=session_id, subdir=subdir, title=title, aliases=aliases or [],
+                last_modified_timestamp=last_modified_timestamp))
         _prune_sessions_index(workspace, index)
         _write_sessions_index(workspace, index)
     finally:
@@ -292,6 +301,7 @@ def write_session_state(
     session_name: str | None = None,
     cur_chainlink_task_id: int | None = None,
     aliases: list[str] | None = None,
+    last_modified_timestamp: datetime | None = None,
 ) -> None:
     """Save `config` and `messages` to `sessions/<subdir>/session.json`, schema-enveloped per
     docs/specs/persisted-json-schema-versioning.md. Overwrites any previous state for this
@@ -303,7 +313,8 @@ def write_session_state(
         config=config, messages=[message.for_persistence() for message in messages],
         statistics=statistics,
         session_id=session_id, root_id=root_id, session_name=session_name,
-        cur_chainlink_task_id=cur_chainlink_task_id, aliases=aliases or [])
+        cur_chainlink_task_id=cur_chainlink_task_id, aliases=aliases or [],
+        last_modified_timestamp=last_modified_timestamp)
     write_versioned_json(
         session_state_path(workspace, subdir), state.model_dump(mode="json"),
         schema_name=SESSION_STATE_SCHEMA_NAME, schema_version=SESSION_STATE_SCHEMA_VERSION)

@@ -24,6 +24,15 @@ import {
  * doesn't speak ACP at all (e.g. an older klorb that ignores the request without answering). */
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 
+/** One `session/list` entry, as returned by `AcpConnection.listSessions()`. `updatedAt` is the
+ * session's `last_modified_timestamp` (ISO-8601), or `null` for a session saved before klorb
+ * grew that field. */
+export interface RecentSessionEntry {
+  id: string;
+  title: string | null;
+  updatedAt: string | null;
+}
+
 /** Renders an unknown thrown value as a human-readable message. JSON-RPC request failures
  * from the ACP SDK reject with a plain `{code, message}` object rather than an `Error`, so
  * both shapes (and anything else) need handling. */
@@ -270,7 +279,7 @@ export class AcpConnection {
   }
 
   /** Lists this workspace's saved sessions (`session/list`), most recently touched first. */
-  public async listSessions(cwd: string): Promise<{ id: string; title: string | null }[]> {
+  public async listSessions(cwd: string): Promise<RecentSessionEntry[]> {
     const connection = this._connection;
     if (connection === undefined) {
       throw new Error('klorb server connection is not ready');
@@ -279,6 +288,7 @@ export class AcpConnection {
     return response.sessions.map((session: AcpSessionInfo) => ({
       id: session.sessionId,
       title: session.title ?? null,
+      updatedAt: session.updatedAt ?? null,
     }));
   }
 

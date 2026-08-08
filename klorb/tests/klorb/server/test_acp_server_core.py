@@ -117,6 +117,25 @@ async def test_list_sessions_returns_saved_sessions_for_workspace(
     assert len(response.sessions) == 1
     assert response.sessions[0].session_id == "sess-1"
     assert response.sessions[0].title == "Saved session"
+    assert response.sessions[0].updated_at is None
+
+
+async def test_list_sessions_reports_last_modified_timestamp_as_updated_at(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    timestamp = datetime(2026, 7, 19, 1, 50, 0)
+    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [])
+    touch_recent_session(
+        workspace, "sess-1", "sess-1", "Saved session", last_modified_timestamp=timestamp)
+
+    harness = await make_harness(provider=MagicMock())
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+
+    response = await harness.client.list_sessions(cwd=str(tmp_path))
+
+    assert response.sessions[0].updated_at == timestamp.isoformat()
 
 
 async def test_list_sessions_raises_when_cwd_is_omitted(

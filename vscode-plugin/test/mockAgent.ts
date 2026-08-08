@@ -47,6 +47,11 @@ export class MockAgent implements acp.Agent {
   public onExtMethod:
     | ((method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>)
     | undefined;
+  /** Scripts `unstable_listSessions()`'s outcome. Unset by default, so `session/list` fails
+   * with `methodNotFound` the way an agent that never advertised the `listSessions` capability
+   * would (see `acp.d.ts`'s `unstable_listSessions?` being optional). */
+  public onListSessions:
+    ((params: acp.ListSessionsRequest) => Promise<acp.ListSessionsResponse>) | undefined;
 
   public async initialize(params: acp.InitializeRequest): Promise<acp.InitializeResponse> {
     this.receivedInitializes.push(params);
@@ -99,6 +104,15 @@ export class MockAgent implements acp.Agent {
       return this.onSetSessionMode(params);
     }
     return {};
+  }
+
+  public async unstable_listSessions(
+    params: acp.ListSessionsRequest
+  ): Promise<acp.ListSessionsResponse> {
+    if (this.onListSessions === undefined) {
+      throw new Error('unstable_listSessions is not scripted for this MockAgent');
+    }
+    return this.onListSessions(params);
   }
 
   public async extMethod(

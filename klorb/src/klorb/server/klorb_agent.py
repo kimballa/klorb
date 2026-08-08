@@ -583,7 +583,11 @@ class KlorbAcpAgent(acp.Agent):
         workspace = self._trust_manager.resolve_workspace(Path(cwd))
         index = read_sessions_index(workspace)
         sessions = [
-            SessionInfo(cwd=str(workspace.path), session_id=entry.session_id, title=entry.title)
+            SessionInfo(
+                cwd=str(workspace.path), session_id=entry.session_id, title=entry.title,
+                updated_at=(
+                    entry.last_modified_timestamp.isoformat()
+                    if entry.last_modified_timestamp else None))
             for entry in index.recent_sessions
         ]
         return ListSessionsResponse(sessions=sessions)

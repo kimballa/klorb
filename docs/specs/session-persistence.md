@@ -56,12 +56,17 @@ written for an untrusted or unresolved workspace.
   first) — so a caller holding a pre-rename id (e.g. a client that recorded the id `session/new`
   returned before the classifier renamed it) can still resolve the same session via
   `find_recent_session`. `title`
-  mirrors `Session.name`.
+  mirrors `Session.name`. `last_modified_timestamp` mirrors `Session.last_modified_at` — an
+  ISO-8601 datetime stamped every time `_write_session_state_and_touch()` saves, or `None` for a
+  session that hasn't been saved yet (or was saved by an older klorb version that predates this
+  field). Drives the relative-age display ("2 hours ago") in the VS Code "Load session" picker
+  (see "VS Code plugin" below).
 * `SessionState` (`session.json`, schema `"klorb-session"`) — `config` (`SessionConfig`),
   `messages`, `statistics` (`SessionStatistics | None`), `session_id`, `root_id`, `session_name`,
-  `cur_chainlink_task_id`. The same shape the old single-slot `last-session.json` carried, plus
-  `root_id`/`cur_chainlink_task_id` (see docs/specs/chainlink-task-tracking.md) — absent (`None`)
-  in files written by an older klorb version that predates either field.
+  `cur_chainlink_task_id`, `last_modified_timestamp`. The same shape the old single-slot
+  `last-session.json` carried, plus `root_id`/`cur_chainlink_task_id` (see docs/specs/chainlink-
+  task-tracking.md) and `last_modified_timestamp` — absent (`None`) in files written by an older
+  klorb version that predates any of these fields.
 
 Both files are schema-enveloped per docs/specs/persisted-json-schema-versioning.md.
 
@@ -342,7 +347,10 @@ behind that flag independently of what the agent itself advertises.
   restored session's mode state and (`field_meta.klorb`) workspace/title info, mirroring
   `session/new`'s reply shape. `mcp_servers` is accepted but never acted on, same as `session/new`.
 * **`session/list`** (`list_sessions(cursor, cwd)`) — returns `cwd`'s workspace's
-  `sessions.json` entries, most-recently-touched first, as `SessionInfo(cwd, session_id, title)`.
+  `sessions.json` entries, most-recently-touched first, as `SessionInfo(cwd, session_id, title,
+  updated_at)`. `updated_at` is `entry.last_modified_timestamp.isoformat()`, or omitted (`None`)
+  for an entry that predates that field — the ACP SDK's own `SessionInfo.updated_at` ("ISO 8601
+  timestamp of last activity") is reused rather than adding a klorb-specific extension field.
   `cursor` is accepted but always ignored, and `next_cursor` always omitted, since the list is
   small by construction (`MAX_RECENT_SESSIONS`) — everything fits in one page. Raises
   `invalid_params` if `cwd` is omitted: unlike `session/new`/`session/load`, ACP allows a client to
@@ -380,8 +388,14 @@ session-stats grid) — an accepted degenerate case, not specially handled.
   `listRecentSessions`, which the extension host answers by running `klorb.browseSessions`).
 * **`klorb.browseSessions`** — fetches the workspace's saved sessions via
   `AcpConnection.listSessions(cwd)` (`session/list`), shows them in a native
-  `vscode.window.showQuickPick` (title or raw id as the label, `"current"` description on the
-  live session), and on a pick that isn't the already-live session, calls
+  `vscode.window.showQuickPick` (title or raw id as the label; description is `"current"` on the
+  live session, otherwise `formatRelativeAge(updatedAt)` in parentheses — e.g. `(2 hours ago)` —
+  when `updatedAt` is present, rendered in the QuickPick's own dimmed description styling since it
+  shares the label's line but isn't the headline). `formatRelativeAge`
+  (`host/features/sessionControls/formatRelativeAge.ts`) buckets the age as `"just now"` (under 2
+  minutes), `"<n> minutes/hours/day(s) ago"` (up through the last week), `"last week"`/`"last
+  month"` for the next couple of buckets, and a `"<Month>, <year>"` fallback beyond ~45 days. On a
+  pick that isn't the already-live session, calls
   `AcpConnection.loadSession(cwd, pickedId)` and updates the remembered last-session id.
   Deliberately does not clear the webview history before the load completes — the incoming
   `_klorb/sessionReplay` notification replaces it wholesale once the server confirms the load, so
@@ -432,8 +446,7 @@ session-stats grid) — an accepted degenerate case, not specially handled.
 * Subagent sessions (not yet implemented) will not create their own top-level `sessions/<subdir>/`
   — a subagent's state is expected to be tracked within its root session's own directory, by a
   mechanism this design doesn't define yet.
-* No UI action to delete a saved session outright (only the automatic `MAX_RECENT_SESSIONS`
-  pruning removes one), and the "Load session"/"Session history" pickers show no recency
-  timestamp, only a title — both are possible future improvements, not built here.
+* No UI action to delete a saved session outright — only the automatic `MAX_RECENT_SESSIONS`
+  pruning removes one; a possible future improvement, not built here.
 * `KlorbAcpAgent.fork_session`/`resume_session` remain unimplemented (`RequestError.
   method_not_found`) — unrelated to `session/load`/`session/list`, and unaffected by this design.

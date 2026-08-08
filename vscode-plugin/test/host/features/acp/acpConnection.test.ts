@@ -436,4 +436,28 @@ describe('AcpConnection', () => {
     await expect(turn).rejects.toThrow('klorb server restarted');
     expect(connection.isReady).toBe(false);
   });
+
+  it('listSessions() maps sessionId/title/updatedAt from session/list', async () => {
+    const agent = new MockAgent();
+    agent.onListSessions = async () => ({
+      sessions: [
+        {
+          cwd: '/work',
+          sessionId: 'sess-2',
+          title: 'Fix auth bug',
+          updatedAt: '2026-08-07T10:00:00',
+        },
+        { cwd: '/work', sessionId: 'sess-3', title: null, updatedAt: null },
+      ],
+    });
+    const { connection } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+
+    const sessions = await connection.listSessions('/work');
+
+    expect(sessions).toEqual([
+      { id: 'sess-2', title: 'Fix auth bug', updatedAt: '2026-08-07T10:00:00' },
+      { id: 'sess-3', title: null, updatedAt: null },
+    ]);
+  });
 });

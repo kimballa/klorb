@@ -122,6 +122,25 @@ class TestSessionState:
         assert state is not None
         assert state.aliases == []
 
+    def test_round_trips_last_modified_timestamp(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        timestamp = datetime(2026, 7, 19, 1, 50, 0)
+        write_session_state(
+            workspace, "sess-1", SessionConfig(), [], last_modified_timestamp=timestamp)
+
+        state = read_session_state(workspace, "sess-1")
+        assert state is not None
+        assert state.last_modified_timestamp == timestamp
+
+    def test_read_returns_none_last_modified_timestamp_for_old_files(self, tmp_path: Path) -> None:
+        """Old session.json files written by an older klorb version lack this field."""
+        workspace = _workspace(tmp_path)
+        write_session_state(workspace, "sess-1", SessionConfig(), [])
+
+        state = read_session_state(workspace, "sess-1")
+        assert state is not None
+        assert state.last_modified_timestamp is None
+
     def test_round_trips_session_id_name_and_chainlink_task(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)
         write_session_state(
@@ -242,6 +261,22 @@ class TestRecentSessionsIndex:
 
         index = read_sessions_index(workspace)
         assert index.recent_sessions[0].aliases == ["2026-07-19-01-50-abcd"]
+
+    def test_touch_persists_last_modified_timestamp(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        timestamp = datetime(2026, 7, 19, 1, 50, 0)
+        touch_recent_session(
+            workspace, "sess-1", "sess-1", "First", last_modified_timestamp=timestamp)
+
+        index = read_sessions_index(workspace)
+        assert index.recent_sessions[0].last_modified_timestamp == timestamp
+
+    def test_touch_defaults_last_modified_timestamp_to_none(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        touch_recent_session(workspace, "sess-1", "sess-1", "First")
+
+        index = read_sessions_index(workspace)
+        assert index.recent_sessions[0].last_modified_timestamp is None
 
     def test_touch_re_keys_session_id_without_changing_subdir(self, tmp_path: Path) -> None:
         """A session-naming rename changes `session_id` but not `subdir` -- re-touching under

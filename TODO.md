@@ -18,6 +18,14 @@
   WaitForSubagent repeatedly until it completes.
   * Likewise, Reviewer should be told by /code-review that its explorer children will also run > 2 mins each.
 
+* Path traversal bug could lead to data deletion if sessions.json is maliciously edited:
+  `_prune_sessions_index` (session_store.py:240, 247, 250) reads `entry.subdir` from sessions.json and
+  passes it to `shutil.rmtree()` and `session_lock_path()`. A hand-crafted sessions.json with a traversal
+  subdir could cause deletion outside sessions/. When rehydrating the session info from files,
+  the `subdir` field must be examined to make sure it is a proper subdir and does not escape the
+  session store dir (e.g. with `subdir='..'`). We should check the fully-resolved subdir before
+  use to ensure that there isn't some symlink shenanigans pointing it elsewhere either.
+
 ### Feature backlog
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
@@ -201,6 +209,13 @@
 
 ### Feature backlog
 
+* You should be able to edit the session title after it's auto-assigned. This should persist down
+  to the Session level so it would get saved with the session.json and rehydrated next time.
+  (This does not change the session.id / slug). If you double-click on the session title
+  text at the top of the vscode plugin panel, it should turn into a textbox `<input/>` you can edit.
+  * If you backspace out *all* of it so it's empty, it should render something more "helper-text"
+    like (italics; dimmed font) that says "Klorb agent session".
+
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.
@@ -231,17 +246,6 @@
 
 * Surface a "delete this saved session" action (TUI palette command and/or VS Code quickpick
   item) rather than relying solely on `MAX_RECENT_SESSIONS` pruning to reclaim space.
-* Show a relative recency timestamp ("2 hours ago") in the Load Session picker (shown when
-  you click the "Session History" button) -- today's design deliberately has no timestamp field on
-  `RecentSession`, only list order; adding one is backwards-compatible.
-* (#agent) Add a lastModifiedTimestamp field to Session, stored in the session.json, and also stored in
-    the RecentSession model. The field is serialized as an ISO-8601 datetime in both places.
-    If this timestamp is provided, then the quickpick shows a relative age for the entry,
-    like `<session_title> (2 hours ago)`. The relative age should be approximate: `just now` if
-    it's less than 2 minutes old. `<n> minutes ago` within the last hour, `<n> hours ago` if
-    it's within the last 24 hours, `<n> day(s) ago`, `last week`, `last month`, then a
-    month-and-year format for older: `April, 2025`. The font for the age should be subtly dimmed
-    or otherwise deemphasized relative to the main headline title for the session.
 * `docs/specs/klorb-server.md`'s `fork_session`/`resume_session` stubs are unaffected by this
   plan; a future plan could build genuine session forking on top of this same `sessions/`
   directory layout.

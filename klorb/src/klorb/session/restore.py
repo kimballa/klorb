@@ -82,7 +82,7 @@ def try_restore_session(
         restored_config, provider=provider, model_registry=model_registry,
         process_config=process_config,
         session_id=state.session_id, root_id=state.root_id, session_name=state.session_name,
-        aliases=state.aliases,
+        aliases=state.aliases, last_modified_at=state.last_modified_timestamp,
         tool_registry=grants.tool_registry,
         effective_subagent_roles=grants.effective_subagent_roles)
     session.set_chainlink_task(state.cur_chainlink_task_id)

@@ -5,12 +5,13 @@ import * as vscode from 'vscode';
 
 import { ApiKeyManager, type ApiKeyVsCode } from 'host/apiKeyStorage';
 import { EditorIntegration, type EditorIntegrationVsCode } from 'host/editorIntegration';
-import { AcpConnection, errorMessage } from 'host/features/acp';
+import { AcpConnection, errorMessage, type RecentSessionEntry } from 'host/features/acp';
 import { FileSearch, type FileSearchVsCode } from 'host/features/fileSearch';
 import {
   SessionControls,
   WorkspaceTrustBridge,
   cyclePermissionModeCommand,
+  formatRelativeAge,
   reloadSkillsCommand,
   selectModelCommand,
   setPermissionModeCommand,
@@ -348,7 +349,7 @@ async function browseSessionsCommand(
     return;
   }
   const cwd = sessionCwd();
-  let sessions: { id: string; title: string | null }[];
+  let sessions: RecentSessionEntry[];
   try {
     sessions = await connection.listSessions(cwd);
   } catch (err) {
@@ -363,7 +364,12 @@ async function browseSessionsCommand(
   }
   const items = sessions.map((session) => ({
     label: session.title ?? session.id,
-    description: session.id === connection.sessionId ? 'current' : undefined,
+    description:
+      session.id === connection.sessionId
+        ? 'current'
+        : session.updatedAt !== null
+          ? `(${formatRelativeAge(session.updatedAt)})`
+          : undefined,
     value: session.id,
   }));
   const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Load session' });

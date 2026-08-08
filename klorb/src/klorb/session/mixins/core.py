@@ -90,6 +90,7 @@ class SessionCoreMixin(SessionBase):
         session_name: str | None = None,
         root_id: str | None = None,
         aliases: list[str] | None = None,
+        last_modified_at: datetime | None = None,
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
         scratchpad_path: str | None = None,
@@ -276,6 +277,13 @@ class SessionCoreMixin(SessionBase):
         self._session_started_at = datetime.now()
         """Timestamp recorded at session construction, used as the session's start time in the
         one-shot `Metadata` interjection prepended to the first user message."""
+        self._last_modified_at = last_modified_at
+        """When this session was last saved to `session.json`, or `None` if it hasn't been saved
+        yet (or was restored from a save file that predates this field). Restored from
+        `SessionState.last_modified_timestamp` if given; otherwise stamped with `datetime.now()`
+        by `SessionPersistenceMixin._write_session_state_and_touch()` on every save, and
+        round-trips through `session.json`/`sessions.json` (`RecentSession.
+        last_modified_timestamp`) like `id`/`session_name`."""
         self._pending_permission_framework_interjection: str | None = None
         """Set by `set_permission_framework()` to the harness message queued for the next
         `send_turn()` call to prepend onto its `prompt`, or `None` if no permission-framework

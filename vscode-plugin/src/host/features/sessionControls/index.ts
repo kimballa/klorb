@@ -9,6 +9,7 @@ export {
   type CommandsVsCode,
   type PickableItem,
 } from './commands';
+export { formatRelativeAge } from './formatRelativeAge';
 export { formatSessionStats, type SessionStatsData } from './formatSessionStats';
 export {
   PERMISSION_MODE_CYCLE,

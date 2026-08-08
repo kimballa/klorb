@@ -65,7 +65,8 @@
         ["tail", "*", "*"],
         ["markdownlint-cli2", "--config", "*", "*"],
         ["find", "/home/aaron/src/klorb/*", "-name", "*"],
-        ["git", "show", "**"]
+        ["git", "show", "**"],
+        ["git", "ls-files", "**"]
       ]
     },
     "shareEnv": [

@@ -115,6 +115,7 @@ class SessionBase:
     _agent_group_seeded: bool
     _session_naming_pending: bool
     _session_started_at: datetime
+    _last_modified_at: datetime | None
     _pending_permission_framework_interjection: str | None
     _standing_interjection_providers: dict[str, Callable[[], str | None]]
     _teardown_callbacks: dict[str, Callable[[], None]]
