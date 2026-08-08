@@ -201,9 +201,6 @@
 
 ### Feature backlog
 
-* (#agent) The "Subagent is still working…" line should include a small animated spinner of some kind, maybe
-  just updating the ellipses: "" -> "." -> ".." -> "..." -> (repeat)
-
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.

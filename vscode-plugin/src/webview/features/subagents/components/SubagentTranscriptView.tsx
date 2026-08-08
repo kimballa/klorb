@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { type JSX, useEffect } from 'react';
+import { type JSX, useEffect, useState } from 'react';
 
 import { HistoryView, type HistoryEntry } from 'webview/features/history';
 import usePinnedScroll from 'webview/hooks/usePinnedScroll';
@@ -20,16 +20,37 @@ export interface SubagentTranscriptViewProps {
   onToggleToolCallExpanded(callId: string): void;
 }
 
+const ELLIPSIS_FRAMES = ['', '.', '..', '...'];
+const ELLIPSIS_INTERVAL_MS = 400;
+
+/** Cycles through `ELLIPSIS_FRAMES` every `ELLIPSIS_INTERVAL_MS` while `active`; the empty frame
+ * otherwise -- the "still working" status line's spinner. */
+function useEllipsisPhase(active: boolean): string {
+  const [frameIndex, setFrameIndex] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const timer = setInterval(
+      () => setFrameIndex((prev) => (prev + 1) % ELLIPSIS_FRAMES.length),
+      ELLIPSIS_INTERVAL_MS
+    );
+    return () => clearInterval(timer);
+  }, [active]);
+  return active ? (ELLIPSIS_FRAMES[frameIndex] ?? '') : '';
+}
+
 function statusNoticeText(
   state: 'running' | 'finished' | undefined,
   aborted: boolean,
-  interruptPending: boolean
+  interruptPending: boolean,
+  workingEllipsis: string
 ): string {
   if (state === undefined) {
     return 'Loading…';
   }
   if (state === 'running') {
-    return interruptPending ? 'Sending interrupt…' : 'Subagent is still working…';
+    return interruptPending ? 'Sending interrupt…' : `Subagent is still working${workingEllipsis}`;
   }
   return aborted ? 'Subagent interrupted.' : 'Subagent task complete.';
 }
@@ -54,6 +75,7 @@ export default function SubagentTranscriptView({
   onToggleToolCallExpanded,
 }: SubagentTranscriptViewProps): JSX.Element {
   const { containerRef, scrollToBottomIfPinned } = usePinnedScroll<HTMLDivElement>();
+  const workingEllipsis = useEllipsisPhase(state === 'running' && !interruptPending);
 
   useEffect(() => {
     scrollToBottomIfPinned();
@@ -72,7 +94,9 @@ export default function SubagentTranscriptView({
            * fails the root's own turn first. */
         }}
       />
-      <div id="subagent-history-status">{statusNoticeText(state, aborted, interruptPending)}</div>
+      <div id="subagent-history-status">
+        {statusNoticeText(state, aborted, interruptPending, workingEllipsis)}
+      </div>
     </div>
   );
 }
