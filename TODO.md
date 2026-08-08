@@ -7,16 +7,12 @@
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
-* KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
+* (#agent) KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
 * (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
-
-* The auto-agent skill should tell the operator that the review will take more than 2 mins and it must
-  WaitForSubagent repeatedly until it completes.
-  * Likewise, Reviewer should be told by /code-review that its explorer children will also run > 2 mins each.
 
 ### Feature backlog
 
@@ -24,14 +20,15 @@
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
   masks out a secret, put the file on a list of sensitive files. This file list should be fed to
-  the BashTool command classifier and if it appears that a bash command could gain unmasked access
-  to the file contents, it should be marked as 9/10+ risk (credential extraction attempt).
+  the BashTool command classifier and if it appears that a bash command could give the agent unmasked access
+  to the file contents or otherwise exfiltrate the credentials, it should be marked as 9/10+ risk (credential extraction attempt).
 
 * New Subagent roles:
-  * TaskMaster / ProjectManager -- keep track of fine-grained tasks and ensure that they are all
+  * project_manager -- keep track of fine-grained tasks and ensure that they are all
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
     registered with chainlink.
+  * Add a /make-plan-tasks skill that explains how to recursively break down a plan into steps and link them together with the chainlink-based Todo* tools.
   * Add a skill for Operator to manage a Planner, one or more Implementers, and Reviewer(s) to
     deliver a complete feature.
   * ... The goal of this is to eventually support a "software factory" model where the system is
@@ -79,7 +76,7 @@
   `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
   docs/specs/roles-and-system-prompts.md.
 
-* Need a ProviderFactory, to support connections other than openrouter.ai?
+* (low priority): add a ProviderFactory, to support connections other than openrouter.ai?
   * Produces ApiProviders from a string
   * Currently only openrouter api provider is supported from "openrouter" string.
   * model names now can be fully-qualified model name (fqmn): e.g.: "openrouter:gpt-4o-mini"
@@ -90,6 +87,8 @@
   * Add Evals for GrepTool and FindFileTool.
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
     (see "Plan 013: WebFetch" section below)
+  * BroadcastMessage -- send a msg to the whole agent team
+  * Improve ability to use MessageSubagent for peer to peer 1:1 messaging while agent loops are ongoing?
 
 * Improvements to Skills:
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
@@ -120,11 +119,13 @@
 * Integrate with `chainlink`'s `blocked_by_open` field, once merged. Then we don't have to look
   up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
 
+* (#agent): improve chainlink to accept multiple --label filters (logical AND)
+
 * Add more system interjections:
-  * If the agent does *not* have a plan, after a while, start harrassing it to write down some
+  * If the agent does *not* have a plan, after a while, redirect it to write down some
     objectives for itself via TodoWrite and use TodoNext to start focusing on task-oriented work.
   * Start adding system interjections mentioning how many turns the agent has taken, or how
-    many tool calls (vs total tool call budget / limit) it has performed.
+    many tool calls (vs total tool call budget / limit) it has performed. Parents should be able to set (more limited) tool use budgets for child sessions.
 
 ## TUI
 
@@ -165,6 +166,11 @@
   merged thinking chip/`klorb.setThinking` QuickPick (see
   docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md).
 
+* Today, if you pass -m and --interactive, it will start the TUI and then stay there.
+  Add --(no-)quit-on-success to have it exit the TUI when the agent turn
+  completes, if the user did not interject / enqueue a msg or use
+  ESC / ctrl-C to interrupt the agent loop.
+
 ## VSCode plugin
 
 ### Bugs
@@ -197,6 +203,7 @@
 * Third-party malware blocklisting: query external threat lists and auto-deny requests to
   domains on blocklist(s) maintained by trusted third parties, not just the user's own
   `deny` list.
+  (Implement as a hook?)
 * Cookie handling: a session-scoped `httpx.Client` (held in
   `session.tool_state["WebFetch"]["client"]`) to enable cookie persistence across calls,
   instead of the fresh per-call client used today.
@@ -205,6 +212,7 @@
 * `Tool.is_read_only()` needs a conditional form `is_read_only(args)` once WebFetch
   supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
   otherwise.
+  * Use AgentCapabilities to control which http methods a subagent can use.
 * Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
 
 ### Plan 017: Multiple sessions per workspace
@@ -261,7 +269,7 @@
   own docs today (OpenAI's `images-vision` guide; MiMo-V2.5's own `preprocessor_config.json`),
   not guessed, but the live API is the tie-breaker if OpenRouter's routing ever imposes
   different effective limits than the base model's own spec.
-* Kimi's token formula remains genuinely unpublished -- still riding the generic Anthropic-tiles
+* Kimi's token formula remains unpublished -- still estimating via the generic Anthropic-tiles
   fallback until Moonshot AI publishes one.
 * Client-side (webview canvas) pre-downscaling before the postMessage hop, if raw-image transit
   over stdio/postMessage proves to be a practical bottleneck in real use -- the resize pipeline
@@ -269,12 +277,12 @@
 
 ### Plan 021: Subagents
 
-* (#agent) Subagent `assigned_task_id`: add a field to `CreateSubagent` that lets the parent start the
+* (#agent) Subagent `starting_task_id`: add a field to `CreateSubagent` that lets the parent start the
   subagent off with a specific todo item pre-claimed, instead of the subagent having to call
   `TodoCreate`/`TodoNext` itself once it starts. Per-agent task labels and `TodoCreate`'s
   `assign_to` (see docs/specs/chainlink-task-tracking.md's "Task assignment" section) already
   let a parent delegate a task to a specific subagent id; this would just fold that into
-  `CreateSubagent` itself as a convenience. If the task was labeled `all`, claim it first by
+  `CreateSubagent` itself as a convenience, and incorporate the task summary into the 1st subagent user prompt. If the task was labeled `all`, claim it first by
   removing the `all` label so no other subagent poaches it while the new subagent is starting up.
   Somewhere in there (the parent? the child?) should explicitly put the `agent:(id)` label for the
   subagent onto the task in chainlink.
