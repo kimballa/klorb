@@ -688,6 +688,14 @@ export interface AttachImageFileMessage {
   type: 'attachImageFile';
 }
 
+/** The user committed an edit to the session title (double-click-to-edit in `PanelHeader`).
+ * `title: null` clears it back to unnamed -- same as an empty/whitespace-only input, which the
+ * webview already normalizes to `null` before posting. */
+export interface RenameSessionMessage {
+  type: 'renameSession';
+  title: string | null;
+}
+
 /** The user clicked the stopwatch ("Session history") icon: fetch this workspace's saved
  * sessions (`session/list`) and show them in a native `showQuickPick`; picking one loads it
  * (`session/load`), replacing the live session -- all handled host-side (`klorb.browseSessions`)
@@ -732,6 +740,7 @@ export type WebviewMessage =
   | ShowSessionStatsMessage
   | NewSessionMessage
   | ReloadSkillsMessage
+  | RenameSessionMessage
   | ListRecentSessionsMessage
   | AttachImageFileMessage
   | SetSubagentsPanelVisibleMessage
@@ -1189,6 +1198,13 @@ function parseCancelSubagent(record: Record<string, unknown>): CancelSubagentMes
   return { type: 'cancelSubagent', sessionId: record.sessionId };
 }
 
+function parseRenameSession(record: Record<string, unknown>): RenameSessionMessage | undefined {
+  if (record.title !== null && typeof record.title !== 'string') {
+    return undefined;
+  }
+  return { type: 'renameSession', title: record.title };
+}
+
 function isAttachedImageMeta(value: unknown): value is AttachedImageMeta {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -1446,6 +1462,8 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parseSelectSubagent(record);
     case 'cancelSubagent':
       return parseCancelSubagent(record);
+    case 'renameSession':
+      return parseRenameSession(record);
     case 'webviewError':
       return parseWebviewError(record);
     default:

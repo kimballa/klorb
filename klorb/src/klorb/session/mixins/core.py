@@ -465,8 +465,8 @@ class SessionCoreMixin(SessionBase):
 
     @property
     def name(self) -> str | None:
-        """The human-readable title assigned by the session-naming classifier, or `None`
-        if no name has been assigned yet (e.g. fresh session, or naming failed)."""
+        """The human-readable session title, assigned by the session-naming classifier or
+        a user rename, or `None` if no title has been assigned (e.g. fresh session)."""
         return self._session_name
 
     @name.setter
@@ -480,6 +480,10 @@ class SessionCoreMixin(SessionBase):
         calling `send_turn()` to know whether to expect `TurnEventHandlers.on_session_name_changed`
         to fire for that call."""
         return self._session_naming_pending
+
+    @session_naming_pending.setter
+    def session_naming_pending(self, value: bool) -> None:
+        self._session_naming_pending = value
 
     def set_id(self, new_id: str) -> None:
         """The only sanctioned way to change `self.id`. If `id == root_id` (this session hasn't

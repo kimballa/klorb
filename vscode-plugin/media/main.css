@@ -33,6 +33,24 @@ body {
   text-overflow: ellipsis;
 }
 
+.panel-header .title-placeholder {
+  font-style: italic;
+  font-weight: normal;
+  color: var(--vscode-descriptionForeground);
+}
+
+.panel-header input.title-input {
+  font: inherit;
+  font-weight: 600;
+  color: var(--vscode-input-foreground);
+  background-color: var(--vscode-input-background, rgba(128, 128, 128, 0.1));
+  border: 1px solid var(--vscode-focusBorder, transparent);
+  border-radius: 2px;
+  padding: 0 4px;
+  margin: -1px -5px;
+  min-width: 0;
+}
+
 .panel-header-actions {
   flex: 0 0 auto;
   display: flex;

@@ -540,6 +540,8 @@ describe('parseWebviewMessage', () => {
       { type: 'selectSubagent', sessionId: null },
       { type: 'selectSubagent', sessionId: 'subagent-1' },
       { type: 'cancelSubagent', sessionId: 'subagent-1' },
+      { type: 'renameSession', title: 'Fix auth bug' },
+      { type: 'renameSession', title: null },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);
@@ -590,5 +592,7 @@ describe('parseWebviewMessage', () => {
     expect(parseWebviewMessage({ type: 'selectSubagent', sessionId: 7 })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'cancelSubagent' })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'cancelSubagent', sessionId: null })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'renameSession', title: 7 })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'renameSession' })).toBeUndefined();
   });
 });

@@ -249,6 +249,20 @@ export class SessionControls {
     return result;
   }
 
+  /** Renames the session (`_klorb/setSessionTitle`); `title: null` (or an empty/whitespace-only
+   * string) clears it back to unnamed. Applies the server's own normalized result to the
+   * snapshot directly, rather than waiting on a `session_info_update` push -- the same
+   * apply-the-response-inline pattern `setSessionConfig`/`trustWorkspace` use. */
+  public async setSessionTitle(title: string | null): Promise<string | null> {
+    const raw = await this._connection.extMethod('_klorb/setSessionTitle', { title });
+    const result = raw.title;
+    if (result !== null && typeof result !== 'string') {
+      throw new Error('klorb server returned a malformed _klorb/setSessionTitle result');
+    }
+    this._merge({ sessionTitle: result });
+    return result;
+  }
+
   /** Rebuilds the skill catalog (`_klorb/reloadSkills`), returning the resulting skill count. */
   public async reloadSkills(): Promise<number> {
     const raw = await this._connection.extMethod('_klorb/reloadSkills', {});

@@ -10,7 +10,7 @@ import {
   type SubagentNodeInfo,
 } from 'shared/webviewMessages';
 import ApprovalPanel, { type ApprovalDecision } from 'webview/components/ApprovalPanel';
-import PanelHeader from 'webview/components/PanelHeader';
+import PanelHeader, { SESSION_TITLE_PLACEHOLDER } from 'webview/components/PanelHeader';
 import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
 import QuestionPanel, { type QuestionPanelAnswer } from 'webview/components/QuestionPanel';
 import StatusRow from 'webview/components/StatusRow';
@@ -385,6 +385,10 @@ export default function App({
     vscode.postMessage({ type: 'reloadSkills' });
   }
 
+  function renameSession(title: string | null): void {
+    vscode.postMessage({ type: 'renameSession', title });
+  }
+
   function submit(text: string, images?: ImageAttachment[]): void {
     if (selectedSubagentId !== null) {
       // Addresses the selected subagent directly (`_klorb/subagentPrompt`), bypassing the root
@@ -518,9 +522,15 @@ export default function App({
     subagentTranscript !== undefined && subagentTranscript.sessionId === selectedSubagentId
       ? subagentTranscript
       : undefined;
+  const rootTitleDisplay = sessionTitleDisplay(status);
   const headerTitle = isSubagentSelected
     ? `${selectedSubagentNode?.address ?? '?'} ${selectedSubagentNode?.title ?? 'New session…'}`
-    : sessionTitleText(status);
+    : rootTitleDisplay.text;
+  // Editing (and thus the rename-on-empty placeholder) only applies to the root session -- a
+  // subagent's title comes from its own tree node, not `status.sessionTitle`, and
+  // `status.sessionTitle === undefined` means the host hasn't reported a live session yet (see
+  // `StatusUpdateMessage.sessionTitle`'s own null-vs-undefined convention).
+  const titleEditable = !isSubagentSelected && status.sessionTitle !== undefined;
   // Shown only while the subagents panel itself is hidden -- once it's open, the panel's own
   // blinking "!" row marker already surfaces the same fact, mirroring the TUI's
   // `#subagent-attention-status` fallback (`_update_subagent_attention_status_line`).
@@ -535,8 +545,12 @@ export default function App({
     <VsCodeApiProvider vscode={vscode}>
       <PanelHeader
         title={headerTitle}
+        titleIsPlaceholder={!isSubagentSelected && rootTitleDisplay.isPlaceholder}
+        editable={titleEditable}
+        rawTitle={status.sessionTitle ?? null}
         onNewSession={newSession}
         onBrowseSessions={browseSessions}
+        onRenameSession={renameSession}
       />
       {subagentsPanelVisible ? (
         <SubagentsPanel
@@ -647,12 +661,19 @@ function selectedStatusOverrides(
   };
 }
 
-/** The panel's top title bar text: the active session's title, `New session…` until one
- * arrives, with an `(Untrusted)` suffix appended whenever `workspaceTrusted === false` (TUI
- * header parity). */
-function sessionTitleText(status: StatusSnapshot): string {
-  const title = status.sessionTitle ?? 'New session…';
-  return status.workspaceTrusted === false ? `${title} (Untrusted)` : title;
+/** The panel's top title bar text for the root session: `New session…` before the host has
+ * reported a live session at all (`status.sessionTitle === undefined`); once one exists,
+ * `SESSION_TITLE_PLACEHOLDER` (italicized by the caller via `isPlaceholder`) for a `null` title,
+ * or the title itself -- either way with an `(Untrusted)` suffix appended whenever
+ * `workspaceTrusted === false` (TUI header parity). */
+function sessionTitleDisplay(status: StatusSnapshot): { text: string; isPlaceholder: boolean } {
+  const isPlaceholder = status.sessionTitle === null;
+  const base =
+    status.sessionTitle === undefined
+      ? 'New session…'
+      : (status.sessionTitle ?? SESSION_TITLE_PLACEHOLDER);
+  const text = status.workspaceTrusted === false ? `${base} (Untrusted)` : base;
+  return { text, isPlaceholder };
 }
 
 /** Renders a `QuestionPanelAnswer` as the compact history text `appendQuestionInteraction()`

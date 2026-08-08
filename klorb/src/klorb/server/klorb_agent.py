@@ -149,6 +149,7 @@ class KlorbAcpAgent(acp.Agent):
                     "trustWorkspace": True,
                     "reloadSkills": True,
                     "enqueueMessage": True,
+                    "setSessionTitle": True,
                     "taskMeta": chainlink_available(),
                     "imageInput": True,
                     "subagents": True,
@@ -379,6 +380,25 @@ class KlorbAcpAgent(acp.Agent):
         logger.debug(
             "_klorb/setSessionConfig applied for ACP session %s: %r", self._acp_session_id, update)
         return session_config_json(self._session, self._model_registry)
+
+    def _ext_set_session_title(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Apply a user-driven session rename -- see `_klorb/setSessionTitle` in
+        docs/specs/klorb-server.md. `title` of `None` or an empty/whitespace-only string clears
+        the title back to unnamed. Also cancels the one-shot naming classifier (see
+        `Session.session_naming_pending`) so a rename issued before the first turn isn't
+        overwritten once that turn runs."""
+        self._require_session_id(params)
+        assert self._session is not None
+        title = params.get("title")
+        if title is not None and not isinstance(title, str):
+            raise acp.RequestError.invalid_params({"reason": "title must be a string or null"})
+        self._session.name = title.strip() if isinstance(title, str) and title.strip() else None
+        self._session.session_naming_pending = False
+        self._session.persist_state()
+        logger.debug(
+            "_klorb/setSessionTitle applied for ACP session %s: %r",
+            self._acp_session_id, self._session.name)
+        return {"title": self._session.name}
 
     def _ext_session_stats(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
@@ -625,6 +645,8 @@ class KlorbAcpAgent(acp.Agent):
             return self._ext_get_session_config(params)
         if method == "klorb/setSessionConfig":
             return self._ext_set_session_config(params)
+        if method == "klorb/setSessionTitle":
+            return self._ext_set_session_title(params)
         if method == "klorb/sessionStats":
             return self._ext_session_stats(params)
         if method == "klorb/reloadSkills":

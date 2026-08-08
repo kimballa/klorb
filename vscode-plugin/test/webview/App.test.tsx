@@ -362,6 +362,32 @@ describe('App', () => {
     expect(screen.getByText('Fix the bug (Untrusted)')).toBeTruthy();
   });
 
+  it('shows the placeholder title once a session exists with no name, and posts renameSession on edit', () => {
+    const { vscode, posted } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    postHostMessage({ type: 'statusUpdate', sessionTitle: null, workspaceTrusted: true });
+
+    const placeholder = screen.getByText('Klorb agent session');
+    expect(placeholder.className).toContain('title-placeholder');
+
+    fireEvent.doubleClick(placeholder);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'My renamed session' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(posted).toContainEqual({ type: 'renameSession', title: 'My renamed session' });
+  });
+
+  it('does not allow editing the title before a session exists', () => {
+    const { vscode } = makeVsCode();
+    render(<App vscode={vscode} initialEntries={[]} />);
+
+    fireEvent.doubleClick(screen.getByText('New session…'));
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
   it('posts newSession and listRecentSessions from the panel header icons', () => {
     const { vscode, posted } = makeVsCode();
     render(<App vscode={vscode} initialEntries={[]} />);

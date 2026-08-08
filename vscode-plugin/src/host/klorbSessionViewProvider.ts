@@ -336,6 +336,13 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
       case 'reloadSkills':
         await vscode.commands.executeCommand('klorb.reloadSkills');
         break;
+      case 'renameSession':
+        try {
+          await this._sessionControls?.setSessionTitle(parsed.title);
+        } catch (err) {
+          this._log(`klorb: renameSession failed: ${errorMessage(err)}`);
+        }
+        break;
       case 'attachImageFile':
         await this._attachImageFile();
         break;

@@ -173,6 +173,33 @@ describe('SessionControls', () => {
     expect(statuses).toContainEqual(expect.objectContaining({ workspaceTrusted: true }));
   });
 
+  it('setSessionTitle() round-trips through _klorb/setSessionTitle and applies the result', async () => {
+    const agent = new MockAgent();
+    agent.onExtMethod = async () => ({ title: 'Renamed session' });
+    const { connection, sessionControls, statuses } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+    statuses.length = 0;
+
+    const result = await sessionControls.setSessionTitle('  Renamed session  ');
+
+    expect(result).toBe('Renamed session');
+    expect(agent.receivedExtMethods.map((r) => r.method)).toContain('_klorb/setSessionTitle');
+    expect(statuses).toContainEqual(expect.objectContaining({ sessionTitle: 'Renamed session' }));
+  });
+
+  it('setSessionTitle() applies a cleared (null) title', async () => {
+    const agent = new MockAgent();
+    agent.onExtMethod = async () => ({ title: null });
+    const { connection, sessionControls, statuses } = makeHarness(agent);
+    await connection.start(OPTIONS, '/work');
+    statuses.length = 0;
+
+    const result = await sessionControls.setSessionTitle(null);
+
+    expect(result).toBeNull();
+    expect(statuses).toContainEqual(expect.objectContaining({ sessionTitle: null }));
+  });
+
   it('sessionStats()/reloadSkills() round-trip through their ext methods', async () => {
     const agent = new MockAgent();
     agent.onExtMethod = async (method) => {

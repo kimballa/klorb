@@ -2,7 +2,7 @@
 """Tests for the session-controls surface `klorb.server.klorb_agent`/`klorb.server.turn_bridge`
 add over ACP: session modes (permission framework), model/thinking session config, session
 naming, token-usage notifications, and the `_klorb/sessionStats`/`_klorb/trustWorkspace`/
-`_klorb/reloadSkills` ext requests. See docs/specs/klorb-server.md."""
+`_klorb/reloadSkills`/`_klorb/setSessionTitle` ext requests. See docs/specs/klorb-server.md."""
 
 from collections.abc import Callable
 from datetime import datetime
@@ -19,6 +19,7 @@ from klorb.message import Message
 from klorb.process_config import ProcessConfig
 from klorb.session_naming import SessionName
 from klorb.workspace import TrustManager
+from klorb.workspace.session_store import find_recent_session, read_sessions_index
 
 
 def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int = 10) -> ProviderResponse:
@@ -203,6 +204,55 @@ async def test_set_session_config_with_invalid_effort_is_a_json_rpc_error(
     with pytest.raises(acp.RequestError):
         await harness.client.ext_method(
             "klorb/setSessionConfig", {"sessionId": session_id, "thinking": {"effort": "extreme"}})
+
+
+async def test_set_session_title_renames_trims_and_persists(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    trust_manager.register_project(tmp_path, trusted=True)
+    harness = await make_harness(provider=MagicMock())
+    session_id = await _new_session(harness, tmp_path)
+    session = harness.server.agent.session
+    assert session is not None
+
+    result = await harness.client.ext_method(
+        "klorb/setSessionTitle", {"sessionId": session_id, "title": "  My Renamed Session  "})
+
+    assert result == {"title": "My Renamed Session"}
+    assert session.name == "My Renamed Session"
+    assert session.session_naming_pending is False
+    index = read_sessions_index(session.config.workspace)
+    entry = find_recent_session(index, session_id)
+    assert entry is not None
+    assert entry.title == "My Renamed Session"
+
+
+async def test_set_session_title_with_blank_string_clears_to_none(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    harness = await make_harness(provider=MagicMock())
+    session_id = await _new_session(harness, tmp_path)
+    session = harness.server.agent.session
+    assert session is not None
+    session.name = "Existing title"
+
+    result = await harness.client.ext_method(
+        "klorb/setSessionTitle", {"sessionId": session_id, "title": "   "})
+
+    assert result == {"title": None}
+    assert session.name is None
+
+
+async def test_set_session_title_with_non_string_title_is_a_json_rpc_error(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    harness = await make_harness(provider=MagicMock())
+    session_id = await _new_session(harness, tmp_path)
+
+    with pytest.raises(acp.RequestError):
+        await harness.client.ext_method(
+            "klorb/setSessionTitle", {"sessionId": session_id, "title": 7})
 
 
 async def test_session_naming_fires_title_update_once_on_success(

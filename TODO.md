@@ -92,9 +92,6 @@
     (see "Plan 013: WebFetch" section below)
 
 * Improvements to Skills:
-  * the user and agent SkillCatalogs are currently global / singleton objects but eventually should
-    get moved into Session. This will set up a clean mechanism for restricting skill availability
-    for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
   * Eventually when we have a lot of skills, the skill list that is auto-advertised in the
     initial SystemInterjection should be pruned and only display some top most-relevant
@@ -183,13 +180,6 @@
   a faithful representation of the in-vscode plugin environment. Can we fix this?
 
 ### Feature backlog
-
-* You should be able to edit the session title after it's auto-assigned. This should persist down
-  to the Session level so it would get saved with the session.json and rehydrated next time.
-  (This does not change the session.id / slug). If you double-click on the session title
-  text at the top of the vscode plugin panel, it should turn into a textbox `<input/>` you can edit.
-  * If you backspace out *all* of it so it's empty, it should render something more "helper-text"
-    like (italics; dimmed font) that says "Klorb agent session".
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 

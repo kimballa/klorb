@@ -71,11 +71,12 @@ way the TUI's own commands do.
 ### Extension methods
 
 `agentCapabilities._meta.klorb` is `{"sessionConfig": true, "sessionStats": true,
-"trustWorkspace": true, "reloadSkills": true, "enqueueMessage": true, "taskMeta": <chainlink
-discoverable>, "imageInput": true, "subagents": true}` —
-`sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills`/`enqueueMessage`/`subagents` name
-the *agent*-advertised extension methods below, all client → server; `taskMeta`/`imageInput` are
-not extension methods (see "Chainlink task-plan updates" below and docs/specs/vision-image-input.md).
+"trustWorkspace": true, "reloadSkills": true, "enqueueMessage": true, "setSessionTitle": true,
+"taskMeta": <chainlink discoverable>, "imageInput": true, "subagents": true}` —
+`sessionConfig`/`sessionStats`/`trustWorkspace`/`reloadSkills`/`enqueueMessage`/`setSessionTitle`/
+`subagents` name the *agent*-advertised extension methods below, all client → server;
+`taskMeta`/`imageInput` are not extension methods (see "Chainlink task-plan updates" below and
+docs/specs/vision-image-input.md).
 Every `_klorb/*` request `KlorbAcpAgent` doesn't recognize gets the standard `-32601`
 method-not-found error; every unrecognized `_klorb/*` *notification* is silently ignored, per
 ACP's own extensibility rules. Later increments grow this section as they land.
@@ -95,6 +96,13 @@ ACP's own extensibility rules. Later increments grow this section as they land.
   (mirroring `Session.active_model_name()`'s own tolerance for an unregistered OpenRouter model
   id); an unrecognized `thinking.effort` string is a JSON-RPC `invalid params` error. Result:
   the same shape `_klorb/getSessionConfig` returns, reflecting the change.
+* **`_klorb/setSessionTitle`** — renames the session's title, mirroring the classifier-driven
+  rename `_run_session_naming` performs on the first turn (see "Session naming and token usage"
+  below), but user-driven and callable at any time. Params: `{sessionId: string, title: string |
+  null}` — `null`, `""`, or a whitespace-only string all clear the title back to unnamed; anything
+  else is stored trimmed. Result: `{title: string | null}`, the stored value. Also cancels
+  `Session.session_naming_pending` if the rename lands before the first turn, so the classifier
+  doesn't overwrite it once that turn runs.
 * **`_klorb/sessionStats`** — the `SessionStatistics` payload the TUI's "Show session stats"
   command renders. Params: `{sessionId: string}`. Result: `Session.statistics.model_dump(mode=
   "json")` verbatim (`user_messages`, `response_messages`, `thinking_messages`, `tool_calls`,
