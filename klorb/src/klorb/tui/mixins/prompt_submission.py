@@ -222,11 +222,12 @@ class PromptSubmissionMixin(ReplAppBase):
             self._show_error(error_message)
         else:
             history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-            self._finish_turn(history, self._history_pinned_to_bottom)
+            self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
 
     def clear_session(self) -> None:
         """Replace the active Session with a fresh one (new id, config re-read from disk
-        with CLI flags re-applied on top), reset the visible history, and roll over the
+        with CLI flags re-applied on top), reset the visible history to the mascot greeting
+        (`_mount_mascot_greeting`) followed by a "Session cleared." notice, and roll over the
         per-session log file if session logging is enabled for this REPL invocation.
 
         Tears down the outgoing `Session` first (`Session.close()`) so a live resource it
@@ -292,6 +293,7 @@ class PromptSubmissionMixin(ReplAppBase):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
         self._queued_message_widgets.clear()
+        self._mount_mascot_greeting(history)
         history.mount(Static("Session cleared.", classes="notice"))
 
         # Display new config parser warnings after we've already cleared the history.
@@ -613,14 +615,14 @@ class PromptSubmissionMixin(ReplAppBase):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(response_text)
-        self._finish_turn(history, was_pinned)
+        self._finish_turn(history, was_pinned, agent_turn_succeeded=True)
 
     def _show_response(self, response_text: str) -> None:
         """Append a model response to the history and re-enable the input box."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         history.mount(Markdown(response_text, classes="response"))
-        self._finish_turn(history, was_pinned)
+        self._finish_turn(history, was_pinned, agent_turn_succeeded=True)
 
     def _show_error(self, message: str) -> None:
         """Append an error message to the history and re-enable the input box. Constructed
@@ -631,7 +633,7 @@ class PromptSubmissionMixin(ReplAppBase):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         history.mount(Static(f"Error: {message}", classes="error", markup=False))
-        self._finish_turn(history, was_pinned)
+        self._finish_turn(history, was_pinned, agent_turn_succeeded=False)
 
     def _handle_aborted_response(
         self, response_widget: Markdown | None, response_text: str,
@@ -656,7 +658,7 @@ class PromptSubmissionMixin(ReplAppBase):
             history.mount(Static("(interrupted)", classes="interrupted"))
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        self._finish_turn(history, self._history_pinned_to_bottom)
+        self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
 
     def _scroll_if_pinned(self, history: VerticalScroll, was_pinned: bool) -> None:
         """Scroll `history` to its end iff `was_pinned` — `_history_pinned_to_bottom`'s value
@@ -689,7 +691,9 @@ class PromptSubmissionMixin(ReplAppBase):
                 widget.add_class("prompt")
         self._queued_message_widgets.clear()
 
-    def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None:
+    def _finish_turn(
+        self, history: VerticalScroll, was_pinned: bool, *, agent_turn_succeeded: bool,
+    ) -> None:
         """Scroll the history into view (iff `was_pinned`, see `_scroll_if_pinned`), refresh the
         token tally, and re-enable and refocus the input box (see
         `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin._update_prompt_input_disabled_state`).
@@ -734,6 +738,18 @@ class PromptSubmissionMixin(ReplAppBase):
         end of every turn, success, error, or interruption alike, so a saved session stays
         current without requiring an explicit save prompt at quit time. See
         docs/specs/session-persistence.md.
+
+        `agent_turn_succeeded` is `True` only for a model turn that actually produced a response
+        (`_show_response`/`_finalize_streamed_response`) -- `False` for an error, an aborted
+        turn, the `_ensure_turn_finished` backstop, or a `!`-prefixed shell command's own
+        "turn". When `self._quit_on_success` (`--quit-on-success`) is set, `agent_turn_succeeded`
+        is `True`, and no message was queued during the turn (see the drain below), this closes
+        the session and quits the process -- the `-m`/`--interactive` "run one turn, then get out
+        of the way" use case. Any other outcome -- a queued interjection, an error, or an abort --
+        latches `self._quit_on_success` off for the rest of the process's life instead of merely
+        skipping the quit for this one turn: see
+        docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md for why a later turn that
+        happens to finish clean must not re-arm it.
         """
         self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
@@ -759,5 +775,11 @@ class PromptSubmissionMixin(ReplAppBase):
         self._active_turn_callbacks = None
         if drained:
             self._submit_prompt("\n\n".join(queued_msg.message_text for queued_msg in drained))
+            self._quit_on_success = False
+        elif not agent_turn_succeeded:
+            self._quit_on_success = False
+        elif self._quit_on_success:
+            self._session.close()
+            self._begin_exit()
         if self._exit_requested:
             self.exit()

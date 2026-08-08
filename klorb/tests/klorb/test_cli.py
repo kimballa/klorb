@@ -337,7 +337,8 @@ def test_main_starts_repl_when_no_prompt_given() -> None:
     assert config.interactive is True
     mock_run_repl.assert_called_once_with(
         mock_session, process_config=mock.ANY, initial_message=None, session_log_enabled=True,
-        trust_manager=mock.ANY, config_flag_path=None)
+        trust_manager=mock.ANY, config_flag_path=None, skip_session_restore=False,
+        quit_on_success=False)
 
 
 def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -> None:
@@ -351,7 +352,51 @@ def test_main_message_with_interactive_flag_starts_repl_with_initial_message() -
     assert config.interactive is True
     mock_run_repl.assert_called_once_with(
         mock_session, process_config=mock.ANY, initial_message="hi", session_log_enabled=True,
-        trust_manager=mock.ANY, config_flag_path=None)
+        trust_manager=mock.ANY, config_flag_path=None, skip_session_restore=False,
+        quit_on_success=False)
+
+
+def test_main_new_flag_skips_session_restore() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl") as mock_run_repl:
+            with patch("sys.argv", ["klorb", "--new"]):
+                cli.main()
+
+    assert mock_run_repl.call_args.kwargs["skip_session_restore"] is True
+
+
+def test_main_new_flag_defaults_to_false() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl") as mock_run_repl:
+            with patch("sys.argv", ["klorb"]):
+                cli.main()
+
+    assert mock_run_repl.call_args.kwargs["skip_session_restore"] is False
+
+
+def test_main_quit_on_success_flag_enables_it() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl") as mock_run_repl:
+            with patch("sys.argv", ["klorb", "--quit-on-success", "--interactive", "-m", "hi"]):
+                cli.main()
+
+    assert mock_run_repl.call_args.kwargs["quit_on_success"] is True
+
+
+def test_main_no_quit_on_success_flag_disables_it() -> None:
+    mock_session = MagicMock()
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("klorb.cli.run_repl") as mock_run_repl:
+            with patch(
+                "sys.argv",
+                ["klorb", "--no-quit-on-success", "--interactive", "-m", "hi"],
+            ):
+                cli.main()
+
+    assert mock_run_repl.call_args.kwargs["quit_on_success"] is False
 
 
 def test_main_no_message_and_explicit_no_interactive_errors() -> None:
@@ -445,7 +490,8 @@ def test_main_repl_passes_session_log_enabled_false_when_disabled() -> None:
 
     mock_run_repl.assert_called_once_with(
         mock_session, process_config=mock.ANY, initial_message=None, session_log_enabled=False,
-        trust_manager=mock.ANY, config_flag_path=None)
+        trust_manager=mock.ANY, config_flag_path=None, skip_session_restore=False,
+        quit_on_success=False)
 
 
 def test_main_one_shot_streams_incrementally_with_single_trailing_newline(

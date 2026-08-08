@@ -261,6 +261,141 @@ async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost()
         assert prompt_widgets.last(Static).content == "second queued\n\nthird queued"
 
 
+async def test_quit_on_success_exits_after_a_successful_turn() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.exit.assert_called_once()
+
+
+async def test_quit_on_success_off_by_default_stays_in_the_repl() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.exit.assert_not_called()
+
+
+async def test_quit_on_success_disregarded_on_error() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = RuntimeError("boom")
+    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.exit.assert_not_called()
+        assert app._quit_on_success is False
+
+
+async def test_quit_on_success_disregarded_on_abort() -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = ResponseAborted()
+    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.exit.assert_not_called()
+        assert app._quit_on_success is False
+
+
+async def test_quit_on_success_latches_off_so_a_later_clean_turn_does_not_exit() -> None:
+    """Once disregarded (here, by an error), `--quit-on-success` must not re-arm itself just
+    because some later turn happens to finish clean -- see
+    docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [RuntimeError("boom"), _reply()]
+    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app._quit_on_success is False
+
+        prompt_input.text = "second"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert mock_provider.send_prompt.call_count == 2
+        app.exit.assert_not_called()
+
+
+async def test_quit_on_success_disregarded_when_a_message_was_queued() -> None:
+    """A message the user queued during the turn (see
+    `test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash`) is folded into a fresh
+    turn by `_finish_turn` -- quitting right there would strand it. Interjecting is also a sign
+    the user is actively steering the session, so `--quit-on-success` latches off for good, even
+    though the second, now-message-free turn goes on to finish cleanly -- see
+    docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md."""
+    mock_provider = MagicMock()
+    first_turn_streaming = threading.Event()
+    release_first_turn = threading.Event()
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        first_turn_streaming.set()
+        release_first_turn.wait(timeout=5)
+        return _reply()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+
+    async with app.run_test() as pilot:
+        app.exit = MagicMock()  # type: ignore[method-assign]
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _wait_until(pilot, first_turn_streaming.is_set)
+
+        app._queue_prompt("second")
+        await pilot.pause()
+
+        release_first_turn.set()
+        await _wait_until(pilot, lambda: mock_provider.send_prompt.call_count == 2)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Both turns ran -- the queued message wasn't stranded by an eager quit -- but the app
+        # never exits, even though the second (message-free) turn finished cleanly: interjecting
+        # latched --quit-on-success off for the rest of the session.
+        assert mock_provider.send_prompt.call_count == 2
+        app.exit.assert_not_called()
+        assert app._quit_on_success is False
+
+
 async def test_provider_error_is_shown_in_history() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")
@@ -688,7 +823,8 @@ async def test_clear_replaces_session_and_resets_history() -> None:
         await _invoke_clear_session(pilot)
 
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert len(history.children) == 1  # Just the "Session cleared." notice.
+        # The mascot greeting plus the "Session cleared." notice.
+        assert len(history.query(Static).exclude(".mascot")) == 1
         assert app._session.id != original_session_id
         assert app._session.config.model == "some/model"
         assert app._session.messages == []

@@ -246,12 +246,15 @@ def _process_config_for_workspace(workspace: Workspace, model: str = "some/model
 
 def _repl_app_for_workspace(
     workspace: Workspace, trust_manager: TrustManager | None, model: str = "some/model",
+    *, skip_session_restore: bool = False,
 ) -> ReplApp:
     process_config = _process_config_for_workspace(workspace, model)
     session = Session(
         process_config.session.model_copy(), provider=MagicMock(), session_id=TEST_SESSION_ID,
         process_config=process_config)
-    return ReplApp(session=session, process_config=process_config, trust_manager=trust_manager)
+    return ReplApp(
+        session=session, process_config=process_config, trust_manager=trust_manager,
+        skip_session_restore=skip_session_restore)
 
 
 def _sample_message(content: str = "hi", role: MessageRole = "user") -> Message:

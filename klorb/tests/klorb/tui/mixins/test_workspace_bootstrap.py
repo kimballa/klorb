@@ -515,6 +515,28 @@ async def test_restores_previous_session_config_and_messages_on_startup(
         assert any("Restored previous session" in notice for notice in _notice_texts(app))
 
 
+async def test_new_flag_skips_restoring_previous_session_on_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`klorb --new` (`ReplApp(skip_session_restore=True)`) must start blank even for a trusted
+    workspace with a saved session on disk -- see docs/specs/session-persistence.md."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    _save_session(
+        workspace, SessionConfig(model="restored/model", workspace=workspace),
+        [_sample_message("earlier prompt", "user")])
+
+    app = _repl_app_for_workspace(
+        workspace, trust_manager, model="fresh/model", skip_session_restore=True)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert app._session.config.model == "fresh/model"
+        assert app._session.messages == []
+        assert not any("Restored previous session" in notice for notice in _notice_texts(app))
+
+
 async def test_restore_skipped_when_no_saved_session_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

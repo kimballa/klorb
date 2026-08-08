@@ -307,6 +307,8 @@ class ReplApp(
         session_log_enabled: bool = True,
         trust_manager: TrustManager | None = None,
         config_flag_path: Path | None = None,
+        skip_session_restore: bool = False,
+        quit_on_success: bool = False,
     ) -> None:
         super().__init__()
         self._process_config = process_config or ProcessConfig()
@@ -334,6 +336,16 @@ class ReplApp(
         """The `--config` path (if any) `klorb.cli.main()`'s initial `load_process_config()`
         call was given, threaded through so `_apply_workspace_config`'s later reload (once a
         workspace's trust/registration state changes) layers it back in identically."""
+        self._skip_session_restore = skip_session_restore
+        """Set by `klorb --new`: skips `WorkspaceBootstrapMixin._maybe_restore_latest_session`
+        at startup even for a trusted workspace with saved sessions on disk, so the app always
+        starts from the freshly constructed `Session` instead."""
+        self._quit_on_success = quit_on_success
+        """Set by `klorb --quit-on-success`: once a model turn finishes with a response and no
+        message was queued during it, `PromptSubmissionMixin._finish_turn` closes the session
+        and exits the process instead of leaving the REPL open. Latched back to `False` by that
+        same method the first time a turn errors, is aborted, or has a message queued during it
+        -- see `_finish_turn` and docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md."""
         self._file_index: WorkspaceFileIndex | None = None
         """The `@`-mention file finder's workspace index, started (`_start_file_finder_index`)
         only once workspace trust is resolved and only for a real `trust_manager` -- the same

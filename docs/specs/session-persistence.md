@@ -224,9 +224,11 @@ write) runs under `workspace.lock`.
 
 The TUI's `WorkspaceBootstrapMixin._maybe_restore_latest_session(workspace)` runs from
 `_resolve_workspace_trust()` once the workspace is resolved, immediately after attaching the
-input-history store, and only when the resolved workspace is trusted. This runs before any
-`initial_message` is submitted, so a `klorb -m "..."` invocation's message becomes the next turn
-of the restored conversation rather than racing it.
+input-history store, and only when the resolved workspace is trusted and `ReplApp` wasn't
+constructed with `skip_session_restore=True` (`klorb --new`) — passing `--new` always starts the
+REPL from the freshly-constructed `Session`, even in a trusted workspace with a saved session on
+disk. Otherwise, this runs before any `initial_message` is submitted, so a `klorb -m "..."`
+invocation's message becomes the next turn of the restored conversation rather than racing it.
 
 If `workspace`'s `sessions.json` has no entries yet, this is a no-op — the freshly-constructed
 `Session` stays as-is. Otherwise it attempts to lock and rebuild the top (most-recently-touched)

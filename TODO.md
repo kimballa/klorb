@@ -175,11 +175,6 @@
   merged thinking chip/`klorb.setThinking` QuickPick (see
   docs/adrs/00162-merge-thinking-enabled-and-effort-into-one-picker.md).
 
-* Today, if you pass -m and --interactive, it will start the TUI and then stay there.
-  Add --(no-)quit-on-success to have it exit the TUI when the agent turn
-  completes, if the user did not interject / enqueue a msg or use
-  ESC / ctrl-C to interrupt the agent loop.
-
 ## VSCode plugin
 
 ### Bugs

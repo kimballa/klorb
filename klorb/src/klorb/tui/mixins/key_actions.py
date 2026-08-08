@@ -35,8 +35,6 @@ MASCOT_ART = """\
 ███████████
 ▟█▙     ▟█▙"""
 
-MASCOT_GREETING = random_greeting()
-
 _INTERRUPTING_MESSAGE = "Interrupting… (Ctrl+C again to quit)"
 """Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the
 user gets immediate confirmation the keystroke was received (rather than wondering if the app has
@@ -361,7 +359,7 @@ class KeyActionsMixin(ReplAppBase):
         `_on_subagent_history_scroll_changed`), start the subagents panel's tick timer (see
         `_start_subagents_panel_timer`), show the initial `> palette` hint (the box
         starts empty), greet the user with the klorb mascot (see
-        `MASCOT_ART`/`MASCOT_GREETING`), note in the history if no per-user config file exists
+        `_mount_mascot_greeting`), note in the history if no per-user config file exists
         yet (see `CONFIG_MISSING_MESSAGE`), reports any config layer that failed to parse (see
         `ProcessConfig.config_warnings`), then hand off to
         `_run_startup_workspace_and_initial_message` to resolve (and, if this is a brand-new
@@ -398,7 +396,7 @@ class KeyActionsMixin(ReplAppBase):
         subagent_history = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         self.watch(subagent_history, "scroll_y", self._on_subagent_history_scroll_changed, init=False)
 
-        history.mount(Static(f"{MASCOT_ART}\n\n{MASCOT_GREETING}", classes="mascot"))
+        self._mount_mascot_greeting(history)
 
         if not user_config_path().is_file():
             history.mount(Static(CONFIG_MISSING_MESSAGE, classes="notice"))
@@ -407,6 +405,12 @@ class KeyActionsMixin(ReplAppBase):
             history.mount(Static(warning, classes="error", markup=False))
 
         self._run_startup_workspace_and_initial_message()
+
+    def _mount_mascot_greeting(self, history: VerticalScroll) -> None:
+        """Mount the klorb mascot art plus a freshly-picked random greeting (`random_greeting()`)
+        into `history` — called on startup (`on_mount`) and again by `clear_session` so a fresh
+        session always opens with the same welcome, not just the process's very first one."""
+        history.mount(Static(f"{MASCOT_ART}\n\n{random_greeting()}", classes="mascot"))
 
     def on_unmount(self) -> None:
         """Disarm the liveness watchdog as the app tears down, so it can't fire during the
@@ -492,5 +496,5 @@ class KeyActionsMixin(ReplAppBase):
         if not self._turn_in_flight:
             return
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        self._finish_turn(history, self._history_pinned_to_bottom)
+        self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
 

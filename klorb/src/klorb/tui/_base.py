@@ -68,6 +68,8 @@ class ReplAppBase(App[None]):
     _session_log_enabled: bool
     _trust_manager: TrustManager | None
     _config_flag_path: Path | None
+    _skip_session_restore: bool
+    _quit_on_success: bool
     _cancel_event: threading.Event | None
     _shell_cancel_event: threading.Event | None
     _last_ctrl_c_at: float
@@ -124,7 +126,11 @@ class ReplAppBase(App[None]):
     @work()
     async def _run_startup_workspace_and_initial_message(self) -> None: ...
 
-    def _finish_turn(self, history: VerticalScroll, was_pinned: bool) -> None: ...
+    def _finish_turn(
+        self, history: VerticalScroll, was_pinned: bool, *, agent_turn_succeeded: bool,
+    ) -> None: ...
+
+    def _mount_mascot_greeting(self, history: VerticalScroll) -> None: ...
 
     def _submit_prompt(self, prompt_text: str) -> None: ...
 

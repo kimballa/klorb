@@ -341,8 +341,10 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   `provider`/`model_registry`, not reused — see
   [the fresh-instance-per-call ADR](../adrs/tool-registry-instantiates-a-fresh-tool-per-call.md)),
   and an empty message history. This runs synchronously — no worker thread, no disabling the
-  input box, since no model call is involved. The visible history's children are removed, and
-  if `session_log_enabled` is `True`, `configure_logging()` is called again with a new
+  input box, since no model call is involved. The visible history's children are removed and
+  replaced with the mascot greeting (`KeyActionsMixin._mount_mascot_greeting`, the same one
+  `on_mount()` shows at startup) followed by a "Session cleared." notice, and if
+  `session_log_enabled` is `True`, `configure_logging()` is called again with a new
   `session_log_path()` for the new session id (relying on `configure_logging`'s `force=True`
   behavior to safely repoint the root logger's file handler mid-process). See
   [[clear-command-starts-a-new-session-and-log-file]].
@@ -394,6 +396,22 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   and calls `run_repl(session, initial_message=args.prompt)` when the session is
   interactive, and otherwise follows the single-shot path described in
   [[openrouter-prompt-client]] via `Session.run_one_shot()`.
+* `--new` (`ReplApp.__init__(skip_session_restore=...)`) skips
+  `WorkspaceBootstrapMixin._maybe_restore_latest_session` at startup, so the REPL always opens a
+  fresh session even in a trusted workspace with a saved one on disk — see
+  docs/specs/session-persistence.md's "Restoring the most recent session at startup" section.
+* `--quit-on-success`/`--no-quit-on-success` (`ReplApp.__init__(quit_on_success=...)`) makes
+  `PromptSubmissionMixin._finish_turn` close the session and exit the process
+  (`ReplApp._begin_exit()`) once a model turn finishes with a response and nothing was queued
+  during it. It's disregarded — the REPL stays open — for a turn that ends in an error
+  (`_show_error`), is aborted via Escape/Ctrl+C (`_handle_aborted_response`), or has a message
+  queued during it (folded into a fresh turn instead). Any of those three outcomes latches
+  `ReplApp._quit_on_success` off for the rest of the process's life, not just for that one turn —
+  a later turn finishing cleanly no longer exits the process either, once that's happened. See
+  docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md for why it isn't re-armed. This
+  is the mechanism behind `klorb -m "..." --interactive --quit-on-success`: run one turn and get
+  out of the way if it succeeds, but stay open for the rest of the session if it ever needs
+  attention.
 
 ## Usage
 
@@ -402,6 +420,8 @@ klorb                          # starts the interactive REPL using the default m
 klorb --model anthropic/claude-3.5-sonnet   # starts the REPL with a specific model
 klorb -m "What is 2+2?"        # single-shot prompt/response, no REPL
 klorb -m "What is 2+2?" --interactive   # REPL, with the message as the first turn
+klorb -m "Fix the failing test." --interactive --quit-on-success  # exit once that turn succeeds
+klorb --new                             # REPL, skipping the trusted workspace's saved session
 ```
 
 ## Input history (up/down-arrow recall)

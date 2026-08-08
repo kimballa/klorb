@@ -114,6 +114,9 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         (`_bootstrap_new_workspace`) and applies whatever the user decided
         (`_apply_workspace_config`); either way, finishes by announcing the resulting trust
         state in the history (`_announce_workspace`). See docs/specs/projects-and-trust.md.
+        Restoring the workspace's most recently touched saved session (below) is additionally
+        skipped when `_skip_session_restore` is set (`klorb --new`), leaving the freshly
+        constructed `Session` as-is even for a trusted workspace with saved sessions on disk.
         """
         if self._trust_manager is None:
             return
@@ -133,7 +136,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         # background index only for a real `cli.main()` run, against the now-resolved workspace
         # root.
         self._start_file_finder_index(workspace)
-        if workspace.trusted:
+        if workspace.trusted and not self._skip_session_restore:
             self._maybe_restore_latest_session(workspace)
 
     def _maybe_restore_latest_session(self, workspace: Workspace) -> None:

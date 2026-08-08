@@ -57,6 +57,8 @@ def run_repl(
     session_log_enabled: bool = True,
     trust_manager: TrustManager | None = None,
     config_flag_path: Path | None = None,
+    skip_session_restore: bool = False,
+    quit_on_success: bool = False,
 ) -> None:
     """Launch the interactive klorb REPL, optionally submitting `initial_message` first.
 
@@ -75,6 +77,8 @@ def run_repl(
         session_log_enabled=session_log_enabled,
         trust_manager=trust_manager,
         config_flag_path=config_flag_path,
+        skip_session_restore=skip_session_restore,
+        quit_on_success=quit_on_success,
     )
     app.error_console.file = crash_tee
     try:

@@ -7,7 +7,9 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 ## SYNOPSIS
 
 `klorb` [`-m` *PROMPT* | `--message` *PROMPT*] [`--model` *MODEL*] [`--config` *FILE*]
-[`--interactive` | `--no-interactive`] [`--session-log` | `--no-session-log`]
+[`--interactive` | `--no-interactive`] [`--new`]
+[`--quit-on-success` | `--no-quit-on-success`]
+[`--session-log` | `--no-session-log`]
 [`-y` | `--auto-approve`] [`--log-tool-calls` | `--no-log-tool-calls`]
 [`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
 [`-V` | `--version`]
@@ -144,6 +146,26 @@ See the COMMANDS section for more details about these operating modes.
   `--no-interactive` flag (preserving the one-shot behavior above).
   `--no-interactive` without `-m`/`--message` is a usage error, since there
   would be nothing to send.
+
+* `--new`
+
+  In the REPL, skip restoring the workspace's most recently touched saved
+  session on startup; always start from a fresh session. Has no effect on a
+  one-shot `-m`/`--message` prompt without `--interactive`, which never
+  restores a saved session anyway (see `docs/specs/session-persistence.md`).
+
+* `--quit-on-success`, `--no-quit-on-success`
+
+  In the REPL, exit the process as soon as a model turn finishes with a
+  response and no message was queued during it. Disregarded, permanently for
+  the rest of the process, for a turn that ends in an error (the REPL stays
+  open so you can handle it), is aborted (Escape/Ctrl+C), or has a message
+  queued during it (that message is folded into a fresh turn instead of
+  being stranded by a quit) — once any of those happens, a later turn
+  finishing cleanly no longer exits the process either. Defaults to off.
+  Most useful with `-m`/`--message` and `--interactive`: run one turn and get
+  out of the way if it succeeds, but stay open for the rest of the session if
+  it ever needs attention.
 
 * `--session-log`, `--no-session-log`
 
@@ -316,6 +338,19 @@ Start the REPL with a starting message, then keep chatting:
 
 ```bash
 klorb -m "What is 2+2?" --interactive
+```
+
+Start the REPL with a starting message, exiting automatically once it
+finishes cleanly (staying open if it hits an error or needs attention):
+
+```bash
+klorb -m "Run the test suite and fix any failures." --interactive --quit-on-success
+```
+
+Start the REPL without restoring the workspace's most recently saved session:
+
+```bash
+klorb --new
 ```
 
 Start the REPL with settings from an extra config file, on top of the usual

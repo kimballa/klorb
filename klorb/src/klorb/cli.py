@@ -98,6 +98,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--new",
+        dest="new_session",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip restoring the workspace's most recently touched saved session on startup; "
+            "always start the REPL with a fresh session. No effect on a one-shot --message "
+            "prompt without --interactive, which never restores a saved session anyway."
+        ),
+    )
+    parser.add_argument(
+        "--quit-on-success",
+        dest="quit_on_success",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "In the REPL, exit the process as soon as a model turn finishes with a response and "
+            "no message was queued during it. Disregarded for a turn that ends in an error, is "
+            "aborted (Escape/Ctrl+C), or is followed by a queued message. Defaults to off (stay "
+            "in the REPL)."
+        ),
+    )
+    parser.add_argument(
         "--session-log",
         dest="session_log",
         action=argparse.BooleanOptionalAction,
@@ -762,6 +785,8 @@ def main() -> None:
             session_log_enabled=session_log,
             trust_manager=trust_manager,
             config_flag_path=config_flag_path,
+            skip_session_restore=args.new_session,
+            quit_on_success=args.quit_on_success,
         )
     else:
         configure_tiktoken_cache_env()
