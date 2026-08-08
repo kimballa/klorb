@@ -99,11 +99,6 @@
     get moved into Session. This will set up a clean mechanism for restricting skill availability
     for narrow sub-agents.
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
-  * (#agent) When `compatibility.claudeSkills` is true, `projRoot/.claude/skills/` should become a
-      privileged directory requiring `EscalatePrivileges(scope="workspace")` the same as
-      `.klorb/skills/`, rather than an ordinary `writeDirs`-gated path — writing skill content
-      into a directory klorb itself trusts and auto-discovers deserves the same escalation
-      klorb's own skills directory gets.
   * Eventually when we have a lot of skills, the skill list that is auto-advertised in the
     initial SystemInterjection should be pruned and only display some top most-relevant
     skills or most-frequently-used skills. Let the agent discover others via SearchSkills.

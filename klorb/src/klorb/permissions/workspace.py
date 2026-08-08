@@ -31,6 +31,7 @@ from klorb.permissions.directory_access import (
     canonicalize_dir,
     is_privileged_path,
     is_under_homedir_klorb_dir,
+    is_under_workspace_claude_skills_dir,
     is_under_workspace_klorb_dir,
 )
 from klorb.permissions.file_access import FileAccessTable
@@ -50,21 +51,31 @@ def _approved_scopes(context: "ToolSetupContext") -> set[str]:
     return context.session_config.approved_scopes
 
 
+def _claude_skills_compat(context: "ToolSetupContext") -> bool:
+    """Whether `compatibility.claudeSkills` is enabled, pulled off the live `ProcessConfig` on
+    `context` (see `ProcessConfig.compatibility_claude_skills`). When true,
+    `${workspace_root}/.claude/skills/` joins `${workspace_root}/.klorb/` as a directory
+    `is_privileged_path` hard-blocks."""
+    return context.process_config.compatibility_claude_skills
+
+
 def _privileged_deny(path: Path, workspace_root: Path, *, is_write: bool) -> Verdict:
     """Return the verdict for a path that failed `is_privileged_path`: always `\"deny\"`, but with
-    a side effect — when the path is the workspace's own `.klorb/` dir or beneath it, raise a
+    a side effect — when the path is the workspace's own `.klorb/` dir, or (with
+    `compatibility.claudeSkills`) its `.claude/skills/` dir, or beneath either, raise a
     `PermissionError` whose message points the agent at the `EscalatePrivileges` tool with scope
     `"workspace"`; when the path is under `KLORB_DATA_DIR`, `KLORB_CONFIG_DIR`, or
     `KLORB_STATE_DIR`, raise a `PermissionError` pointing the agent at `EscalatePrivileges` with
     scope `"homedir"`. Both are temporary, session-only grants."""
-    if is_under_workspace_klorb_dir(path, workspace_root):
+    if is_under_workspace_klorb_dir(path, workspace_root) or is_under_workspace_claude_skills_dir(
+            path, workspace_root):
         op = "write to" if is_write else "read"
         raise PermissionError(
-            f"Permission denied: {op} {path}. This file is inside the workspace's privileged "
-            ".klorb/ directory, which is hard-blocked from direct tool access. If you need to "
-            "read or write files there, call the EscalatePrivileges tool with scope \"workspace\" "
-            "to request temporary, session-only access; once the user approves, retry the "
-            "operation.")
+            f"Permission denied: {op} {path}. This file is inside a workspace privileged "
+            "directory (.klorb/, or .claude/skills/ under compatibility.claudeSkills), which is "
+            "hard-blocked from direct tool access. If you need to read or write files there, "
+            "call the EscalatePrivileges tool with scope \"workspace\" to request temporary, "
+            "session-only access; once the user approves, retry the operation.")
     if is_under_homedir_klorb_dir(path):
         op = "write to" if is_write else "read"
         raise PermissionError(
@@ -142,7 +153,9 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     even if `readDirs` allows it.
     """
     workspace_root = context.session_config.workspace.path.resolve()
-    if is_privileged_path(path, workspace_root, _approved_scopes(context)):
+    if is_privileged_path(
+            path, workspace_root, _approved_scopes(context),
+            claude_skills_compat=_claude_skills_compat(context)):
         return _privileged_deny(path, workspace_root, is_write=True)
     if context.permission_override is not None and path in context.permission_override.paths:
         return "allow"
@@ -202,7 +215,9 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     workspace_root = context.session_config.workspace.path.resolve()
     candidate = canonicalize_candidate(context, filename)
 
-    if is_privileged_path(candidate, workspace_root, _approved_scopes(context)):
+    if is_privileged_path(
+            candidate, workspace_root, _approved_scopes(context),
+            claude_skills_compat=_claude_skills_compat(context)):
         return candidate, _privileged_deny(candidate, workspace_root, is_write=False)
 
     file_table = FileAccessTable(context.session_config.read_files, workspace_root)
@@ -251,7 +266,9 @@ def resolve_and_evaluate_write(context: "ToolSetupContext", filename: str) -> tu
     workspace_root = context.session_config.workspace.path.resolve()
     candidate = canonicalize_candidate(context, filename)
 
-    if is_privileged_path(candidate, workspace_root, _approved_scopes(context)):
+    if is_privileged_path(
+            candidate, workspace_root, _approved_scopes(context),
+            claude_skills_compat=_claude_skills_compat(context)):
         return candidate, _privileged_deny(candidate, workspace_root, is_write=True)
 
     file_table = FileAccessTable(context.session_config.write_files, workspace_root)

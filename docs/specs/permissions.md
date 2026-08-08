@@ -244,6 +244,12 @@ the session ends (e.g. a `/clear` in the REPL starts a fresh `SessionConfig` wit
 set), and no config file can pre-populate `approved_scopes` (it's absent from
 `SESSION_KEY_MAP`).
 
+When `compatibility.claudeSkills` is enabled (see docs/specs/skills.md), `privileged_dirs()` also
+includes `${workspace_root}/.claude/skills/`, gated by the same `"workspace"` scope as `.klorb/` —
+writing skill content into a directory klorb itself auto-discovers and trusts gets the same hard
+block, rather than falling through to the ordinary `writeDirs` table. Unlike every other entry in
+`privileged_dirs()`, this one is conditional on a config flag rather than unconditional.
+
 ## Configuration
 
 `readDirs`/`writeDirs`/`readFiles`/`writeFiles`, each `{"deny": [...], "ask": [...], "allow":

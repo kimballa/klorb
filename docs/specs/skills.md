@@ -394,9 +394,10 @@ decides.
 
 There is no `CreateSkill`/`EditSkill` tool. A workspace- or user-tier skill is authored the same
 way any other privileged-directory file is: `EscalatePrivileges(scope="workspace")` (for
-`.klorb/skills/...`) or `EscalatePrivileges(scope="homedir")` (for `$KLORB_DATA_DIR/skills/...`)
-followed by ordinary `CreateFile`/`EditFile`/`ReadFile` calls. The packaged (`internal`) tier is
-never writable this way — a new built-in skill is added to the klorb source tree. Because this is a
+`.klorb/skills/...`, and for `.claude/skills/...` when `compatibility.claudeSkills` is enabled —
+see below) or `EscalatePrivileges(scope="homedir")` (for `$KLORB_DATA_DIR/skills/...`) followed by
+ordinary `CreateFile`/`EditFile`/`ReadFile` calls. The packaged (`internal`) tier is never writable
+this way — a new built-in skill is added to the klorb source tree. Because this is a
 convention-heavy, multi-step dance, the instructions live as klorb's own packaged skill,
 `klorb.resources/skills/create-edit-skill/SKILL.md`, rather than in a dedicated tool — "how to
 build a skill" is itself just a skill. A newly-created or edited skill isn't visible to
@@ -412,7 +413,10 @@ for `CLAUDE.md`. When enabled and the workspace is trusted, `${workspace_root}/.
 discovered as a **second source for the `workspace` namespace**, alongside `.klorb/skills/` — not a
 fourth namespace. Skills from either source share the `workspace` identity for permission purposes.
 On a name collision, `.klorb/skills/` (klorb's own convention) wins over `.claude/skills/`, per the
-same most-specific-source-wins shadowing every tier uses. Claude Code's own `SKILL.md` frontmatter
+same most-specific-source-wins shadowing every tier uses. When the flag is enabled,
+`${workspace_root}/.claude/skills/` also becomes a privileged directory requiring
+`EscalatePrivileges(scope="workspace")` to write to, the same as `.klorb/skills/` — see
+"Internal privileged paths" in docs/specs/permissions.md. Claude Code's own `SKILL.md` frontmatter
 may carry fields beyond `name`/`description` (allowed-tools lists, model hints, etc.); klorb reads
 only `name`/`description` off the raw frontmatter dict and leaves the rest in `Skill.raw` unused
 today, so a Claude-authored `SKILL.md` is discovered by its directory basename with its

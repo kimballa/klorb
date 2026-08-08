@@ -566,6 +566,10 @@ class SessionTurnsMixin(SessionBase):
             if git_branch:
                 metadata_strs.append(f"The current git branch is `{git_branch}`. ")
 
+            claude_skills_compat: bool = \
+                self._process_config.compatibility_claude_skills if self._process_config else False
+            metadata_strs.append(f"compatibility.claudeSkills = {claude_skills_compat}")
+
             metadata_body = "\n".join(metadata_strs)
             prompt = f"{wrap_system_interjection('Metadata', metadata_body)}\n{prompt}"
         if not self._agent_group_seeded:

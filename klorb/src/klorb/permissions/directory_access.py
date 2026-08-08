@@ -37,6 +37,15 @@ KLORB_PROJECT_DIR_NAME = ".klorb"
 per-project config and state. Shared with `klorb.process_config.project_config_path()`,
 which imports this constant rather than duplicating the literal."""
 
+CLAUDE_PROJECT_DIR_NAME = ".claude"
+"""Workspace-root child directory whose `skills/` subtree is discovered as a second
+`workspace`-namespace skill source when `compatibility.claudeSkills` is enabled. Shared with
+`klorb.tools.skill.common`, which imports this constant rather than duplicating it."""
+
+SKILLS_DIRNAME = "skills"
+"""Directory name holding skill subdirectories within a tier's parent directory. Shared with
+`klorb.tools.skill.common`, which imports this constant rather than duplicating it."""
+
 
 class DirRules(BaseModel):
     """One directory-access direction's (`readDirs` or `writeDirs`) `deny`/`ask`/`allow` rule
@@ -96,11 +105,16 @@ def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
     return path.resolve(strict=False)
 
 
-def privileged_dirs(workspace_root: Path, approved_scopes: set[str] | None = None) -> list[Path]:
+def privileged_dirs(
+    workspace_root: Path, approved_scopes: set[str] | None = None, *, claude_skills_compat: bool = False,
+) -> list[Path]:
     """Canonicalized list of every directory klorb's file tools must never read from or write to:
     the workspace's own `${workspace_root}/.klorb/` project dir, plus the process-wide
     `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` from `klorb.paths` (resolved here,
     not cached at import time, so an env-var override picked up by `klorb.paths` is honored).
+    When `claude_skills_compat` is true, `${workspace_root}/.claude/skills/` joins the workspace
+    `.klorb/` dir — writing skill content into a directory klorb auto-discovers and trusts (see
+    `klorb.tools.skill.common`) deserves the same protection as `.klorb/skills/`.
 
     This is the single source of truth `klorb.permissions.workspace.evaluate_write` and
     `resolve_and_evaluate_read` both check against, unconditionally, ahead of the
@@ -109,13 +123,14 @@ def privileged_dirs(workspace_root: Path, approved_scopes: set[str] | None = Non
 
     `approved_scopes` is the set of session-only escalation scopes the user has granted this
     session (see `SessionConfig.approved_scopes`, populated by the `EscalatePrivileges` tool).
-    A `"workspace"` scope in it omits `${workspace_root}/.klorb/` from the returned list,
-    lifting the privileged-path deny on that one directory for the rest of the session — the
-    process-wide `KLORB_*_DIR` locations stay privileged regardless, since `"workspace"` scope
-    only ever covers the workspace's own project dir. A `"homedir"` scope in it omits
-    `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR` and `KLORB_STATE_DIR`, lifting the privileged-path deny
-    on those directories for the rest of the session.
-    `None` (or an empty set) preserves the pre-escalation behavior: every privileged dir is denied.
+    A `"workspace"` scope in it omits `${workspace_root}/.klorb/` and (when `claude_skills_compat`)
+    `${workspace_root}/.claude/skills/` from the returned list, lifting the privileged-path deny on
+    those directories for the rest of the session — the process-wide `KLORB_*_DIR` locations stay
+    privileged regardless, since `"workspace"` scope only ever covers the workspace's own
+    directories. A `"homedir"` scope in it omits `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR` and
+    `KLORB_STATE_DIR`, lifting the privileged-path deny on those directories for the rest of the
+    session. `None` (or an empty set) preserves the pre-escalation behavior: every privileged dir
+    is denied.
     """
     root = workspace_root.resolve(strict=False)
     dirs: list[Path] = []
@@ -125,17 +140,23 @@ def privileged_dirs(workspace_root: Path, approved_scopes: set[str] | None = Non
         dirs.append(KLORB_CONFIG_DIR.resolve(strict=False))
     if not (approved_scopes and "workspace" in approved_scopes):
         dirs.append(root / KLORB_PROJECT_DIR_NAME)
+        if claude_skills_compat:
+            dirs.append(root / CLAUDE_PROJECT_DIR_NAME / SKILLS_DIRNAME)
     return dirs
 
 
 def is_privileged_path(
-    path: Path, workspace_root: Path, approved_scopes: set[str] | None = None,
+    path: Path, workspace_root: Path, approved_scopes: set[str] | None = None, *,
+    claude_skills_compat: bool = False,
 ) -> bool:
     """Return whether `path` (already canonicalized by the caller) is one of, or falls beneath,
-    any directory in `privileged_dirs(workspace_root, approved_scopes)` — the same
-    equal-or-descendant containment semantics `DirectoryAccessTable._matches` uses for ordinary
-    rules. See `privileged_dirs` for how `approved_scopes` gates the workspace `.klorb/` dir."""
-    return any(path == d or path.is_relative_to(d) for d in privileged_dirs(workspace_root, approved_scopes))
+    any directory in `privileged_dirs(workspace_root, approved_scopes, claude_skills_compat=...)`
+    — the same equal-or-descendant containment semantics `DirectoryAccessTable._matches` uses for
+    ordinary rules. See `privileged_dirs` for how `approved_scopes` and `claude_skills_compat`
+    gate which directories are included."""
+    return any(
+        path == d or path.is_relative_to(d)
+        for d in privileged_dirs(workspace_root, approved_scopes, claude_skills_compat=claude_skills_compat))
 
 
 def workspace_klorb_dir(workspace_root: Path) -> Path:
@@ -151,6 +172,21 @@ def is_under_workspace_klorb_dir(path: Path, workspace_root: Path) -> bool:
     — the subset of `is_privileged_path` an `EscalatePrivileges` \"workspace\" scope grant lifts."""
     klorb = workspace_klorb_dir(workspace_root)
     return path == klorb or path.is_relative_to(klorb)
+
+
+def workspace_claude_skills_dir(workspace_root: Path) -> Path:
+    """Return the canonicalized `${workspace_root}/.claude/skills/` path — the
+    `compatibility.claudeSkills`-only privileged dir an `EscalatePrivileges(scope="workspace")`
+    grant also unlocks, alongside the workspace `.klorb/` dir itself."""
+    return workspace_root.resolve(strict=False) / CLAUDE_PROJECT_DIR_NAME / SKILLS_DIRNAME
+
+
+def is_under_workspace_claude_skills_dir(path: Path, workspace_root: Path) -> bool:
+    """Return whether `path` (already canonicalized) is the workspace `.claude/skills/` dir or
+    beneath it — the `claude_skills_compat` subset of `is_privileged_path` an
+    `EscalatePrivileges` \"workspace\" scope grant lifts."""
+    claude_skills = workspace_claude_skills_dir(workspace_root)
+    return path == claude_skills or path.is_relative_to(claude_skills)
 
 
 def is_under_homedir_klorb_dir(path: Path) -> bool:

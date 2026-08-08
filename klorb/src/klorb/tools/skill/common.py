@@ -19,7 +19,12 @@ from typing import Any, Protocol
 import yaml
 
 from klorb.paths import KLORB_DATA_DIR
-from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, canonicalize_dir
+from klorb.permissions.directory_access import (
+    CLAUDE_PROJECT_DIR_NAME,
+    KLORB_PROJECT_DIR_NAME,
+    SKILLS_DIRNAME,
+    canonicalize_dir,
+)
 from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import VALID_NAMESPACES, Namespace, SkillId, SkillRules, evaluate_skill
 from klorb.permissions.table import raise_if_not_allowed
@@ -27,18 +32,9 @@ from klorb.token_estimate import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
-SKILLS_DIRNAME = "skills"
-"""Directory name holding skill subdirectories within each tier's parent: `.klorb/skills/` and
-(with `compatibility.claudeSkills`) `.claude/skills/` for `workspace`, `$KLORB_DATA_DIR/skills/`
-for `user`, and `klorb.resources/skills/` for `internal`."""
-
 SKILL_FILE_NAME = "SKILL.md"
 """The one file every skill directory must contain to be discoverable; its basename directory is
 the skill's `name` and its YAML frontmatter carries the skill's `description`."""
-
-CLAUDE_PROJECT_DIR_NAME = ".claude"
-"""Workspace-root child directory whose `skills/` subtree is discovered as a second
-`workspace`-namespace source when `compatibility.claudeSkills` is enabled -- see docs/specs/skills.md."""
 
 NAMESPACE_SCHEMA_PROPERTY: dict[str, object] = {
     "type": "string",
@@ -249,7 +245,8 @@ def skill_file_manifest(resolved: SkillLocation) -> list[str]:
     each path relative to that directory (including `SKILL.md`) -- the `path` values a model then
     passes to `ReadSkillFile`. A symlink that escapes the skill directory is excluded, the same
     containment boundary `resolve_skill_file` enforces for an actual read."""
-    root_real = canonicalize_dir(resolved.root, resolved.root) if isinstance(resolved.root, Path) else None
+    root_real = canonicalize_dir(resolved.root, resolved.root) if isinstance(
+        resolved.root, Path) else None
     return sorted(_iter_relative_files(resolved.root, "", root_real))
 
 
@@ -321,10 +318,14 @@ def skill_activation_payload(skill: SkillLocation) -> dict[str, Any]:
     turn a `Skill` into what the model sees, so the two paths can never drift apart."""
     content = read_skill_md(skill)
     files = skill_file_manifest(skill)
-    return {
+    payload: dict[str, Any] = {
         "namespace": skill.namespace,
         "name": skill.name,
         "content": content,
         "files": files,
         "tokens": estimate_tokens(content) if content else 0,
     }
+    if len(files):
+        payload["file_access_hint"] = "Use ReadSkillFile to access paths in 'files' with " + \
+            f"namespace=\"{skill.namespace}\", name=\"{skill.name}\""
+    return payload

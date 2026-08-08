@@ -44,9 +44,10 @@ def _context(
     write_dirs: DirRules | None = None,
     read_files: FileRules | None = None,
     write_files: FileRules | None = None,
+    claude_skills_compat: bool = False,
 ) -> ToolSetupContext:
     return ToolSetupContext(
-        process_config=ProcessConfig(),
+        process_config=ProcessConfig(compatibility_claude_skills=claude_skills_compat),
         session_config=SessionConfig(
             workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
             read_dirs=read_dirs or DirRules(), write_dirs=write_dirs or DirRules(),
@@ -69,7 +70,8 @@ def test_deny_beats_allow_regardless_of_specificity(tmp_path: Path) -> None:
 
 
 def test_ask_wins_over_allow_but_loses_to_deny(tmp_path: Path) -> None:
-    all_three = DirectoryAccessTable(DirRules(deny=[tmp_path], ask=[tmp_path], allow=[tmp_path]), tmp_path)
+    all_three = DirectoryAccessTable(
+        DirRules(deny=[tmp_path], ask=[tmp_path], allow=[tmp_path]), tmp_path)
     assert all_three.evaluate(tmp_path / "f.txt") == "deny"
 
     ask_and_allow = DirectoryAccessTable(DirRules(ask=[tmp_path], allow=[tmp_path]), tmp_path)
@@ -89,7 +91,8 @@ def test_stricter_rule_wins_regardless_of_construction_order(tmp_path: Path) -> 
     added to the table first — since concatenation across config layers means the final list
     order carries no evaluation precedence of its own."""
     looser_first = DirectoryAccessTable(DirRules(allow=[tmp_path], deny=[tmp_path / "secret"]), tmp_path)
-    stricter_first = DirectoryAccessTable(DirRules(deny=[tmp_path / "secret"], allow=[tmp_path]), tmp_path)
+    stricter_first = DirectoryAccessTable(
+        DirRules(deny=[tmp_path / "secret"], allow=[tmp_path]), tmp_path)
 
     candidate = tmp_path / "secret" / "key.txt"
     assert looser_first.evaluate(candidate) == "deny"
@@ -255,6 +258,56 @@ def test_privileged_klorb_deny_read_error_mentions_escalate_privileges(tmp_path:
     context = _context(tmp_path)
     with pytest.raises(PermissionError, match="EscalatePrivileges"):
         resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
+
+
+# --- privileged_dirs / is_privileged_path: compatibility.claudeSkills gating ---
+
+
+def test_claude_skills_compat_off_leaves_claude_skills_dir_unprivileged(tmp_path: Path) -> None:
+    dirs = privileged_dirs(tmp_path)
+    assert tmp_path / ".claude" / "skills" not in dirs
+    assert not is_privileged_path(tmp_path / ".claude" / "skills" / "foo" / "SKILL.md", tmp_path)
+
+
+def test_claude_skills_compat_on_privileges_claude_skills_dir(tmp_path: Path) -> None:
+    dirs = privileged_dirs(tmp_path, claude_skills_compat=True)
+    assert tmp_path / ".claude" / "skills" in dirs
+    assert is_privileged_path(
+        tmp_path / ".claude" / "skills" / "foo" / "SKILL.md", tmp_path, claude_skills_compat=True)
+    # Sibling .claude/ content outside skills/ is untouched.
+    assert not is_privileged_path(tmp_path / ".claude" / "CLAUDE.md",
+                                  tmp_path, claude_skills_compat=True)
+
+
+def test_workspace_scope_lifts_claude_skills_dir_too(tmp_path: Path) -> None:
+    skill_file = tmp_path / ".claude" / "skills" / "foo" / "SKILL.md"
+    assert is_privileged_path(skill_file, tmp_path, claude_skills_compat=True)
+    assert not is_privileged_path(skill_file, tmp_path, {"workspace"}, claude_skills_compat=True)
+
+
+def test_resolve_and_evaluate_write_denies_claude_skills_dir_without_escalation(tmp_path: Path) -> None:
+    context = _context(
+        tmp_path, write_dirs=DirRules(allow=[tmp_path]), read_dirs=DirRules(allow=[tmp_path]),
+        claude_skills_compat=True)
+    with pytest.raises(PermissionError, match="EscalatePrivileges"):
+        resolve_and_evaluate_write(context, ".claude/skills/foo/SKILL.md")
+
+
+def test_resolve_and_evaluate_write_unlocks_claude_skills_after_workspace_escalation(tmp_path: Path) -> None:
+    target = tmp_path / ".claude" / "skills" / "foo" / "SKILL.md"
+    process_config = ProcessConfig(compatibility_claude_skills=True)
+    context = ToolSetupContext(
+        process_config=process_config,
+        session_config=SessionConfig(
+            workspace=Workspace(path=tmp_path),
+            write_dirs=DirRules(allow=[tmp_path]),
+            read_dirs=DirRules(allow=[tmp_path]),
+            approved_scopes={"workspace"},
+        ),
+    )
+    resolved, verdict = resolve_and_evaluate_write(context, ".claude/skills/foo/SKILL.md")
+    assert verdict == "allow"
+    assert resolved == target
 
 
 def test_homedir_scope_in_approved_scopes_omits_data_and_state_dirs(tmp_path: Path) -> None:
@@ -463,7 +516,8 @@ def test_writefiles_ask_short_circuits_even_when_writedirs_would_deny(tmp_path: 
     against a writeDirs.deny for the same path, unlike evaluate_write()'s own readDirs/writeDirs
     merge."""
     target = tmp_path / "f.txt"
-    context = _context(tmp_path, write_dirs=DirRules(deny=[tmp_path]), write_files=FileRules(ask=[target]))
+    context = _context(tmp_path, write_dirs=DirRules(
+        deny=[tmp_path]), write_files=FileRules(ask=[target]))
     _, verdict = resolve_and_evaluate_write(context, "f.txt")
     assert verdict == "ask"
 
@@ -494,7 +548,8 @@ def test_readfiles_allow_bypasses_the_workspace_root_boundary(tmp_path: Path) ->
 
 def test_readfiles_deny_short_circuits_even_when_readdirs_would_allow(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
-    context = _context(tmp_path, read_dirs=DirRules(allow=[tmp_path]), read_files=FileRules(deny=[target]))
+    context = _context(tmp_path, read_dirs=DirRules(
+        allow=[tmp_path]), read_files=FileRules(deny=[target]))
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
     assert verdict == "deny"
 
@@ -503,7 +558,8 @@ def test_readfiles_has_no_opinion_falls_through_to_readdirs(tmp_path: Path) -> N
     """A readFiles entry for a different file must not affect evaluation of this one -- it
     falls through to the ordinary readDirs/workspace-boundary flow untouched."""
     other = tmp_path / "other.txt"
-    context = _context(tmp_path, read_dirs=DirRules(deny=[tmp_path]), read_files=FileRules(allow=[other]))
+    context = _context(tmp_path, read_dirs=DirRules(
+        deny=[tmp_path]), read_files=FileRules(allow=[other]))
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
     assert verdict == "deny"
 
