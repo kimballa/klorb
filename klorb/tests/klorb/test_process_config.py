@@ -9,6 +9,11 @@ import pytest
 from pydantic import ValidationError
 
 from klorb import process_config as process_config_module
+from klorb.hooks.config import (
+    FileSystemModifiedEventConfig,
+    TimerEventConfig,
+    WorkspaceTrustChangedEventConfig,
+)
 from klorb.openrouter import DEFAULT_MODEL, OPENROUTER_BASE_URL
 from klorb.permissions.directory_access import DirectoryAccessTable
 from klorb.process_config import (
@@ -978,3 +983,165 @@ def test_sidebar_maps_from_config_key(tmp_path: Path) -> None:
     _write_config(tmp_path / "etc" / "klorb-config.json", {"ui.sidebar": "agents"})
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.sidebar == "agents"
+
+
+def test_hooks_and_events_default_to_empty(tmp_path: Path) -> None:
+    process_config = load_process_config(cwd=tmp_path)
+    assert process_config.hooks == {}
+    assert process_config.events == {}
+
+
+def test_hooks_concatenate_across_layers(tmp_path: Path) -> None:
+    """A later layer's handler list for a given hook name is appended to, not replacing,
+    every earlier layer's list for that same name."""
+    _write_config(
+        tmp_path / "user-config" / "klorb-config.json",
+        {"hooks": {"onProcessStart": [{"type": "bash", "shell": "echo user"}]}})
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"hooks": {"onProcessStart": [{"type": "bash", "shell": "echo project"}]}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    shells = [handler.shell for handler in process_config.hooks["onProcessStart"]]
+    assert shells == ["echo user", "echo project"]
+
+
+def test_hooks_for_different_names_do_not_interfere(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "hooks": {
+                "onProcessStart": [{"type": "bash", "shell": "echo start"}],
+                "onSessionEnd": [{"type": "chat", "prompt": "wrap up"}],
+            },
+        })
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert len(process_config.hooks["onProcessStart"]) == 1
+    assert len(process_config.hooks["onSessionEnd"]) == 1
+    assert process_config.hooks["onSessionEnd"][0].type == "chat"
+
+
+def test_hook_with_filter_is_parsed(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "hooks": {
+                "onAgentTurnEnd": [{
+                    "type": "chat",
+                    "prompt": "keep going",
+                    "filter": {"not": {"matches": "definitely done"}},
+                }],
+            },
+        })
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    handler = process_config.hooks["onAgentTurnEnd"][0]
+    assert handler.filter is not None
+    assert handler.filter.not_ is not None
+    assert handler.filter.not_.matches == "definitely done"
+
+
+def test_unrecognized_hook_name_is_dropped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"hooks": {"onTotallyMadeUp": [{"type": "bash", "shell": "echo hi"}]}})
+
+    with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.hooks == {}
+    assert "onTotallyMadeUp" in caplog.text
+
+
+def test_invalid_hook_entry_is_dropped_with_a_warning_but_siblings_survive(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "hooks": {
+                "onProcessStart": [
+                    {"type": "bash", "shell": "echo hi"},
+                    {"type": "not-a-real-type"},
+                ],
+            },
+        })
+
+    with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert len(process_config.hooks["onProcessStart"]) == 1
+    assert "invalid handler config" in caplog.text
+
+
+def test_events_concatenate_across_layers_and_dispatch_by_event_name(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / "user-config" / "klorb-config.json",
+        {
+            "events": {
+                "FileSystemModified": [
+                    {"watch": "src/", "action": {"type": "bash", "shell": "echo changed"}},
+                ],
+            },
+        })
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "events": {
+                "Timer": [{"interval_minutes": 10, "action": {"type": "chat", "prompt": "tick"}}],
+                "WorkspaceTrustChanged": [{"action": {"type": "chat", "prompt": "trust changed"}}],
+            },
+        })
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    fs_handler = process_config.events["FileSystemModified"][0]
+    assert isinstance(fs_handler, FileSystemModifiedEventConfig)
+    assert fs_handler.watch == "src/"
+
+    timer_handler = process_config.events["Timer"][0]
+    assert isinstance(timer_handler, TimerEventConfig)
+    assert timer_handler.interval_minutes == 10
+
+    trust_handler = process_config.events["WorkspaceTrustChanged"][0]
+    assert isinstance(trust_handler, WorkspaceTrustChangedEventConfig)
+    assert trust_handler.action.prompt == "trust changed"
+
+
+def test_unrecognized_event_name_is_dropped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"events": {"TotallyMadeUp": [{"action": {"type": "bash", "shell": "echo hi"}}]}})
+
+    with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.events == {}
+    assert "TotallyMadeUp" in caplog.text
+
+
+def test_process_config_to_disk_dict_serializes_hooks_and_events(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "hooks": {"onProcessStart": [{"type": "bash", "shell": "echo hi"}]},
+            "events": {"Timer": [{"interval_minutes": 5, "action": {"type": "chat", "prompt": "tick"}}]},
+        })
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    disk_dict = process_config_module.process_config_to_disk_dict(process_config)
+
+    assert disk_dict["hooks"] == {"onProcessStart": [{"type": "bash", "shell": "echo hi"}]}
+    assert disk_dict["events"] == {
+        "Timer": [{"interval_minutes": 5, "action": {"type": "chat", "prompt": "tick"}}],
+    }
+    # Round-trips through plain json.dumps without error (no leftover pydantic model instances).
+    json.dumps(disk_dict)
