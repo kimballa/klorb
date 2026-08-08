@@ -113,13 +113,6 @@
     between that check and the actual file I/O, so a rename/symlink swap in that window could
     redirect an approved operation. Closing this needs os.open()-based fd-relative I/O
     (O_NOFOLLOW/O_DIRECTORY), not path-string re-resolution. See docs/specs/permissions.md.
-  * Path macros: support expanding `${home}`/`${workspaceRoot}` (maybe also `${configDir}`)
-    inside `readDirs`/`writeDirs` (and any other future path-shaped config value), alongside the
-    plain `~` homedir shorthand `canonicalize_dir` already expands. `workspaceRoot` has no
-    shorthand today, and namespaced/braced macros read more explicitly than a bare `~` once
-    there's more than one kind of substitution — this would give one consistent expansion story
-    across every path source (config file, and LLM-supplied tool-call `filename`s) instead of
-    special-casing `~` alone.
 
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)
 

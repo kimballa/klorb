@@ -260,6 +260,21 @@ there are only the first two:
    layer's for that same key, but keys from different layers accumulate — effectively
    `dict.update()` scoped to this one nested object rather than the whole `sessionDefaults` dict.
 
+Every string entry in `readDirs`/`writeDirs`/`readFiles`/`writeFiles`'s `deny`/`ask`/`allow`
+lists, and every value (not key) in `setEnv`, is expanded for `${home}`/`${workspaceRoot}`
+macro references (`klorb.config_macros.expand_macros`) before that layer is merged — `${home}`
+is the invoking user's home directory, `${workspaceRoot}` the current workspace root
+(`Workspace.path`, resolved). Expansion is a single left-to-right pass per string: a macro's
+substituted value is never itself re-scanned for further `${...}` references, so a value that
+happens to contain the literal text `${...}` is not expanded a second time. A layer containing
+an unrecognized macro name, an unterminated `${`, or an empty `${}` is dropped in its entirety —
+same as a layer that isn't valid JSON at all — with an error collected into
+`ProcessConfig.config_warnings`; see
+docs/adrs/malformed-config-macro-drops-the-whole-layer.md. `readFiles`/`writeFiles` additionally
+reject expanding a macro whose resolved value contains a literal `*`, since that grammar's `*`
+wildcard metacharacter (see docs/specs/permissions.md) is otherwise detected purely by string
+content — see docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md.
+
 When klorb *writes* a config file (`klorb.schema_envelope.write_versioned_json`, used by the
 project-config bootstrap and by interactive permission grants), the document is pretty-printed
 with two-space indentation, with one exception: the `allow`/`ask`/`deny` lists (of `readDirs`,

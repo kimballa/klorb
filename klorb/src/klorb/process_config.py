@@ -5,13 +5,17 @@ running concurrently). See docs/specs/process-and-session-config.md.
 """
 
 import importlib.resources
+import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from klorb.config_macros import MacroExpansionError, expand_macros, resolve_macro_values
+from klorb.json_error_display import format_json_error_context
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.command_access import CommandRules
@@ -610,7 +614,116 @@ def apply_cli_flags_to_session(process_config: "ProcessConfig") -> None:
         setattr(process_config.session, attr_name, value)
 
 
-def _default_config_layer(warnings: list[str]) -> dict[str, Any]:
+@dataclass
+class LoadedConfigLayer:
+    """One config layer's parsed contents alongside the raw source text and a human-readable
+    label identifying where it came from — bundled together (rather than returned as a bare
+    tuple) because `_expand_config_layer_macros` needs all three: `contents` to expand and
+    merge, `text` to locate a malformed `${...}` reference's line/column within, and
+    `source_label` to name the layer in the resulting warning.
+    """
+
+    contents: dict[str, Any]
+    text: str
+    source_label: str
+
+
+_DIR_RULE_KEYS = ("readDirs", "writeDirs")
+_FILE_RULE_KEYS = ("readFiles", "writeFiles")
+"""`sessionDefaults` keys `_expand_config_layer_macros` expands `${...}` macros within.
+`_FILE_RULE_KEYS` entries are expanded with `forbid_char="*"` (see `expand_macros`) since,
+unlike a directory rule, a file rule's matching semantics change if `*` appears in it — see
+docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md."""
+
+
+def _expand_rule_block_macros(
+    session_layer: dict[str, Any], key: str, macros: dict[str, str], *, forbid_char: str | None,
+) -> None:
+    """Expand `${...}` macros in every `deny`/`ask`/`allow` string entry of
+    `session_layer[key]` (a `readDirs`/`writeDirs`/`readFiles`/`writeFiles`-shaped block), in
+    place. A non-string entry (already-malformed config data) is left untouched, so it fails
+    later exactly as it did before this function existed, rather than gaining a new error path
+    here."""
+    rule_block = session_layer.get(key)
+    if not isinstance(rule_block, dict):
+        return
+    for category in ("deny", "ask", "allow"):
+        entries = rule_block.get(category)
+        if not isinstance(entries, list):
+            continue
+        rule_block[category] = [
+            expand_macros(entry, macros=macros, forbid_char=forbid_char) if isinstance(entry, str) else entry
+            for entry in entries
+        ]
+
+
+def _report_macro_error(
+    exc: MacroExpansionError, *, source_label: str, source_text: str, warnings: list[str],
+) -> None:
+    """Log and collect (into `warnings`, see `ProcessConfig.config_warnings`) a human-readable
+    description of `exc`, formatted exactly like a JSON syntax error (see
+    `klorb.schema_envelope.parse_versioned_json`): `source_label`, the error, and a
+    line/column-annotated excerpt of `source_text`.
+
+    `exc.snippet` is searched for verbatim in `source_text` to recover a position — this always
+    succeeds for a real config file, since a macro token uses only ASCII identifier characters
+    and `{`/`}`/`$`, none of which JSON string escaping ever alters. If it somehow isn't found
+    (e.g. `source_text` is empty, as for a layer with no on-disk file), the message is still
+    reported, just without a line/column.
+    """
+    pos = source_text.find(exc.snippet)
+    if pos == -1:
+        message = f"{source_label}: {exc.message}; ignoring its contents."
+    else:
+        decode_error = json.JSONDecodeError(exc.message, source_text, pos)
+        message = (
+            f"{source_label}: {exc.message} (line {decode_error.lineno}, "
+            f"column {decode_error.colno}); ignoring its contents.\n"
+            f"{format_json_error_context(source_text, decode_error)}"
+        )
+    logger.error(message)
+    warnings.append(message)
+
+
+def _expand_config_layer_macros(
+    layer: LoadedConfigLayer, *, workspace_root: Path, warnings: list[str],
+) -> dict[str, Any]:
+    """Expand every `${home}`/`${workspaceRoot}` macro reference in `layer`'s
+    `readDirs`/`writeDirs`/`readFiles`/`writeFiles` rule paths and `setEnv` values, in a single
+    left-to-right pass per string (see `klorb.config_macros.expand_macros`) — never a
+    per-macro-name sequential replace, which would let one macro's expanded value be
+    re-scanned and partially re-expanded by another.
+
+    A malformed or unrecognized macro reference anywhere in `layer` drops the entire layer —
+    returns `{}`, exactly as `klorb.schema_envelope.parse_versioned_json` does for a layer
+    that isn't valid JSON at all — rather than silently applying the rest of the layer around
+    the bad reference. See docs/adrs/malformed-config-macro-drops-the-whole-layer.md: a
+    `deny` rule whose macro silently failed to expand (left as literal text, or blanked to an
+    empty string) would silently stop matching anything, which is far more dangerous than
+    refusing to start with a clear error.
+    """
+    session_layer = layer.contents.get(SESSION_DEFAULTS_KEY)
+    if not isinstance(session_layer, dict):
+        return layer.contents
+    macros = resolve_macro_values(workspace_root)
+    try:
+        for key in _DIR_RULE_KEYS:
+            _expand_rule_block_macros(session_layer, key, macros, forbid_char=None)
+        for key in _FILE_RULE_KEYS:
+            _expand_rule_block_macros(session_layer, key, macros, forbid_char="*")
+        set_env = session_layer.get("setEnv")
+        if isinstance(set_env, dict):
+            for env_key, env_value in set_env.items():
+                if isinstance(env_value, str):
+                    set_env[env_key] = expand_macros(env_value, macros=macros)
+    except MacroExpansionError as exc:
+        _report_macro_error(
+            exc, source_label=layer.source_label, source_text=layer.text, warnings=warnings)
+        return {}
+    return layer.contents
+
+
+def _default_config_layer(warnings: list[str]) -> LoadedConfigLayer:
     """The packaged built-in-defaults layer: `klorb.resources/default-config.json`
     (`DEFAULT_CONFIG_RESOURCE_NAME`), read via `importlib.resources` and parsed the same way
     an on-disk `klorb-config.json` layer is. Unlike every other layer `load_process_config()`
@@ -628,8 +741,25 @@ def _default_config_layer(warnings: list[str]) -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     source = f"klorb.resources/{DEFAULT_CONFIG_RESOURCE_NAME}"
-    return parse_versioned_json(
+    contents = parse_versioned_json(
         text, expected_schema_name=CONFIG_SCHEMA_NAME, source=source, warnings=warnings)
+    return LoadedConfigLayer(contents=contents, text=text, source_label=source)
+
+
+def _load_config_layer(path: Path, warnings: list[str]) -> LoadedConfigLayer:
+    """Read and parse the on-disk config layer at `path`, bundled with its raw text and a
+    source label (see `LoadedConfigLayer`) — the single-read counterpart of
+    `klorb.schema_envelope.read_versioned_json`, which this mirrors exactly (including the
+    missing-file and malformed-JSON handling) except that it also keeps `text` around for
+    `_expand_config_layer_macros`'s error reporting.
+    """
+    if not path.is_file():
+        logger.debug("No file at %s; skipping.", path)
+        return LoadedConfigLayer(contents={}, text="", source_label=str(path))
+    text = path.read_text(encoding="utf-8")
+    contents = parse_versioned_json(
+        text, expected_schema_name=CONFIG_SCHEMA_NAME, source=str(path), warnings=warnings)
+    return LoadedConfigLayer(contents=contents, text=text, source_label=str(path))
 
 
 def etc_config_path() -> Path:
@@ -911,7 +1041,9 @@ def load_process_config(
     concatenated_share_env: list[str] = []
     merged_set_env: dict[str, str] = {}
 
-    def merge_layer(layer: dict[str, Any]) -> None:
+    def merge_layer(loaded_layer: LoadedConfigLayer) -> None:
+        layer = _expand_config_layer_macros(
+            loaded_layer, workspace_root=workspace.path, warnings=config_warnings)
         session_layer = layer.pop(SESSION_DEFAULTS_KEY, None) or {}
         for key, accumulator in (
             ("readDirs", concatenated_read_dirs), ("writeDirs", concatenated_write_dirs),
@@ -946,25 +1078,21 @@ def load_process_config(
         merged.update(layer)
 
     merge_layer(_default_config_layer(config_warnings))
-    merge_layer(read_versioned_json(
-        etc_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
-    merge_layer(read_versioned_json(
-        user_config_path(), expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
+    merge_layer(_load_config_layer(etc_config_path(), config_warnings))
+    merge_layer(_load_config_layer(user_config_path(), config_warnings))
     if workspace.trusted:
         logger.debug(
             "load_process_config: workspace %s is trusted; reading project config layer %s",
             workspace.path, project_config_path(workspace.path))
-        merge_layer(read_versioned_json(
-            project_config_path(workspace.path), expected_schema_name=CONFIG_SCHEMA_NAME,
-            warnings=config_warnings))
+        merge_layer(_load_config_layer(project_config_path(workspace.path), config_warnings))
     else:
         logger.debug(
             "load_process_config: workspace %s is not trusted; skipping project config layer %s",
             workspace.path, project_config_path(workspace.path))
     if config_flag_path is not None:
-        merge_layer(read_versioned_json(
-            config_flag_path, expected_schema_name=CONFIG_SCHEMA_NAME, warnings=config_warnings))
-    merge_layer(_load_saved_session_overrides(cwd))
+        merge_layer(_load_config_layer(config_flag_path, config_warnings))
+    merge_layer(LoadedConfigLayer(
+        contents=_load_saved_session_overrides(cwd), text="", source_label="saved-session-overrides"))
 
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
     session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)

@@ -83,18 +83,18 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
 
 
 def test_default_config_layer_reads_the_packaged_resource() -> None:
-    layer = _real_default_config_layer([])
+    layer = _real_default_config_layer([]).contents
     assert layer["sessionDefaults"]["model"] == DEFAULT_MODEL
     assert "~/.ssh" in layer["sessionDefaults"]["readDirs"]["deny"]
 
 
 def test_default_config_layer_strips_the_schema_envelope() -> None:
-    layer = _real_default_config_layer([])
+    layer = _real_default_config_layer([]).contents
     assert "schema" not in layer
 
 
 def test_default_config_layer_pre_allows_create_edit_skill() -> None:
-    layer = _real_default_config_layer([])
+    layer = _real_default_config_layer([]).contents
     assert "internal:create-edit-skill" in layer["sessionDefaults"]["skillRules"]["allow"]
 
 
@@ -419,6 +419,82 @@ def test_malformed_config_layer_is_collected_into_config_warnings(tmp_path: Path
     assert "^" in warning
 
 
+def test_readdirs_expands_home_macro(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"readDirs": {"allow": ["${home}/scratch"]}}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert Path.home() / "scratch" in process_config.session.read_dirs.allow
+
+
+def test_readfiles_expands_workspaceroot_macro(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"readFiles": {"allow": ["${workspaceRoot}/secret.pem"]}}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert tmp_path.resolve(strict=False) / "secret.pem" in process_config.session.read_files.allow
+
+
+def test_setenv_expands_macros_in_values_but_not_keys(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"setEnv": {"${home}": "literal-key-untouched", "SCRATCH": "${home}/scratch"}}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.set_env["${home}"] == "literal-key-untouched"
+    assert process_config.session.set_env["SCRATCH"] == f"{Path.home()}/scratch"
+
+
+def test_malformed_macro_reference_drops_whole_layer_into_config_warnings(tmp_path: Path) -> None:
+    """Mirrors `test_malformed_config_layer_is_collected_into_config_warnings`: an unrecognized
+    `${...}` reference is treated exactly like a JSON syntax error -- the whole layer (including
+    unrelated keys like `model` here) is dropped, not just the offending rule. See
+    docs/adrs/malformed-config-macro-drops-the-whole-layer.md."""
+    path = tmp_path / ".klorb" / "klorb-config.json"
+    _write_config(path, {
+        "sessionDefaults": {
+            "model": "project/model",
+            "readFiles": {"deny": ["${nope}/secret"]},
+        },
+    })
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.model == DEFAULT_MODEL
+    assert len(process_config.config_warnings) == 1
+    warning = process_config.config_warnings[0]
+    assert str(path) in warning
+    assert "${nope}" in warning
+    assert "^" in warning
+
+
+def test_file_rule_macro_value_containing_star_drops_whole_layer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """See docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md: a macro whose
+    resolved value contains `*` must never be substituted into a `readFiles`/`writeFiles` rule,
+    since that would silently change the rule's wildcard-vs-exact classification. `${home}` is
+    forced to an unrealistic value containing `*` here to exercise that guard without depending
+    on the test machine's actual home directory name."""
+    monkeypatch.setattr(
+        process_config_module, "resolve_macro_values",
+        lambda workspace_root: {"home": "/ev*il", "workspaceRoot": str(workspace_root)})
+    path = tmp_path / ".klorb" / "klorb-config.json"
+    _write_config(
+        path, {"sessionDefaults": {"readFiles": {"deny": ["${home}/secret"]}}})
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.read_files.deny == []
+    assert len(process_config.config_warnings) == 1
+    assert "*" in process_config.config_warnings[0]
+
+
 def test_readdirs_and_writedirs_concatenate_across_layers(tmp_path: Path) -> None:
     """See docs/specs/permissions.md: a later layer's readDirs/writeDirs entries add to,
     rather than replace, every earlier layer's — unlike every other config key."""
@@ -560,7 +636,7 @@ def test_default_config_layer_readfiles_writefiles_allow_the_special_device_file
     """The packaged default layer carves out the four special character devices in both
     `readFiles.allow`/`writeFiles.allow` — see docs/specs/permissions.md's "File access"
     section for why these, specifically, need a file-level (not directory-level) exception."""
-    layer = _real_default_config_layer([])
+    layer = _real_default_config_layer([]).contents
     device_paths = ["/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"]
     for device_path in device_paths:
         assert device_path in layer["sessionDefaults"]["readFiles"]["allow"]
@@ -773,7 +849,7 @@ def test_default_config_layer_matches_bash_risk_classifier_field_defaults() -> N
     "nothing configured" behavior, and drifting apart would make the packaged file lie about
     what actually happens when it's missing entirely (e.g. `ProcessConfig()` constructed
     directly by a test, or a caller that bypasses `load_process_config`)."""
-    layer = _real_default_config_layer([])
+    layer = _real_default_config_layer([]).contents
     defaults = ProcessConfig()
 
     assert layer["tools.bash.riskClassifier.enabled"] == defaults.bash_risk_classifier_enabled

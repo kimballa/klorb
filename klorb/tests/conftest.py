@@ -39,7 +39,10 @@ def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setenv(
         process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
     monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
-    monkeypatch.setattr(process_config_module, "_default_config_layer", lambda warnings: {})
+    monkeypatch.setattr(
+        process_config_module, "_default_config_layer",
+        lambda warnings: process_config_module.LoadedConfigLayer(
+            contents={}, text="", source_label="blanked-default-config"))
 
 
 @pytest.fixture(autouse=True)

@@ -124,6 +124,13 @@ the reasoning behind the most consequential decisions here.
   matches too). A pattern with a literal directory segment before the `*`, like
   `"secrets/*.pem"`, narrows this to `.pem` files anywhere under that one directory. See
   docs/adrs/file-rule-wildcard-star-matches-any-characters-including-slash.md.
+* A rule string may also reference `${home}`/`${workspaceRoot}`, expanded at config-load time —
+  see docs/specs/process-and-session-config.md's config-layer merge section. Expanding a macro
+  whose resolved value contains a literal `*` is rejected (drops the whole config layer) rather
+  than silently changing a rule's wildcard-vs-exact classification; see
+  docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md. `readDirs`/`writeDirs`
+  rules (below) support the same two macros with no such restriction, since containment matching
+  has no wildcard grammar for a macro-introduced `*` to corrupt.
 * `resolve_and_evaluate_read()`/`resolve_and_evaluate_write()` (`klorb.permissions.workspace`,
   below) each build a `FileAccessTable` from `read_files`/`write_files` and check it against the
   canonicalized candidate *before* the workspace-root boundary check and before consulting
