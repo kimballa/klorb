@@ -295,6 +295,44 @@ def test_finished_update_readfile_meta_carries_content_and_filename(tmp_path: Pa
     assert "c" in readfile_meta["content"]
 
 
+def test_finished_update_readfile_meta_for_read_memory(tmp_path: Path) -> None:
+    """A finished ReadMemory call should also include `_meta.klorb.readFile`."""
+    registry = _registry(tmp_path)
+    args = {"namespace": "workspace", "filename": "notes.md"}
+    result = {
+        "content": "1|a\n2|b", "namespace": "workspace", "filename": "notes.md",
+        "start_line": 1, "end_line": 2, "total_lines": 2, "truncated": False,
+    }
+    event = ToolCallEvent(call_id="1", name="ReadMemory", args=args, result=result, error=None)
+
+    update = tool_call_finished_update(event, registry, tmp_path)
+
+    assert update.field_meta is not None
+    readfile_meta = update.field_meta["klorb"]["readFile"]
+    assert readfile_meta["filename"] == "notes.md"
+    assert "a" in readfile_meta["content"]
+    assert "b" in readfile_meta["content"]
+
+
+def test_finished_update_readfile_meta_for_read_scratchpad_falls_back_to_tool_name(
+    tmp_path: Path,
+) -> None:
+    """`ReadScratchpad` has no `filename` arg or result field, so `readFile.filename` falls
+    back to the tool's own name."""
+    registry = _registry(tmp_path)
+    result = {
+        "content": "1|note", "start_line": 1, "end_line": 1, "total_lines": 1, "truncated": False,
+    }
+    event = ToolCallEvent(call_id="1", name="ReadScratchpad", args={}, result=result, error=None)
+
+    update = tool_call_finished_update(event, registry, tmp_path)
+
+    assert update.field_meta is not None
+    readfile_meta = update.field_meta["klorb"]["readFile"]
+    assert readfile_meta["filename"] == "ReadScratchpad"
+    assert "note" in readfile_meta["content"]
+
+
 def test_finished_update_reports_failure_text_and_status(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     event = ToolCallEvent(
@@ -837,3 +875,23 @@ class TestBuildSessionReplay:
         assert entries[0]["readFileMeta"]["filename"] == "hello.txt"
         assert "line one" in entries[0]["readFileMeta"]["content"]
         assert "line two" in entries[0]["readFileMeta"]["content"]
+
+    def test_replayed_read_scratchpad_call_includes_readfile_meta(self, tmp_path: Path) -> None:
+        session = Session(SessionConfig(), provider=MagicMock())
+        tool_use = _msg("tool_use", tool_calls=[
+            ToolCallRequest(id="call-1", name="ReadScratchpad", arguments="{}")])
+        tool_response = _msg("tool_response", content=json.dumps({
+            "is_error": False, "is_retryable": False, "error_category": None,
+            "error_message": None,
+            "response_body": {
+                "content": "1|note", "start_line": 1, "end_line": 1,
+                "total_lines": 1, "truncated": False,
+            },
+        }), tool_call_id="call-1")
+        session.load_messages([tool_use, tool_response])
+
+        entries = build_session_replay(session, None, tmp_path)
+
+        assert len(entries) == 1
+        assert entries[0]["readFileMeta"]["filename"] == "ReadScratchpad"
+        assert "note" in entries[0]["readFileMeta"]["content"]

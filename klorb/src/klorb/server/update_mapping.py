@@ -336,20 +336,27 @@ _READFILE_MAX_META_LINES = 8
 `ReadFile.detail_view()`'s own truncation so the metadata doesn't carry more
 than the content text block already does."""
 
+_READFILE_META_TOOLS = ("ReadFile", "ReadMemory", "ReadScratchpad")
+"""Tool names whose finished call reports `_meta.klorb.readFile` -- every tool built on
+`klorb.tools.util.ReadFileCore`, so the webview can render each one's result as the same
+structured line-numbered card."""
+
 
 def _readfile_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
-    """Return `_meta.klorb.readFile` for a finished `ReadFile` call, or `None` for other
-    tools or when the result lacks content.  The `content` field carries the truncated
-    line-numbered content (same format as `detail_view()`), so the webview can render it
-    as a structured line-numbered card instead of parsing JSON."""
-    if event.name != "ReadFile" or not isinstance(event.result, dict):
+    """Return `_meta.klorb.readFile` for a finished call to a tool in `_READFILE_META_TOOLS`,
+    or `None` for other tools or when the result lacks content. The `content` field carries
+    the truncated line-numbered content (same format as `detail_view()`), so the webview can
+    render it as a structured line-numbered card instead of parsing JSON. `filename` falls
+    back to the tool's own name for `ReadScratchpad`, whose subject isn't a model-nameable
+    path in the first place (same reasoning as `_diff_path`'s fallback)."""
+    if event.name not in _READFILE_META_TOOLS or not isinstance(event.result, dict):
         return None
     content = event.result.get("content")
     if not isinstance(content, str):
         return None
     filename = event.args.get("filename")
     if not isinstance(filename, str):
-        filename = event.result.get("filename", "?")
+        filename = event.result.get("filename", event.name)
     content = truncate_lines(content, _READFILE_MAX_META_LINES)
     return {"filename": filename, "content": content}
 
@@ -742,7 +749,7 @@ def _replay_readfile_meta(
     parsed: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     """Build `readFileMeta` for a replayed tool-call entry from the restored call/response pair."""
-    if call.name != "ReadFile" or parsed is None:
+    if call.name not in _READFILE_META_TOOLS or parsed is None:
         return None
     body = parsed.get("response_body")
     if not isinstance(body, dict):
@@ -752,7 +759,7 @@ def _replay_readfile_meta(
         return None
     filename = args.get("filename")
     if not isinstance(filename, str):
-        filename = body.get("filename", "?")
+        filename = body.get("filename", call.name)
     content = truncate_lines(content, _READFILE_MAX_META_LINES)
     return {"filename": filename, "content": content}
 

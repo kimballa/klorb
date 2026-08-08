@@ -206,12 +206,6 @@
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.
   How tall is that, exactly? I feel like it should be no more than 5 or 6 rows high.
 
-* (#agent) ReadScratchpad/ReadMemory tool output cards should use the `<ReadFileContent>` ability to
-  display numbered lines, like ReadFile.
-
-* (#agent) EditScratchpad/EditMemory tool output cards should use the `<DiffLines>` format like
-  EditFile.
-
 ## Remaining / future work from `plan` epics
 
 *Some `plan` documents were only partially implemented; others explicitly mentioned follow-up work*
