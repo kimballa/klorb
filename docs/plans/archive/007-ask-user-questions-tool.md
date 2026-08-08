@@ -200,7 +200,7 @@ task" bullet already gives, rather than treat the tool as always available.
 
 ## Permission bypass
 
-Like the scratchpad tools (`docs/adrs/scratchpad-tools-bypass-permission-tables.md`),
+Like the scratchpad tools (`docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md`),
 `AskUserQuestionsTool` gets **no** `tools.askUserQuestions.*Permission` entry in the
 `deny`/`ask`/`allow` tables: those tables gate the model's access to a resource
 (filesystem path, shell command) that the model could otherwise reach directly. Asking
@@ -361,10 +361,10 @@ asserted)
 5. **System prompt**: revise the "ambiguous task" bullet and add the new "Ask instead of
    guessing" section to `default_sys.md`, per "System prompt" above.
 
-6. **New ADR**: `docs/adrs/ask-user-questions-tool-bypasses-permission-tables.md` (or
+6. **New ADR**: `docs/adrs/00091-ask-user-questions-tool-bypasses-permission-tables.md` (or
    similar slug), recording the "no `tools.askUserQuestions.*Permission` entry, because
    interactivity itself is the gate" decision, alongside a cross-reference to
-   `docs/adrs/scratchpad-tools-bypass-permission-tables.md` for the closest precedent and
+   `docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md` for the closest precedent and
    how this differs (harness-owned-location bypass vs. inherently-interactive bypass).
 
 7. **New spec**: once implemented, write `docs/specs/ask-user-questions.md` describing

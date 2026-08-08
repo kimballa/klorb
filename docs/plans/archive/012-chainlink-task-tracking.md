@@ -17,7 +17,7 @@ Chainlink is a todo item tracking system for agents in a source control reposito
 * We do not use chainlink's own Session/handoff-note/breadcrumb feature -- only Issues (comments
   and the dependency graph), which is what carries task state across context compaction or a
   handoff between klorb sessions. See
-  docs/adrs/chainlink-issues-not-chainlink-sessions-for-continuity.md for why.
+  docs/adrs/00148-chainlink-issues-not-chainlink-sessions-for-continuity.md for why.
 
 ## Setup
 

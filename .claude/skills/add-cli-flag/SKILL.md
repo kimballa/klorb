@@ -100,7 +100,7 @@ worked example of every step above:
   initial_message=prompt)`.
 * `klorb/usage.md` documents it in the synopsis, an `## OPTIONS` entry, and a new example.
 * `docs/specs/session-and-turns.md` documents the defaulting rule; the ADR
-  `docs/adrs/route-one-shot-and-repl-prompts-through-a-shared-session.md` records why a
+  `docs/adrs/00008-route-one-shot-and-repl-prompts-through-a-shared-session.md` records why a
   shared `Session` was needed once this flag made "one-shot" and "REPL" no longer mutually
   exclusive at the CLI's call site.
 * `klorb/tests/test_cli.py` has dedicated tests for the default-with-message,

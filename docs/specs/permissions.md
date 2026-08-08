@@ -123,12 +123,12 @@ the reasoning behind the most consequential decisions here.
   depth under `workspace_root`, not just a direct child (e.g. `${workspace_root}/sub/dir/f.pem`
   matches too). A pattern with a literal directory segment before the `*`, like
   `"secrets/*.pem"`, narrows this to `.pem` files anywhere under that one directory. See
-  docs/adrs/file-rule-wildcard-star-matches-any-characters-including-slash.md.
+  docs/adrs/00173-file-rule-wildcard-star-matches-any-characters-including-slash.md.
 * A rule string may also reference `${home}`/`${workspaceRoot}`, expanded at config-load time —
   see docs/specs/process-and-session-config.md's config-layer merge section. Expanding a macro
   whose resolved value contains a literal `*` is rejected (drops the whole config layer) rather
   than silently changing a rule's wildcard-vs-exact classification; see
-  docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md. `readDirs`/`writeDirs`
+  docs/adrs/00175-file-rule-macro-values-may-not-contain-a-literal-star.md. `readDirs`/`writeDirs`
   rules (below) support the same two macros with no such restriction, since containment matching
   has no wildcard grammar for a macro-introduced `*` to corrupt.
 * `resolve_and_evaluate_read()`/`resolve_and_evaluate_write()` (`klorb.permissions.workspace`,
@@ -391,7 +391,7 @@ This mechanism is edge-triggered and one-shot by design — it fires exactly onc
 next turn, and is not meant for a condition that can stay true across many turns. `Session`
 also has a complementary, level-triggered mechanism (`register_standing_interjection()`) for
 that case — see docs/specs/bash-tool-and-command-permissions.md's "Session-scoped terminals"
-section and docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md.
+section and docs/adrs/00081-standing-interjections-complement-one-shot-for-level-triggered-state.md.
 
 ### Multi-item asks
 
@@ -461,7 +461,7 @@ Truncation accounts for soft-wrapping, not just explicit newlines: `ReplApp` pas
 `preview_wrap_width` estimated from the terminal's own width, so a single very long line with
 no `\n` at all still gets truncated once it would soft-wrap past the row budget, rather than
 silently overflowing and pushing the grid off the bottom of the screen — see
-docs/adrs/estimate-command-preview-wrap-width-from-terminal-size.md.
+docs/adrs/00093-estimate-command-preview-wrap-width-from-terminal-size.md.
 
 The preview shows `PermissionAskContext.item_command_text` — the exact source text of just the
 one statement this particular item is about (e.g. `"echo $SHELL"` out of a bigger
@@ -552,7 +552,7 @@ An Allow grant is never recorded narrower than a directory. Two cases:
   `None`-normalized-to-`"ask"` default): the grant is recorded at the *containing directory* of
   the accessed path (`candidate.parent`) when `candidate` is a file, or at `candidate` itself when
   `candidate` is already a directory (e.g. an `ls some/dir` implicit-read target — see
-  docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md). `PermissionAskPanel`'s copy
+  docs/adrs/00085-grant-directory-candidate-at-itself-not-its-parent.md). `PermissionAskPanel`'s copy
   states whichever of the two this resolves to explicitly before the user picks a scope, since a
   file candidate's grant covers more than what the user sees the model touching right now.
 

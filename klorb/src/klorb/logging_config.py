@@ -30,7 +30,7 @@ DEFAULT_MAX_SESSION_LOG_FILES = 12
 """Default hard cap on how many `*.log` files `prune_session_logs()` leaves in the session-logs
 directory once a new session log is opened (counting the new one). See
 docs/specs/paths-and-logging.md and
-docs/adrs/prune-session-logs-to-newest-within-count-and-byte-caps.md."""
+docs/adrs/00097-prune-session-logs-to-newest-within-count-and-byte-caps.md."""
 
 DEFAULT_MAX_SESSION_LOG_BYTES = 32 * 1024 * 1024
 """Default hard cap on the combined size of the `*.log` files `prune_session_logs()` retains.
@@ -219,7 +219,7 @@ class AcpBackgroundTaskErrorFilter(logging.Filter):
     unsupported content block, ...) prints a full traceback exactly like a genuine bug would.
     `acp.run_agent()` builds its `Connection` internally with no seam to swap in a different
     task-error handler, so this filter matches the SDK's own hardcoded message instead. See
-    docs/adrs/quiet-acp-request-error-tracebacks-with-a-logging-filter.md.
+    docs/adrs/00164-quiet-acp-request-error-tracebacks-with-a-logging-filter.md.
 
     `RequestError.internal_error()` is left alone (the record passes through unfiltered): the SDK
     raises that specific code when it caught some other, non-`RequestError` exception, so it does

@@ -91,7 +91,7 @@ See the COMMANDS section for more details about these operating modes.
   plain text; combined with `--json`, it instead emits a JSON array of name
   strings (e.g. `["xiaomi/mimo-v2.5", ...]`). `--costs` looks up each
   model's current per-token cost from OpenRouter (live, not stored — see
-  `docs/adrs/fetch-model-pricing-live-not-from-json.md`), throttled to
+  `docs/adrs/00100-fetch-model-pricing-live-not-from-json.md`), throttled to
   `klorb.models.openrouter_pricing.MAX_PRICING_REQUESTS_PER_SECOND` requests
   per second, and folds it into the table (as an `IN $/MTOK`/`OUT $/MTOK`
   column pair) or the `--json` output (as a `costs` key); it's ignored with

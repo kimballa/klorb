@@ -4,7 +4,7 @@ docs/specs/bash-tool-and-command-permissions.md.
 
 These tests invoke the real `shfmt` binary (installed by the pinned `shfmt-py` dependency) —
 not a mocked AST — since the whole point of this module is to walk *actual* `shfmt --to-json`
-output; see docs/adrs/shell-out-to-shfmt-for-bash-parsing.md.
+output; see docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md.
 """
 
 from pathlib import Path
@@ -66,7 +66,7 @@ def test_and_or_semicolon_lists_extract_every_simple_command() -> None:
 def test_and_or_semicolon_lists_give_each_simple_command_its_own_source_text() -> None:
     """Regression test for the compound-command permission-ask bug: each simple command's own
     `source_text` must be just that one piece, not the whole raw command line -- see
-    docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md."""
+    docs/adrs/00082-permission-ask-item-shows-its-own-command-text-not-the-full-compound.md."""
     analysis = parse_command("git status && ls -la", SHFMT)
     assert [sc.source_text for sc in analysis.simple_commands] == ["git status", "ls -la"]
 

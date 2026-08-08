@@ -130,7 +130,7 @@ class SessionTurnsMixin(SessionBase):
         (`klorb.token_estimate.estimate_tokens`) -- refreshed on every chunk while streaming,
         so `Session.total_tokens_used()` has a live, steadily-accurate number throughout the
         round trip, and left as-is once a message stops changing. See
-        docs/adrs/count-every-message-tokens-client-side-with-tiktoken.md.
+        docs/adrs/00121-count-every-message-tokens-client-side-with-tiktoken.md.
 
         On any exception other than `ResponseAborted`, whichever placeholder(s) were created
         are mutated to `processing_state="error"`/`last_error` (partial `streaming_content`

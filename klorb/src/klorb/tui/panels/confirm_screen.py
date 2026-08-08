@@ -4,7 +4,7 @@
 command — see docs/specs/projects-and-trust.md) so each one isn't its own near-identical
 `ModalScreen` subclass. Distinct from `klorb.tui.widgets.tool_call_widgets.ToolCallLimitScreen`,
 an earlier, narrower yes/no modal this doesn't replace — see
-docs/adrs/reuse-a-generic-confirmscreen-for-workspace-trust-prompts.md.
+docs/adrs/00057-reuse-a-generic-confirmscreen-for-workspace-trust-prompts.md.
 """
 
 from textual.app import ComposeResult

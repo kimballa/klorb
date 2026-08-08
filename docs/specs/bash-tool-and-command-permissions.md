@@ -102,7 +102,7 @@ permissions system, since a syntax error isn't a permission verdict.
 `CommandRules` (`deny`/`ask`/`allow`, each `list[list[str]]`) is a `SessionConfig.command_rules`
 field, on-disk `commandRules` (nested under `sessionDefaults`, concatenated across config layers
 exactly like `readDirs`/`writeDirs` — see docs/specs/permissions.md and
-docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md).
+docs/adrs/00065-command-rules-mirror-dirrules-deny-ask-allow-evaluation.md).
 `CommandPermissionsTable(PermissionsTable[list[str]])` matches a rule against a candidate argv
 positionally: each rule token is either a literal (exact match at that position), a literal ending
 in a trailing `*` (a suffix-wildcard token, matching any run of characters — including none — after
@@ -111,7 +111,7 @@ that literal prefix within the single candidate token at that position, see belo
 special-cased by position), `"?"` (`OPTIONAL_TOKEN`, matching zero-or-one arbitrary token — also
 always, at any position), or `"**"` (`UNBOUNDED_TOKEN`, matching any number of arbitrary tokens,
 including zero, at any position). See
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
+docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
 for the reasoning behind giving "exactly one," "zero-or-one," and "unbounded" three distinct
 symbols instead of overloading one of them by position.
 
@@ -136,7 +136,7 @@ tokens: `"of=*"` never matches across a space the way `UNBOUNDED_TOKEN` does, an
 `*`), not a general glob — a `*` occurring anywhere else in the same token, not its last character,
 is just a literal asterisk to match verbatim. See
 `klorb.permissions.command_access._token_matches_literal` and
-docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 
 A candidate argv with no matching rule in any list evaluates to `None` from
 `PermissionsTable.evaluate()`; `BashTool` normalizes that to `"ask"` (never a permissive
@@ -173,11 +173,11 @@ entry with neither a path nor a command becomes a structural item, for which onl
 are meaningful (see `PermissionAskItem`'s own docstring). Every ask item a `BashTool` call
 produces — structural or not — also carries `command_text`, the full unparsed command string,
 separate from `resource_description`'s own per-item detail — see
-docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md — and
+docs/adrs/00075-permission-ask-item-carries-raw-command-text-as-its-own-field.md — and
 `item_command_text`, the `SimpleCommand`/`ForcedAskReason`/`RedirectTarget`'s own `source_text`
 for just the one statement that particular item is about, distinct from every other item's from
 the same call even though they all share the identical `command_text` — see
-docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md. Every ask item
+docs/adrs/00082-permission-ask-item-shows-its-own-command-text-not-the-full-compound.md. Every ask item
 also carries `intent`, identically across the whole call — see "Agent-stated intent" below.
 
 ### Agent-stated intent
@@ -223,7 +223,7 @@ consumer, e.g. a VSCode plugin) can call the exact same function rather than re-
 logic against its own UI. This is a UX layer on top of, never a replacement for, the
 deterministic pipeline above: the classifier only ever runs on an item that has already resolved
 to `"ask"`, and never itself promotes anything to `"allow"` or `"deny"` — see
-docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md for the same reasoning
+docs/adrs/00064-bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md for the same reasoning
 applied to a different probabilistic layer (`bwrap`).
 
 When the call's `intent` is set (see "Agent-stated intent" above), it's included in the request as
@@ -272,7 +272,7 @@ compound command in one request the first time any of its items is looked up, ca
 `item_command_text` — every other item in the same batch, and a byte-identical item asked about
 again later in the session (e.g. a retried "once" decision), reuses the cached result instead of
 spending another round trip. See
-docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md for why the actual
+docs/adrs/00094-risk-classifier-siblings-threaded-through-permissionaskcontext.md for why the actual
 classifier call site is `ReplApp` rather than `Session`, despite `Session` being where the full
 item list is first available, and why the gating/batching/caching logic itself instead lives in
 `klorb.permissions.risk_classifier` rather than `klorb.tui`.
@@ -301,7 +301,7 @@ wedged event loop and force-exit the process — see [[interrupt-and-liveness-wa
 
 **Prior-decision history.** Every `classify_command_risk()` call remains a single, independent,
 stateless request — no conversation with the classifier model persists across calls (see
-docs/adrs/bounded-explicit-history-not-a-persistent-classifier-conversation.md for why this was
+docs/adrs/00109-bounded-explicit-history-not-a-persistent-classifier-conversation.md for why this was
 chosen over keeping the classifier itself alive as a growing per-session conversation). Instead,
 right after the user's own `PermissionDecision` comes back, `ReplApp._confirm_permission_ask`
 calls `klorb.permissions.risk_classifier.record_decision_history()`, which appends one
@@ -339,13 +339,13 @@ key, a `None`, or an empty string all default to `"command"`:
 `"command"` runs as `bash --rcfile ${HOME}/.bashrc -i -c "unset PS1; unset PS2; <command>"` (no
 `--login`) — `-i --rcfile` is what makes bash source `~/.bashrc` despite being non-login (a plain
 `bash -c` silently skips it for the vast majority of real `.bashrc` files; see
-docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why), so PATH/
+docs/adrs/00063-bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why), so PATH/
 toolchain setup gets recomputed the same way the user's own shell already does it. Two fixed,
 content-independent stderr lines `bash -i` always emits with no controlling tty are stripped from
 the front of captured stderr (`klorb.tools.bash._strip_bash_shell_noise`) before anything is
 returned to the model. The child runs via `start_new_session=True` (`setsid()` before `exec()`),
 so it has no controlling terminal at all regardless of whether klorb itself is running attached
-to one — see docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md.
+to one — see docs/adrs/00074-shelled-out-children-run-in-their-own-session-via-start-new-session.md.
 
 `"session"`/`"new"` run through a different execution path entirely — see "Session-scoped
 terminals" below.
@@ -395,7 +395,7 @@ Any other non-zero, non-signal exit reports `"Process completed normally with no
 
 At most one persistent shell exists per `Session` at a time, held at
 `session.tool_state["Bash"]["persistent_shell"]` (`klorb.tools.bash.PersistentShell`) — see
-docs/adrs/cap-persistent-shells-at-one-per-session.md for why this first version doesn't support
+docs/adrs/00078-cap-persistent-shells-at-one-per-session.md for why this first version doesn't support
 addressing several concurrent persistent shells.
 
 **Launch shape.** Unlike `"command"`, a persistent shell is launched as plain, non-interactive
@@ -403,7 +403,7 @@ addressing several concurrent persistent shells.
 bootstrap command through the shell's own ordinary execution channel as its first command:
 `PS1=x` (satisfying the `[ -z "$PS1" ] && return` guard most real `.bashrc` files start with),
 `source ~/.bashrc`, then `unset PS1 PS2` again. See
-docs/adrs/persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md for why this differs from
+docs/adrs/00079-persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md for why this differs from
 `"command"`'s `-i --rcfile` invocation — in short, `-i` puts an interactively-fed, never-exiting
 shell into a real prompt-printing read loop, which corrupts the sentinel-delimited output stream
 below; a plain non-interactive `bash` never prints a prompt at all, so there's no analogous noise
@@ -416,7 +416,7 @@ emitting a `__KLORB_DONE_<token>__[ <exit_code>]` line to stdout and stderr resp
 `<token>` is a fresh `uuid4().hex` per call. Two background reader threads relay every line from
 each stream onto a shared queue; `PersistentShell._run_raw` consumes it until both sentinel lines
 are seen, treating everything before them as the command's output — see
-docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md for the full reasoning,
+docs/adrs/00080-sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md for the full reasoning,
 including why a pty/OSC-133 approach was considered and deferred. After a command completes, the
 shell's cwd is refreshed via one more sentinel-delimited `pwd` round-trip
 (`PersistentShell._refresh_cwd`) and reported as `terminal_cwd` below.
@@ -440,7 +440,7 @@ rather than erroring.
 `"SessionTerminal"` provider via `Session.register_standing_interjection()` — a message reminding
 the model it has a live terminal open (and how to keep using or close it), included on every
 subsequent turn for as long as the shell stays alive, even if the model doesn't call `Bash` again
-that turn. See docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md
+that turn. See docs/adrs/00081-standing-interjections-complement-one-shot-for-level-triggered-state.md
 for how this differs from `docs/specs/permissions.md`'s one-shot `PermissionFramework` change
 interjection.
 
@@ -464,8 +464,8 @@ relaunch, replay cwd + exported env (`export -p`) — and the command runs in th
 command does not run, the shell is left untouched, and `failure_reason` tells the model to opt into
 a `shell_lifetime="new"` respawn (accepting the loss of its background work) rather than have the
 harness make that call silently. See
-docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md and
-docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md. On an unsandboxed host this is
+docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md and
+docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md. On an unsandboxed host this is
 entirely a no-op — there is no namespace to go stale — and directory grants remain enforced at the
 classification layer per command exactly as for the one-shot fallback.
 
@@ -477,7 +477,7 @@ that aborts an in-flight model turn (see docs/specs/interrupt-and-liveness-watch
 "Ctrl+C semantics" section), not just at the next tool-call/round boundary
 `Session._dispatch_turn`/`_run_tool_calls` themselves check. `BashTool._active_cancel_event()`
 reads `Session.active_cancel_event` (set for the duration of `_dispatch_turn` — see
-docs/adrs/bash-cancellation-via-session-active-cancel-event.md) and both execution paths poll it
+docs/adrs/00127-bash-cancellation-via-session-active-cancel-event.md) and both execution paths poll it
 every `_CANCEL_POLL_SECONDS` while waiting on the child, the same cadence the `!`-prefixed direct
 shell feature (`klorb.tui.shell.UserShellCommand`) already polls its own, separately-threaded
 `cancel_event`.
@@ -536,7 +536,7 @@ filesystem policy):
   with an identity uid/gid map so files the command creates in the binds stay owned by the real
   user — the explicit `--unshare-user` is required by `--disable-userns` on real `bwrap`, contrary
   to the plan's original guidance; see
-  docs/adrs/pass-unshare-user-because-disable-userns-requires-it.md.
+  docs/adrs/00111-pass-unshare-user-because-disable-userns-requires-it.md.
 * Hardening `--hostname klorb-host`, `--die-with-parent`, `--new-session`, `--cap-drop ALL`; a
   `--clearenv` + one `--setenv` per `build_bash_env()` entry so the sandbox starts from exactly
   that dict.
@@ -549,7 +549,7 @@ filesystem policy):
   `/usr`/`$HOME`; then an empty `--tmpfs` mask over every `readDirs.deny` entry and every
   process-wide `privileged_dirs()` entry (the klorb config/data/state dirs) — masked with
   `--tmpfs` rather than empty-placeholder binds, so no host-side placeholder needs cleanup; see
-  docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
+  docs/adrs/00110-mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
 * **The workspace's own `<workspace>/.klorb` dir** is the one privileged dir that is *bound*
   rather than masked: an empty `--tmpfs` over it would make a sandboxed `git status` report its
   tracked, managed files (`klorb-config.json`, ...) as *deleted* — they're in the index but absent
@@ -559,7 +559,7 @@ filesystem policy):
   on it. The bind is emitted after the directory masks (so it wins over the whole-workspace bind
   for that subtree), and the writable form grows the reconcile-on-grow snapshot so an escalation
   rebuilds the live persistent shell with `.klorb` now writable. See
-  docs/adrs/bind-workspace-klorb-in-sandbox-so-git-status-is-clean.md.
+  docs/adrs/00132-bind-workspace-klorb-in-sandbox-so-git-status-is-clean.md.
 * **Individual files.** The same one-source-of-truth idea extends to `readFiles`/`writeFiles`,
   which name single files by exact path (`klorb.permissions.file_access`) rather than directories.
   An existing `readFiles.deny` file that lands inside a bound directory (e.g. `~/.git-credentials`
@@ -582,7 +582,7 @@ filesystem policy):
   glob-expanded here — `compute_sandbox_dirs` skips it entirely (in every category) rather than
   walking the bound directories for matches, so it binds/masks nothing for it; it's enforced only
   by the tool-level `FileAccessTable` classification, not the sandbox boundary. See
-  docs/adrs/wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md.
+  docs/adrs/00174-wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md.
 * `--chdir workspace_root`.
 
 Signal deaths inside the sandbox surface through the extra `bwrap` → `bash` → target layer as an
@@ -754,44 +754,44 @@ taxonomy this adds further examples of alongside `readDirs`/`writeDirs`.
   "Network egress (domain-gated proxy)" above for what's already covered.
 * Growing a live persistent sandbox's mounts *in place* (rather than rebuilding it) via a
   privileged in-namespace mount helper — rejected as contradicting `--cap-drop ALL`; see
-  docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md.
+  docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md.
 * Structured audit logging of command requests/decisions/outcomes — a real goal, not required for
   this first version.
 * macOS support (`sandbox-exec`/Seatbelt in place of `bwrap`) — Linux only.
 * More than one concurrent session-scoped persistent shell per `Session`, and how the model would
-  address a specific one — see docs/adrs/cap-persistent-shells-at-one-per-session.md.
+  address a specific one — see docs/adrs/00078-cap-persistent-shells-at-one-per-session.md.
 * A real pty and OSC-133-style shell-integration escape codes for more robust persistent-shell
   command-boundary detection and support for interactive programs through that channel — see
-  docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md.
+  docs/adrs/00080-sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md.
 
 ## See also
 
 * docs/specs/permissions.md — the shared `PermissionsTable` abstraction, the interactive "ask"
   confirmation flow (including multi-item asks and the permission grid), and the directory-access
   resource kind this doc's `CommandPermissionsTable` mirrors.
-* docs/adrs/shell-out-to-shfmt-for-bash-parsing.md
-* docs/adrs/reject-trap-debug-as-a-security-boundary.md
-* docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md
-* docs/adrs/pass-unshare-user-because-disable-userns-requires-it.md
-* docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md
-* docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md
-* docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md
-* docs/adrs/command-rules-mirror-dirrules-deny-ask-allow-evaluation.md
-* docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
-* docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md
-* docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md
-* docs/adrs/ask-independent-items-serially-not-just-the-strictest.md
-* docs/adrs/generalize-permission-override-to-a-set-of-resources.md
-* docs/adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md
-* docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md
-* docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md
-* docs/adrs/persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md
-* docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md
-* docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md
-* docs/adrs/cap-persistent-shells-at-one-per-session.md
-* docs/adrs/risk-classifier-siblings-threaded-through-permissionaskcontext.md
-* docs/adrs/bash-tool-requires-a-stated-intent-argument.md
-* docs/adrs/bounded-explicit-history-not-a-persistent-classifier-conversation.md
-* docs/adrs/bash-cancellation-via-session-active-cancel-event.md
+* docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md
+* docs/adrs/00066-reject-trap-debug-as-a-security-boundary.md
+* docs/adrs/00064-bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md
+* docs/adrs/00111-pass-unshare-user-because-disable-userns-requires-it.md
+* docs/adrs/00110-mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md
+* docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md
+* docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md
+* docs/adrs/00065-command-rules-mirror-dirrules-deny-ask-allow-evaluation.md
+* docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
+* docs/adrs/00063-bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md
+* docs/adrs/00074-shelled-out-children-run-in-their-own-session-via-start-new-session.md
+* docs/adrs/00068-ask-independent-items-serially-not-just-the-strictest.md
+* docs/adrs/00070-generalize-permission-override-to-a-set-of-resources.md
+* docs/adrs/00069-generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md
+* docs/adrs/00075-permission-ask-item-carries-raw-command-text-as-its-own-field.md
+* docs/adrs/00076-permission-ask-screen-shows-a-header-command-preview-and-detail.md
+* docs/adrs/00079-persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md
+* docs/adrs/00080-sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md
+* docs/adrs/00081-standing-interjections-complement-one-shot-for-level-triggered-state.md
+* docs/adrs/00078-cap-persistent-shells-at-one-per-session.md
+* docs/adrs/00094-risk-classifier-siblings-threaded-through-permissionaskcontext.md
+* docs/adrs/00108-bash-tool-requires-a-stated-intent-argument.md
+* docs/adrs/00109-bounded-explicit-history-not-a-persistent-classifier-conversation.md
+* docs/adrs/00127-bash-cancellation-via-session-active-cancel-event.md
 * docs/specs/interrupt-and-liveness-watchdog.md — the Ctrl+C/Escape gesture that drives this
   doc's "Cancellation" section

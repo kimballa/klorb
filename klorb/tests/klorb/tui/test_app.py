@@ -42,7 +42,7 @@ async def test_selection_safe_screen_drops_hit_on_detached_widget() -> None:
     """A `MouseDown` hit-test that resolves to a detached (parent-less) widget — as happens
     when a click lands on a `MarkdownParagraph` mid streaming-remount — is dropped so Textual's
     text-selection code never dereferences the widget's `None` parent and crashes the app. See
-    docs/adrs/drop-mousedown-on-detached-widget-to-avoid-selection-crash.md.
+    docs/adrs/00118-drop-mousedown-on-detached-widget-to-avoid-selection-crash.md.
     """
     mock_provider = MagicMock()
     app = ReplApp(session=_session(mock_provider))

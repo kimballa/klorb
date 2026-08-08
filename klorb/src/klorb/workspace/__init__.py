@@ -24,11 +24,11 @@ A `Workspace` is attached to `SessionConfig.workspace` (`klorb.session`) once re
 must not be able to grant itself trust, or fabricate its own project id, via its own config
 file. It lives on `SessionConfig`, not `ProcessConfig`, since multiple sessions can run
 concurrently within one process against different directories, making workspace identity a
-per-session concern — see docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md.
+per-session concern — see docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md.
 `workspace.trusted` is read directly by the permission-evaluation code
 (`klorb.permissions.workspace.evaluate_write`/`resolve_and_evaluate_read`); there is no separate
 `is_workspace_trusted` bool mirroring it — see
-docs/adrs/consolidate-workspace-trust-into-a-single-field.md.
+docs/adrs/00055-consolidate-workspace-trust-into-a-single-field.md.
 """
 
 from pathlib import Path

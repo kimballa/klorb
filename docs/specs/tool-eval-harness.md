@@ -81,7 +81,7 @@ make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite ris
        write_dirs=DirRules(allow=[<temp dir>]))` — explicit `allow` rules for the temp
        workspace in both tables, since an unmatched `writeDirs` table normalizes to `"ask"`
        rather than `"allow"` (see
-       docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md) and this harness runs
+       docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md) and this harness runs
        non-interactively, where `"ask"` has no prompting flow to resolve and fails closed.
     3. Builds a `ToolRegistry(ProcessConfig(), session_config, package=klorb.tools)` — the real
        tools package, so exactly the tools a live session would offer (`ReadFile`, `CreateFile`,

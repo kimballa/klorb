@@ -139,7 +139,7 @@ is resolvable by `resolve_at_mentions()` later.
   rescan completes, instead of racing it. `close()` signals a shutdown event a running rescan
   polls periodically so it aborts its walk promptly rather than running to completion (or
   restarting) after the index should already be dead. See
-  `docs/adrs/use-watchdog-for-tui-file-finder-index.md`.
+  `docs/adrs/00168-use-watchdog-for-tui-file-finder-index.md`.
 * **Startup.** The index starts only once workspace trust is resolved for a real `klorb`
   process (`ReplApp._start_file_finder_index`, gated on `trust_manager` the same way
   `PromptInput.set_history_store` is), so a `ReplApp` built without one -- every existing test

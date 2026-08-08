@@ -242,7 +242,7 @@ class SessionPermissionsMixin(SessionBase):
         `result["answers"]` from the collected `AskUserQuestionsAnswer`s. Unlike a permission
         ask, there is no `config.permission_framework` branching (asking the user isn't a
         resource-access verdict an "auto"/"deny" framework applies to — see
-        `docs/adrs/ask-user-questions-tool-bypasses-permission-tables.md`) and no "retry
+        `docs/adrs/00091-ask-user-questions-tool-bypasses-permission-tables.md`) and no "retry
         `tool.apply()`" step afterward: asking the question was this tool's entire job, so the
         collected answers directly become the result.
 

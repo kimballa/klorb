@@ -215,7 +215,7 @@ def _diff_text(hunks: list[DiffHunk]) -> tuple[str | None, str]:
     """Reassemble `hunks` (a hunk-with-context view, not a whole file) back into an
     old/new text pair for ACP's `diff` content block -- `oldText`/`newText` are therefore an
     approximation of the touched file, not its literal full contents; see
-    docs/adrs/persist-diff-hunks-in-edit-result.md for why klorb persists hunks rather than
+    docs/adrs/00146-persist-diff-hunks-in-edit-result.md for why klorb persists hunks rather than
     whole files in the first place. `old_text` is `None` when every line is an `"add"` (a
     brand-new file/memory/scratchpad has no prior content to show), matching ACP's own
     `oldText: None` convention for new files."""
@@ -407,7 +407,7 @@ _PERSISTENT_PERMISSION_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str]
 """Additional options offered only when `PermissionResource.is_persistable` is `True` -- a
 `StructuralResource` ask has no rule a workspace/homedir grant could be recorded against.
 Mirrors the always-offered specs' allow/deny pairing one scope further out -- see
-docs/adrs/generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md for why a
+docs/adrs/00069-generalize-grant-writer-for-deny-and-mirror-it-for-commandrules.md for why a
 persistent-scope deny is just as real a grant as a persistent-scope allow."""
 
 _ESCALATE_PRIVILEGES_OPTION_SPECS: tuple[tuple[str, PermissionOptionKind, str], ...] = (

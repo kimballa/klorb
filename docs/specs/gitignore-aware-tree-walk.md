@@ -29,7 +29,7 @@ which alternatives were rejected.
   agent can distinguish "nothing matches" from "a match exists but was hidden," and an ignored
   `node_modules/` that has no bearing on the current query never trips it. (Contrast a
   permission-pruned subtree, which is dropped silently with no flag — see [[permissions]] and
-  `docs/adrs/prune-non-allow-subdirs-during-recursive-tree-walk.md`.)
+  `docs/adrs/00049-prune-non-allow-subdirs-during-recursive-tree-walk.md`.)
 * **`Grep` does not speculatively search ignored files.** It never reads a gitignored file to
   check whether it *would* have matched; it only notes that such a file exists (and passes its
   `file_glob`). `gitignored_hidden` means "some file I would have searched went unsearched," and
@@ -39,7 +39,7 @@ which alternatives were rejected.
   against its pattern — but a gitignored match is only counted toward `gitignored_hidden`, never
   added to the returned `matches` list. The agent learns a hidden match exists and the exact
   argument to reveal it, but the path stays withheld until it opts in. See
-  `docs/adrs/findfile-matches-directory-names-not-just-files.md` for why directory bare names are
+  `docs/adrs/00170-findfile-matches-directory-names-not-just-files.md` for why directory bare names are
   matched at all, alongside file bare names.
 * **Single-file `Grep` is never filtered.** When `Grep`'s `path` names one explicit file rather
   than a directory, gitignore filtering does not apply — an explicitly named target is honored
@@ -71,7 +71,7 @@ directory's own child directories are themselves reported under its `gitignored_
 The decision of whether a gitignored file or directory *matters* lives in each tool, not the walk:
 the walk only surfaces the ignored entries; `FindFileTool`/`GrepTool` apply their own predicate
 (glob match / `file_glob`) and set their own `gitignored_hidden`. See
-`docs/adrs/gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md`.
+`docs/adrs/00131-gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md`.
 
 ### Evaluating `.gitignore` rules
 
@@ -114,4 +114,4 @@ surfaces or an agent can opt out of.
 Only the walk's own root is exempt: a caller that explicitly passes a `.git` directory (or a path
 inside one) as `dirname`/`path` searches it normally, the same "explicit target is user intent"
 principle already used for permission checks and single-file `Grep`. See
-`docs/adrs/hard-code-skip-dot-git-dirs-in-tree-walk.md`.
+`docs/adrs/00141-hard-code-skip-dot-git-dirs-in-tree-walk.md`.

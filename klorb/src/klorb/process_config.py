@@ -633,7 +633,7 @@ _FILE_RULE_KEYS = ("readFiles", "writeFiles")
 """`sessionDefaults` keys `_expand_config_layer_macros` expands `${...}` macros within.
 `_FILE_RULE_KEYS` entries are expanded with `forbid_char="*"` (see `expand_macros`) since,
 unlike a directory rule, a file rule's matching semantics change if `*` appears in it — see
-docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md."""
+docs/adrs/00175-file-rule-macro-values-may-not-contain-a-literal-star.md."""
 
 
 def _expand_rule_block_macros(
@@ -697,7 +697,7 @@ def _expand_config_layer_macros(
     A malformed or unrecognized macro reference anywhere in `layer` drops the entire layer —
     returns `{}`, exactly as `klorb.schema_envelope.parse_versioned_json` does for a layer
     that isn't valid JSON at all — rather than silently applying the rest of the layer around
-    the bad reference. See docs/adrs/malformed-config-macro-drops-the-whole-layer.md: a
+    the bad reference. See docs/adrs/00176-malformed-config-macro-drops-the-whole-layer.md: a
     `deny` rule whose macro silently failed to expand (left as literal text, or blanked to an
     empty string) would silently stop matching anything, which is far more dangerous than
     refusing to start with a clear error.
@@ -1018,7 +1018,7 @@ def load_process_config(
     production code path allowed to set `workspace.trusted` `True`, gated entirely on the
     harness-resolved `Workspace`, never on anything a config file said. `workspace` lives on
     `SessionConfig`, not `ProcessConfig`, since it's a per-session concern — see
-    docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md.
+    docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md.
     """
     cwd = cwd if cwd is not None else Path.cwd()
     workspace = workspace if workspace is not None else Workspace(path=find_workspace_root(cwd))

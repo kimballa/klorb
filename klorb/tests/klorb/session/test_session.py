@@ -344,7 +344,7 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
     further provider request is made -- rather than waiting for the provider's own mid-stream
     cancel check on a round that may never start. This is what lets an interactive quit or Ctrl+C
     unwind a turn whose worker thread is parked between streams (e.g. on a permission ask). See
-    docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
+    docs/adrs/00120-unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
     cancel_event = threading.Event()
     mock_provider = MagicMock()
 

@@ -49,7 +49,7 @@ Pure functions (no I/O, no Session access) covering:
       block per touched file — `path` from the call args, `oldText` = the hunks'
       `context`+`del` lines joined, `newText` = the hunks' `context`+`add` lines joined.
       This is a hunk-reassembled approximation of the file (klorb persists hunks, not whole
-      files — deliberately, see docs/adrs/persist-diff-hunks-in-edit-result.md); record
+      files — deliberately, see docs/adrs/00146-persist-diff-hunks-in-edit-result.md); record
       that approximation as a note in the spec, and additionally put the raw hunks under
       the block's `_meta.klorb.diffHunks` so the klorb client can render a real gutter
       view in 004.

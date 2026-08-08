@@ -355,7 +355,7 @@ class KeyActionsMixin(ReplAppBase):
         `configure_tiktoken_cache_env()`) now that the app is actually running, so its log
         message routes through the app's log / the session log file rather than leaking to
         raw stderr ahead of the TUI taking over the terminal — see
-        docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md. Then label and focus
+        docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md. Then label and focus
         the input box, cap its growth at the configured max height, watch the history's and
         subagent-history's scroll positions (see `_on_history_scroll_changed`/
         `_on_subagent_history_scroll_changed`), start the subagents panel's tick timer (see

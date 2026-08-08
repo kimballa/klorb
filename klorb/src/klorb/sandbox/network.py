@@ -6,7 +6,7 @@ this process over a `socketpair()` control channel established before the sandbo
 
 See docs/specs/bash-tool-and-command-permissions.md's "Network egress (domain-gated proxy)"
 section for the current-state design this module implements, and
-docs/adrs/cross-sandbox-net-namespace-via-socketpair-fd-passing.md for why fd-passing over a
+docs/adrs/00165-cross-sandbox-net-namespace-via-socketpair-fd-passing.md for why fd-passing over a
 `socketpair()` is the mechanism that gets one end of a live channel across the sandbox's
 `--unshare-net` boundary in the first place.
 
@@ -106,7 +106,7 @@ def _bootstrap_script(
     would list the relay forever, indistinguishable from a real model-started background job --
     which would make `klorb.tools.bash.BashTool._reconcile_sandbox`'s `has_live_jobs()` check
     always see "live work" and permanently refuse the reconcile-on-grow rebuild it exists to do
-    (see docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md). `disown` only removes
+    (see docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md). `disown` only removes
     the job from the shell's own job table; the process stays alive, still in the same process
     group, so it's still reaped by the same `SIGKILL`-the-process-group teardown every other
     sandboxed child gets (verified empirically, the same way this project verifies other

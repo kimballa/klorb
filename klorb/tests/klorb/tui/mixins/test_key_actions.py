@@ -28,7 +28,7 @@ async def test_on_mount_configures_tiktoken_cache_env() -> None:
     for an interactive session, since by then the Textual app is actually running and its
     startup log message routes through the app's log / the session log file instead of
     leaking to raw stderr -- see
-    docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md."""
+    docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md."""
     mock_provider = MagicMock()
     session = _session(mock_provider)
     app = ReplApp(session=session)

@@ -86,7 +86,7 @@ catch-in-`Session`-and-callback plumbing rather than inventing a second mechanis
   worker thread running `Session.send_turn()` via `call_from_thread`, mounts
   `klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel` for one question at a time into
   the REPL's `#interaction-panel` (see [[terminal-repl]]'s "Interaction panel" section and
-  docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md) on the app's own
+  docs/adrs/00092-embed-tool-approval-and-ask-user-questions-in-history-panel.md) on the app's own
   event loop, and returns once the user answers.
 
 ### `AskUserQuestionsPanel`
@@ -107,7 +107,7 @@ in the history scroll (`ReplApp._record_interaction_history`) — see [[terminal
 
 `AskUserQuestionsTool` has no `tools.askUserQuestions.*Permission` config entry and consults no
 `deny`/`ask`/`allow` table — see
-docs/adrs/ask-user-questions-tool-bypasses-permission-tables.md. The tables exist to gate a
+docs/adrs/00091-ask-user-questions-tool-bypasses-permission-tables.md. The tables exist to gate a
 model's access to a resource (a path, a shell command) it could otherwise reach directly; there
 is no such resource here, so there's nothing to pre-allow or deny. The interactivity itself is
 the only gate: an interactive session always shows the prompt, and a headless one fails closed

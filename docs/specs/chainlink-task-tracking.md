@@ -410,7 +410,7 @@ user-facing setting.
 * No cross-session "resume a prior session's leftover work" capability — a crashed or
   ungracefully-closed session's issues stay open under its label until manually cleaned up,
   since `close-all` only runs from `Session.close()`'s own teardown path. See
-  docs/adrs/chainlink-issues-not-chainlink-sessions-for-continuity.md.
+  docs/adrs/00148-chainlink-issues-not-chainlink-sessions-for-continuity.md.
 * No use of chainlink's own `session`/`timer`/`milestone`/`archive`/`cpitd`/`usage`/`agent`/
   `locks`/`sync`/`export`/`import` subcommands, or of `issue subissue`/`relate`/`unrelate`/
   `related`/`tree`/`tested`/`delete`/`quick` — only `create`/`list`/`show`/`update`/`close`/

@@ -7,7 +7,7 @@ never silently to "allow". See docs/specs/bash-tool-and-command-permissions.md.
 
 Parsing itself is delegated entirely to `shfmt --to-json` (the `shfmt-py` pypi package wrapping
 `mvdan/sh`'s `syntax` package) — never a regexp/lexical classifier; see
-docs/adrs/shell-out-to-shfmt-for-bash-parsing.md for why. This module has no dependency on
+docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md for why. This module has no dependency on
 `klorb.tools`/`klorb.session`:
 it returns plain data (`BashCommandAnalysis`) for `klorb.tools.bash.BashTool` to combine with
 `CommandPermissionsTable`/`evaluate_write`/`resolve_and_evaluate_read`, mirroring the
@@ -133,7 +133,7 @@ class BashCommandAnalysis:
     `BashTool.apply()` combines `simple_commands`/`redirects` with `CommandPermissionsTable`'s
     own verdicts and `forced_ask_reasons` via the same strictest-wins rule
     `klorb.permissions.workspace.evaluate_write` already uses for read/write — see
-    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md.
+    docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md.
 
     `command_count` tallies every executable node the walker visits — every `CallExpr` with a
     non-empty `Args` (`_handle_call_expr`), every `DeclClause` (`_handle_decl_clause`), and every
@@ -183,7 +183,7 @@ def _resolve_shfmt_command(shfmt_command: str) -> str:
     containing the running Python interpreter (`sys.executable`) first — where `shfmt-py` (a
     "scripts"-only wheel with no importable Python API of its own) installs the exact-pinned
     `shfmt` binary for a venv install (see `pyproject.toml`'s exact-version pin and
-    docs/adrs/shell-out-to-shfmt-for-bash-parsing.md), alongside `python`/`pip` themselves,
+    docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md), alongside `python`/`pip` themselves,
     whether or not that venv's `bin/` happens to be on `PATH` for the current process. Only if no
     such sibling binary exists does this fall back to `PATH`. This order is deliberate, not
     incidental: a machine with its own system-wide `shfmt` on `PATH` (a different, unpinned

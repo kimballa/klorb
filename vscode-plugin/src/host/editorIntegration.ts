@@ -41,7 +41,7 @@ export interface EditorIntegrationVsCode {
 
 /** Serves the reconstructed before/after contents `EditorIntegration.openDiff` diffs against,
  * registered under the `klorb-diff:` scheme. The reassembled text is a hunk-context view, not
- * necessarily the whole file (see docs/adrs/persist-diff-hunks-in-edit-result.md) -- an elided
+ * necessarily the whole file (see docs/adrs/00146-persist-diff-hunks-in-edit-result.md) -- an elided
  * view, not the literal file contents. */
 class KlorbDiffContentProvider implements vscode.TextDocumentContentProvider {
   private readonly _contentByUri = new Map<string, string>();

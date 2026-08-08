@@ -3,8 +3,8 @@
 and evaluates that path against the `readFiles`/`writeFiles` `FileAccessTable`s (an exact-match
 check, consulted first), then the workspace-root boundary and the `readDirs`/`writeDirs`
 `DirectoryAccessTable`s, to decide whether the operation is allowed. See
-docs/specs/permissions.md, docs/adrs/confine-file-tools-to-workspace-root.md, and
-docs/adrs/gate-read-hard-boundary-on-workspace-trust.md.
+docs/specs/permissions.md, docs/adrs/00025-confine-file-tools-to-workspace-root.md, and
+docs/adrs/00028-gate-read-hard-boundary-on-workspace-trust.md.
 
 This module takes a `ToolSetupContext` parameter purely as a type annotation (never
 instantiates or introspects it beyond attribute access), so the import is `TYPE_CHECKING`-only

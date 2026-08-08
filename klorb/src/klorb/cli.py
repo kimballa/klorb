@@ -627,7 +627,7 @@ def run_server_cli(argv: list[str]) -> int:
     stderr) in addition to the session log file; the `"[server] "` prefix marks each stderr line
     as coming from this process when a client interleaves it with output from others. Unlike a
     one-shot prompt (see
-    docs/adrs/one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md), a server
+    docs/adrs/00007-one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md), a server
     process has no interactive/headless distinction to key that default off of and no single
     `Session` whose id could name the log file -- `KlorbAcpAgent.new_session` may replace it
     many times over the process's life -- so the log file is instead keyed off a
@@ -675,7 +675,7 @@ def main() -> None:
     `klorb.tui.ReplApp.on_mount()` once the Textual app is running, so its log message
     routes through the app's log (or the session log file) rather than leaking to raw stderr
     ahead of the TUI taking over the terminal -- see
-    docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md.
+    docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md.
     """
     load_dotenv()
     # Call `configure_minimal_logging()` immediately after before argument parsing or subcommand

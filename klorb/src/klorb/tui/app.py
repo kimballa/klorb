@@ -85,7 +85,7 @@ class SelectionSafeScreen(Screen[None]):
 
     We drop a hit on a detached widget so selection simply doesn't begin on it; the next
     render re-hit-tests cleanly. See
-    `docs/adrs/drop-mousedown-on-detached-widget-to-avoid-selection-crash.md`.
+    `docs/adrs/00118-drop-mousedown-on-detached-widget-to-avoid-selection-crash.md`.
     """
 
     def get_widget_and_offset_at(
@@ -395,7 +395,7 @@ class ReplApp(
         `_release_workers_for_exit`) call it so quitting or interrupting can never strand a worker
         thread blocked on a decision that will never come — the deadlock behind both the
         "model hangs" and "can't quit" symptoms (see
-        docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md)."""
+        docs/adrs/00120-unblock-worker-thread-before-teardown-so-quit-cannot-hang.md)."""
         self._exit_requested: bool = False
         """Set by `_begin_exit` when a quit is requested while a turn or shell command is still in
         flight: rather than `self.exit()` immediately (which would stop the event loop while the

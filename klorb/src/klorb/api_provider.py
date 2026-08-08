@@ -25,7 +25,7 @@ class ProviderResponse(BaseModel):
     including the system prompt), as reported by the provider's usage stats. Retained for
     logging/diagnostics only -- `klorb.session.Session` derives its own token accounting
     entirely from each `Message`'s client-side `num_tokens` instead (see
-    docs/adrs/count-every-message-tokens-client-side-with-tiktoken.md), since a provider's
+    docs/adrs/00121-count-every-message-tokens-client-side-with-tiktoken.md), since a provider's
     aggregate usage figures are reported per-request, not broken down per message, and can't
     be reconciled against individual messages without their own tokenizer anyway."""
 

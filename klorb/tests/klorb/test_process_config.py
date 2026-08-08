@@ -454,7 +454,7 @@ def test_malformed_macro_reference_drops_whole_layer_into_config_warnings(tmp_pa
     """Mirrors `test_malformed_config_layer_is_collected_into_config_warnings`: an unrecognized
     `${...}` reference is treated exactly like a JSON syntax error -- the whole layer (including
     unrelated keys like `model` here) is dropped, not just the offending rule. See
-    docs/adrs/malformed-config-macro-drops-the-whole-layer.md."""
+    docs/adrs/00176-malformed-config-macro-drops-the-whole-layer.md."""
     path = tmp_path / ".klorb" / "klorb-config.json"
     _write_config(path, {
         "sessionDefaults": {
@@ -476,7 +476,7 @@ def test_malformed_macro_reference_drops_whole_layer_into_config_warnings(tmp_pa
 def test_file_rule_macro_value_containing_star_drops_whole_layer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """See docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md: a macro whose
+    """See docs/adrs/00175-file-rule-macro-values-may-not-contain-a-literal-star.md: a macro whose
     resolved value contains `*` must never be substituted into a `readFiles`/`writeFiles` rule,
     since that would silently change the rule's wildcard-vs-exact classification. `${home}` is
     forced to an unrealistic value containing `*` here to exercise that guard without depending
@@ -749,7 +749,7 @@ def test_untrusted_workspace_skips_project_config_layer_entirely(tmp_path: Path)
     is never read at all, so it can't even reach the "unrecognized key" warning path. This is
     what actually protects a hostile, downloaded-and-unzipped repository's `readDirs.allow`
     from reaching the concatenated list at all (see docs/specs/projects-and-trust.md and
-    docs/adrs/gate-read-hard-boundary-on-workspace-trust.md)."""
+    docs/adrs/00028-gate-read-hard-boundary-on-workspace-trust.md)."""
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",
         {"sessionDefaults": {"model": "hostile/model", "readDirs": {"allow": ["/whatever"]}}})

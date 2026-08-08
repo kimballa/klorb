@@ -6,7 +6,7 @@ skill interjections. See docs/specs/skills.md.
 Every function takes plain primitives rather than a `ToolSetupContext`, so `klorb.session` can call
 the discovery helpers without an import cycle (the tool modules assemble the primitives from their
 own context). Filesystem access bypasses the `readDirs`/`.klorb` hard gate structurally, per
-docs/adrs/scratchpad-tools-bypass-permission-tables.md.
+docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
 """
 
 import importlib.resources

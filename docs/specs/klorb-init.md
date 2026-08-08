@@ -95,7 +95,7 @@ command reuses.
   it directly for a one-shot prompt (right after `configure_logging()` runs, so its log
   message is actually visible on stderr), while `klorb.tui.ReplApp.on_mount()` calls it
   for an interactive session, once the Textual app itself is running — see
-  docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md for why the REPL doesn't
+  docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md for why the REPL doesn't
   just call it from `main()` the same way. It checks whether `klorb.token_estimate.
   tiktoken_cache_encoding_dir()` (`$KLORB_DATA_DIR/tiktoken-cache/o200k_base`, populated by
   `copy_tiktoken_cache()` above) exists; if so, it sets the `TIKTOKEN_CACHE_DIR` environment

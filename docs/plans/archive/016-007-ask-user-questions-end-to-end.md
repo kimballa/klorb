@@ -15,7 +15,7 @@ Why an extension method rather than ACP elicitation: recorded in the plan overvi
 ("Decisions taken" #5) — the multi-question batch with headers, described options, and
 free-text answers doesn't survive the current elicitation shape, which is also among the
 least-settled parts of the protocol. Write the ADR
-(`docs/adrs/ask-user-questions-rides-a-klorb-ext-method-not-acp-elicitation.md`) as part
+(`docs/adrs/00160-ask-user-questions-rides-a-klorb-ext-method-not-acp-elicitation.md`) as part
 of this increment.
 
 ## Server deliverables (python)

@@ -3,7 +3,7 @@
 the skill tools (ActivateSkill/ReadSkillFile), grouped into the "file-tools" EvalSuite.
 
 Each case's `check` inspects the resulting workspace file state only, never `final_response`
-text — see docs/adrs/grade-tool-evals-by-filesystem-state.md. Content comparisons tolerate
+text — see docs/adrs/00031-grade-tool-evals-by-filesystem-state.md. Content comparisons tolerate
 incidental trailing-newline differences (a model may or may not end a file with a trailing
 newline) but are otherwise exact: an eval case is meant to catch a model failing to use a tool
 correctly, not to reward creative alternate phrasing of the outcome.
@@ -12,7 +12,7 @@ A handful of cases use files longer than `DEFAULT_READ_FILE_MAX_LINES` so a sing
 call can't return the whole file, forcing a competent run to either page with
 `start_line`/`end_line`, or locate the target line directly (e.g. via `Grep`) and skip paging
 entirely — these also inspect `session.messages` for the `ReadFile`/`Grep`/`EditFile` calls
-actually made (see docs/adrs/grade-tool-evals-by-filesystem-state.md's "where useful"
+actually made (see docs/adrs/00031-grade-tool-evals-by-filesystem-state.md's "where useful"
 carve-out), not just the resulting file content.
 
 Another handful use repeated, identical lines at or near a file's first/last line, where

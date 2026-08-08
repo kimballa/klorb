@@ -41,7 +41,7 @@ draining queued updates — the 001 machinery):
 * **klorb `_meta` on the request** (`_meta.klorb`): `resourceDescription`; for a bash ask
   (`bash_context` set): `commandText` (full command), `itemCommandText` (this item's
   statement — the client's prominent preview line, per
-  docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md),
+  docs/adrs/00082-permission-ask-item-shows-its-own-command-text-not-the-full-compound.md),
   `itemIndex`/`itemTotal` for a multi-item (sibling) sequence, and `grantPatterns` /
   `riskLevel` from risk classification (below).
 * **Decision mapping.** Response outcome `selected` → split the option id back into

@@ -198,7 +198,7 @@ def test_classify_command_risk_keeps_a_wildcard_argv0_version_query() -> None:
 
 def test_classify_command_risk_keeps_a_suffix_wildcard_suggested_pattern() -> None:
     """The reported shape from the bash risk classifier bug (see
-    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md): the classifier
+    docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md): the classifier
     proposes `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` for a `dd if=/dev/zero
     of=/home/aaron/zeros.bin bs=1 count=32` command, generalizing just the value half of `of=`/
     `count=`. Now that `pattern_matches_argv` understands trailing suffix-wildcard tokens, this

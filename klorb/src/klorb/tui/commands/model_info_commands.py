@@ -89,7 +89,7 @@ def format_model_info(model: Model, pricing: ModelPricing | None) -> str:
     `ModelInfoCommandProvider` posts, and independently testable without constructing a
     Textual app or a network connection. `pricing` is looked up separately
     (`fetch_openrouter_pricing`, live, not stored on `model` — see
-    docs/adrs/fetch-model-pricing-live-not-from-json.md) and passed in rather than read off
+    docs/adrs/00100-fetch-model-pricing-live-not-from-json.md) and passed in rather than read off
     `model`, since fetching it is a blocking network call this function itself must not make.
     """
     lines = [

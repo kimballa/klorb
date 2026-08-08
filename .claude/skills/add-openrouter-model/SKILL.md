@@ -65,7 +65,7 @@ inventing a number:
   default), so leave it `true` unless you have specific evidence a given model can't stream.
 
 Never copy `pricing.*` values into the file directly (e.g. dollar amounts) —
-see `docs/adrs/fetch-model-pricing-live-not-from-json.md`. `pricing`'s presence/shape is
+see `docs/adrs/00100-fetch-model-pricing-live-not-from-json.md`. `pricing`'s presence/shape is
 still read as a *signal*, not a value — see `settings.temperature` and `cache_mgmt_style`
 below.
 

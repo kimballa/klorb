@@ -62,7 +62,7 @@ def walk_readable_tree(
     `.gitignore` files are read from the workspace root down through every directory walked, with
     a nested file overriding those above it (see `klorb.tools.util.gitignore.GitignoreFilter`).
     See docs/specs/gitignore-aware-tree-walk.md and
-    docs/adrs/gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md.
+    docs/adrs/00131-gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md.
 
     `dirname` is resolved and checked exactly like `ListDirTool`
     (`klorb.permissions.workspace.resolve_and_evaluate_read`), so a denied or ask-required root
@@ -72,12 +72,12 @@ def walk_readable_tree(
     never yielded itself — rather than aborting the whole walk or raising, since one directory
     somewhere under a large tree being denied or ask-gated shouldn't stop a bulk search from
     covering the rest of it. See
-    docs/adrs/prune-non-allow-subdirs-during-recursive-tree-walk.md.
+    docs/adrs/00049-prune-non-allow-subdirs-during-recursive-tree-walk.md.
 
     A subdirectory that is itself a symlink is also excluded from `subdir_names` and never
     descended into, regardless of its permission verdict — mirroring `os.walk`'s
     `followlinks=False` default — so a symlink cycle can't recurse forever. See
-    docs/adrs/recursive-tree-walk-does-not-follow-symlinked-dirs.md.
+    docs/adrs/00050-recursive-tree-walk-does-not-follow-symlinked-dirs.md.
 
     Every subdirectory named `.git` encountered anywhere below the walk's root is skipped
     unconditionally: it is never listed in `subdir_names`, never yielded, and never counted
@@ -85,7 +85,7 @@ def walk_readable_tree(
     `readDirs` permissions. This is a hard-coded exclusion, not a filtering decision either tool
     surfaces to the agent. Only the walk's own root is exempt — a caller that explicitly names a
     `.git` directory (or a path beneath one) as `dirname` searches it normally. See
-    docs/adrs/hard-code-skip-dot-git-dirs-in-tree-walk.md.
+    docs/adrs/00141-hard-code-skip-dot-git-dirs-in-tree-walk.md.
     """
     root_path, verdict = resolve_and_evaluate_read(context, dirname)
     raise_if_not_allowed(

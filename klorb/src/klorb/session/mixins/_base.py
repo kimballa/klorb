@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     # depends on `SessionConfig` from `klorb.session.config` — importing it for real here
     # would be circular. `Session` only stores and calls methods on a `ToolRegistry` it's
     # handed, so a type-checking-only import is enough (see
-    # docs/adrs/tool-setup-context-carries-process-and-session-config.md).
+    # docs/adrs/00022-tool-setup-context-carries-process-and-session-config.md).
     from klorb.tools.registry import ToolRegistry
     # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
     # from `klorb.session`, so importing it for real here would be circular too. `Session`

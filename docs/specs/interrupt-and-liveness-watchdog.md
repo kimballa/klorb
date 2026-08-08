@@ -8,7 +8,7 @@ off, typing `Ctrl+C` does **not** generate a `SIGINT`: the raw `0x03` byte is de
 stdin, read by Textual's input reader, and dispatched as a `ctrl+c` **key event**. So while
 the TUI owns the terminal, a process-level `signal.signal(SIGINT, ...)` handler never fires
 from a keyboard `Ctrl+C` — the only real `SIGINT` a running TUI can receive is an external
-`kill -INT`. See docs/adrs/remove-sigint-handler-because-textual-disables-isig.md.
+`kill -INT`. See docs/adrs/00124-remove-sigint-handler-because-textual-disables-isig.md.
 
 That left klorb with no reliable last-ditch escape when a turn wedged. This feature adds three
 cooperating mechanisms so a stuck klorb can always be recovered without an external `kill`, and
@@ -85,7 +85,7 @@ Net effect: a solitary bare Ctrl+C (nothing selected, nothing running) takes **t
 force-exit — warn, then quit. A copy or an interrupt takes **three** — the copy/interrupt itself,
 then a warning (even if the interrupted activity is still shutting down), then a quit — since a
 copy or an interrupt only ever counts as the first step in the ladder, never as the first of two
-"nothing to do" presses. See docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md for why
+"nothing to do" presses. See docs/adrs/00129-idle-ctrl-c-force-exits-not-the-polite-quit-flow.md for why
 the final quit bypasses the polite `_quit_after_maybe_saving()` flow entirely rather than opening
 its save-prompt modal.
 
@@ -134,7 +134,7 @@ those key events is delivered and `action_interrupt` runs each time, escaping wi
 even though the worker thread is permanently stuck. Never force-exiting on just the *second*
 press avoids nuking the whole process for an activity (a Bash command SIGINT'd a moment earlier,
 say) that was always going to end on its own within its grace period anyway — see
-docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md.
+docs/adrs/00129-idle-ctrl-c-force-exits-not-the-polite-quit-flow.md.
 
 ### 3. Liveness watchdog (hang mode 2)
 
@@ -184,7 +184,7 @@ finally hitting its own timeout) it would fire `call_from_thread(_finalize/_fini
 corrupt the *new* turn's state — exactly the concurrent-worker corruption `_turn_in_flight`
 exists to prevent. The only correct response to a worker that never unwinds is to exit the
 process, which is what the repeated-Ctrl+C and watchdog paths do. See
-docs/adrs/liveness-watchdog-over-reactive-arming.md.
+docs/adrs/00123-liveness-watchdog-over-reactive-arming.md.
 
 ## See also
 
@@ -192,8 +192,8 @@ docs/adrs/liveness-watchdog-over-reactive-arming.md.
   Ctrl+C/Escape signal actually drives for a running Bash tool call.
 * docs/specs/session-persistence.md — the "Saving" section covering `SaveOnQuitScreen`, the
   Ctrl+Q quit-with-save-prompt flow this feature deliberately keeps separate from Ctrl+C.
-* docs/adrs/bash-cancellation-via-session-active-cancel-event.md
-* docs/adrs/idle-ctrl-c-force-exits-not-the-polite-quit-flow.md
-* docs/adrs/ctrl-c-interrupt-escalates-on-the-third-press-not-the-second.md
-* docs/adrs/liveness-watchdog-over-reactive-arming.md
-* docs/adrs/remove-sigint-handler-because-textual-disables-isig.md
+* docs/adrs/00127-bash-cancellation-via-session-active-cancel-event.md
+* docs/adrs/00129-idle-ctrl-c-force-exits-not-the-polite-quit-flow.md
+* docs/adrs/00128-ctrl-c-interrupt-escalates-on-the-third-press-not-the-second.md
+* docs/adrs/00123-liveness-watchdog-over-reactive-arming.md
+* docs/adrs/00124-remove-sigint-handler-because-textual-disables-isig.md

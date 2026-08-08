@@ -193,7 +193,7 @@ the durable path reference only, never a second copy of the base64 payload. On r
 `klorb.session.restore.try_restore_session` rehydrates every such fragment's `image_url` back
 into memory, once, from its on-disk bytes (`read_session_image`) plus the stored `mime_type` --
 so `Message.provider_content()` stays a pure function of in-memory state, never touching the
-filesystem itself. See docs/adrs/store-image-fragments-on-disk-not-inline-in-session-json.md and
+filesystem itself. See docs/adrs/00169-store-image-fragments-on-disk-not-inline-in-session-json.md and
 docs/specs/vision-image-input.md.
 
 Deleting a session's directory (`MAX_RECENT_SESSIONS` pruning's `shutil.rmtree`, below) already

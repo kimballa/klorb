@@ -59,7 +59,7 @@ run against `klorb.openrouter.DEFAULT_MODEL`; `--model`/`EVALARGS` can point at 
 model instead. It needs `OPENROUTER_API_KEY` set (in the environment, or in a `.env` file anywhere
 from `klorb/` up to the repo root — `python-dotenv` finds it automatically); without one, `make
 evals` prints a one-line notice and exits `0` (doesn't fail the build — see
-`docs/adrs/tool-evals-skip-without-api-key.md`). Each case's report line is `[PASS]`,
+`docs/adrs/00033-tool-evals-skip-without-api-key.md`). Each case's report line is `[PASS]`,
 `[CONDITIONAL PASS]` (passed, but took more tool calls than expected — worth a look even though
 it's not a hard failure), or `[FAIL]`. See `docs/specs/tool-eval-harness.md` for the full design
 and how to add a new case or suite.

@@ -67,7 +67,7 @@ In `klorb/evals/cases.py`, follow the existing shape for every case:
 
 `check()` must assert on real on-disk file content (`Path.read_text()`/`.exists()`/etc.) under
 `workspace_root`, and *never* on the model's closing text — see
-`docs/adrs/grade-tool-evals-by-filesystem-state.md`. There is no LLM-as-judge grading anywhere in
+`docs/adrs/00031-grade-tool-evals-by-filesystem-state.md`. There is no LLM-as-judge grading anywhere in
 this harness; don't introduce fuzzy/semantic matching.
 
 Two helpers already in `cases.py` cover almost every case's needs:

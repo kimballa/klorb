@@ -34,7 +34,7 @@ class ReadMemoryTool(Tool):
     validate_memory_filename`) and checked against the untrusted-workspace gate and
     `tools.memory.readPermission` before any disk I/O -- there is no `readDirs` check at all;
     see docs/specs/memories.md for why memory tools bypass that table entirely, the same
-    reasoning as docs/adrs/scratchpad-tools-bypass-permission-tables.md.
+    reasoning as docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:

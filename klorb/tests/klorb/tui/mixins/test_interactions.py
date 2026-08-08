@@ -275,7 +275,7 @@ def test_granted_line_keeps_a_bracketed_pattern_verbatim_as_a_styled_span() -> N
     in inline markup + `textual.markup.escape()`: escaping is less conservative than the parser,
     so a pattern like `echo [$HOME]` slips through and is silently dropped, misreporting exactly
     what a persistent Allow would grant. See
-    docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+    docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
     screen = PermissionAskPanel(
         _command_ask_ctx("echo [$HOME]"), granted_preview=GrantPreview(resource_text="echo [$HOME]"))
 
@@ -432,7 +432,7 @@ def test_permission_ask_screen_shows_more_indicator_for_a_short_compound_command
 ) -> None:
     """A short `foo && bar` still gets `[more...]` when `is_compound` is set, even though the
     full command already fits on screen without truncation -- see
-    docs/adrs/always-show-more-indicator-for-compound-command-ask-items.md."""
+    docs/adrs/00077-always-show-more-indicator-for-compound-command-ask-items.md."""
     screen = PermissionAskPanel(_command_ask_ctx(
         "echo hi && echo bye", reason="run command: echo hi", is_compound=True))
 
@@ -504,7 +504,7 @@ async def test_a_command_with_brackets_mounts_without_a_markup_error() -> None:
     at reflow, not at `Static.render()`, which is why a `.compose()`-only unit test wouldn't catch
     it). The whole ask path -- command preview, expanded screen, and `resource_description`
     detail -- is exercised by expanding the command and mounting it. See
-    docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
+    docs/adrs/00076-permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
     bracketed = "python -c \"print([m for m in modes if m=='selection' or m=='text' or m=='cursor'])\""
     app = _PermissionAskTestApp(_command_ask_ctx(bracketed, is_compound=True, reason=bracketed))
 
@@ -542,7 +542,7 @@ async def test_more_indicator_is_never_focused_so_it_cannot_steal_enter_from_the
     focus (and every subsequent Enter keystroke) the moment the panel mounted, with no click
     needed, making the grid's Allow/Deny selection unconfirmable by keyboard whenever a command
     was long enough to truncate. See
-    docs/adrs/permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
+    docs/adrs/00076-permission-ask-screen-shows-a-header-command-preview-and-detail.md."""
     long_command = "\n".join(f"line {i}" for i in range(1, 21))
     app = _PermissionAskTestApp(_command_ask_ctx(long_command))
 
@@ -575,7 +575,7 @@ async def test_every_body_static_is_height_capped_so_a_long_line_cannot_push_the
     protects it. Uncapped, the intent (~28 rows), command and detail (~40 rows each), rationale
     (~28 rows) and granted line together dwarf even this tall test terminal; capped, they sum well
     under it and the grid stays fully on screen. See `PermissionAskPanel._cap_body_static_heights`,
-    docs/adrs/cap-every-permission-ask-body-static-height.md."""
+    docs/adrs/00116-cap-every-permission-ask-body-static-height.md."""
     huge = "x" * 4000
     ctx = PermissionAskContext(
         resource=StructuralResource(reason="run command: python3 -c " + huge),
@@ -763,7 +763,7 @@ async def test_release_pending_interaction_unblocks_a_parked_confirm() -> None:
     default (deny/once here), releasing whatever is blocked on it -- a real turn's worker thread is
     parked in `App.call_from_thread` on exactly this future. `_signal_turn_cancellation` fires it,
     and the callback is cleared once the confirm returns. See
-    docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
+    docs/adrs/00120-unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
     app = ReplApp(session=_session(MagicMock()))
 
     async with app.run_test() as pilot:
@@ -811,7 +811,7 @@ async def test_quit_while_a_permission_ask_is_pending_defers_exit_until_the_work
     decision must not `self.exit()` immediately (which would stop the event loop while the worker
     is still blocked in `App.call_from_thread`, hanging process shutdown). Instead the pending ask
     is released, the turn unwinds, and the real exit is deferred to `_finish_turn`. See
-    docs/adrs/unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
+    docs/adrs/00120-unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", tmp_path / "f.txt")]),

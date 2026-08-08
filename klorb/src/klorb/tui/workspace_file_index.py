@@ -151,7 +151,7 @@ class WorkspaceFileIndex:
     `_ABORT_CHECK_INTERVAL`) so an in-flight scan aborts promptly instead of running to
     completion (or worse, restarting) after the index is supposed to be dead; it also cancels
     any pending debounce timer and stops the observer thread. See
-    docs/adrs/use-watchdog-for-tui-file-finder-index.md.
+    docs/adrs/00168-use-watchdog-for-tui-file-finder-index.md.
     """
 
     def __init__(self, workspace_root: Path, on_changed: Callable[[], None]) -> None:

@@ -8,7 +8,7 @@ subagent session rather than any one file tool directly.
 and `session.messages` (via `klorb.evals.harness.tool_call_args`) -- filesystem state alone
 can't tell a genuine CreateSubagent/WaitForSubagent round trip apart from the operator simply
 reading the marker file itself and skipping delegation entirely, since both tool sets are
-available to it (see docs/adrs/grade-tool-evals-by-filesystem-state.md's "where useful"
+available to it (see docs/adrs/00031-grade-tool-evals-by-filesystem-state.md's "where useful"
 carve-out).
 """
 

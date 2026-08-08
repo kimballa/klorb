@@ -463,7 +463,7 @@ directly rather than a live `Session`, so they're callable from a test with just
     `oldText` for a brand-new file/memory/scratchpad, matching ACP's own convention). This is a
     hunk-reassembled *approximation* of the touched file, not its literal full contents — klorb
     persists hunks, not whole files, by design (see
-    docs/adrs/persist-diff-hunks-in-edit-result.md) — so the raw hunks additionally ride under
+    docs/adrs/00146-persist-diff-hunks-in-edit-result.md) — so the raw hunks additionally ride under
     the block's `_meta.klorb.diffHunks` for a client that wants to render a real gutter view
     (lands in `plan-016-004`) instead of reassembled text. The block's `path` is
     `args["filename"]` (resolved against `workspace_root`) for every edit-family tool that has
@@ -534,7 +534,7 @@ short-circuits before ever calling back, exactly as it does for the TUI.
   a client can render an equivalent header without reimplementing `header_kind()`'s per-resource
   dispatch itself. For a `BashTool` ask (`PermissionAskContext.bash_context` set): `commandText`
   (the full compound command), `itemCommandText` (this item's own statement — see
-  docs/adrs/permission-ask-item-shows-its-own-command-text-not-the-full-compound.md),
+  docs/adrs/00082-permission-ask-item-shows-its-own-command-text-not-the-full-compound.md),
   `itemIndex`/`itemTotal` (0-based, this item's position within its `sibling_items` batch —
   mirroring `AskUserQuestionsItemContext.index`/`.total`'s own convention), `grantPatterns`
   (`list[list[str]]`, the `commandRules` pattern a persistent grant would cover — the risk
@@ -615,7 +615,7 @@ drives, and the same shape a same-turn bash permission-ask batch already uses fo
   `Session`. This mirrors the "one formatting rule stays in klorb" invariant
   `permission_decision_from_outcome`'s free-text redirect already follows for a permission ask,
   and is recorded as a deliberate choice (over letting the ACP client format it) in
-  docs/adrs/ask-user-questions-rides-a-klorb-ext-method-not-acp-elicitation.md.
+  docs/adrs/00160-ask-user-questions-rides-a-klorb-ext-method-not-acp-elicitation.md.
 * **Result shapes.** `{selectedOptionIndex: int}` picks one of the question's own `options` (an
   index outside `0..len(options)` raises `ValueError`, propagating as a turn failure — a
   compliant client only ever echoes back an index this request itself offered); `{otherText:

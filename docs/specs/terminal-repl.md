@@ -43,7 +43,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   confirmation" section) or an `AskUserQuestions` prompt (see [[ask-user-questions]]) renders as
   a full-width band mounted into `#interaction-panel`, between the history scroll and the
   prompt input, rather than as a floating modal dialog — see
-  docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md for why. Concretely,
+  docs/adrs/00092-embed-tool-approval-and-ask-user-questions-in-history-panel.md for why. Concretely,
   `ReplApp` mounts a `klorb.tui.panels.permission_ask_panel.PermissionAskPanel` or
   `klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel` into `#interaction-panel` and
   `await`s an `asyncio.Future` its `on_dismiss` callback resolves — see those modules' own

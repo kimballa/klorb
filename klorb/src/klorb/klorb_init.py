@@ -99,7 +99,7 @@ def is_user_scope_initialized() -> bool:
 def template_config_text() -> str:
     """The packaged, spartan starter config's contents, read from `klorb.resources` via
     `importlib.resources` (see `docs/specs/klorb-init.md` and
-    `docs/adrs/ship-reference-klorb-config-as-package-data.md`). Copied verbatim, not parsed
+    `docs/adrs/00053-ship-reference-klorb-config-as-package-data.md`). Copied verbatim, not parsed
     or validated: `klorb init` just places it on disk for the user to edit, unlike
     `klorb.process_config`'s built-in-defaults layer, which is parsed and merged.
     """

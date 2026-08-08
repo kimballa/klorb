@@ -168,7 +168,7 @@ class RenderingMixin(ReplAppBase):
         """Render one finished tool call as a `RenderedToolCall` — instantiating a fresh `Tool`
         purely to call its pure `summary()`/`detail_view()`/`diff_preview()`/`read_preview()`
         methods (`ToolRegistry.instantiate_tool()` is already a cheap, no-shared-state
-        operation; see docs/adrs/tool-registry-instantiates-a-fresh-tool-per-call.md) — or via
+        operation; see docs/adrs/00021-tool-registry-instantiates-a-fresh-tool-per-call.md) — or via
         the shared default formatters if `name` isn't a registered tool (e.g. a hallucinated
         tool name, which `Session._run_tool_calls` already turned into `error`).
 

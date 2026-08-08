@@ -2,7 +2,7 @@
 """Detects whether `bwrap` (bubblewrap, https://github.com/containers/bubblewrap) can actually
 sandbox `BashTool`'s subprocesses on this host, and builds the `bwrap` argv that does so. See
 docs/specs/bash-tool-and-command-permissions.md's "Sandboxing" section and
-docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md.
+docs/adrs/00064-bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md.
 
 `build_bwrap_argv()` assembles the namespace/mount/env argv from a session's permission tables
 (the same `readDirs`/`writeDirs` the file tools use — one source of truth, not a second parallel
@@ -55,7 +55,7 @@ matters most for `/tmp` -- it commonly appears in `readDirs.allow` (so it lands 
 read-only, which sends `tempfile.gettempdir()` (pytest's `tmp_path`, etc.) falling through to the
 workspace root and scatters temp dirs into the user's checkout. Only an *exact* match is dropped;
 a bind of a directory *under* `/tmp`/`/var` still lands on top of the tmpfs, as intended. See
-docs/adrs/sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md."""
+docs/adrs/00115-sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md."""
 
 BwrapUnavailableReason = Literal["missing_binary", "no_userns"]
 """Why `bwrap_available()` returned `False`, for `BashTool`'s one-time fallback notice
@@ -235,7 +235,7 @@ def compute_sandbox_dirs(
     entry (e.g. `*.pem`) is therefore enforced only by the tool-level `FileAccessTable`
     classification (`ReadFile`/`EditFile`/... calls), not by the `bwrap` boundary: a sandboxed
     shell command can still read a file a wildcard rule would deny the agent's own file tools.
-    See docs/adrs/wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md for why this
+    See docs/adrs/00174-wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md for why this
     gap is accepted rather than closed with a directory walk.
 
     `approved_scopes` is the session's `EscalatePrivileges` grants (see
@@ -378,7 +378,7 @@ def build_bwrap_argv(
       `--unshare-user`/`--disable-userns` (defense-in-depth against nested-userns escapes; the
       user namespace uses an identity uid/gid map, so files the command creates in the binds are
       owned by the real user — see
-      docs/adrs/pass-unshare-user-because-disable-userns-requires-it.md).
+      docs/adrs/00111-pass-unshare-user-because-disable-userns-requires-it.md).
     * Hardening: `--hostname`, `--die-with-parent`, `--new-session` (blocks `TIOCSTI` escapes),
       `--cap-drop ALL`.
     * Environment: `--clearenv` then one `--setenv` per `env` entry, so the sandboxed command
@@ -398,7 +398,7 @@ def build_bwrap_argv(
       bind, with `--dir`-synthesized parents); and finally a `--ro-bind /dev/null` mask over every
       reachable `dirs.mask_files` file. The masks are applied after the binds so they win over the
       whole-home bind that would otherwise expose `~/.ssh`, `~/.git-credentials`, and friends — see
-      docs/adrs/mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
+      docs/adrs/00110-mask-sandbox-denyholes-with-tmpfs-not-placeholder-binds.md.
     * `--chdir workspace_root` so the command starts in the workspace.
     """
     workspace_root = workspace_root.resolve(strict=False)
@@ -431,7 +431,7 @@ def build_bwrap_argv(
     # `/usr/tmp` under the read-only `/usr` bind), so if `/tmp` were ever not writable
     # `tempfile.gettempdir()` (and pytest's `tmp_path`) would fall through to `os.getcwd()` -- the
     # workspace root -- and scatter temp dirs into the user's checkout. See
-    # docs/adrs/sandbox-tmp-is-1777-so-any-uid-can-write.md.
+    # docs/adrs/00114-sandbox-tmp-is-1777-so-any-uid-can-write.md.
     args += [
         "--perms", "1777", "--tmpfs", "/tmp", "--tmpfs", "/var", "--dev", "/dev", "--proc", "/proc"]
 

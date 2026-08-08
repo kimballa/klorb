@@ -185,7 +185,7 @@ def configure_tiktoken_cache_env() -> None:
     session (once the Textual app itself is running, so the message routes through the app's
     log / the session log file instead of the `TextualHandler`'s raw-stderr fallback for
     logging that happens before any app is active) — see
-    docs/adrs/configure-tiktoken-cache-env-after-repl-app-mounts.md.
+    docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md.
     """
     encoding_dir = tiktoken_cache_encoding_dir()
     if not encoding_dir.is_dir():

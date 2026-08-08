@@ -66,7 +66,7 @@ class UserShellCommand:
             # so a child (or a background job it launches) contending for that terminal's
             # foreground process group is a more direct risk here than for BashTool's headless
             # invocations; see
-            # docs/adrs/shelled-out-children-run-in-their-own-session-via-start-new-session.md.
+            # docs/adrs/00074-shelled-out-children-run-in-their-own-session-via-start-new-session.md.
             # setsid() also makes the child its own process group leader (pgid == pid), which the
             # kill path below relies on.
             process = subprocess.Popen(

@@ -2,7 +2,7 @@
 """A `Model` implementation driven entirely by a parsed `klorb-model` JSON document (see
 docs/specs/model-framework.md), so a new model is registered by dropping in a JSON file
 rather than writing a dedicated `Model` subclass — see
-docs/adrs/back-models-with-json-resource-files-not-python-classes.md."""
+docs/adrs/00099-back-models-with-json-resource-files-not-python-classes.md."""
 
 from typing import Any
 

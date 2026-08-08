@@ -9,7 +9,7 @@ def status_label(result: CaseResult, *, color: bool) -> str:
     """Render `result`'s status: `FAIL` (red) if it didn't pass; `CONDITIONAL PASS` (yellow) if
     it passed but either used more tool calls than `EvalCase.expected_tool_calls` allowed for or
     its `EvalCase.soft_check` flagged a suboptimal-but-correct call shape (see
-    `CaseResult.conditional` and docs/adrs/eval-conditional-pass-on-excess-tool-calls.md);
+    `CaseResult.conditional` and docs/adrs/00034-eval-conditional-pass-on-excess-tool-calls.md);
     plain `PASS` (green) otherwise. Shared by `render_report()` and `run_evals`'s per-case
     progress printer so both use the same three-way status.
     """

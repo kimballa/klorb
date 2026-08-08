@@ -25,7 +25,7 @@ class FindFileTool(InterruptibleTool):
     `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory
     level, not just at `dirname` itself — see that function's docstring for how a denied,
     ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search. See
-    docs/adrs/findfile-matches-directory-names-not-just-files.md for why directory names are
+    docs/adrs/00170-findfile-matches-directory-names-not-just-files.md for why directory names are
     matched too.
     """
 

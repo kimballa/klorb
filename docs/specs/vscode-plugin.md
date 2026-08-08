@@ -266,7 +266,7 @@ extension specifically.
   `acquireVsCodeApi()` a second time anywhere throws and silently aborts whatever called it — the
   VS Code webview API only allows one call per page load — which is why the single `vscode` value
   from that one call is threaded through as a prop rather than re-acquired (see
-  `docs/adrs/call-acquirevscodeapi-exactly-once-per-webview-page.md`).
+  `docs/adrs/00152-call-acquirevscodeapi-exactly-once-per-webview-page.md`).
 * `vscode-plugin/src/webview/sessionState.ts`'s `readPersistedState()` reads `vscode.getState()`
   and sanitizes it before trusting it as `SessionState`: `entries` is filtered through
   `isHistoryEntry()` (`webview/features/history`'s `HistoryEntry` type guard — a non-null object
@@ -485,7 +485,7 @@ extension specifically.
     documents served by a `KlorbDiffContentProvider` registered under the `klorb-diff:` scheme
     (one `EditorIntegration` per extension activation registers its own provider instance),
     titled `"<basename> (Klorb edit)"`. The reassembled before/after text is a hunk-context view,
-    not necessarily the whole file (see docs/adrs/persist-diff-hunks-in-edit-result.md) — an
+    not necessarily the whole file (see docs/adrs/00146-persist-diff-hunks-in-edit-result.md) — an
     elided view, the same caveat [[klorb-server]] records for the update's own `oldText`/
     `newText`.
 
@@ -943,7 +943,7 @@ increment this landed in.
   `{type: 'pickThinking'}` — this opens the same single `Off`/`Low`/`Medium`/`High` QuickPick
   **Klorb: Set Thinking** does (see its own bullet below), covering whether thinking is enabled
   and its effort level as one four-way choice rather than two separately-settable properties —
-  see docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md for why. The permission
+  see docs/adrs/00162-merge-thinking-enabled-and-effort-into-one-picker.md for why. The permission
   badge reads `[ask]`/`[auto]`/`[deny]`, defaulting to `[ask]` before any mode is known; clicking
   it posts `{type: 'cyclePermissionMode'}`; a brief
   `.status-permission-badge-flash` CSS-transition highlight plays on every change (its own
@@ -1327,7 +1327,7 @@ The webview and the extension host exchange messages shaped by the discriminated
 and webview) so the same types check both sides — over the standard `vscode.postMessage()` /
 `window.addEventListener('message', ...)` webview messaging channel. The webview never speaks
 ACP directly; `KlorbSessionViewProvider` is the only place that translates between the two (see
-`docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md`).
+`docs/adrs/00156-vscode-webview-stays-acp-ignorant-behind-typed-messages.md`).
 
 * Webview → host (`WebviewMessage`): `{type: 'submitPrompt', text: string, images?:
   ImageAttachment[]}` (once per submitted prompt while idle), `{type: 'enqueueMessage', text:
@@ -1395,7 +1395,7 @@ extension host is a Node/CommonJS process with the `vscode` module and Node's
 `child_process`/`stream` APIs available, the webview is a sandboxed `vscode-webview://` document
 with neither — so they're built by two different pipelines, both `noEmit: true` (typecheck-only)
 tsconfigs paired with their own `esbuild` bundle (see
-`docs/adrs/bundle-extension-host-with-esbuild-not-tsc-emit.md` for why the host is bundled at
+`docs/adrs/00157-bundle-extension-host-with-esbuild-not-tsc-emit.md` for why the host is bundled at
 all, not just type-checked):
 
 * `tsconfig.json` type-checks everything under `src/` *except* `src/webview/` (plus
@@ -1442,14 +1442,14 @@ all, not just type-checked):
   → `babel-plugin-react-compiler` (`target: '19'`) before esbuild ever bundles it, so components
   get the compiler's automatic `useMemo`/`useCallback`-equivalent memoization
   (`useMemoCache`-backed) without being hand-written throughout — see
-  `docs/adrs/run-react-compiler-through-babel-esbuild-plugin.md` for why this needed a Babel
+  `docs/adrs/00163-run-react-compiler-through-babel-esbuild-plugin.md` for why this needed a Babel
   pass at all and why the plugin's `filter` matches only those two source directories rather than
   every file esbuild loads (avoiding running the same presets over inlined `node_modules`
   dependency source). `--define:process.env.NODE_ENV` (`"development"` unminified for
   `build:webview`, `"production"` minified with `--sourcemap=linked
   --sources-content=false --legal-comments=linked` for `build:webview:prod`) and the choice to
   otherwise skip `--minify` in the dev build are unchanged from the original stub (see
-  `docs/adrs/use-react-for-the-webview-ui.md`); `docs/adrs/bundle-webview-script-with-esbuild-not-es-modules.md`
+  `docs/adrs/00153-use-react-for-the-webview-ui.md`); `docs/adrs/00151-bundle-webview-script-with-esbuild-not-es-modules.md`
   explains why the output loads as a plain `<script nonce="...">` rather than
   `<script type="module">`. `src/webview/tsconfig.json` and `test/webview/tsconfig.json` are
   pointer files (`{"extends": "../../tsconfig.webview.json"}`) that exist purely so VS Code's
@@ -1472,7 +1472,7 @@ all, not just type-checked):
   devDependency so it hoists to the top-level `node_modules` (`eslint-plugin-import-x`'s
   cross-module parsing `require()`s it directly, and won't find a copy nested only inside the
   `typescript-eslint` meta-package's own `node_modules`). See
-  `docs/adrs/vscode-plugin-typechecks-with-tsgo-lints-with-typescript-6.md`.
+  `docs/adrs/00158-vscode-plugin-typechecks-with-tsgo-lints-with-typescript-6.md`.
 
 ### Test tree
 
@@ -1503,7 +1503,7 @@ approval/question panels' "Other…" redirects. Their TypeScript JSX typings
 live in `vscode-plugin/types/global.d.ts`, vendored from the vscode-elements examples repo's
 own `global.d.ts` (declaring the `react`-module `JSX.IntrinsicElements` additions for every
 element the library ships) rather than hand-written per element as they're adopted. See
-`docs/adrs/use-vscode-elements-for-webview-controls.md` for why this library over the
+`docs/adrs/00155-use-vscode-elements-for-webview-controls.md` for why this library over the
 alternatives.
 
 `<vscode-icon>` renders a [Codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html)
@@ -1616,7 +1616,7 @@ of two.
   Code — it
   produces the artifact meant for actual distribution (`vsce publish`, or handing the `.vsix` to
   someone else), not another local dev-loop iteration. See
-  `docs/adrs/production-vsix-build-is-minified-and-drops-node-modules.md`.
+  `docs/adrs/00159-production-vsix-build-is-minified-and-drops-node-modules.md`.
 * `.vscodeignore` excludes `node_modules/**`, `package-lock.json`, and `types/**` from every
   packaged `.vsix` (dev or prod) — since both the extension host and the webview are fully
   bundled by `esbuild`, nothing at runtime ever `require()`s a package out of `node_modules`, so
@@ -1723,5 +1723,5 @@ time a connection is started (at activation and on `klorb.restartServer`):
   nothing is written to disk, and history (including the status snapshot) is lost on
   `klorb.restartServer`, `klorb.newSession`, or a full window reload.
 * No production (minified) webview bundle — see
-  `docs/adrs/bundle-webview-script-with-esbuild-not-es-modules.md`'s reasoning, unchanged from
+  `docs/adrs/00151-bundle-webview-script-with-esbuild-not-es-modules.md`'s reasoning, unchanged from
   the original stub.

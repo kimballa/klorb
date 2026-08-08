@@ -45,7 +45,7 @@ before falling back to a literal-argv grant. A troubleshooter reading the log la
 *which* safeguard fired, not just that "something" fell back to the safe default.
 
 This matters even more when the surrounding tool contract is "fail closed silently to the caller"
-(deny without a raised warning, prune without a flag) — see `docs/adrs/prune-non-allow-subdirs-*`
+(deny without a raised warning, prune without a flag) — see `docs/adrs/00049-prune-non-allow-subdirs-*`
 and the `.git`-skip case below. The agent-facing behavior is deliberately quiet; the debug log is
 where that quiet decision still has to be visible to whoever's debugging it.
 
@@ -75,7 +75,7 @@ decision is logged **at the point in the recursion where the prune happens**, no
 the loop as a one-time notice and not left mute because the walk's *contract* is "skip silently."
 `klorb/src/klorb/tools/util/dir_walk.py`'s hard-coded `.git`-directory skip is a worked example —
 the walk deliberately tells neither the agent nor the caller's return value that anything was
-skipped (see `docs/adrs/hard-code-skip-dot-git-dirs-in-tree-walk.md`), which is exactly why the
+skipped (see `docs/adrs/00141-hard-code-skip-dot-git-dirs-in-tree-walk.md`), which is exactly why the
 debug line at the `continue` is load-bearing:
 
 ```python

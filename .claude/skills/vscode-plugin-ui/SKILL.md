@@ -16,7 +16,7 @@ all three; `docs/specs/vscode-plugin.md`'s "Component library" section and the
 `<vscode-textfield>`, `<vscode-icon>`, `<vscode-context-menu>`, `<vscode-progress-ring>`,
 `<vscode-badge>`, ...) are rendered directly as JSX with no wrapper package -- React 19 passes
 props straight through to custom-element properties/attributes. See
-`docs/adrs/use-vscode-elements-for-webview-controls.md` for why this library was chosen over the
+`docs/adrs/00155-use-vscode-elements-for-webview-controls.md` for why this library was chosen over the
 alternatives. Reach for one of these first whenever a matching element exists.
 
 Two situations call for something else instead:

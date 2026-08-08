@@ -3,7 +3,7 @@
 individual files by exact path match or `*`-wildcard pattern, distinct from
 `klorb.permissions.directory_access`'s containment-based directory rules. See
 docs/specs/permissions.md and
-docs/adrs/file-rule-wildcard-star-matches-any-characters-including-slash.md.
+docs/adrs/00173-file-rule-wildcard-star-matches-any-characters-including-slash.md.
 
 `klorb.permissions.workspace.resolve_and_evaluate_read()`/`resolve_and_evaluate_write()` consult
 a `FileAccessTable` before any directory-level concern (the workspace-root boundary,

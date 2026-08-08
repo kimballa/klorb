@@ -270,10 +270,10 @@ happens to contain the literal text `${...}` is not expanded a second time. A la
 an unrecognized macro name, an unterminated `${`, or an empty `${}` is dropped in its entirety —
 same as a layer that isn't valid JSON at all — with an error collected into
 `ProcessConfig.config_warnings`; see
-docs/adrs/malformed-config-macro-drops-the-whole-layer.md. `readFiles`/`writeFiles` additionally
+docs/adrs/00176-malformed-config-macro-drops-the-whole-layer.md. `readFiles`/`writeFiles` additionally
 reject expanding a macro whose resolved value contains a literal `*`, since that grammar's `*`
 wildcard metacharacter (see docs/specs/permissions.md) is otherwise detected purely by string
-content — see docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md.
+content — see docs/adrs/00175-file-rule-macro-values-may-not-contain-a-literal-star.md.
 
 When klorb *writes* a config file (`klorb.schema_envelope.write_versioned_json`, used by the
 project-config bootstrap and by interactive permission grants), the document is pretty-printed

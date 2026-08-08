@@ -168,12 +168,12 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns the process exit code: `0` if every case passed (or no `OPENROUTER_API_KEY` is
     configured, in which case evals are skipped entirely — see
-    docs/adrs/tool-evals-skip-without-api-key.md), `1` if any case failed, or if `--suite` names
+    docs/adrs/00033-tool-evals-skip-without-api-key.md), `1` if any case failed, or if `--suite` names
     something other than `ALL_SUITES_ARG` or a known `EvalSuite.name`. A case that passed
     but used more tool calls than its `EvalCase.expected_tool_calls` (`CaseResult.conditional`,
     printed as `[CONDITIONAL PASS]`) still counts as passed for this exit code — it's a
     yellow-flag efficiency signal, not a correctness failure. See
-    docs/adrs/eval-conditional-pass-on-excess-tool-calls.md.
+    docs/adrs/00034-eval-conditional-pass-on-excess-tool-calls.md.
 
     `--list-suites` prints every known suite name and returns `0` without running anything or
     requiring `OPENROUTER_API_KEY`.

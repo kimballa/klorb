@@ -309,7 +309,7 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   root) for files and directories whose bare name matches a glob `pattern` (e.g. `"*.py"` or
   `"*_context*"`; `case_insensitive` folds case on both sides of the match) — mirroring `find
   -name`'s default of matching every node type, not just files (see
-  `docs/adrs/findfile-matches-directory-names-not-just-files.md`). Uses the same
+  `docs/adrs/00170-findfile-matches-directory-names-not-just-files.md`). Uses the same
   `walk_readable_tree()` walk as `Grep`. At most `context.process_config.find_file_max_results`
   matches (default `process_config.DEFAULT_FIND_FILE_MAX_RESULTS`, 500) are returned per call.
   The result is a dict: `root`, `pattern`, `case_insensitive`, `matches` (a list of

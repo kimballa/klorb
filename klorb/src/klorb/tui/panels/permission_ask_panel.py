@@ -72,7 +72,7 @@ lines are informational and have no `[more...]` expand path of their own, so the
 clipped at this many rows rather than truncated-with-an-indicator; the full command is always
 still reachable via the command preview's `[more...]`/`ExpandedCommandScreen`. See
 `PermissionAskPanel._cap_body_static_heights` and
-docs/adrs/cap-every-permission-ask-body-static-height.md."""
+docs/adrs/00116-cap-every-permission-ask-body-static-height.md."""
 
 _SECTION_END_CLASS = "ask-section-end"
 """CSS class carrying the trailing blank-line margin between one body section (header, command
@@ -236,7 +236,7 @@ class PermissionAskPanel(Vertical):
 
     `ReplApp` mounts this into its full-width `#interaction-panel` container, below the history
     scroll and above the (disabled, visually muted) prompt input, rather than as a floating
-    modal — see docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md. This
+    modal — see docs/adrs/00092-embed-tool-approval-and-ask-user-questions-in-history-panel.md. This
     widget has no opinion on where it's mounted or what happens once it's dismissed; `dismiss()`
     just invokes the `on_dismiss` callback given at construction (`ReplApp` resolves a pending
     `asyncio.Future` with it), and `ReplApp` is responsible for unmounting it and recording a
@@ -562,7 +562,7 @@ class PermissionAskPanel(Vertical):
         parser that actually applies the markup, so a resource containing e.g. `[$HOME]` slips
         through escaping and is silently dropped from the rendered line -- which, for a line whose
         whole job is to state exactly what a persistent Allow grants, would misreport the grant.
-        See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+        See docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
         if self._granted_preview is None:
             return None
         prefix = (

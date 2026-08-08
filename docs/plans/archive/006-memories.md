@@ -203,7 +203,7 @@ across sessions).
 * `tools.memory.editPermission` config: `deny`/`ask`/`allow` behaviors, both namespaces.
 * Editing a `workspace`-namespace memory in an untrusted workspace is permission-denied.
 * No `readDirs`/`writeDirs` table is consulted at all (same bypass rationale as
-  `docs/adrs/scratchpad-tools-bypass-permission-tables.md`) — assert a `writeDirs.deny`
+  `docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md`) — assert a `writeDirs.deny`
   covering the memories directory has no effect on `EditMemory`.
 
 ### `CreateMemoryTool` (`test_create_memory.py`, mirroring `test_create_file.py`)
@@ -272,7 +272,7 @@ asserted, if anywhere)
 1. **Extract `CreateFileCore`** into `klorb/src/klorb/tools/util/create_file_core.py`,
    re-exported from `klorb/src/klorb/tools/util/__init__.py` alongside `ReadFileCore`/
    `EditFileCore` (see that package's docstring and
-   `docs/adrs/read-edit-file-scratchpad-share-core-via-composition.md` for the established
+   `docs/adrs/00088-read-edit-file-scratchpad-share-core-via-composition.md` for the established
    shape: a plain class over a `pathlib.Path`, no `ToolSetupContext` dependency, holding the
    "does this file already exist / write content / build the result dict" mechanic). Update
    `CreateFileTool` (`klorb/src/klorb/tools/create_file.py`) to hold
@@ -349,7 +349,7 @@ asserted, if anywhere)
 8. **Implement `DeleteMemoryTool`**: `namespace`/`filename`. New territory — no
    `resolve_within_workspace`/`evaluate_write` call applies (memories don't live under
    `readDirs`/`writeDirs`, same bypass rationale as scratchpad — see
-   `docs/adrs/scratchpad-tools-bypass-permission-tables.md`) — implement directly against
+   `docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md`) — implement directly against
    `Path.unlink()` after the namespace/filename validation, permission check
    (`tools.memory.deletePermission`, default `ask`), and untrusted-workspace gate, in that
    order, so a denied delete never touches the filesystem. Raise a clear, tool-appropriate

@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Directory access control: Concrete `PermissionsTable` resource kind, governing
 which directories klorb's file tools may read from and write to. See
-docs/specs/permissions.md and docs/adrs/gate-read-hard-boundary-on-workspace-trust.md.
+docs/specs/permissions.md and docs/adrs/00028-gate-read-hard-boundary-on-workspace-trust.md.
 
 This module deliberately has no dependency on `klorb.tools` or `klorb.session`: `SessionConfig`
 (in `klorb.session`) holds a `DirRules` field, so this module must not import `klorb.session` —

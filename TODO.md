@@ -14,12 +14,13 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
-* (#agent) chore: look at docs/adrs/, sort the files by creation timestamp and git mv them to 12345-existing-title.md in order. Start at 00001. Update agent guidance to keep files numbered.
-  
 ### Feature backlog
 
-* Add a session-specific env file in the session state dir. It's preloaded into every bash cmd. Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an env var when running hooks, so they can customize the env. 
-  
+* The `EscalatePrivileges` tool should take a `reason` arg that the agent has to supply, which is
+  shown to the user in the approval panel.
+
+* Add a session-specific env file in the session state dir. It's preloaded into every bash cmd. Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an env var when running hooks, so they can customize the env.
+
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
@@ -152,7 +153,7 @@
 ### Feature backlog
 
 * (#agent) Add a "Rename Session" cmd palette action to change the title.
-  
+
 * (#agent) In the TUI, When the user types `/` at start or after whitespace, it should have a
   fuzzy-finder pop-up to help find the skill they want. ESC dismisses fuzzy-finder, as does
   continuing to type after ruling out any matches. This should use the same layout / style as the
@@ -170,7 +171,7 @@
 * (#agent) Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
   command-palette entries into one Off/Low/Medium/High choice, mirroring the VS Code plugin's
   merged thinking chip/`klorb.setThinking` QuickPick (see
-  docs/adrs/merge-thinking-enabled-and-effort-into-one-picker.md).
+  docs/adrs/00162-merge-thinking-enabled-and-effort-into-one-picker.md).
 
 * Today, if you pass -m and --interactive, it will start the TUI and then stay there.
   Add --(no-)quit-on-success to have it exit the TUI when the agent turn

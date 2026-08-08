@@ -73,7 +73,7 @@ _PERSISTENT_SHELL_KEY = "persistent_shell"
 _STANDING_INTERJECTION_SUBJECT = "SessionTerminal"
 """`Session.register_standing_interjection()` subject key `BashTool` registers under whenever it
 creates or reuses a persistent shell — see `_standing_interjection_provider` and
-docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md."""
+docs/adrs/00081-standing-interjections-complement-one-shot-for-level-triggered-state.md."""
 
 _TEARDOWN_SUBJECT = "Bash"
 """`Session.register_teardown()` subject key `BashTool` registers under for killing a live
@@ -171,7 +171,7 @@ class PersistentShell:
     `$PS1` just long enough to satisfy the `[ -z "$PS1" ] && return` guard most real `.bashrc`
     files start with, `source`-ing the rcfile, then unsetting `PS1`/`PS2` again) through the
     ordinary `run_command` channel as this shell's first command — see `BashTool._spawn_persistent_
-    shell` and docs/adrs/bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why
+    shell` and docs/adrs/00063-bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why
     the guard clause needs `$PS1` set at all. A non-interactive bash never prints prompts, so
     nothing needs to be stripped from its stderr the way `_strip_bash_shell_noise` strips the
     one-shot path's fixed `-i` startup lines.
@@ -202,7 +202,7 @@ class PersistentShell:
         compares it against the session's current snapshot before each command: a `bwrap` mount
         namespace is frozen at launch, so if the session's allowed-directory set has *grown* (an
         interactive grant added an `allow`) the sandbox is stale and must be rebuilt to see the
-        new directory — see docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md. `None`
+        new directory — see docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md. `None`
         skips that check entirely (nothing to go stale without a mount namespace)."""
         self.networking = networking
         """This shell's live `klorb.sandbox.network.SandboxNetworking` (the network-egress proxy
@@ -281,7 +281,7 @@ class PersistentShell:
         (`export -p`), replayed into a rebuilt shell so cwd + exported env survive a
         reconcile-on-grow sandbox rebuild — the load-bearing carryable state (see
         `BashTool._rebuild_persistent_shell` and
-        docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md). Returns `""` if the shell died
+        docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md). Returns `""` if the shell died
         or the probe failed, so a rebuild just proceeds without a replay rather than raising."""
         stdout, _stderr, exit_status, timed_out, _cancelled = self._run_raw(
             "export -p", _PWD_TIMEOUT_SECONDS)
@@ -1295,7 +1295,7 @@ class BashTool(InterruptibleTool):
         current (wider) permission tables, replaying the old shell's exported env + cwd, then
         `SIGKILL` the old sandbox. Only called once `has_live_jobs()` has confirmed no background
         work would be lost — see `_execute_persistent` and
-        docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md."""
+        docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md."""
         restore_env = old.export_state()
         restore_cwd = old.cwd
         new_shell = self._spawn_persistent_shell(restore_env=restore_env, restore_cwd=restore_cwd)
@@ -1404,13 +1404,13 @@ class BashTool(InterruptibleTool):
         * Unsandboxed shell (`sandbox_snapshot is None`), or the allowed-dir set is unchanged (the
           overwhelmingly common case): the same shell, `False`, `None` — run the command as-is.
         * The allowed-dir set grew (an interactive grant added an `allow` since this sandbox
-          launched — see docs/adrs/rebuild-persistent-sandbox-when-grants-grow.md) and the shell
+          launched — see docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md) and the shell
           has no live background jobs: a freshly rebuilt shell, `True`, `None`.
         * It grew but the shell *does* have live background jobs: the original shell (untouched),
           `False`, and a non-`None` refusal string — the caller must not run the command, to avoid
           silently killing that background work; the model is told to opt into a
           `shell_lifetime="new"` respawn instead (see
-          docs/adrs/rebuild-persistent-sandbox-only-when-no-live-jobs.md).
+          docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md).
         """
         if shell.sandbox_snapshot is None:
             return shell, False, None

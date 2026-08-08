@@ -188,7 +188,7 @@ class ToolCallEvent(BaseModel):
     display strings, so `Session` stays entirely ignorant of how (or whether) a call is
     displayed; a consumer renders `name`/`args`/`result`/`error` itself, e.g. via
     `klorb.tools.tool.Tool.summary()`/`detail_view()`. See
-    docs/adrs/render-tool-calls-via-raw-callback-data.md.
+    docs/adrs/00043-render-tool-calls-via-raw-callback-data.md.
     """
 
     model_config = ConfigDict(frozen=True)

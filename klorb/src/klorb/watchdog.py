@@ -4,7 +4,7 @@ time-boxed cleanup then `os._exit`) and a `LivenessWatchdog` daemon thread that 
 the main-thread event loop stops snoozing it. UI-agnostic library code — the TUI wires it up in
 `klorb.tui.ReplApp`, but nothing here imports Textual. See
 docs/specs/interrupt-and-liveness-watchdog.md and
-docs/adrs/liveness-watchdog-over-reactive-arming.md.
+docs/adrs/00123-liveness-watchdog-over-reactive-arming.md.
 """
 
 import os

@@ -69,7 +69,7 @@ scope") coordinate through one shared file rather than each keeping a private on
     to point at.
 * None of this touches `config.read_dirs`/`write_dirs`: the three tools read/write
   `session.scratchpad.path` directly, with no `readDirs`/`writeDirs` permission check at all —
-  see docs/adrs/scratchpad-tools-bypass-permission-tables.md for why that's safe (the path is
+  see docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md for why that's safe (the path is
   never model-supplied, so there's nothing for a permission check to protect against) and why a
   `Session`-level `allow` grant for the scratchpad directory was rejected (it would need to
   special-case the hard workspace-root boundary anyway, and several existing permission tests

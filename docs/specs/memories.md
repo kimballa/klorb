@@ -44,7 +44,7 @@ either namespace.
   the resolved path is a direct child of `namespace_dir` and never escapes it (e.g. via `..` or
   a symlink).
 * **Memory tools bypass `readDirs`/`writeDirs` entirely**, the same design as the Scratchpad
-  tools (see docs/adrs/scratchpad-tools-bypass-permission-tables.md): `filename` is a bare name
+  tools (see docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md): `filename` is a bare name
   within a harness-resolved namespace directory, never a model-supplied path into the rest of
   the filesystem, so there is nothing for those tables to protect against. Instead, each
   operation kind (read, edit, create, delete) has its own flat `Verdict` (`"deny"`/`"ask"`/
@@ -55,7 +55,7 @@ either namespace.
   asks" section).
 * `ReadMemoryTool`/`EditMemoryTool` delegate their line-range mechanics to
   `klorb.tools.util.ReadFileCore`/`EditFileCore`, the same cores `ReadFile`/`EditFile`/
-  `ReadScratchpad`/`EditScratchpad` use — see docs/adrs/read-edit-file-scratchpad-share-core-via-composition.md.
+  `ReadScratchpad`/`EditScratchpad` use — see docs/adrs/00088-read-edit-file-scratchpad-share-core-via-composition.md.
   `CreateMemoryTool` similarly delegates to `klorb.tools.util.CreateFileCore`, the file-creation
   mechanic extracted from `CreateFileTool` (which now holds one too) so both tools share it
   rather than duplicating the "already exists / create missing parents / write" logic.

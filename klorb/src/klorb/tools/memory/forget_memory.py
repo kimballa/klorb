@@ -24,7 +24,7 @@ class ForgetMemoryTool(Tool):
     validate_memory_filename`) and checked against the untrusted-workspace gate and
     `tools.memory.deletePermission` before any disk I/O -- in that order, so a denied delete
     never touches the filesystem. There is no `writeDirs` check at all, the same bypass as
-    every other Memory tool -- see docs/adrs/scratchpad-tools-bypass-permission-tables.md.
+    every other Memory tool -- see docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
     """
 
     def name(self) -> str:

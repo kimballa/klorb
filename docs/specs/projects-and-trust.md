@@ -10,10 +10,10 @@ one workspace, so trust survives across process runs and can't be forged by the 
 describes. `SessionConfig.workspace` (a `klorb.workspace.Workspace`) carries the resolved answer
 for the owning session; `workspace.trusted` is read directly by the permission-evaluation code
 (see [[permissions]] and
-[docs/adrs/gate-read-hard-boundary-on-workspace-trust.md](../adrs/gate-read-hard-boundary-on-workspace-trust.md)).
+[docs/adrs/00028-gate-read-hard-boundary-on-workspace-trust.md](../adrs/gate-read-hard-boundary-on-workspace-trust.md)).
 `workspace` lives on `SessionConfig`, not `ProcessConfig`, since multiple concurrent sessions
 could each be pointed at a different directory — see
-[docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
+[docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
 Only an untrusted workspace's own `.klorb/klorb-config.json` is ever skipped — every other
 config layer (`/etc`, per-user, `--config`) is unaffected.
 
@@ -35,7 +35,7 @@ yet; `is_project` is `True` exactly when `id` is not `None`. It's never loaded f
 section). There is deliberately no separate `is_workspace_trusted` bool mirroring
 `workspace.trusted` on either config object — an earlier version of this feature had one, kept
 manually in sync by every place that changed either, until it was removed as a needless
-duplication risk; see docs/adrs/consolidate-workspace-trust-into-a-single-field.md.
+duplication risk; see docs/adrs/00055-consolidate-workspace-trust-into-a-single-field.md.
 
 ### `projects.json` (`klorb.workspace.trust_manager`)
 
@@ -45,7 +45,7 @@ duplication risk; see docs/adrs/consolidate-workspace-trust-into-a-single-field.
 entry is a `ProjectRecord`: `{id: str, path: str, trusted: bool}` (`path` canonicalized via
 `Path.resolve()`). It's constructed once per process (`klorb.cli.main()`) and passed explicitly
 to every collaborator that needs it, rather than a module-level global — see
-[docs/adrs/thread-trustmanager-explicitly-not-a-global-singleton.md](../adrs/thread-trustmanager-explicitly-not-a-global-singleton.md).
+[docs/adrs/00059-thread-trustmanager-explicitly-not-a-global-singleton.md](../adrs/thread-trustmanager-explicitly-not-a-global-singleton.md).
 
 `TrustManager.resolve_workspace(cwd)` is the deterministic half of resolution — it never prompts
 anyone and never writes anything:
@@ -81,7 +81,7 @@ is this same `Workspace` (never routed through `SESSION_KEY_MAP`/`PROCESS_KEY_MA
 which has an entry for it) — this is the one production code path allowed to set
 `workspace.trusted = True`, gated entirely on the harness-resolved `Workspace`, never on
 anything a config file said. `workspace` lives on `SessionConfig`, not `ProcessConfig` — see
-[docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
+[docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md](../adrs/move-workspace-from-processconfig-to-sessionconfig.md).
 
 `klorb.cli.main()` constructs one `TrustManager`, calls `resolve_workspace(Path.cwd())`, and
 passes the result into `load_process_config(...)` — for *both* the headless one-shot path and
@@ -116,7 +116,7 @@ project's config layer and expanded `ReadFile` boundary (see
 
 Entirely opt-in: `ReplApp.__init__(trust_manager: TrustManager | None = None)` defaults to
 `None`, under which every piece of this section is a no-op — see
-[docs/adrs/gate-workspace-bootstrap-on-an-explicit-trust-manager.md](../adrs/gate-workspace-bootstrap-on-an-explicit-trust-manager.md).
+[docs/adrs/00056-gate-workspace-bootstrap-on-an-explicit-trust-manager.md](../adrs/gate-workspace-bootstrap-on-an-explicit-trust-manager.md).
 Only `klorb.cli.main()`'s real invocation passes a `TrustManager`.
 
 `on_mount()` (synchronous) hands off to `_run_startup_workspace_and_initial_message()`, a
@@ -125,7 +125,7 @@ Only `klorb.cli.main()`'s real invocation passes a `TrustManager`.
 races the bootstrap. `@work()` is required here (and on `trust_workspace()`, below) because both
 push a `ConfirmScreen` and await its dismissal (`push_screen_wait`), which Textual only permits
 from an active worker context — see
-[docs/adrs/run-modal-driven-workspace-flows-as-textual-workers.md](../adrs/run-modal-driven-workspace-flows-as-textual-workers.md).
+[docs/adrs/00058-run-modal-driven-workspace-flows-as-textual-workers.md](../adrs/run-modal-driven-workspace-flows-as-textual-workers.md).
 
 `_resolve_workspace_trust()`:
 

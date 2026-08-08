@@ -212,7 +212,7 @@ through the existing `tiktoken`-based `estimate_tokens()`; each `image_url` frag
 `resized_width`/`resized_height` (bookkeeping fields, set by `prepare_image_for_model` before the
 fragment is built) go through `estimate_image_tokens()`. The sum becomes the message's
 `num_tokens`, same "definitive cost" treatment every other message already gets (see
-docs/adrs/count-every-message-tokens-client-side-with-tiktoken.md) — no naive fallthrough of
+docs/adrs/00121-count-every-message-tokens-client-side-with-tiktoken.md) — no naive fallthrough of
 `Message.body()`'s JSON-dumped fragments (including a multi-KB base64 string) into `tiktoken`,
 which would produce a token count with no relationship to the model's actual multimodal billing.
 
@@ -360,7 +360,7 @@ New `tools.images.*` process-level keys (`ProcessConfig`/`PROCESS_KEY_MAP`/
   — smaller wire payload, at the cost of a new network trust boundary. This plan always inlines.
 * **Remote file upload / preflighting** — sending image files to a dedicated file upload endpoint of the provider and using a reference to the uploaded file. (We currently send the base64-encoded data every turn.)
 * **Image retention/pruning policy** — an analogue to the existing per-model `drop_reasoning`
-  toggle (docs/adrs/preserve-reasoning-across-turns-by-default.md's counterpart), e.g. dropping or
+  toggle (docs/adrs/00122-preserve-reasoning-across-turns-by-default.md's counterpart), e.g. dropping or
   summarizing image fragments from history after N turns, to cap the ongoing resend-token cost
   the "Session persistence" section above flags. Not attempted here.
 * **Re-verify `gpt-5-nano`/`mimo-v2.5`'s numbers against OpenRouter's live `/models` response**

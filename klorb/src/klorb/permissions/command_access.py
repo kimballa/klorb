@@ -19,24 +19,24 @@ WILDCARD_TOKEN = "*"
 """A rule token that matches exactly one arbitrary candidate token at that position — always,
 regardless of position (including a rule's own last token); see
 `CommandPermissionsTable._matches` and
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
 A literal token that ends with a trailing `"*"` without being exactly `"*"` (or exactly `"**"`,
 `UNBOUNDED_TOKEN`) is a distinct case, a suffix-wildcard literal — see `_token_matches_literal`
-and docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+and docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 """
 
 OPTIONAL_TOKEN = "?"
 """A rule token that matches zero or one arbitrary candidate token at that position — uniformly,
 regardless of position, including a rule's own last token; see `CommandPermissionsTable._matches`
 and
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
 """
 
 UNBOUNDED_TOKEN = "**"
 """A rule token that matches any number of arbitrary candidate tokens at that position, including
 zero — at any position in a rule, not just as the last token; see
 `CommandPermissionsTable._matches` and
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
 """
 
 
@@ -52,7 +52,7 @@ def _token_matches_literal(pattern_token: str, candidate_token: str) -> bool:
     just a literal asterisk to match verbatim, not a wildcard: `"a*b"` matches only the literal
     candidate token `"a*b"`. This is a deliberately narrow, single-suffix-wildcard grammar (a
     plain string-prefix check, not a general glob/regex) -- see
-    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md for why a wildcard anywhere in
+    docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md for why a wildcard anywhere in
     a token (not just trailing) was rejected as unnecessarily permissive.
     """
     if pattern_token.endswith(WILDCARD_TOKEN) and len(pattern_token) > 1:
@@ -150,7 +150,7 @@ class CommandPermissionsTable(PermissionsTable[list[str]]):
           to span multiple candidate tokens — `"of=*"` never matches across a space the way
           `UNBOUNDED_TOKEN` spans multiple argv entries, and a `"*"` earlier in the same token
           (not its last character) still isn't a wildcard; see `_token_matches_literal` and
-          docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+          docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md.
         * `WILDCARD_TOKEN` (`"*"`) matches exactly one arbitrary candidate token at that
           position, always — including when it's the rule's last token: `["foo", "*"]` matches
           `["foo", "bar"]` but not `["foo"]` (zero extra tokens) or `["foo", "bar", "baz"]` (two

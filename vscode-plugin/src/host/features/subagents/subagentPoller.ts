@@ -29,7 +29,7 @@ export type SubagentTranscriptListener = (
 /**
  * Polls `_klorb/subagentTree`/`_klorb/subagentTranscript` on behalf of the webview's subagents
  * panel -- the webview never calls an ACP ext method directly (see
- * docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md), so this class is the
+ * docs/adrs/00156-vscode-webview-stays-acp-ignorant-behind-typed-messages.md), so this class is the
  * "keep pulling and push what changed" counterpart to how the server side pushes plan/task
  * updates unprompted. Two independent timers: the tree poll runs whenever the panel is visible
  * (`setPanelVisible`), the transcript poll additionally requires a non-root selection

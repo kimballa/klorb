@@ -119,7 +119,7 @@ class EscalatePrivilegesPanel(Vertical):
         # `markup=False` on the header and description: the description embeds arbitrary
         # filesystem paths, which are parsed as console markup by default and would crash the
         # compositor at reflow on a literal `[` (see
-        # docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md).
+        # docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md).
         widgets: list[Widget] = [
             Static(self.header_text(), id=ESCALATE_PRIVILEGES_HEADER_ID, markup=False)]
         widgets.append(Static(

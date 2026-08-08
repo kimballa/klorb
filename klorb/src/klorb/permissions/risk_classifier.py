@@ -16,7 +16,7 @@ call the exact same function rather than re-implementing this logic against its 
 that function's own docstring. It also threads in a bounded window of the user's own prior
 decisions this session (`record_decision_history()`/`HistoryEntry`) as calibration context for
 the one request it does make — see
-docs/adrs/bounded-explicit-history-not-a-persistent-classifier-conversation.md for why this
+docs/adrs/00109-bounded-explicit-history-not-a-persistent-classifier-conversation.md for why this
 history is passed explicitly into an otherwise-stateless call rather than achieved by keeping the
 classifier itself alive as a growing conversation.
 """

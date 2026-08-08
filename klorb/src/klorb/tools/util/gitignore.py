@@ -9,7 +9,7 @@ matching itself is delegated to `pathspec`'s `GitIgnoreSpec`; this module layers
 rules of one nearer the root — which a single `GitIgnoreSpec` doesn't model on its own.
 
 See docs/specs/gitignore-aware-tree-walk.md and
-docs/adrs/find-and-grep-respect-gitignore-by-default.md.
+docs/adrs/00125-find-and-grep-respect-gitignore-by-default.md.
 """
 
 import logging

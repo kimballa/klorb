@@ -22,7 +22,7 @@ def _context(
 ) -> ToolSetupContext:
     """Defaults both `readDirs`/`writeDirs` to allowing all of `workspace_root`, since
     `evaluate_write()` requires an explicit allow in *both* tables (see
-    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md) and most tests here are
+    docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md) and most tests here are
     about CreateFile's own logic, not the permission system -- only the "Permission-table
     integration" tests below pass an explicit override to narrow that default."""
     return ToolSetupContext(
@@ -150,7 +150,7 @@ def test_hard_workspace_boundary_wins_even_if_writedirs_allow_covers_outside(tmp
 def test_writedirs_allow_alone_does_not_grant_write_without_readdirs_allow(tmp_path: Path) -> None:
     """writeDirs.allow alone does not grant write access to a path readDirs is silent on --
     write access is never more permissive than read access for the same path; see
-    docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md. An integration-level
+    docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md. An integration-level
     counterpart to test_permissions.py's unit-level
     test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent, since this file's
     other permission tests all use the (allow, allow) default context."""

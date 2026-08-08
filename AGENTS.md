@@ -30,6 +30,10 @@ are short documents that record a decision, with the format:
 
 ADRs are stored in docs/adrs/.
 
+ADR filenames are sequentially numbered by creation date: `NNNNN-slug-name.md` (e.g.
+`00042-edit-file-auto-creates-via-empty-subject-insert-shape.md`). When creating a new ADR, find
+the highest existing number and use the next one. Use `ls docs/adrs/ | tail -1` to find it.
+
 ADR filenames should have a reasonable slug and include the answer (`do-foo-by-using-bar.md`) for
 quick filename access, not wasteful filler words (`how-should-we-do-foo.md`).
 

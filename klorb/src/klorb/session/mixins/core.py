@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     # depends on `SessionConfig` from `klorb.session.config` — importing it for real here
     # would be circular. `Session` only stores and calls methods on a `ToolRegistry` it's
     # handed, so a type-checking-only import is enough (see
-    # docs/adrs/tool-setup-context-carries-process-and-session-config.md).
+    # docs/adrs/00022-tool-setup-context-carries-process-and-session-config.md).
     from klorb.tools.registry import ToolRegistry
     # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
     # from `klorb.session`, so importing it for real here would be circular too. `Session`
@@ -166,7 +166,7 @@ class SessionCoreMixin(SessionBase):
         the fields already pulled out of it above) so `_retry_after_permission_decision` can
         thread it into `klorb.permissions.grant.apply_permission_grant` for a `"workspace"`/
         `"homedir"` grant's process-wide ripple — see that method and
-        docs/adrs/session-applies-its-own-permission-grants.md."""
+        docs/adrs/00045-session-applies-its-own-permission-grants.md."""
         self._mention_read_file_core = self._create_read_file_core(
             process_config.mention_max_lines
             if process_config is not None else self._default_mention_max_lines(),
@@ -749,7 +749,7 @@ class SessionCoreMixin(SessionBase):
         every call without leaking entries. `provider` itself is responsible for deciding whether
         its condition still holds — returning `None` once it no longer applies is what stops the
         interjection from appearing; there is no separate unregister call. See
-        docs/adrs/standing-interjections-complement-one-shot-for-level-triggered-state.md.
+        docs/adrs/00081-standing-interjections-complement-one-shot-for-level-triggered-state.md.
         """
         self._standing_interjection_providers[subject] = provider
 

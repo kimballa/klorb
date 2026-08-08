@@ -154,7 +154,7 @@ Both catalogs are built once, lazily, the first time either is needed in that se
 `Session`'s life. **Scoped to the `Session`, not the process**: a `/clear` that replaces the live
 `Session` gets a brand-new, empty `SkillCatalogRegistry`, which rescans the disk on its own first
 use rather than inheriting whatever the outgoing session's catalog held — see
-docs/adrs/scope-skill-catalogs-to-session-not-process.md. Skill catalogs are never persisted to
+docs/adrs/00167-scope-skill-catalogs-to-session-not-process.md. Skill catalogs are never persisted to
 `session.json`; a restored session rebuilds its catalog the same way a brand-new one does, on its
 own first use. Within one session's lifetime, a skill added, removed, or edited on disk after the
 catalog was built is still invisible until an explicit `Session.reload_skills()` call — the
@@ -420,7 +420,7 @@ same most-specific-source-wins shadowing every tier uses. When the flag is enabl
 may carry fields beyond `name`/`description` (allowed-tools lists, model hints, etc.); klorb reads
 only `name`/`description` off the raw frontmatter dict and leaves the rest in `Skill.raw` unused
 today, so a Claude-authored `SKILL.md` is discovered by its directory basename with its
-`description` listed. See docs/adrs/discover-claude-skills-dir-as-a-second-workspace-source.md.
+`description` listed. See docs/adrs/00134-discover-claude-skills-dir-as-a-second-workspace-source.md.
 
 ## Configuration
 

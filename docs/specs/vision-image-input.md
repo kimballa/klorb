@@ -27,7 +27,7 @@ the OpenAI/OpenRouter content-part `"type"` value literally. `MessageFragment` c
 * `image_path: str | None` -- path relative to the session's own directory, once this
   fragment's bytes have been spilled to disk (see docs/specs/session-persistence.md's
   "Image-fragment storage" section and
-  docs/adrs/store-image-fragments-on-disk-not-inline-in-session-json.md).
+  docs/adrs/00169-store-image-fragments-on-disk-not-inline-in-session-json.md).
 * `mime_type: str | None` -- set alongside `image_path`, so a restored fragment's `image_url`
   data URI can be rebuilt without re-parsing a (by-then-cleared) prior value.
 * `source_filename: str | None`, `original_width`/`original_height`/`resized_width`/

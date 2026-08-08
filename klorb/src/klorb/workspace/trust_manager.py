@@ -8,7 +8,7 @@ Every read or write of `projects.json` goes through a `TrustManager` instance so
 single owner of the file's I/O; the caller (`klorb.cli.main()`, or a test) is responsible for
 constructing one `TrustManager` per process and threading it to every place that needs it
 (`klorb.process_config.load_process_config`, `klorb.tui.ReplApp`) rather than this module
-reaching for a module-level global — see docs/adrs/thread-trustmanager-explicitly-not-a-global-singleton.md.
+reaching for a module-level global — see docs/adrs/00059-thread-trustmanager-explicitly-not-a-global-singleton.md.
 
 `register_project`/`set_trusted` each guard their own load-mutate-save sequence with
 `workspaces.lock` (`TrustManager._workspaces_lock_path()`, `klorb.lockfile.

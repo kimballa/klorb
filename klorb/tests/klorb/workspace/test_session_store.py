@@ -158,7 +158,7 @@ class TestSessionState:
 class TestSessionImages:
     """Tests for write_session_image/read_session_image and write_session_state's use of
     Message.for_persistence() to keep base64 image bytes out of session.json -- see
-    docs/adrs/store-image-fragments-on-disk-not-inline-in-session-json.md."""
+    docs/adrs/00169-store-image-fragments-on-disk-not-inline-in-session-json.md."""
 
     def test_write_then_read_round_trips_bytes(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)

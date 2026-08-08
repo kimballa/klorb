@@ -51,7 +51,7 @@ def compute_grant_paths(
     `write_dirs`, matching `resolve_and_evaluate_read()`'s own read-only semantics), or, if
     nothing matched at all ("the dir was never mentioned"), `[candidate]` when `candidate` is
     itself a directory or `[candidate.parent]` when it's a file — see
-    docs/adrs/grant-directory-candidate-at-itself-not-its-parent.md. This granularity computation
+    docs/adrs/00085-grant-directory-candidate-at-itself-not-its-parent.md. This granularity computation
     is the same for an Allow or a Deny decision — only which rule category the grant writes into
     differs (see `GrantAction`).
 
@@ -198,7 +198,7 @@ def apply_permission_grant(
     - An `"allow"` decision always reassigns `session_config.read_dirs` (and `write_dirs`, when
       `is_write`) wholesale — never mutates their lists in place — so the live session sees the
       grant immediately; write access requires both tables to say `allow` (see
-      docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md), which is why a write
+      docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md), which is why a write
       grant always promotes read too. A `"deny"` decision only touches the one table matching
       `is_write` (`write_dirs` for a write ask, `read_dirs` for a read ask) — denying a write
       doesn't imply denying a read that was never in question, and `write_dirs.deny` alone

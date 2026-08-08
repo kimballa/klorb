@@ -16,7 +16,7 @@ not open design decisions. Do not implement any part of this until it's moved to
 implement a fully deterministic deny/ask/allow pipeline for `BashTool`: `shfmt --to-json`
 parses a command into an AST, `CommandPermissionsTable` matches parsed argv against
 `commandRules` token patterns (literals plus the `*`/`?`/`**` wildcards — see
-`docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md`),
+`docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md`),
 redirection targets go through the same `readDirs`/`writeDirs` tables the file tools use, and
 anything the walker can't confidently classify escalates to `"ask"`. When a verdict is
 `"ask"`, `PermissionAskScreen` shows the user the item's own source text
@@ -66,7 +66,7 @@ simple command/redirect/forced-ask-reason within it, matching the granularity
   without the user seeing and confirming it first — even a "too risky" score only biases which
   grid cell is pre-selected (see "Risk score influence on the ask flow" below), it never
   removes or auto-confirms one. This mirrors the reasoning in
-  `docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md`: a probabilistic
+  `docs/adrs/00064-bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md`: a probabilistic
   layer sits *alongside* the deterministic one, never in place of it.
 * Not a replacement for `shfmt`-based AST parsing. `klorb.permissions.shell_parse` remains the
   only thing that decides *what a command's structure is*; the LLM classifier only ever
@@ -199,7 +199,7 @@ literal payload.
 ### Structured output
 
 klorb is committed to OpenRouter as its one API surface (`docs/specs/openrouter-prompt-client.md`,
-`docs/adrs/use-openai-sdk-against-openrouter.md`), so this uses whatever mechanism OpenRouter
+`docs/adrs/00001-use-openai-sdk-against-openrouter.md`), so this uses whatever mechanism OpenRouter
 itself documents for forcing a JSON-schema-conformant reply, rather than function-calling
 `tools`/`tool_choice`: an OpenAI-compatible structured-output request, `response_format=
 {"type": "json_schema", "json_schema": {"name": "CommandRiskReport", "schema":
@@ -334,7 +334,7 @@ scattering the idea across unrelated modules or leaving it undiscoverable.
 ### Risk score influence on the ask flow
 
 `PermissionAskScreen`'s initial grid cursor cell today starts on the previous prompt's
-remembered cell (per `docs/adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md`).
+remembered cell (per `docs/adrs/00071-permission-ask-screen-uses-a-2d-action-by-scope-grid.md`).
 This plan biases that default, purely as a starting cursor position — every cell stays
 reachable and confirmable regardless of score, this never removes or disables an option:
 
@@ -431,7 +431,7 @@ were resolved during that plan's implementation:
 * docs/specs/model-framework.md
 * docs/specs/openrouter-prompt-client.md
 * docs/specs/tool-framework.md
-* docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
-* docs/adrs/bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md
-* docs/adrs/permission-ask-screen-uses-a-2d-action-by-scope-grid.md
-* docs/adrs/permission-ask-item-carries-raw-command-text-as-its-own-field.md
+* docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md
+* docs/adrs/00064-bubblewrap-is-defense-in-depth-not-a-classifier-substitute.md
+* docs/adrs/00071-permission-ask-screen-uses-a-2d-action-by-scope-grid.md
+* docs/adrs/00075-permission-ask-item-carries-raw-command-text-as-its-own-field.md

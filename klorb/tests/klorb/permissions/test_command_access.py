@@ -2,8 +2,8 @@
 """Tests for klorb.permissions.command_access: CommandRules/CommandPermissionsTable token-
 pattern matching and deny/ask/allow precedence. See
 docs/specs/bash-tool-and-command-permissions.md,
-docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md,
-and docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md,
+and docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 """
 
 import shlex
@@ -170,7 +170,7 @@ def test_pattern_matches_argv_rejects_a_pattern_missing_a_required_literal() -> 
 # through BOTH the standalone `pattern_matches_argv` AND an allow-only `CommandPermissionsTable`
 # verdict on every candidate, so a divergence between the two paths (or a table-level regression)
 # fails here too, not just a matcher bug. See
-# docs/adrs/command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
+# docs/adrs/00072-command-rule-wildcards-double-star-unbounded-anywhere-question-mark-always-optional.md.
 
 
 def _admits(pattern: list[str], *argvs: list[str]) -> None:
@@ -188,7 +188,7 @@ def _rejects(pattern: list[str], *argvs: list[str]) -> None:
 
 
 # --- suffix-wildcard tokens: a literal token ending in a trailing `*` without being exactly -----
-# `"*"` or `"**"` -- see docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md.
+# `"*"` or `"**"` -- see docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md.
 # The risk classifier sometimes proposes exactly this shape (`["dd", "of=*", ...]`) to generalize
 # the value half of a `--flag=value`/`key=value` argument while keeping the flag name literal. Only
 # a token's own *last* character carries wildcard meaning -- a `*` anywhere else in the same token
@@ -271,7 +271,7 @@ def test_literal_question_mark_inside_a_token_is_not_a_wildcard() -> None:
     embedded inside a larger literal token is just a literal character, requiring an exact
     match -- this grammar never grew glob meaning for `?` or `[...]` the way `fnmatch` would, only
     for a token's own trailing `*` (see
-    docs/adrs/command-rule-tokens-support-trailing-star-suffix-wildcards.md)."""
+    docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md)."""
     pattern = ["echo", "really?"]
     _admits(pattern, ["echo", "really?"])
     _rejects(pattern, ["echo", "really1"], ["echo", "reallyX"], ["echo", "really"])

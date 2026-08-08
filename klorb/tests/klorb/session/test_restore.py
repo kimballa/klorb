@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.session.restore -- try_restore_session's rehydration of path-backed image
-fragments (see docs/adrs/store-image-fragments-on-disk-not-inline-in-session-json.md)."""
+fragments (see docs/adrs/00169-store-image-fragments-on-disk-not-inline-in-session-json.md)."""
 
 import base64
 from datetime import datetime

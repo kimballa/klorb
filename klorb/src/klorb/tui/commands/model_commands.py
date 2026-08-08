@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Command palette provider and modal for switching the active model, mirroring
 `klorb.tui.commands.theme_commands`'s "one command that names the current value, opens a modal" shape
-— see docs/adrs/single-change-model-command-with-typeahead-modal.md for why models get a
+— see docs/adrs/00102-single-change-model-command-with-typeahead-modal.md for why models get a
 dedicated typeahead-filterable modal instead of one palette entry per model."""
 
 from typing import Protocol, cast
@@ -169,7 +169,7 @@ class ModelSelectionScreen(ModalScreen[None]):
 class ModelCommandProvider(Provider):
     """Offers a single `"Change model (<current>)"` command via the command palette that opens
     `ModelSelectionScreen`, replacing the previous one-entry-per-model listing — see
-    docs/adrs/single-change-model-command-with-typeahead-modal.md.
+    docs/adrs/00102-single-change-model-command-with-typeahead-modal.md.
     """
 
     async def search(self, query: str) -> Hits:

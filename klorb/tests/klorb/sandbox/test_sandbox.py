@@ -258,7 +258,7 @@ def test_read_files_deny_becomes_a_mask_file_when_it_exists(tmp_path: Path) -> N
 def test_wildcard_read_files_deny_is_not_masked(tmp_path: Path) -> None:
     """compute_sandbox_dirs does not glob-expand a wildcard rule against the bound directories --
     a matching real file stays unmasked in the sandbox, unlike an exact-path deny of the same
-    file (see docs/adrs/wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md)."""
+    file (see docs/adrs/00174-wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md)."""
     home = tmp_path / "home"
     home.mkdir()
     secret = home / "key.pem"
@@ -373,7 +373,7 @@ def test_argv_tmpfs_tmp_is_world_writable_and_sticky(tmp_path: Path) -> None:
     # /var/tmp, there is no /usr/tmp), so it must be writable regardless of which uid the userns
     # maps the command to -- a default 0755 tmpfs is writable only by its owner uid. It is mounted
     # 1777 (world-writable + sticky, like a real /tmp). See
-    # docs/adrs/sandbox-tmp-is-1777-so-any-uid-can-write.md.
+    # docs/adrs/00114-sandbox-tmp-is-1777-so-any-uid-can-write.md.
     argv = _argv(tmp_path)
     tmpfs_tmp = next(
         i for i, tok in enumerate(argv) if tok == "--tmpfs" and argv[i + 1] == "/tmp")
@@ -387,7 +387,7 @@ def test_argv_does_not_bind_tmp_over_the_scratch_tmpfs(tmp_path: Path) -> None:
     # `--ro-bind /tmp /tmp` that shadows the disposable scratch tmpfs with the host's read-only
     # /tmp -- making the sandbox's /tmp read-only and sending tempfile.gettempdir() falling back to
     # the workspace root. The disposable tmpfs must win. See
-    # docs/adrs/sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md.
+    # docs/adrs/00115-sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md.
     home = tmp_path / "home"
     home.mkdir()
     ws = tmp_path / "ws"

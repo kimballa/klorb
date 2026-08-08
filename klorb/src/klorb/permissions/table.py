@@ -3,7 +3,7 @@
 category order, independent of what kind of resource (a directory, or in principle any other
 resource kind with its own matching semantics) the rules describe. See
 docs/specs/permissions.md and
-docs/adrs/evaluate-permission-categories-deny-then-ask-then-allow.md.
+docs/adrs/00027-evaluate-permission-categories-deny-then-ask-then-allow.md.
 """
 
 from abc import ABC, abstractmethod

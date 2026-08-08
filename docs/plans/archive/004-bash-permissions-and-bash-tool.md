@@ -451,7 +451,7 @@ Walking the tree needs to:
   `EditFile` call already is, not a second parallel filesystem policy.
 * Combine every sub-verdict (one per simple command, plus one per redirection target) using the
   same "strictest wins" pattern already established for read/write
-  (`docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md`): the overall verdict for a
+  (`docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md`): the overall verdict for a
   compound command is never more permissive than its strictest constituent part.
 
 ## while the BashTool is running
@@ -530,7 +530,7 @@ Planned invocation shape (Linux only — macOS support is Future Work, see below
   is what keeps an everyday `make test > results.log`-style redirect from landing in `"ask"` by
   default for a trusted project, since `evaluate_write()` otherwise normalizes an unmentioned path
   to `"ask"` on both the read and write tables (see
-  `docs/adrs/write-verdict-is-stricter-of-read-and-write-tables.md`).
+  `docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md`).
 * `--tmpfs /tmp`, `--proc /proc`, `--dev /dev` for a normal-looking but disposable scratch area.
 * `--unshare-pid`, `--unshare-ipc`, `--unshare-uts`, `--unshare-net`, `--unshare-cgroup` by
   default; deliberately *not* `--unshare-user` (see "uid/gid" in the args section above — bwrap
@@ -632,7 +632,7 @@ single hard constraint:
 **A `bwrap` sandbox's mount namespace is fixed at launch and cannot be modified for the life of
 that `bwrap` process.** There is no "add a bind mount to a running sandbox" operation. A persistent
 shell is, by design, *one* long-lived `bash` process (one per `Session`, per
-`docs/adrs/cap-persistent-shells-at-one-per-session.md`) — so if it runs inside `bwrap`, its entire
+`docs/adrs/00078-cap-persistent-shells-at-one-per-session.md`) — so if it runs inside `bwrap`, its entire
 filesystem view is frozen at the instant the shell was spawned. But the set of directories the
 session is allowed to touch is *not* frozen: the user can approve an `ask` prompt mid-session,
 which adds an `allow` rule to the live `SessionConfig`. A shell sandboxed at turn 1 physically
@@ -645,8 +645,8 @@ inside a mount namespace that never had that path.
 Within a single live session, the allowed-directory set is **monotonically non-shrinking**. An
 interactive grant only ever *adds* an `allow` (and at most removes a now-redundant `ask`) to the
 in-memory `SessionConfig`; nothing in a running session tightens it (see
-`docs/adrs/homedir-grants-can-clean-workspace-ask-never-reverse.md` and
-`docs/adrs/session-applies-its-own-permission-grants.md`). Denyholes (`~/.ssh` etc.) come from the
+`docs/adrs/00037-homedir-grants-can-clean-workspace-ask-never-reverse.md` and
+`docs/adrs/00045-session-applies-its-own-permission-grants.md`). Denyholes (`~/.ssh` etc.) come from the
 static deny list, which is stable for the whole process. So the sandbox's mount set only ever needs
 to *grow*, never to remove a bind or re-mask a path — and "grow an immutable namespace" has exactly
 one primitive available: replace it. This is the whole design.
@@ -659,7 +659,7 @@ command happens to name, precisely because an approved `python -c "..."` can `op
 shfmt walker never sees (this plan states that limitation plainly under "Fallback"). So the
 persistent shell reuses the *same* `build_bwrap_argv()` computation, just once at spawn instead of
 once per command, and launches `bwrap [args] -- bash` (plain `bash`, no `-c`, matching
-`docs/adrs/persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md`) with its stdin pipe fed
+`docs/adrs/00079-persistent-shell-skips-i-flag-and-bootstraps-rcfile-itself.md`) with its stdin pipe fed
 the same sentinel-delimited command stream the unsandboxed version uses today.
 
 `PersistentShell` records the allowed-directory set (or a cheap monotonically-increasing version
@@ -682,7 +682,7 @@ parser can't see" hole — the mount set is a function of the tables, and it is 
 
 Rebuilding means: `SIGKILL` the old `bwrap` process (per the "Always kill the outer bwrap process
 with SIGKILL" rule in "process outcome" above — do *not* reuse the `SIGINT`-first escalation from
-`docs/adrs/sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md`, which was tuned for
+`docs/adrs/00080-sentinel-tokens-not-a-pty-delimit-persistent-shell-commands.md`, which was tuned for
 in-namespace command timeout, not outer-sandbox teardown), recompute `build_bwrap_argv()` against
 the now-wider tables, relaunch `bwrap [args] -- bash`, and replay the previous shell's carryable
 state into the new one before running the model's command.

@@ -94,8 +94,8 @@ updates → host messages. It also forwards `turnError` when a prompt rejects.
 
 Rewrite `docs/specs/vscode-plugin.md` for the new architecture (ACP connection, message
 protocol, component layout, build/test changes). ADR:
-`docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md` (the host-translates
-decision), and `docs/adrs/use-vscode-elements-for-webview-controls.md`.
+`docs/adrs/00156-vscode-webview-stays-acp-ignorant-behind-typed-messages.md` (the host-translates
+decision), and `docs/adrs/00155-use-vscode-elements-for-webview-controls.md`.
 
 ## Tests (`vscode-plugin/test/`)
 

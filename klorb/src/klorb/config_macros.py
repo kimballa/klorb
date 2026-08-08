@@ -53,7 +53,7 @@ def expand_macros(text: str, *, macros: dict[str, str], forbid_char: str | None 
     resolved value contains that character — used by callers expanding into a `readFiles`/
     `writeFiles` rule to guarantee expansion never introduces a new `*` wildcard
     metacharacter that the rule's author didn't type themselves; see
-    docs/adrs/file-rule-macro-values-may-not-contain-a-literal-star.md.
+    docs/adrs/00175-file-rule-macro-values-may-not-contain-a-literal-star.md.
     """
     pieces: list[str] = []
     i = 0

@@ -452,7 +452,7 @@ built around cut/paste tooling instead.
    * `docs/adrs/` entries that mention `klorb.tui.repl.ReplApp` are historical decision
      records, not living docs — leave them as-is, same as `docs/plans/archive/` is never
      touched after the fact.
-   * Write one new ADR (`docs/adrs/split-repl-app-into-mixins-not-composition.md` or similar)
+   * Write one new ADR (`docs/adrs/00130-split-repl-app-into-mixins-not-composition.md` or similar)
      recording the mixin-vs-composition decision from "Current shape of `repl.py`" above,
      since that's exactly the kind of framework-level architecture decision this codebase's
      ADR convention exists for.

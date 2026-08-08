@@ -243,7 +243,7 @@ async def test_bracketed_option_and_question_text_do_not_crash_at_reflow() -> No
     """Model-authored labels, descriptions, headers, and question text can contain a literal
     `[` that Rich would otherwise parse as console markup and crash the compositor with a
     `MarkupError` at reflow (not at `Static.render()`, so this must mount through a real app to
-    reproduce). See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+    reproduce). See docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
     app = _AskUserQuestionsTestApp(AskUserQuestionsItemContext(
         header="Pick [an-option]", question="Which [foo-bar] do you want?",
         options=[_option("Use [foo-bar]", description="the [baz-qux] variant"), _option("Cookie")],

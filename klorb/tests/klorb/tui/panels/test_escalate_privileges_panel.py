@@ -171,7 +171,7 @@ async def test_bracketed_description_does_not_crash_at_reflow() -> None:
     contain a literal `[` that Rich would otherwise parse as console markup and crash the
     compositor with a `MarkupError` at reflow (not at `Static.render()`, so this must mount
     through a real app to reproduce). See
-    docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
+    docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md."""
     app = _EscalatePrivilegesTestApp(_ctx(
         description="Grant Klorb read/write access to /workspace/[foo]/.klorb/ for the rest of "
         "this session."))

@@ -296,7 +296,7 @@ definitions sent to the model.
 `domains` is merged across config layers by concatenating each category list
 (`deny`, `ask`, `allow`) independently, in layer order (default → etc → user → project →
 `--config` → last-session). This is the same merging strategy `readDirs`/`writeDirs`/`commandRules`/`skillRules` use — see
-`docs/adrs/evaluate-permission-categories-deny-then-ask-then-allow.md`. A later layer's
+`docs/adrs/00027-evaluate-permission-categories-deny-then-ask-then-allow.md`. A later layer's
 `deny` always outranks an earlier layer's `allow` by virtue of the evaluation order, not by
 any merge-time filtering.
 

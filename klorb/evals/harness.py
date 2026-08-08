@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Runs EvalCase tool-efficacy tasks against a real model through a real klorb Session.
 
-See docs/specs/tool-eval-harness.md and docs/adrs/reuse-session-for-tool-eval-agent-loop.md
+See docs/specs/tool-eval-harness.md and docs/adrs/00032-reuse-session-for-tool-eval-agent-loop.md
 for why this drives `klorb.session.Session` directly instead of a bespoke chat/tool loop.
 """
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class EvalCase:
     """One tool-efficacy eval task: a prompt sent to a real model, offered the real klorb file
     tools, plus a deterministic `check` that inspects the resulting workspace file state — never
-    the model's closing text (see docs/adrs/grade-tool-evals-by-filesystem-state.md).
+    the model's closing text (see docs/adrs/00031-grade-tool-evals-by-filesystem-state.md).
     """
 
     name: str
@@ -55,7 +55,7 @@ class EvalCase:
     passing case as a `CaseResult.conditional` pass when the model needed noticeably more calls
     than that — typically a sign it stumbled into retries (e.g. a rejected `EditFile` call)
     before eventually recovering. `None` (the default) means no threshold is checked for this
-    case. See docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
+    case. See docs/adrs/00034-eval-conditional-pass-on-excess-tool-calls.md."""
     soft_check: Callable[[Path, Session], str | None] | None = None
     """Run only when `check` passes (same signature): a non-`None` return marks the result
     `conditional` with that string as `CaseResult.soft_failure_reason`, without flipping
@@ -130,7 +130,7 @@ class CaseResult:
         set) — a sign the model likely stumbled into a rejected call and retried before
         recovering, or reached for a token-wasteful form, rather than a clean sign of genuine
         failure. See report.py's `[CONDITIONAL PASS]` status and
-        docs/adrs/eval-conditional-pass-on-excess-tool-calls.md."""
+        docs/adrs/00034-eval-conditional-pass-on-excess-tool-calls.md."""
         return self.passed and (
             (self.expected_tool_calls is not None and self.num_tool_calls > self.expected_tool_calls)
             or self.soft_failure_reason is not None

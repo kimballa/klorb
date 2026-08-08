@@ -191,7 +191,7 @@ def test_single_command_ask_item_is_not_compound(tmp_path: Path) -> None:
 def test_compound_command_ask_items_are_marked_compound(tmp_path: Path) -> None:
     """`foo && bar` needs a decision for each simple command, and every one of those items must
     say so via `is_compound` -- see
-    docs/adrs/always-show-more-indicator-for-compound-command-ask-items.md."""
+    docs/adrs/00077-always-show-more-indicator-for-compound-command-ask-items.md."""
     context = _context(tmp_path, command_rules=CommandRules())
     tool = BashTool(context)
     with pytest.raises(MultiPermissionAskRequired) as exc_info:

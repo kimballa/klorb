@@ -28,7 +28,7 @@ new user-facing control) needs a plan step for each layer it doesn't already cro
    it's what makes the feature reachable over stdio at all.
 2. **Extension host** (`vscode-plugin/src/host/features/acp/`) — `AcpConnection`/
    `KlorbAcpClient` need to handle the new ACP message, and per
-   `docs/adrs/vscode-webview-stays-acp-ignorant-behind-typed-messages.md`,
+   `docs/adrs/00156-vscode-webview-stays-acp-ignorant-behind-typed-messages.md`,
    `KlorbSessionViewProvider` needs to re-express it as a new variant on the shared
    `HostMessage`/`WebviewMessage` union in `vscode-plugin/src/shared/webviewMessages.ts`. The
    webview never sees ACP directly — this translation step is mandatory, not optional glue.

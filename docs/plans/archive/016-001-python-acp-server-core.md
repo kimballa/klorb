@@ -109,7 +109,7 @@ that shape:
   re-exports.
 * Rewrite `docs/specs/klorb-server.md` as the current-state spec of the ACP server (protocol
   summary, class layout, threading bridge, single-session policy, extension-method registry —
-  empty for now). Add an ADR `docs/adrs/speak-acp-not-bespoke-jsonl-from-klorb-server.md`
+  empty for now). Add an ADR `docs/adrs/00154-speak-acp-not-bespoke-jsonl-from-klorb-server.md`
   recording the protocol/library decision (date/question/answer/reasoning, per AGENTS.md).
 
 ## Tests (`klorb/tests/klorb/server/`)

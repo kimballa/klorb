@@ -58,7 +58,7 @@ class SessionConfig(BaseModel):
     docs/specs/projects-and-trust.md. Lives on `SessionConfig`, not `ProcessConfig`: multiple
     sessions can run concurrently within one process, each against a different directory (and
     so a different trust decision), which makes workspace identity a per-session concern, not
-    a process-wide one — see docs/adrs/move-workspace-from-processconfig-to-sessionconfig.md.
+    a process-wide one — see docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md.
 
     `workspace.path` is the directory the file-editing tools (`EditFile`, `ReplaceAll`,
     `CreateFile`) are always confined to — see
@@ -67,7 +67,7 @@ class SessionConfig(BaseModel):
     interactive workspace-trust flow). Defaults to `Workspace(path=Path.cwd())` for callers
     that construct `SessionConfig` directly (e.g. tests); real runs get an explicit,
     ancestor-searched `path` from `klorb.permissions.directory_access.find_workspace_root()` via
-    `load_process_config()`. See docs/adrs/confine-file-tools-to-workspace-root.md and
+    `load_process_config()`. See docs/adrs/00025-confine-file-tools-to-workspace-root.md and
     docs/specs/permissions.md."""
     read_dirs: DirRules = Field(default_factory=DirRules)
     """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults — see

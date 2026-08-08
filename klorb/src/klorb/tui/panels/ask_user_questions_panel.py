@@ -55,7 +55,7 @@ class AskUserQuestionsPanel(Vertical):
 
     `ReplApp` mounts this into its full-width `#interaction-panel` container, below the history
     scroll and above the (disabled, visually muted) prompt input, rather than as a floating
-    modal — see docs/adrs/embed-tool-approval-and-ask-user-questions-in-history-panel.md and
+    modal — see docs/adrs/00092-embed-tool-approval-and-ask-user-questions-in-history-panel.md and
     `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`'s docstring for the shared mechanics:
     `dismiss()` just invokes the `on_dismiss` callback given at construction, and `ReplApp` owns
     unmounting this panel and recording a permanent record of the exchange afterward.
@@ -140,7 +140,7 @@ class AskUserQuestionsPanel(Vertical):
     def compose(self) -> ComposeResult:
         # `markup=False` on the header and question: both carry arbitrary model-authored text,
         # which is parsed as console markup by default and would crash the compositor at reflow
-        # on a literal `[` (see docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md).
+        # on a literal `[` (see docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md).
         widgets: list[Widget] = [
             Static(self.header_text(), id=ASK_USER_QUESTIONS_HEADER_ID, markup=False)]
         widgets.append(Static(
@@ -174,7 +174,7 @@ class AskUserQuestionsPanel(Vertical):
         # A `Content` (already-resolved styled text) rather than a markup string: `label` and
         # `description` are arbitrary model-authored text, so bolding the label with `[bold]`
         # markup would re-parse that text and crash the compositor at reflow on a literal `[`.
-        # See docs/adrs/style-arbitrary-text-spans-with-content-not-escaped-markup.md.
+        # See docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md.
         option = self._ask_ctx.options[index]
         prefix = "(Recommended) " if option.recommended else ""
         label = f"{prefix}{option.label}:"
