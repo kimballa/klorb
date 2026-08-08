@@ -576,7 +576,13 @@ filesystem policy):
   source). `klorb.resources.default-config.json` ships `readFiles.deny` entries for the common
   single-file home-directory credential stores — `~/.git-credentials`, `~/.netrc`, `~/.npmrc`,
   `~/.pypirc`, `~/.pgpass`, `~/.my.cnf` — that live directly in `$HOME` alongside unremarkable
-  files.
+  files, plus wildcard entries for private-key and keystore file types (`*.pem`, `*.key`,
+  `*.p12`, `*.pfx`, `*.jks`, `*.ppk`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`, `id_dsa*`,
+  `*.kdbx`). A `readFiles`/`writeFiles` rule containing `*` is not
+  glob-expanded here — `compute_sandbox_dirs` skips it entirely (in every category) rather than
+  walking the bound directories for matches, so it binds/masks nothing for it; it's enforced only
+  by the tool-level `FileAccessTable` classification, not the sandbox boundary. See
+  docs/adrs/wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md.
 * `--chdir workspace_root`.
 
 Signal deaths inside the sandbox surface through the extra `bwrap` → `bash` → target layer as an

@@ -28,7 +28,7 @@ from klorb.permissions.directory_access import (
     privileged_dirs,
     workspace_klorb_dir,
 )
-from klorb.permissions.file_access import FileRules
+from klorb.permissions.file_access import FileRules, is_wildcard_rule
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +228,16 @@ def compute_sandbox_dirs(
     `readFiles.allow`/`writeFiles.allow` files carry into `read_files`/`write_files` so an exact
     file grant outside every directory bind is still reachable inside the sandbox.
 
+    A `readFiles`/`writeFiles` entry containing `*` (see
+    `klorb.permissions.file_access.is_wildcard_rule`) is skipped entirely here, in every
+    category (`deny`, `allow`) — this function only ever binds or masks concrete on-disk paths,
+    never glob-expands a pattern against the directories it's about to bind. A wildcard `deny`
+    entry (e.g. `*.pem`) is therefore enforced only by the tool-level `FileAccessTable`
+    classification (`ReadFile`/`EditFile`/... calls), not by the `bwrap` boundary: a sandboxed
+    shell command can still read a file a wildcard rule would deny the agent's own file tools.
+    See docs/adrs/wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md for why this
+    gap is accepted rather than closed with a directory walk.
+
     `approved_scopes` is the session's `EscalatePrivileges` grants (see
     `SessionConfig.approved_scopes`). It gates the workspace's own `<workspace>/.klorb` dir: that
     dir is always *bound* rather than masked (so `git status` sees its managed files instead of
@@ -265,7 +275,14 @@ def compute_sandbox_dirs(
     def existing_file_rules(rules: FileRules | None, attr: str) -> set[Path]:
         if rules is None:
             return set()
-        return {f for f in canon(getattr(rules, attr)) if f.exists() and not f.is_dir()}
+        raw = getattr(rules, attr)
+        concrete = [f for f in raw if not is_wildcard_rule(f)]
+        if len(concrete) != len(raw):
+            logger.debug(
+                "compute_sandbox_dirs: skipping %d wildcard %s file rule(s) -- not "
+                "glob-expanded for bwrap masking, enforced only by FileAccessTable",
+                len(raw) - len(concrete), attr)
+        return {f for f in canon(concrete) if f.exists() and not f.is_dir()}
 
     mask_files = existing_file_rules(read_files, "deny")
     read_allow_files = existing_file_rules(read_files, "allow")

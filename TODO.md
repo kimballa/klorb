@@ -106,13 +106,13 @@
 * Permissions
   * BashTool / bubblewrap sandbox follow-ups: a `--seccomp` defense-in-depth
     filter (ptrace/mount/reboot/keyring).
+  * A wildcard `readFiles`/`writeFiles` rule (e.g. `*.pem`) is enforced by `FileAccessTable`
+    against the agent's own file tools, but `bwrap` sandboxing currently skips wildcard rules.
   * TOCTOU: every permission check (klorb.permissions.workspace/directory_access) resolves a
     path string at check time; nothing holds an open OS-level directory handle across the gap
     between that check and the actual file I/O, so a rename/symlink swap in that window could
     redirect an approved operation. Closing this needs os.open()-based fd-relative I/O
     (O_NOFOLLOW/O_DIRECTORY), not path-string re-resolution. See docs/specs/permissions.md.
-  * (#agent) Per-file allow/ask/deny is only partially implemented — add wildcard/glob support
-    like `*.pem`.
   * Path macros: support expanding `${home}`/`${workspaceRoot}` (maybe also `${configDir}`)
     inside `readDirs`/`writeDirs` (and any other future path-shaped config value), alongside the
     plain `~` homedir shorthand `canonicalize_dir` already expands. `workspaceRoot` has no

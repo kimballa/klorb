@@ -49,7 +49,18 @@
         "~/.npmrc",
         "~/.pypirc",
         "~/.pgpass",
-        "~/.my.cnf"
+        "~/.my.cnf",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        "*.jks",
+        "*.ppk",
+        "id_rsa*",
+        "id_ed25519*",
+        "id_ecdsa*",
+        "id_dsa*",
+        "*.kdbx"
       ],
       "ask": [],
       "allow": [

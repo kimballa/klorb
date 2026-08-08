@@ -255,6 +255,33 @@ def test_read_files_deny_becomes_a_mask_file_when_it_exists(tmp_path: Path) -> N
     assert missing.resolve() not in dirs.mask_files  # nothing to hide -> not masked
 
 
+def test_wildcard_read_files_deny_is_not_masked(tmp_path: Path) -> None:
+    """compute_sandbox_dirs does not glob-expand a wildcard rule against the bound directories --
+    a matching real file stays unmasked in the sandbox, unlike an exact-path deny of the same
+    file (see docs/adrs/wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    secret = home / "key.pem"
+    secret.write_text("private")
+    dirs = compute_sandbox_dirs(
+        workspace_root=tmp_path / "ws", home=home, trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules(),
+        read_files=FileRules(deny=[Path("*.pem")]))
+    assert secret.resolve() not in dirs.mask_files
+    assert dirs.mask_files == ()
+
+
+def test_wildcard_allow_files_produce_no_bind(tmp_path: Path) -> None:
+    allowed = tmp_path / "r.pem"
+    allowed.write_text("r")
+    dirs = compute_sandbox_dirs(
+        workspace_root=tmp_path / "ws", home=tmp_path / "home", trusted=True,
+        read_dirs=DirRules(), write_dirs=DirRules(),
+        read_files=FileRules(allow=[Path("*.pem")]), write_files=FileRules(allow=[Path("*.pem")]))
+    assert dirs.read_files == ()
+    assert dirs.write_files == ()
+
+
 def test_allow_files_become_read_and_write_bind_sets(tmp_path: Path) -> None:
     readable = tmp_path / "r.conf"
     readable.write_text("r")

@@ -20,12 +20,12 @@ too; see step 3).
 A skill lives in one of two writable tiers (the third, `internal`, ships inside klorb and is not
 authored at runtime):
 
-- **workspace** — a skill specific to this project. Only discoverable when the workspace is
+* **workspace** — a skill specific to this project. Only discoverable when the workspace is
   trusted. Lives in one of two source directories, both sharing the same `workspace` namespace:
-  - `${workspaceRoot}/.klorb/skills/<name>/` — klorb's own convention.
-  - `${workspaceRoot}/.claude/skills/<name>/` — Claude Code's convention, discovered as a second
+  * `${workspaceRoot}/.klorb/skills/<name>/` — klorb's own convention.
+  * `${workspaceRoot}/.claude/skills/<name>/` — Claude Code's convention, discovered as a second
     source for `workspace` skills only when the `compatibility.claudeSkills` flag is on.
-- **user** — `$KLORB_DATA_DIR/skills/<name>/` (default `~/.local/share/klorb/skills/`) — a skill
+* **user** — `$KLORB_DATA_DIR/skills/<name>/` (default `~/.local/share/klorb/skills/`) — a skill
   available to you across every workspace.
 
 Before deciding, check the `compatibility.claudeSkills` flag in the system prompt's
@@ -33,12 +33,12 @@ Before deciding, check the `compatibility.claudeSkills` flag in the system promp
 `.claude/skills/` isn't discovered at all, so putting a new skill there would be silently inert.
 Just use `.klorb/skills/` without asking.
 
-**When creating a _new_ workspace-tier skill** and `compatibility.claudeSkills` is true, check
+**When creating a *new* workspace-tier skill** and `compatibility.claudeSkills` is true, check
 whether `${workspaceRoot}/.claude/skills/` already exists. If it does, ask the user whether to
 store the new skill there or under `.klorb/skills/`. The repo has already committed to a
 convention by having that directory, and only the user knows whether to stay consistent with it or
 start using klorb's own convention going forward. If `.claude/skills/` does not exist, just use
-`.klorb/skills/` without asking. When _editing_ an existing skill, use whichever directory it
+`.klorb/skills/` without asking. When *editing* an existing skill, use whichever directory it
 already lives in.
 
 The directory basename **is** the skill's canonical `name` — the identity every `skillRules`
@@ -70,11 +70,11 @@ point it at them.
 
 The file tools hard-block writes into privileged directories, so escalate first:
 
-- **`.klorb/skills/...`, and `.claude/skills/...` when `compatibility.claudeSkills` is on:** call
+* **`.klorb/skills/...`, and `.claude/skills/...` when `compatibility.claudeSkills` is on:** call
   `EscalatePrivileges(scope="workspace")`. In a trusted workspace this lifts the block on both
   directories at once, and the trusted workspace's own `writeDirs.allow` already covers them, so no
   further approval is needed.
-- **user tier:** call `EscalatePrivileges(scope="homedir")`. Approving it grants session-level
+* **user tier:** call `EscalatePrivileges(scope="homedir")`. Approving it grants session-level
   read/write access to `$KLORB_DATA_DIR` (and the other klorb home directories) so the file tools
   can write beneath `$KLORB_DATA_DIR/skills/`.
 
@@ -82,8 +82,8 @@ The file tools hard-block writes into privileged directories, so escalate first:
 
 With the escalation approved, use the ordinary file tools against the full path:
 
-- `CreateFile` a new `<tier-dir>/skills/<name>/SKILL.md` (and any supporting files).
-- `ReadFile` / `EditFile` an existing skill's files to change them.
+* `CreateFile` a new `<tier-dir>/skills/<name>/SKILL.md` (and any supporting files).
+* `ReadFile` / `EditFile` an existing skill's files to change them.
 
 Write the frontmatter exactly as in step 2 — a malformed or missing `description` is treated as an
 empty description (the skill is still discoverable, it just lists blank), so double-check it.

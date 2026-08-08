@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.permissions.file_access: FileRules/FileAccessTable exact-match evaluation.
-See docs/specs/permissions.md's "File access" section.
+"""Tests for klorb.permissions.file_access: FileRules/FileAccessTable exact-match and
+`*`-wildcard evaluation. See docs/specs/permissions.md's "File access" section.
 """
 
 from pathlib import Path
@@ -87,3 +87,34 @@ def test_tilde_rule_path_expands_to_home(tmp_path: Path, monkeypatch: pytest.Mon
     table = FileAccessTable(FileRules(deny=[Path("~/secret.txt")]), workspace)
 
     assert table.evaluate(home / "secret.txt") == "deny"
+
+
+def test_wildcard_rule_matches_by_extension(tmp_path: Path) -> None:
+    table = FileAccessTable(FileRules(deny=[Path("*.pem")]), tmp_path)
+
+    assert table.evaluate(tmp_path / "key.pem") == "deny"
+    assert table.evaluate(tmp_path / "key.crt") is None
+
+
+def test_wildcard_rule_star_spans_directory_separators(tmp_path: Path) -> None:
+    """A single `*` matches `/` too, so a rule with no literal directory prefix reaches every
+    depth under the workspace root, not just direct children."""
+    table = FileAccessTable(FileRules(deny=[Path("*.pem")]), tmp_path)
+
+    assert table.evaluate(tmp_path / "sub" / "dir" / "key.pem") == "deny"
+
+
+def test_wildcard_rule_with_directory_prefix_scopes_the_match(tmp_path: Path) -> None:
+    table = FileAccessTable(FileRules(deny=[Path("secrets/*.pem")]), tmp_path)
+
+    assert table.evaluate(tmp_path / "secrets" / "key.pem") == "deny"
+    assert table.evaluate(tmp_path / "other" / "key.pem") is None
+
+
+def test_wildcard_rule_other_glob_characters_are_literal(tmp_path: Path) -> None:
+    """`?` and `[...]` carry no special meaning in this grammar -- only `*` does."""
+    table = FileAccessTable(FileRules(allow=[Path("file[1].txt")]), tmp_path)
+
+    assert table.evaluate(tmp_path / "file[1].txt") == "allow"
+    assert table.evaluate(tmp_path / "file1.txt") is None
+    assert table.evaluate(tmp_path / "fileX.txt") is None

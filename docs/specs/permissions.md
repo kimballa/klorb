@@ -111,9 +111,19 @@ the reasoning behind the most consequential decisions here.
 * `FileRules` is a pydantic model: `deny`/`ask`/`allow`, each `list[Path]`, defaulting to
   empty — the same shape as `DirRules`, just naming individual files instead of directories.
 * `FileAccessTable(PermissionsTable[Path])` canonicalizes every rule path at construction time
-  via the same `canonicalize_dir(path, workspace_root)` `DirectoryAccessTable` uses, but matches
-  a candidate by **exact equality only** (`candidate == rule`), never containment: a `writeFiles`
-  entry for `/dev/null` matches only `/dev/null` itself, never `/dev/null/anything`.
+  via the same `canonicalize_dir(path, workspace_root)` `DirectoryAccessTable` uses. A rule with
+  no `*` in it matches a candidate by **exact equality only** (`candidate == rule`), never
+  containment: a `writeFiles` entry for `/dev/null` matches only `/dev/null` itself, never
+  `/dev/null/anything`. A rule containing `*` matches by pattern instead: `*` stands for zero or
+  more of any character, including `/` (there's no separate `**` for crossing a directory
+  separator — a single `*` already does), and every other character (including `?` and `[...]`)
+  is literal. A still-relative rule is joined onto `workspace_root` before matching, same as any
+  other rule path, so `readFiles.allow: ["*.pem"]` becomes the pattern
+  `${workspace_root}/*.pem` — and since `*` spans `/`, that already matches a `.pem` file at any
+  depth under `workspace_root`, not just a direct child (e.g. `${workspace_root}/sub/dir/f.pem`
+  matches too). A pattern with a literal directory segment before the `*`, like
+  `"secrets/*.pem"`, narrows this to `.pem` files anywhere under that one directory. See
+  docs/adrs/file-rule-wildcard-star-matches-any-characters-including-slash.md.
 * `resolve_and_evaluate_read()`/`resolve_and_evaluate_write()` (`klorb.permissions.workspace`,
   below) each build a `FileAccessTable` from `read_files`/`write_files` and check it against the
   canonicalized candidate *before* the workspace-root boundary check and before consulting
