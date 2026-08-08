@@ -474,10 +474,11 @@ def _standing_interjection_provider(shell: PersistentShell) -> Callable[[], str 
 def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str, str]:
     """Build the environment `BashTool` runs a command with: `HOME`/`USER` are always shared
     from the klorb process's own environment, `WORKSPACE_ROOT` is always set to the resolved
-    workspace root and `SHELL`/`BASH` are always set to `bash_command` (unconditionally — not
+    workspace root, `SHELL`/`BASH` are always set to `bash_command` (unconditionally — not
     gated on any config, and not the klorb process's own `$SHELL`/`$BASH` if any — this is the
-    actual bash binary the command runs under, per `ProcessConfig.bash_command`), followed by
-    every `session_config.share_env` name that's actually set in the klorb process's environment,
+    actual bash binary the command runs under, per `ProcessConfig.bash_command`), and `NO_COLOR`
+    is always set to disable ANSI color codes in command output, followed by every
+    `session_config.share_env` name that's actually set in the klorb process's environment,
     followed by `session_config.set_env`'s overrides (applied last, so they shadow a shared or
     always-set value for the same name). Everything else in the klorb process's own environment
     is left out. When a `bwrap` sandbox is in use this same dict is re-applied inside it via
@@ -493,6 +494,7 @@ def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str
     env["WORKSPACE_ROOT"] = str(session_config.workspace.path.resolve())
     env["SHELL"] = bash_command
     env["BASH"] = bash_command
+    env["NO_COLOR"] = "true"
     for name in session_config.share_env:
         if name in os.environ:
             env[name] = os.environ[name]

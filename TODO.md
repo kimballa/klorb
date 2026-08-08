@@ -18,8 +18,6 @@
   WaitForSubagent repeatedly until it completes.
   * Likewise, Reviewer should be told by /code-review that its explorer children will also run > 2 mins each.
 
-* (#agent) When BashTool sets up the environment for its commands to execute, export `NO_COLOR=true` too.
-
 ### Feature backlog
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.

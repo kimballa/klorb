@@ -702,12 +702,23 @@ def test_build_bash_env_always_shares_home_and_user(
     env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert env == {
         "HOME": "/home/someone", "USER": "someone", "WORKSPACE_ROOT": str(tmp_path.resolve()),
-        "SHELL": _BASH_COMMAND, "BASH": _BASH_COMMAND}
+        "SHELL": _BASH_COMMAND, "BASH": _BASH_COMMAND, "NO_COLOR": "true"}
 
 
 def test_build_bash_env_always_sets_workspace_root(tmp_path: Path) -> None:
     env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert env["WORKSPACE_ROOT"] == str(tmp_path.resolve())
+
+
+def test_build_bash_env_always_sets_no_color(tmp_path: Path) -> None:
+    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
+    assert env["NO_COLOR"] == "true"
+
+
+def test_build_bash_env_set_env_can_override_no_color(tmp_path: Path) -> None:
+    env = build_bash_env(SessionConfig(
+        workspace=Workspace(path=tmp_path), set_env={"NO_COLOR": "0"}), _BASH_COMMAND)
+    assert env["NO_COLOR"] == "0"
 
 
 def test_build_bash_env_always_sets_shell_and_bash_to_bash_command(tmp_path: Path) -> None:
