@@ -16,21 +16,25 @@
 
 ### Feature backlog
 
-* Add a session-specific env file in the session state dir. It's preloaded into every bash cmd. Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an env var when running hooks, so they can customize the env.
+* Add a session-specific env file in the session state dir. It's preloaded into every bash cmd.
+  Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an
+  env var when running hooks, so they can customize the env.
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
   masks out a secret, put the file on a list of sensitive files. This file list should be fed to
   the BashTool command classifier and if it appears that a bash command could give the agent unmasked access
-  to the file contents or otherwise exfiltrate the credentials, it should be marked as 9/10+ risk (credential extraction attempt).
+  to the file contents or otherwise exfiltrate the credentials, it should be marked as 9/10+ risk
+  (credential extraction attempt).
 
 * New Subagent roles:
   * project_manager -- keep track of fine-grained tasks and ensure that they are all
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
     registered with chainlink.
-  * Add a /make-plan-tasks skill that explains how to recursively break down a plan into steps and link them together with the chainlink-based Todo* tools.
+  * Add a /make-plan-tasks skill that explains how to recursively break down a plan into steps and link
+    them together with the chainlink-based Todo* tools.
   * Add a skill for Operator to manage a Planner, one or more Implementers, and Reviewer(s) to
     deliver a complete feature.
   * ... The goal of this is to eventually support a "software factory" model where the system is
@@ -127,7 +131,8 @@
   * If the agent does *not* have a plan, after a while, redirect it to write down some
     objectives for itself via TodoWrite and use TodoNext to start focusing on task-oriented work.
   * Start adding system interjections mentioning how many turns the agent has taken, or how
-    many tool calls (vs total tool call budget / limit) it has performed. Parents should be able to set (more limited) tool use budgets for child sessions.
+    many tool calls (vs total tool call budget / limit) it has performed. Parents should be able to
+    set (more limited) tool use budgets for child sessions.
 
 ## TUI
 
@@ -284,12 +289,12 @@
 * (#agent) Subagent `starting_task_id`: add a field to `CreateSubagent` that lets the parent start the
   subagent off with a specific todo item pre-claimed, instead of the subagent having to call
   `TodoCreate`/`TodoNext` itself once it starts. Per-agent task labels and `TodoCreate`'s
-  `assign_to` (see docs/specs/chainlink-task-tracking.md's "Task assignment" section) already
-  let a parent delegate a task to a specific subagent id; this would just fold that into
-  `CreateSubagent` itself as a convenience, and incorporate the task summary into the 1st subagent user prompt. If the task was labeled `all`, claim it first by
-  removing the `all` label so no other subagent poaches it while the new subagent is starting up.
-  Somewhere in there (the parent? the child?) should explicitly put the `agent:(id)` label for the
-  subagent onto the task in chainlink.
+  `assign_to` (see docs/specs/chainlink-task-tracking.md's "Task assignment" section) already let a
+  parent delegate a task to a specific subagent id; this would just fold that into `CreateSubagent`
+  itself as a convenience, and incorporate the task summary into the 1st subagent user prompt. If
+  the task was labeled `all`, claim it first by removing the `all` label so no other subagent
+  poaches it while the new subagent is starting up. Somewhere in there (the parent? the child?)
+  should explicitly put the `agent:(id)` label for the subagent onto the task in chainlink.
 
 * (#agent) Notify subagents in a group when a new subagent is created or one is removed from the group,
   and broadcast active/idle state changes -- the `AgentGroup` interjection (see

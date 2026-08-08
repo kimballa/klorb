@@ -52,8 +52,8 @@ def _token_matches_literal(pattern_token: str, candidate_token: str) -> bool:
     just a literal asterisk to match verbatim, not a wildcard: `"a*b"` matches only the literal
     candidate token `"a*b"`. This is a deliberately narrow, single-suffix-wildcard grammar (a
     plain string-prefix check, not a general glob/regex) -- see
-    docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md for why a wildcard anywhere in
-    a token (not just trailing) was rejected as unnecessarily permissive.
+    docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md for why a
+    wildcard anywhere in a token (not just trailing) was rejected as unnecessarily permissive.
     """
     if pattern_token.endswith(WILDCARD_TOKEN) and len(pattern_token) > 1:
         return candidate_token.startswith(pattern_token[:-1])

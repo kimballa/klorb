@@ -31,7 +31,7 @@ starts an interactive, full-screen terminal REPL instead. Passing
 `--interactive` together with `-m`/`--message` starts the REPL with that
 message submitted as the first turn, then keeps the REPL open for more.
 
-Subcommand overview: 
+Subcommand overview:
 
 * Invoked as `klorb init`, it instead bootstraps a `klorb-config.json` file.
 * Invoked as `klorb system-prompt`, it dumps the resolved system prompt and tool
@@ -106,7 +106,7 @@ See the COMMANDS section for more details about these operating modes.
   file on top of the usual stack. Exit status is `0` on success.
 * `server` [`--config` *FILE*]
 
-  Runs a persistent process that reads newline-delimited JSON (JSONL) 
+  Runs a persistent process that reads newline-delimited JSON (JSONL)
   command records from stdin (JSON-RPC) to communicate with
   IDE plug-ins, etc, over the agent communication protocol (ACP).
   Stops (exit status `0`) on a shutdown command, on stdin reaching EOF, or on

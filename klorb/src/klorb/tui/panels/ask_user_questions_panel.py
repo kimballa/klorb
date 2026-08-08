@@ -140,7 +140,8 @@ class AskUserQuestionsPanel(Vertical):
     def compose(self) -> ComposeResult:
         # `markup=False` on the header and question: both carry arbitrary model-authored text,
         # which is parsed as console markup by default and would crash the compositor at reflow
-        # on a literal `[` (see docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md).
+        # on a literal `[` (see
+        # docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md).
         widgets: list[Widget] = [
             Static(self.header_text(), id=ASK_USER_QUESTIONS_HEADER_ID, markup=False)]
         widgets.append(Static(
