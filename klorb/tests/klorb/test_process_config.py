@@ -85,7 +85,7 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
 def test_default_config_layer_reads_the_packaged_resource() -> None:
     layer = _real_default_config_layer([]).contents
     assert layer["sessionDefaults"]["model"] == DEFAULT_MODEL
-    assert "~/.ssh" in layer["sessionDefaults"]["readDirs"]["deny"]
+    assert "${home}/.ssh" in layer["sessionDefaults"]["readDirs"]["deny"]
 
 
 def test_default_config_layer_strips_the_schema_envelope() -> None:
@@ -106,7 +106,7 @@ def test_default_config_layer_is_merged_when_no_other_config_files_exist(
     process_config = load_process_config(cwd=tmp_path)
 
     assert process_config.session.model == DEFAULT_MODEL
-    assert Path("~/.ssh") in process_config.session.read_dirs.deny
+    assert Path.home() / ".ssh" in process_config.session.read_dirs.deny
 
 
 def test_default_config_layer_is_overridden_by_etc_config(
@@ -132,7 +132,7 @@ def test_default_config_layer_readdirs_deny_survives_later_layers_own_allow(
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
-    assert Path("~/.ssh") in process_config.session.read_dirs.deny
+    assert Path.home() / ".ssh" in process_config.session.read_dirs.deny
     assert Path("/ok") in process_config.session.read_dirs.allow
 
 

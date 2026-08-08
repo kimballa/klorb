@@ -32,9 +32,6 @@
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
     registered with chainlink.
-  * May also want an "Implementer" role which is basically like Operator but only for the implementation
-    part; doesn't itself spawn planners, reviewers, etc. Its job is to just implement plans already
-    written. It may create tasks for itself but not others, see group-wide tasks, and receive tasks.
   * Add a skill for Operator to manage a Planner, one or more Implementers, and Reviewer(s) to
     deliver a complete feature.
   * ... The goal of this is to eventually support a "software factory" model where the system is

@@ -9,10 +9,12 @@ converse with asynchronously, and receive a report back from — `CreateSubagent
 system prompt, and (usually narrower) tool/skill access, but it is not a standing team member:
 it answers one request and sits dormant until asked a follow-up or the whole session tree closes.
 
-Today three roles exist as something a subagent can be launched as -- `explorer`
+Today four roles exist as something a subagent can be launched as -- `explorer`
 (`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`), `reviewer`
-(`.../roles/reviewer/default.md`), and `planner` (`.../roles/planner/default.md`) -- and only the `operator` role (the top-level, user-facing
-session) is permitted to launch any of them — see `klorb/src/klorb/resources/agents.json`.
+(`.../roles/reviewer/default.md`), `planner` (`.../roles/planner/default.md`), and
+`implementer` (`.../roles/implementer/default.md`) -- and only the `operator` role (the
+top-level, user-facing session) is permitted to launch any of them — see
+`klorb/src/klorb/resources/agents.json`.
 
 ## Configuration
 
@@ -406,6 +408,26 @@ review is a bounded request/response, not ongoing work), `assigns_tasks: true` (
 follow-up work it finds but decides is out of scope, assigned to the parent or another agent in
 the group), and `see_group_tasks: true` (it may see everything the group is tracking, for
 context on what the change was supposed to accomplish).
+
+## Implementer role
+
+`resources/system_prompts.d/roles/implementer/default.md` instructs the Implementer to carry
+out a plan its creator (or a Planner) already wrote, running the same
+research/decide/execute/verify/report loop as `operator`'s own default prompt but without any
+of Operator's task-ownership, delegation, or problem-decomposition responsibilities — it never
+scopes, plans, or reviews another agent's work, and its report is expected to flag a plan that
+turns out to be wrong rather than silently reinterpreting it.
+
+Like Reviewer, its `agents.json` entry sets no `restrict_to.tools`/`.skills` at all and
+`enforce_readonly_tools` is left at its `false` default — it inherits its creator's full tool
+set, since carrying out a plan requires the same file-edit and `Bash` access as any other
+implementation work. `restrict_to.subagent_roles` names only `["explorer"]` and
+`allow_subagents: true`, so an Implementer may launch Explorer subagents for research but can
+never launch a Planner, Reviewer, or another Implementer — implementation is not something it
+delegates onward. Its `agent_capabilities` are `accepts_tasks: true` (it may hold a group task,
+or one of its own, as its current tracked task), `assigns_tasks: false` (`TodoCreate` may only
+target itself; it cannot file work for another agent), and `see_group_tasks: true` (it may see
+everything the group is tracking, for context on how its slice of the plan fits the rest).
 
 ## Subagents panel (TUI)
 
