@@ -275,6 +275,9 @@ async def test_quit_on_success_exits_after_a_successful_turn() -> None:
         await pilot.pause()
 
         app.exit.assert_called_once()
+        # The triggering turn's response text is stashed so `run_repl()` can print it once the
+        # TUI has torn down -- see docs/specs/terminal-repl.md.
+        assert app._final_turn_response == "model reply"
 
 
 async def test_quit_on_success_off_by_default_stays_in_the_repl() -> None:
@@ -291,6 +294,7 @@ async def test_quit_on_success_off_by_default_stays_in_the_repl() -> None:
         await pilot.pause()
 
         app.exit.assert_not_called()
+        assert app._final_turn_response is None
 
 
 async def test_quit_on_success_disregarded_on_error() -> None:
@@ -308,6 +312,7 @@ async def test_quit_on_success_disregarded_on_error() -> None:
 
         app.exit.assert_not_called()
         assert app._quit_on_success is False
+        assert app._final_turn_response is None
 
 
 async def test_quit_on_success_disregarded_on_abort() -> None:
@@ -325,6 +330,7 @@ async def test_quit_on_success_disregarded_on_abort() -> None:
 
         app.exit.assert_not_called()
         assert app._quit_on_success is False
+        assert app._final_turn_response is None
 
 
 async def test_quit_on_success_latches_off_so_a_later_clean_turn_does_not_exit() -> None:

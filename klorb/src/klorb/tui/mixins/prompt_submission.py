@@ -615,14 +615,16 @@ class PromptSubmissionMixin(ReplAppBase):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(response_text)
-        self._finish_turn(history, was_pinned, agent_turn_succeeded=True)
+        self._finish_turn(
+            history, was_pinned, agent_turn_succeeded=True, response_text=response_text)
 
     def _show_response(self, response_text: str) -> None:
         """Append a model response to the history and re-enable the input box."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         history.mount(Markdown(response_text, classes="response"))
-        self._finish_turn(history, was_pinned, agent_turn_succeeded=True)
+        self._finish_turn(
+            history, was_pinned, agent_turn_succeeded=True, response_text=response_text)
 
     def _show_error(self, message: str) -> None:
         """Append an error message to the history and re-enable the input box. Constructed
@@ -693,6 +695,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _finish_turn(
         self, history: VerticalScroll, was_pinned: bool, *, agent_turn_succeeded: bool,
+        response_text: str | None = None,
     ) -> None:
         """Scroll the history into view (iff `was_pinned`, see `_scroll_if_pinned`), refresh the
         token tally, and re-enable and refocus the input box (see
@@ -740,16 +743,19 @@ class PromptSubmissionMixin(ReplAppBase):
         docs/specs/session-persistence.md.
 
         `agent_turn_succeeded` is `True` only for a model turn that actually produced a response
-        (`_show_response`/`_finalize_streamed_response`) -- `False` for an error, an aborted
-        turn, the `_ensure_turn_finished` backstop, or a `!`-prefixed shell command's own
-        "turn". When `self._quit_on_success` (`--quit-on-success`) is set, `agent_turn_succeeded`
-        is `True`, and no message was queued during the turn (see the drain below), this closes
-        the session and quits the process -- the `-m`/`--interactive` "run one turn, then get out
-        of the way" use case. Any other outcome -- a queued interjection, an error, or an abort --
-        latches `self._quit_on_success` off for the rest of the process's life instead of merely
-        skipping the quit for this one turn: see
-        docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md for why a later turn that
-        happens to finish clean must not re-arm it.
+        (`_show_response`/`_finalize_streamed_response`, which also pass that response's text as
+        `response_text`) -- `False` for an error, an aborted turn, the `_ensure_turn_finished`
+        backstop, or a `!`-prefixed shell command's own "turn" (`response_text` stays `None` for
+        all of those). When `self._quit_on_success` (`--quit-on-success`) is set,
+        `agent_turn_succeeded` is `True`, and no message was queued during the turn (see the
+        drain below), this stashes `response_text` on `self._final_turn_response` -- so
+        `klorb.tui.entrypoint.run_repl` can print it to stdout once the TUI has actually torn
+        down, since otherwise a quit-on-success exit would leave no visible trace of what the
+        agent actually said -- then closes the session and quits the process. Any other outcome
+        -- a queued interjection, an error, or an abort -- latches `self._quit_on_success` off
+        for the rest of the process's life instead of merely skipping the quit for this one
+        turn: see docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md for why a
+        later turn that happens to finish clean must not re-arm it.
         """
         self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
@@ -779,6 +785,7 @@ class PromptSubmissionMixin(ReplAppBase):
         elif not agent_turn_succeeded:
             self._quit_on_success = False
         elif self._quit_on_success:
+            self._final_turn_response = response_text
             self._session.close()
             self._begin_exit()
         if self._exit_requested:

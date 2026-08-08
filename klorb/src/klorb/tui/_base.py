@@ -70,6 +70,7 @@ class ReplAppBase(App[None]):
     _config_flag_path: Path | None
     _skip_session_restore: bool
     _quit_on_success: bool
+    _final_turn_response: str | None
     _cancel_event: threading.Event | None
     _shell_cancel_event: threading.Event | None
     _last_ctrl_c_at: float
@@ -128,6 +129,7 @@ class ReplAppBase(App[None]):
 
     def _finish_turn(
         self, history: VerticalScroll, was_pinned: bool, *, agent_turn_succeeded: bool,
+        response_text: str | None = None,
     ) -> None: ...
 
     def _mount_mascot_greeting(self, history: VerticalScroll) -> None: ...

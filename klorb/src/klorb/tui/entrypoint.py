@@ -67,6 +67,12 @@ def run_repl(
     also captured to a `/tmp` crash log file — via `CrashLogTee` standing in for `App.
     error_console`'s output stream — before `_handle_repl_crash` reports the crash (and saves
     session state, where possible) once `run()` returns.
+
+    If `quit_on_success` made `ReplApp` exit on its own (`PromptSubmissionMixin._finish_turn`),
+    `app._final_turn_response` holds that turn's response text; once `App.run()` has returned
+    and the TUI has fully torn down, it's printed to stdout via a plain `print()` (not the
+    logger) so the agent's final answer is still visible on the terminal -- otherwise the
+    process would just vanish with no trace of what it actually said.
     """
     workspace_root = session.config.workspace.path if session is not None else Path.cwd()
     crash_tee = CrashLogTee(sys.stderr, crash_log_path(workspace_root))
@@ -91,3 +97,5 @@ def run_repl(
         # snoozing it (see docs/specs/interrupt-and-liveness-watchdog.md).
         app._watchdog.stop()
         crash_tee.close()
+    if app._final_turn_response is not None:
+        print(app._final_turn_response)

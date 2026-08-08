@@ -1,17 +1,18 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.tui.entrypoint: run_repl's crash handling."""
+"""Tests for klorb.tui.entrypoint: run_repl's crash handling and its quit-on-success final-
+response print."""
 
 import contextlib
 import io
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from tui.conftest import _isolated_data_dir, _repl_app_for_workspace, _sample_message, _session
 
 from klorb.logging_config import CrashLogTee
 from klorb.tui.app import ReplApp
-from klorb.tui.entrypoint import _handle_repl_crash
+from klorb.tui.entrypoint import _handle_repl_crash, run_repl
 from klorb.workspace import TrustManager
 from klorb.workspace.session_store import read_session_state, read_sessions_index
 
@@ -107,3 +108,39 @@ async def test_handle_repl_crash_prints_pointer_messages_to_stderr(
     output = stderr.getvalue()
     assert str(log_path) in output
     assert "session state saved" in output
+
+
+def _mock_repl_app(*, final_turn_response: str | None, return_code: int = 0) -> MagicMock:
+    """A stand-in for `run_repl()`'s `ReplApp(...)` construction: a `run()` that does nothing
+    (no real Textual event loop) plus the two attributes `run_repl()` reads afterward."""
+    mock_app = MagicMock()
+    mock_app.return_code = return_code
+    mock_app._final_turn_response = final_turn_response
+    return mock_app
+
+
+def test_run_repl_prints_final_turn_response_after_teardown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A `--quit-on-success` exit leaves `ReplApp._final_turn_response` set to the triggering
+    turn's response text; `run_repl()` must print it to stdout via a plain `print()` (not the
+    logger) once `App.run()` has returned and the TUI has torn down, so the agent's final answer
+    is still visible on the terminal -- see docs/specs/terminal-repl.md."""
+    mock_app = _mock_repl_app(final_turn_response="the final answer")
+    with patch("klorb.tui.entrypoint.ReplApp", return_value=mock_app):
+        run_repl(session=_session(MagicMock()))
+
+    assert capsys.readouterr().out == "the final answer\n"
+
+
+def test_run_repl_prints_nothing_when_quit_on_success_never_fired(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`_final_turn_response` stays `None` for every exit path other than a `--quit-on-success`
+    close (Ctrl+Q, a crash, an ordinary interrupt) -- `run_repl()` must not print anything for
+    those."""
+    mock_app = _mock_repl_app(final_turn_response=None)
+    with patch("klorb.tui.entrypoint.ReplApp", return_value=mock_app):
+        run_repl(session=_session(MagicMock()))
+
+    assert capsys.readouterr().out == ""

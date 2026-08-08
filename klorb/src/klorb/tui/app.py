@@ -346,6 +346,12 @@ class ReplApp(
         and exits the process instead of leaving the REPL open. Latched back to `False` by that
         same method the first time a turn errors, is aborted, or has a message queued during it
         -- see `_finish_turn` and docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md."""
+        self._final_turn_response: str | None = None
+        """The response text of the turn that triggered a `--quit-on-success` exit, set by
+        `PromptSubmissionMixin._finish_turn` right before it closes the session and quits --
+        `None` on every other exit path. `klorb.tui.entrypoint.run_repl` prints this to stdout
+        once `App.run()` returns and the TUI has actually torn down, so a quit-on-success exit
+        still leaves the agent's final answer visible on the terminal."""
         self._file_index: WorkspaceFileIndex | None = None
         """The `@`-mention file finder's workspace index, started (`_start_file_finder_index`)
         only once workspace trust is resolved and only for a real `trust_manager` -- the same
