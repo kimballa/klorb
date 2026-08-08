@@ -229,14 +229,30 @@ def _write_sessions_index(workspace: Workspace, index: SessionsIndexState) -> No
         schema_name=SESSIONS_LIST_SCHEMA_NAME, schema_version=SESSIONS_LIST_SCHEMA_VERSION)
 
 
+def _is_safe_session_subdir(workspace: Workspace, subdir: str) -> bool:
+    """Whether `subdir` (an untrusted `RecentSession.subdir` read back from `sessions.json`)
+    resolves to somewhere inside `sessions_dir(workspace)` once `..` segments and symlinks are
+    followed. Guards `_prune_sessions_index` against a hand-edited or corrupted index entry that
+    could otherwise send `shutil.rmtree`/`session_lock_path` outside the session store."""
+    root = sessions_dir(workspace).resolve()
+    candidate = (root / subdir).resolve()
+    return candidate.is_relative_to(root)
+
+
 def _prune_sessions_index(workspace: Workspace, index: SessionsIndexState) -> None:
     """Mutate `index.recent_sessions` in place, dropping (and deleting the directory of) every
     entry beyond `MAX_RECENT_SESSIONS` whose `session.lock` isn't currently held by a live
-    process -- see `MAX_RECENT_SESSIONS`'s own docstring. Called only from
-    `touch_recent_session()`, already holding `workspace.lock`."""
+    process -- see `MAX_RECENT_SESSIONS`'s own docstring. An entry whose `subdir` fails
+    `_is_safe_session_subdir` is dropped without touching the filesystem at all. Called only
+    from `touch_recent_session()`, already holding `workspace.lock`."""
     kept = index.recent_sessions[:MAX_RECENT_SESSIONS]
     overflow = index.recent_sessions[MAX_RECENT_SESSIONS:]
     for entry in overflow:
+        if not _is_safe_session_subdir(workspace, entry.subdir):
+            logger.warning(
+                "Dropping sessions.json entry %s with unsafe subdir %r that escapes %s.",
+                entry.session_id, entry.subdir, sessions_dir(workspace))
+            continue
         lock = create_lockfile(session_lock_path(workspace, entry.subdir))
         if lock.is_held_by_other():
             logger.debug(

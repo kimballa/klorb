@@ -18,14 +18,6 @@
   WaitForSubagent repeatedly until it completes.
   * Likewise, Reviewer should be told by /code-review that its explorer children will also run > 2 mins each.
 
-* Path traversal bug could lead to data deletion if sessions.json is maliciously edited:
-  `_prune_sessions_index` (session_store.py:240, 247, 250) reads `entry.subdir` from sessions.json and
-  passes it to `shutil.rmtree()` and `session_lock_path()`. A hand-crafted sessions.json with a traversal
-  subdir could cause deletion outside sessions/. When rehydrating the session info from files,
-  the `subdir` field must be examined to make sure it is a proper subdir and does not escape the
-  session store dir (e.g. with `subdir='..'`). We should check the fully-resolved subdir before
-  use to ensure that there isn't some symlink shenanigans pointing it elsewhere either.
-
 ### Feature backlog
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.

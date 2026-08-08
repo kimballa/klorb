@@ -26,6 +26,7 @@ from klorb.workspace.session_store import (
     read_sessions_index,
     session_lock_path,
     session_state_path,
+    sessions_dir,
     sessions_list_path,
     touch_recent_session,
     write_session_image,
@@ -331,6 +332,100 @@ class TestPruning:
 
         assert read_session_state(workspace, "sess-0") is None
         assert not session_state_path(workspace, "sess-0").parent.exists()
+
+    def test_traversal_subdir_is_dropped_without_touching_filesystem(self, tmp_path: Path) -> None:
+        """A hand-edited `sessions.json` with a `..`-escaping `subdir` must not reach
+        `shutil.rmtree` -- the outside-of-`sessions/` target it names is left untouched, and the
+        bogus entry is simply dropped from the index."""
+        workspace = _workspace(tmp_path)
+        victim_dir = tmp_path / "victim"
+        victim_dir.mkdir(parents=True)
+        (victim_dir / "keep-me.txt").write_text("do not delete", encoding="utf-8")
+
+        for i in range(MAX_RECENT_SESSIONS):
+            session_id = f"sess-{i}"
+            write_session_state(workspace, session_id, SessionConfig(), [])
+            touch_recent_session(workspace, session_id, session_id, f"Session {i}")
+
+        malicious = "../../../victim"
+        write_versioned_json(
+            sessions_list_path(workspace),
+            {"recent_sessions": [
+                json.loads(entry.model_dump_json())
+                for entry in read_sessions_index(workspace).recent_sessions] + [
+                {"session_id": "evil", "subdir": malicious, "title": "Evil"}]},
+            schema_name=SESSIONS_LIST_SCHEMA_NAME, schema_version=SESSIONS_LIST_SCHEMA_VERSION)
+
+        write_session_state(workspace, "sess-new", SessionConfig(), [])
+        touch_recent_session(workspace, "sess-new", "sess-new", "Newest")
+
+        assert (victim_dir / "keep-me.txt").exists()
+        index = read_sessions_index(workspace)
+        assert "evil" not in {entry.session_id for entry in index.recent_sessions}
+
+    def test_symlinked_subdir_component_escaping_sessions_dir_is_dropped(
+        self, tmp_path: Path,
+    ) -> None:
+        """A `subdir` with no `..` in it at all, like `malicious_link/somewhere`, is still
+        unsafe if `malicious_link` is a symlink pointing outside `sessions_dir(workspace)` --
+        resolving it lands outside the session store just the same, so it must be dropped
+        without `shutil.rmtree` ever reaching the real target."""
+        workspace = _workspace(tmp_path)
+        victim_dir = tmp_path / "victim"
+        victim_dir.mkdir(parents=True)
+        (victim_dir / "keep-me.txt").write_text("do not delete", encoding="utf-8")
+
+        for i in range(MAX_RECENT_SESSIONS):
+            session_id = f"sess-{i}"
+            write_session_state(workspace, session_id, SessionConfig(), [])
+            touch_recent_session(workspace, session_id, session_id, f"Session {i}")
+
+        (sessions_dir(workspace) / "malicious_link").symlink_to(victim_dir, target_is_directory=True)
+        malicious = "malicious_link/somewhere"
+        write_versioned_json(
+            sessions_list_path(workspace),
+            {"recent_sessions": [
+                json.loads(entry.model_dump_json())
+                for entry in read_sessions_index(workspace).recent_sessions] + [
+                {"session_id": "evil", "subdir": malicious, "title": "Evil"}]},
+            schema_name=SESSIONS_LIST_SCHEMA_NAME, schema_version=SESSIONS_LIST_SCHEMA_VERSION)
+
+        write_session_state(workspace, "sess-new", SessionConfig(), [])
+        touch_recent_session(workspace, "sess-new", "sess-new", "Newest")
+
+        assert (victim_dir / "keep-me.txt").exists()
+        index = read_sessions_index(workspace)
+        assert "evil" not in {entry.session_id for entry in index.recent_sessions}
+
+    def test_subdir_inside_a_symlinked_sessions_dir_is_still_pruned_normally(
+        self, tmp_path: Path,
+    ) -> None:
+        """If `sessions_dir(workspace)` itself is a symlink pointing somewhere outside its
+        natural location under `$KLORB_DATA_DIR`, an ordinary nested `subdir` inside that
+        retargeted tree is still safe: the containment check resolves `sessions_dir(workspace)`
+        too, so it compares against where the symlink actually points, not its nominal path.
+        Confirmed by checking that pruning it actually deletes its (real, retargeted) directory
+        -- the unsafe-subdir path would instead leave it on disk and only drop the index entry.
+        """
+        workspace = _workspace(tmp_path)
+        real_sessions_dir = tmp_path / "elsewhere" / "real-sessions"
+        real_sessions_dir.mkdir(parents=True)
+        nominal_sessions_dir = sessions_dir(workspace)
+        nominal_sessions_dir.parent.mkdir(parents=True, exist_ok=True)
+        nominal_sessions_dir.symlink_to(real_sessions_dir, target_is_directory=True)
+
+        write_session_state(workspace, "foo/bar", SessionConfig(), [])
+        touch_recent_session(workspace, "nested", "foo/bar", "Nested")
+        assert (real_sessions_dir / "foo" / "bar" / "session.json").exists()
+
+        for i in range(MAX_RECENT_SESSIONS):
+            session_id = f"sess-{i}"
+            write_session_state(workspace, session_id, SessionConfig(), [])
+            touch_recent_session(workspace, session_id, session_id, f"Session {i}")
+
+        index = read_sessions_index(workspace)
+        assert "nested" not in {entry.session_id for entry in index.recent_sessions}
+        assert not (real_sessions_dir / "foo" / "bar").exists()
 
     def test_locked_entry_survives_past_the_cap(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)
