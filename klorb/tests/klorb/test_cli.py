@@ -4,6 +4,7 @@
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -53,6 +54,61 @@ def test_main_prints_prompt_response(capsys: pytest.CaptureFixture[str]) -> None
 
     mock_session.run_one_shot.assert_called_once_with("what is 2+2?", on_chunk=mock.ANY)
     assert capsys.readouterr().out == "model reply\n"
+
+
+def test_main_dispatches_onprocessstart_before_and_onprocessend_after_the_session(
+    stub_process_config: MagicMock,
+) -> None:
+    """`onProcessStart` fires once `ProcessConfig` is resolved, before any `Session` exists;
+    `onProcessEnd` fires once the process is otherwise done, even on the one-shot path where
+    `Session.close()` already ran."""
+    order: list[str] = []
+    mock_session = MagicMock()
+
+    def _run_one_shot(*args: object, **kwargs: object) -> str:
+        order.append("run_one_shot")
+        return "reply"
+
+    mock_session.run_one_shot.side_effect = _run_one_shot
+
+    def _session_side_effect(*args: object, **kwargs: object) -> MagicMock:
+        order.append("Session")
+        return mock_session
+
+    mock_dispatcher = MagicMock()
+
+    def _dispatch_side_effect(hook_name: str, hook_input: Any, **kwargs: object) -> MagicMock:
+        order.append(hook_name)
+        return MagicMock()
+
+    mock_dispatcher.dispatch.side_effect = _dispatch_side_effect
+
+    with patch("klorb.cli.HookDispatcher", return_value=mock_dispatcher) as mock_dispatcher_cls:
+        with patch("klorb.cli.Session", side_effect=_session_side_effect):
+            with patch("sys.argv", ["klorb", "-m", "hi"]):
+                cli.main()
+
+    mock_dispatcher_cls.assert_called_once_with(stub_process_config.return_value)
+    assert order == ["onProcessStart", "Session", "run_one_shot", "onProcessEnd"]
+    first_hook, second_hook = mock_dispatcher.dispatch.call_args_list
+    assert first_hook.args[1].event == "Startup"
+    assert second_hook.args[1].event == "Shutdown"
+
+
+def test_main_dispatches_onprocessend_even_when_the_turn_raises(
+    stub_process_config: MagicMock,
+) -> None:
+    mock_session = MagicMock()
+    mock_session.run_one_shot.side_effect = RuntimeError("boom")
+    mock_dispatcher = MagicMock()
+    with patch("klorb.cli.HookDispatcher", return_value=mock_dispatcher):
+        with patch("klorb.cli.Session", return_value=mock_session):
+            with patch("sys.argv", ["klorb", "-m", "hi"]):
+                with pytest.raises(RuntimeError):
+                    cli.main()
+
+    hook_names = [call.args[0] for call in mock_dispatcher.dispatch.call_args_list]
+    assert hook_names == ["onProcessStart", "onProcessEnd"]
 
 
 def test_main_configures_minimal_logging_immediately_after_load_dotenv() -> None:

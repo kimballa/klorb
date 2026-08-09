@@ -117,11 +117,19 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         Restoring the workspace's most recently touched saved session (below) is additionally
         skipped when `_skip_session_restore` is set (`klorb --new`), leaving the freshly
         constructed `Session` as-is even for a trusted workspace with saved sessions on disk.
+
+        Once trust is fully settled -- this method's only exit points below -- fires
+        `onSessionStart` (`Session.fire_session_start_hook`) exactly once for this app's
+        lifetime, tagged `event="ResumeSession"` if the block above swapped in a restored
+        session, `"NewSession"` otherwise. Fires from here rather than from `Session.__init__`
+        directly because trust isn't settled yet at construction time for a brand-new
+        workspace -- `_bootstrap_new_workspace` above is what settles it.
         """
         if self._trust_manager is None:
             return
         workspace = self._session.config.workspace
-        if workspace.id is None:
+        just_bootstrapped = workspace.id is None
+        if just_bootstrapped:
             workspace = await self._bootstrap_new_workspace(workspace)
             self._apply_workspace_config(workspace)
         self._announce_workspace(workspace)
@@ -136,8 +144,13 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         # background index only for a real `cli.main()` run, against the now-resolved workspace
         # root.
         self._start_file_finder_index(workspace)
+        session_before_restore = self._session
         if workspace.trusted and not self._skip_session_restore:
             self._maybe_restore_latest_session(workspace)
+        resumed = self._session is not session_before_restore
+        self._session.fire_session_start_hook(
+            "ResumeSession" if resumed else "NewSession",
+            workspace_just_bootstrapped=just_bootstrapped)
 
     def _maybe_restore_latest_session(self, workspace: Workspace) -> None:
         """If `workspace`'s `sessions.json` has a most-recently-touched entry, and it isn't
