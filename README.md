@@ -36,4 +36,4 @@ local settings, which you can modify. If this file does not exist, run `bin/klor
 Run `bin/klorb` to start the terminal UI.
 
 There are some options to control the interface; see `bin/klorb --help` for a list.
-There is further detail and examples in [usage.md](klorb/usage.md).
+There is further detail and examples in [usage.md](docs/user/usage.md).
