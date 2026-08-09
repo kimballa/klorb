@@ -14,6 +14,7 @@ from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.skill import common as skill_common
 from klorb.tools.skill.activate_skill import ActivateSkillTool
+from klorb.tools.skill.common import MAX_SKILL_NAME_DISPLAY_LENGTH
 from klorb.tools.skill.read_skill_file import ReadSkillFileTool
 from klorb.tools.skill.search_skills import SearchSkillsTool
 from klorb.workspace import Workspace
@@ -79,6 +80,16 @@ def test_search_excludes_denied_skill(tmp_path: Path) -> None:
     assert result["match_count"] == 0
 
 
+def test_search_excludes_disable_model_invocation_skill(tmp_path: Path) -> None:
+    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "user-only")]))
+    skill_dir = _workspace_skills_dir(context) / "user-only"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\ndescription: about birds\ndisable-model-invocation: true\n---\n")
+    result = SearchSkillsTool(context).apply({"queries": ["bird"]})
+    assert result["match_count"] == 0
+
+
 # --- ActivateSkill ---
 
 
@@ -96,9 +107,29 @@ def test_activate_allow_returns_content_and_manifest(tmp_path: Path) -> None:
     assert result["tokens"] > 0
 
 
-def test_activate_deny_raises_permission_error(tmp_path: Path) -> None:
+def test_activate_pre_denied_skill_raises_value_error_not_found(tmp_path: Path) -> None:
+    """A skill already `"deny"`-verdicted when the catalog is first built is excluded from the
+    catalog entirely (see docs/specs/skills.md), so activating it reads the same as an unknown
+    name -- there's no permission question to raise, since the skill was never resolvable."""
     context = _context(tmp_path, skill_rules=SkillRules(deny=[("workspace", "s")]))
     _write_skill(_workspace_skills_dir(context), "s", "d")
+    with pytest.raises(ValueError, match="no such skill"):
+        ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
+
+
+def test_activate_deny_after_catalog_built_raises_permission_error(tmp_path: Path) -> None:
+    """A skill denied *after* the catalog was already built (e.g. an interactive ask answered
+    "deny" mid-session) stays resolvable in memory until an explicit reload, so its `skillRules`
+    verdict is still checked at every use -- this path still raises `PermissionError`, unlike the
+    pre-denied case above."""
+    context = _context(tmp_path)  # empty rules -> ask
+    _write_skill(_workspace_skills_dir(context), "s", "d")
+    assert context.session is not None
+    # Force the catalog to build while the skill is merely "ask"-verdicted.
+    context.session.skill_catalog_registry.ensure_from_context(context)
+    assert context.session.skill_catalog_registry.canonical().get(("workspace", "s")) is not None
+
+    context.session_config.skill_rules = SkillRules(deny=[("workspace", "s")])
     with pytest.raises(PermissionError):
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
 
@@ -130,6 +161,42 @@ def test_activate_bad_name_raises_value_error(tmp_path: Path) -> None:
     context = _context(tmp_path)
     with pytest.raises(ValueError, match="skill name"):
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "../escape"})
+
+
+def test_activate_over_long_name_resolves_via_truncated_identity(tmp_path: Path) -> None:
+    """A skill directory whose basename is longer than `MAX_SKILL_NAME_DISPLAY_LENGTH` is
+    catalogued under its truncated form -- the same name every advertised listing shows -- so
+    calling `ActivateSkill` with exactly that (truncated) name always resolves, even though the
+    real directory name on disk is longer."""
+    long_name = "b" * (MAX_SKILL_NAME_DISPLAY_LENGTH + 15)
+    truncated_name = long_name[:MAX_SKILL_NAME_DISPLAY_LENGTH]
+    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", truncated_name)]))
+    _write_skill(_workspace_skills_dir(context), long_name, "d", body="the steps")
+
+    result = ActivateSkillTool(context).apply({"namespace": "workspace", "name": truncated_name})
+
+    assert result["name"] == truncated_name
+    assert "the steps" in result["content"]
+    # The untruncated real name is not a resolvable identity for ActivateSkill.
+    with pytest.raises(ValueError, match="no such skill"):
+        ActivateSkillTool(context).apply({"namespace": "workspace", "name": long_name})
+
+
+def test_activate_disable_model_invocation_skill_refuses_with_tailored_message(
+    tmp_path: Path,
+) -> None:
+    """The one legitimate way into a `disable-model-invocation` skill is the user's own message
+    starting with `/<name>` (`UserSkillActivation`) -- a model that guesses the name and calls
+    ActivateSkill directly must get a specific, actionable refusal, not the generic "no such
+    skill" a genuinely-unknown name gets."""
+    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "user-only")]))
+    skill_dir = _workspace_skills_dir(context) / "user-only"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\ndescription: d\ndisable-model-invocation: true\n---\n\nsecret steps\n")
+
+    with pytest.raises(ValueError, match="/user-only"):
+        ActivateSkillTool(context).apply({"namespace": "workspace", "name": "user-only"})
 
 
 # --- ReadSkillFile ---

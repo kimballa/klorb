@@ -355,3 +355,28 @@ def strip_system_interjections(text: str) -> str:
     # Collapse runs of blank lines (including the gaps left by removed blocks).
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+_USER_SKILL_ACTIVATION_RE = re.compile(
+    r"<SystemInterjection\s+subject=\"UserSkillActivation\">\n.*?\n(\{.*\})\n</SystemInterjection>",
+    re.DOTALL,
+)
+"""Matches the one `UserSkillActivation` block `strip_system_interjections` would otherwise
+elide entirely, capturing its JSON payload -- see `extract_skill_activation_notice`."""
+
+
+def extract_skill_activation_notice(text: str) -> str | None:
+    """If `text` (a stored user message's raw content, before `strip_system_interjections`)
+    carries a `UserSkillActivation` interjection, return a one-line "Activated skill: <namespace>/
+    <name>" notice for it -- so a restored history scroll still shows that a leading `/<name>`
+    mention activated a skill, even though the interjection body itself is stripped from the
+    displayed message. `None` if `text` carries no such interjection, or its payload doesn't
+    parse (never raises)."""
+    match = _USER_SKILL_ACTIVATION_RE.search(text)
+    if match is None:
+        return None
+    try:
+        payload = json.loads(match.group(1))
+        return f"Activated skill: {payload['namespace']}/{payload['name']}"
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None

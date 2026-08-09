@@ -260,7 +260,8 @@ def compute_root_session_grants(
     skill_catalog_registry.ensure(
         workspace_root=session_config.workspace.path,
         workspace_trusted=session_config.workspace.trusted,
-        claude_skills_compat=process_config.compatibility_claude_skills)
+        claude_skills_compat=process_config.compatibility_claude_skills,
+        skill_rules=session_config.skill_rules)
     skill_rules = _child_skill_rules(skill_catalog_registry, session_config, restrict_to)
     subagent_roles = compute_child_subagent_roles(frozenset(get_agent_registry().names()), restrict_to)
 

@@ -70,7 +70,8 @@ class ActivateSkillTool(Tool):
 
         registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
-            catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
+            catalog=registry.canonical(), typed_catalog=registry.typed(),
+            skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)
 
         payload = skill_activation_payload(resolved)

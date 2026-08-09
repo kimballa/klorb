@@ -36,6 +36,36 @@ SKILL_FILE_NAME = "SKILL.md"
 """The one file every skill directory must contain to be discoverable; its basename directory is
 the skill's `name` and its YAML frontmatter carries the skill's `description`."""
 
+MAX_SKILL_NAME_DISPLAY_LENGTH = 64
+"""Cap on a skill's canonical name -- defends against a hostile, arbitrarily-long directory or
+frontmatter-alias name bloating every turn's context. Applied once, at catalog-build time
+(`klorb.tools.skill.catalog.build_catalogs`), to *become* the skill's `(namespace, name)` identity
+itself -- not just a display-time copy -- so a name once advertised to the model or a user-facing
+skill list is always resolvable via `ActivateSkill`/`ReadSkillFile`."""
+
+MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH = 1024
+"""Cap on a skill's description as advertised to the model, for the same reason as
+`MAX_SKILL_NAME_DISPLAY_LENGTH` -- a frontmatter `description` is project- or user-supplied free
+text with no length limit of its own. Unlike `name`, `description` is never part of a skill's
+identity, so this cap is applied fresh at each display site rather than baked into the catalog."""
+
+
+def display_skill_name(name: str) -> str:
+    """`name` truncated to `MAX_SKILL_NAME_DISPLAY_LENGTH`, with any trailing `-` truncation would
+    leave behind stripped too -- so the result always satisfies `is_valid_skill_name` when `name`
+    itself did (truncation only removes characters from the end; `name` is already guaranteed not
+    to start with `-`, so stripping trailing dashes can never empty the string out). Called once,
+    at catalog-build time, to compute a skill's actual `(namespace, name)` identity when its real
+    name is over the cap -- see `klorb.tools.skill.catalog.build_catalogs`."""
+    return name[:MAX_SKILL_NAME_DISPLAY_LENGTH].rstrip("-")
+
+
+def display_skill_description(description: str) -> str:
+    """`description` truncated to `MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH` -- what's shown to the
+    model or a user-facing skill list."""
+    return description[:MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH]
+
+
 NAMESPACE_SCHEMA_PROPERTY: dict[str, object] = {
     "type": "string",
     "enum": list(VALID_NAMESPACES),
@@ -94,18 +124,22 @@ def validate_skill_name(name: object) -> str:
         raise ValueError("skill name must be a non-empty string")
     if not is_valid_skill_name(name):
         raise ValueError(
-            f"skill name must be a bare slug with no path separator, ':', or '..' component: "
-            f"{name!r}")
+            f"skill name must be a bare slug with no path separator, ':', or '..' component, no "
+            f"leading/trailing '-', and no '<'/'>': {name!r}")
     return name
 
 
 def is_valid_skill_name(name: str) -> bool:
-    """Whether `name` is usable as a skill directory basename: non-empty, no path separator or
-    `:` (the fully-qualified-skill-name separator -- see `klorb.permissions.skill_access.
-    format_fqsn`), and not `.`/`..`."""
+    """Whether `name` is usable as a skill directory basename, a frontmatter alias, or a
+    model-supplied `ActivateSkill`/`ReadSkillFile` argument: non-empty, no path separator or `:`
+    (the fully-qualified-skill-name separator -- see `klorb.permissions.skill_access.
+    format_fqsn`), not `.`/`..`, no leading/trailing `-` (ambiguous with a CLI-flag-style token),
+    and no `<`/`>` (would corrupt the `<SystemInterjection>`/skill-list markup a name rides in)."""
     return (
         bool(name) and "/" not in name and "\\" not in name and ":" not in name
         and name not in (".", "..")
+        and not name.startswith("-") and not name.endswith("-")
+        and "<" not in name and ">" not in name
     )
 
 
@@ -182,16 +216,23 @@ def _is_dir(node: Traversable) -> bool:
 
 def _skill_dir_names(source: Traversable) -> list[str]:
     """The sorted basenames of `source`'s immediate children that are valid, non-hidden skill
-    directories containing a `SKILL.md`."""
+    directories containing a `SKILL.md`. A directory that's otherwise a genuine skill candidate
+    (has a `SKILL.md`) but fails `is_valid_skill_name` is skipped with a logged warning, since
+    that's a content problem worth surfacing to whoever authored it -- a non-candidate child
+    (no `SKILL.md`, or not a directory at all) is never warned about regardless of its name."""
     if not _is_dir(source):
         return []
     names: list[str] = []
     for child in source.iterdir():
         name = child.name
-        if name.startswith(".") or not is_valid_skill_name(name):
+        if name.startswith("."):
             continue
-        if _is_dir(child) and child.joinpath(SKILL_FILE_NAME).is_file():
-            names.append(name)
+        if not (_is_dir(child) and child.joinpath(SKILL_FILE_NAME).is_file()):
+            continue
+        if not is_valid_skill_name(name):
+            logger.warning("Skill directory %r skipped: invalid name.", name)
+            continue
+        names.append(name)
     return sorted(names)
 
 

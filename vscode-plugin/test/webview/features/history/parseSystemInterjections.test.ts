@@ -1,7 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import { describe, expect, it } from 'vitest';
 
-import { parseSystemInterjections } from 'webview/features/history';
+import { parseSkillActivationIdentity, parseSystemInterjections } from 'webview/features/history';
 
 describe('parseSystemInterjections', () => {
   it('returns unchanged text when no interjections are present', () => {
@@ -82,5 +82,30 @@ describe('parseSystemInterjections', () => {
   it('returns original text when input is empty', () => {
     const result = parseSystemInterjections('');
     expect(result).toEqual({ interjections: [], remainingText: '' });
+  });
+});
+
+describe('parseSkillActivationIdentity', () => {
+  it('extracts namespace/name from a UserSkillActivation payload', () => {
+    const body =
+      'The user has invoked skill do-thing. Read the skill JSON that follows plus the ' +
+      "user's prompt, then apply this skill:\n" +
+      '{"namespace": "workspace", "name": "do-thing", "content": "steps", "files": [], "tokens": 3}';
+    expect(parseSkillActivationIdentity(body)).toEqual({
+      namespace: 'workspace',
+      name: 'do-thing',
+    });
+  });
+
+  it('returns undefined when the body has no JSON payload', () => {
+    expect(parseSkillActivationIdentity('no json here')).toBeUndefined();
+  });
+
+  it('returns undefined when the JSON payload is malformed', () => {
+    expect(parseSkillActivationIdentity('prefix {not valid json')).toBeUndefined();
+  });
+
+  it('returns undefined when namespace/name are missing from the payload', () => {
+    expect(parseSkillActivationIdentity('{"content": "steps"}')).toBeUndefined();
   });
 });

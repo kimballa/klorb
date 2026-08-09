@@ -4,6 +4,7 @@ interjections, the process-wide skill catalog, and the ActivateSkill permission-
 retry flow through Session._run_tool_calls."""
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -115,6 +116,58 @@ def test_denied_skill_absent_from_available_list(tmp_path: Path) -> None:
     assert "AvailableSkills" not in _user_content(session)
 
 
+def test_pre_denied_skill_absent_from_catalog_and_fuzzy_finder(tmp_path: Path) -> None:
+    """A skill denied before the catalog is ever built never enters either catalog at all -- not
+    just filtered from what's advertised -- so `discover_skills()` (the `_ext_list_skills` ACP
+    extension's own implementation, backing the vscode-plugin skill fuzzy finder) never sees it
+    either."""
+    session = _session(
+        tmp_path, skill_rules=SkillRules(deny=[("workspace", "secret")]))
+    _write_skill(_workspace_skills(session), "secret", "hidden")
+
+    skills = session.discover_skills()
+
+    assert skills == []
+    assert session.skill_catalog_registry.canonical().get(("workspace", "secret")) is None
+    assert session.skill_catalog_registry.typed().get(("workspace", "secret")) is None
+
+
+def test_disable_model_invocation_skill_absent_from_available_list_but_leading_mention_works(
+    tmp_path: Path,
+) -> None:
+    """A `disable-model-invocation: true` skill never appears in the AvailableSkills interjection
+    (it's only ever in the typed catalog), but a user's own leading `/<name>` mention still
+    activates it via UserSkillActivation -- the one legitimate way in."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "user-only")]), provider=provider)
+    skill_dir = _workspace_skills(session) / "user-only"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\ndescription: does the thing\ndisable-model-invocation: true\n---\n\nthe steps\n")
+
+    session.send_turn("/user-only go")
+    content = _user_content(session)
+    assert "AvailableSkills" not in content
+    assert '<SystemInterjection subject="UserSkillActivation">' in content
+    assert "the steps" in content
+
+
+def test_available_skills_interjection_truncates_long_description(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(tmp_path, provider=provider)
+    long_description = "x" * 2000
+    _write_skill(_workspace_skills(session), "do-thing", long_description)
+
+    session.send_turn("hello")
+    content = _user_content(session)
+    assert long_description not in content
+    assert "x" * 1024 in content
+    assert "x" * 1025 not in content
+
+
 def test_claude_skills_compat_listed_when_enabled(tmp_path: Path) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply()
@@ -196,20 +249,29 @@ def test_leading_skill_reference_activates_unconditionally(tmp_path: Path) -> No
     assert "SkillReference" not in content
 
 
-def test_leading_skill_reference_not_activated_without_allow(tmp_path: Path) -> None:
-    """An "ask"-verdicted skill never gets its content auto-injected -- only the ordinary
-    SkillReference reminder, so the model still has to call ActivateSkill and go through the
-    normal approval flow."""
+def test_leading_skill_reference_ask_verdict_auto_promotes_and_activates(tmp_path: Path) -> None:
+    """An "ask"-verdicted skill is auto-promoted to "allow" for this session and its content is
+    injected immediately -- typing the leading /<name> itself counts as the user's approval, so
+    no interactive ask panel is raised."""
     provider = MagicMock()
     provider.send_prompt.return_value = _reply()
     session = _session(tmp_path, provider=provider)  # empty rules -> ask
-    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="secret steps")
 
-    session.send_turn("/do-thing please handle this now")
+    asked: list[PermissionAskContext] = []
+
+    def on_ask(ctx: PermissionAskContext) -> PermissionDecision:
+        asked.append(ctx)
+        return PermissionDecision(action="deny", scope="once")
+
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="the steps")
+
+    session.send_turn("/do-thing please handle this now", TurnEventHandlers(on_permission_ask=on_ask))
     content = _user_content(session)
-    assert "UserSkillActivation" not in content
-    assert "secret steps" not in content
-    assert '<SystemInterjection subject="SkillReference">' in content
+    assert '<SystemInterjection subject="UserSkillActivation">' in content
+    assert "the steps" in content
+    assert not asked  # no interactive ask panel was ever raised
+    assert ("workspace", "do-thing") in session.config.skill_rules.allow
+    assert ("workspace", "do-thing") not in session.config.skill_rules.ask
 
 
 def test_leading_skill_reference_denied_gets_no_special_treatment(tmp_path: Path) -> None:
@@ -223,6 +285,64 @@ def test_leading_skill_reference_denied_gets_no_special_treatment(tmp_path: Path
     content = _user_content(session)
     assert "UserSkillActivation" not in content
     assert "SkillReference" not in content
+
+
+def test_leading_skill_reference_denied_after_catalog_built_is_skipped_and_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A skill already resolvable in this session's (unrebuilt) catalog, denied later mid-session
+    -- e.g. via an approval panel answered "deny" -- must still be skipped on a later leading
+    mention, exactly like a skill denied before the catalog was ever built, but since this is a
+    silent skip from the user's perspective it must also log a warning."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(tmp_path, provider=provider)  # empty rules -> ask
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="secret steps")
+
+    # First turn builds the catalog while the skill is still merely "ask"-verdicted.
+    session.send_turn("hello")
+    assert session.skill_catalog_registry.canonical().get(("workspace", "do-thing")) is not None
+
+    # Simulate the skill being denied mid-session (e.g. an approval panel answered "deny") --
+    # the catalog itself is not rebuilt.
+    session.config.skill_rules = SkillRules(deny=[("workspace", "do-thing")])
+
+    with caplog.at_level(logging.WARNING):
+        session.send_turn("/do-thing please handle this now")
+
+    content = _user_content(session)
+    assert "UserSkillActivation" not in content
+    assert "secret steps" not in content
+    assert any(
+        "do-thing" in record.message and "deny" in record.message for record in caplog.records)
+
+
+def test_leading_activation_fires_on_skill_activated_callback(tmp_path: Path) -> None:
+    """A caller (the TUI, an ACP server) can observe a leading-mention activation via
+    `TurnEventHandlers.on_skill_activated`, without re-parsing the interjection out of the
+    stored message content -- e.g. to show an "Activated skill: ..." notice."""
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "do-thing")]), provider=provider)
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+
+    activated: list[tuple[str, str]] = []
+    session.send_turn(
+        "/do-thing go", TurnEventHandlers(on_skill_activated=activated.append))
+
+    assert activated == [("workspace", "do-thing")]
+
+
+def test_no_skill_activated_callback_without_leading_mention(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(tmp_path, provider=provider)
+
+    activated: list[tuple[str, str]] = []
+    session.send_turn("just a normal message", TurnEventHandlers(on_skill_activated=activated.append))
+
+    assert activated == []
 
 
 def test_other_mention_alongside_leading_activation_still_referenced(tmp_path: Path) -> None:

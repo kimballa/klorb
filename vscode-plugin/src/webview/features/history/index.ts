@@ -34,6 +34,7 @@ import {
 import {
   type ParsedPromptWithInterjections,
   type ParsedSystemInterjection,
+  parseSkillActivationIdentity,
   parseSystemInterjections,
 } from './parseSystemInterjections';
 import { type DiffRow, renderDiffLines } from './renderDiffLines';
@@ -67,6 +68,7 @@ export {
   applyTurnFlag,
   isHistoryEntry,
   isScrollPinnedToBottom,
+  parseSkillActivationIdentity,
   parseSystemInterjections,
   renderDiffLines,
   renderYamlFrontmatter,

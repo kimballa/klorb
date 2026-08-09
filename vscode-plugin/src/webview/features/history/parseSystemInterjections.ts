@@ -55,3 +55,26 @@ export function parseSystemInterjections(text: string): ParsedPromptWithInterjec
     remainingText: remaining.trimStart(),
   };
 }
+
+/** A `UserSkillActivation` interjection's body is an explanatory sentence followed by the
+ * skill's JSON payload (`{namespace, name, content, files, tokens}` -- see
+ * `klorb.tools.skill.common.skill_activation_payload`) on the line(s) after it. Extracts just
+ * `namespace`/`name` for a friendly "Activated skill: <namespace>/<name>" label, without needing
+ * the full payload (its `content` can be large). Returns `undefined` if `body` doesn't parse. */
+export function parseSkillActivationIdentity(
+  body: string
+): { namespace: string; name: string } | undefined {
+  const jsonStart = body.indexOf('{');
+  if (jsonStart === -1) {
+    return undefined;
+  }
+  try {
+    const payload = JSON.parse(body.slice(jsonStart)) as { namespace?: unknown; name?: unknown };
+    if (typeof payload.namespace === 'string' && typeof payload.name === 'string') {
+      return { namespace: payload.namespace, name: payload.name };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}

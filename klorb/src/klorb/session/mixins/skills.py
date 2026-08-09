@@ -5,6 +5,7 @@
 `UserSkillActivation` shortcut. See docs/specs/skills.md."""
 
 import json
+import logging
 
 from klorb.paths import KLORB_CONFIG_DIR
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME
@@ -12,8 +13,10 @@ from klorb.permissions.skill_access import evaluate_skill
 from klorb.session.events import UserSkillActivation
 from klorb.session.mixins._base import SessionBase
 from klorb.tools.skill.catalog import SkillCatalogs
-from klorb.tools.skill.common import skill_activation_payload
+from klorb.tools.skill.common import display_skill_description, skill_activation_payload
 from klorb.tools.skill.model import Skill
+
+logger = logging.getLogger(__name__)
 
 
 class SessionSkillsMixin(SessionBase):
@@ -91,6 +94,7 @@ class SessionSkillsMixin(SessionBase):
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
             claude_skills_compat=self._compatibility_claude_skills,
+            skill_rules=self.config.skill_rules,
         )
 
     def reload_skills(self) -> SkillCatalogs:
@@ -111,6 +115,7 @@ class SessionSkillsMixin(SessionBase):
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
             claude_skills_compat=claude_skills_compat,
+            skill_rules=self.config.skill_rules,
         )
 
     def discover_skills(self) -> list[Skill]:
@@ -124,13 +129,16 @@ class SessionSkillsMixin(SessionBase):
     def _format_skill_list(skills: list[Skill]) -> str:
         """Render `skills` as the newline-joined `- <name> (<namespace>): <description>` bullet
         list shared by both skill interjections, always by canonical name (a skill's directory
-        basename), never a frontmatter-name alias. A skill with an empty description contributes
-        just `- <name> (<namespace>)`."""
-        lines = [
-            f"- {skill.name} ({skill.namespace}): {skill.description}" if skill.description
-            else f"- {skill.name} ({skill.namespace})"
-            for skill in skills
-        ]
+        basename, already lowercased and length-capped -- see `klorb.tools.skill.catalog.
+        build_catalogs`), never a frontmatter-name alias. A skill with an empty description
+        contributes just `- <name> (<namespace>)`. `description` is additionally capped
+        (`display_skill_description`) before display, since it's arbitrary frontmatter text with
+        no length limit of its own."""
+        lines = []
+        for skill in skills:
+            description = display_skill_description(skill.description)
+            lines.append(f"- {skill.name} ({skill.namespace}): {description}" if description
+                         else f"- {skill.name} ({skill.namespace})")
         return "\n".join(lines)
 
     def _build_available_skills_interjection(self, skills: list[Skill]) -> str | None:
@@ -189,26 +197,50 @@ class SessionSkillsMixin(SessionBase):
 
     def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
         """When `token` (the prompt's leading `/<token>` slug, from `_leading_skill_token()`)
-        resolves to a discoverable, `"allow"`-verdicted skill, return a `UserSkillActivation`
+        resolves to a discoverable, non-`"deny"`-verdicted skill, return a `UserSkillActivation`
         whose `body` carries the exact same `{namespace, name, content, files, tokens}` JSON
         payload `ActivateSkill` would return (built by the same `skill_activation_payload()` both
         paths share), so the model can apply the skill immediately with no `ActivateSkill` round
         trip.
 
-        Returns `None` when `token` doesn't resolve to a skill, or when it resolves but isn't
-        `"allow"`-verdicted -- a `"deny"` skill gets no special treatment at all (as if the user's
-        message didn't start with a skill reference), and an `"ask"`-verdicted skill falls back to
-        the ordinary `SkillReference` reminder instead, so the model still has to call
-        `ActivateSkill` and go through the normal approval flow -- a prompt-leading `/name` never
-        bypasses `skillRules` approval. See docs/specs/skills.md.
+        An `"ask"`-verdicted skill is auto-promoted to `"allow"` for the rest of this session
+        (`apply_skill_permission_grant(scope="session")`, no interactive prompt raised) before its
+        content is injected: typing `/<name>` as the leading token of a message *is* the user's
+        approval, the same way answering an interactive ask with "Allow" would be -- there's no
+        separate confirmation to ask for. This only ever widens `"ask"` to `"allow"`; it never
+        touches a `"deny"` verdict.
+
+        Returns `None` when `token` doesn't resolve to a skill, or when its verdict is `"deny"` --
+        gets no special treatment at all (as if the user's message didn't start with a skill
+        reference), the same whether the catalog was built with that verdict already in place or
+        the skill was denied later in this session and the (unrebuilt) catalog still holds it; the
+        latter case logs a `logger.warning()` so the silent skip is still observable. See
+        docs/specs/skills.md.
         """
         self._ensure_skill_catalog()
         skill = self._skill_catalog_registry.typed().resolve_reference(token)
         if skill is None:
             return None
         skill_id = (skill.namespace, skill.name)
-        if evaluate_skill(self.config.skill_rules, skill_id) != "allow":
+        verdict = evaluate_skill(self.config.skill_rules, skill_id)
+        if verdict == "deny":
+            logger.warning(
+                "Leading skill mention /%s resolved to %s but its skillRules verdict is deny; "
+                "skipping activation.", token, skill_id)
             return None
+        if verdict == "ask":
+            # Deferred import: `klorb.permissions.skill_grant` pulls in `klorb.permissions.grant`,
+            # which imports `klorb.process_config` -- itself upstream of `klorb.session` (and so
+            # this module) in the import graph. A module-level import here would cycle back
+            # through the partially-initialized `klorb.process_config`, the same reason
+            # `klorb.permissions.resource.SkillResource.apply_grant` defers this same import.
+            from klorb.permissions.skill_grant import apply_skill_permission_grant
+            logger.debug(
+                "Leading skill mention /%s auto-promoting %s from ask to allow for this session.",
+                token, skill_id)
+            apply_skill_permission_grant(
+                action="allow", scope="session", session_config=self.config,
+                process_config=None, skill_id=skill_id)
         payload = skill_activation_payload(skill)
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "

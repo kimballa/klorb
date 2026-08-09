@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from klorb.tools.skill.catalog import resolve_session_skill_catalog_registry
-from klorb.tools.skill.common import read_skill_md
+from klorb.tools.skill.common import display_skill_description, read_skill_md
 from klorb.tools.tool import Tool
 from klorb.tools.util import compile_queries, validate_queries
 
@@ -81,7 +81,7 @@ class SearchSkillsTool(Tool):
                 results.append({
                     "namespace": skill.namespace,
                     "name": skill.name,
-                    "description": skill.description,
+                    "description": display_skill_description(skill.description),
                 })
 
         logger.debug("SearchSkills found %d skill(s)", len(results))

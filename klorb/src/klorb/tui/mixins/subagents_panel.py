@@ -25,6 +25,7 @@ from klorb.tui.constants import (
     TASK_SIDEBAR_ID,
 )
 from klorb.tui.formatting import (
+    extract_skill_activation_notice,
     pinned_to_bottom,
     resolve_thinking_body_text,
     strip_system_interjections,
@@ -234,6 +235,9 @@ class SubagentsPanelMixin(ReplAppBase):
             if message.role == "user":
                 display_content = strip_system_interjections(message.content)
                 container.mount(Static(display_content, classes="prompt", markup=False))
+                skill_notice = extract_skill_activation_notice(message.content)
+                if skill_notice is not None:
+                    container.mount(Static(skill_notice, classes="notice", markup=False))
             elif message.role == "assistant":
                 text = message.content
                 if message.processing_state == "aborted":

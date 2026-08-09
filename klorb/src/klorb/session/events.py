@@ -256,7 +256,11 @@ class TurnEventHandlers(BaseModel):
     for a running indicator), and `on_tool_call` (report one finished tool call, for
     display). `on_session_name_changed` fires once, at most, on the first `send_turn()` call for
     a `Session` -- with the derived `SessionName` if the naming classifier succeeded, or `None`
-    if it failed -- see `SessionCoreMixin._run_session_naming`. Replaces passing these as
+    if it failed -- see `SessionCoreMixin._run_session_naming`. `on_skill_activated` fires with a
+    skill's `(namespace, name)` identity when the turn's prompt leads with a `/<name>` mention
+    that unconditionally activates it (see `SessionSkillsMixin.
+    _build_user_skill_activation_interjection`), so a caller can surface "Activated skill: ..."
+    without re-parsing the interjection out of the stored message content. Replaces passing these as
     separate keyword arguments through `send_turn()`/`retry_last_turn()`/`_dispatch_turn()` and
     everything they call — a single object here means a future addition only touches this
     class, not every method's signature along the chain. `frozen=True` since a
@@ -281,6 +285,7 @@ class TurnEventHandlers(BaseModel):
     on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
     on_session_name_changed: Callable[[SessionName | None], None] | None = None
+    on_skill_activated: Callable[[tuple[str, str]], None] | None = None
     on_enqueue_message: Callable[["QueuedMessage"], None] | None = None
     on_send_queued_message: Callable[["QueuedMessage"], None] | None = None
 

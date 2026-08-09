@@ -100,7 +100,8 @@ class ReadSkillFileTool(Tool):
 
         registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
-            catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
+            catalog=registry.canonical(), typed_catalog=registry.typed(),
+            skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)
 
         target = resolve_skill_file(resolved, path)
@@ -160,7 +161,8 @@ class ReadSkillFileTool(Tool):
         ungated resolution path to call instead)."""
         registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
-            catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
+            catalog=registry.canonical(), typed_catalog=registry.typed(),
+            skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)
         target = resolve_skill_file(resolved, path)
         return read_full_file_lines(lambda: self.read_file_core.open_resource(target), scroll_to_line)
