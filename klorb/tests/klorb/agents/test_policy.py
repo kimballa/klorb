@@ -14,14 +14,25 @@ from unittest.mock import MagicMock
 import pytest
 from tools.subagents.conftest import _FakeProvider
 
-from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message, plan_subagent_creation
+from klorb.agents.policy import (
+    compute_root_session_grants,
+    dispatch_direct_message,
+    dispatch_subagent_turn,
+    plan_subagent_creation,
+)
 from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle
+from klorb.hooks.config import HookConfig
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
+
+
+@pytest.fixture(autouse=True)
+def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
 def _operator_context(
@@ -331,3 +342,56 @@ def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the
     finally:
         never_finishes.set()
         running_handle.thread.join(timeout=5.0)
+
+
+def _subagent_session_pair(
+    tmp_path: Path, provider: _FakeProvider, hooks: dict[str, list[HookConfig]],
+) -> tuple[Session, Session]:
+    process_config = ProcessConfig(hooks=hooks)
+    parent = Session(
+        SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config)
+    child = Session(
+        SessionConfig(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config, parent=parent)
+    return parent, child
+
+
+def test_dispatch_subagent_turn_fires_onsubagentstart_and_rewrites_the_message(tmp_path: Path) -> None:
+    provider = _FakeProvider(reply_text="subagent reply")
+    parent, child = _subagent_session_pair(tmp_path, provider, {
+        "onSubagentStart": [HookConfig(type="bash", shell='echo \'{"message": "rewritten task"}\'')],
+    })
+
+    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "original task")
+    handle.thread.join(timeout=5.0)
+
+    assert provider.calls
+    user_message = next(m for m in provider.calls[0] if m.role == "user")
+    assert user_message.content.endswith("rewritten task")
+
+
+def test_onsubagentstart_veto_blocks_the_turn_without_calling_the_model(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    parent, child = _subagent_session_pair(tmp_path, provider, {
+        "onSubagentStart": [HookConfig(type="bash", shell='echo \'{"success": false}\'')],
+    })
+
+    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "original task")
+    handle.thread.join(timeout=5.0)
+
+    assert provider.calls == []
+    assert handle.output == "(Subagent blocked by onSubagentStart hook policy.)"
+
+
+def test_dispatch_subagent_turn_fires_onsubagentturnend_after_the_turn_ends(tmp_path: Path) -> None:
+    marker = tmp_path / "marker"
+    provider = _FakeProvider(reply_text="subagent reply")
+    parent, child = _subagent_session_pair(tmp_path, provider, {
+        "onSubagentTurnEnd": [HookConfig(type="bash", shell=f'touch "{marker}"; echo \'{{}}\'')],
+    })
+
+    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "task")
+    handle.thread.join(timeout=5.0)
+
+    assert marker.exists()

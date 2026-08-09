@@ -362,18 +362,31 @@ def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers
     anything, the same concatenation plus an abort note if `handlers.cancel_event` fired
     mid-stream, or a failure note if the turn raised. Never raises -- this is the background
     thread's own top-level call, and an unhandled exception here would silently strand the
-    subagent as "running" forever."""
+    subagent as "running" forever.
+
+    Dispatches `onSubagentStart`/`onSubagentTurnEnd` (`Session.fire_subagent_start_hook`/
+    `fire_subagent_turn_end_hook`) around the turn, covering every way a subagent's turn is
+    kicked off -- `CreateSubagent`, `MessageSubagent`, or `_klorb/subagentPrompt` -- since all
+    three funnel through `dispatch_subagent_turn`, which always calls this function. A
+    `onSubagentStart` veto (`fire_subagent_start_hook` returning `None`) skips the turn
+    entirely, reporting a blocked note back to the creating session exactly like a failed turn
+    would."""
+    effective_message = child.fire_subagent_start_hook(message)
+    if effective_message is None:
+        return "(Subagent blocked by onSubagentStart hook policy.)"
     start_index = len(child.messages)
     try:
-        child.send_turn(message, callbacks=handlers, resolve_mentions=False)
+        child.send_turn(effective_message, callbacks=handlers, resolve_mentions=False)
         output = _assistant_authored_text(child.messages[start_index:])
-        return output if output else "The subagent completed its work without saying anything."
+        result = output if output else "The subagent completed its work without saying anything."
     except ResponseAborted:
         output = _assistant_authored_text(child.messages[start_index:])
-        return f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
+        result = f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
     except Exception as exc:
         logger.exception("Subagent %s turn failed", child.id)
-        return f"(Subagent turn failed: {exc})"
+        result = f"(Subagent turn failed: {exc})"
+    child.fire_subagent_turn_end_hook(result)
+    return result
 
 
 def dispatch_subagent_turn(

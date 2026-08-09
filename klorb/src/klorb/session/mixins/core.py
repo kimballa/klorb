@@ -71,6 +71,10 @@ if TYPE_CHECKING:
     # importing it for real here would be circular; needed only to type `ensure_chainlink_client`'s
     # return value, which is constructed via a deferred import where it's actually used.
     from klorb.tools.tasks.common import ChainlinkClient
+    # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
+    # actually used) depends on `klorb.session.config`, so a real import here would be circular;
+    # needed only to type `_dispatch_hook`'s return value.
+    from klorb.hooks.wire import HookOutput
     # isort: on
 
 logger = logging.getLogger(__name__)
@@ -317,6 +321,14 @@ class SessionCoreMixin(SessionBase):
         running. Set at the top of `_dispatch_turn` and cleared in its `finally`. Used by
         `enqueue_queued_message` and `drain_queued_messages` to call the `on_enqueue_message`
         and `on_send_queued_message` hooks."""
+        self._chained_hook_turns = 0
+        """How many turns in a row `start_turn_or_enqueue` has started back-to-back on behalf of
+        a `chat` hook/event handler, without an intervening real user- or tool-driven turn --
+        see `start_turn_or_enqueue` and `SessionConfig.max_chained_hook_turns`."""
+        self._dispatching_chained_turn = False
+        """`True` for the duration of a `send_turn()` call `start_turn_or_enqueue` itself made,
+        so that call doesn't reset `_chained_hook_turns` back to `0` the way an ordinary,
+        externally-driven `send_turn()` call does -- see `start_turn_or_enqueue`."""
         self.subagent_tracker = self._create_subagent_tracker()
         """Bookkeeping for the subagents this session has directly created -- see
         `klorb.agents.runtime.SubagentTracker`. Every `Session` gets its own, fresh and empty,
@@ -809,20 +821,57 @@ class SessionCoreMixin(SessionBase):
         self, hook_name: str, *, event: str, workspace_just_bootstrapped: bool = False,
     ) -> None:
         """Build a `HookInput` describing this session's `workspace`/`event` and dispatch
-        `hook_name` against it via `klorb.hooks.dispatcher.HookDispatcher`, sandboxing any
-        `bash` handler with this session's own permission tables. Deferred imports: `klorb.hooks`
-        doesn't depend on `klorb.session`, but importing it at module level here would still be
-        the wrong direction for a mixin most callers construct without ever touching hooks."""
+        `hook_name` -- `onSessionStart`/`onSessionEnd`'s own shape, on top of the shared
+        `_dispatch_hook` every other lifecycle/turn/tool hook point uses."""
+        self._dispatch_hook(
+            hook_name, event=event, workspaceTrusted=self.config.workspace.trusted,
+            workspaceJustBootstrapped=workspace_just_bootstrapped)
+
+    def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
+        """Dispatch `hook_name` against this session's own `ProcessConfig`/`SessionConfig`,
+        tagging the built `HookInput` with this session's `workspace`/`role`/`id` and passing
+        through `hook_input_kwargs` (e.g. `event=`, `message=`, `toolName=`) -- the shared
+        building block every hook-firing call site in `klorb.session.mixins` (turn dispatch,
+        tool execution, `_dispatch_lifecycle_hook` above) and `klorb.agents.policy` (subagent
+        lifecycle) goes through. Returns a default (`success=True`, no message) `HookOutput` if
+        this session has no `ProcessConfig` -- hooks are inert for a `Session` constructed
+        without one, e.g. most unit tests. Deferred imports: `klorb.hooks` doesn't depend on
+        `klorb.session`, but importing it at module level here would still be the wrong
+        direction for a mixin most callers construct without ever touching hooks."""
         from klorb.hooks.dispatcher import HookDispatcher
-        from klorb.hooks.wire import HookInput
-        assert self._process_config is not None
-        HookDispatcher(self._process_config).dispatch(
+        from klorb.hooks.wire import HookInput, HookOutput
+        if self._process_config is None:
+            return HookOutput()
+        return HookDispatcher(
+            self._process_config, api_provider=self._provider, model_registry=self._model_registry,
+        ).dispatch(
             hook_name,
             HookInput(
-                hook=hook_name, event=event, workspaceRoot=str(self.config.workspace.path),
-                workspaceTrusted=self.config.workspace.trusted,
-                workspaceJustBootstrapped=workspace_just_bootstrapped),
+                hook=hook_name, workspaceRoot=str(self.config.workspace.path),
+                role=self.config.role_name, session_id=self.id, **hook_input_kwargs),
             session_config=self.config)
+
+    def fire_subagent_start_hook(self, message: str) -> str | None:
+        """Dispatch `onSubagentStart` for this subagent session, about to run its first (or
+        resumed) turn -- called by `klorb.agents.policy._run_subagent_turn`, mirroring
+        `onSubmitUserPrompt`'s message-rewrite/veto contract for the root session's own turns
+        (see `SessionTurnsMixin._dispatch_turn`). Returns the message to actually send: `message`
+        itself, unless the aggregate `HookOutput` set `message` (a rewrite) or `success=False`
+        (a veto, signaled by returning `None` -- the caller must not start the turn)."""
+        result = self._dispatch_hook("onSubagentStart", message=message)
+        if result.success is False:
+            return None
+        return result.message if result.message is not None else message
+
+    def fire_subagent_turn_end_hook(self, output: str) -> None:
+        """Dispatch `onSubagentTurnEnd` for this subagent session once its turn ends -- called by
+        `klorb.agents.policy._run_subagent_turn`, mirroring `onAgentTurnEnd`'s `chat`-handler
+        chaining for the root session's own turns (see `SessionTurnsMixin._dispatch_turn`): a
+        `message` in the aggregate `HookOutput` starts (or queues) a follow-up turn on this same
+        subagent session via `start_turn_or_enqueue`, not on the parent that created it."""
+        result = self._dispatch_hook("onSubagentTurnEnd", message=output)
+        if result.message is not None:
+            cast("Session", self).start_turn_or_enqueue(result.message)
 
     def close(self) -> None:
         """Persist a final `session.json` and release `session.lock` (see

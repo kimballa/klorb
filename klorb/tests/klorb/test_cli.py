@@ -88,7 +88,8 @@ def test_main_dispatches_onprocessstart_before_and_onprocessend_after_the_sessio
             with patch("sys.argv", ["klorb", "-m", "hi"]):
                 cli.main()
 
-    mock_dispatcher_cls.assert_called_once_with(stub_process_config.return_value)
+    mock_dispatcher_cls.assert_called_once_with(
+        stub_process_config.return_value, api_provider=mock.ANY, model_registry=mock.ANY)
     assert order == ["onProcessStart", "Session", "run_one_shot", "onProcessEnd"]
     first_hook, second_hook = mock_dispatcher.dispatch.call_args_list
     assert first_hook.args[1].event == "Startup"

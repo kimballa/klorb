@@ -740,7 +740,9 @@ def main() -> None:
     workspace = trust_manager.resolve_workspace(cwd)
 
     process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
-    hook_dispatcher = HookDispatcher(process_config)
+    provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
+    model_registry = ModelRegistry()
+    hook_dispatcher = HookDispatcher(process_config, api_provider=provider, model_registry=model_registry)
     hook_dispatcher.dispatch(
         "onProcessStart",
         HookInput(hook="onProcessStart", event="Startup", workspaceRoot=str(workspace.path)))
@@ -766,7 +768,6 @@ def main() -> None:
         elif args.log_tool_calls is False:
             process_config.log_tool_calls = False
 
-        provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
         session_config = process_config.session.model_copy()
         if args.model is not None:
             session_config.model = args.model
@@ -775,6 +776,7 @@ def main() -> None:
         session = Session(
             session_config,
             provider=provider,
+            model_registry=model_registry,
             process_config=process_config,
             tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles,
