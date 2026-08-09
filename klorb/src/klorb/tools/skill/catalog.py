@@ -35,7 +35,7 @@ from pydantic import BaseModel, ConfigDict
 from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import VALID_NAMESPACES, SkillId, SkillRules, evaluate_skill, format_fqsn
 from klorb.tools.skill.common import (
-    has_valid_skill_name_shape,
+    display_skill_name,
     is_valid_skill_name,
     parse_frontmatter,
     raise_if_skill_not_allowed,
@@ -156,15 +156,20 @@ def build_catalogs(
     A skill whose frontmatter `name` disagrees with its directory basename logs a warning (it's
     still discoverable under its canonical basename; the frontmatter name is only ever added to
     `typed` as an alias, never used as the skill's identity) -- see docs/specs/skills.md. The
-    canonical basename itself is lowercased -- the identity both catalogs key on, and what's
-    advertised to the model or a user-facing skill list, is always lowercase.
+    canonical basename itself is lowercased and capped to `MAX_SKILL_NAME_DISPLAY_LENGTH` -- the
+    identity both catalogs key on, and what's advertised to the model or a user-facing skill list,
+    is always this lowercased, length-capped form, so a name once advertised always resolves. The
+    full (untruncated) lowercased basename, and both the full and capped forms of a frontmatter
+    alias, are added to `typed` as additional aliases when they differ from the canonical name --
+    see `Skill.aliases`.
     """
     canonical: dict[SkillId, Skill] = {}
     typed: dict[SkillId, Skill] = {}
     for resolved in resolve_all_skills(
             workspace_root=workspace_root, workspace_trusted=workspace_trusted,
             claude_skills_compat=claude_skills_compat):
-        canonical_name = resolved.name.lower()
+        full_name = resolved.name.lower()
+        canonical_name = display_skill_name(full_name)
         skill_id: SkillId = (resolved.namespace, canonical_name)
         if evaluate_skill(skill_rules, skill_id) == "deny":
             logger.debug(
@@ -172,8 +177,8 @@ def build_catalogs(
             continue
         if skill_id in canonical:
             logger.warning(
-                "Skill %s (%s) collides with another skill after lowercasing; the first one "
-                "found wins, this one is dropped.", resolved.name, resolved.namespace)
+                "Skill %s (%s) collides with another skill after lowercasing/truncation; the "
+                "first one found wins, this one is dropped.", resolved.name, resolved.namespace)
             continue
 
         try:
@@ -190,7 +195,7 @@ def build_catalogs(
 
         disable_model_invocation = raw.get("disable-model-invocation") is True
 
-        aliases = {canonical_name}
+        aliases = {full_name, canonical_name}
         frontmatter_name = raw.get("name")
         if isinstance(frontmatter_name, str) and frontmatter_name:
             if frontmatter_name != canonical_name:
@@ -199,13 +204,12 @@ def build_catalogs(
                     "%r; the basename remains canonical, the frontmatter name is usable only as "
                     "an alias.", canonical_name, resolved.namespace, frontmatter_name, canonical_name)
             if is_valid_skill_name(frontmatter_name):
-                if has_valid_skill_name_shape(frontmatter_name):
-                    aliases.add(frontmatter_name)
-                else:
-                    logger.warning(
-                        "Skill %s (%s) frontmatter alias %r skipped: name must not start/end "
-                        "with '-' or contain '<'/'>'.", canonical_name, resolved.namespace,
-                        frontmatter_name)
+                aliases.add(frontmatter_name)
+                aliases.add(display_skill_name(frontmatter_name))
+            else:
+                logger.warning(
+                    "Skill %s (%s) frontmatter alias %r skipped: invalid name.",
+                    canonical_name, resolved.namespace, frontmatter_name)
 
         skill = Skill(
             namespace=resolved.namespace, name=canonical_name, description=description,

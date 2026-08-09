@@ -14,25 +14,28 @@ class Skill(BaseModel):
     """One discovered skill.
 
     `namespace` and `name` are the skill's canonical `(namespace, name)` identity -- `name` is
-    always the skill directory's basename, never a frontmatter-supplied name, so it's what every
-    `skillRules` rule and approval decision is keyed on. `description` is propagated straight
-    from `raw["description"]` (empty string if absent or non-string). `raw` is the skill's full
-    parsed YAML frontmatter, whatever attributes its author wrote. `aliases` is every string a
-    user may type to mean this skill: the canonical basename, plus the frontmatter `name` when
-    present, valid, and different from the basename.
+    the skill directory's basename, lowercased and capped to `klorb.tools.skill.common.
+    MAX_SKILL_NAME_DISPLAY_LENGTH`, never a frontmatter-supplied name, so it's what every
+    `skillRules` rule and approval decision is keyed on, and always what's advertised to the model
+    or a user-facing skill list -- a name once advertised is guaranteed resolvable. `description`
+    is propagated straight from `raw["description"]` (empty string if absent or non-string). `raw`
+    is the skill's full parsed YAML frontmatter, whatever attributes its author wrote. `aliases` is
+    every string a user may type to mean this skill: the full (untruncated) lowercased basename,
+    the canonical (capped) basename, and the frontmatter `name` in both its full and capped forms,
+    when present and valid -- up to four strings, deduped by set semantics when some coincide.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     namespace: Namespace
     name: str
-    "Canonical name for the skill, based on the dirname it lives in."
+    "Canonical name for the skill: the dirname it lives in, lowercased and length-capped."
     description: str
     "Description from SKILL.md frontmatter."
     raw: dict[str, Any]
     "All SKILL.md frontmatter dict items"
     aliases: set[str]
-    "Other names for the skill; e.g. if frontmatter name disagrees with the dirname."
+    "Other names for the skill; e.g. its full untruncated basename, or a frontmatter alias."
     disable_model_invocation: bool = False
     """From frontmatter `disable-model-invocation: true`. Such a skill is never added to the
     canonical catalog `ActivateSkill`/`ReadSkillFile` resolve against, only to the typed one a

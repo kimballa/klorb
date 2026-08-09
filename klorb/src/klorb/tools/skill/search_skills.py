@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from klorb.tools.skill.catalog import resolve_session_skill_catalog_registry
-from klorb.tools.skill.common import display_skill_description, display_skill_name, read_skill_md
+from klorb.tools.skill.common import display_skill_description, read_skill_md
 from klorb.tools.tool import Tool
 from klorb.tools.util import compile_queries, validate_queries
 
@@ -80,7 +80,7 @@ class SearchSkillsTool(Tool):
             if compiled.search(skill.name) or compiled.search(body):
                 results.append({
                     "namespace": skill.namespace,
-                    "name": display_skill_name(skill.name),
+                    "name": skill.name,
                     "description": display_skill_description(skill.description),
                 })
 

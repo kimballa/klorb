@@ -13,7 +13,7 @@ from klorb.permissions.skill_access import evaluate_skill
 from klorb.session.events import UserSkillActivation
 from klorb.session.mixins._base import SessionBase
 from klorb.tools.skill.catalog import SkillCatalogs
-from klorb.tools.skill.common import display_skill_description, display_skill_name, skill_activation_payload
+from klorb.tools.skill.common import display_skill_description, skill_activation_payload
 from klorb.tools.skill.model import Skill
 
 logger = logging.getLogger(__name__)
@@ -129,15 +129,16 @@ class SessionSkillsMixin(SessionBase):
     def _format_skill_list(skills: list[Skill]) -> str:
         """Render `skills` as the newline-joined `- <name> (<namespace>): <description>` bullet
         list shared by both skill interjections, always by canonical name (a skill's directory
-        basename), never a frontmatter-name alias. A skill with an empty description contributes
-        just `- <name> (<namespace>)`. `name`/`description` are each capped (`display_skill_name`/
-        `display_skill_description`) before display."""
+        basename, already lowercased and length-capped -- see `klorb.tools.skill.catalog.
+        build_catalogs`), never a frontmatter-name alias. A skill with an empty description
+        contributes just `- <name> (<namespace>)`. `description` is additionally capped
+        (`display_skill_description`) before display, since it's arbitrary frontmatter text with
+        no length limit of its own."""
         lines = []
         for skill in skills:
-            name = display_skill_name(skill.name)
             description = display_skill_description(skill.description)
-            lines.append(f"- {name} ({skill.namespace}): {description}" if description
-                         else f"- {name} ({skill.namespace})")
+            lines.append(f"- {skill.name} ({skill.namespace}): {description}" if description
+                         else f"- {skill.name} ({skill.namespace})")
         return "\n".join(lines)
 
     def _build_available_skills_interjection(self, skills: list[Skill]) -> str | None:

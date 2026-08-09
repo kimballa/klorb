@@ -118,29 +118,23 @@ def validate_skill_name(name: object) -> str:
         raise ValueError("skill name must be a non-empty string")
     if not is_valid_skill_name(name):
         raise ValueError(
-            f"skill name must be a bare slug with no path separator, ':', or '..' component: "
-            f"{name!r}")
+            f"skill name must be a bare slug with no path separator, ':', or '..' component, no "
+            f"leading/trailing '-', and no '<'/'>': {name!r}")
     return name
 
 
 def is_valid_skill_name(name: str) -> bool:
-    """Whether `name` is usable as a skill directory basename: non-empty, no path separator or
-    `:` (the fully-qualified-skill-name separator -- see `klorb.permissions.skill_access.
-    format_fqsn`), and not `.`/`..`."""
+    """Whether `name` is usable as a skill directory basename, a frontmatter alias, or a
+    model-supplied `ActivateSkill`/`ReadSkillFile` argument: non-empty, no path separator or `:`
+    (the fully-qualified-skill-name separator -- see `klorb.permissions.skill_access.
+    format_fqsn`), not `.`/`..`, no leading/trailing `-` (ambiguous with a CLI-flag-style token),
+    and no `<`/`>` (would corrupt the `<SystemInterjection>`/skill-list markup a name rides in)."""
     return (
         bool(name) and "/" not in name and "\\" not in name and ":" not in name
         and name not in (".", "..")
+        and not name.startswith("-") and not name.endswith("-")
+        and "<" not in name and ">" not in name
     )
-
-
-def has_valid_skill_name_shape(name: str) -> bool:
-    """Whether `name` is well-formed enough to advertise, beyond `is_valid_skill_name`'s bare
-    path-safety check: no leading/trailing hyphen (ambiguous with a CLI-flag-style token) and no
-    `<`/`>` (would corrupt the `<SystemInterjection>` markup and skill-list markup a name rides
-    in). A name failing this check is skipped during discovery, with a logged warning -- unlike
-    `is_valid_skill_name`'s silent skip, since this is a content-quality problem worth surfacing
-    to whoever authored the skill, not a structural one."""
-    return not name.startswith("-") and not name.endswith("-") and "<" not in name and ">" not in name
 
 
 def parse_frontmatter(text: str) -> dict[str, Any]:
@@ -216,21 +210,23 @@ def _is_dir(node: Traversable) -> bool:
 
 def _skill_dir_names(source: Traversable) -> list[str]:
     """The sorted basenames of `source`'s immediate children that are valid, non-hidden skill
-    directories containing a `SKILL.md`."""
+    directories containing a `SKILL.md`. A directory that's otherwise a genuine skill candidate
+    (has a `SKILL.md`) but fails `is_valid_skill_name` is skipped with a logged warning, since
+    that's a content problem worth surfacing to whoever authored it -- a non-candidate child
+    (no `SKILL.md`, or not a directory at all) is never warned about regardless of its name."""
     if not _is_dir(source):
         return []
     names: list[str] = []
     for child in source.iterdir():
         name = child.name
-        if name.startswith(".") or not is_valid_skill_name(name):
+        if name.startswith("."):
             continue
-        if not has_valid_skill_name_shape(name):
-            logger.warning(
-                "Skill directory %r skipped: name must not start/end with '-' or contain '<'/'>'.",
-                name)
+        if not (_is_dir(child) and child.joinpath(SKILL_FILE_NAME).is_file()):
             continue
-        if _is_dir(child) and child.joinpath(SKILL_FILE_NAME).is_file():
-            names.append(name)
+        if not is_valid_skill_name(name):
+            logger.warning("Skill directory %r skipped: invalid name.", name)
+            continue
+        names.append(name)
     return sorted(names)
 
 
@@ -357,15 +353,14 @@ def skill_activation_payload(skill: SkillLocation) -> dict[str, Any]:
     turn a `Skill` into what the model sees, so the two paths can never drift apart."""
     content = read_skill_md(skill)
     files = skill_file_manifest(skill)
-    display_name = display_skill_name(skill.name)
     payload: dict[str, Any] = {
         "namespace": skill.namespace,
-        "name": display_name,
+        "name": skill.name,
         "content": content,
         "files": files,
         "tokens": estimate_tokens(content) if content else 0,
     }
     if len(files):
         payload["file_access_hint"] = "Use ReadSkillFile to access paths in 'files' with " + \
-            f"namespace=\"{skill.namespace}\", name=\"{display_name}\""
+            f"namespace=\"{skill.namespace}\", name=\"{skill.name}\""
     return payload

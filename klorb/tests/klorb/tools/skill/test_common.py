@@ -17,7 +17,6 @@ from klorb.tools.skill.common import (
     MAX_SKILL_NAME_DISPLAY_LENGTH,
     display_skill_description,
     display_skill_name,
-    has_valid_skill_name_shape,
     is_valid_skill_name,
     parse_frontmatter,
     raise_if_skill_not_allowed,
@@ -67,7 +66,10 @@ def test_validate_namespace() -> None:
 
 def test_validate_skill_name_rejects_separators_and_traversal() -> None:
     assert validate_skill_name("add-cli-flag") == "add-cli-flag"
-    for bad in ["", "..", ".", "a/b", "a\\b", "../x", "internal:foo"]:
+    for bad in [
+        "", "..", ".", "a/b", "a\\b", "../x", "internal:foo",
+        "-bad-start", "bad-end-", "foo<bar", "foo>bar",
+    ]:
         with pytest.raises(ValueError, match="skill name"):
             validate_skill_name(bad)
 
@@ -78,14 +80,10 @@ def test_is_valid_skill_name() -> None:
     assert not is_valid_skill_name("..")
     assert not is_valid_skill_name("a/b")
     assert not is_valid_skill_name("a:b")
-
-
-def test_has_valid_skill_name_shape() -> None:
-    assert has_valid_skill_name_shape("foo-bar")
-    assert not has_valid_skill_name_shape("-foo-bar")
-    assert not has_valid_skill_name_shape("foo-bar-")
-    assert not has_valid_skill_name_shape("foo<bar")
-    assert not has_valid_skill_name_shape("foo>bar")
+    assert not is_valid_skill_name("-foo-bar")
+    assert not is_valid_skill_name("foo-bar-")
+    assert not is_valid_skill_name("foo<bar")
+    assert not is_valid_skill_name("foo>bar")
 
 
 def test_discovery_skips_and_warns_on_bad_name_shape(
@@ -100,7 +98,7 @@ def test_discovery_skips_and_warns_on_bad_name_shape(
         resolved = resolve_all_skills(workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
 
     assert [r.name for r in resolved] == ["good"]
-    assert sum(1 for record in caplog.records if "must not start/end" in record.message) == 2
+    assert sum(1 for record in caplog.records if "invalid name" in record.message) == 2
 
 
 def test_display_skill_name_and_description_truncate() -> None:

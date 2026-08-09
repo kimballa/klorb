@@ -8,6 +8,7 @@ import pytest
 
 from klorb.permissions.skill_access import SkillRules
 from klorb.tools.skill.catalog import build_catalogs
+from klorb.tools.skill.common import MAX_SKILL_NAME_DISPLAY_LENGTH
 
 
 def _write_skill(base: Path, name: str, text: str) -> None:
@@ -75,6 +76,30 @@ def test_denied_skill_never_enters_either_catalog(tmp_path: Path) -> None:
 
     assert catalogs.canonical.get(("workspace", "secret")) is None
     assert catalogs.typed.get(("workspace", "secret")) is None
+
+
+def test_over_long_name_truncated_and_still_resolvable(tmp_path: Path) -> None:
+    """A directory basename longer than `MAX_SKILL_NAME_DISPLAY_LENGTH` is truncated to build the
+    skill's canonical identity -- the catalog key `ActivateSkill` resolves against and what's
+    ever advertised to the model -- rather than rejected outright, so a name once advertised is
+    always resolvable. The full untruncated basename remains resolvable too, as a `typed`-only
+    alias."""
+    ws = tmp_path / "workspace"
+    long_name = "a" * (MAX_SKILL_NAME_DISPLAY_LENGTH + 20)
+    _write_skill(ws / ".klorb" / "skills", long_name, "---\ndescription: d\n---\n")
+
+    catalogs = build_catalogs(
+        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
+        skill_rules=SkillRules())
+
+    truncated_name = long_name[:MAX_SKILL_NAME_DISPLAY_LENGTH]
+    assert catalogs.canonical.get(("workspace", long_name)) is None
+    skill = catalogs.canonical.get(("workspace", truncated_name))
+    assert skill is not None
+    assert skill.name == truncated_name
+    # The full untruncated basename still resolves -- only via `typed`, as an alias.
+    assert catalogs.typed.get(("workspace", long_name)) is skill
+    assert catalogs.typed.get(("workspace", truncated_name)) is skill
 
 
 def test_alias_collision_with_another_skills_canonical_name_is_dropped(

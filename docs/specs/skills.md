@@ -23,28 +23,31 @@ containing at minimum a `SKILL.md`:
 
 The directory basename is always the skill's canonical `name` — the identity every `skillRules`
 rule and approval decision is keyed on. `name` is validated as a bare slug everywhere the model
-supplies one (`ActivateSkill`, `ReadSkillFile`): it must contain no path separator (`/` or `\`) or
-`:` (the fully-qualified-skill-name separator — see "Fully-qualified skill names" below), and must
-not be `.` or `..` (a name has no separators, so that is the only way it could carry a `..`
-component). A directory whose basename fails this validation is skipped during discovery; a tool
-call naming such a string raises `ValueError` before any disk access — so `name` can never be
-steered into a path that escapes its harness-resolved namespace directory (the same discipline
-`klorb.tools.memory.common.validate_memory_filename` enforces). The validation lives in
-`klorb.tools.skill.common.validate_skill_name`/`is_valid_skill_name`.
+supplies one (`ActivateSkill`, `ReadSkillFile`) or a directory/frontmatter name is discovered from
+disk: it must contain no path separator (`/` or `\`) or `:` (the fully-qualified-skill-name
+separator — see "Fully-qualified skill names" below), must not be `.` or `..` (a name has no
+separators, so that is the only way it could carry a `..` component), must not start or end with
+`-` (ambiguous with a CLI-flag-style token), and must contain no `<`/`>` (would corrupt the
+`<SystemInterjection>`/skill-list markup a name rides in). A tool call naming a string that fails
+this raises `ValueError` before any disk access — so `name` can never be steered into a path that
+escapes its harness-resolved namespace directory (the same discipline `klorb.tools.memory.common.
+validate_memory_filename` enforces). A directory basename or frontmatter alias failing it is
+skipped during discovery, logged as a `logger.warning()` since it's worth surfacing to whoever
+authored the skill. The validation lives in `klorb.tools.skill.common.validate_skill_name`/
+`is_valid_skill_name` — one predicate covering every rule above, checked identically regardless of
+where the candidate name came from.
 
-A second, content-quality check (`klorb.tools.skill.common.has_valid_skill_name_shape`) applies on
-top of that structural one, to both a directory basename and a frontmatter alias name: no
-leading/trailing `-` (ambiguous with a CLI-flag-style token) and no `<`/`>` (would corrupt the
-`<SystemInterjection>`/skill-list markup a name rides in). Unlike a structurally-invalid name's
-silent skip, a name failing this check is skipped with a logged `logger.warning()`, since it's a
-content problem worth surfacing to whoever authored the skill.
-
-The canonical `name` every catalog entry is keyed on is always the directory basename *lowercased*
-— what's advertised to the model and a user-facing skill list (the vscode-plugin fuzzy finder,
-backed by `Session.discover_skills()`) is always lowercase, regardless of the directory's own
-casing on disk. Two skills whose basenames collide only after lowercasing resolve to whichever one
-`resolve_all_skills()` yields first (a logged, dropped collision), the same shape as an alias
-collision below.
+The canonical `name` every catalog entry is keyed on is derived from the directory basename,
+lowercased and capped to `MAX_SKILL_NAME_DISPLAY_LENGTH` (64 characters,
+`klorb.tools.skill.common.display_skill_name`) — what's advertised to the model and a user-facing
+skill list (the vscode-plugin fuzzy finder, backed by `Session.discover_skills()`) is always this
+lowercased, length-capped form, and it's also the *only* form the catalog dict is ever keyed on:
+`ActivateSkill`/`ReadSkillFile` resolve against exactly what was advertised, so a name once shown
+to the model is always resolvable, even when the real directory name is longer. The full
+(untruncated) lowercased basename is still resolvable too, but only as a `typed`-catalog alias (see
+"The session-scoped skill catalog" below) — never the canonical identity itself. Two skills whose
+basenames collide only after lowercasing/truncation resolve to whichever one `resolve_all_skills()`
+yields first (a logged, dropped collision), the same shape as an alias collision below.
 
 `SKILL.md` opens with YAML frontmatter carrying `name` and `description`, then a markdown body:
 
@@ -160,18 +163,21 @@ calls `ensure_from_context()` and raises `ValueError` if `context` wasn't built 
 use `self._skill_catalog_registry` directly:
 
 * **`registry.canonical()`** is keyed by every discovered skill's true `(namespace, name)` identity
-  — its (lowercased) directory basename. This is the *only* catalog `ActivateSkill`/`ReadSkillFile`
-  may resolve against (`resolve_and_gate_skill`), and the only identity `skillRules` rules and
-  approval decisions are ever keyed on. A skill whose `disable-model-invocation` frontmatter flag
-  is `true` is never added here (see "Model-invocation-disabled skills" below).
-* **`registry.typed()`** additionally carries an alias entry `(namespace, <frontmatter name>)` for a
-  skill whose frontmatter `name` disagrees with its directory basename (see above) — pointing at
-  the *same* `Skill` object as its canonical entry. This is the catalog a user's typed reference is
-  checked against (`SkillCatalog.resolve_reference()`, see "Explicit skill mentions" below). An
-  alias can never shadow another skill's real `(namespace, name)` identity: if a frontmatter alias
-  collides with a genuine skill's canonical name, the alias is dropped (logged) and the real skill
-  wins. A `disable-model-invocation` skill *is* still added here, under both its canonical name and
-  any alias — this is the one catalog it's ever resolvable through.
+  — its directory basename, lowercased and capped to `MAX_SKILL_NAME_DISPLAY_LENGTH`. This is the
+  *only* catalog `ActivateSkill`/`ReadSkillFile` may resolve against (`resolve_and_gate_skill`), and
+  the only identity `skillRules` rules and approval decisions are ever keyed on. A skill whose
+  `disable-model-invocation` frontmatter flag is `true` is never added here (see
+  "Model-invocation-disabled skills" below).
+* **`registry.typed()`** additionally carries an alias entry for each string in `Skill.aliases` that
+  differs from the canonical `(namespace, name)` — up to three more entries (the full untruncated
+  basename, and the frontmatter `name` in both its full and capped forms, when present and valid)
+  — pointing at the *same* `Skill` object as its canonical entry. This is the catalog a user's typed
+  reference is checked against (`SkillCatalog.resolve_reference()`, see "Explicit skill mentions"
+  below). An alias can never shadow another skill's real `(namespace, name)` identity: if it
+  collides with a genuine skill's canonical name (or another skill's alias), the alias is dropped
+  (logged) and the earlier-registered skill wins. A `disable-model-invocation` skill *is* still
+  added here, under its canonical name and every alias — this is the one catalog it's ever
+  resolvable through.
 
 A skill whose `(namespace, name)` verdict against the session's *current* `skillRules` is already
 `"deny"` at the moment `build_catalogs()` scans it is excluded from **both** catalogs entirely —
@@ -218,15 +224,17 @@ is what the available-skills interjection lists and `SearchSkills` narrows (see 
 
 Every catalog entry is a `Skill`, a pydantic `BaseModel`:
 
-* **`namespace`**/**`name`** — the canonical `(namespace, name)` identity (`name` is always the
-  directory basename).
+* **`namespace`**/**`name`** — the canonical `(namespace, name)` identity (`name` is the directory
+  basename, lowercased and length-capped — see above).
 * **`description`** — propagated straight from `raw["description"]` (`""` if absent/non-string).
 * **`raw`** — the skill's whole parsed YAML frontmatter dict, whatever attributes its author wrote
   (see `parse_frontmatter` above).
-* **`aliases`** — a `set[str]` containing the directory basename plus the frontmatter `name`, when
-  present, valid, and different from the basename. This is exactly the set of strings a user
-  typing `/<name>` may use to mean this skill (via `SkillCatalogRegistry.typed()`); klorb's own resolution
-  (`SkillCatalogRegistry.canonical()`) never consults it.
+* **`aliases`** — a `set[str]` of every string a user typing `/<name>` may use to mean this skill
+  (via `SkillCatalogRegistry.typed()`; klorb's own resolution — `SkillCatalogRegistry.canonical()`
+  — never consults it): the full (untruncated) lowercased basename, the canonical (capped) basename,
+  and — when the frontmatter `name` disagrees with the basename and is itself valid — both its full
+  and capped forms too. Up to four strings, deduped by set semantics whenever some of them coincide
+  (the common case: a basename under the length cap collapses "full" and "capped" to one entry).
 * **`root`** — the skill directory's `Traversable` (a real `Path` for the `workspace`/`user`
   tiers, or an `importlib.resources` `Traversable` for a zip-installed `internal` tier), used to
   read `SKILL.md`/supporting files on demand. Bodies are *not* cached on the `Skill` object itself
@@ -279,13 +287,11 @@ advertise a skill the model structurally cannot activate. A skill evaluating to 
 other non-denied skill is a deliberate first-version simplification; a future recency/frequency-
 based top-*k* cutoff is anticipated (see "Out of scope").
 
-Every bullet's `name`/`description` are each capped before display —
-`klorb.tools.skill.common.display_skill_name`/`display_skill_description`, 64/1024 characters
-respectively — the same caps `SearchSkills` results use (see below). The catalog's own identity
-(what `ActivateSkill` resolves against) is never truncated, only this advertised copy; a skill
-whose real name exceeds the cap would fail to resolve if the model echoed the truncated copy back,
-an accepted, visible-failure tradeoff against a hostile or careless over-long name bloating every
-turn's context.
+Every bullet's `name` is already the catalog's own (capped) identity — see "Skill directory layout"
+above — so it needs no further truncation here; `description` is capped at display time
+(`klorb.tools.skill.common.display_skill_description`, 1024 characters), the same cap
+`SearchSkills` results use (see below), since a frontmatter description is arbitrary free text with
+no length limit of its own, unlike `name`.
 
 ## Explicit skill mentions
 
@@ -369,8 +375,8 @@ reveal. It searches `SkillCatalogRegistry.canonical().discoverable(skill_rules)`
 non-`"deny"` set the available-skills interjection lists (so a `disable-model-invocation` skill,
 never in `canonical()`, is unreachable here too) — reading each candidate's `SKILL.md` body fresh
 (the catalog doesn't cache skill bodies, only frontmatter) to match against the body text. Each
-result's `name`/`description` are capped the same way the available-skills interjection's are (see
-above).
+result's `description` is capped the same way the available-skills interjection's is (see above);
+`name` needs no separate capping, since it's already the catalog's own identity.
 
 ## Activating a skill
 
