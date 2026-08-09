@@ -60,6 +60,14 @@ class HookOutput(BaseModel):
     permission: Verdict | None = None
     message: str | None = None
     interrupt: bool = False
+    clear_session: bool = False
+    """Discard the firing session (as if the user issued a `/clear`) and start a fresh one
+    seeded with `message` as its first turn. Only `onSessionEnd`/`onAgentTurnEnd` act on this --
+    see `docs/specs/hooks-and-events.md`. Valid only alongside a non-empty `message`;
+    `HookDispatcher` drops an aggregate result that sets this without one, logged at `warning`.
+    Implies `interrupt` without reading it: the firing session is being torn down regardless of
+    whether a turn happens to be in flight, so the "interrupt now vs. wait" distinction that
+    field exists for doesn't apply."""
 
 
 class FileSystemUpdate(BaseModel):

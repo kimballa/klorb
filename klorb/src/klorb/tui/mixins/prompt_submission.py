@@ -224,11 +224,34 @@ class PromptSubmissionMixin(ReplAppBase):
             history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
             self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
 
+    def _bind_clear_session_handler(self, session: Session) -> None:
+        """Wire `session.on_clear_session_requested` so an `onSessionEnd`/`onAgentTurnEnd`
+        hook's `clear_session` result routes back into `_replace_session` -- called for every
+        `Session` this app ever installs as `self._session` (initial construction, `/clear`,
+        "Load session", startup restore)."""
+        session.on_clear_session_requested = self._replace_session
+
     def clear_session(self) -> None:
-        """Replace the active Session with a fresh one (new id, config re-read from disk
+        """Replace the active Session with a fresh, blank one -- the "Clear session" palette
+        command's action. See `_replace_session`."""
+        self._replace_session(None)
+
+    def _replace_session(self, initial_message: str | None) -> None:
+        """Replace the active `Session` with a fresh one (new id, config re-read from disk
         with CLI flags re-applied on top), reset the visible history to the mascot greeting
         (`_mount_mascot_greeting`) followed by a "Session cleared." notice, and roll over the
-        per-session log file if session logging is enabled for this REPL invocation.
+        per-session log file if session logging is enabled for this REPL invocation. If
+        `initial_message` is given, it's submitted as the new session's first turn once it's
+        installed -- how a `Session.on_clear_session_requested` hook request (see
+        `_bind_clear_session_handler`) begins its replacement session, per
+        `HookOutput.clear_session`'s documented behavior; `None` for the "Clear session"
+        palette command, which leaves the new session's first turn to the user.
+
+        Guarded by `_replacing_session` against a second request arriving while this one is
+        already in progress -- e.g. an `onSessionEnd` handler that itself sets `clear_session`,
+        fired by the very `Session.close()` call below, would otherwise race this method's own
+        replacement session into existence. The second request is dropped, logged at
+        `warning`, rather than building a second replacement on top of the first.
 
         Tears down the outgoing `Session` first (`Session.close()`) so a live resource it
         registered a teardown for (e.g. `BashTool`'s persistent shell) doesn't leak past this
@@ -236,13 +259,32 @@ class PromptSubmissionMixin(ReplAppBase):
 
         The new session's `SessionConfig` is rebuilt by re-reading the config layers from
         disk (keeping just the session-scoped parts) and applying the CLI flags on top, so a
-        config-file edit made between startup and this `/clear` takes effect and a `--model`
+        config-file edit made between startup and this call takes effect and a `--model`
         (etc.) flag survives a `/clear` the same way it survived startup — see
         `apply_cli_flags_to_session` and docs/specs/process-and-session-config.md.
-        `_apply_workspace_config` is then called with the same workspace as before to fold in
-        the workspace-trust-driven parts (project-layer `readDirs`/`writeDirs` grants,
-        `config_warnings`) the same way it does when trust is first resolved.
         """
+        if self._replacing_session:
+            logger.warning(
+                "Ignoring a clear_session request that arrived while another session "
+                "replacement was already in progress.")
+            return
+        self._replacing_session = True
+        try:
+            # `Session.on_clear_session_requested` (see `_bind_clear_session_handler`) can
+            # fire from either this app's own thread (a manual `/clear`'s synchronous
+            # `Session.close()`) or `_send_prompt`'s worker thread (an `onAgentTurnEnd` hook,
+            # fired deep inside `Session.send_turn()`) -- unlike a per-turn
+            # `TurnEventHandlers` callback, which only ever fires from the worker thread and
+            # so can call `call_from_thread` unconditionally, this one has to check.
+            if threading.get_ident() == self._thread_id:
+                self._do_replace_session(initial_message)
+            else:
+                self.call_from_thread(self._do_replace_session, initial_message)
+        finally:
+            self._replacing_session = False
+
+    def _do_replace_session(self, initial_message: str | None) -> None:
+        """`_replace_session`'s body, run under its reentrancy guard."""
         old_session: Session = self._session
 
         workspace = old_session.config.workspace
@@ -284,6 +326,7 @@ class PromptSubmissionMixin(ReplAppBase):
             tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles,
         )
+        self._bind_clear_session_handler(self._session)
 
         if self._session_log_enabled:
             log_path = session_log_path(self._session.id)
@@ -306,6 +349,15 @@ class PromptSubmissionMixin(ReplAppBase):
         self._update_status_bar()
         session_name = self.query_one(f"#{SESSION_NAME_ID}", Static)
         session_name.update(NEW_SESSION_LABEL)
+
+        if initial_message is not None:
+            # Deferred rather than called directly: an `onAgentTurnEnd`-triggered replacement
+            # runs from inside the outgoing turn's own `_send_prompt` worker (see
+            # `_replace_session`), which hasn't reset `_turn_in_flight` yet at this point --
+            # `_submit_prompt` would see it still `True` and silently drop the submit.
+            # `call_after_refresh` queues this for after that worker's own `_finish_turn`
+            # clears the flag, and is safe to call from either thread (`post_message`-backed).
+            self.call_after_refresh(self._submit_prompt, initial_message)
 
     def _submit_prompt(self, prompt_text: str) -> None:
         """Echo `prompt_text` into the history and dispatch it. The echoed `Static` is

@@ -54,14 +54,15 @@ def _fold(accumulated: HookOutput, latest: HookOutput) -> HookOutput:
     `latest` explicitly set wins, one it left at its default carries `accumulated`'s value
     forward. `success` is the strictest outcome seen so far (`False` once any valid handler
     says `False`); `permission` is the strictest allow/ask/deny verdict any handler that opined
-    expressed (see `_fold_permission`); `interrupt` is `True` once any valid handler asks for
-    it."""
+    expressed (see `_fold_permission`); `interrupt`/`clear_session` are `True` once any valid
+    handler asks for them."""
     return HookOutput(
         success=accumulated.success and latest.success,
         tool_args=latest.tool_args if latest.tool_args is not None else accumulated.tool_args,
         permission=_fold_permission(accumulated.permission, latest.permission),
         message=latest.message if latest.message is not None else accumulated.message,
-        interrupt=latest.interrupt or accumulated.interrupt)
+        interrupt=latest.interrupt or accumulated.interrupt,
+        clear_session=latest.clear_session or accumulated.clear_session)
 
 
 class HookDispatcher:
@@ -149,6 +150,11 @@ class HookDispatcher:
                 "message": result.message if result.message is not None else chained_input.message,
                 "tool_args": result.tool_args if result.tool_args is not None else chained_input.tool_args,
             })
+        if aggregate.clear_session and not aggregate.message:
+            logger.warning(
+                "Hook %r's aggregate result set clear_session without a message; ignoring "
+                "clear_session.", name)
+            aggregate = aggregate.model_copy(update={"clear_session": False})
         return aggregate
 
     def _run_handler(

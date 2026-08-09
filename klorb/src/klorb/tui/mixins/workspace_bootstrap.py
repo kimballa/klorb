@@ -75,6 +75,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
                 process_config=self._process_config,
                 tool_registry=grants.tool_registry,
                 effective_subagent_roles=grants.effective_subagent_roles)
+            self._bind_clear_session_handler(self._session)
             self.show_notice(
                 f"Could not load session {entry.title or entry.session_id!r}: it is locked by "
                 "another process or no longer available. Started a new session instead.",
@@ -186,6 +187,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         relative to their own confirmation/lookup flow.
         """
         self._session = restored
+        self._bind_clear_session_handler(restored)
         self.sub_title = restored.config.model
         self._update_status_bar()
         session_name_widget = self.query_one(f"#{SESSION_NAME_ID}", Static)

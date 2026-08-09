@@ -339,6 +339,13 @@ class SessionCoreMixin(SessionBase):
         """`True` for the duration of a `send_turn()` call `start_turn_or_enqueue` itself made,
         so that call doesn't reset `_chained_hook_turns` back to `0` the way an ordinary,
         externally-driven `send_turn()` call does -- see `start_turn_or_enqueue`."""
+        self.on_clear_session_requested: Callable[[str], None] | None = None
+        """Set by whichever host owns this session's lifecycle (e.g. `klorb.tui.ReplApp`) to
+        replace it with a fresh session seeded by the given message, in response to a hook's
+        `HookOutput.clear_session` -- see `close()` and `SessionTurnsMixin.
+        _fire_agent_turn_end_hook`. `None` (the default) means no host has registered one, e.g.
+        headless/ACP or most unit tests; a `clear_session` request against such a session
+        degrades to a warning rather than being fulfilled."""
         self.subagent_tracker = self._create_subagent_tracker()
         """Bookkeeping for the subagents this session has directly created -- see
         `klorb.agents.runtime.SubagentTracker`. Every `Session` gets its own, fresh and empty,
@@ -911,11 +918,11 @@ class SessionCoreMixin(SessionBase):
 
     def _dispatch_lifecycle_hook(
         self, hook_name: str, *, event: str, workspace_just_bootstrapped: bool = False,
-    ) -> None:
+    ) -> "HookOutput":
         """Build a `HookInput` describing this session's `workspace`/`event` and dispatch
         `hook_name` -- `onSessionStart`/`onSessionEnd`'s own shape, on top of the shared
         `_dispatch_hook` every other lifecycle/turn/tool hook point uses."""
-        self._dispatch_hook(
+        return self._dispatch_hook(
             hook_name, event=event, workspaceTrusted=self.config.workspace.trusted,
             workspaceJustBootstrapped=workspace_just_bootstrapped)
 
@@ -987,15 +994,33 @@ class SessionCoreMixin(SessionBase):
         output (or a termination note, for one still running) into this session's own
         `messages` first -- so `_finalize_session_persistence()` below captures it in
         `session.json`, per docs/specs/subagents.md's "Persistence" section.
+
+        A `clear_session` result from `onSessionEnd` (guaranteed by `HookDispatcher` to carry a
+        non-empty `message`) is handed to `on_clear_session_requested` once every other step
+        above has finished -- discarding this session and starting a fresh one is exactly what
+        this method is already about to do the rest of, so the request is honored after, not
+        instead of, the teardown work. Logged at `warning` and otherwise dropped if no host has
+        registered that callback.
         """
+        clear_session_message: str | None = None
         if self.parent is None and self._process_config is not None:
-            self._dispatch_lifecycle_hook("onSessionEnd", event="SuspendSession")
+            result = self._dispatch_lifecycle_hook("onSessionEnd", event="SuspendSession")
+            if result.clear_session:
+                assert result.message is not None
+                clear_session_message = result.message
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()
         for teardown in self._teardown_callbacks.values():
             teardown()
         self._teardown_callbacks.clear()
+        if clear_session_message is not None:
+            if self.on_clear_session_requested is not None:
+                self.on_clear_session_requested(clear_session_message)
+            else:
+                logger.warning(
+                    "onSessionEnd hook requested clear_session but this session has no "
+                    "on_clear_session_requested handler registered; ignoring.")
 
     def active_model(self) -> Model | None:
         """Return the registered `Model` for `config.model`, or `None` if it isn't registered

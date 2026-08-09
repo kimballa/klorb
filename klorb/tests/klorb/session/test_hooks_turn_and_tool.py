@@ -141,6 +141,73 @@ def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(tmp_path: 
     assert user_messages[1:] == ["keep going"] * 5
 
 
+def test_onagentturnend_clear_session_invokes_the_callback_instead_of_chaining(
+    tmp_path: Path,
+) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [
+            HookConfig(
+                type="bash",
+                shell='echo \'{"message": "fresh start", "clear_session": true}\''),
+        ],
+    })
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+    received: list[str] = []
+    session.on_clear_session_requested = received.append
+
+    session.send_turn("go")
+
+    assert received == ["fresh start"]
+    # Only the original turn ran -- clear_session bypasses start_turn_or_enqueue's chaining.
+    assert provider.send_prompt.call_count == 1
+
+
+def test_onagentturnend_clear_session_falls_back_to_chaining_without_a_handler(
+    tmp_path: Path,
+) -> None:
+    """Without a registered `on_clear_session_requested`, `clear_session` degrades to an
+    ordinary chained turn -- and since the hook fires again on that follow-up turn's own end,
+    it keeps chaining until `max_chained_hook_turns` (default 5) trips, the same safety cap
+    an ordinary `chat` handler is bound by (see
+    `test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips`)."""
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [
+            HookConfig(
+                type="bash",
+                shell='echo \'{"message": "fresh start", "clear_session": true}\''),
+        ],
+    })
+    provider = MagicMock()
+    provider.send_prompt.side_effect = [_reply(f"reply {i}") for i in range(6)]
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+
+    session.send_turn("go")
+
+    assert provider.send_prompt.call_count == 6
+    user_messages = [m.content for m in session.messages if m.role == "user"]
+    assert user_messages[1:] == ["fresh start"] * 5
+
+
+def test_onagentturnend_clear_session_without_a_message_is_ignored(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [
+            HookConfig(type="bash", shell='echo \'{"clear_session": true}\''),
+        ],
+    })
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+    received: list[str] = []
+    session.on_clear_session_requested = received.append
+
+    session.send_turn("go")
+
+    assert received == []
+    assert provider.send_prompt.call_count == 1
+
+
 def test_onagentturnend_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],

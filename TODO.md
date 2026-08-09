@@ -326,3 +326,8 @@
   (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.
 * Third-party domain blocklisting for `WebFetch` as an `onToolUse`/`onToolResult` hook consumer —
   see "Plan 013: WebFetch" above.
+* `clear_session` support outside the TUI: `KlorbAcpAgent`/headless `klorb.cli.main()` never
+  register `Session.on_clear_session_requested`. An ACP client addressing a stable `session_id`
+  would need a protocol-level way to learn its session was reset (e.g. a `session/update`); headless
+  has no host loop to hand a replacement session back to. See
+  docs/specs/hooks-and-events.md's "Session replacement" section.
