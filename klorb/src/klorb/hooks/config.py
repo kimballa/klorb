@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 HOOK_NAMES: frozenset[str] = frozenset({
     "onProcessStart", "onSessionStart", "onSubmitUserPrompt", "onRequestPermission",
-    "onToolUse", "onToolResult", "onSubagentStart", "onSubagentTurnEnd", "onAgentTurnEnd",
-    "onSessionEnd", "onProcessEnd",
+    "onToolUse", "onToolResult", "onActivateSkill", "onSubagentStart", "onSubagentTurnEnd",
+    "onAgentTurnEnd", "onSessionEnd", "onProcessEnd",
 })
 """Every lifecycle moment a `hooks` config key may name."""
 
@@ -28,7 +28,7 @@ seconds" cadence."""
 
 HookHandlerType = Literal["bash", "classifier", "chat"]
 
-HookFilterSubjectField = Literal["event", "message", "tool_name"]
+HookFilterSubjectField = Literal["event", "message", "tool_name", "skill_name"]
 
 HOOK_FILTER_SUBJECT_FIELDS: dict[str, HookFilterSubjectField] = {
     "onProcessStart": "event",
@@ -37,6 +37,7 @@ HOOK_FILTER_SUBJECT_FIELDS: dict[str, HookFilterSubjectField] = {
     "onRequestPermission": "event",
     "onToolUse": "tool_name",
     "onToolResult": "message",
+    "onActivateSkill": "skill_name",
     "onSubagentStart": "message",
     "onSubagentTurnEnd": "message",
     "onAgentTurnEnd": "message",
@@ -45,9 +46,10 @@ HOOK_FILTER_SUBJECT_FIELDS: dict[str, HookFilterSubjectField] = {
 }
 """Which `HookInput` field a `HookConfig.filter` is evaluated against, per hook name: an
 `event`-name hook (process/session start/end) filters on `event`, a hook centered on a chunk of
-conversation text (a user prompt, an agent reply, a subagent's output) filters on `message`, and
-`onToolUse` filters on `tool_name`. `onRequestPermission`'s own subject is left as `"event"` (a
-placeholder default): its `HookInput` shape is deferred future work, not yet documented."""
+conversation text (a user prompt, an agent reply, a subagent's output) filters on `message`,
+`onToolUse` filters on `tool_name`, and `onActivateSkill` filters on `skill_name` (the skill's
+bare, canonical name). `onRequestPermission`'s own subject is left as `"event"` (a placeholder
+default): its `HookInput` shape is deferred future work, not yet documented."""
 
 
 class HookConfigFilter(BaseModel):

@@ -195,13 +195,13 @@ class SessionSkillsMixin(SessionBase):
             + self._format_skill_list(mentioned)
         )
 
-    def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
-        """When `token` (the prompt's leading `/<token>` slug, from `_leading_skill_token()`)
-        resolves to a discoverable, non-`"deny"`-verdicted skill, return a `UserSkillActivation`
-        whose `body` carries the exact same `{namespace, name, content, files, tokens}` JSON
-        payload `ActivateSkill` would return (built by the same `skill_activation_payload()` both
-        paths share), so the model can apply the skill immediately with no `ActivateSkill` round
-        trip.
+    def _build_user_skill_activation_interjection(self, skill: Skill) -> UserSkillActivation | None:
+        """When `skill` (the prompt's leading `/<token>` slug, already resolved by the caller
+        against the typed catalog -- see `_leading_skill_token()`) is non-`"deny"`-verdicted and
+        clears the `onActivateSkill` hook, return a `UserSkillActivation` whose `body` carries the
+        exact same `{namespace, name, content, files, tokens}` JSON payload `ActivateSkill` would
+        return (built by the same `skill_activation_payload()` both paths share), so the model can
+        apply the skill immediately with no `ActivateSkill` round trip.
 
         An `"ask"`-verdicted skill is auto-promoted to `"allow"` for the rest of this session
         (`apply_skill_permission_grant(scope="session")`, no interactive prompt raised) before its
@@ -210,23 +210,19 @@ class SessionSkillsMixin(SessionBase):
         separate confirmation to ask for. This only ever widens `"ask"` to `"allow"`; it never
         touches a `"deny"` verdict.
 
-        Returns `None` when `token` doesn't resolve to a skill, or when its verdict is `"deny"` --
-        gets no special treatment at all (as if the user's message didn't start with a skill
-        reference), the same whether the catalog was built with that verdict already in place or
-        the skill was denied later in this session and the (unrebuilt) catalog still holds it; the
-        latter case logs a `logger.warning()` so the silent skip is still observable. See
-        docs/specs/skills.md.
+        Returns `None` when `skill`'s verdict is `"deny"`, or an `onActivateSkill` handler vetoes
+        the activation -- gets no special treatment at all (as if the user's message didn't start
+        with a skill reference), the same whether the catalog was built with that verdict already
+        in place or the skill was denied later in this session and the (unrebuilt) catalog still
+        holds it; the latter case logs a `logger.warning()` so the silent skip is still observable.
+        See docs/specs/skills.md.
         """
-        self._ensure_skill_catalog()
-        skill = self._skill_catalog_registry.typed().resolve_reference(token)
-        if skill is None:
-            return None
         skill_id = (skill.namespace, skill.name)
         verdict = evaluate_skill(self.config.skill_rules, skill_id)
         if verdict == "deny":
             logger.warning(
                 "Leading skill mention /%s resolved to %s but its skillRules verdict is deny; "
-                "skipping activation.", token, skill_id)
+                "skipping activation.", skill.name, skill_id)
             return None
         if verdict == "ask":
             # Deferred import: `klorb.permissions.skill_grant` pulls in `klorb.permissions.grant`,
@@ -237,10 +233,16 @@ class SessionSkillsMixin(SessionBase):
             from klorb.permissions.skill_grant import apply_skill_permission_grant
             logger.debug(
                 "Leading skill mention /%s auto-promoting %s from ask to allow for this session.",
-                token, skill_id)
+                skill.name, skill_id)
             apply_skill_permission_grant(
                 action="allow", scope="session", session_config=self.config,
                 process_config=None, skill_id=skill_id)
+        if self.fire_activate_skill_hook(
+                skill_namespace=skill.namespace, skill_name=skill.name) is not None:
+            # Denied by an `onActivateSkill` handler: no special treatment, as if the leading
+            # mention hadn't resolved to a skill at all -- the model still has to call
+            # `ActivateSkill` and go through the normal flow, where the hook gets another say.
+            return None
         payload = skill_activation_payload(skill)
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
@@ -248,3 +250,28 @@ class SessionSkillsMixin(SessionBase):
             + json.dumps(payload, ensure_ascii=False)
         )
         return UserSkillActivation(body=body, skill_id=skill_id)
+
+    def fire_activate_skill_hook(self, *, skill_namespace: str, skill_name: str) -> str | None:
+        """Dispatch `onActivateSkill` for `(skill_namespace, skill_name)`, about to be activated
+        -- called by `_build_user_skill_activation_interjection` (the leading-mention fast path)
+        and by `ActivateSkillTool.apply()` (the ordinary model-driven call), after each has
+        already resolved and gated the skill through `skillRules`.
+
+        `HookInput.is_user_mentioned`/`is_user_activated` are read off this turn's own
+        `_current_turn_mentioned_skill_ids`/`_current_turn_leading_skill_id` (set by
+        `send_turn()`), not passed in by the caller -- so both call sites report the same facts
+        about what the user actually typed, regardless of which one is asking.
+
+        Returns a denial message when the aggregate `HookOutput` vetoes the activation
+        (`success=False`, or a `permission` of `"ask"`/`"deny"`), `None` otherwise.
+        """
+        skill_id = (skill_namespace, skill_name)
+        result = self._dispatch_hook(
+            "onActivateSkill", skill_name=skill_name, skill_namespace=skill_namespace,
+            is_user_mentioned=skill_id in self._current_turn_mentioned_skill_ids,
+            is_user_activated=skill_id == self._current_turn_leading_skill_id)
+        if result.success is False or result.permission in ("deny", "ask"):
+            return result.message or (
+                f"Skill activation {skill_namespace}/{skill_name} blocked by onActivateSkill "
+                "hook policy.")
+        return None

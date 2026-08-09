@@ -399,7 +399,7 @@ klorb system-prompt
 Dump the system prompt for a different role and model:
 
 ```bash
-klorb system-prompt --role auditor --model openai/gpt-5-nano
+klorb system-prompt --role reviewer --model openai/gpt-5-nano
 ```
 
 List every discovered model as a table:
@@ -430,14 +430,6 @@ Show the merged config with an extra config file layered on top:
 
 ```bash
 klorb show-config --config ./ci-defaults.json
-```
-
-Run the persistent JSONL server, greet it, then ask it to shut down:
-
-```bash
-klorb server
-{"greet": "Ada"}
-{"action": "shutdown"}
 ```
 
 ## SEE ALSO
