@@ -31,7 +31,7 @@ klorb -m "What is the capital of France?"   # single-shot prompt/response, no RE
 klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
 ```
 
-See [`usage.md`](usage.md) for the full command reference, including the
+See [`usage.md`](../docs/user/usage.md) for the full command reference, including the
 `--session-log`/`--no-session-log` flags and supported environment variables.
 
 ## Evals
