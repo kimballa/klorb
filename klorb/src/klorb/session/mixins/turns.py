@@ -434,6 +434,17 @@ class SessionTurnsMixin(SessionBase):
         finally:
             self._dispatching_chained_turn = False
 
+    def deliver_event_message(self, text: str) -> None:
+        """Deliver an event handler's aggregate `message` (`FileSystemModified`/
+        `WorkspaceTrustChanged`) into this session's conversation. If a turn is already
+        running, `text` is queued verbatim via `start_turn_or_enqueue` as an interjection;
+        otherwise a fresh turn is started with `text` prefixed to make clear what woke the
+        conversation back up on its own."""
+        if self.current_turn_handlers() is not None:
+            self.start_turn_or_enqueue(text)
+            return
+        self.start_turn_or_enqueue(f"An event has resumed this conversation:\n{text}")
+
     def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
         """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` (see
         `klorb.workspace.session_store.write_session_image`) and return the same fragment with

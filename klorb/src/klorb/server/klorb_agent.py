@@ -530,6 +530,7 @@ class KlorbAcpAgent(acp.Agent):
             assert trusted_workspace.id is not None
             self._trust_manager.set_trusted(trusted_workspace.id, True)
         self._apply_workspace_config(trusted_workspace)
+        self._session.fire_workspace_trust_changed_hook("AcpTrustWorkspace")
         logger.debug(
             "_klorb/trustWorkspace trusted %s for ACP session %s",
             trusted_workspace.path, self._acp_session_id)

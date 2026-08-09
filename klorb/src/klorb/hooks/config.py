@@ -19,6 +19,12 @@ HOOK_NAMES: frozenset[str] = frozenset({
 EVENT_NAMES: frozenset[str] = frozenset({"FileSystemModified", "Timer", "WorkspaceTrustChanged"})
 """Every event kind an `events` config key may name."""
 
+MIN_EVENT_DEBOUNCE_SECONDS: float = 10.0
+"""The default debounce window `FileSystemModified`'s watcher waits after the most recent
+change before delivering a batch, and the floor `Timer`'s own interval/cron scheduling may not
+go tighter than -- shared so both events settle on the same "not more than once every 10
+seconds" cadence."""
+
 HookHandlerType = Literal["bash", "classifier", "chat"]
 
 HookFilterSubjectField = Literal["event", "message", "tool_name"]

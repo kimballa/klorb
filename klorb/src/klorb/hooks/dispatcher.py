@@ -4,14 +4,15 @@ name, runs each eligible handler, and folds the results into a single aggregate 
 """
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from klorb.api_provider import ApiProvider
 from klorb.hooks.bash_handler import run_bash_handler
 from klorb.hooks.classifier_handler import run_classifier_handler
-from klorb.hooks.config import HOOK_FILTER_SUBJECT_FIELDS, HookConfig
+from klorb.hooks.config import HOOK_FILTER_SUBJECT_FIELDS, EventConfig, HookConfig
 from klorb.hooks.filters import evaluate_filter
-from klorb.hooks.wire import HookInput, HookOutput
+from klorb.hooks.wire import EventInput, HookInput, HookOutput
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.table import Verdict, stricter_verdict
 from klorb.session.config import SessionConfig
@@ -107,14 +108,40 @@ class HookDispatcher:
         if not handlers:
             return HookOutput()
         sandbox_config = session_config if session_config is not None else self._process_config.session
-        subject_field = HOOK_FILTER_SUBJECT_FIELDS.get(hook_name, "event")
+        return self._run_chain(hook_name, handlers, hook_input, sandbox_config)
+
+    def dispatch_event(
+        self, event_name: str, entries: Sequence[EventConfig], event_input: EventInput, *,
+        session_config: SessionConfig | None = None,
+    ) -> HookOutput:
+        """Run each of `entries`' own `action` as one ordered chain, under the same
+        filter/fold/error-handling contract `dispatch()` applies to a hook's handler list.
+        `entries` is whatever subset of `ProcessConfig.events[event_name]` the caller has
+        already decided is eligible for this occurrence (e.g. a `FileSystemModified` watcher's
+        own watch-path match) -- this method applies no further selection beyond each entry's
+        own `action.filter`."""
+        logger.debug("Dispatching event %r (%d configured handler(s))", event_name, len(entries))
+        if not entries:
+            return HookOutput()
+        sandbox_config = session_config if session_config is not None else self._process_config.session
+        handlers = list(map(lambda entry: entry.action, entries))
+        return self._run_chain(event_name, handlers, event_input, sandbox_config)
+
+    def _run_chain(
+        self, name: str, handlers: list[HookConfig], hook_input: HookInput,
+        session_config: SessionConfig,
+    ) -> HookOutput:
+        """Run `handlers` in order against `hook_input`, folding each valid `HookOutput` into
+        the next handler's input and into the aggregate result -- the shared chain-execution
+        loop `dispatch()`/`dispatch_event()` both build their handler list for."""
+        subject_field = HOOK_FILTER_SUBJECT_FIELDS.get(name, "event")
         subject = getattr(hook_input, subject_field, None) or ""
         aggregate = HookOutput()
         chained_input = hook_input
         for handler in handlers:
             if handler.filter is not None and not evaluate_filter(handler.filter, subject):
                 continue
-            result = self._run_handler(handler, chained_input, sandbox_config)
+            result = self._run_handler(handler, chained_input, session_config)
             if result is None:
                 continue
             aggregate = _fold(aggregate, result)

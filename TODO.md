@@ -164,8 +164,6 @@
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
     compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
-  * This can actually be an onWorkspaceTrust hook, executed within the Session.
-    * ... we need to define a whole bunch of hookable moments, here.
   * This can then send a msg / AskUserQuestion to the user, in either TUI or VSCode.
 * (#agent) Improve Workspace trust msg:
   * When querying about workspace trust, list any workspace skills auto-allowed by config.
