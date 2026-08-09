@@ -2,7 +2,7 @@
 
 ## NAME
 
-klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
+klorb - interact with a coding agent through an interactive TUI or headless session.
 
 ## SYNOPSIS
 
@@ -27,11 +27,11 @@ klorb - send a prompt to a model via OpenRouter, or start an interactive REPL
 ## DESCRIPTION
 
 klorb is an agent harness. Invoked with `-m`/`--message` and no explicit
-`--interactive` flag, it sends a single prompt to a model via OpenRouter and
+`--interactive` flag, it sends a single prompt to an agent via OpenRouter and
 prints the response to stdout. Invoked with no `-m`/`--message` flag, it
-starts an interactive, full-screen terminal REPL instead. Passing
-`--interactive` together with `-m`/`--message` starts the REPL with that
-message submitted as the first turn, then keeps the REPL open for more.
+starts an interactive, full-screen terminal UI instead. Passing
+`--interactive` together with `-m`/`--message` starts the TUI with that
+message submitted as the first turn, then keeps the TUI open for more.
 
 Subcommand overview:
 
