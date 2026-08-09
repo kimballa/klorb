@@ -206,7 +206,7 @@ hooks are inert in that case rather than erroring.
 | `onProcessStart` | `klorb.cli.main()`, before workspace/session setup | process |
 | `onProcessEnd` | `klorb.cli.main()`, at exit | process |
 | `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | root session |
-| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `event="DestroySession"` | root session |
+| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `event="SuspendSession"` | root session |
 | `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
 | `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `start_turn_or_enqueue` | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |

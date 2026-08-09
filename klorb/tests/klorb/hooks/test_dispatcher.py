@@ -27,6 +27,14 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
+    write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
+    monkeypatch.setattr(
+        "klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
+
+
 def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) -> ProcessConfig:
     session = SessionConfig(
         workspace=Workspace(path=workspace_root, trusted=True),
@@ -230,7 +238,7 @@ def test_dispatch_uses_a_live_session_config_over_the_process_template(tmp_path:
         workspace=Workspace(path=other_root, trusted=True),
         read_dirs=DirRules(allow=[other_root]), write_dirs=DirRules(allow=[other_root]))
     result = HookDispatcher(process_config).dispatch(
-        "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", event="DestroySession"),
+        "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", event="SuspendSession"),
         session_config=live_session_config)
     assert result.message == str(other_root.resolve(strict=False))
 

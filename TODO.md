@@ -7,6 +7,12 @@
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
+* `deliver_event_message` → `start_turn_or_enqueue` → `send_turn` has a thread-safety gap:
+  the "no turn in flight" path checks `current_turn_handlers()` and calls `send_turn` without a
+  lock, so a concurrent TUI `_submit_prompt` could slip between the check and the call, resulting
+  in two threads running `_dispatch_turn` simultaneously. Narrow race window in practice (timer
+  events fire every 10s+, FS events debounce 10s), but it exists.
+
 * (#agent) KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
   on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
 
