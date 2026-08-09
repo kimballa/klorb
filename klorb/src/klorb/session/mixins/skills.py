@@ -187,25 +187,20 @@ class SessionSkillsMixin(SessionBase):
             + self._format_skill_list(mentioned)
         )
 
-    def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
-        """When `token` (the prompt's leading `/<token>` slug, from `_leading_skill_token()`)
-        resolves to a discoverable, `"allow"`-verdicted skill, return a `UserSkillActivation`
-        whose `body` carries the exact same `{namespace, name, content, files, tokens}` JSON
-        payload `ActivateSkill` would return (built by the same `skill_activation_payload()` both
-        paths share), so the model can apply the skill immediately with no `ActivateSkill` round
-        trip.
+    def _build_user_skill_activation_interjection(self, skill: Skill) -> UserSkillActivation | None:
+        """When `skill` (the prompt's leading `/<token>` slug, already resolved by the caller
+        against the typed catalog -- see `_leading_skill_token()`) is `"allow"`-verdicted,
+        return a `UserSkillActivation` whose `body` carries the exact same `{namespace, name,
+        content, files, tokens}` JSON payload `ActivateSkill` would return (built by the same
+        `skill_activation_payload()` both paths share), so the model can apply the skill
+        immediately with no `ActivateSkill` round trip.
 
-        Returns `None` when `token` doesn't resolve to a skill, or when it resolves but isn't
-        `"allow"`-verdicted -- a `"deny"` skill gets no special treatment at all (as if the user's
-        message didn't start with a skill reference), and an `"ask"`-verdicted skill falls back to
-        the ordinary `SkillReference` reminder instead, so the model still has to call
-        `ActivateSkill` and go through the normal approval flow -- a prompt-leading `/name` never
-        bypasses `skillRules` approval. See docs/specs/skills.md.
+        Returns `None` when `skill` isn't `"allow"`-verdicted -- a `"deny"` skill gets no special
+        treatment at all (as if the user's message didn't start with a skill reference), and an
+        `"ask"`-verdicted skill falls back to the ordinary `SkillReference` reminder instead, so
+        the model still has to call `ActivateSkill` and go through the normal approval flow -- a
+        prompt-leading `/name` never bypasses `skillRules` approval. See docs/specs/skills.md.
         """
-        self._ensure_skill_catalog()
-        skill = self._skill_catalog_registry.typed().resolve_reference(token)
-        if skill is None:
-            return None
         skill_id = (skill.namespace, skill.name)
         if evaluate_skill(self.config.skill_rules, skill_id) != "allow":
             return None

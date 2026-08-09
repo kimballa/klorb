@@ -587,17 +587,18 @@ class SessionTurnsMixin(SessionBase):
             for skill in map(typed_catalog.resolve_reference, skill_mention_tokens)
             if skill is not None
         )
-        leading_token = _leading_skill_token(original_prompt)
-        leading_skill = (
-            typed_catalog.resolve_reference(leading_token) if leading_token is not None else None)
-        self._current_turn_leading_skill_id = (
-            (leading_skill.namespace, leading_skill.name) if leading_skill is not None else None)
+        self._current_turn_leading_skill_id = None
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
+        leading_token = _leading_skill_token(original_prompt)
         if leading_token is not None:
-            activation = self._build_user_skill_activation_interjection(leading_token)
-            if activation is not None:
-                prompt = f"{wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
-                excluded_skill_ids = frozenset({activation.skill_id})
+            leading_skill = typed_catalog.resolve_reference(leading_token)
+            if leading_skill is not None:
+                self._current_turn_leading_skill_id = (leading_skill.namespace, leading_skill.name)
+                activation = self._build_user_skill_activation_interjection(leading_skill)
+                if activation is not None:
+                    prompt = (
+                        f"{wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}")
+                    excluded_skill_ids = frozenset({activation.skill_id})
         if self._pending_permission_framework_interjection is not None:
             interjection = wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)

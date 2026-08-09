@@ -192,7 +192,7 @@ class SessionBase:
     ) -> str | None:
         raise NotImplementedError
 
-    def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
+    def _build_user_skill_activation_interjection(self, skill: Skill) -> UserSkillActivation | None:
         raise NotImplementedError
 
     def _confirm_limit_increase(
