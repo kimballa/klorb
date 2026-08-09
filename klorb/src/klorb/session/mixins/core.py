@@ -74,7 +74,8 @@ if TYPE_CHECKING:
     # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
     # actually used) depends on `klorb.session.config`, so a real import here would be circular;
     # needed only to type `_dispatch_hook`'s return value.
-    from klorb.hooks.wire import HookOutput
+    from klorb.hooks.config import FileSystemModifiedEventConfig
+    from klorb.hooks.wire import EventInput, HookOutput
     # isort: on
 
 logger = logging.getLogger(__name__)
@@ -816,6 +817,66 @@ class SessionCoreMixin(SessionBase):
             return
         self._dispatch_lifecycle_hook(
             "onSessionStart", event=event, workspace_just_bootstrapped=workspace_just_bootstrapped)
+        self._start_workspace_event_watchers()
+
+    def _start_workspace_event_watchers(self) -> None:
+        """Start this root session's `FileSystemModified` watcher, if any `events.
+        FileSystemModified` entries are configured, and register its teardown so `close()`
+        stops it -- called once `onSessionStart` fires (see `fire_session_start_hook`), so
+        trust is already settled and `self._process_config.events` reflects whatever config
+        layer the resolved workspace can see."""
+        assert self._process_config is not None
+        entries = cast(
+            "list[FileSystemModifiedEventConfig]",
+            self._process_config.events.get("FileSystemModified", []))
+        if not entries:
+            return
+        from klorb.hooks.fs_events import FileSystemWatcher
+        watcher = FileSystemWatcher(
+            self.config.workspace.path, entries, dispatch=self._dispatch_fs_modified_event)
+        watcher.start()
+        self.register_teardown("FileSystemWatcher", watcher.close)
+
+    def _dispatch_fs_modified_event(
+        self, entries: "list[FileSystemModifiedEventConfig]", event_input: "EventInput",
+    ) -> None:
+        """`FileSystemWatcher`'s dispatch callback: runs `entries`' actions as one chain and
+        delivers any resulting `message` into this session's conversation. Called from the
+        watcher's own debounce-timer thread, not this session's turn-dispatch thread -- see
+        `Session.deliver_event_message`."""
+        from klorb.hooks.dispatcher import HookDispatcher
+        assert self._process_config is not None
+        output = HookDispatcher(
+            self._process_config, api_provider=self._provider, model_registry=self._model_registry,
+        ).dispatch_event(
+            "FileSystemModified", entries, event_input, session_config=self.config)
+        if output.message is not None:
+            cast("Session", self).deliver_event_message(output.message)
+
+    def fire_workspace_trust_changed_hook(self, event: str) -> None:
+        """Dispatch `WorkspaceTrustChanged` for this root session -- called by the TUI's
+        `>Trust workspace` command (`event="TrustCommand"`) or ACP's `_klorb/trustWorkspace`
+        (`event="AcpTrustWorkspace"`) once `_apply_workspace_config` has already reloaded this
+        session's config against the newly-trusted workspace. A no-op for a subagent or a
+        session with no `ProcessConfig`, mirroring `fire_session_start_hook`'s own guard --
+        both callers only ever hold a reference to the root session in practice."""
+        if self.parent is not None or self._process_config is None:
+            return
+        entries = self._process_config.events.get("WorkspaceTrustChanged", [])
+        if not entries:
+            return
+        from klorb.hooks.dispatcher import HookDispatcher
+        from klorb.hooks.wire import EventInput
+        output = HookDispatcher(
+            self._process_config, api_provider=self._provider, model_registry=self._model_registry,
+        ).dispatch_event(
+            "WorkspaceTrustChanged", entries,
+            EventInput(
+                hook="WorkspaceTrustChanged", workspaceRoot=str(self.config.workspace.path),
+                event=event, role=self.config.role_name, session_id=self.id),
+            session_config=self.config)
+        if output.message is not None:
+            cast("Session", self).deliver_event_message(output.message)
 
     def _dispatch_lifecycle_hook(
         self, hook_name: str, *, event: str, workspace_just_bootstrapped: bool = False,

@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from klorb.api_provider import ProviderResponse
-from klorb.hooks.config import HookConfig, HookConfigFilter
+from klorb.hooks.config import HookConfig, HookConfigFilter, WorkspaceTrustChangedEventConfig
 from klorb.hooks.dispatcher import HookDispatcher
-from klorb.hooks.wire import HookInput
+from klorb.hooks.wire import EventInput, HookInput
 from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
@@ -233,3 +233,48 @@ def test_dispatch_uses_a_live_session_config_over_the_process_template(tmp_path:
         "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", event="DestroySession"),
         session_config=live_session_config)
     assert result.message == str(other_root.resolve(strict=False))
+
+
+def test_dispatch_event_with_no_entries_returns_default_success(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {})
+    result = HookDispatcher(process_config).dispatch_event(
+        "WorkspaceTrustChanged", [],
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="TrustCommand"))
+    assert result.success is True
+    assert result.message is None
+
+
+def test_dispatch_event_runs_each_entrys_own_action_as_a_chain(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {})
+    entries = [
+        WorkspaceTrustChangedEventConfig(
+            action=HookConfig(type="bash", shell='echo \'{"message": "first"}\'')),
+        WorkspaceTrustChangedEventConfig(
+            action=HookConfig(
+                type="bash",
+                shell=(
+                    'python3 -c \'import sys, json; data = json.load(sys.stdin); '
+                    'print(json.dumps({"message": data["message"] + "+second"}))\''))),
+    ]
+    result = HookDispatcher(process_config).dispatch_event(
+        "WorkspaceTrustChanged", entries,
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="TrustCommand"))
+    assert result.message == "first+second"
+
+
+def test_dispatch_event_filters_on_the_event_field(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {})
+    entries = [
+        WorkspaceTrustChangedEventConfig(
+            action=HookConfig(
+                type="bash", shell='echo \'{"message": "matched"}\'',
+                filter=HookConfigFilter(matches="TrustCommand"))),
+    ]
+    matching = HookDispatcher(process_config).dispatch_event(
+        "WorkspaceTrustChanged", entries,
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="TrustCommand"))
+    assert matching.message == "matched"
+    non_matching = HookDispatcher(process_config).dispatch_event(
+        "WorkspaceTrustChanged", entries,
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="AcpTrustWorkspace"))
+    assert non_matching.message is None
