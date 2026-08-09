@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 
 from klorb import __version__
 from klorb.agents.policy import compute_root_session_grants
+from klorb.hooks.dispatcher import HookDispatcher
+from klorb.hooks.wire import HookInput
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, configure_minimal_logging, session_log_path
 from klorb.models.model import Model
@@ -738,75 +740,86 @@ def main() -> None:
     workspace = trust_manager.resolve_workspace(cwd)
 
     process_config = load_process_config(config_flag_path=config_flag_path, cwd=cwd, workspace=workspace)
+    hook_dispatcher = HookDispatcher(process_config)
+    hook_dispatcher.dispatch(
+        "onProcessStart",
+        HookInput(hook="onProcessStart", event="Startup", workspaceRoot=str(workspace.path)))
 
-    # Gather CLI flag outcomes that impact the SessionConfig into a dict. We save this collection of
-    # attributes because if we subsequently create new sessions, we want to be able to re-apply the session
-    # config override CLI flags on those new sessions as well.
-    session_cli_flags: dict[str, Any] = {"interactive": interactive}
-    if args.auto_approve:
-        session_cli_flags["permission_framework"] = "auto"
-    elif not interactive:
-        session_cli_flags["permission_framework"] = "deny"
-    if args.max_tool_calls_per_turn is not None:
-        session_cli_flags["max_tool_calls_per_turn"] = args.max_tool_calls_per_turn
-    if args.max_tool_calls_per_session is not None:
-        session_cli_flags["max_tool_calls_per_session"] = args.max_tool_calls_per_session
-    process_config.argv = list(sys.argv)
-    process_config.session_cli_flags = session_cli_flags
-    apply_cli_flags_to_session(process_config)
-    if args.log_tool_calls is True:
-        process_config.log_tool_calls = True
-    elif args.log_tool_calls is False:
-        process_config.log_tool_calls = False
+    try:
+        # Gather CLI flag outcomes that impact the SessionConfig into a dict. We save this
+        # collection of attributes because if we subsequently create new sessions, we want to be
+        # able to re-apply the session config override CLI flags on those new sessions as well.
+        session_cli_flags: dict[str, Any] = {"interactive": interactive}
+        if args.auto_approve:
+            session_cli_flags["permission_framework"] = "auto"
+        elif not interactive:
+            session_cli_flags["permission_framework"] = "deny"
+        if args.max_tool_calls_per_turn is not None:
+            session_cli_flags["max_tool_calls_per_turn"] = args.max_tool_calls_per_turn
+        if args.max_tool_calls_per_session is not None:
+            session_cli_flags["max_tool_calls_per_session"] = args.max_tool_calls_per_session
+        process_config.argv = list(sys.argv)
+        process_config.session_cli_flags = session_cli_flags
+        apply_cli_flags_to_session(process_config)
+        if args.log_tool_calls is True:
+            process_config.log_tool_calls = True
+        elif args.log_tool_calls is False:
+            process_config.log_tool_calls = False
 
-    provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
-    session_config = process_config.session.model_copy()
-    if args.model is not None:
-        session_config.model = args.model
-    grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
-    session_config.skill_rules = grants.skill_rules
-    session = Session(
-        session_config,
-        provider=provider,
-        process_config=process_config,
-        tool_registry=grants.tool_registry,
-        effective_subagent_roles=grants.effective_subagent_roles,
-    )
-
-    # Replace early-bird logging setup with a full config now that we have terminal / interactivity
-    # flags parsed and log path established.
-    log_path = session_log_path(session.id) if session_log else None
-    configure_logging(repl_mode=interactive, log_path=log_path)
-    logger.debug("Logging to %s", log_path)
-
-    if interactive:
-        run_repl(
-            session,
+        provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
+        session_config = process_config.session.model_copy()
+        if args.model is not None:
+            session_config.model = args.model
+        grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
+        session_config.skill_rules = grants.skill_rules
+        session = Session(
+            session_config,
+            provider=provider,
             process_config=process_config,
-            initial_message=args.prompt,
-            session_log_enabled=session_log,
-            trust_manager=trust_manager,
-            config_flag_path=config_flag_path,
-            skip_session_restore=args.new_session or args.prompt is not None,
-            quit_on_success=args.quit_on_success,
+            tool_registry=grants.tool_registry,
+            effective_subagent_roles=grants.effective_subagent_roles,
         )
-    else:
-        configure_tiktoken_cache_env()
-        logger.info("Sending prompt to model=%s", session.config.model)
-        streamed_any = False
 
-        def on_chunk(delta_text: str) -> None:
-            nonlocal streamed_any
-            streamed_any = True
-            print(delta_text, end="", flush=True)
+        # Replace early-bird logging setup with a full config now that we have terminal / interactivity
+        # flags parsed and log path established.
+        log_path = session_log_path(session.id) if session_log else None
+        configure_logging(repl_mode=interactive, log_path=log_path)
+        logger.debug("Logging to %s", log_path)
 
-        response = session.run_one_shot(args.prompt, on_chunk=on_chunk)
-        logger.info("Received response of %d characters from model=%s", len(response), session.config.model)
-        if streamed_any:
-            print()
+        if interactive:
+            run_repl(
+                session,
+                process_config=process_config,
+                initial_message=args.prompt,
+                session_log_enabled=session_log,
+                trust_manager=trust_manager,
+                config_flag_path=config_flag_path,
+                skip_session_restore=args.new_session or args.prompt is not None,
+                quit_on_success=args.quit_on_success,
+            )
         else:
-            print(response)
-        session.close()
+            configure_tiktoken_cache_env()
+            logger.info("Sending prompt to model=%s", session.config.model)
+            session.fire_session_start_hook("NewSession")
+            streamed_any = False
+
+            def on_chunk(delta_text: str) -> None:
+                nonlocal streamed_any
+                streamed_any = True
+                print(delta_text, end="", flush=True)
+
+            response = session.run_one_shot(args.prompt, on_chunk=on_chunk)
+            logger.info(
+                "Received response of %d characters from model=%s", len(response), session.config.model)
+            if streamed_any:
+                print()
+            else:
+                print(response)
+            session.close()
+    finally:
+        hook_dispatcher.dispatch(
+            "onProcessEnd",
+            HookInput(hook="onProcessEnd", event="Shutdown", workspaceRoot=str(workspace.path)))
 
 
 if __name__ == "__main__":

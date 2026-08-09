@@ -354,6 +354,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.bash.command": "bash_command",
     "tools.bash.timeout": "bash_timeout_seconds",
     "tools.bash.spillBytes": "bash_spill_bytes",
+    "hooks.bash.timeoutSeconds": "hook_bash_timeout_seconds",
     "tools.bash.shfmtCommand": "shfmt_command",
     "tools.bash.riskClassifier.enabled": "bash_risk_classifier_enabled",
     "tools.bash.riskClassifier.model": "bash_risk_classifier_model",
@@ -459,6 +460,11 @@ class ProcessConfig(BaseModel):
     """Per-stream `stdout`/`stderr` byte threshold above which `BashTool` reports a file path
     (`stdout_file`/`stderr_file`) instead of the content itself, so a chatty command can't
     overrun the model's context — see `klorb.tools.bash`."""
+    hook_bash_timeout_seconds: float | None = None
+    """Maximum wall-clock seconds a `type="bash"` hook handler's subprocess may run before it's
+    killed and treated as contributing nothing to its hook's outcome — see
+    `klorb.hooks.bash_handler.run_bash_handler`. `None` (the default) falls back to
+    `bash_timeout_seconds`."""
     shfmt_command: str = DEFAULT_SHFMT_COMMAND
     """`shfmt` binary `BashTool` parses a requested command through before evaluating it against
     `SessionConfig.command_rules` — see `klorb.permissions.shell_parse`."""

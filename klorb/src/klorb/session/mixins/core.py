@@ -786,6 +786,44 @@ class SessionCoreMixin(SessionBase):
         instance per call can safely re-register every time)."""
         self._teardown_callbacks[subject] = teardown
 
+    def fire_session_start_hook(
+        self, event: str, *, workspace_just_bootstrapped: bool = False,
+    ) -> None:
+        """Dispatch `onSessionStart` for this session -- a no-op unless it's a root session
+        (`self.parent is None`; a subagent never fires its own `onSessionStart`/`onSessionEnd`)
+        with a `ProcessConfig`. `event` is one of `"NewSession"`/`"ResumeSession"` -- the
+        caller's job to determine, since only it knows whether this session was freshly
+        constructed or restored from disk. Callers: headless and ACP (`klorb.cli.main()`,
+        `klorb.server.klorb_agent.KlorbAcpAgent.new_session`/`load_session`) call this right
+        after constructing the session, since workspace trust is already settled by then; the
+        TUI calls it from `_resolve_workspace_trust()`
+        (`klorb.tui.mixins.workspace_bootstrap.WorkspaceBootstrapMixin`) instead, once trust is
+        settled there.
+        """
+        if self.parent is not None or self._process_config is None:
+            return
+        self._dispatch_lifecycle_hook(
+            "onSessionStart", event=event, workspace_just_bootstrapped=workspace_just_bootstrapped)
+
+    def _dispatch_lifecycle_hook(
+        self, hook_name: str, *, event: str, workspace_just_bootstrapped: bool = False,
+    ) -> None:
+        """Build a `HookInput` describing this session's `workspace`/`event` and dispatch
+        `hook_name` against it via `klorb.hooks.dispatcher.HookDispatcher`, sandboxing any
+        `bash` handler with this session's own permission tables. Deferred imports: `klorb.hooks`
+        doesn't depend on `klorb.session`, but importing it at module level here would still be
+        the wrong direction for a mixin most callers construct without ever touching hooks."""
+        from klorb.hooks.dispatcher import HookDispatcher
+        from klorb.hooks.wire import HookInput
+        assert self._process_config is not None
+        HookDispatcher(self._process_config).dispatch(
+            hook_name,
+            HookInput(
+                hook=hook_name, event=event, workspaceRoot=str(self.config.workspace.path),
+                workspaceTrusted=self.config.workspace.trusted,
+                workspaceJustBootstrapped=workspace_just_bootstrapped),
+            session_config=self.config)
+
     def close(self) -> None:
         """Persist a final `session.json` and release `session.lock` (see
         `SessionPersistenceMixin._finalize_session_persistence`, a no-op if this session never
@@ -801,12 +839,16 @@ class SessionCoreMixin(SessionBase):
         `subprocess.Popen` handle would otherwise leak for the rest of the klorb process's
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
 
-        Before any of that, cascade-closes every subagent this session has directly or
-        indirectly created (see `klorb.agents.runtime.cascade_close_subagents`), relaying each
-        one's not-yet-delivered output (or a termination note, for one still running) into this
-        session's own `messages` first -- so `_finalize_session_persistence()` below captures
-        it in `session.json`, per docs/specs/subagents.md's "Persistence" section.
+        Before any of that, dispatches `onSessionEnd` (root session only -- see
+        `fire_session_start_hook`) with `event="DestroySession"`, then cascade-closes every
+        subagent this session has directly or indirectly created (see
+        `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
+        output (or a termination note, for one still running) into this session's own
+        `messages` first -- so `_finalize_session_persistence()` below captures it in
+        `session.json`, per docs/specs/subagents.md's "Persistence" section.
         """
+        if self.parent is None and self._process_config is not None:
+            self._dispatch_lifecycle_hook("onSessionEnd", event="DestroySession")
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()
