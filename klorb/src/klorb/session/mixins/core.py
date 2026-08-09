@@ -972,7 +972,7 @@ class SessionCoreMixin(SessionBase):
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
 
         Before any of that, dispatches `onSessionEnd` (root session only -- see
-        `fire_session_start_hook`) with `event="DestroySession"`, then cascade-closes every
+        `fire_session_start_hook`) with `event="SuspendSession"`, then cascade-closes every
         subagent this session has directly or indirectly created (see
         `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
         output (or a termination note, for one still running) into this session's own
@@ -980,7 +980,7 @@ class SessionCoreMixin(SessionBase):
         `session.json`, per docs/specs/subagents.md's "Persistence" section.
         """
         if self.parent is None and self._process_config is not None:
-            self._dispatch_lifecycle_hook("onSessionEnd", event="DestroySession")
+            self._dispatch_lifecycle_hook("onSessionEnd", event="SuspendSession")
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()

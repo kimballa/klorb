@@ -5,9 +5,10 @@ gate whether a handler is eligible to run, and the event-specific config shapes
 (`FileSystemModified`, `Timer`, `WorkspaceTrustChanged`).
 """
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 HOOK_NAMES: frozenset[str] = frozenset({
     "onProcessStart", "onSessionStart", "onSubmitUserPrompt", "onRequestPermission",
@@ -65,6 +66,18 @@ class HookConfigFilter(BaseModel):
     any: "list[HookConfigFilter] | None" = None
     all: "list[HookConfigFilter] | None" = None
     not_: "HookConfigFilter | None" = Field(default=None, alias="not")
+
+    @field_validator("pattern")
+    @classmethod
+    def _validate_pattern(cls, value: str | None) -> str | None:
+        """Reject invalid regex patterns at config load time so a malformed `pattern` can't
+        crash the dispatch loop later (where `re.search` would raise `re.error`)."""
+        if value is not None:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"invalid regex pattern {value!r}: {exc}") from exc
+        return value
 
 
 class HookConfig(BaseModel):

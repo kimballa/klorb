@@ -91,7 +91,7 @@ A `filter` on a handler gates whether it runs at all. Each filter clause holds e
 The subject a filter is checked against depends on the hook: `onSubmitUserPrompt`/
 `onAgentTurnEnd`/`onToolResult`/`onSubagentStart`/`onSubagentTurnEnd` match against the message
 text, `onToolUse` matches against the tool name, and the process/session start/end hooks match
-against the `event` name (`Startup`, `NewSession`, `DestroySession`, etc). A handler with no
+against the `event` name (`Startup`, `NewSession`, `SuspendSession`, etc). A handler with no
 filter always runs.
 
 ## Input and output JSON
@@ -135,7 +135,7 @@ depends on which hook/event fired:
   or `{"prompt": ...}`, whichever it declared.
 * `workspaceRoot` — the workspace's absolute path. Always present.
 * `event` — the specific occurrence name, for hooks/events that need one: `Startup`/`Shutdown`
-  (process start/end), `NewSession`/`ResumeSession`/`SuspendSession`/`DestroySession` (session
+  (process start/end), `NewSession`/`ResumeSession`/`SuspendSession` (session
   start/end), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`).
 * `message` — the user prompt (`onSubmitUserPrompt`), the agent's reply (`onAgentTurnEnd`), a
   subagent's prompt/output (`onSubagentStart`/`onSubagentTurnEnd`), or a tool's result content
