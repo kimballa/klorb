@@ -68,6 +68,10 @@ if TYPE_CHECKING:
     # `klorb.agents.runtime` imports `klorb.session.mixins.turns` (for `wrap_system_interjection`),
     # which itself is part of assembling `Session` -- a real import here would be circular.
     from klorb.agents.runtime import SubagentTracker
+    # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
+    # actually used) depends on `klorb.session.config`, so a real import here would be circular;
+    # needed only to type `_dispatch_hook`'s return value.
+    from klorb.hooks.wire import HookOutput
     # isort: on
 
 
@@ -122,6 +126,8 @@ class SessionBase:
     _queued_messages: list[QueuedMessage]
     _user_msg_event: threading.Event
     _current_turn_handlers: TurnEventHandlers | None
+    _chained_hook_turns: int
+    _dispatching_chained_turn: bool
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"
     statistics: SessionStatistics
@@ -247,3 +253,13 @@ class SessionBase:
         self, callbacks: TurnEventHandlers | None = None,
     ) -> list[QueuedMessage]:
         raise NotImplementedError
+
+    def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
+        raise NotImplementedError
+
+    def start_turn_or_enqueue(self, text: str) -> None: ...
+
+    def fire_subagent_start_hook(self, message: str) -> str | None:
+        raise NotImplementedError
+
+    def fire_subagent_turn_end_hook(self, output: str) -> None: ...

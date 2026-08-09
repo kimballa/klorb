@@ -17,7 +17,7 @@ from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.images.prepare import extension_for_mime_type
 from klorb.message import Message, MessageFragment
 from klorb.session.constants import MAX_TOOL_CALL_ROUNDS, ToolCallLimitExceeded
-from klorb.session.events import TurnEventHandlers
+from klorb.session.events import QueuedMessage, TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.mentions import resolve_at_mentions
 from klorb.token_estimate import estimate_message_tokens, estimate_tokens
@@ -70,6 +70,13 @@ def _prompt_mentions_skill(prompt: str) -> bool:
     skills via `SearchSkills` before proceeding.
     """
     return bool(_SKILL_WORD_RE.search(prompt))
+
+
+class HookDeniedTurnError(Exception):
+    """Raised when an `onSubmitUserPrompt` hook's aggregate `HookOutput.success` is `False`,
+    refusing to send this turn to the model at all. Caught by `_dispatch_turn`'s own generic
+    `except Exception`, which marks `user_message` `processing_state="error"`/`last_error` and
+    re-raises -- exactly like any other turn-ending failure."""
 
 
 def wrap_system_interjection(subject: str, message: str) -> str:
@@ -310,11 +317,14 @@ class SessionTurnsMixin(SessionBase):
         reasoning = self._reasoning_params()
         drop_reasoning = self._drop_reasoning()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
+        is_root = self.parent is None
 
         self.active_cancel_event = callbacks.cancel_event
         self._current_turn_handlers = callbacks
         try:
             try:
+                if is_root:
+                    self._apply_submit_user_prompt_hook(user_message)
                 reply, _ = self._send_and_receive(
                     list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
                     tools, callbacks)
@@ -363,10 +373,66 @@ class SessionTurnsMixin(SessionBase):
                 "Turn complete for %s: user num_tokens=%d, assistant num_tokens=%d, finish_reason=%s",
                 model_name, user_message.num_tokens, reply.num_tokens, reply.finish_reason,
             )
-            return reply.content
+            result_text = reply.content
         finally:
             self.active_cancel_event = None
             self._current_turn_handlers = None
+        if is_root:
+            self._fire_agent_turn_end_hook(result_text)
+        return result_text
+
+    def _apply_submit_user_prompt_hook(self, user_message: Message) -> None:
+        """Dispatch `onSubmitUserPrompt` for this (root-session) turn's `user_message`, before
+        it's sent to the model. A `message` in the aggregate `HookOutput` rewrites
+        `user_message.content` (and its token estimate) in place -- `user_message.fragments`,
+        if any (an `@mention`/image attachment), is left untouched, so a rewrite only reaches
+        the model for a turn with no such attachments. `success=False` raises
+        `HookDeniedTurnError` instead of sending anything, letting `_dispatch_turn`'s own
+        generic exception handling mark and re-raise it like any other turn failure."""
+        result = self._dispatch_hook("onSubmitUserPrompt", message=user_message.content)
+        if result.success is False:
+            raise HookDeniedTurnError(
+                result.message or "Turn blocked by onSubmitUserPrompt hook policy.")
+        if result.message is not None and result.message != user_message.content:
+            user_message.content = result.message
+            user_message.num_tokens = estimate_tokens(user_message.content)
+
+    def _fire_agent_turn_end_hook(self, reply_text: str) -> None:
+        """Dispatch `onAgentTurnEnd` once this root session's turn has fully ended -- called
+        after `_dispatch_turn`'s own `finally` already cleared `_current_turn_handlers`, so a
+        `chat` handler's chained follow-up (via `start_turn_or_enqueue`) sees no turn in flight
+        and starts a fresh one, per the `chat` handler type's documented behavior."""
+        result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
+        if result.message is not None:
+            self.start_turn_or_enqueue(result.message)
+
+    def start_turn_or_enqueue(self, text: str) -> None:
+        """Start a fresh turn with `text`, or queue it (`enqueue_queued_message`) if a turn is
+        already running on this session -- the single decision point a hook/event `chat`
+        handler's message needs: `current_turn_handlers()` is this session's own turn-in-flight
+        signal, the same one `enqueue_queued_message`/`drain_queued_messages` already key off.
+
+        Bounded by `config.max_chained_hook_turns`: `_chained_hook_turns` counts how many turns
+        in a row this method has started back-to-back; once it reaches the cap, a further
+        chained turn is refused (logged at `warning`) rather than started. `_dispatching_chained_turn`
+        marks the nested `send_turn()` call below as one this method itself made, so `send_turn`
+        doesn't reset the counter back to `0` the way it does for an ordinary, externally-driven
+        call -- only a real user- or tool-driven turn resets it.
+        """
+        if self.current_turn_handlers() is not None:
+            self.enqueue_queued_message(QueuedMessage(message_text=text))
+            return
+        if self._chained_hook_turns >= self.config.max_chained_hook_turns:
+            logger.warning(
+                "Chained hook/event turn cap (%d) reached; refusing to start another turn.",
+                self.config.max_chained_hook_turns)
+            return
+        self._chained_hook_turns += 1
+        self._dispatching_chained_turn = True
+        try:
+            self.send_turn(text)
+        finally:
+            self._dispatching_chained_turn = False
 
     def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
         """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` (see
@@ -488,6 +554,8 @@ class SessionTurnsMixin(SessionBase):
         given, is invoked once with the result (or `None` on failure) so a caller can react --
         e.g. the TUI updates its status line and renames its session log file.
         """
+        if not self._dispatching_chained_turn:
+            self._chained_hook_turns = 0
         original_prompt = prompt
         active_model = self.active_model()
         mention_fragments = resolve_at_mentions(
