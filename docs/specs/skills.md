@@ -357,6 +357,30 @@ PermissionsTable`:
   `/dev/null`. Because the entry names the `internal` namespace explicitly, a workspace- or
   user-tier skill of the same name does not inherit its `allow`.
 
+## `onActivateSkill` hook
+
+Once `skillRules` has already let an activation through, both activation paths — the leading-
+mention fast path (`Session._build_user_skill_activation_interjection`) and the ordinary
+`ActivateSkillTool.apply()` call — dispatch the `onActivateSkill` hook via `Session.
+fire_activate_skill_hook(skill_namespace, skill_name)` (`klorb.session.mixins.skills`) before
+handing the skill's content to the model. See docs/specs/hooks-and-events.md for hook dispatch,
+config, and wire-schema mechanics in general.
+
+`HookInput.skill_name`/`skill_namespace` name the skill; `is_user_mentioned`/`is_user_activated`
+report what the current turn's raw prompt actually contained — `is_user_mentioned` if a
+`/<name>` reference to this skill appeared anywhere in it, `is_user_activated` (a strict subset)
+if the prompt *led* with one. Both are computed once per turn, in `send_turn()`, and read back
+by `fire_activate_skill_hook` regardless of which of the two call sites is asking — a plain
+model-initiated `ActivateSkill` call (no matching `/name` in the prompt at all) reports both
+`false`.
+
+A denial (`success: false`, or `permission: "ask"`/`"deny"`) is handled differently by each call
+site: the leading-mention fast path just returns `None`, falling back to the ordinary
+`SkillReference` reminder — the same graceful-degradation treatment an `"ask"`-verdicted skill
+already gets, so the model still has to call `ActivateSkill` and give the hook another look.
+`ActivateSkillTool.apply()` itself has no such fallback — a denial there raises `ToolCallError`
+(`category="permission"`), reported back to the model as this call's failure.
+
 ## Supporting files: `ReadSkillFile`
 
 `ReadSkillFile(namespace: str, name: str, path: str)` resolves the skill against

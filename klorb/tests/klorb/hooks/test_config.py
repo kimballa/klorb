@@ -82,8 +82,8 @@ def test_workspace_trust_changed_event_config_has_no_selector_field() -> None:
 def test_hook_names_matches_the_documented_lifecycle_moments() -> None:
     assert HOOK_NAMES == {
         "onProcessStart", "onSessionStart", "onSubmitUserPrompt", "onRequestPermission",
-        "onToolUse", "onToolResult", "onSubagentStart", "onSubagentTurnEnd", "onAgentTurnEnd",
-        "onSessionEnd", "onProcessEnd",
+        "onToolUse", "onToolResult", "onActivateSkill", "onSubagentStart", "onSubagentTurnEnd",
+        "onAgentTurnEnd", "onSessionEnd", "onProcessEnd",
     }
 
 

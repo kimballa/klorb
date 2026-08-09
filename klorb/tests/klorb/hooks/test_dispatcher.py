@@ -206,6 +206,24 @@ def test_dispatch_filters_ontooluse_on_tool_name_not_event(tmp_path: Path) -> No
     assert non_matching.message is None
 
 
+def test_dispatch_filters_onactivateskill_on_skill_name_not_event(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onActivateSkill": [
+            HookConfig(
+                type="bash", shell='echo \'{"message": "matched"}\'',
+                filter=HookConfigFilter(matches="do-thing")),
+        ],
+    })
+    matching = HookDispatcher(process_config).dispatch(
+        "onActivateSkill",
+        HookInput(hook="onActivateSkill", workspaceRoot=str(tmp_path), skill_name="do-thing"))
+    assert matching.message == "matched"
+    non_matching = HookDispatcher(process_config).dispatch(
+        "onActivateSkill",
+        HookInput(hook="onActivateSkill", workspaceRoot=str(tmp_path), skill_name="other-skill"))
+    assert non_matching.message is None
+
+
 def test_dispatch_filters_onsubmituserprompt_on_message_not_event(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onSubmitUserPrompt": [

@@ -69,18 +69,21 @@ none set is vacuously eligible.
 
 `klorb.hooks.config.HOOK_FILTER_SUBJECT_FIELDS` maps each hook name to which `HookInput` field its
 `filter` is evaluated against: `event` for the process/session start/end hooks, `tool_name` for
-`onToolUse`, and `message` for every hook centered on a chunk of conversation text
-(`onSubmitUserPrompt`, `onToolResult`, `onSubagentStart`, `onSubagentTurnEnd`, `onAgentTurnEnd`).
-An event handler's `action.filter` is evaluated the same way, keyed by the event name.
+`onToolUse`, `skill_name` for `onActivateSkill`, and `message` for every hook centered on a chunk
+of conversation text (`onSubmitUserPrompt`, `onToolResult`, `onSubagentStart`, `onSubagentTurnEnd`,
+`onAgentTurnEnd`). An event handler's `action.filter` is evaluated the same way, keyed by the
+event name.
 
 ## Wire schema
 
 `klorb.hooks.wire` defines the JSON shapes a handler is invoked with and must reply with:
 
 * **`HookInput`** — `hook`, `name`, `args` (the firing handler's own `shell`/`command`/`prompt`),
-  `workspace_root`, `event`, `message`, `tool_name`, `tool_args`, `role`, `session_id` (the firing
-  session's own id; `None` only for `onProcessStart`/`onProcessEnd`, before any session exists),
-  `workspace_trusted`/`workspace_just_bootstrapped` (set only for `onSessionStart`).
+  `workspace_root`, `event`, `message`, `tool_name`, `tool_args`, `skill_name`/`skill_namespace`/
+  `is_user_mentioned`/`is_user_activated` (set only for `onActivateSkill`), `role`, `session_id`
+  (the firing session's own id; `None` only for `onProcessStart`/`onProcessEnd`, before any
+  session exists), `workspace_trusted`/`workspace_just_bootstrapped` (set only for
+  `onSessionStart`).
 * **`HookOutput`** — `success` (default `True`), `tool_args`, `permission` (a bare `Verdict`),
   `message`, `interrupt` (default `False`).
 * **`EventInput(HookInput)`** — adds `fs_updates: list[FileSystemUpdate] | None`, each a
@@ -211,6 +214,7 @@ hooks are inert in that case rather than erroring.
 | `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `start_turn_or_enqueue` | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |
 | `onToolResult` | `_apply_tool_result_hook`, after a tool call's result is available; `message` in the result replaces the result content | whole tree |
+| `onActivateSkill` | `Session.fire_activate_skill_hook` (`klorb/src/klorb/session/mixins/skills.py`), from `ActivateSkillTool.apply()` and from `_build_user_skill_activation_interjection`'s leading-mention fast path, once `skillRules` has already let the activation through; `success=False` or a `permission` of `"deny"`/`"ask"` vetoes it — `ActivateSkillTool.apply()` raises `ToolCallError`, the leading-mention path falls back to the ordinary `SkillReference` reminder | whole tree |
 | `onSubagentStart` | `Session.fire_subagent_start_hook`, called from `klorb.agents.policy` around a subagent's turn; a `None` return (aggregate `success=False`) skips the turn entirely | firing subagent |
 | `onSubagentTurnEnd` | `Session.fire_subagent_turn_end_hook`, after a subagent's turn | firing subagent |
 
@@ -224,9 +228,9 @@ permission prompt is `onRequestPermission`'s own deferred design.
 ### Scope across the subagent tree
 
 Subagents (docs/specs/subagents.md) are separate `Session` objects nested under a root session.
-`onToolUse`/`onToolResult` fire identically for any session in the tree, tagged via `HookInput.role`/
-`session_id` with whichever session fired them, so a `filter` can single out subagent activity.
-Every other hook above is scoped to exactly one side: `onSessionStart`/`onSessionEnd`/
+`onToolUse`/`onToolResult`/`onActivateSkill` fire identically for any session in the tree, tagged
+via `HookInput.role`/`session_id` with whichever session fired them, so a `filter` can single out
+subagent activity. Every other hook above is scoped to exactly one side: `onSessionStart`/`onSessionEnd`/
 `onSubmitUserPrompt`/`onAgentTurnEnd` never fire for a subagent's own turns, and
 `onSubagentStart`/`onSubagentTurnEnd` never fire for the root session. `onProcessStart`/
 `onProcessEnd` have no session at all yet/anymore when they fire.

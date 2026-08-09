@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from klorb.api_provider import ProviderResponse
+from klorb.hooks.config import HookConfig
 from klorb.message import Message, ToolCallRequest
 from klorb.permissions.resource import SkillResource
 from klorb.permissions.skill_access import SkillRules
@@ -19,6 +20,19 @@ from klorb.session import PermissionAskContext, PermissionDecision, Session, Ses
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill import catalog as skill_catalog
 from klorb.workspace import Workspace
+
+
+@pytest.fixture(autouse=True)
+def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
+    write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
+    monkeypatch.setattr(
+        "klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
 
 
 def _write_skill(base: Path, name: str, description: str, *, body: str = "instructions") -> Path:
@@ -48,6 +62,7 @@ def _tool_call_reply(call_id: str, name: str, arguments: str) -> ProviderRespons
 def _session(
     tmp_path: Path, *, trusted: bool = True, claude_skills: bool = False,
     skill_rules: SkillRules | None = None, provider: MagicMock | None = None,
+    hooks: dict[str, list[HookConfig]] | None = None,
 ) -> Session:
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
@@ -57,7 +72,8 @@ def _session(
     return Session(
         config,
         provider=provider if provider is not None else MagicMock(),
-        process_config=ProcessConfig(compatibility_claude_skills=claude_skills))
+        process_config=ProcessConfig(
+            compatibility_claude_skills=claude_skills, hooks=hooks if hooks is not None else {}))
 
 
 def _workspace_skills(session: Session) -> Path:
@@ -364,3 +380,130 @@ def test_activate_skill_ask_denied(tmp_path: Path) -> None:
     assert ("workspace", "do-thing") not in session.config.skill_rules.allow
     tool_responses = [m for m in session.messages if m.role == "tool_response"]
     assert any("Permission denied" in m.content for m in tool_responses)
+
+
+# --- onActivateSkill hook ---
+
+_ECHO_HOOK_INPUT = HookConfig(
+    type="bash",
+    shell=(
+        'python3 -c \'import sys, json; data = json.load(sys.stdin); '
+        'print(json.dumps({"success": False, "message": json.dumps(data)}))\''),
+)
+"""Denies unconditionally, echoing the full received `HookInput` JSON back as the denial
+`message` so a test can inspect exactly what `fire_activate_skill_hook` sent."""
+
+
+def test_onactivateskill_hook_denies_the_activateskill_tool_call(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.side_effect = [
+        _tool_call_reply("c1", "ActivateSkill", '{"namespace": "workspace", "name": "do-thing"}'),
+        _reply("done"),
+    ]
+    session = _session(
+        tmp_path, provider=provider, skill_rules=SkillRules(allow=[("workspace", "do-thing")]),
+        hooks={
+            "onActivateSkill": [
+                HookConfig(
+                    type="bash",
+                    shell='echo \'{"permission": "deny", "message": "blocked by skill policy"}\''),
+            ],
+        })
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+    session._tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session.config)
+    session._tool_registry.session = session
+
+    session.send_turn("go")
+
+    tool_response = next(m for m in session.messages if m.role == "tool_response")
+    envelope = json.loads(tool_response.content)
+    assert envelope["is_error"] is True
+    assert envelope["error_category"] == "permission"
+    assert envelope["error_message"] == "blocked by skill policy"
+
+
+def test_onactivateskill_hook_reports_no_mention_for_a_model_initiated_call(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.side_effect = [
+        _tool_call_reply("c1", "ActivateSkill", '{"namespace": "workspace", "name": "do-thing"}'),
+        _reply("done"),
+    ]
+    session = _session(
+        tmp_path, provider=provider, skill_rules=SkillRules(allow=[("workspace", "do-thing")]),
+        hooks={"onActivateSkill": [_ECHO_HOOK_INPUT]})
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+    session._tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session.config)
+    session._tool_registry.session = session
+
+    session.send_turn("please help me out, no skill mentioned")
+
+    tool_response = next(m for m in session.messages if m.role == "tool_response")
+    envelope = json.loads(tool_response.content)
+    seen = json.loads(envelope["error_message"])
+    assert seen["skill_name"] == "do-thing"
+    assert seen["skill_namespace"] == "workspace"
+    assert seen["is_user_mentioned"] is False
+    assert seen["is_user_activated"] is False
+
+
+def test_onactivateskill_hook_reports_mention_without_leading_position(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.side_effect = [
+        _tool_call_reply("c1", "ActivateSkill", '{"namespace": "workspace", "name": "do-thing"}'),
+        _reply("done"),
+    ]
+    session = _session(
+        tmp_path, provider=provider, skill_rules=SkillRules(allow=[("workspace", "do-thing")]),
+        hooks={"onActivateSkill": [_ECHO_HOOK_INPUT]})
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+    session._tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session.config)
+    session._tool_registry.session = session
+
+    session.send_turn("not first: please check /do-thing here")
+
+    tool_response = next(m for m in session.messages if m.role == "tool_response")
+    envelope = json.loads(tool_response.content)
+    seen = json.loads(envelope["error_message"])
+    assert seen["is_user_mentioned"] is True
+    assert seen["is_user_activated"] is False
+
+
+def test_onactivateskill_hook_can_veto_the_leading_mention_fast_path(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, provider=provider, skill_rules=SkillRules(allow=[("workspace", "do-thing")]),
+        hooks={"onActivateSkill": [HookConfig(type="bash", shell='echo \'{"success": false}\'')]})
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="the exact steps")
+
+    session.send_turn("/do-thing please handle this now")
+    content = _user_content(session)
+    assert "UserSkillActivation" not in content
+    assert "the exact steps" not in content
+    # Denial falls back to the ordinary reminder, same as an "ask"-verdicted skill -- the model
+    # still has to call ActivateSkill and give the hook another look.
+    assert '<SystemInterjection subject="SkillReference">' in content
+
+
+def test_onactivateskill_hook_sees_is_user_activated_for_the_leading_mention_fast_path(
+    tmp_path: Path,
+) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, provider=provider, skill_rules=SkillRules(allow=[("workspace", "do-thing")]),
+        hooks={
+            "onActivateSkill": [
+                HookConfig(
+                    type="bash",
+                    shell=(
+                        'python3 -c \'import sys, json; data = json.load(sys.stdin); '
+                        'print(json.dumps({"success": bool(data.get("is_user_activated"))}))\'')),
+            ],
+        })
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing", body="the exact steps")
+
+    session.send_turn("/do-thing please handle this now")
+    content = _user_content(session)
+    assert '<SystemInterjection subject="UserSkillActivation">' in content
+    assert "the exact steps" in content

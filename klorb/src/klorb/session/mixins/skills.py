@@ -209,6 +209,12 @@ class SessionSkillsMixin(SessionBase):
         skill_id = (skill.namespace, skill.name)
         if evaluate_skill(self.config.skill_rules, skill_id) != "allow":
             return None
+        if self.fire_activate_skill_hook(
+                skill_namespace=skill.namespace, skill_name=skill.name) is not None:
+            # Denied by an `onActivateSkill` handler: no special treatment, same as an
+            # "ask"-verdicted skill -- the model still has to call `ActivateSkill` and go
+            # through the normal flow, where the hook gets another say.
+            return None
         payload = skill_activation_payload(skill)
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
@@ -216,3 +222,28 @@ class SessionSkillsMixin(SessionBase):
             + json.dumps(payload, ensure_ascii=False)
         )
         return UserSkillActivation(body=body, skill_id=skill_id)
+
+    def fire_activate_skill_hook(self, *, skill_namespace: str, skill_name: str) -> str | None:
+        """Dispatch `onActivateSkill` for `(skill_namespace, skill_name)`, about to be activated
+        -- called by `_build_user_skill_activation_interjection` (the leading-mention fast path)
+        and by `ActivateSkillTool.apply()` (the ordinary model-driven call), after each has
+        already resolved and gated the skill through `skillRules`.
+
+        `HookInput.is_user_mentioned`/`is_user_activated` are read off this turn's own
+        `_current_turn_mentioned_skill_ids`/`_current_turn_leading_skill_id` (set by
+        `send_turn()`), not passed in by the caller -- so both call sites report the same facts
+        about what the user actually typed, regardless of which one is asking.
+
+        Returns a denial message when the aggregate `HookOutput` vetoes the activation
+        (`success=False`, or a `permission` of `"ask"`/`"deny"`), `None` otherwise.
+        """
+        skill_id = (skill_namespace, skill_name)
+        result = self._dispatch_hook(
+            "onActivateSkill", skill_name=skill_name, skill_namespace=skill_namespace,
+            is_user_mentioned=skill_id in self._current_turn_mentioned_skill_ids,
+            is_user_activated=skill_id == self._current_turn_leading_skill_id)
+        if result.success is False or result.permission in ("deny", "ask"):
+            return result.message or (
+                f"Skill activation {skill_namespace}/{skill_name} blocked by onActivateSkill "
+                "hook policy.")
+        return None

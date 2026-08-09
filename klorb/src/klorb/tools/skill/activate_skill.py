@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from klorb.token_estimate import estimate_tokens
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.skill.catalog import resolve_and_gate_skill, resolve_session_skill_catalog_registry
 from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, skill_activation_payload
 from klorb.tools.tool import Tool, truncate_lines
@@ -19,8 +20,9 @@ class ActivateSkillTool(Tool):
     follows those instructions and reaches any supporting file through `ReadSkillFile`.
 
     Gated by the skill's `skillRules` verdict: `"deny"` raises, `"ask"` interrupts for approval,
-    `"allow"` proceeds. An unknown `(namespace, name)` is a plain `ValueError`. See
-    docs/specs/skills.md.
+    `"allow"` proceeds. An unknown `(namespace, name)` is a plain `ValueError`. Once gated, also
+    dispatches the `onActivateSkill` hook (`Session.fire_activate_skill_hook`); a denial there
+    raises `ToolCallError`. See docs/specs/skills.md and docs/specs/hooks-and-events.md.
     """
 
     def name(self) -> str:
@@ -72,6 +74,12 @@ class ActivateSkillTool(Tool):
         resolved = resolve_and_gate_skill(
             catalog=registry.canonical(), skill_rules=self.context.session_config.skill_rules,
             override=self.context.permission_override, namespace=namespace, name=name)
+
+        assert self.context.session is not None
+        denial = self.context.session.fire_activate_skill_hook(
+            skill_namespace=resolved.namespace, skill_name=resolved.name)
+        if denial is not None:
+            raise ToolCallError(denial, category="permission")
 
         payload = skill_activation_payload(resolved)
         logger.info(
