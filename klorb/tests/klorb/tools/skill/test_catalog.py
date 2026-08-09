@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.skill_access import SkillRules
 from klorb.tools.skill.catalog import build_catalogs
 
 
@@ -21,7 +22,9 @@ def test_typed_catalog_resolves_frontmatter_alias(tmp_path: Path) -> None:
         ws / ".klorb" / "skills", "add-cli-flag",
         "---\nname: cli-flag\ndescription: adds a flag\n---\n")
 
-    catalogs = build_catalogs(workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
+    catalogs = build_catalogs(
+        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
+        skill_rules=SkillRules())
 
     canonical_skill = catalogs.canonical.get(("workspace", "add-cli-flag"))
     assert canonical_skill is not None
@@ -45,7 +48,8 @@ def test_alias_collision_between_two_skills_resolves_deterministically(
 
     with caplog.at_level(logging.WARNING):
         catalogs = build_catalogs(
-            workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
+            workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
+            skill_rules=SkillRules())
 
     winner = catalogs.typed.get(("workspace", "helper"))
     assert winner is not None
@@ -55,6 +59,22 @@ def test_alias_collision_between_two_skills_resolves_deterministically(
     assert loser.name == "task-b"
     assert any(
         "helper" in record.message and "task-b" in record.message for record in caplog.records)
+
+
+def test_denied_skill_never_enters_either_catalog(tmp_path: Path) -> None:
+    """A skill whose skillRules verdict is already "deny" when the catalog is built is absent
+    from both `canonical` and `typed` -- not merely filtered out of `discoverable()` -- since a
+    "deny" verdict can never become anything else for that identity within this catalog's
+    lifetime."""
+    ws = tmp_path / "workspace"
+    _write_skill(ws / ".klorb" / "skills", "secret", "---\ndescription: hidden\n---\n")
+
+    catalogs = build_catalogs(
+        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
+        skill_rules=SkillRules(deny=[("workspace", "secret")]))
+
+    assert catalogs.canonical.get(("workspace", "secret")) is None
+    assert catalogs.typed.get(("workspace", "secret")) is None
 
 
 def test_alias_collision_with_another_skills_canonical_name_is_dropped(
@@ -67,7 +87,8 @@ def test_alias_collision_with_another_skills_canonical_name_is_dropped(
 
     with caplog.at_level(logging.WARNING):
         catalogs = build_catalogs(
-            workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
+            workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
+            skill_rules=SkillRules())
 
     winner = catalogs.typed.get(("workspace", "helper"))
     assert winner is not None

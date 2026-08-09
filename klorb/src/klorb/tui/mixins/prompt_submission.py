@@ -397,6 +397,10 @@ class PromptSubmissionMixin(ReplAppBase):
             self._handle_session_name_changed(original_id, result)
             self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
+        def handle_skill_activated(skill_id: tuple[str, str]) -> None:
+            namespace, name = skill_id
+            self.call_from_thread(self.show_notice, f"Activated skill: {namespace}/{name}")
+
         if not naming_pending:
             self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
@@ -533,6 +537,7 @@ class PromptSubmissionMixin(ReplAppBase):
             on_tool_call_started=handle_tool_call_started,
             on_tool_call=handle_tool_call,
             on_session_name_changed=handle_session_name_changed,
+            on_skill_activated=handle_skill_activated,
             on_enqueue_message=handle_enqueue_message,
             on_send_queued_message=handle_send_queued_message)
         # Stashed so `_finish_turn`'s end-of-turn `drain_queued_messages()` call has a live

@@ -502,6 +502,8 @@ class SessionTurnsMixin(SessionBase):
             if activation is not None:
                 prompt = f"{wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
                 excluded_skill_ids = frozenset({activation.skill_id})
+                if callbacks is not None and callbacks.on_skill_activated is not None:
+                    callbacks.on_skill_activated(activation.skill_id)
         if self._pending_permission_framework_interjection is not None:
             interjection = wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)

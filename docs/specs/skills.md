@@ -32,6 +32,20 @@ steered into a path that escapes its harness-resolved namespace directory (the s
 `klorb.tools.memory.common.validate_memory_filename` enforces). The validation lives in
 `klorb.tools.skill.common.validate_skill_name`/`is_valid_skill_name`.
 
+A second, content-quality check (`klorb.tools.skill.common.has_valid_skill_name_shape`) applies on
+top of that structural one, to both a directory basename and a frontmatter alias name: no
+leading/trailing `-` (ambiguous with a CLI-flag-style token) and no `<`/`>` (would corrupt the
+`<SystemInterjection>`/skill-list markup a name rides in). Unlike a structurally-invalid name's
+silent skip, a name failing this check is skipped with a logged `logger.warning()`, since it's a
+content problem worth surfacing to whoever authored the skill.
+
+The canonical `name` every catalog entry is keyed on is always the directory basename *lowercased*
+— what's advertised to the model and a user-facing skill list (the vscode-plugin fuzzy finder,
+backed by `Session.discover_skills()`) is always lowercase, regardless of the directory's own
+casing on disk. Two skills whose basenames collide only after lowercasing resolve to whichever one
+`resolve_all_skills()` yields first (a logged, dropped collision), the same shape as an alias
+collision below.
+
 `SKILL.md` opens with YAML frontmatter carrying `name` and `description`, then a markdown body:
 
 ```markdown
@@ -51,10 +65,18 @@ attributes read out of it, but a skill author may write others (Claude Code's ow
 carries more — see "Claude-skills compatibility"). `klorb.tools.skill.model.Skill.raw` holds that
 whole dict, so a future feature can read a new attribute without a frontmatter-schema change.
 
-* **`description`** is a single paragraph — no hard length cap, but it is exactly what gets listed
-  for the model (see "The available-skills interjection"), so a skill author keeps it to a
-  sentence or two. Propagated straight from `raw["description"]` onto `Skill.description`; a
-  missing or non-string value is `""`.
+* **`description`** is a single paragraph — no hard length cap on `Skill.description` itself
+  (propagated straight from `raw["description"]`; a missing or non-string value is `""`), but
+  every agent-facing surface that displays it (the available-skills/`SkillReference` bullet lists,
+  `SearchSkills` results) truncates it to `MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH` (1024 characters)
+  via `klorb.tools.skill.common.display_skill_description` — a defense against a hostile or
+  careless frontmatter description bloating every turn's context, so a skill author keeps it to a
+  sentence or two regardless.
+* **`disable-model-invocation`** (`bool`, default unset/`False`): when `true`, the skill is never
+  added to the catalog `ActivateSkill`/`ReadSkillFile` resolve against — only to the `typed`
+  catalog a user's own `/<name>` mention resolves against — so it's invisible to the
+  available-skills interjection and `SearchSkills`, and unreachable by a model that merely guesses
+  its name. See "Model-invocation-disabled skills" below.
 * **`name`** should match the directory basename. It's how the doc calls this "should", not
   "must": the directory basename is *always* the canonical name — nothing else could be, since
   precedence, `skillRules`, and approval decisions all need one identity nailed down before a
@@ -138,16 +160,32 @@ calls `ensure_from_context()` and raises `ValueError` if `context` wasn't built 
 use `self._skill_catalog_registry` directly:
 
 * **`registry.canonical()`** is keyed by every discovered skill's true `(namespace, name)` identity
-  — its directory basename. This is the *only* catalog `ActivateSkill`/`ReadSkillFile` may resolve
-  against (`resolve_and_gate_skill`), and the only identity `skillRules` rules and approval
-  decisions are ever keyed on.
+  — its (lowercased) directory basename. This is the *only* catalog `ActivateSkill`/`ReadSkillFile`
+  may resolve against (`resolve_and_gate_skill`), and the only identity `skillRules` rules and
+  approval decisions are ever keyed on. A skill whose `disable-model-invocation` frontmatter flag
+  is `true` is never added here (see "Model-invocation-disabled skills" below).
 * **`registry.typed()`** additionally carries an alias entry `(namespace, <frontmatter name>)` for a
   skill whose frontmatter `name` disagrees with its directory basename (see above) — pointing at
   the *same* `Skill` object as its canonical entry. This is the catalog a user's typed reference is
   checked against (`SkillCatalog.resolve_reference()`, see "Explicit skill mentions" below). An
   alias can never shadow another skill's real `(namespace, name)` identity: if a frontmatter alias
   collides with a genuine skill's canonical name, the alias is dropped (logged) and the real skill
-  wins.
+  wins. A `disable-model-invocation` skill *is* still added here, under both its canonical name and
+  any alias — this is the one catalog it's ever resolvable through.
+
+A skill whose `(namespace, name)` verdict against the session's *current* `skillRules` is already
+`"deny"` at the moment `build_catalogs()` scans it is excluded from **both** catalogs entirely —
+not merely filtered out of `discoverable()` below. Since a `"deny"` verdict for a given
+`(namespace, name)` pair can never become anything else within one built catalog's lifetime (the
+catalog isn't rebuilt just because `skillRules` changed), there both isn't and shouldn't be a way
+to reach it — it's absent from the available-skills interjection, `SearchSkills`, the vscode-plugin
+fuzzy finder (`Session.discover_skills()`, the `_klorb/listSkills` ACP extension's own
+implementation), and any `/<name>` mention, exactly as if it didn't exist on disk. This is stronger
+than a skill denied *after* the catalog was already built (e.g. an interactive ask answered "deny"
+mid-session): that one stays resolvable in memory until an explicit reload, so its `skillRules`
+verdict is still checked at every use — a leading `/<name>` mention for it is skipped with a logged
+`logger.warning()` (see "Leading skill mention" below), and `ActivateSkill`/`ReadSkillFile` still
+raise `PermissionError` for it, same as ever.
 
 Both catalogs are built once, lazily, the first time either is needed in that session (via
 `registry.ensure()` — a cheap no-op once built), and stay in memory for the rest of that
@@ -235,9 +273,19 @@ The following skills are available. ...
 
 A skill whose `(namespace, name)` evaluates to `"deny"` is excluded entirely — there's no reason to
 advertise a skill the model structurally cannot activate. A skill evaluating to `"ask"` or
-`"allow"` is listed the same way; the difference only shows up when `ActivateSkill` is called.
-Listing every non-denied skill is a deliberate first-version simplification; a future
-recency/frequency-based top-*k* cutoff is anticipated (see "Out of scope").
+`"allow"` is listed the same way; the difference only shows up when `ActivateSkill` is called. A
+`disable-model-invocation` skill is excluded too, regardless of verdict — it was never in
+`registry.canonical()` (the catalog `discoverable()` enumerates) to begin with. Listing every
+other non-denied skill is a deliberate first-version simplification; a future recency/frequency-
+based top-*k* cutoff is anticipated (see "Out of scope").
+
+Every bullet's `name`/`description` are each capped before display —
+`klorb.tools.skill.common.display_skill_name`/`display_skill_description`, 64/1024 characters
+respectively — the same caps `SearchSkills` results use (see below). The catalog's own identity
+(what `ActivateSkill` resolves against) is never truncated, only this advertised copy; a skill
+whose real name exceeds the cap would fail to resolve if the model echoed the truncated copy back,
+an accepted, visible-failure tradeoff against a hostile or careless over-long name bloating every
+turn's context.
 
 ## Explicit skill mentions
 
@@ -266,27 +314,49 @@ When the user's prompt *starts* with a skill reference — the first non-whitesp
 invocation, rather than "the user happened to write `/foo` somewhere in their message", is meant to
 feel like.
 
-If the resolved skill's canonical `(namespace, name)` verdict is `"allow"`, `Session.send_turn()`
-prepends a `<SystemInterjection subject="UserSkillActivation">` block carrying the exact same
-`{namespace, name, content, files, tokens}` JSON payload `ActivateSkill` would return for that
-skill — built by `klorb.tools.skill.common.skill_activation_payload()`, the single piece of code
-both `ActivateSkillTool.apply()` and this mechanism share, so the two paths can never drift apart.
-The message explains: *"The user has invoked skill \<name\>. Read the skill JSON that follows plus
-the user's prompt, then apply this skill:"* followed by the JSON. After the interjection, the
-user's message body continues exactly as they typed it (including the leading `/<token>` itself —
-nothing is stripped out of the prompt text).
+If the resolved skill's canonical `(namespace, name)` verdict is `"allow"` — or `"ask"`, see
+below — `Session.send_turn()` prepends a `<SystemInterjection subject="UserSkillActivation">`
+block carrying the exact same `{namespace, name, content, files, tokens}` JSON payload
+`ActivateSkill` would return for that skill — built by `klorb.tools.skill.common.
+skill_activation_payload()`, the single piece of code both `ActivateSkillTool.apply()` and this
+mechanism share, so the two paths can never drift apart. The message explains: *"The user has
+invoked skill \<name\>. Read the skill JSON that follows plus the user's prompt, then apply this
+skill:"* followed by the JSON. After the interjection, the user's message body continues exactly
+as they typed it (including the leading `/<token>` itself — nothing is stripped out of the prompt
+text).
 
 This only applies to the *leading* mention. A prompt like `/skill-1 bla bla /skill-2` gets a
 `UserSkillActivation` block for `skill-1` and a separate, ordinary `SkillReference` reminder for
 `skill-2` (mentioned elsewhere in the same message) — `skill-1` is excluded from that reminder
 list since it already got the full activation treatment.
 
-**A leading mention never bypasses `skillRules` approval.** If the verdict is `"ask"`, no content
-is auto-injected — the leading mention instead falls back to the ordinary `SkillReference`
-reminder, so the model still has to call `ActivateSkill` and go through the normal interactive
-approval flow. If the verdict is `"deny"`, the leading mention gets no special treatment at all —
-as if the message hadn't started with a skill reference, matching every other `"deny"`-verdicted
-skill's invisibility elsewhere.
+**Typing the leading `/<name>` mention itself counts as the user's approval.** If the verdict is
+`"ask"`, `_build_user_skill_activation_interjection` auto-promotes it to `"allow"` for the rest of
+this session — `klorb.permissions.skill_grant.apply_skill_permission_grant(action="allow",
+scope="session", ...)`, the same in-memory mutation a `"session"`-scope answer to an interactive
+ask would apply — and then proceeds exactly as the already-`"allow"` case above, with **no
+interactive ask panel raised**. This only ever widens `"ask"` to `"allow"`; it never touches a
+`"deny"` verdict, and the promotion is session-scoped only (never written to a config file), the
+same as any other `"session"`-scope grant. If the verdict is `"deny"`, the leading mention gets no
+special treatment at all — as if the message hadn't started with a skill reference, matching every
+other `"deny"`-verdicted skill's invisibility elsewhere — except when the skill was resolvable in
+this session's (unrebuilt) catalog at a less restrictive verdict and was denied only afterward
+(e.g. an interactive ask elsewhere in the session was answered "deny" mid-session): that case logs
+a `logger.warning()` so the otherwise-silent skip is still observable, since a pre-denied skill (see
+"The session-scoped skill catalog" above) can't reach this code path in the first place.
+
+**A UI hook, not just a stored interjection.** Alongside the interjection, `Session.send_turn()`
+invokes `TurnEventHandlers.on_skill_activated(skill_id)` if the caller supplied one, so a live UI
+doesn't have to re-parse the interjection out of stored message content to know a skill just
+activated. The TUI wires this to `show_notice()`, appending an `Activated skill: <namespace>/<name>`
+line to the history right after the echoed prompt; the vscode-plugin webview instead recognizes the
+`UserSkillActivation` subject when it renders a restored/streamed history entry's system
+interjections (`HistoryView.tsx`'s `SystemInterjection` component) and renders the same friendly
+label in place of the generic collapsed "System interjection (...)" disclosure every other subject
+gets. A restored TUI history scroll (`_mount_restored_history`,
+`SubagentsPanelMixin._render_restored_messages`) shows the same notice too, via
+`klorb.tui.formatting.extract_skill_activation_notice`, even though the interjection body itself
+stays stripped from the displayed message like any other.
 
 ## `SearchSkills`
 
@@ -296,8 +366,11 @@ construction `SearchMemories` uses. Its result is a flat list of `{namespace, na
 for every skill with a hit, no matched-line detail: since a skill's `name`/`description` are
 already exposed by the available-skills interjection, `SearchSkills` exists to *narrow*, not to
 reveal. It searches `SkillCatalogRegistry.canonical().discoverable(skill_rules)` — the same precedence-deduped,
-non-`"deny"` set the available-skills interjection lists — reading each candidate's `SKILL.md` body
-fresh (the catalog doesn't cache skill bodies, only frontmatter) to match against the body text.
+non-`"deny"` set the available-skills interjection lists (so a `disable-model-invocation` skill,
+never in `canonical()`, is unreachable here too) — reading each candidate's `SKILL.md` body fresh
+(the catalog doesn't cache skill bodies, only frontmatter) to match against the body text. Each
+result's `name`/`description` are capped the same way the available-skills interjection's are (see
+above).
 
 ## Activating a skill
 
@@ -312,6 +385,21 @@ that was never in the catalog because the workspace was untrusted when it was bu
 canonicalization containment check `ReadSkillFile` applies to a `path` argument (see below): a
 symlink inside the skill directory that resolves outside it is excluded from the manifest entirely,
 rather than followed and leaked into what the model sees.
+
+### Model-invocation-disabled skills
+
+`resolve_and_gate_skill` (the shared front half of `ActivateSkill`/`ReadSkillFile`) resolves
+`(namespace, name)` against `canonical()` first; a `disable-model-invocation` skill was never added
+there (see "The session-scoped skill catalog"), so this lookup always misses for it. Rather than
+the generic "no such skill" `ValueError` an actually-unknown name gets, `resolve_and_gate_skill`
+also checks `typed()` at that point purely to give a caller that *guessed* such a skill's name (it
+was never advertised, so the only way to know it exists at all is to have somehow learned its
+name) a specific, actionable refusal instead: *"Skill \<fqsn\> cannot be loaded by name -- it only
+activates when the user's own message starts with \"/\<name\>\". Tell the user to invoke it that
+way if they want to use it; do not retry this call."* This is a final safety check, not a
+disclosure — the `typed()` lookup only ever informs the error message, never resolves or returns
+the skill's content. The one legitimate way in stays the leading-mention `UserSkillActivation`
+path above, which resolves through `typed()` directly and never calls `ActivateSkill` at all.
 
 Loading a skill's instructions is a materially bigger step than reading its name and one-line
 description, so it's gated by a `skillRules` resource kind on `klorb.permissions.table.
@@ -452,6 +540,13 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
   restored one, or a `/clear` — is unaffected, since it rescans on its own first use). This is a
   deliberate performance/simplicity trade rather than an oversight; a future version could
   auto-invalidate on a filesystem-watch signal.
+* **A leading `/<name>` mention auto-promotes an `"ask"`-verdicted skill to `"allow"` with no
+  interactive prompt.** This is intentional, not an oversight: typing a skill's name as the leading
+  token of a message is treated as the user's own approval, the same weight an interactive "Allow
+  (this session)" answer carries — see "Leading skill mention". It only ever widens `"ask"`, never
+  `"deny"`, and only for this session (never persisted to a config file), so the worst case is one
+  extra session-scoped `allow` the user could have gotten anyway by typing `/<name>` a second time
+  and clicking through the ask panel.
 
 ## Out of scope
 

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 from tui.conftest import (
+    TEST_SESSION_ID,
     _invoke_clear_session,
     _reply,
     _session,
@@ -20,6 +21,7 @@ from tui.conftest import (
 from klorb.agents.runtime import SubagentHandle
 from klorb.api_provider import ResponseAborted
 from klorb.logging_config import session_log_path
+from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, Session, SessionConfig
 from klorb.session_naming import SessionName, rename_session_id
@@ -27,6 +29,7 @@ from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, ToolCallStatic, TurnWaitingStatic
+from klorb.workspace import Workspace
 
 
 def _add_running_subagent(root: Session, provider: MagicMock) -> SubagentHandle:
@@ -419,6 +422,33 @@ async def test_provider_error_is_shown_in_history() -> None:
 
         assert "boom" in str(error_widget.content)
         assert prompt_input.disabled is False
+
+
+async def test_leading_skill_mention_shows_activated_skill_notice(tmp_path: Path) -> None:
+    """A live turn whose prompt starts with `/<name>` and unconditionally activates a skill
+    (see `SessionSkillsMixin._build_user_skill_activation_interjection`) shows a visible
+    "Activated skill: ..." notice in the history, via `TurnEventHandlers.on_skill_activated`."""
+    skill_dir = tmp_path / ".klorb" / "skills" / "do-thing"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\ndescription: does the thing\n---\n\nthe steps\n")
+
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    config = SessionConfig(
+        model="some/model", workspace=Workspace(path=tmp_path, trusted=True),
+        skill_rules=SkillRules(allow=[("workspace", "do-thing")]))
+    app = ReplApp(session=Session(config, provider=mock_provider, session_id=TEST_SESSION_ID))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "/do-thing go"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        notice_widget = history.query_one(".notice", Static)
+        assert str(notice_widget.content) == "Activated skill: workspace/do-thing"
 
 
 async def test_aborted_response_keeps_prompt_in_history_and_clears_input() -> None:

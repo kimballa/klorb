@@ -24,6 +24,7 @@ from klorb.tools.util import FullFileView
 from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import HISTORY_ID
 from klorb.tui.formatting import (
+    extract_skill_activation_notice,
     prefix_with_header,
     render_diff_content,
     render_full_file_content,
@@ -420,6 +421,9 @@ class RenderingMixin(ReplAppBase):
             if message.role == "user":
                 display_content = strip_system_interjections(message.content)
                 history.mount(Static(display_content, classes="prompt", markup=False))
+                skill_notice = extract_skill_activation_notice(message.content)
+                if skill_notice is not None:
+                    history.mount(Static(skill_notice, classes="notice", markup=False))
             elif message.role == "assistant":
                 text = message.content
                 if message.processing_state == "aborted":

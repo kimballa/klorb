@@ -9,6 +9,7 @@ import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
 import type { HistoryEntry } from '../historyModel';
 import {
   type ParsedSystemInterjection,
+  parseSkillActivationIdentity,
   parseSystemInterjections,
 } from '../parseSystemInterjections';
 import { renderYamlFrontmatter } from '../renderYamlFrontmatter';
@@ -51,6 +52,14 @@ interface SystemInterjectionProps {
 
 function SystemInterjection(props: SystemInterjectionProps): JSX.Element {
   const { interjection } = props;
+  if (interjection.subject === 'UserSkillActivation') {
+    const identity = parseSkillActivationIdentity(interjection.body);
+    const label =
+      identity === undefined
+        ? 'Activated skill'
+        : `Activated skill: ${identity.namespace}/${identity.name}`;
+    return <div className="entry entry-notice">{label}</div>;
+  }
   const title = `System interjection (${interjection.subject})`;
   return (
     <details className="entry entry-system-interjection">

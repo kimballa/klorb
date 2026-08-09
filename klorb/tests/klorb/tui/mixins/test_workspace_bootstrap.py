@@ -21,6 +21,7 @@ from tui.conftest import (
 
 from klorb.lockfile import create_lockfile
 from klorb.message import Message, ToolCallRequest
+from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, project_config_path
 from klorb.schema_envelope import read_versioned_json
 from klorb.session import Session, SessionConfig
@@ -95,7 +96,8 @@ async def test_trusting_a_workspace_reloads_the_skill_catalog(tmp_path: Path) ->
         # Simulate a turn that built the catalog before the workspace was trusted, exactly like
         # a real skill Tool's `registry.ensure_from_context()` would on an early turn.
         session.skill_catalog_registry.ensure(
-            workspace_root=tmp_path, workspace_trusted=False, claude_skills_compat=False)
+            workspace_root=tmp_path, workspace_trusted=False, claude_skills_compat=False,
+            skill_rules=SkillRules())
         assert session.skill_catalog_registry.canonical().get(("workspace", "my-skill")) is None
 
         app._apply_workspace_config(

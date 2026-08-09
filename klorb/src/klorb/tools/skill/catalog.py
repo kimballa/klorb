@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict
 from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import VALID_NAMESPACES, SkillId, SkillRules, evaluate_skill, format_fqsn
 from klorb.tools.skill.common import (
+    has_valid_skill_name_shape,
     is_valid_skill_name,
     parse_frontmatter,
     raise_if_skill_not_allowed,
@@ -137,20 +138,44 @@ class SkillCatalogs(BaseModel):
 
 def build_catalogs(
     *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
+    skill_rules: SkillRules,
 ) -> SkillCatalogs:
-    """Scan every tier once and return the `(typed, canonical)` `SkillCatalog`s. Pure -- touches
-    no shared state, so it's independently testable and is what `SkillCatalogRegistry.reload()`
-    calls to actually populate a session's catalogs.
+    """Scan every tier once and return the `(typed, canonical)` `SkillCatalog`s. Pure aside from
+    reading `skill_rules` -- touches no shared state, so it's independently testable and is what
+    `SkillCatalogRegistry.reload()` calls to actually populate a session's catalogs.
+
+    A skill whose `(namespace, name)` verdict against `skill_rules` is already `"deny"` at scan
+    time is excluded from both catalogs entirely -- it never becomes resolvable, listable, or
+    even nameable by the model or a user's typed reference, since a `"deny"` verdict can never
+    become anything else for that identity within this catalog's lifetime. This is a stronger
+    exclusion than `SkillCatalog.discoverable()`'s runtime filter: a skill denied *after* the
+    catalog was already built (e.g. via an interactive ask answered "deny" mid-session) stays
+    resolvable in memory until an explicit reload, so its `skillRules` verdict is still checked
+    at every use -- see docs/specs/skills.md.
 
     A skill whose frontmatter `name` disagrees with its directory basename logs a warning (it's
     still discoverable under its canonical basename; the frontmatter name is only ever added to
-    `typed` as an alias, never used as the skill's identity) -- see docs/specs/skills.md.
+    `typed` as an alias, never used as the skill's identity) -- see docs/specs/skills.md. The
+    canonical basename itself is lowercased -- the identity both catalogs key on, and what's
+    advertised to the model or a user-facing skill list, is always lowercase.
     """
     canonical: dict[SkillId, Skill] = {}
     typed: dict[SkillId, Skill] = {}
     for resolved in resolve_all_skills(
             workspace_root=workspace_root, workspace_trusted=workspace_trusted,
             claude_skills_compat=claude_skills_compat):
+        canonical_name = resolved.name.lower()
+        skill_id: SkillId = (resolved.namespace, canonical_name)
+        if evaluate_skill(skill_rules, skill_id) == "deny":
+            logger.debug(
+                "Skill %s excluded from catalog: skillRules verdict is deny", format_fqsn(skill_id))
+            continue
+        if skill_id in canonical:
+            logger.warning(
+                "Skill %s (%s) collides with another skill after lowercasing; the first one "
+                "found wins, this one is dropped.", resolved.name, resolved.namespace)
+            continue
+
         try:
             text = read_skill_md(resolved)
         except (OSError, UnicodeDecodeError):
@@ -163,23 +188,32 @@ def build_catalogs(
         else:
             description = description.strip()
 
-        aliases = {resolved.name}
+        disable_model_invocation = raw.get("disable-model-invocation") is True
+
+        aliases = {canonical_name}
         frontmatter_name = raw.get("name")
         if isinstance(frontmatter_name, str) and frontmatter_name:
-            if frontmatter_name != resolved.name:
+            if frontmatter_name != canonical_name:
                 logger.warning(
                     "Skill %s (%s) frontmatter name %r disagrees with its directory basename "
                     "%r; the basename remains canonical, the frontmatter name is usable only as "
-                    "an alias.", resolved.name, resolved.namespace, frontmatter_name, resolved.name)
+                    "an alias.", canonical_name, resolved.namespace, frontmatter_name, canonical_name)
             if is_valid_skill_name(frontmatter_name):
-                aliases.add(frontmatter_name)
+                if has_valid_skill_name_shape(frontmatter_name):
+                    aliases.add(frontmatter_name)
+                else:
+                    logger.warning(
+                        "Skill %s (%s) frontmatter alias %r skipped: name must not start/end "
+                        "with '-' or contain '<'/'>'.", canonical_name, resolved.namespace,
+                        frontmatter_name)
 
         skill = Skill(
-            namespace=resolved.namespace, name=resolved.name, description=description,
-            raw=raw, aliases=aliases, root=resolved.root)
-        skill_id: SkillId = (resolved.namespace, resolved.name)
-        canonical[skill_id] = skill
+            namespace=resolved.namespace, name=canonical_name, description=description,
+            raw=raw, aliases=aliases, disable_model_invocation=disable_model_invocation,
+            root=resolved.root)
         typed[skill_id] = skill
+        if not disable_model_invocation:
+            canonical[skill_id] = skill
 
     # Second pass: add alias entries, only once every skill's canonical identity is known, so an
     # alias can never shadow another skill's real (namespace, name) identity. Processed in
@@ -204,7 +238,7 @@ def build_catalogs(
 
 
 def resolve_and_gate_skill(
-    *, catalog: SkillCatalog, skill_rules: SkillRules,
+    *, catalog: SkillCatalog, typed_catalog: SkillCatalog, skill_rules: SkillRules,
     override: PermissionOverride | None, namespace: object, name: object,
 ) -> Skill:
     """Validate `namespace`/`name`, resolve the pair against the session's canonical skill
@@ -216,12 +250,26 @@ def resolve_and_gate_skill(
     `catalog` is always the *canonical* one, never the typed/alias one: `ActivateSkill`/
     `ReadSkillFile` only ever resolve a skill's true `(namespace, name)` identity, exactly as
     given, never through a frontmatter-name alias -- see docs/specs/skills.md.
+
+    A `disable-model-invocation` skill is never in `catalog` (see `build_catalogs`), so it's
+    unresolvable here by construction -- except `typed_catalog` is also consulted, purely to
+    give a caller that guessed such a skill's name a specific `ValueError` explaining *why*
+    (rather than the generic "no such skill", which reads the same as a typo), directing it at
+    the one legitimate way in: the user's own message starting with `/<name>`.
     """
     validated_namespace = validate_namespace(namespace)
     validated_name = validate_skill_name(name)
-    skill = catalog.get((validated_namespace, validated_name))
+    skill_id = (validated_namespace, validated_name)
+    skill = catalog.get(skill_id)
     if skill is None:
-        raise ValueError(f"no such skill: {format_fqsn((validated_namespace, validated_name))}")
+        typed_skill = typed_catalog.get(skill_id)
+        if typed_skill is not None and typed_skill.disable_model_invocation:
+            raise ValueError(
+                f"Skill {format_fqsn(skill_id)} cannot be loaded by name -- "
+                "it only activates when the user's own message starts with "
+                f"\"/{typed_skill.name}\". Tell the user to invoke it that way if they want to "
+                "use it; do not retry this call.")
+        raise ValueError(f"no such skill: {format_fqsn(skill_id)}")
     raise_if_skill_not_allowed(
         skill_rules, override, validated_namespace, validated_name,
         description=skill.description)
@@ -240,6 +288,7 @@ class SkillCatalogRegistry:
 
     def ensure(
         self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
+        skill_rules: SkillRules,
     ) -> None:
         """Build both catalogs if this registry hasn't built them yet. A no-op on every call
         after the first -- the tiers are scanned exactly once; reflecting a change to disk (or to
@@ -248,19 +297,21 @@ class SkillCatalogRegistry:
             return
         self.reload(
             workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-            claude_skills_compat=claude_skills_compat)
+            claude_skills_compat=claude_skills_compat, skill_rules=skill_rules)
 
     def ensure_from_context(self, context: "ToolSetupContext") -> None:
-        """`ensure()`, extracting `workspace_root`/`workspace_trusted`/`claude_skills_compat` from
-        a `Tool`'s `ToolSetupContext` -- the common case every skill `Tool.apply()` needs before
-        touching the catalog."""
+        """`ensure()`, extracting `workspace_root`/`workspace_trusted`/`claude_skills_compat`/
+        `skill_rules` from a `Tool`'s `ToolSetupContext` -- the common case every skill
+        `Tool.apply()` needs before touching the catalog."""
         workspace = context.session_config.workspace
         self.ensure(
             workspace_root=workspace.path, workspace_trusted=workspace.trusted,
-            claude_skills_compat=context.process_config.compatibility_claude_skills)
+            claude_skills_compat=context.process_config.compatibility_claude_skills,
+            skill_rules=context.session_config.skill_rules)
 
     def reload(
         self, *, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
+        skill_rules: SkillRules,
     ) -> SkillCatalogs:
         """Rebuild both catalogs from a fresh disk scan, replacing whatever was held -- the
         ">Reload skills" command's implementation. Returns the new catalog pair."""
@@ -269,7 +320,7 @@ class SkillCatalogRegistry:
             "claude_skills_compat=%r", workspace_root, workspace_trusted, claude_skills_compat)
         catalogs = build_catalogs(
             workspace_root=workspace_root, workspace_trusted=workspace_trusted,
-            claude_skills_compat=claude_skills_compat)
+            claude_skills_compat=claude_skills_compat, skill_rules=skill_rules)
         self._typed, self._canonical = catalogs.typed, catalogs.canonical
         logger.info(
             "Skill catalog reloaded: %d skill(s), %d typed reference(s)",

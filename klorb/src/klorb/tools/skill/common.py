@@ -36,6 +36,30 @@ SKILL_FILE_NAME = "SKILL.md"
 """The one file every skill directory must contain to be discoverable; its basename directory is
 the skill's `name` and its YAML frontmatter carries the skill's `description`."""
 
+MAX_SKILL_NAME_DISPLAY_LENGTH = 64
+"""Cap on a skill's name as advertised to the model (the `AvailableSkills`/`SkillReference`
+bullet lists, `SearchSkills` results) -- defends against a hostile, arbitrarily-long directory or
+frontmatter-alias name bloating every turn's context. The catalog's own identity (used to resolve
+`ActivateSkill`/`ReadSkillFile` calls) is never truncated, only this advertised copy."""
+
+MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH = 1024
+"""Cap on a skill's description as advertised to the model, for the same reason as
+`MAX_SKILL_NAME_DISPLAY_LENGTH` -- a frontmatter `description` is project- or user-supplied free
+text with no length limit of its own."""
+
+
+def display_skill_name(name: str) -> str:
+    """`name` truncated to `MAX_SKILL_NAME_DISPLAY_LENGTH` -- what's shown to the model or a
+    user-facing skill list, never what's used to resolve a skill's identity."""
+    return name[:MAX_SKILL_NAME_DISPLAY_LENGTH]
+
+
+def display_skill_description(description: str) -> str:
+    """`description` truncated to `MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH` -- what's shown to the
+    model or a user-facing skill list."""
+    return description[:MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH]
+
+
 NAMESPACE_SCHEMA_PROPERTY: dict[str, object] = {
     "type": "string",
     "enum": list(VALID_NAMESPACES),
@@ -107,6 +131,16 @@ def is_valid_skill_name(name: str) -> bool:
         bool(name) and "/" not in name and "\\" not in name and ":" not in name
         and name not in (".", "..")
     )
+
+
+def has_valid_skill_name_shape(name: str) -> bool:
+    """Whether `name` is well-formed enough to advertise, beyond `is_valid_skill_name`'s bare
+    path-safety check: no leading/trailing hyphen (ambiguous with a CLI-flag-style token) and no
+    `<`/`>` (would corrupt the `<SystemInterjection>` markup and skill-list markup a name rides
+    in). A name failing this check is skipped during discovery, with a logged warning -- unlike
+    `is_valid_skill_name`'s silent skip, since this is a content-quality problem worth surfacing
+    to whoever authored the skill, not a structural one."""
+    return not name.startswith("-") and not name.endswith("-") and "<" not in name and ">" not in name
 
 
 def parse_frontmatter(text: str) -> dict[str, Any]:
@@ -189,6 +223,11 @@ def _skill_dir_names(source: Traversable) -> list[str]:
     for child in source.iterdir():
         name = child.name
         if name.startswith(".") or not is_valid_skill_name(name):
+            continue
+        if not has_valid_skill_name_shape(name):
+            logger.warning(
+                "Skill directory %r skipped: name must not start/end with '-' or contain '<'/'>'.",
+                name)
             continue
         if _is_dir(child) and child.joinpath(SKILL_FILE_NAME).is_file():
             names.append(name)
@@ -318,14 +357,15 @@ def skill_activation_payload(skill: SkillLocation) -> dict[str, Any]:
     turn a `Skill` into what the model sees, so the two paths can never drift apart."""
     content = read_skill_md(skill)
     files = skill_file_manifest(skill)
+    display_name = display_skill_name(skill.name)
     payload: dict[str, Any] = {
         "namespace": skill.namespace,
-        "name": skill.name,
+        "name": display_name,
         "content": content,
         "files": files,
         "tokens": estimate_tokens(content) if content else 0,
     }
     if len(files):
         payload["file_access_hint"] = "Use ReadSkillFile to access paths in 'files' with " + \
-            f"namespace=\"{skill.namespace}\", name=\"{skill.name}\""
+            f"namespace=\"{skill.namespace}\", name=\"{display_name}\""
     return payload

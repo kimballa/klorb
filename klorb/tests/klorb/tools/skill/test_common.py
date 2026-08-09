@@ -2,6 +2,7 @@
 """Tests for klorb.tools.skill.common: discovery, resolution, frontmatter parsing, name/path
 validation, the manifest, and the skillRules gate."""
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,11 @@ from klorb.permissions.table import PermissionAskRequired
 from klorb.tools.skill import common as skill_common
 from klorb.tools.skill.catalog import SkillCatalog, build_catalogs, resolve_and_gate_skill
 from klorb.tools.skill.common import (
+    MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH,
+    MAX_SKILL_NAME_DISPLAY_LENGTH,
+    display_skill_description,
+    display_skill_name,
+    has_valid_skill_name_shape,
     is_valid_skill_name,
     parse_frontmatter,
     raise_if_skill_not_allowed,
@@ -72,6 +78,50 @@ def test_is_valid_skill_name() -> None:
     assert not is_valid_skill_name("..")
     assert not is_valid_skill_name("a/b")
     assert not is_valid_skill_name("a:b")
+
+
+def test_has_valid_skill_name_shape() -> None:
+    assert has_valid_skill_name_shape("foo-bar")
+    assert not has_valid_skill_name_shape("-foo-bar")
+    assert not has_valid_skill_name_shape("foo-bar-")
+    assert not has_valid_skill_name_shape("foo<bar")
+    assert not has_valid_skill_name_shape("foo>bar")
+
+
+def test_discovery_skips_and_warns_on_bad_name_shape(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_skill(ws / ".klorb" / "skills", "-bad-start", "d")
+    _write_skill(ws / ".klorb" / "skills", "bad-end-", "d")
+    _write_skill(ws / ".klorb" / "skills", "good", "d")
+
+    with caplog.at_level(logging.WARNING):
+        resolved = resolve_all_skills(workspace_root=ws, workspace_trusted=True, claude_skills_compat=False)
+
+    assert [r.name for r in resolved] == ["good"]
+    assert sum(1 for record in caplog.records if "must not start/end" in record.message) == 2
+
+
+def test_display_skill_name_and_description_truncate() -> None:
+    long_name = "n" * (MAX_SKILL_NAME_DISPLAY_LENGTH + 10)
+    long_description = "d" * (MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH + 10)
+    assert len(display_skill_name(long_name)) == MAX_SKILL_NAME_DISPLAY_LENGTH
+    assert len(display_skill_description(long_description)) == MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH
+    assert display_skill_name("short") == "short"
+    assert display_skill_description("short") == "short"
+
+
+def test_canonical_name_is_lowercased(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_skill(ws / ".klorb" / "skills", "MixedCase", "d")
+
+    catalog = _catalog(tmp_path, ws)
+
+    assert catalog.get(("workspace", "MixedCase")) is None
+    skill = catalog.get(("workspace", "mixedcase"))
+    assert skill is not None
+    assert skill.name == "mixedcase"
 
 
 # --- frontmatter parsing ---
@@ -311,25 +361,27 @@ def test_override_never_bypasses_deny() -> None:
 
 def _catalog(
     tmp_path: Path, ws: Path, *, workspace_trusted: bool = True, claude_skills_compat: bool = False,
+    skill_rules: SkillRules = SkillRules(),
 ) -> SkillCatalog:
     return build_catalogs(
         workspace_root=ws, workspace_trusted=workspace_trusted,
-        claude_skills_compat=claude_skills_compat).canonical
+        claude_skills_compat=claude_skills_compat, skill_rules=skill_rules).canonical
 
 
 def test_resolve_and_gate_unknown_skill_raises_value_error(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     with pytest.raises(ValueError, match="no such skill"):
         resolve_and_gate_skill(
-            catalog=_catalog(tmp_path, ws), skill_rules=SkillRules(), override=None,
-            namespace="workspace", name="ghost")
+            catalog=_catalog(tmp_path, ws), typed_catalog=_catalog(tmp_path, ws),
+            skill_rules=SkillRules(), override=None, namespace="workspace", name="ghost")
 
 
 def test_resolve_and_gate_finds_catalog_skill(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "s", "does the thing")
     skill = resolve_and_gate_skill(
-        catalog=_catalog(tmp_path, ws), skill_rules=SkillRules(allow=[("workspace", "s")]),
+        catalog=_catalog(tmp_path, ws), typed_catalog=_catalog(tmp_path, ws),
+        skill_rules=SkillRules(allow=[("workspace", "s")]),
         override=None, namespace="workspace", name="s")
     assert skill.namespace == "workspace"
     assert skill.name == "s"

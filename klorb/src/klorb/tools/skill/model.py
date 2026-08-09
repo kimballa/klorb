@@ -33,6 +33,11 @@ class Skill(BaseModel):
     "All SKILL.md frontmatter dict items"
     aliases: set[str]
     "Other names for the skill; e.g. if frontmatter name disagrees with the dirname."
+    disable_model_invocation: bool = False
+    """From frontmatter `disable-model-invocation: true`. Such a skill is never added to the
+    canonical catalog `ActivateSkill`/`ReadSkillFile` resolve against, only to the typed one a
+    user's own `/name` reference resolves against -- see `klorb.tools.skill.catalog.
+    build_catalogs`."""
     root: Any
     """The skill directory's `Traversable` root -- a real `Path` for the `workspace`/`user`
     tiers, or an `importlib.resources` `Traversable` for a zip-installed `internal` tier. `Any`

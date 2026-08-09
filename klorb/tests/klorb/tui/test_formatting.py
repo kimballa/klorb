@@ -6,6 +6,7 @@ from klorb.tui.formatting import (
     _idle_ticks,
     _sweep_ticks,
     crawl_animation_text,
+    extract_skill_activation_notice,
     format_token_count,
     render_diff_content,
     resolve_thinking_body_text,
@@ -264,3 +265,30 @@ def test_strip_system_interjections_handles_multiline_body() -> None:
 def test_strip_system_interjections_no_interjections_unchanged() -> None:
     text = "Just a normal user message."
     assert strip_system_interjections(text) == text
+
+
+# --- extract_skill_activation_notice ---
+
+
+def test_extract_skill_activation_notice_finds_payload() -> None:
+    text = (
+        '<SystemInterjection subject="UserSkillActivation">\n'
+        "The user has invoked skill do-thing. Read the skill JSON that follows plus the "
+        "user's prompt, then apply this skill:\n"
+        '{"namespace": "workspace", "name": "do-thing", "content": "steps", "files": [], '
+        '"tokens": 3}\n'
+        "</SystemInterjection>\n/do-thing please handle this now"
+    )
+    assert extract_skill_activation_notice(text) == "Activated skill: workspace/do-thing"
+
+
+def test_extract_skill_activation_notice_none_when_absent() -> None:
+    text = (
+        '<SystemInterjection subject="SkillReference">\nsome reminder\n</SystemInterjection>\n'
+        "hello"
+    )
+    assert extract_skill_activation_notice(text) is None
+
+
+def test_extract_skill_activation_notice_none_for_plain_text() -> None:
+    assert extract_skill_activation_notice("just a normal message") is None
