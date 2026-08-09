@@ -126,6 +126,8 @@ class SessionBase:
     _queued_messages: list[QueuedMessage]
     _user_msg_event: threading.Event
     _current_turn_handlers: TurnEventHandlers | None
+    _current_turn_mentioned_skill_ids: frozenset[tuple[str, str]]
+    _current_turn_leading_skill_id: tuple[str, str] | None
     _chained_hook_turns: int
     _dispatching_chained_turn: bool
     scratchpad: Scratchpad
@@ -190,7 +192,7 @@ class SessionBase:
     ) -> str | None:
         raise NotImplementedError
 
-    def _build_user_skill_activation_interjection(self, token: str) -> UserSkillActivation | None:
+    def _build_user_skill_activation_interjection(self, skill: Skill) -> UserSkillActivation | None:
         raise NotImplementedError
 
     def _confirm_limit_increase(

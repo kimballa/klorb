@@ -24,6 +24,15 @@ class HookInput(BaseModel):
     message: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
+    skill_name: str | None = None
+    skill_namespace: str | None = None
+    is_user_mentioned: bool | None = None
+    """Set only for `onActivateSkill`: whether `skill_name` appeared anywhere in the current
+    turn's raw prompt as a `/<name>` reference -- see
+    `klorb.session.mixins.skills.SessionSkillsMixin.fire_activate_skill_hook`."""
+    is_user_activated: bool | None = None
+    """Set only for `onActivateSkill`: whether the current turn's raw prompt *began* with a
+    `/<name>` reference to `skill_name` -- a strict subset of `is_user_mentioned`."""
     role: str | None = None
     session_id: str | None = None
     """The firing session's own `Session.id` -- root or subagent alike -- so a handler script

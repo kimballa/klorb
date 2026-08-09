@@ -21,6 +21,24 @@ def test_hook_output_defaults_to_success_with_no_message() -> None:
     assert output.interrupt is False
 
 
+def test_hook_input_activate_skill_fields_default_to_none() -> None:
+    hook_input = HookInput(hook="onActivateSkill", workspaceRoot="/ws")
+    assert hook_input.skill_name is None
+    assert hook_input.skill_namespace is None
+    assert hook_input.is_user_mentioned is None
+    assert hook_input.is_user_activated is None
+
+
+def test_hook_input_carries_activate_skill_fields() -> None:
+    hook_input = HookInput(
+        hook="onActivateSkill", workspaceRoot="/ws", skill_name="do-thing",
+        skill_namespace="workspace", is_user_mentioned=True, is_user_activated=False)
+    assert hook_input.skill_name == "do-thing"
+    assert hook_input.skill_namespace == "workspace"
+    assert hook_input.is_user_mentioned is True
+    assert hook_input.is_user_activated is False
+
+
 def test_event_input_carries_fs_updates() -> None:
     event_input = EventInput.model_validate({
         "hook": "FileSystemModified",

@@ -538,6 +538,12 @@ class SessionTurnsMixin(SessionBase):
         `AvailableSkills` catalog is also prepended (see `_build_skill_reference_interjection`/
         `_build_available_skills_interjection` and docs/specs/skills.md).
 
+        Every `/<name>` reference found this way is also resolved and recorded on
+        `_current_turn_mentioned_skill_ids`/`_current_turn_leading_skill_id`, so a later
+        `ActivateSkill` tool call this same turn can report `is_user_mentioned`/
+        `is_user_activated` to the `onActivateSkill` hook (see
+        `SessionSkillsMixin.fire_activate_skill_hook`).
+
         Finally, the very first time `send_turn()` is ever called on this `Session`
         (`self._context_files_seeded` still `False`), `_build_context_files_interjection()` is
         consulted once; a non-`None` result is wrapped in a `<SystemInterjection
@@ -574,15 +580,27 @@ class SessionTurnsMixin(SessionBase):
             active_model=active_model, image_pipeline_config=self._image_pipeline_config,
         ) if resolve_mentions else None
         self._ensure_skill_catalog()
+        typed_catalog = self._skill_catalog_registry.typed()
+        skill_mention_tokens = _skill_mention_tokens(original_prompt)
+        self._current_turn_mentioned_skill_ids = frozenset(
+            (skill.namespace, skill.name)
+            for skill in map(typed_catalog.resolve_reference, skill_mention_tokens)
+            if skill is not None
+        )
+        self._current_turn_leading_skill_id = None
         excluded_skill_ids: frozenset[tuple[str, str]] = frozenset()
         leading_token = _leading_skill_token(original_prompt)
         if leading_token is not None:
-            activation = self._build_user_skill_activation_interjection(leading_token)
-            if activation is not None:
-                prompt = f"{wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}"
-                excluded_skill_ids = frozenset({activation.skill_id})
-                if callbacks is not None and callbacks.on_skill_activated is not None:
-                    callbacks.on_skill_activated(activation.skill_id)
+            leading_skill = typed_catalog.resolve_reference(leading_token)
+            if leading_skill is not None:
+                self._current_turn_leading_skill_id = (leading_skill.namespace, leading_skill.name)
+                activation = self._build_user_skill_activation_interjection(leading_skill)
+                if activation is not None:
+                    prompt = (
+                        f"{wrap_system_interjection('UserSkillActivation', activation.body)}\n{prompt}")
+                    excluded_skill_ids = frozenset({activation.skill_id})
+                    if callbacks is not None and callbacks.on_skill_activated is not None:
+                        callbacks.on_skill_activated(activation.skill_id)
         if self._pending_permission_framework_interjection is not None:
             interjection = wrap_system_interjection(
                 "PermissionFramework", self._pending_permission_framework_interjection)
@@ -592,7 +610,6 @@ class SessionTurnsMixin(SessionBase):
             message = self._standing_interjection_providers[subject]()
             if message is not None:
                 prompt = f"{wrap_system_interjection(subject, message)}\n{prompt}"
-        skill_mention_tokens = _skill_mention_tokens(original_prompt)
         skill_reference = self._build_skill_reference_interjection(
             skill_mention_tokens, exclude=excluded_skill_ids)
         if skill_reference is not None:

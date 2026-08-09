@@ -90,9 +90,9 @@ A `filter` on a handler gates whether it runs at all. Each filter clause holds e
 
 The subject a filter is checked against depends on the hook: `onSubmitUserPrompt`/
 `onAgentTurnEnd`/`onToolResult`/`onSubagentStart`/`onSubagentTurnEnd` match against the message
-text, `onToolUse` matches against the tool name, and the process/session start/end hooks match
-against the `event` name (`Startup`, `NewSession`, `SuspendSession`, etc). A handler with no
-filter always runs.
+text, `onToolUse` matches against the tool name, `onActivateSkill` matches against the skill's
+bare name, and the process/session start/end hooks match against the `event` name (`Startup`,
+`NewSession`, `SuspendSession`, etc). A handler with no filter always runs.
 
 ## Input and output JSON
 
@@ -115,6 +115,10 @@ neither receives nor produces this JSON — it just contributes its configured `
   "message": "the user prompt, agent reply, or tool result text, depending on the hook",
   "tool_name": "Bash",
   "tool_args": { "command": "ls" },
+  "skill_name": "do-thing",
+  "skill_namespace": "workspace",
+  "is_user_mentioned": true,
+  "is_user_activated": false,
   "role": "operator",
   "session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
   "workspaceTrusted": true,
@@ -142,6 +146,12 @@ depends on which hook/event fired:
   (`onToolResult`).
 * `tool_name` / `tool_args` — set for `onToolUse`/`onToolResult`: which tool, and (for
   `onToolUse`) its call arguments.
+* `skill_name` / `skill_namespace` — set for `onActivateSkill`: the skill about to be activated,
+  by its canonical (directory-basename) identity.
+* `is_user_mentioned` / `is_user_activated` — set for `onActivateSkill`: whether the current
+  turn's raw prompt referenced this skill by `/<name>` anywhere in it, and whether it *led* with
+  one (a strict subset of `is_user_mentioned`). Both `false` for a skill the model activated on
+  its own, with no matching `/<name>` in the prompt at all.
 * `role` — `"operator"` for the root session, or the relevant subagent role name.
 * `session_id` — the id of the session (root or subagent) that fired this hook; `null` for
   `onProcessStart`/`onProcessEnd`, since no session exists yet.
@@ -165,13 +175,13 @@ depends on which hook/event fired:
 Every field is optional — omit anything you have no opinion on, and it won't affect the outcome:
 
 * `success` (default `true`) — set `false` to veto the moment: block the turn
-  (`onSubmitUserPrompt`), block the tool call (`onToolUse`), or skip the subagent turn
-  (`onSubagentStart`). Ignored by hooks that can't be canceled (`onSessionStart`/`onSessionEnd`/
-  `onProcessStart`/`onProcessEnd`).
+  (`onSubmitUserPrompt`), block the tool call (`onToolUse`), block the activation
+  (`onActivateSkill`), or skip the subagent turn (`onSubagentStart`). Ignored by hooks that can't
+  be canceled (`onSessionStart`/`onSessionEnd`/`onProcessStart`/`onProcessEnd`).
 * `tool_args` — for `onToolUse`, replaces the tool call's arguments before it runs.
-* `permission` — `"allow"`, `"ask"`, or `"deny"`; for `onToolUse`, `"ask"`/`"deny"` both block the
-  call the same as `success: false` (there's no live channel yet to actually ask a human from a
-  hook).
+* `permission` — `"allow"`, `"ask"`, or `"deny"`; for `onToolUse`/`onActivateSkill`, `"ask"`/
+  `"deny"` both block the call the same as `success: false` (there's no live channel yet to
+  actually ask a human from a hook).
 * `message` — rewrites the user prompt (`onSubmitUserPrompt`), the tool result content
   (`onToolResult`), or supplies the text a `chat`-style outcome sends as a new/queued turn
   (`onAgentTurnEnd`, `onSubagentTurnEnd`, or any event). Also used as denial feedback when
@@ -205,15 +215,17 @@ the count.
 | `onSubmitUserPrompt` | a user prompt about to be sent to the agent | root session |
 | `onToolUse` | a tool about to run — can rewrite `tool_args` or veto the call | whole tree |
 | `onToolResult` | a tool's result, before it's returned to the agent | whole tree |
+| `onActivateSkill` | a skill about to be activated (via the `ActivateSkill` tool call, or a leading `/name` mention), after `skillRules` already allowed it — can veto the activation | whole tree |
 | `onSubagentStart` | a subagent's turn kicking off | that subagent |
 | `onSubagentTurnEnd` | a subagent's turn ending | that subagent |
 | `onAgentTurnEnd` | the agent's turn ending, after its final message | root session |
 | `onSessionEnd` | a session suspending or being destroyed | root session |
 | `onProcessEnd` | `bin/klorb` exiting | process |
 
-`onToolUse`/`onToolResult` fire for every session in the tree — root or subagent — tagged with
-which one fired it. Every other hook above is scoped to either the root session only, or (for the
-subagent pair) to the firing subagent only; it never fires for the other side.
+`onToolUse`/`onToolResult`/`onActivateSkill` fire for every session in the tree — root or
+subagent — tagged with which one fired it. Every other hook above is scoped to either the root
+session only, or (for the subagent pair) to the firing subagent only; it never fires for the
+other side.
 
 `onRequestPermission` is planned but not yet implemented — see "Future work" below.
 

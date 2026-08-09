@@ -322,6 +322,15 @@ class SessionCoreMixin(SessionBase):
         running. Set at the top of `_dispatch_turn` and cleared in its `finally`. Used by
         `enqueue_queued_message` and `drain_queued_messages` to call the `on_enqueue_message`
         and `on_send_queued_message` hooks."""
+        self._current_turn_mentioned_skill_ids: frozenset[tuple[str, str]] = frozenset()
+        """Every skill `(namespace, name)` the current turn's raw prompt referenced via a
+        `/<name>` token, resolved against the typed catalog -- recomputed at the top of every
+        `send_turn()` call. Consulted by `fire_activate_skill_hook` to report `HookInput.
+        is_user_mentioned` when the model later calls `ActivateSkill` mid-turn."""
+        self._current_turn_leading_skill_id: tuple[str, str] | None = None
+        """The skill `(namespace, name)` the current turn's raw prompt *began* with (a `/<name>`
+        reference), or `None` -- a strict subset of `_current_turn_mentioned_skill_ids`.
+        Consulted by `fire_activate_skill_hook` to report `HookInput.is_user_activated`."""
         self._chained_hook_turns = 0
         """How many turns in a row `start_turn_or_enqueue` has started back-to-back on behalf of
         a `chat` hook/event handler, without an intervening real user- or tool-driven turn --
