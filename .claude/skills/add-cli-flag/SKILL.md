@@ -1,6 +1,6 @@
 ---
 name: add-cli-flag
-description: Add a new command-line flag to the klorb CLI (klorb/src/klorb/cli.py). Use when the user wants to add, wire up, or document a new --flag for klorb, especially one that should be threaded through SessionConfig/Session so library code (TUI, future VSCode plugin) can see it. Also covers updating klorb/usage.md to document the new flag.
+description: Add a new command-line flag to the klorb CLI (klorb/src/klorb/cli.py). Use when the user wants to add, wire up, or document a new --flag for klorb, especially one that should be threaded through SessionConfig/Session so library code (TUI, future VSCode plugin) can see it. Also covers updating docs/user/usage.md to document the new flag.
 ---
 
 # Adding a CLI flag to klorb
@@ -49,7 +49,7 @@ When it does belong on `SessionConfig`:
   on `Session` that reads `self.config.<field>` — see `Session.active_model_name()` for the
   pattern of resolving a config value into behavior.
 
-## 3. Update `klorb/usage.md`
+## 3. Update `docs/user/usage.md`
 
 This file is klorb's single source of CLI documentation — don't leave a flag undocumented
 or duplicate its docs elsewhere:
@@ -98,7 +98,7 @@ worked example of every step above:
 * `SessionConfig.interactive: bool` carries the resolved value into `Session`; `cli.main()`
   branches on it to choose `session.run_one_shot(prompt)` vs. `run_repl(session,
   initial_message=prompt)`.
-* `klorb/usage.md` documents it in the synopsis, an `## OPTIONS` entry, and a new example.
+* `docs/user/usage.md` documents it in the synopsis, an `## OPTIONS` entry, and a new example.
 * `docs/specs/session-and-turns.md` documents the defaulting rule; the ADR
   `docs/adrs/00008-route-one-shot-and-repl-prompts-through-a-shared-session.md` records why a
   shared `Session` was needed once this flag made "one-shot" and "REPL" no longer mutually

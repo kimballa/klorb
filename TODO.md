@@ -16,10 +16,6 @@
 
 ### Feature backlog
 
-* Add a session-specific env file in the session state dir. It's preloaded into every bash cmd.
-  Things like NO_COLOR we currently set directly get initialized into here once. Point to it with an
-  env var when running hooks, so they can customize the env.
-
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
@@ -204,8 +200,9 @@
 
 * Third-party malware blocklisting: query external threat lists and auto-deny requests to
   domains on blocklist(s) maintained by trusted third parties, not just the user's own
-  `deny` list.
-  (Implement as a hook?)
+  `deny` list. Now that hooks exist (docs/specs/hooks-and-events.md), implement as an
+  `onToolUse`/`onToolResult` consumer instead of bespoke `WebFetch` code — see
+  "Plan 022: Hooks and Events" below.
 * Cookie handling: a session-scoped `httpx.Client` (held in
   `session.tool_state["WebFetch"]["client"]`) to enable cookie persistence across calls,
   instead of the fresh per-call client used today.
@@ -304,3 +301,23 @@
     "as an image_url attachment" into a MessageFragment for the subagent to use; adding this is
     a blocking feature before this agent role can be produced.
   * Once available, allow both Operator and Explorer to use VisionAssistant subagents.
+
+### Plan 022: Hooks and Events
+
+* `onRequestPermission` hook: deferred entirely. A real design needs to reconcile
+  `HookOutput.permission` (a bare `Verdict`) against the richer `PermissionDecision`
+  (`action`+`scope`, `klorb/src/klorb/session/events.py`) a human/UI answer produces.
+* A genuine persistent daemon mode, so `Timer` events can become real scheduling instead of
+  best-effort (see docs/adrs/00180-timer-events-are-best-effort-not-real-cron.md). A
+  process-lifecycle feature in its own right, not naturally scoped inside a hooks/events plan.
+* Hot-reloading hook/event config edited mid-process, without a full restart.
+* Surfacing hook activity in the UI — a TUI/VSCode view of which hooks fired, what they returned,
+  and whether they errored, rather than only `logger.debug()`/`warning()` output.
+* Real content for `KLORB_HOOK_ENV_FILE`: a `bash` hook handler's subprocess is pointed at a
+  fresh, empty file per invocation (`klorb.hooks.bash_handler`); nothing writes session-scoped
+  values (e.g. `NO_COLOR`) into it yet, and ordinary `BashTool` commands don't share it.
+* An explicit turn-interrupt primitive hooks/events can call directly, rather than
+  `HookOutput.interrupt` needing new wiring on top of a turn's own `cancel_event`
+  (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.
+* Third-party domain blocklisting for `WebFetch` as an `onToolUse`/`onToolResult` hook consumer —
+  see "Plan 013: WebFetch" above.
