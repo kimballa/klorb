@@ -184,6 +184,7 @@ class KlorbAcpAgent(acp.Agent):
             session_config, provider=self._provider, model_registry=self._model_registry,
             process_config=self._process_config, tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles)
+        session.fire_session_start_hook("NewSession")
         self._session = session
         self._acp_session_id = session.id
         self._turn_bridge = TurnBridge(
@@ -562,6 +563,7 @@ class KlorbAcpAgent(acp.Agent):
         if self._session is not None:
             logger.debug("session/load replacing live ACP session %s", self._acp_session_id)
             self._session.close()
+        restored.fire_session_start_hook("ResumeSession")
         self._session = restored
         # Use the *client's* session_id (the parameter) as the stable ACP handle, not
         # restored.id: the client may be loading by alias (a pre-rename id the naming

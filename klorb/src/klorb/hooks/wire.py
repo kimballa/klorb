@@ -25,6 +25,14 @@ class HookInput(BaseModel):
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     role: str | None = None
+    workspace_trusted: bool | None = Field(default=None, alias="workspaceTrusted")
+    """Whether the workspace is trusted, as of `onSessionStart` firing -- always set for that
+    hook (`None` for every other hook), once trust is settled for this session's startup."""
+    workspace_just_bootstrapped: bool | None = Field(default=None, alias="workspaceJustBootstrapped")
+    """Whether this `onSessionStart` firing is what triggered a first-time workspace trust
+    decision -- `True` only for a brand-new, never-before-seen workspace; `False` for every
+    subsequent `onSessionStart` against an already-registered workspace. `None` for every hook
+    other than `onSessionStart`."""
 
 
 class HookOutput(BaseModel):

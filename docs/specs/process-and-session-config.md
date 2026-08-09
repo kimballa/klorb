@@ -244,8 +244,8 @@ sit as flat keys alongside it at the top level:
 ```
 
 There are, as of `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`shareEnv`/
-`setEnv`, four distinct cross-layer merge behaviors in one file — a reader shouldn't assume
-there are only the first two:
+`setEnv`/`hooks`/`events`, five distinct cross-layer merge behaviors in one file — a reader
+shouldn't assume there are only the first two:
 
 1. **Scalar replace** (most keys, e.g. `model`, `terminal.input.maxLines`): a later layer's
    value replaces an earlier layer's outright.
@@ -259,6 +259,12 @@ there are only the first two:
 4. **Key-by-key merge** (`setEnv`): a later layer's value for a given key replaces an earlier
    layer's for that same key, but keys from different layers accumulate — effectively
    `dict.update()` scoped to this one nested object rather than the whole `sessionDefaults` dict.
+5. **Named-list concatenate** (`hooks`/`events`): each is an object keyed by hook/event name
+   (`onProcessStart`, `FileSystemModified`, ...); a later layer's list for a given name is
+   appended to, never replaces, an earlier layer's list for that same name — the same idea
+   `commandRules`'s `deny`/`ask`/`allow` concatenation uses, generalized from three fixed
+   subkeys to an open-ended, finite set of hook/event names (`klorb.hooks.merge.
+   concatenate_named_handler_lists`).
 
 Every string entry in `readDirs`/`writeDirs`/`readFiles`/`writeFiles`'s `deny`/`ask`/`allow`
 lists, and every value (not key) in `setEnv`, is expanded for `${home}`/`${workspaceRoot}`
