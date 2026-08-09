@@ -5,7 +5,7 @@ helpers every other mixin builds on."""
 
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
     # actually used) depends on `klorb.session.config`, so a real import here would be circular;
     # needed only to type `_dispatch_hook`'s return value.
-    from klorb.hooks.config import FileSystemModifiedEventConfig
+    from klorb.hooks.config import EventConfig, FileSystemModifiedEventConfig, TimerEventConfig
     from klorb.hooks.wire import EventInput, HookOutput
     # isort: on
 
@@ -820,22 +820,29 @@ class SessionCoreMixin(SessionBase):
         self._start_workspace_event_watchers()
 
     def _start_workspace_event_watchers(self) -> None:
-        """Start this root session's `FileSystemModified` watcher, if any `events.
-        FileSystemModified` entries are configured, and register its teardown so `close()`
-        stops it -- called once `onSessionStart` fires (see `fire_session_start_hook`), so
-        trust is already settled and `self._process_config.events` reflects whatever config
-        layer the resolved workspace can see."""
+        """Start this root session's `FileSystemModified` watcher and `Timer` scheduler, for
+        whichever of the two have `events` entries configured, and register their teardowns so
+        `close()` stops them -- called once `onSessionStart` fires (see
+        `fire_session_start_hook`), so trust is already settled and
+        `self._process_config.events` reflects whatever config layer the resolved workspace can
+        see."""
         assert self._process_config is not None
-        entries = cast(
+        fs_entries = cast(
             "list[FileSystemModifiedEventConfig]",
             self._process_config.events.get("FileSystemModified", []))
-        if not entries:
-            return
-        from klorb.hooks.fs_events import FileSystemWatcher
-        watcher = FileSystemWatcher(
-            self.config.workspace.path, entries, dispatch=self._dispatch_fs_modified_event)
-        watcher.start()
-        self.register_teardown("FileSystemWatcher", watcher.close)
+        if fs_entries:
+            from klorb.hooks.fs_events import FileSystemWatcher
+            watcher = FileSystemWatcher(
+                self.config.workspace.path, fs_entries, dispatch=self._dispatch_fs_modified_event)
+            watcher.start()
+            self.register_teardown("FileSystemWatcher", watcher.close)
+        timer_entries = cast("list[TimerEventConfig]", self._process_config.events.get("Timer", []))
+        if timer_entries:
+            from klorb.hooks.timer_events import TimerScheduler
+            scheduler = TimerScheduler(
+                self.config.workspace.path, timer_entries, dispatch=self._dispatch_timer_event)
+            scheduler.start()
+            self.register_teardown("TimerScheduler", scheduler.close)
 
     def _dispatch_fs_modified_event(
         self, entries: "list[FileSystemModifiedEventConfig]", event_input: "EventInput",
@@ -844,12 +851,27 @@ class SessionCoreMixin(SessionBase):
         delivers any resulting `message` into this session's conversation. Called from the
         watcher's own debounce-timer thread, not this session's turn-dispatch thread -- see
         `Session.deliver_event_message`."""
+        self._dispatch_event_entries("FileSystemModified", entries, event_input)
+
+    def _dispatch_timer_event(
+        self, entries: "list[TimerEventConfig]", event_input: "EventInput",
+    ) -> None:
+        """`TimerScheduler`'s dispatch callback -- one entry at a time, since each fires on its
+        own independent schedule (see `TimerScheduler`). Called from that entry's own timer
+        thread, not this session's turn-dispatch thread -- see `Session.deliver_event_message`."""
+        self._dispatch_event_entries("Timer", entries, event_input)
+
+    def _dispatch_event_entries(
+        self, event_name: str, entries: "Sequence[EventConfig]", event_input: "EventInput",
+    ) -> None:
+        """Shared body for `_dispatch_fs_modified_event`/`_dispatch_timer_event`: run `entries`'
+        actions as one chain and deliver any resulting `message` into this session's
+        conversation."""
         from klorb.hooks.dispatcher import HookDispatcher
         assert self._process_config is not None
         output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,
-        ).dispatch_event(
-            "FileSystemModified", entries, event_input, session_config=self.config)
+        ).dispatch_event(event_name, entries, event_input, session_config=self.config)
         if output.message is not None:
             cast("Session", self).deliver_event_message(output.message)
 

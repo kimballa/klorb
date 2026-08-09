@@ -11,13 +11,14 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
 from klorb.config_macros import MacroExpansionError, expand_macros, resolve_macro_values
-from klorb.hooks.config import EVENT_CONFIG_MODELS, HOOK_NAMES, EventConfig, HookConfig
+from klorb.hooks.config import EVENT_CONFIG_MODELS, HOOK_NAMES, EventConfig, HookConfig, TimerEventConfig
 from klorb.hooks.merge import concatenate_named_handler_lists, parse_handler_list
+from klorb.hooks.timer_events import clamp_timer_intervals
 from klorb.json_error_display import format_json_error_context
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import KLORB_CONFIG_DIR
@@ -1016,6 +1017,10 @@ def _merge_named_handlers_layer(
         for warning in parse_warnings:
             logger.warning(warning)
         warnings.extend(parse_warnings)
+        if name == "Timer":
+            clamp_timer_intervals(
+                cast("list[TimerEventConfig]", parsed), source_label=f"{source_label} ({name})",
+                warnings=warnings)
         concatenate_named_handler_lists(accumulator, {name: parsed})
 
 

@@ -1114,6 +1114,22 @@ def test_events_concatenate_across_layers_and_dispatch_by_event_name(tmp_path: P
     assert trust_handler.action.prompt == "trust changed"
 
 
+def test_timer_interval_below_the_floor_is_clamped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"events": {"Timer": [{"interval_minutes": 0.01, "action": {"type": "chat", "prompt": "tick"}}]}})
+
+    with caplog.at_level(logging.WARNING, logger="klorb.hooks.timer_events"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    timer_handler = process_config.events["Timer"][0]
+    assert isinstance(timer_handler, TimerEventConfig)
+    assert timer_handler.interval_minutes == pytest.approx(10.0 / 60.0)
+    assert "clamping" in caplog.text
+
+
 def test_unrecognized_event_name_is_dropped_with_a_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
