@@ -2,21 +2,26 @@
 
 klorb lets you attach your own logic to moments in a session's lifecycle (**hooks**) or to
 occurrences outside the planned turn-by-turn flow (**events**). Both are configured under the
-`hooks`/`events` keys of `klorb-config.json`, and both are inert by default: an empty config
-changes nothing.
+`hooks`/`events` keys of `klorb-config.json`.
 
 * A **hook** fires at a specific, planned lifecycle moment — a session starting, a tool about to
   run, the agent's turn ending. It can rewrite what happens next, veto it, or leave a message for
   the agent.
 * An **event** fires whenever something happens, on its own schedule or trigger — a file changing
-  on disk, a timer elapsing, workspace trust changing. It injects a message into the conversation
-  rather than altering a step already in flight.
+  on disk, a timer elapsing, etc. It injects a message into the conversation rather than altering a
+  step already in flight.
 
 ## Configuration
 
 ```json
 {
   "hooks": {
+    "onSessionStart": [
+      {
+        "type": "bash",
+        "shell": "bin/install-project-dependencies.sh"
+      }
+    ],
     "onSubmitUserPrompt": [
       {
         "type": "classifier",
@@ -61,7 +66,7 @@ Every hook config entry, and every event's `action`, is one of three handler typ
   `${home}` and `${workspaceRoot}` are expanded in `command` elements, not in `shell`. The
   handler receives the triggering event as JSON on stdin and must print a `HookOutput`-shaped
   JSON object to stdout; a non-zero exit, a timeout, or invalid output JSON all mean the handler
-  contributed nothing (not a crash). The subprocess also gets a `KLORB_HOOK_ENV_FILE` environment
+  contributed nothing. The subprocess also gets a `$KLORB_HOOK_ENV_FILE` environment
   variable pointing at a file the script can read/write to pass values back and forth without
   putting them in a tool-call argument the model would see.
 * **`classifier`** — appeals to a small, fast model with `"prompt"` as its instructions, asking
@@ -88,6 +93,97 @@ The subject a filter is checked against depends on the hook: `onSubmitUserPrompt
 text, `onToolUse` matches against the tool name, and the process/session start/end hooks match
 against the `event` name (`Startup`, `NewSession`, `DestroySession`, etc). A handler with no
 filter always runs.
+
+## Input and output JSON
+
+A `bash` handler receives the triggering event as JSON on stdin and must print JSON in the
+`HookOutput` shape (below) to stdout. A `classifier` handler receives the same input JSON as the
+first part of its prompt, and its structured reply is parsed the same way. A `chat` handler
+neither receives nor produces this JSON — it just contributes its configured `prompt` as
+`message` directly.
+
+### `HookInput` / `EventInput`
+
+```json
+{
+  "hook": "onToolUse",
+  "name": "my-handler-name",
+  "args": { "shell": "..." },
+  "workspaceRoot": "/path/to/workspace",
+
+  "event": "NewSession",
+  "message": "the user prompt, agent reply, or tool result text, depending on the hook",
+  "tool_name": "Bash",
+  "tool_args": { "command": "ls" },
+  "role": "operator",
+  "session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "workspaceTrusted": true,
+  "workspaceJustBootstrapped": false,
+
+  "fs_updates": [
+    { "event": "modified", "path": "/path/to/workspace/src/foo.py" }
+  ]
+}
+```
+
+Every field is optional except `hook` and `workspaceRoot` — which fields are actually populated
+depends on which hook/event fired:
+
+* `hook` — the hook or event name that fired (`onToolUse`, `FileSystemModified`, ...).
+* `name` — the `name` you gave this handler in its config entry, or `null` if you didn't set one.
+* `args` — the firing handler's own configured payload: `{"shell": ...}`, `{"command": [...]}`,
+  or `{"prompt": ...}`, whichever it declared.
+* `workspaceRoot` — the workspace's absolute path. Always present.
+* `event` — the specific occurrence name, for hooks/events that need one: `Startup`/`Shutdown`
+  (process start/end), `NewSession`/`ResumeSession`/`SuspendSession`/`DestroySession` (session
+  start/end), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`).
+* `message` — the user prompt (`onSubmitUserPrompt`), the agent's reply (`onAgentTurnEnd`), a
+  subagent's prompt/output (`onSubagentStart`/`onSubagentTurnEnd`), or a tool's result content
+  (`onToolResult`).
+* `tool_name` / `tool_args` — set for `onToolUse`/`onToolResult`: which tool, and (for
+  `onToolUse`) its call arguments.
+* `role` — `"operator"` for the root session, or the relevant subagent role name.
+* `session_id` — the id of the session (root or subagent) that fired this hook; `null` for
+  `onProcessStart`/`onProcessEnd`, since no session exists yet.
+* `workspaceTrusted` / `workspaceJustBootstrapped` — set only for `onSessionStart`: whether the
+  workspace is trusted, and whether this firing is what triggered a first-time trust decision.
+* `fs_updates` — set only for a `FileSystemModified` firing: a debounced batch of
+  `{"event": "created"|"deleted"|"modified", "path": "..."}` entries.
+
+### `HookOutput`
+
+```json
+{
+  "success": true,
+  "tool_args": { "command": "ls -la" },
+  "permission": "allow",
+  "message": "text to inject into the conversation, or feedback on a denial",
+  "interrupt": false
+}
+```
+
+Every field is optional — omit anything you have no opinion on, and it won't affect the outcome:
+
+* `success` (default `true`) — set `false` to veto the moment: block the turn
+  (`onSubmitUserPrompt`), block the tool call (`onToolUse`), or skip the subagent turn
+  (`onSubagentStart`). Ignored by hooks that can't be canceled (`onSessionStart`/`onSessionEnd`/
+  `onProcessStart`/`onProcessEnd`).
+* `tool_args` — for `onToolUse`, replaces the tool call's arguments before it runs.
+* `permission` — `"allow"`, `"ask"`, or `"deny"`; for `onToolUse`, `"ask"`/`"deny"` both block the
+  call the same as `success: false` (there's no live channel yet to actually ask a human from a
+  hook).
+* `message` — rewrites the user prompt (`onSubmitUserPrompt`), the tool result content
+  (`onToolResult`), or supplies the text a `chat`-style outcome sends as a new/queued turn
+  (`onAgentTurnEnd`, `onSubagentTurnEnd`, or any event). Also used as denial feedback when
+  `success: false`.
+* `interrupt` (default `false`) — reserved for breaking into an in-flight turn immediately rather
+  than waiting for the next natural delivery point; not yet wired up anywhere.
+
+If more than one handler runs in a chain for the same firing, each handler's `HookOutput` feeds
+into the next handler's input, and the final aggregate is the strictest/most-recent combination of
+every handler's opinion: `success` is `false` if any handler said so, `permission` is the
+strictest of any handler that gave one, and `message`/`tool_args` take the last handler's value
+that actually set one.
 
 ### Chained turns
 
