@@ -103,6 +103,9 @@ class ReplAppBase(App[None]):
     _subagent_history_rendered_state: SubagentState | None
     _subagent_transcript_notice: Static | None
     _subagent_interrupt_pending: str | None
+    _replacing_session: bool
+
+    def _bind_clear_session_handler(self, session: Session) -> None: ...
 
     def _start_file_finder_index(self, workspace: Workspace) -> None: ...
 

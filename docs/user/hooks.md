@@ -168,7 +168,8 @@ depends on which hook/event fired:
   "tool_args": { "command": "ls -la" },
   "permission": "allow",
   "message": "text to inject into the conversation, or feedback on a denial",
-  "interrupt": false
+  "interrupt": false,
+  "clear_session": false
 }
 ```
 
@@ -188,6 +189,16 @@ Every field is optional — omit anything you have no opinion on, and it won't a
   `success: false`.
 * `interrupt` (default `false`) — reserved for breaking into an in-flight turn immediately rather
   than waiting for the next natural delivery point; not yet wired up anywhere.
+* `clear_session` (default `false`) — discard the session and start a fresh one seeded with
+  `message` as its first turn, as if you'd run "Clear session" yourself. Only `onSessionEnd` and
+  `onAgentTurnEnd` act on this; other hooks/events may set it, but nothing reads it there. Requires
+  a non-empty `message` — an aggregate result with `clear_session: true` and no `message` is
+  dropped (logged at `warning`, `clear_session` reset to `false`). Interactive TUI only today: an
+  ACP or headless run has nothing to hand a replacement session back to, so `clear_session` there
+  just logs a warning and, for `onAgentTurnEnd`, falls back to delivering `message` as an ordinary
+  chained turn instead. See "Chained turns" below — the same infinite-loop risk applies, since a
+  replacement session starts its own chained-turn counter from zero rather than inheriting the
+  outgoing session's.
 
 If more than one handler runs in a chain for the same firing, each handler's `HookOutput` feeds
 into the next handler's input, and the final aggregate is the strictest/most-recent combination of
@@ -218,8 +229,8 @@ the count.
 | `onActivateSkill` | a skill about to be activated (via the `ActivateSkill` tool call, or a leading `/name` mention), after `skillRules` already allowed it — can veto the activation | whole tree |
 | `onSubagentStart` | a subagent's turn kicking off | that subagent |
 | `onSubagentTurnEnd` | a subagent's turn ending | that subagent |
-| `onAgentTurnEnd` | the agent's turn ending, after its final message | root session |
-| `onSessionEnd` | a session suspending or being destroyed | root session |
+| `onAgentTurnEnd` | the agent's turn ending, after its final message — can `clear_session` | root session |
+| `onSessionEnd` | a session suspending or being destroyed — can `clear_session` | root session |
 | `onProcessEnd` | `bin/klorb` exiting | process |
 
 `onToolUse`/`onToolResult`/`onActivateSkill` fire for every session in the tree — root or

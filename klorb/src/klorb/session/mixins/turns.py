@@ -401,8 +401,24 @@ class SessionTurnsMixin(SessionBase):
         """Dispatch `onAgentTurnEnd` once this root session's turn has fully ended -- called
         after `_dispatch_turn`'s own `finally` already cleared `_current_turn_handlers`, so a
         `chat` handler's chained follow-up (via `start_turn_or_enqueue`) sees no turn in flight
-        and starts a fresh one, per the `chat` handler type's documented behavior."""
+        and starts a fresh one, per the `chat` handler type's documented behavior.
+
+        A `clear_session` result (guaranteed by `HookDispatcher` to carry a non-empty `message`)
+        is handed to `on_clear_session_requested` instead -- discarding this session rather than
+        continuing its conversation. Falls back to an ordinary `start_turn_or_enqueue` delivery,
+        logged at `warning`, if no host has registered that callback."""
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
+        if result.clear_session:
+            assert result.message is not None
+            if self.on_clear_session_requested is not None:
+                self.on_clear_session_requested(result.message)
+            else:
+                logger.warning(
+                    "onAgentTurnEnd hook requested clear_session but this session has no "
+                    "on_clear_session_requested handler registered; delivering its message as "
+                    "an ordinary follow-up turn instead.")
+                self.start_turn_or_enqueue(result.message)
+            return
         if result.message is not None:
             self.start_turn_or_enqueue(result.message)
 

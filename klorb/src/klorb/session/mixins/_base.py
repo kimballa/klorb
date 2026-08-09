@@ -130,6 +130,7 @@ class SessionBase:
     _current_turn_leading_skill_id: tuple[str, str] | None
     _chained_hook_turns: int
     _dispatching_chained_turn: bool
+    on_clear_session_requested: Callable[[str], None] | None
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"
     statistics: SessionStatistics

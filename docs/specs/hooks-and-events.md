@@ -85,7 +85,7 @@ event name.
   session exists), `workspace_trusted`/`workspace_just_bootstrapped` (set only for
   `onSessionStart`).
 * **`HookOutput`** — `success` (default `True`), `tool_args`, `permission` (a bare `Verdict`),
-  `message`, `interrupt` (default `False`).
+  `message`, `interrupt` (default `False`), `clear_session` (default `False`).
 * **`EventInput(HookInput)`** — adds `fs_updates: list[FileSystemUpdate] | None`, each a
   `{event: "created"|"deleted"|"modified", path}` pair, populated for a `FileSystemModified`
   firing.
@@ -118,10 +118,17 @@ Both funnel into `_run_chain`, which walks the handler list in order:
 
 `_fold(accumulated, latest)`: `success` is `accumulated.success and latest.success` (once any
 valid handler says `False`, the aggregate stays `False`); `tool_args`/`message` take `latest`'s
-value when set, else carry `accumulated`'s forward; `interrupt` is `True` once any handler asks
-for it; `permission` is reduced via `_fold_permission`, which defers to
+value when set, else carry `accumulated`'s forward; `interrupt`/`clear_session` are `True` once
+any handler asks for them; `permission` is reduced via `_fold_permission`, which defers to
 `klorb.permissions.table.stricter_verdict` once two handlers have both opined (a handler that
 leaves `permission` unset contributes no opinion and never pulls the aggregate toward `deny`).
+
+Once the whole chain has folded, `_run_chain` enforces `clear_session`'s one invariant: it's valid
+only alongside a non-empty `message`. An aggregate that sets `clear_session` without one has it
+reset to `False`, logged at `warning` — the same "handler contributed something invalid, drop it"
+shape "Error handling" below uses elsewhere, just applied to the final aggregate rather than one
+handler's raw output, since `message` can come from an earlier handler in the chain than the one
+that set `clear_session`.
 
 `HookDispatcher.dispatch`/`dispatch_event` never raise — a hook is a policy overlay, not something
 that can crash the lifecycle moment it's attached to.
@@ -196,6 +203,64 @@ start (or queue) another turn, logged at `warning`, until the counter resets —
 shape as `max_tool_calls_per_turn`/`max_tool_calls_per_session`
 (docs/specs/process-and-session-config.md).
 
+## Session replacement: `clear_session`
+
+`HookOutput.clear_session` discards the firing session (as if a user issued a `/clear`) and
+starts a fresh one seeded with `message` as its first turn. Only two call sites read it —
+`SessionTurnsMixin._fire_agent_turn_end_hook` (`klorb/src/klorb/session/mixins/turns.py`) for
+`onAgentTurnEnd`, and `SessionCoreMixin.close()` (`klorb/src/klorb/session/mixins/core.py`) for
+`onSessionEnd` — every other hook/event can set the field (`HookDispatcher` doesn't know which
+hook fired when it folds/validates the aggregate), but nothing consumes it there. Both call sites
+fire only once a turn has already fully ended (`onAgentTurnEnd`) or with no turn active at all
+(`onSessionEnd`), so unlike `interrupt`, `clear_session` never has to reconcile with an in-flight
+turn — the field implies `interrupt` without reading its value, since discarding the session makes
+the "interrupt now vs. wait" distinction moot.
+
+`Session.on_clear_session_requested: Callable[[str], None] | None` is the seam: neither call site
+can replace the `Session` object a host (`klorb.tui.ReplApp`, `KlorbAcpAgent`, `klorb.cli.main()`)
+holds its own reference to, so each host that wants to fulfill `clear_session` registers this
+callback rather than `Session` reaching into TUI/ACP-specific code (see `AGENTS.md`'s "Keep agent
+functionality reachable from `Session`... use a callback instead"). `None` (the default) means no
+host has registered one — `close()`'s `onSessionEnd` handling logs a warning and drops the
+request; `_fire_agent_turn_end_hook`'s `onAgentTurnEnd` handling logs a warning and falls back to
+an ordinary `start_turn_or_enqueue(message)` chained turn instead, the same delivery a `clear_session`-
+less `message` gets.
+
+**TUI only today.** `klorb.tui.ReplApp` is the only host that binds
+`on_clear_session_requested`, via `PromptSubmissionMixin._bind_clear_session_handler` — called for
+every `Session` the app ever installs as `self._session` (initial construction, `/clear`, "Load
+session", startup restore). The bound callback is `_replace_session`, the same helper `clear_session()`
+(the "Clear session" palette command) itself calls with `initial_message=None`; a hook-driven call
+passes the request's `message` instead, which `_do_replace_session` submits as the new session's
+first turn via `call_after_refresh(self._submit_prompt, initial_message)` once the replacement is
+installed — deferred rather than called directly, because an `onAgentTurnEnd`-triggered
+replacement runs from inside the outgoing turn's own `_send_prompt` worker thread, before that
+worker's own `_finish_turn` has cleared `_turn_in_flight`; `_submit_prompt` would otherwise see it
+still `True` and silently drop the submit. `call_after_refresh` (Textual's `post_message`-backed,
+thread-safe scheduling) queues the submit for after that happens.
+
+`_replace_session` can be entered from either this app's own thread (a manual `/clear`, or an
+`onSessionEnd` firing synchronously inside a manual `/clear`'s own `Session.close()` call) or
+`_send_prompt`'s worker thread (an `onAgentTurnEnd` hook, fired deep inside `Session.send_turn()`)
+— it compares `threading.get_ident()` against `self._thread_id` to call `_do_replace_session`
+directly or marshal it via `call_from_thread`, the same pattern `_send_prompt`'s own
+`call_on_app_thread` helper already uses for the same reason.
+
+Guarded by `ReplApp._replacing_session`: `close()`'s `onSessionEnd` dispatch can itself request
+`clear_session` (e.g. a hook configured on both `onSessionEnd` and `onAgentTurnEnd`, or an
+`onSessionEnd` handler that fires from the very `close()` call a manual `/clear` is already
+making), which would otherwise race a second replacement session into existence while the first is
+still being built. The flag is set for the duration of `_replace_session`'s body; a request that
+arrives while it's already `True` is dropped, logged at `warning` — whichever request got there
+first wins.
+
+`KlorbAcpAgent` and headless `klorb.cli.main()` never bind `on_clear_session_requested`: ACP's
+`session_id` is a stable identifier the client addresses future requests to, and unilaterally
+swapping the underlying `Session` without the client knowing would need its own protocol-level
+design (a `session/update` telling the client its session was reset); headless is a single
+request/response with no host loop to hand a replacement back to. `clear_session` degrades to the
+warning-and-fallback path described above for both. See `TODO.md`'s "Plan 022" section.
+
 ## Available hooks
 
 `Session._dispatch_hook` (`klorb/src/klorb/session/mixins/core.py`) is the shared building block
@@ -209,9 +274,9 @@ hooks are inert in that case rather than erroring.
 | `onProcessStart` | `klorb.cli.main()`, before workspace/session setup | process |
 | `onProcessEnd` | `klorb.cli.main()`, at exit | process |
 | `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | root session |
-| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `event="SuspendSession"` | root session |
+| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `event="SuspendSession"`; a `clear_session` result is handed to `on_clear_session_requested` once teardown finishes (see "Session replacement" above) | root session |
 | `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
-| `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `start_turn_or_enqueue` | root session |
+| `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `start_turn_or_enqueue`, unless `clear_session` is also set (see "Session replacement" above) | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |
 | `onToolResult` | `_apply_tool_result_hook`, after a tool call's result is available; `message` in the result replaces the result content | whole tree |
 | `onActivateSkill` | `Session.fire_activate_skill_hook` (`klorb/src/klorb/session/mixins/skills.py`), from `ActivateSkillTool.apply()` and from `_build_user_skill_activation_interjection`'s leading-mention fast path, once `skillRules` has already let the activation through; `success=False` or a `permission` of `"deny"`/`"ask"` vetoes it — `ActivateSkillTool.apply()` raises `ToolCallError`, the leading-mention path falls back to the ordinary `SkillReference` reminder | whole tree |
@@ -322,3 +387,7 @@ startup.
 * **An explicit turn-interrupt primitive** hooks/events can call directly, rather than
   `HookOutput.interrupt` needing new wiring on top of a turn's `cancel_event`
   (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.
+* **`clear_session` support outside the TUI.** `KlorbAcpAgent`/headless `klorb.cli.main()` never
+  register `Session.on_clear_session_requested` (see "Session replacement" above) — an ACP client
+  addressing a stable `session_id` would need a protocol-level way to learn its session was reset,
+  and headless has no host loop to hand a replacement session back to.

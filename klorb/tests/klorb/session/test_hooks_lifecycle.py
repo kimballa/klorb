@@ -91,6 +91,37 @@ def test_close_does_not_run_onsessionend_for_a_subagent(tmp_path: Path) -> None:
     assert marker.exists()
 
 
+def test_close_with_clear_session_invokes_the_callback(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onSessionEnd": [
+            HookConfig(type="bash", shell='echo \'{"message": "restart me", "clear_session": true}\''),
+        ],
+    })
+    session = Session(process_config.session, process_config=process_config)
+    received: list[str] = []
+    session.on_clear_session_requested = received.append
+
+    session.close()
+
+    assert received == ["restart me"]
+
+
+def test_close_with_clear_session_logs_warning_without_a_handler(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    process_config = _process_config(tmp_path, {
+        "onSessionEnd": [
+            HookConfig(type="bash", shell='echo \'{"message": "restart me", "clear_session": true}\''),
+        ],
+    })
+    session = Session(process_config.session, process_config=process_config)
+
+    with caplog.at_level("WARNING"):
+        session.close()
+
+    assert "clear_session" in caplog.text
+
+
 def test_fire_session_start_hook_carries_workspace_trust_fields(tmp_path: Path) -> None:
     output_path = tmp_path / "output.json"
     handler = HookConfig(
