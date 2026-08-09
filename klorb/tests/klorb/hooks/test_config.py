@@ -85,3 +85,13 @@ def test_hook_names_matches_the_documented_lifecycle_moments() -> None:
         "onToolUse", "onToolResult", "onSubagentStart", "onSubagentTurnEnd", "onAgentTurnEnd",
         "onSessionEnd", "onProcessEnd",
     }
+
+
+def test_hook_config_filter_rejects_invalid_regex_pattern() -> None:
+    with pytest.raises(ValidationError, match="invalid regex pattern"):
+        HookConfigFilter.model_validate({"pattern": "["})
+
+
+def test_hook_config_filter_accepts_valid_regex_pattern() -> None:
+    filter_ = HookConfigFilter.model_validate({"pattern": r"^foo\d+"})
+    assert filter_.pattern == r"^foo\d+"

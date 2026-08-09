@@ -210,3 +210,21 @@ def test_close_is_safe_to_call_more_than_once(root: Path, recorder: _Recorder) -
     watcher.start()
     watcher.close()
     watcher.close()
+
+
+def test_watch_path_outside_workspace_is_skipped(
+    root: Path, recorder: _Recorder, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A `watch` value that resolves outside the workspace root (e.g. `../../etc`) is skipped
+    with a warning -- the watcher never schedules it with the Observer."""
+    escape_entry = _entry("../../etc")
+    watcher = FileSystemWatcher(
+        root, [escape_entry], dispatch=recorder, debounce_seconds=_DEBOUNCE_SECONDS)
+    watcher.start()
+    try:
+        assert watcher._observer is not None
+        # The escape entry should have been skipped; no watches scheduled with the Observer.
+        assert len(watcher._observer._handlers) == 0
+        assert any("outside workspace" in r.message for r in caplog.records)
+    finally:
+        watcher.close()

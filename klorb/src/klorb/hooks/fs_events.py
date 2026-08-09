@@ -131,10 +131,16 @@ class FileSystemWatcher:
         """The directories to actually register with the `Observer`: each entry's own `watch`
         target if it's a directory, else its parent (inotify has no way to watch a single file
         directly) -- deduplicated, since more than one entry can name the same or an
-        overlapping path."""
+        overlapping path. Entries whose `watch` escapes the workspace root are skipped with a
+        warning."""
         dirs: set[Path] = set()
         for entry in self._entries:
             target = (self._workspace_root / entry.watch).resolve()
+            if not target.is_relative_to(self._workspace_root):
+                logger.warning(
+                    "Skipping FileSystemModified watch %r: resolves to %s, outside workspace %s",
+                    entry.watch, target, self._workspace_root)
+                continue
             dirs.add(target if target.is_dir() else target.parent)
         return dirs
 
