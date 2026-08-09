@@ -309,6 +309,7 @@ SESSION_KEY_MAP: dict[str, str] = {
     "thinking.effort": "thinking_effort",
     "tools.maxCallsPerTurn": "max_tool_calls_per_turn",
     "tools.maxCallsPerSession": "max_tool_calls_per_session",
+    "tools.hooks.maxChainedTurns": "max_chained_hook_turns",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always

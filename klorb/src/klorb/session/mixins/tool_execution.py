@@ -26,7 +26,7 @@ from klorb.token_estimate import estimate_tokens
 from klorb.tool_call_log import log_tool_call
 from klorb.tools.ask.common import AskUserQuestionsRequired
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
-from klorb.tools.exceptions import ErrorCategory, NoSuchToolException
+from klorb.tools.exceptions import ErrorCategory, NoSuchToolException, ToolCallError
 from klorb.tools.response_envelope import (
     SystemInterjectionPayload,
     ToolResponseEnvelope,
@@ -189,6 +189,7 @@ class SessionToolExecutionMixin(SessionBase):
             tool = None
             if error is None:
                 try:
+                    args = self._apply_tool_use_hook(call.name, args)
                     tool = self._tool_registry.instantiate_tool(call.name)
                     logger.debug("Tool call %s parsed arguments: %r", call.name, args)
                     if callbacks.on_tool_call_started is not None:
@@ -269,7 +270,8 @@ class SessionToolExecutionMixin(SessionBase):
                     error, category=category, response_body=response_body,
                     system_interjections=first_call_interjections,
                     user_interjections=first_call_user_interjections)
-            content = json.dumps(envelope.to_wire_dict(), ensure_ascii=False)
+            content = self._apply_tool_result_hook(
+                call.name, json.dumps(envelope.to_wire_dict(), ensure_ascii=False))
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)
             if callbacks.on_tool_call is not None:
@@ -289,3 +291,35 @@ class SessionToolExecutionMixin(SessionBase):
             self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
             self._tool_calls_this_session, self.config.max_tool_calls_per_session,
         )
+
+    def _apply_tool_use_hook(self, call_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch `onToolUse` before `call_name` actually runs -- fires for every session in
+        the tree (root or subagent alike), tagged by `_dispatch_hook` with this session's own
+        `role`/`id`. A `tool_args` in the aggregate `HookOutput` replaces `args` (a
+        preprocessing rewrite) before the tool ever sees them; `success=False`, or an
+        allow/ask/deny `permission` verdict that isn't `"allow"`, raises `ToolCallError` instead
+        of letting the call run -- caught by this method's caller's own `except Exception`,
+        which reports it back to the model as this call's failure exactly like any other tool
+        exception.
+
+        `"ask"` is treated the same as `"deny"` here: there is no interactive channel wired from
+        `onToolUse` to a human yet -- that is `onRequestPermission`'s own, still-deferred,
+        design -- so a hook wanting a human in the loop can't get one from this hook point
+        today, only an unconditional veto.
+        """
+        result = self._dispatch_hook("onToolUse", tool_name=call_name, tool_args=args)
+        if result.tool_args is not None:
+            args = result.tool_args
+        if result.success is False or result.permission in ("deny", "ask"):
+            raise ToolCallError(
+                result.message or f"Tool call {call_name!r} blocked by onToolUse hook policy.",
+                category="permission")
+        return args
+
+    def _apply_tool_result_hook(self, call_name: str, content: str) -> str:
+        """Dispatch `onToolResult` after `call_name`'s result envelope is serialized -- fires
+        for every session in the tree, same as `onToolUse`. A `message` in the aggregate
+        `HookOutput` replaces `content` (the envelope's json text) before it's logged, reported
+        via `callbacks.on_tool_call`, and appended as this call's `tool_response` `Message`."""
+        result = self._dispatch_hook("onToolResult", tool_name=call_name, message=content)
+        return result.message if result.message is not None else content

@@ -3,14 +3,19 @@
 handler's output into the next handler's input, and folding results into one aggregate
 `HookOutput`."""
 
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig, HookConfigFilter
 from klorb.hooks.dispatcher import HookDispatcher
 from klorb.hooks.wire import HookInput
+from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.session.config import SessionConfig
@@ -92,17 +97,23 @@ def test_dispatch_runs_a_handler_whose_filter_matches(tmp_path: Path) -> None:
     assert result.message == "ran"
 
 
-def test_dispatch_skips_classifier_and_chat_handlers(tmp_path: Path) -> None:
+def test_dispatch_skips_a_classifier_handler_with_no_api_provider_wired_in(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
-        "onAgentTurnEnd": [
-            HookConfig(type="classifier", prompt="classify this"),
-            HookConfig(type="chat", prompt="keep going"),
-        ],
+        "onAgentTurnEnd": [HookConfig(type="classifier", prompt="classify this")],
     })
     result = HookDispatcher(process_config).dispatch(
         "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
     assert result.success is True
     assert result.message is None
+
+
+def test_dispatch_runs_a_chat_handler_as_its_own_configured_prompt(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
+    })
+    result = HookDispatcher(process_config).dispatch(
+        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+    assert result.message == "keep going"
 
 
 def test_dispatch_folds_success_as_strictest_outcome(tmp_path: Path) -> None:
@@ -128,6 +139,81 @@ def test_dispatch_a_failing_handler_contributes_nothing_to_the_chain(tmp_path: P
     result = HookDispatcher(process_config).dispatch("onProcessStart", _hook_input(tmp_path))
     assert result.success is True
     assert result.message == "second ran fine"
+
+
+def _classifier_reply(message: str) -> ProviderResponse:
+    return ProviderResponse(
+        message=Message(
+            content=json.dumps({"message": message}), role="assistant", num_tokens=1,
+            timestamp=datetime.now(), processing_state="complete"),
+        prompt_tokens=1)
+
+
+def test_dispatch_runs_a_classifier_handler_when_an_api_provider_is_wired_in(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _classifier_reply("classified message")
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [HookConfig(type="classifier", prompt="summarize")],
+    })
+    result = HookDispatcher(process_config, api_provider=provider).dispatch(
+        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+    assert result.message == "classified message"
+
+
+def test_dispatch_folds_permission_via_stricter_verdict(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onToolUse": [
+            HookConfig(type="bash", shell='echo \'{"permission": "allow"}\''),
+            HookConfig(type="bash", shell='echo \'{"permission": "ask"}\''),
+            HookConfig(type="bash", shell='echo \'{"permission": "allow"}\''),
+        ],
+    })
+    result = HookDispatcher(process_config).dispatch(
+        "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"))
+    assert result.permission == "ask"
+
+
+def test_dispatch_permission_stays_unset_when_every_handler_is_silent(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onToolUse": [HookConfig(type="bash", shell='echo \'{"message": "no opinion"}\'')],
+    })
+    result = HookDispatcher(process_config).dispatch(
+        "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"))
+    assert result.permission is None
+
+
+def test_dispatch_filters_ontooluse_on_tool_name_not_event(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onToolUse": [
+            HookConfig(
+                type="bash", shell='echo \'{"message": "matched"}\'',
+                filter=HookConfigFilter(matches="Bash")),
+        ],
+    })
+    matching = HookDispatcher(process_config).dispatch(
+        "onToolUse", HookInput(hook="onToolUse", workspaceRoot=str(tmp_path), tool_name="Bash"))
+    assert matching.message == "matched"
+    non_matching = HookDispatcher(process_config).dispatch(
+        "onToolUse", HookInput(hook="onToolUse", workspaceRoot=str(tmp_path), tool_name="ReadFile"))
+    assert non_matching.message is None
+
+
+def test_dispatch_filters_onsubmituserprompt_on_message_not_event(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onSubmitUserPrompt": [
+            HookConfig(
+                type="bash", shell='echo \'{"message": "matched"}\'',
+                filter=HookConfigFilter(contains="deploy")),
+        ],
+    })
+    matching = HookDispatcher(process_config).dispatch(
+        "onSubmitUserPrompt",
+        HookInput(hook="onSubmitUserPrompt", workspaceRoot=str(tmp_path), message="please deploy this"))
+    assert matching.message == "matched"
+    non_matching = HookDispatcher(process_config).dispatch(
+        "onSubmitUserPrompt",
+        HookInput(hook="onSubmitUserPrompt", workspaceRoot=str(tmp_path), message="please build this"))
+    assert non_matching.message is None
 
 
 def test_dispatch_uses_a_live_session_config_over_the_process_template(tmp_path: Path) -> None:

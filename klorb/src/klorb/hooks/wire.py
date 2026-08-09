@@ -25,6 +25,11 @@ class HookInput(BaseModel):
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     role: str | None = None
+    session_id: str | None = None
+    """The firing session's own `Session.id` -- root or subagent alike -- so a handler script
+    can tell which session in the tree an `onToolUse`/`onToolResult` firing (or any other
+    hook) belongs to. `None` only when no live session exists yet (`onProcessStart`/
+    `onProcessEnd`)."""
     workspace_trusted: bool | None = Field(default=None, alias="workspaceTrusted")
     """Whether the workspace is trusted, as of `onSessionStart` firing -- always set for that
     hook (`None` for every other hook), once trust is settled for this session's startup."""

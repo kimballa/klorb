@@ -23,6 +23,13 @@ DEFAULT_MAX_TOOL_CALLS_PER_SESSION = 200
 calls a `Session` will execute across its entire lifetime (every turn combined) before asking
 the user whether to keep going (see `Session._confirm_limit_increase`)."""
 
+DEFAULT_MAX_CHAINED_HOOK_TURNS = 5
+"""Default value of `SessionConfig.max_chained_hook_turns`: how many turns in a row a `chat`
+hook/event handler may auto-chain (via `Session.start_turn_or_enqueue`) before further
+auto-chained turns are refused, until a real user- or tool-driven turn resets the count -- the
+same fail-safe shape as `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, guarding against a misconfigured
+`onAgentTurnEnd`/event handler that keeps the agent talking to itself indefinitely."""
+
 
 class ToolCallLimitExceeded(Exception):
     """Raised when a turn exceeds one of the tool-calling safety caps without the model
