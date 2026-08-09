@@ -37,21 +37,27 @@ SKILL_FILE_NAME = "SKILL.md"
 the skill's `name` and its YAML frontmatter carries the skill's `description`."""
 
 MAX_SKILL_NAME_DISPLAY_LENGTH = 64
-"""Cap on a skill's name as advertised to the model (the `AvailableSkills`/`SkillReference`
-bullet lists, `SearchSkills` results) -- defends against a hostile, arbitrarily-long directory or
-frontmatter-alias name bloating every turn's context. The catalog's own identity (used to resolve
-`ActivateSkill`/`ReadSkillFile` calls) is never truncated, only this advertised copy."""
+"""Cap on a skill's canonical name -- defends against a hostile, arbitrarily-long directory or
+frontmatter-alias name bloating every turn's context. Applied once, at catalog-build time
+(`klorb.tools.skill.catalog.build_catalogs`), to *become* the skill's `(namespace, name)` identity
+itself -- not just a display-time copy -- so a name once advertised to the model or a user-facing
+skill list is always resolvable via `ActivateSkill`/`ReadSkillFile`."""
 
 MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH = 1024
 """Cap on a skill's description as advertised to the model, for the same reason as
 `MAX_SKILL_NAME_DISPLAY_LENGTH` -- a frontmatter `description` is project- or user-supplied free
-text with no length limit of its own."""
+text with no length limit of its own. Unlike `name`, `description` is never part of a skill's
+identity, so this cap is applied fresh at each display site rather than baked into the catalog."""
 
 
 def display_skill_name(name: str) -> str:
-    """`name` truncated to `MAX_SKILL_NAME_DISPLAY_LENGTH` -- what's shown to the model or a
-    user-facing skill list, never what's used to resolve a skill's identity."""
-    return name[:MAX_SKILL_NAME_DISPLAY_LENGTH]
+    """`name` truncated to `MAX_SKILL_NAME_DISPLAY_LENGTH`, with any trailing `-` truncation would
+    leave behind stripped too -- so the result always satisfies `is_valid_skill_name` when `name`
+    itself did (truncation only removes characters from the end; `name` is already guaranteed not
+    to start with `-`, so stripping trailing dashes can never empty the string out). Called once,
+    at catalog-build time, to compute a skill's actual `(namespace, name)` identity when its real
+    name is over the cap -- see `klorb.tools.skill.catalog.build_catalogs`."""
+    return name[:MAX_SKILL_NAME_DISPLAY_LENGTH].rstrip("-")
 
 
 def display_skill_description(description: str) -> str:

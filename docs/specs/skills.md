@@ -48,6 +48,9 @@ to the model is always resolvable, even when the real directory name is longer. 
 "The session-scoped skill catalog" below) — never the canonical identity itself. Two skills whose
 basenames collide only after lowercasing/truncation resolve to whichever one `resolve_all_skills()`
 yields first (a logged, dropped collision), the same shape as an alias collision below.
+`display_skill_name` also strips any trailing `-` truncation would otherwise leave behind (e.g. a
+name whose 65th character is `-`), so the capped identity always satisfies `is_valid_skill_name`
+the same way the real, un-truncated name already did.
 
 `SKILL.md` opens with YAML frontmatter carrying `name` and `description`, then a markdown body:
 

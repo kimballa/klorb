@@ -102,6 +102,25 @@ def test_over_long_name_truncated_and_still_resolvable(tmp_path: Path) -> None:
     assert catalogs.typed.get(("workspace", truncated_name)) is skill
 
 
+def test_over_long_name_truncation_landing_on_a_dash_strips_it(tmp_path: Path) -> None:
+    """When the character right at the truncation cutoff is a `-`, the naive `name[:64]` slice
+    would leave an invalid trailing dash; `build_catalogs` strips it (via `display_skill_name`) so
+    the resulting canonical identity is still a well-formed name."""
+    ws = tmp_path / "workspace"
+    long_name = "a" * (MAX_SKILL_NAME_DISPLAY_LENGTH - 1) + "-" + "b" * 10
+    _write_skill(ws / ".klorb" / "skills", long_name, "---\ndescription: d\n---\n")
+
+    catalogs = build_catalogs(
+        workspace_root=ws, workspace_trusted=True, claude_skills_compat=False,
+        skill_rules=SkillRules())
+
+    canonical_name = "a" * (MAX_SKILL_NAME_DISPLAY_LENGTH - 1)
+    skill = catalogs.canonical.get(("workspace", canonical_name))
+    assert skill is not None
+    assert skill.name == canonical_name
+    assert not skill.name.endswith("-")
+
+
 def test_alias_collision_with_another_skills_canonical_name_is_dropped(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:

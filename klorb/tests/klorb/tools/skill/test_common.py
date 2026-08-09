@@ -110,6 +110,22 @@ def test_display_skill_name_and_description_truncate() -> None:
     assert display_skill_description("short") == "short"
 
 
+def test_display_skill_name_strips_a_trailing_dash_left_by_truncation() -> None:
+    # Character at the cut point (index MAX_SKILL_NAME_DISPLAY_LENGTH - 1) is a "-", which
+    # truncation alone would leave as a trailing dash -- an invalid shape.
+    name = "a" * (MAX_SKILL_NAME_DISPLAY_LENGTH - 1) + "-" + "b" * 10
+    result = display_skill_name(name)
+    assert not result.endswith("-")
+    assert is_valid_skill_name(result)
+
+
+def test_display_skill_name_strips_multiple_trailing_dashes() -> None:
+    name = "a" + "-" * (MAX_SKILL_NAME_DISPLAY_LENGTH + 10)
+    result = display_skill_name(name)
+    assert result == "a"
+    assert is_valid_skill_name(result)
+
+
 def test_canonical_name_is_lowercased(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_skill(ws / ".klorb" / "skills", "MixedCase", "d")
