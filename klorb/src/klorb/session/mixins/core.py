@@ -80,6 +80,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT = "FileSystemWatcher"
+_TIMER_SCHEDULER_TEARDOWN_SUBJECT = "TimerScheduler"
+_INFRASTRUCTURE_TEARDOWN_SUBJECTS = frozenset({
+    _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT, _TIMER_SCHEDULER_TEARDOWN_SUBJECT})
+"""Teardown subjects `_reset_state()` must never touch: workspace/process-level resources
+registered once at root-session start (`_start_workspace_event_watchers`) and torn down only by
+a real `close()`, never recreated mid-session -- unlike `Scratchpad`/`Bash`'s persistent shell,
+which `_reset_state()` does tear down and let their owners lazily recreate."""
+
 
 class SessionCoreMixin(SessionBase):
     """`Session.__init__` plus the accessors, loaders, and lifecycle methods that don't belong
@@ -192,24 +201,6 @@ class SessionCoreMixin(SessionBase):
         self._tool_registry = tool_registry
         if tool_registry is not None:
             tool_registry.session = cast("Session", self)
-        self.cur_chainlink_task_id: int | None = None
-        """The chainlink issue id most recently selected as this session's current task -- by
-        `TodoNext`, or by `TodoUpdate`/`TodoCreate`'s auto-activation (`klorb.tools.tasks._util.
-        maybe_activate_task`) -- or `None` if none is set (no task picked or activated yet, or
-        the last one found nothing ready/open). Read by `klorb.tools.tasks._util`'s standing
-        interjection provider on every turn, and by `TodoCreate`'s `blocks_current_issue`
-        argument. Round-trips through `session.json` (`klorb.workspace.session_store.SessionState.
-        cur_chainlink_task_id`) like `id`/`session_name`. Written only via `set_chainlink_task()`,
-        never assigned directly by a `Tool`. See docs/specs/chainlink-task-tracking.md."""
-        self.tool_state: dict[str, Any] = {}
-        """Per-session runtime state a `Tool` implementation wants to keep across calls within
-        this one session (e.g. `BashTool`'s one-time sandbox-fallback notice), keyed by tool
-        name (`tool_state["Bash"]`). Distinct from `config` (`SessionConfig`, user-configurable
-        settings only): this is ad hoc, tool-private bookkeeping, never read or written by
-        `Session` itself, and never persisted to disk. A `Tool` accesses it via
-        `self.context.session.tool_state` (see `klorb.tools.setup_context.ToolSetupContext.
-        session`) and must `.setdefault(...)` its own key rather than assuming it's pre-populated
-        — this dict starts empty for every new `Session`."""
         self.active_cancel_event: threading.Event | None = None
         """The in-flight turn's `TurnEventHandlers.cancel_event`, or `None` when no turn is
         running — set at the top of `_dispatch_turn` and cleared in its `finally` once the turn
@@ -220,8 +211,6 @@ class SessionCoreMixin(SessionBase):
         to cancellation immediately — e.g. sending `SIGINT` to a running shell command — rather
         than only at the next tool-call/round boundary `_dispatch_turn`/`_run_tool_calls`
         themselves check. See docs/specs/interrupt-and-liveness-watchdog.md."""
-        self._tool_calls_this_session = 0
-        self._tool_calls_this_turn = 0
         self._compatibility_claude_markdown = (
             process_config.compatibility_claude_markdown if process_config is not None else False
         )
@@ -230,11 +219,6 @@ class SessionCoreMixin(SessionBase):
         )
         """Whether to also discover workspace-namespace skills from `.claude/skills/`. See
         docs/specs/skills.md."""
-        self._skill_catalog_registry = SkillCatalogRegistry()
-        """This session's own skill catalogs -- a fresh, empty `SkillCatalogRegistry` per
-        `Session`, rescanning the disk on first use (`_ensure_skill_catalog`) rather than reusing
-        another session's catalog. Not persisted -- a restored session rebuilds it the same way a
-        fresh one does. See `klorb.tools.skill.catalog` and docs/specs/skills.md."""
         self._log_tool_calls = tool_call_logging_enabled(
             process_config.log_tool_calls if process_config is not None else None
         )
@@ -247,31 +231,6 @@ class SessionCoreMixin(SessionBase):
         variable is only consulted when `process_config.log_tool_calls` is `None` (e.g.
         a caller that constructs a `Session` without a `ProcessConfig` at all, as most
         unit tests do)."""
-        self._messages: list[Message] = []
-        self._skills_seeded = False
-        """Whether `send_turn()` has already computed the one-shot `AvailableSkills`
-        `<SystemInterjection>` for the first turn (see `_build_available_skills_interjection`). Set
-        unconditionally the first time it's checked, so the standing list is locked for the
-        session."""
-        self._context_files_seeded = False
-        """Whether `send_turn()` has already computed (and, if non-`None`, prepended) the
-        one-shot `ProjectGuidance` `<SystemInterjection>` carrying the workspace's
-        context-instruction files (`.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and `CLAUDE.md` when
-        compatibility is enabled) onto the very first turn's prompt — see
-        `_build_context_files_interjection()`. Set unconditionally the first time it's
-        checked, even when there was nothing to prepend (workspace untrusted, or no applicable
-        file exists on disk), so a later turn never re-reads the filesystem or re-prepends
-        anything."""
-        self._metadata_seeded = False
-        """Whether `send_turn()` has already prepended the one-shot `Metadata`
-        `<SystemInterjection>` carrying the session start time and workspace root name onto
-        the very first turn's prompt. Set unconditionally the first time it's checked."""
-        self._agent_group_seeded = False
-        """Whether `send_turn()` has already prepended the one-shot `AgentGroup`
-        `<SystemInterjection>` (a markdown table of every agent in this session's group) onto
-        the very first turn's prompt -- see `_build_agent_group_interjection()`. Set
-        unconditionally the first time it's checked, even for a root session (which has no
-        group to report, so nothing is ever prepended for it)."""
         self._session_naming_pending = self._session_name is None
         """Whether `send_turn()` still needs to run the one-shot session-naming classifier (see
         `_run_session_naming`) on its first call. Seeded `False` when a `session_name` was
@@ -279,9 +238,6 @@ class SessionCoreMixin(SessionBase):
         otherwise (a fresh session, or a restored session that was never successfully named).
         Set unconditionally the first time `send_turn()` checks it, regardless of the
         classifier's outcome, so a failed/timed-out attempt is never retried."""
-        self._session_started_at = datetime.now()
-        """Timestamp recorded at session construction, used as the session's start time in the
-        one-shot `Metadata` interjection prepended to the first user message."""
         self._last_modified_at = last_modified_at
         """When this session was last saved to `session.json`, or `None` if it hasn't been saved
         yet (or was restored from a save file that predates this field). Restored from
@@ -289,81 +245,12 @@ class SessionCoreMixin(SessionBase):
         by `SessionPersistenceMixin._write_session_state_and_touch()` on every save, and
         round-trips through `session.json`/`sessions.json` (`RecentSession.
         last_modified_timestamp`) like `id`/`session_name`."""
-        self._pending_permission_framework_interjection: str | None = None
-        """Set by `set_permission_framework()` to the harness message queued for the next
-        `send_turn()` call to prepend onto its `prompt`, or `None` if no permission-framework
-        change is pending. Overwritten (not accumulated) on every call to
-        `set_permission_framework()`, so several changes before the next turn collapse to a
-        single interjection reflecting only the final mode — see docs/specs/permissions.md's
-        "Permission framework change interjection" section."""
-        self._standing_interjection_providers: dict[str, Callable[[], str | None]] = {}
-        """Providers registered via `register_standing_interjection()`, keyed by subject.
-        Distinct from `_pending_permission_framework_interjection`: that field is one-shot and
-        edge-triggered (set once, prepended once, cleared); every provider here is polled on
-        every `send_turn()` call for as long as it stays registered, for level-triggered,
-        standing conditions (e.g. `BashTool`'s live persistent shell) — see
-        `register_standing_interjection` and docs/adrs/standing-interjections-complement-one-
-        shot-for-level-triggered-state.md."""
         self._teardown_callbacks: dict[str, Callable[[], None]] = {}
         """Callbacks registered via `register_teardown()`, keyed by subject, invoked once each
-        by `close()`. See `register_teardown`/`close`."""
-        self._queued_messages: list[QueuedMessage] = []
-        """User messages typed during an active agent turn, awaiting delivery as the next
-        user turn when the current turn ends. Enqueued by the TUI when the user presses
-        Enter while `_turn_in_flight` is `True`; drained by `_finish_turn()` or
-        `_run_tool_calls()`. An empty list means no pending messages."""
-        self._user_msg_event: threading.Event = threading.Event()
-        """Signaled by `enqueue_queued_message()` whenever a user message is queued during an
-        active turn. Watched by `UserInterruptibleTool` subclasses (e.g.
-        `WaitForSubagentTool`) so a blocking wait can be interrupted immediately when the user
-        sends a new message, rather than waiting for the next cancel-event poll cycle."""
-        self._current_turn_handlers: TurnEventHandlers | None = None
-        """The `TurnEventHandlers` for the currently active turn, or `None` when no turn is
-        running. Set at the top of `_dispatch_turn` and cleared in its `finally`. Used by
-        `enqueue_queued_message` and `drain_queued_messages` to call the `on_enqueue_message`
-        and `on_send_queued_message` hooks."""
-        self._current_turn_mentioned_skill_ids: frozenset[tuple[str, str]] = frozenset()
-        """Every skill `(namespace, name)` the current turn's raw prompt referenced via a
-        `/<name>` token, resolved against the typed catalog -- recomputed at the top of every
-        `send_turn()` call. Consulted by `fire_activate_skill_hook` to report `HookInput.
-        is_user_mentioned` when the model later calls `ActivateSkill` mid-turn."""
-        self._current_turn_leading_skill_id: tuple[str, str] | None = None
-        """The skill `(namespace, name)` the current turn's raw prompt *began* with (a `/<name>`
-        reference), or `None` -- a strict subset of `_current_turn_mentioned_skill_ids`.
-        Consulted by `fire_activate_skill_hook` to report `HookInput.is_user_activated`."""
-        self._chained_hook_turns = 0
-        """How many turns in a row `start_turn_or_enqueue` has started back-to-back on behalf of
-        a `chat` hook/event handler, without an intervening real user- or tool-driven turn --
-        see `start_turn_or_enqueue` and `SessionConfig.max_chained_hook_turns`."""
-        self._dispatching_chained_turn = False
-        """`True` for the duration of a `send_turn()` call `start_turn_or_enqueue` itself made,
-        so that call doesn't reset `_chained_hook_turns` back to `0` the way an ordinary,
-        externally-driven `send_turn()` call does -- see `start_turn_or_enqueue`."""
-        self.on_clear_session_requested: Callable[[str], None] | None = None
-        """Set by whichever host owns this session's lifecycle (e.g. `klorb.tui.ReplApp`) to
-        replace it with a fresh session seeded by the given message, in response to a hook's
-        `HookOutput.clear_session` -- see `close()` and `SessionTurnsMixin.
-        _fire_agent_turn_end_hook`. `None` (the default) means no host has registered one, e.g.
-        headless/ACP or most unit tests; a `clear_session` request against such a session
-        degrades to a warning rather than being fulfilled."""
-        self.subagent_tracker = self._create_subagent_tracker()
-        """Bookkeeping for the subagents this session has directly created -- see
-        `klorb.agents.runtime.SubagentTracker`. Every `Session` gets its own, fresh and empty,
-        including a subagent's own child `Session` (a subagent may itself create further
-        subagents, up to `ProcessConfig.subagents_max_depth`)."""
-        self.scratchpad = Scratchpad(scratchpad_path)
-        """This session's scratchpad file (see `klorb.tools.scratchpad.common.Scratchpad`,
-        which does all the work of resolving `scratchpad_path` — a caller-supplied path to
-        reuse, or a freshly provisioned one — and of cleaning it up again below). A `Tool`
-        reads it via `self.context.session.scratchpad.path` (see `klorb.tools.scratchpad.common.
-        scratchpad_path`), the same access pattern as `tool_state` above."""
-        self.register_teardown("Scratchpad", self.scratchpad.cleanup)
-        self.statistics = SessionStatistics()
-        """Running tally of message counts, tool-call counts, and per-tool success/failure
-        breakdowns, updated incrementally as turns flow through `send_turn()` /
-        `_send_and_receive()` / `_run_tool_calls()`. Persisted alongside the session state
-        (see `klorb.workspace.session_store.SessionState.statistics`) so a restored session
-        continues accumulating from where the previous one left off."""
+        by `close()` -- except a conversation-scoped one (e.g. `Scratchpad`, `Bash`'s persistent
+        shell), which `_reset_state()` also invokes and re-registers on a `reset_session()` call.
+        See `register_teardown`/`close`/`_reset_state`."""
+        self._reset_state(scratchpad_path=scratchpad_path)
         self._session_lock: Lockfile | None = None
         """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
         if this session hasn't claimed one yet (or ever will -- an untrusted workspace never
@@ -378,6 +265,59 @@ class SessionCoreMixin(SessionBase):
         self._session_claimed = False
         """Whether this session currently owns a `sessions/<subdir>/` directory (holds its
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
+
+    def _reset_state(self, *, scratchpad_path: str | None = None) -> None:
+        """Reset every conversation-scoped field to a freshly constructed `Session`'s own value.
+        Called once by `__init__` itself, and again by `reset_session()` to wipe an existing
+        session's conversation in place (`HookOutput.reset_session`'s effect -- see
+        docs/specs/hooks-and-events.md). Deliberately leaves untouched: identity (`id`/`root_id`/
+        `parent`/`depth`/`aliases`), anything derived from `config`/`process_config` alone
+        (`_role`, `_system_prompt`, `_mention_read_file_core`, ...) -- `reset_session()` handles
+        `config` and its derivatives itself, since unlike this method it must reinitialize them
+        from `ProcessConfig.session`'s template rather than leave them alone -- and persistence
+        identity (`_session_lock`/`_session_subdir`/`_session_claimed`, `_last_modified_at`):
+        a reset keeps using the same on-disk directory, it doesn't claim a new one.
+
+        `_teardown_callbacks` is similarly left alone as a dict (never reassigned) since a
+        root session's `FileSystemModified`/`Timer` watchers are registered once, at session
+        start, and nothing recreates them mid-session -- only a conversation-scoped teardown
+        (`Scratchpad`, `Bash`'s persistent shell) is actually invoked and dropped here, so a
+        live shell/scratchpad from before the reset doesn't leak past it. `scratchpad_path`
+        threads through to a fresh `Scratchpad`: `__init__` passes its own constructor arg
+        (a caller-supplied path to reuse, or `None` for a freshly provisioned one);
+        `reset_session()` always passes `None`, since a reset has no path to reuse.
+        """
+        self.cur_chainlink_task_id: int | None = None
+        self.tool_state: dict[str, Any] = {}
+        self.active_cancel_event = None
+        self._tool_calls_this_session = 0
+        self._tool_calls_this_turn = 0
+        self._skill_catalog_registry = SkillCatalogRegistry()
+        self._messages: list[Message] = []
+        self._skills_seeded = False
+        self._context_files_seeded = False
+        self._metadata_seeded = False
+        self._agent_group_seeded = False
+        self._session_started_at = datetime.now()
+        self._pending_permission_framework_interjection: str | None = None
+        self._standing_interjection_providers: dict[str, Callable[[], str | None]] = {}
+        self._queued_messages: list[QueuedMessage] = []
+        self._user_msg_event: threading.Event = threading.Event()
+        self._current_turn_handlers: TurnEventHandlers | None = None
+        self._current_turn_mentioned_skill_ids: frozenset[tuple[str, str]] = frozenset()
+        self._current_turn_leading_skill_id: tuple[str, str] | None = None
+        self._chained_hook_turns = 0
+        self._dispatching_chained_turn = False
+        self.subagent_tracker = self._create_subagent_tracker()
+        self.statistics = SessionStatistics()
+        for subject, teardown in list(self._teardown_callbacks.items()):
+            if subject in _INFRASTRUCTURE_TEARDOWN_SUBJECTS:
+                continue
+            logger.debug("Tearing down conversation-scoped resource %r for reset.", subject)
+            teardown()
+            del self._teardown_callbacks[subject]
+        self.scratchpad = Scratchpad(scratchpad_path)
+        self.register_teardown("Scratchpad", self.scratchpad.cleanup)
 
     @staticmethod
     def _create_read_file_core(max_lines: int, max_line_length: int) -> "ReadFileCore":
@@ -988,39 +928,62 @@ class SessionCoreMixin(SessionBase):
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
 
         Before any of that, dispatches `onSessionEnd` (root session only -- see
-        `fire_session_start_hook`) with `event="SuspendSession"`, then cascade-closes every
-        subagent this session has directly or indirectly created (see
-        `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
-        output (or a termination note, for one still running) into this session's own
-        `messages` first -- so `_finalize_session_persistence()` below captures it in
-        `session.json`, per docs/specs/subagents.md's "Persistence" section.
+        `fire_session_start_hook`) with `event="SuspendSession"`. A `reset_session` result
+        (guaranteed by `HookDispatcher` to carry a non-empty `message`) aborts the shutdown
+        entirely -- this session isn't actually ending, so none of cascade-closing subagents,
+        finalizing persistence, or running teardowns happens; `reset_session()` does its own,
+        narrower cleanup instead. See docs/specs/hooks-and-events.md's "Session reset" section.
 
-        A `clear_session` result from `onSessionEnd` (guaranteed by `HookDispatcher` to carry a
-        non-empty `message`) is handed to `on_clear_session_requested` once every other step
-        above has finished -- discarding this session and starting a fresh one is exactly what
-        this method is already about to do the rest of, so the request is honored after, not
-        instead of, the teardown work. Logged at `warning` and otherwise dropped if no host has
-        registered that callback.
+        Otherwise, cascade-closes every subagent this session has directly or indirectly created
+        (see `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
+        output (or a termination note, for one still running) into this session's own `messages`
+        first -- so `_finalize_session_persistence()` below captures it in `session.json`, per
+        docs/specs/subagents.md's "Persistence" section.
         """
-        clear_session_message: str | None = None
         if self.parent is None and self._process_config is not None:
             result = self._dispatch_lifecycle_hook("onSessionEnd", event="SuspendSession")
-            if result.clear_session:
+            if result.reset_session:
                 assert result.message is not None
-                clear_session_message = result.message
+                cast("Session", self).reset_session(result.message)
+                return
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()
         for teardown in self._teardown_callbacks.values():
             teardown()
         self._teardown_callbacks.clear()
-        if clear_session_message is not None:
-            if self.on_clear_session_requested is not None:
-                self.on_clear_session_requested(clear_session_message)
-            else:
-                logger.warning(
-                    "onSessionEnd hook requested clear_session but this session has no "
-                    "on_clear_session_requested handler registered; ignoring.")
+
+    def reset_session(self, message: str) -> None:
+        """Wipe this session's conversation and start it over in place, as if it were a freshly
+        constructed `Session` reusing the same `id`/on-disk directory -- `HookOutput.
+        reset_session`'s effect (see docs/specs/hooks-and-events.md's "Session reset" section).
+        Called by `close()` (an `onSessionEnd` result) and `SessionTurnsMixin.
+        _fire_agent_turn_end_hook` (an `onAgentTurnEnd` result).
+
+        Cascade-closes any live subagents first (their relayed output lands in `self._messages`
+        only to be wiped a moment later by `_reset_state()`, same as a real `close()` would
+        capture it first). Reinitializes `config` from `ProcessConfig.session`'s template (a
+        no-op without a `ProcessConfig`, e.g. most unit tests) -- unlike `_reset_state()`, which
+        leaves `config` and everything derived from it alone, since `__init__`'s own call to
+        `_reset_state()` must not clobber a caller-supplied `config` (a restored session, a
+        subagent's inherited one). Finally starts `message` as the next turn via
+        `start_turn_or_enqueue`, exactly like an ordinary `chat` handler's message would.
+        """
+        from klorb.agents.runtime import cascade_close_subagents
+        cascade_close_subagents(cast("Session", self))
+        if self._process_config is not None:
+            self.config = self._process_config.session.model_copy()
+            if self.parent is None:
+                self.config.permission_framework_state = PermissionFrameworkState(
+                    value=self.config.permission_framework_state.value)
+            self._role = get_role(self.config.role_name)
+            self._system_prompt = SystemPrompt(
+                self.config, self._role, self._model_registry, self._process_config)
+        self._reset_state()
+        self._session_name = None
+        self._session_naming_pending = True
+        logger.info("Session %s reset in place via a hook's reset_session request.", self.id)
+        cast("Session", self).start_turn_or_enqueue(message)
 
     def active_model(self) -> Model | None:
         """Return the registered `Model` for `config.model`, or `None` if it isn't registered

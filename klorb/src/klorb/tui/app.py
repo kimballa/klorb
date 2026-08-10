@@ -324,7 +324,6 @@ class ReplApp(
             )
         self._session = session
         self._replacing_session = False
-        self._bind_clear_session_handler(session)
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
         self._trust_manager = trust_manager

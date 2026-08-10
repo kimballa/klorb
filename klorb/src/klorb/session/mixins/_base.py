@@ -130,7 +130,6 @@ class SessionBase:
     _current_turn_leading_skill_id: tuple[str, str] | None
     _chained_hook_turns: int
     _dispatching_chained_turn: bool
-    on_clear_session_requested: Callable[[str], None] | None
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"
     statistics: SessionStatistics
@@ -140,6 +139,8 @@ class SessionBase:
     aliases: list[str]
 
     def close(self) -> None: ...
+
+    def reset_session(self, message: str) -> None: ...
 
     def claim_session_directory(self) -> None: ...
 
@@ -258,6 +259,11 @@ class SessionBase:
         raise NotImplementedError
 
     def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
+        raise NotImplementedError
+
+    def _dispatch_lifecycle_hook(
+        self, hook_name: str, *, event: str, workspace_just_bootstrapped: bool = False,
+    ) -> "HookOutput":
         raise NotImplementedError
 
     def start_turn_or_enqueue(self, text: str) -> None: ...

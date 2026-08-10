@@ -14,7 +14,7 @@ import fixtures.sample_tools as sample_tools_package
 import pytest
 
 from klorb.api_provider import ProviderResponse
-from klorb.hooks.config import HookConfig
+from klorb.hooks.config import HookConfig, HookConfigFilter
 from klorb.message import Message, ToolCallRequest
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
@@ -141,71 +141,82 @@ def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(tmp_path: 
     assert user_messages[1:] == ["keep going"] * 5
 
 
-def test_onagentturnend_clear_session_invokes_the_callback_instead_of_chaining(
-    tmp_path: Path,
-) -> None:
+def test_onagentturnend_reset_session_resets_the_conversation_in_place(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onAgentTurnEnd": [
             HookConfig(
                 type="bash",
-                shell='echo \'{"message": "fresh start", "clear_session": true}\''),
+                shell='echo \'{"message": "fresh start", "reset_session": true}\'',
+                # Filtered to the original turn's own reply so the reset conversation's own
+                # first turn (whose reply is "second") doesn't trigger another reset -- an
+                # unfiltered config would reset forever, since `_reset_state()` re-arms
+                # `max_chained_hook_turns` back to `0` on every reset.
+                filter=HookConfigFilter(matches="first")),
         ],
     })
     provider = MagicMock()
-    provider.send_prompt.return_value = _reply()
+    provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
     session = Session(process_config.session, provider=provider, process_config=process_config)
-    received: list[str] = []
-    session.on_clear_session_requested = received.append
+    original_id = session.id
 
     session.send_turn("go")
 
-    assert received == ["fresh start"]
-    # Only the original turn ran -- clear_session bypasses start_turn_or_enqueue's chaining.
-    assert provider.send_prompt.call_count == 1
-
-
-def test_onagentturnend_clear_session_falls_back_to_chaining_without_a_handler(
-    tmp_path: Path,
-) -> None:
-    """Without a registered `on_clear_session_requested`, `clear_session` degrades to an
-    ordinary chained turn -- and since the hook fires again on that follow-up turn's own end,
-    it keeps chaining until `max_chained_hook_turns` (default 5) trips, the same safety cap
-    an ordinary `chat` handler is bound by (see
-    `test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips`)."""
-    process_config = _process_config(tmp_path, {
-        "onAgentTurnEnd": [
-            HookConfig(
-                type="bash",
-                shell='echo \'{"message": "fresh start", "clear_session": true}\''),
-        ],
-    })
-    provider = MagicMock()
-    provider.send_prompt.side_effect = [_reply(f"reply {i}") for i in range(6)]
-    session = Session(process_config.session, provider=provider, process_config=process_config)
-
-    session.send_turn("go")
-
-    assert provider.send_prompt.call_count == 6
+    assert session.id == original_id
+    assert provider.send_prompt.call_count == 2
     user_messages = [m.content for m in session.messages if m.role == "user"]
-    assert user_messages[1:] == ["fresh start"] * 5
+    assert len(user_messages) == 1
+    assert user_messages[0].endswith("fresh start")
 
 
-def test_onagentturnend_clear_session_without_a_message_is_ignored(tmp_path: Path) -> None:
+def test_onagentturnend_reset_session_also_fires_onsessionend_with_resetsession_event(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "output.json"
     process_config = _process_config(tmp_path, {
         "onAgentTurnEnd": [
-            HookConfig(type="bash", shell='echo \'{"clear_session": true}\''),
+            HookConfig(
+                type="bash",
+                shell='echo \'{"message": "fresh start", "reset_session": true}\'',
+                filter=HookConfigFilter(matches="first")),
+        ],
+        "onSessionEnd": [
+            HookConfig(
+                type="bash",
+                shell=(
+                    'python3 -c \'import sys, json; data = json.load(sys.stdin); '
+                    f'open("{output_path}", "w").write(json.dumps(data))\'; '
+                    'echo \'{}\'')),
+        ],
+    })
+    provider = MagicMock()
+    provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+
+    session.send_turn("go")
+
+    data = json.loads(output_path.read_text())
+    assert data["hook"] == "onSessionEnd"
+    assert data["event"] == "ResetSession"
+
+
+def test_onagentturnend_reset_session_without_a_message_is_ignored(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [
+            HookConfig(type="bash", shell='echo \'{"reset_session": true}\''),
         ],
     })
     provider = MagicMock()
     provider.send_prompt.return_value = _reply()
     session = Session(process_config.session, provider=provider, process_config=process_config)
-    received: list[str] = []
-    session.on_clear_session_requested = received.append
+    original_id = session.id
 
     session.send_turn("go")
 
-    assert received == []
+    assert session.id == original_id
     assert provider.send_prompt.call_count == 1
+    user_messages = [m.content for m in session.messages if m.role == "user"]
+    assert len(user_messages) == 1
+    assert user_messages[0].endswith("go")
 
 
 def test_onagentturnend_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> None:
