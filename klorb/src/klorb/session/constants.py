@@ -10,18 +10,13 @@ from coolname import generate_slug
 MAX_TOOL_CALL_ROUNDS = 200
 """Safety cap on how many model-to-tool round trips one turn will run before giving up, in
 case a model gets stuck repeatedly requesting tool calls without ever returning a final
-answer. Unlike `SessionConfig.max_tool_calls_per_turn`/`max_tool_calls_per_session`, this
-isn't user-configurable or interactively raisable — it's a hard backstop."""
+answer. Unlike `SessionConfig.max_tool_calls_per_turn`, this isn't user-configurable or
+interactively raisable — it's a hard backstop."""
 
-DEFAULT_MAX_TOOL_CALLS_PER_TURN = 50
+DEFAULT_MAX_TOOL_CALLS_PER_TURN = 75
 """Default value of `SessionConfig.max_tool_calls_per_turn`: how many individual tool calls
 (across every round) one turn will execute before asking the user whether to keep going (see
 `Session._confirm_limit_increase`)."""
-
-DEFAULT_MAX_TOOL_CALLS_PER_SESSION = 200
-"""Default value of `SessionConfig.max_tool_calls_per_session`: how many individual tool
-calls a `Session` will execute across its entire lifetime (every turn combined) before asking
-the user whether to keep going (see `Session._confirm_limit_increase`)."""
 
 DEFAULT_MAX_CHAINED_HOOK_TURNS = 5
 """Default value of `SessionConfig.max_chained_hook_turns`: how many turns in a row a `chat`
@@ -34,8 +29,8 @@ same fail-safe shape as `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, guarding against a mi
 class ToolCallLimitExceeded(Exception):
     """Raised when a turn exceeds one of the tool-calling safety caps without the model
     returning a final answer: more than `MAX_TOOL_CALL_ROUNDS` model-to-tool round trips, or
-    the user declined to raise `max_tool_calls_per_turn`/`max_tool_calls_per_session` past
-    where it was exceeded (see `Session._confirm_limit_increase`)."""
+    the user declined to raise `max_tool_calls_per_turn` past where it was exceeded (see
+    `Session._confirm_limit_increase`)."""
 
 
 # Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids

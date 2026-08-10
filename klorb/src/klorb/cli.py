@@ -171,16 +171,6 @@ def build_parser() -> argparse.ArgumentParser:
             "turn fails. Defaults to the configured/process value."
         ),
     )
-    parser.add_argument(
-        "--max-tool-calls-per-session",
-        dest="max_tool_calls_per_session",
-        type=int,
-        default=None,
-        help=(
-            "Override the configured max tool calls allowed across this session before the "
-            "turn fails. Defaults to the configured/process value."
-        ),
-    )
     return parser
 
 
@@ -774,8 +764,6 @@ def main() -> None:
             session_cli_flags["permission_framework"] = "deny"
         if args.max_tool_calls_per_turn is not None:
             session_cli_flags["max_tool_calls_per_turn"] = args.max_tool_calls_per_turn
-        if args.max_tool_calls_per_session is not None:
-            session_cli_flags["max_tool_calls_per_session"] = args.max_tool_calls_per_session
         process_config.argv = list(sys.argv)
         process_config.session_cli_flags = session_cli_flags
         apply_cli_flags_to_session(process_config)

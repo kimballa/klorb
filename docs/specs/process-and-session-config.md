@@ -38,16 +38,16 @@ or slicing a superset.
   `ThemeSelectionScreen` in `klorb/src/klorb/tui/commands/theme_commands.py`); `None` means no persisted
   choice exists yet, so `ReplApp` falls back to Textual's own built-in default theme).
 
-  `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` and
-  `max_tool_calls_per_session` (int, defaults `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/
-  `DEFAULT_MAX_TOOL_CALLS_PER_SESSION` — `50`/`200`) — safety caps `Session._run_tool_calls()`
-  enforces on individual tool-call dispatches. These live on `SessionConfig`, not
-  `ProcessConfig`, specifically because reaching one can raise it: `Session` may ask (via an
+  `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` (int, default
+  `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN` — `75`) — a safety cap `Session._run_tool_calls()`
+  enforces on individual tool-call dispatches within one turn. It lives on `SessionConfig`, not
+  `ProcessConfig`, specifically because reaching it can raise it: `Session` may ask (via an
   `on_tool_call_limit_reached` callback — see [[session-and-turns]]) whether to double it and
   keep going, mutating `self.config` for the rest of that session's lifetime — a per-session,
   interactively-mutable value, which is exactly what `SessionConfig` (not `ProcessConfig`,
   whose fields must stay identical across every concurrently running session) is for. See
-  [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
+  [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md) and
+  [the per-session cap removal ADR](../adrs/remove-the-per-session-tool-call-cap-only-the-per-turn-cap-is-useful.md).
 
   `SessionConfig` also carries `read_dirs`/`write_dirs` (`DirRules`, default empty
   `deny`/`ask`/`allow` lists) — the `readDirs`/`writeDirs`-config-driven permission rules the
@@ -209,8 +209,7 @@ sit as flat keys alongside it at the top level:
     "model": "openai/gpt-5-nano",
     "thinking.enabled": true,
     "thinking.effort": "high",
-    "tools.maxCallsPerTurn": 50,
-    "tools.maxCallsPerSession": 200,
+    "tools.maxCallsPerTurn": 75,
     "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo"]},
     "writeDirs": {"deny": [], "ask": [], "allow": []},
     "readFiles": {"deny": [], "ask": [], "allow": ["/dev/null"]},
@@ -334,8 +333,8 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
 
 * `klorb-config.json` — see "How it works" above for the six layers and their
   precedence, and "On-disk key naming" above for the file's shape and key style. Every entry
-  in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`,
-  `tools.maxCallsPerSession`) can be set inside `sessionDefaults`; every entry in
+  in `SESSION_KEY_MAP` (`model`, `thinking.enabled`, `thinking.effort`, `tools.maxCallsPerTurn`)
+  can be set inside `sessionDefaults`; every entry in
   `PROCESS_KEY_MAP` (`thinking.tokenBudgets`, `terminal.input.maxLines`,
   `tools.readFile.maxLines`, `tools.grep.maxResults`,
   `tools.grep.contextLines`, `tools.grep.maxLineLength`, `tools.grep.spillBytes`,

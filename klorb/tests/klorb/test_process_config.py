@@ -32,12 +32,7 @@ from klorb.process_config import (
     persist_theme,
     user_config_path,
 )
-from klorb.session import (
-    DEFAULT_MAX_TOOL_CALLS_PER_SESSION,
-    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
-    THINKING_EFFORT_TOKEN_BUDGETS,
-    SessionConfig,
-)
+from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig
 from klorb.workspace import Workspace
 
 
@@ -71,7 +66,6 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     assert process_config.session == SessionConfig(workspace=Workspace(path=tmp_path))
     assert process_config.session.model == DEFAULT_MODEL
     assert process_config.session.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
-    assert process_config.session.max_tool_calls_per_session == DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     assert process_config.prompt_input_max_lines == DEFAULT_PROMPT_INPUT_MAX_LINES
     assert process_config.thinking_token_budgets == THINKING_EFFORT_TOKEN_BUDGETS
     assert process_config.read_file_max_lines == DEFAULT_READ_FILE_MAX_LINES
@@ -279,7 +273,6 @@ def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:
                 "thinking.enabled": False,
                 "thinking.effort": "low",
                 "tools.maxCallsPerTurn": 3,
-                "tools.maxCallsPerSession": 15,
             },
         },
     )
@@ -289,7 +282,6 @@ def test_session_defaults_are_nested_under_one_key(tmp_path: Path) -> None:
     assert process_config.session.thinking_enabled is False
     assert process_config.session.thinking_effort == "low"
     assert process_config.session.max_tool_calls_per_turn == 3
-    assert process_config.session.max_tool_calls_per_session == 15
 
 
 def test_interactive_is_not_a_recognized_session_default(

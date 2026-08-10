@@ -196,8 +196,7 @@ def test_main_passes_process_config_thinking_token_budgets_to_session(
 def test_main_passes_process_config_tool_call_limits_to_session(
     stub_process_config: MagicMock,
 ) -> None:
-    process_config = ProcessConfig(
-        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
+    process_config = ProcessConfig(session=SessionConfig(max_tool_calls_per_turn=3))
     stub_process_config.return_value = process_config
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
@@ -207,7 +206,6 @@ def test_main_passes_process_config_tool_call_limits_to_session(
 
     config = mock_session_cls.call_args.args[0]
     assert config.max_tool_calls_per_turn == 3
-    assert config.max_tool_calls_per_session == 9
 
 
 def test_main_passes_a_tool_registry_built_from_process_and_session_config(
@@ -352,28 +350,25 @@ def test_main_no_log_tool_calls_flag_overrides_config_true(
 
 
 def test_main_max_tool_calls_flags_override_process_config(stub_process_config: MagicMock) -> None:
-    process_config = ProcessConfig(
-        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
+    process_config = ProcessConfig(session=SessionConfig(max_tool_calls_per_turn=3))
     stub_process_config.return_value = process_config
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
     with patch("klorb.cli.Session", return_value=mock_session) as mock_session_cls:
         with patch(
             "sys.argv",
-            ["klorb", "--max-tool-calls-per-turn", "5", "--max-tool-calls-per-session", "20", "-m", "hi"],
+            ["klorb", "--max-tool-calls-per-turn", "5", "-m", "hi"],
         ):
             cli.main()
 
     config = mock_session_cls.call_args.args[0]
     assert config.max_tool_calls_per_turn == 5
-    assert config.max_tool_calls_per_session == 20
 
 
 def test_main_max_tool_calls_flags_default_to_process_config_when_omitted(
     stub_process_config: MagicMock,
 ) -> None:
-    process_config = ProcessConfig(
-        session=SessionConfig(max_tool_calls_per_turn=3, max_tool_calls_per_session=9))
+    process_config = ProcessConfig(session=SessionConfig(max_tool_calls_per_turn=3))
     stub_process_config.return_value = process_config
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
@@ -383,7 +378,6 @@ def test_main_max_tool_calls_flags_default_to_process_config_when_omitted(
 
     config = mock_session_cls.call_args.args[0]
     assert config.max_tool_calls_per_turn == 3
-    assert config.max_tool_calls_per_session == 9
 
 
 def test_main_starts_repl_when_no_prompt_given() -> None:

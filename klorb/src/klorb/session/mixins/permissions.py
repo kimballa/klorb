@@ -6,7 +6,7 @@ whether to raise a tool-call safety limit that was just reached."""
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from klorb.message import ToolCallRequest
 from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
@@ -41,39 +41,34 @@ class SessionPermissionsMixin(SessionBase):
 
     def _confirm_limit_increase(
         self,
-        scope: Literal["turn", "session"],
         current_count: int,
         current_limit: int,
         on_tool_call_limit_reached: Callable[[str], bool] | None,
     ) -> bool:
-        """A `max_tool_calls_per_{scope}` limit was just reached. Ask (via
-        `on_tool_call_limit_reached`, if given) whether to double it and keep going.
+        """`max_tool_calls_per_turn` was just reached. Ask (via `on_tool_call_limit_reached`,
+        if given) whether to double it and keep going.
 
         Returns `False` without asking anything if `on_tool_call_limit_reached` is `None`,
         since there's no way to interactively confirm outside e.g. the TUI (see
         [[terminal-repl]]'s `ToolCallLimitScreen`) — a one-shot CLI prompt has nobody to ask.
         Otherwise calls it with a human-readable prompt describing the limit reached, and:
-        on `True`, doubles `self.config.max_tool_calls_per_{scope}` for the rest of this
+        on `True`, doubles `self.config.max_tool_calls_per_turn` for the rest of this
         `Session`'s lifetime (not just this turn) and returns `True`; on `False`, returns
         `False` without changing the limit.
         """
-        logger.warning(
-            "%s tool-call limit reached (%d/%d).", scope.capitalize(), current_count, current_limit)
+        logger.warning("Turn tool-call limit reached (%d/%d).", current_count, current_limit)
         if on_tool_call_limit_reached is None:
             return False
         prompt = (
-            f"This task has made {current_count} tool calls this {scope}, reaching its "
+            f"This task has made {current_count} tool calls this turn, reaching its "
             f"configured limit of {current_limit}. Continue tool use?"
         )
         if not on_tool_call_limit_reached(prompt):
-            logger.info("User declined to raise the %s tool-call limit; aborting turn.", scope)
+            logger.info("User declined to raise the turn tool-call limit; aborting turn.")
             return False
         new_limit = current_limit * 2
-        if scope == "turn":
-            self.config.max_tool_calls_per_turn = new_limit
-        else:
-            self.config.max_tool_calls_per_session = new_limit
-        logger.info("User approved continuing; %s tool-call limit doubled to %d.", scope, new_limit)
+        self.config.max_tool_calls_per_turn = new_limit
+        logger.info("User approved continuing; turn tool-call limit doubled to %d.", new_limit)
         return True
 
     def _retry_after_permission_decision(

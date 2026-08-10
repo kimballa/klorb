@@ -14,7 +14,6 @@ base class instead of subclassing `Session` piecewise.
 
 from klorb.session.config import SessionConfig
 from klorb.session.constants import (
-    DEFAULT_MAX_TOOL_CALLS_PER_SESSION,
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
     MAX_TOOL_CALL_ROUNDS,
     NONCE_WORD_COUNT,
@@ -67,7 +66,6 @@ class Session(
 
 
 __all__ = [
-    "DEFAULT_MAX_TOOL_CALLS_PER_SESSION",
     "DEFAULT_MAX_TOOL_CALLS_PER_TURN",
     "MAX_TOOL_CALL_ROUNDS",
     "NONCE_WORD_COUNT",

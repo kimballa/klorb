@@ -203,8 +203,8 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   turn — see [[escape-aborts-streaming-turn-and-discards-it-from-history]] and
   [[keep-aborted-turn-content-in-history-tagged-not-discarded]].
 * If a turn's tool calls (see [[tool-framework]] and [[session-and-turns]]) reach
-  `SessionConfig.max_tool_calls_per_turn`/`max_tool_calls_per_session`, `Session` asks
-  whether to double the reached cap and keep going via the `on_tool_call_limit_reached`
+  `SessionConfig.max_tool_calls_per_turn`, `Session` asks whether to double the reached cap
+  and keep going via the `on_tool_call_limit_reached`
   callback `_send_prompt` passes into `Session.send_turn()`:
   `ReplApp._on_tool_call_limit_reached(message)`. Since that callback runs on the worker
   thread but showing a modal and waiting for its result requires the app's own event loop,

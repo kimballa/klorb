@@ -23,15 +23,15 @@ config) has one place to live.
   * `thinking_effort: ThinkingEffort` (`"low" | "medium" | "high"`) — the user-facing
     reasoning depth knob, defaulting to `"high"`. See [[default-thinking-on-and-high-effort]]
     for why these are the defaults.
-  * `max_tool_calls_per_turn`/`max_tool_calls_per_session: int` — safety caps
-    `Session._run_tool_calls()` enforces on individual tool-call dispatches, defaulting to
-    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN`/`DEFAULT_MAX_TOOL_CALLS_PER_SESSION` (`50`/`200`).
-    Unlike the other fields, `Session` mutates these itself (doubling one in place when the
-    user approves continuing past it — see below), so they live on `SessionConfig` rather
-    than the process-wide `ProcessConfig`; see
-    [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
-    `klorb.cli.build_parser()`'s `--max-tool-calls-per-turn`/`--max-tool-calls-per-session`
-    flags let a caller override either default without editing a config file.
+  * `max_tool_calls_per_turn: int` — a safety cap `Session._run_tool_calls()` enforces on
+    individual tool-call dispatches within one turn, defaulting to
+    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN` (`75`). Unlike the other fields, `Session`
+    mutates this itself (doubling it in place when the user approves continuing past it —
+    see below), so it lives on `SessionConfig` rather than the process-wide `ProcessConfig`;
+    see [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md) and
+    [the per-session cap removal ADR](../adrs/remove-the-per-session-tool-call-cap-only-the-per-turn-cap-is-useful.md).
+    `klorb.cli.build_parser()`'s `--max-tool-calls-per-turn` flag lets a caller override the
+    default without editing a config file.
   * `permission_framework: PermissionFramework` (`"ask" | "auto" | "deny"`) — how
     `Session._run_tool_calls()` resolves a `PermissionAskRequired` verdict, defaulting to
     `"ask"`. See docs/specs/permissions.md's "Interactive `"ask"` confirmation" section for
@@ -159,31 +159,29 @@ config) has one place to live.
     `content` is a JSON-serialized `klorb.tools.response_envelope.ToolResponseEnvelope` — see
     "Tool-response envelope" below — and `_dispatch_turn()` sends another
     round with the updated history. This repeats until a plain `"assistant"` reply comes
-    back, or one of three safety caps is exceeded and not raised past, which raises
+    back, or one of two safety caps is exceeded and not raised past, which raises
     `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
     `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (200, a hard module constant, never
-    raisable) model-to-tool round trips; `config.max_tool_calls_per_turn` (default
-    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 50) individual tool calls dispatched by
+    raisable) model-to-tool round trips; or `config.max_tool_calls_per_turn` (default
+    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 75) individual tool calls dispatched by
     `_run_tool_calls()` in this turn — `self._tool_calls_this_turn` resets to `0` at the
-    start of every `_dispatch_turn()` call, including retries; or `config.max_tool_calls_per_session`
-    (default `DEFAULT_MAX_TOOL_CALLS_PER_SESSION`, 200) individual tool calls dispatched
-    across this `Session`'s entire lifetime — `self._tool_calls_this_session` is never reset.
-    Both are checked, and the running counts logged, before each individual call within
-    `_run_tool_calls()` (not just once per round), so a round requesting several parallel
-    tool calls can be cut off partway through; calls already dispatched earlier in that same
-    round stay in history.
+    start of every `_dispatch_turn()` call, including retries. The running count is checked,
+    and logged, before each individual call within `_run_tool_calls()` (not just once per
+    round), so a round requesting several parallel tool calls can be cut off partway through;
+    calls already dispatched earlier in that same round stay in history.
 
-    Reaching the turn or session cap isn't necessarily fatal: `_confirm_limit_increase()`
-    calls `on_tool_call_limit_reached(prompt)` (the callback threaded through `send_turn()`/
+    Reaching the turn cap isn't necessarily fatal: `_confirm_limit_increase()` calls
+    `on_tool_call_limit_reached(prompt)` (the callback threaded through `send_turn()`/
     `retry_last_turn()`/`_dispatch_turn()`), if one was given, with a human-readable prompt
-    describing which cap was hit. Returning `True` doubles that cap on `self.config` — for
+    describing the cap hit. Returning `True` doubles that cap on `self.config` — for
     the rest of this `Session`'s lifetime, not just the current call — and lets the call
     proceed; returning `False`, or no callback being given at all (e.g. `klorb.cli`'s
     one-shot path), raises `ToolCallLimitExceeded` exactly as if no confirmation had been
     offered. [[terminal-repl]]'s `ToolCallLimitScreen` is what supplies this callback
     interactively. See
-    [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md) and
-    [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md).
+    [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md),
+    [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md), and
+    [the per-session cap removal ADR](../adrs/remove-the-per-session-tool-call-cap-only-the-per-turn-cap-is-useful.md).
   * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None,
     on_tool_call_limit_reached: ... = None) -> str` scans
     backward for the last `role == "user"` `Message`; if it isn't in `"error"` state (or
@@ -197,8 +195,8 @@ config) has one place to live.
     is a thin wrapper around `send_turn()`, named for the non-interactive entry point so
     callers don't need to know it's "just" a single turn.
 * `klorb.cli.main()` (`klorb/src/klorb/cli.py`) builds a `SessionConfig` from parsed CLI
-  arguments (`--model`, the resolved `--interactive` value, `--max-tool-calls-per-turn`/
-  `--max-tool-calls-per-session` (each overriding the configured default when given), the
+  arguments (`--model`, the resolved `--interactive` value, `--max-tool-calls-per-turn`
+  (overriding the configured default when given), the
   resolved `permission_framework` (see below), and the log path returned by
   `configure_logging()`), constructs a `Session`, and either calls
   `session.run_one_shot(prompt)` and prints the result, or calls
