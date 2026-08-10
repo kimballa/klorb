@@ -23,13 +23,26 @@ from klorb.tools.bash import KLORB_ENV_FILE_VAR, session_env_file
 logger = logging.getLogger(__name__)
 
 
+def _handler_label(handler: HookConfig) -> str:
+    """A human-readable label for `handler` in a log message: its own `name` if set, else the
+    program name from `command`, else the whole `shell` string -- `name` is optional, so a
+    handler that omits it would otherwise log as `None`."""
+    if handler.name is not None:
+        return handler.name
+    if handler.command:
+        return handler.command[0]
+    if handler.shell is not None:
+        return handler.shell
+    return "<unnamed>"
+
+
 def _log_handler_stderr(handler: HookConfig, hook_input: HookInput, stderr: str) -> None:
     """Logs `stderr` verbatim at `warning` level, preceded by which hook/handler produced it.
     No-op if `stderr` is empty -- a handler that wrote nothing to it logs nothing."""
     if not stderr:
         return
     logger.warning(
-        "Hook handler %r for %r wrote to stderr:\n%s", handler.name, hook_input.hook, stderr)
+        "Hook handler %r for %r wrote to stderr:\n%s", _handler_label(handler), hook_input.hook, stderr)
 
 
 def _build_env(session_config: SessionConfig, env_file: Path | None) -> dict[str, str]:
