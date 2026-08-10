@@ -5,6 +5,9 @@
 
 ### Bugs
 
+* the agent's memory topics should be injected into the first user prompt
+* the system prompt should explain the memory system and encourage the agent more forcefully to capture memories, any time it is corrected by the user or learns something important about the project. 
+
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * `deliver_event_message` → `start_turn_or_enqueue` → `send_turn` has a thread-safety gap:
