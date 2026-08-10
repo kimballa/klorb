@@ -38,6 +38,18 @@ from klorb.tools.tool import describe_tool_arg_json_error
 logger = logging.getLogger(__name__)
 
 
+def _tool_result_text(envelope: ToolResponseEnvelope) -> str:
+    """The substantive result content `_apply_tool_result_hook` exposes as `onToolResult`'s
+    `tool_result`: `response_body` if set, else `error_message`, else `""` -- serialized to JSON
+    if not already a plain string."""
+    value = envelope.response_body if envelope.response_body is not None else envelope.error_message
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
 class SessionToolExecutionMixin(SessionBase):
     """The tool-call dispatch loop `_dispatch_turn` runs once per model round trip that
     requests tool use."""
@@ -270,8 +282,8 @@ class SessionToolExecutionMixin(SessionBase):
                     error, category=category, response_body=response_body,
                     system_interjections=first_call_interjections,
                     user_interjections=first_call_user_interjections)
-            content = self._apply_tool_result_hook(
-                call.name, json.dumps(envelope.to_wire_dict(), ensure_ascii=False))
+            envelope = self._apply_tool_result_hook(call.name, envelope)
+            content = json.dumps(envelope.to_wire_dict(), ensure_ascii=False)
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)
             if callbacks.on_tool_call is not None:
@@ -316,10 +328,19 @@ class SessionToolExecutionMixin(SessionBase):
                 category="permission")
         return args
 
-    def _apply_tool_result_hook(self, call_name: str, content: str) -> str:
-        """Dispatch `onToolResult` after `call_name`'s result envelope is serialized -- fires
-        for every session in the tree, same as `onToolUse`. A `message` in the aggregate
-        `HookOutput` replaces `content` (the envelope's json text) before it's logged, reported
-        via `callbacks.on_tool_call`, and appended as this call's `tool_response` `Message`."""
-        result = self._dispatch_hook("onToolResult", tool_name=call_name, message=content)
-        return result.message if result.message is not None else content
+    def _apply_tool_result_hook(
+        self, call_name: str, envelope: ToolResponseEnvelope,
+    ) -> ToolResponseEnvelope:
+        """Dispatch `onToolResult` after `call_name`'s `ToolResponseEnvelope` is built -- fires
+        for every session in the tree, same as `onToolUse`. Only the envelope's own substantive
+        result (`_tool_result_text`) is exposed as `tool_result`; `system_interjections`/
+        `user_interjections` are never visible to, or overridable by, a hook. A `tool_result` in
+        the aggregate `HookOutput` replaces `response_body` (or `error_message`, when the
+        envelope had no `response_body`) in the envelope returned here."""
+        tool_result = _tool_result_text(envelope)
+        result = self._dispatch_hook("onToolResult", tool_name=call_name, tool_result=tool_result)
+        if result.tool_result is None:
+            return envelope
+        if envelope.is_error and envelope.response_body is None:
+            return envelope.model_copy(update={"error_message": result.tool_result})
+        return envelope.model_copy(update={"response_body": result.tool_result})

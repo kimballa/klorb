@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from klorb import __version__
 from klorb.agents.policy import compute_root_session_grants
 from klorb.hooks.dispatcher import HookDispatcher
-from klorb.hooks.wire import HookInput
+from klorb.hooks.hook_api import HookInput
 from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 from klorb.logging_config import configure_logging, configure_minimal_logging, session_log_path
 from klorb.models.model import Model
@@ -681,6 +681,22 @@ def run_server_cli(argv: list[str]) -> int:
         return 0
 
 
+def _current_exit_status() -> int:
+    """The exit status klorb is about to end with, inferred from whatever exception (if any) is
+    currently unwinding through `main()`'s `finally` block -- 0 if none, a `SystemExit`'s own
+    integer `code`, or 1 for anything else (a non-int `SystemExit.code`, or any other
+    propagating exception)."""
+    exc = sys.exc_info()[1]
+    if exc is None:
+        return 0
+    if isinstance(exc, SystemExit):
+        if exc.code is None:
+            return 0
+        if isinstance(exc.code, int):
+            return exc.code
+    return 1
+
+
 def main() -> None:
     """Parse CLI arguments and either run a single prompt or start the interactive REPL.
 
@@ -745,7 +761,7 @@ def main() -> None:
     hook_dispatcher = HookDispatcher(process_config, api_provider=provider, model_registry=model_registry)
     hook_dispatcher.dispatch(
         "onProcessStart",
-        HookInput(hook="onProcessStart", event="Startup", workspaceRoot=str(workspace.path)))
+        HookInput(hook="onProcessStart", reason="Startup", workspaceRoot=str(workspace.path)))
 
     try:
         # Gather CLI flag outcomes that impact the SessionConfig into a dict. We save this
@@ -821,7 +837,9 @@ def main() -> None:
     finally:
         hook_dispatcher.dispatch(
             "onProcessEnd",
-            HookInput(hook="onProcessEnd", event="Shutdown", workspaceRoot=str(workspace.path)))
+            HookInput(
+                hook="onProcessEnd", reason="Shutdown", workspaceRoot=str(workspace.path),
+                exit_status=_current_exit_status()))
 
 
 if __name__ == "__main__":

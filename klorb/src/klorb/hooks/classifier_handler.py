@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from klorb.api_provider import ApiProvider
-from klorb.hooks.wire import HookInput, HookOutput
+from klorb.hooks.hook_api import HookInput, HookOutput
 from klorb.message import Message, MessageRole
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ def run_classifier_handler(
     any failure -- a request error, a request exceeding `timeout`, the whole call exceeding
     `e2e_timeout`, or a reply that still fails to parse/validate after one retry -- so the caller
     treats this handler as contributing nothing to the chain, per hooks' general error-handling
-    contract. Never raises, mirroring `klorb.session_naming.generate_session_name`.
+    contract. Never raises.
     """
     started = time.perf_counter()
     cancel_event = threading.Event()

@@ -1069,14 +1069,6 @@ def load_process_config(
     replaces an earlier layer's, same as `dict.update` but scoped to this one nested object
     rather than the whole `sessionDefaults` dict) — see
     docs/specs/bash-tool-and-command-permissions.md.
-    Top-level `hooks`/`events` use a fifth variant, named-list concatenate: each is an object
-    keyed by hook/event name, and a later layer's list for a given name is appended to, rather
-    than replaces, every earlier layer's list for that same name (`klorb.hooks.merge.
-    concatenate_named_handler_lists`) — the same idea as the `deny`/`ask`/`allow` concatenation
-    above, generalized from three fixed subkeys to an open-ended, finite set of names. An
-    unrecognized hook/event name, or an entry that fails to validate against its handler
-    schema, is skipped and collected into `config_warnings` rather than dropping the rest of
-    the layer.
 
     `workspace` identifies the current project root and whether it's trusted — see
     `klorb.workspace.Workspace` and docs/specs/projects-and-trust.md. When omitted (the common

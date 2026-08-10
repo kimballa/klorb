@@ -118,12 +118,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         skipped when `_skip_session_restore` is set (`klorb --new`), leaving the freshly
         constructed `Session` as-is even for a trusted workspace with saved sessions on disk.
 
-        Once trust is fully settled -- this method's only exit points below -- fires
-        `onSessionStart` (`Session.fire_session_start_hook`) exactly once for this app's
-        lifetime, tagged `event="ResumeSession"` if the block above swapped in a restored
-        session, `"NewSession"` otherwise. Fires from here rather than from `Session.__init__`
-        directly because trust isn't settled yet at construction time for a brand-new
-        workspace -- `_bootstrap_new_workspace` above is what settles it.
+        Once trust is fully settled, fires `onSessionStart`, tagged `reason="ResumeSession"` if
+        the block above swapped in a restored session, `"NewSession"` otherwise. Fires from here
+        rather than from `Session.__init__` directly because trust isn't settled yet at
+        construction time for a brand-new workspace.
         """
         if self._trust_manager is None:
             return

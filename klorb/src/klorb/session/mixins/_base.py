@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
     # actually used) depends on `klorb.session.config`, so a real import here would be circular;
     # needed only to type `_dispatch_hook`'s return value.
-    from klorb.hooks.wire import HookOutput
+    from klorb.hooks.hook_api import HookOutput
     # isort: on
 
 
@@ -129,7 +129,6 @@ class SessionBase:
     _current_turn_mentioned_skill_ids: frozenset[tuple[str, str]]
     _current_turn_leading_skill_id: tuple[str, str] | None
     _chained_hook_turns: int
-    _dispatching_chained_turn: bool
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"
     statistics: SessionStatistics
@@ -262,7 +261,7 @@ class SessionBase:
         raise NotImplementedError
 
     def _dispatch_lifecycle_hook(
-        self, hook_name: str, *, event: str, workspace_just_bootstrapped: bool = False,
+        self, hook_name: str, *, reason: str, workspace_just_bootstrapped: bool = False,
     ) -> "HookOutput":
         raise NotImplementedError
 

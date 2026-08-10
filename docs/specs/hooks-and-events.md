@@ -68,24 +68,28 @@ OR/AND, `not_` negates a nested filter. Every field a filter clause sets must ho
 none set is vacuously eligible.
 
 `klorb.hooks.config.HOOK_FILTER_SUBJECT_FIELDS` maps each hook name to which `HookInput` field its
-`filter` is evaluated against: `event` for the process/session start/end hooks, `tool_name` for
-`onToolUse`, `skill_name` for `onActivateSkill`, and `message` for every hook centered on a chunk
-of conversation text (`onSubmitUserPrompt`, `onToolResult`, `onSubagentStart`, `onSubagentTurnEnd`,
-`onAgentTurnEnd`). An event handler's `action.filter` is evaluated the same way, keyed by the
-event name.
+`filter` is evaluated against: `reason` for the process/session start/end hooks, `tool_name` for
+`onToolUse`, `tool_result` for `onToolResult`, `skill_name` for `onActivateSkill`, and `message`
+for every hook centered on a chunk of conversation text (`onSubmitUserPrompt`, `onSubagentStart`,
+`onSubagentTurnEnd`, `onAgentTurnEnd`). An event handler's `action.filter` is evaluated the same
+way, keyed by the event name.
 
-## Wire schema
+## Hook API schema
 
-`klorb.hooks.wire` defines the JSON shapes a handler is invoked with and must reply with:
+`klorb.hooks.hook_api` defines the JSON shapes a handler is invoked with and must reply with:
 
 * **`HookInput`** — `hook`, `name`, `args` (the firing handler's own `shell`/`command`/`prompt`),
-  `workspace_root`, `event`, `message`, `tool_name`, `tool_args`, `skill_name`/`skill_namespace`/
-  `is_user_mentioned`/`is_user_activated` (set only for `onActivateSkill`), `role`, `session_id`
-  (the firing session's own id; `None` only for `onProcessStart`/`onProcessEnd`, before any
-  session exists), `workspace_trusted`/`workspace_just_bootstrapped` (set only for
-  `onSessionStart`).
+  `workspace_root`, `reason` (why `hook` fired — an event's own name is carried in `hook` itself,
+  never here), `message`, `tool_name`, `tool_args`, `tool_result` (`onToolResult` only — the
+  call's own substantive result content, never `system_interjections`/`user_interjections`),
+  `skill_name`/`skill_namespace`/`is_user_mentioned`/`is_user_activated` (set only for
+  `onActivateSkill`), `role`, `session_id`/`root_session_id` (the firing session's own id and the
+  root session it descends from; `None` only for `onProcessStart`/`onProcessEnd`, before any
+  session exists), `exit_status` (set only for `onProcessEnd`, read-only),
+  `workspace_trusted`/`workspace_just_bootstrapped` (set only for `onSessionStart`).
 * **`HookOutput`** — `success` (default `True`), `tool_args`, `permission` (a bare `Verdict`),
-  `message`, `interrupt` (default `False`), `reset_session` (default `False`).
+  `message`, `tool_result` (`onToolResult` only — replaces `response_body`/`error_message` in the
+  envelope), `interrupt` (default `False`), `reset_session` (default `False`).
 * **`EventInput(HookInput)`** — adds `fs_updates: list[FileSystemUpdate] | None`, each a
   `{event: "created"|"deleted"|"modified", path}` pair, populated for a `FileSystemModified`
   firing.
@@ -147,11 +151,13 @@ unsandboxed (logged at `debug`) when `bwrap_available()` is `False`.
   `shell` gets no macro expansion.
 * The subprocess env is `HOME`/`USER` (shared from the klorb process), `WORKSPACE_ROOT`, then
   `SessionConfig.share_env`/`set_env`'s passthrough (same precedence
-  `klorb.tools.bash.build_bash_env` uses), then `KLORB_HOOK_ENV_FILE`
-  (`klorb.hooks.bash_handler.HOOK_ENV_FILE_VAR`) pointing at a fresh, empty, per-invocation file
-  under `KLORB_STATE_DIR / "hooks"`, granted `writeFiles` access in the sandbox and deleted once
-  the subprocess exits. It exists so a hook script has a place to read/write values without them
-  becoming a tool-call argument visible to the model; nothing populates it with content today.
+  `klorb.tools.bash.build_bash_env` uses), then `KLORB_ENV_FILE`
+  (`klorb.tools.bash.KLORB_ENV_FILE_VAR`) pointing at the firing session's `session_env_file()` --
+  created empty on first use, kept for the rest of the session (not per-invocation), granted
+  `writeFiles` access in the sandbox. Unset when no live session exists yet (`onProcessStart`/
+  `onProcessEnd`). It exists so a hook script has a place to read/write values without them
+  becoming a tool-call argument visible to the model; nothing populates it with content today,
+  and an ordinary model-issued `Bash` command doesn't see it yet.
 * Bounded by `timeout_seconds` — `ProcessConfig.hook_bash_timeout_seconds`
   (`hooks.bash.timeoutSeconds`) if set, else `ProcessConfig.bash_timeout_seconds`
   (`tools.bash.timeout`)'s own value.
@@ -257,7 +263,7 @@ narrower cleanup (step 3 above) runs instead.
 
 **`onSessionEnd` also fires for an `onAgentTurnEnd`-triggered reset.** Before calling
 `reset_session()`, `_fire_agent_turn_end_hook` dispatches `onSessionEnd` with
-`event="ResetSession"` — purely for side effects (e.g. a bash handler logging that this
+`reason="ResetSession"` — purely for side effects (e.g. a bash handler logging that this
 conversation ended); its own `HookOutput` is discarded, the same way every other `onSessionEnd`
 firing is non-cancelable. `close()`'s own `onSessionEnd` firing (a real `SuspendSession`) doesn't
 need this extra dispatch, since `onSessionEnd` is already what fired there.
@@ -278,11 +284,11 @@ hooks are inert in that case rather than erroring.
 | `onProcessStart` | `klorb.cli.main()`, before workspace/session setup | process |
 | `onProcessEnd` | `klorb.cli.main()`, at exit | process |
 | `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | root session |
-| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `event="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); a `reset_session` result calls `Session.reset_session()` instead of continuing shutdown (see "Session reset" above) | root session |
+| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); a `reset_session` result calls `Session.reset_session()` instead of continuing shutdown (see "Session reset" above) | root session |
 | `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
 | `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `start_turn_or_enqueue`, unless `reset_session` is also set (see "Session reset" above) | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |
-| `onToolResult` | `_apply_tool_result_hook`, after a tool call's result is available; `message` in the result replaces the result content | whole tree |
+| `onToolResult` | `_apply_tool_result_hook`, after a tool call's result envelope is built; `tool_result` in the result replaces `response_body`/`error_message` in the envelope, never `system_interjections`/`user_interjections` | whole tree |
 | `onActivateSkill` | `Session.fire_activate_skill_hook` (`klorb/src/klorb/session/mixins/skills.py`), from `ActivateSkillTool.apply()` and from `_build_user_skill_activation_interjection`'s leading-mention fast path, once `skillRules` has already let the activation through; `success=False` or a `permission` of `"deny"`/`"ask"` vetoes it — `ActivateSkillTool.apply()` raises `ToolCallError`, the leading-mention path falls back to the ordinary `SkillReference` reminder | whole tree |
 | `onSubagentStart` | `Session.fire_subagent_start_hook`, called from `klorb.agents.policy` around a subagent's turn; a `None` return (aggregate `success=False`) skips the turn entirely | firing subagent |
 | `onSubagentTurnEnd` | `Session.fire_subagent_turn_end_hook`, after a subagent's turn | firing subagent |
@@ -350,10 +356,10 @@ than crashing the scheduler thread.
 
 ### `WorkspaceTrustChanged`
 
-Fires via `Session.fire_workspace_trust_changed_hook(event)` at the two points a workspace's trust
+Fires via `Session.fire_workspace_trust_changed_hook(reason)` at the two points a workspace's trust
 decision can change against an already-live root session: the TUI's `>Trust workspace` command
-(`event="TrustCommand"`, `klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) and ACP's
-`_klorb/trustWorkspace` (`event="AcpTrustWorkspace"`, `klorb.server.klorb_agent.KlorbAcpAgent`). Needs
+(`reason="TrustCommand"`, `klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) and ACP's
+`_klorb/trustWorkspace` (`reason="AcpTrustWorkspace"`, `klorb.server.klorb_agent.KlorbAcpAgent`). Needs
 no watcher/scheduler of its own — it dispatches directly through the same `HookDispatcher`/
 `start_turn_or_enqueue` path the other two events use. Distinct from `onSessionStart`'s own
 `workspace_trusted`/`workspace_just_bootstrapped` fields, which report a session's *initial* trust
@@ -385,8 +391,8 @@ startup.
 * **Hot-reloading hook/event config** edited mid-process, without a full restart.
 * **Surfacing hook activity in the UI** — a TUI/VSCode view of which hooks fired, what they
   returned, and whether they errored, beyond `logger.debug()`/`warning()` output.
-* **Real content for `KLORB_HOOK_ENV_FILE`.** A `bash` handler's subprocess is pointed at a fresh,
-  empty file per invocation; nothing writes session-scoped values into it yet, and ordinary
+* **Real content for `KLORB_ENV_FILE`.** A `bash` handler's subprocess is pointed at a
+  session-scoped, otherwise-empty file; nothing writes values into it yet, and ordinary
   `BashTool` commands don't share it.
 * **An explicit turn-interrupt primitive** hooks/events can call directly, rather than
   `HookOutput.interrupt` needing new wiring on top of a turn's `cancel_event`

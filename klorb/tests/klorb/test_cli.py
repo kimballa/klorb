@@ -92,8 +92,9 @@ def test_main_dispatches_onprocessstart_before_and_onprocessend_after_the_sessio
         stub_process_config.return_value, api_provider=mock.ANY, model_registry=mock.ANY)
     assert order == ["onProcessStart", "Session", "run_one_shot", "onProcessEnd"]
     first_hook, second_hook = mock_dispatcher.dispatch.call_args_list
-    assert first_hook.args[1].event == "Startup"
-    assert second_hook.args[1].event == "Shutdown"
+    assert first_hook.args[1].reason == "Startup"
+    assert second_hook.args[1].reason == "Shutdown"
+    assert second_hook.args[1].exit_status == 0
 
 
 def test_main_dispatches_onprocessend_even_when_the_turn_raises(
@@ -110,6 +111,8 @@ def test_main_dispatches_onprocessend_even_when_the_turn_raises(
 
     hook_names = [call.args[0] for call in mock_dispatcher.dispatch.call_args_list]
     assert hook_names == ["onProcessStart", "onProcessEnd"]
+    _, onprocessend_call = mock_dispatcher.dispatch.call_args_list
+    assert onprocessend_call.args[1].exit_status == 1
 
 
 def test_main_configures_minimal_logging_immediately_after_load_dotenv() -> None:

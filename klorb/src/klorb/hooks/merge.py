@@ -1,9 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """The named-list-concatenate merge `hooks`/`events` use across the config-layer stack: each
 layer contributes a dict keyed by hook/event name, and layers are combined by appending a later
-layer's list for a name onto whatever earlier layers already built for that same name — the
-same idea `readDirs`'s `deny`/`ask`/`allow` concatenation uses, generalized from three fixed
-subkeys to an open-ended, finite set of hook/event names.
+layer's list for a name onto whatever earlier layers already built for that same name.
 """
 
 from typing import Any, TypeVar

@@ -8,11 +8,12 @@ import pytest
 
 from klorb import sandbox
 from klorb.config_macros import MacroExpansionError
-from klorb.hooks.bash_handler import HOOK_ENV_FILE_VAR, _handler_argv, run_bash_handler
+from klorb.hooks.bash_handler import _handler_argv, run_bash_handler
 from klorb.hooks.config import HookConfig
-from klorb.hooks.wire import HookInput
+from klorb.hooks.hook_api import HookInput
 from klorb.permissions.directory_access import DirRules
 from klorb.session.config import SessionConfig
+from klorb.tools.bash import KLORB_ENV_FILE_VAR
 from klorb.workspace import Workspace
 
 requires_bwrap = pytest.mark.skipif(
@@ -30,10 +31,10 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
-    write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
+    """Redirect the session env file directory into `tmp_path` so tests don't write to the real
+    KLORB_STATE_DIR (which may be read-only in CI)."""
     monkeypatch.setattr(
-        "klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
+        "klorb.tools.bash._BASH_ENV_FILES_DIR", tmp_path / "bash-env-files")
 
 
 def _session_config(workspace_root: Path, **overrides: Any) -> SessionConfig:
@@ -48,7 +49,7 @@ def _session_config(workspace_root: Path, **overrides: Any) -> SessionConfig:
 
 def _hook_input(workspace_root: Path, **overrides: Any) -> HookInput:
     defaults: dict[str, Any] = {
-        "hook": "onProcessStart", "event": "Startup", "workspaceRoot": str(workspace_root),
+        "hook": "onProcessStart", "reason": "Startup", "workspaceRoot": str(workspace_root),
     }
     defaults.update(overrides)
     return HookInput(**defaults)
@@ -128,25 +129,45 @@ def test_command_handler_runs_with_expanded_argv(tmp_path: Path) -> None:
 def test_hook_env_file_var_points_to_a_writable_file(tmp_path: Path) -> None:
     handler = HookConfig(
         type="bash",
-        shell=f'test -w "${HOOK_ENV_FILE_VAR}" && echo \'{{"message": "writable"}}\'')
+        shell=f'test -w "${KLORB_ENV_FILE_VAR}" && echo \'{{"message": "writable"}}\'')
     result = run_bash_handler(
-        handler, _hook_input(tmp_path), session_config=_session_config(tmp_path),
-        bash_command="/bin/bash", timeout_seconds=5.0)
+        handler, _hook_input(tmp_path, session_id="test-session"),
+        session_config=_session_config(tmp_path), bash_command="/bin/bash", timeout_seconds=5.0)
     assert result is not None
     assert result.message == "writable"
 
 
-def test_hook_env_file_is_removed_after_the_handler_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    env_files_dir = tmp_path / "hook-env-files"
-    monkeypatch.setattr("klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", env_files_dir)
-    handler = HookConfig(type="bash", shell="echo '{}'")
+def test_hook_env_file_var_is_unset_with_no_live_session(tmp_path: Path) -> None:
+    handler = HookConfig(
+        type="bash",
+        shell=f'test -z "${{{KLORB_ENV_FILE_VAR}+x}}" && echo \'{{"message": "unset"}}\'')
     result = run_bash_handler(
         handler, _hook_input(tmp_path), session_config=_session_config(tmp_path),
         bash_command="/bin/bash", timeout_seconds=5.0)
     assert result is not None
-    assert list(env_files_dir.iterdir()) == []
+    assert result.message == "unset"
+
+
+def test_session_env_file_persists_and_is_reused_across_handler_invocations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_files_dir = tmp_path / "bash-env-files"
+    monkeypatch.setattr("klorb.tools.bash._BASH_ENV_FILES_DIR", env_files_dir)
+    handler = HookConfig(type="bash", shell="echo '{}'")
+    hook_input = _hook_input(tmp_path, session_id="test-session")
+    session_config = _session_config(tmp_path)
+    result = run_bash_handler(
+        handler, hook_input, session_config=session_config, bash_command="/bin/bash",
+        timeout_seconds=5.0)
+    assert result is not None
+    env_file = env_files_dir / "test-session" / "session.env"
+    assert env_file.exists()
+
+    result = run_bash_handler(
+        handler, hook_input, session_config=session_config, bash_command="/bin/bash",
+        timeout_seconds=5.0)
+    assert result is not None
+    assert env_file.exists()
 
 
 # --- run_bash_handler: error handling (never raises, returns None) ---
