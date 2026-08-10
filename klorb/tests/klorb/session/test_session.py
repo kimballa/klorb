@@ -1609,14 +1609,14 @@ def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
     assert str(MAX_TOOL_CALL_ROUNDS) in (user_message.last_error or "")
 
 
-def test_per_turn_tool_call_limit_defaults_to_seventy_five() -> None:
+def test_per_turn_tool_call_limit_defaults() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
     config = SessionConfig(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
-    with pytest.raises(ToolCallLimitExceeded, match="75 tool call"):
+    with pytest.raises(ToolCallLimitExceeded, match="100 tool call"):
         session.send_turn("loop forever")
 
     tool_response_messages = [m for m in session.messages if m.role == "tool_response"]

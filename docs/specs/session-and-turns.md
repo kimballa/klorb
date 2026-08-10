@@ -25,7 +25,7 @@ config) has one place to live.
     for why these are the defaults.
   * `max_tool_calls_per_turn: int` — a safety cap `Session._run_tool_calls()` enforces on
     individual tool-call dispatches within one turn, defaulting to
-    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN` (`75`). Unlike the other fields, `Session`
+    `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN` (`100`). Unlike the other fields, `Session`
     mutates this itself (doubling it in place when the user approves continuing past it —
     see below), so it lives on `SessionConfig` rather than the process-wide `ProcessConfig`;
     see [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md) and
@@ -163,7 +163,7 @@ config) has one place to live.
     `ToolCallLimitExceeded` (handled like any other mid-turn failure: `user_message` marked
     `processing_state="error"`): `MAX_TOOL_CALL_ROUNDS` (200, a hard module constant, never
     raisable) model-to-tool round trips; or `config.max_tool_calls_per_turn` (default
-    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 75) individual tool calls dispatched by
+    `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, 100) individual tool calls dispatched by
     `_run_tool_calls()` in this turn — `self._tool_calls_this_turn` resets to `0` at the
     start of every `_dispatch_turn()` call, including retries. The running count is checked,
     and logged, before each individual call within `_run_tool_calls()` (not just once per

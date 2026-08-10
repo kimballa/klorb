@@ -17,10 +17,11 @@
   hard, non-raisable per-turn round-trip cap) and `max_tool_calls_per_turn` (the raisable
   per-turn call-count cap) are untouched.
 
-  `DEFAULT_MAX_TOOL_CALLS_PER_TURN` moves from `50` to `75`, and this repository's own
-  `.klorb/klorb-config.json` sets `sessionDefaults["tools.maxCallsPerTurn"]` to `150` for
-  developing klorb itself, where turns routinely run long tool-call chains (test suites, lint
-  fixes, multi-file refactors).
+  `DEFAULT_MAX_TOOL_CALLS_PER_TURN` moves from `50` to `100`, matching the packaged
+  `default-config.json`'s own `tools.maxCallsPerTurn` value (previously out of sync with the
+  code constant). This repository's own `.klorb/klorb-config.json` sets
+  `sessionDefaults["tools.maxCallsPerTurn"]` to `150` for developing klorb itself, where turns
+  routinely run long tool-call chains (test suites, lint fixes, multi-file refactors).
 * Reasoning: The per-turn cap bounds the cost of any single request — a real, useful brake on a
   model that gets stuck looping within one turn. The per-session cap bounds cumulative cost
   across a `Session`'s entire lifetime, but a session's lifetime has no natural relationship to

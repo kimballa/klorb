@@ -39,7 +39,7 @@ or slicing a superset.
   choice exists yet, so `ReplApp` falls back to Textual's own built-in default theme).
 
   `SessionConfig` (`session.py`) additionally carries `max_tool_calls_per_turn` (int, default
-  `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN` — `75`) — a safety cap `Session._run_tool_calls()`
+  `session.DEFAULT_MAX_TOOL_CALLS_PER_TURN` — `100`) — a safety cap `Session._run_tool_calls()`
   enforces on individual tool-call dispatches within one turn. It lives on `SessionConfig`, not
   `ProcessConfig`, specifically because reaching it can raise it: `Session` may ask (via an
   `on_tool_call_limit_reached` callback — see [[session-and-turns]]) whether to double it and
@@ -209,7 +209,7 @@ sit as flat keys alongside it at the top level:
     "model": "openai/gpt-5-nano",
     "thinking.enabled": true,
     "thinking.effort": "high",
-    "tools.maxCallsPerTurn": 75,
+    "tools.maxCallsPerTurn": 100,
     "readDirs": {"deny": ["/nope"], "ask": ["/home/aaron/maybe"], "allow": ["/yolo"]},
     "writeDirs": {"deny": [], "ask": [], "allow": []},
     "readFiles": {"deny": [], "ask": [], "allow": ["/dev/null"]},

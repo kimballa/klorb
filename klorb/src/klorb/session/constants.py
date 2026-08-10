@@ -13,7 +13,7 @@ case a model gets stuck repeatedly requesting tool calls without ever returning 
 answer. Unlike `SessionConfig.max_tool_calls_per_turn`, this isn't user-configurable or
 interactively raisable — it's a hard backstop."""
 
-DEFAULT_MAX_TOOL_CALLS_PER_TURN = 75
+DEFAULT_MAX_TOOL_CALLS_PER_TURN = 100
 """Default value of `SessionConfig.max_tool_calls_per_turn`: how many individual tool calls
 (across every round) one turn will execute before asking the user whether to keep going (see
 `Session._confirm_limit_increase`)."""
