@@ -133,32 +133,25 @@ neither receives nor produces this JSON — it just contributes its configured `
 Every field is optional except `hook` and `workspaceRoot` — which fields are actually populated
 depends on which hook/event fired:
 
-* `hook` — the hook or event name that fired (`onToolUse`, `FileSystemModified`, ...).
-* `name` — the `name` you gave this handler in its config entry, or `null` if you didn't set one.
-* `args` — the firing handler's own configured payload: `{"shell": ...}`, `{"command": [...]}`,
-  or `{"prompt": ...}`, whichever it declared.
-* `workspaceRoot` — the workspace's absolute path. Always present.
-* `event` — the specific occurrence name, for hooks/events that need one: `Startup`/`Shutdown`
-  (process start/end), `NewSession`/`ResumeSession`/`SuspendSession` (session
-  start/end), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`).
-* `message` — the user prompt (`onSubmitUserPrompt`), the agent's reply (`onAgentTurnEnd`), a
-  subagent's prompt/output (`onSubagentStart`/`onSubagentTurnEnd`), or a tool's result content
-  (`onToolResult`).
-* `tool_name` / `tool_args` — set for `onToolUse`/`onToolResult`: which tool, and (for
-  `onToolUse`) its call arguments.
-* `skill_name` / `skill_namespace` — set for `onActivateSkill`: the skill about to be activated,
-  by its canonical (directory-basename) identity.
-* `is_user_mentioned` / `is_user_activated` — set for `onActivateSkill`: whether the current
-  turn's raw prompt referenced this skill by `/<name>` anywhere in it, and whether it *led* with
-  one (a strict subset of `is_user_mentioned`). Both `false` for a skill the model activated on
-  its own, with no matching `/<name>` in the prompt at all.
-* `role` — `"operator"` for the root session, or the relevant subagent role name.
-* `session_id` — the id of the session (root or subagent) that fired this hook; `null` for
-  `onProcessStart`/`onProcessEnd`, since no session exists yet.
-* `workspaceTrusted` / `workspaceJustBootstrapped` — set only for `onSessionStart`: whether the
-  workspace is trusted, and whether this firing is what triggered a first-time trust decision.
-* `fs_updates` — set only for a `FileSystemModified` firing: a debounced batch of
-  `{"event": "created"|"deleted"|"modified", "path": "..."}` entries.
+| Field | Type | Populated for | Notes |
+| --- | --- | --- | --- |
+| `hook` | string | Always | The hook or event name that fired (`onToolUse`, `FileSystemModified`, ...). |
+| `name` | string \| null | Always | The `name` you gave this handler in its config entry, or `null` if you didn't set one. |
+| `args` | object | Always | The firing handler's own configured payload: `{"shell": ...}`, `{"command": [...]}`, or `{"prompt": ...}`, whichever it declared. |
+| `workspaceRoot` | string | Always | The workspace's absolute path. |
+| `event` | string \| null | `onProcessStart`/`onProcessEnd`, `onSessionStart`/`onSessionEnd`, `WorkspaceTrustChanged` | The specific occurrence name: `Startup`/`Shutdown` (process start/end), `NewSession`/`ResumeSession`/`SuspendSession` (session start/end), `ResetSession` (`onSessionEnd` fired alongside an `onAgentTurnEnd`-triggered `reset_session` — see "Session reset" below), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`). |
+| `message` | string \| null | `onSubmitUserPrompt`, `onAgentTurnEnd`, `onSubagentStart`, `onSubagentTurnEnd`, `onToolResult` | The user prompt, the agent's reply, a subagent's prompt/output, or a tool's result content, depending on which hook fired. |
+| `tool_name` | string \| null | `onToolUse`, `onToolResult` | Which tool. |
+| `tool_args` | object \| null | `onToolUse`, `onToolResult` | The tool call's arguments. |
+| `skill_name` | string \| null | `onActivateSkill` | The skill about to be activated, by its canonical (directory-basename) identity. |
+| `skill_namespace` | string \| null | `onActivateSkill` | The skill's namespace. |
+| `is_user_mentioned` | bool \| null | `onActivateSkill` | Whether the current turn's raw prompt referenced this skill by `/<name>` anywhere in it. |
+| `is_user_activated` | bool \| null | `onActivateSkill` | Whether the current turn's raw prompt *led* with a `/<name>` reference to this skill — a strict subset of `is_user_mentioned`. Both this and `is_user_mentioned` are `false` for a skill the model activated on its own, with no matching `/<name>` in the prompt at all. |
+| `role` | string \| null | Every hook once a session exists | `"operator"` for the root session, or the relevant subagent role name. |
+| `session_id` | string \| null | Every hook once a session exists | The id of the session (root or subagent) that fired this hook; `null` for `onProcessStart`/`onProcessEnd`, since no session exists yet. |
+| `workspaceTrusted` | bool \| null | `onSessionStart` only | Whether the workspace is trusted. |
+| `workspaceJustBootstrapped` | bool \| null | `onSessionStart` only | Whether this firing is what triggered a first-time trust decision. |
+| `fs_updates` | array \| null | `FileSystemModified` event only | A debounced batch of `{"event": "created"\|"deleted"\|"modified", "path": "..."}` entries. Only `EventInput` (which extends `HookInput` with this one field) carries it. |
 
 ### `HookOutput`
 
@@ -169,36 +162,20 @@ depends on which hook/event fired:
   "permission": "allow",
   "message": "text to inject into the conversation, or feedback on a denial",
   "interrupt": false,
-  "clear_session": false
+  "reset_session": false
 }
 ```
 
 Every field is optional — omit anything you have no opinion on, and it won't affect the outcome:
 
-* `success` (default `true`) — set `false` to veto the moment: block the turn
-  (`onSubmitUserPrompt`), block the tool call (`onToolUse`), block the activation
-  (`onActivateSkill`), or skip the subagent turn (`onSubagentStart`). Ignored by hooks that can't
-  be canceled (`onSessionStart`/`onSessionEnd`/`onProcessStart`/`onProcessEnd`).
-* `tool_args` — for `onToolUse`, replaces the tool call's arguments before it runs.
-* `permission` — `"allow"`, `"ask"`, or `"deny"`; for `onToolUse`/`onActivateSkill`, `"ask"`/
-  `"deny"` both block the call the same as `success: false` (there's no live channel yet to
-  actually ask a human from a hook).
-* `message` — rewrites the user prompt (`onSubmitUserPrompt`), the tool result content
-  (`onToolResult`), or supplies the text a `chat`-style outcome sends as a new/queued turn
-  (`onAgentTurnEnd`, `onSubagentTurnEnd`, or any event). Also used as denial feedback when
-  `success: false`.
-* `interrupt` (default `false`) — reserved for breaking into an in-flight turn immediately rather
-  than waiting for the next natural delivery point; not yet wired up anywhere.
-* `clear_session` (default `false`) — discard the session and start a fresh one seeded with
-  `message` as its first turn, as if you'd run "Clear session" yourself. Only `onSessionEnd` and
-  `onAgentTurnEnd` act on this; other hooks/events may set it, but nothing reads it there. Requires
-  a non-empty `message` — an aggregate result with `clear_session: true` and no `message` is
-  dropped (logged at `warning`, `clear_session` reset to `false`). Interactive TUI only today: an
-  ACP or headless run has nothing to hand a replacement session back to, so `clear_session` there
-  just logs a warning and, for `onAgentTurnEnd`, falls back to delivering `message` as an ordinary
-  chained turn instead. See "Chained turns" below — the same infinite-loop risk applies, since a
-  replacement session starts its own chained-turn counter from zero rather than inheriting the
-  outgoing session's.
+| Field | Type | Default | Used by | Notes |
+| --- | --- | --- | --- | --- |
+| `success` | bool | `true` | `onSubmitUserPrompt`, `onToolUse`, `onActivateSkill`, `onSubagentStart` | Set `false` to veto the moment: block the turn, the tool call, the activation, or skip the subagent turn. |
+| `tool_args` | object \| null | `null` | `onToolUse` | Replaces the tool call's arguments before it runs. |
+| `permission` | `allow`\|`ask`\|`deny` \| null | `null` | `onToolUse`, `onActivateSkill` | |
+| `message` | string \| null | `null` | `onSubmitUserPrompt` / `onToolResult` (rewrite), `onAgentTurnEnd` / `onSubagentTurnEnd` / events (new/queued turn text), with any `success: false` (denial feedback) | Multi-purpose |
+| `interrupt` | bool | `false` | Any hook/event that also sets `message` | Breaks into an in-flight turn immediately rather than waiting for turn end. (Not yet implemented) |
+| `reset_session` | bool | `false` | `onSessionEnd`, `onAgentTurnEnd` | Wipes the conversation and starts it over in place (same session id/directory), seeded with `message`. See "Session reset" below. |
 
 If more than one handler runs in a chain for the same firing, each handler's `HookOutput` feeds
 into the next handler's input, and the final aggregate is the strictest/most-recent combination of
@@ -217,20 +194,41 @@ turns in a row can be auto-started this way (`tools.hooks.maxChainedTurns`, defa
 cap is hit, further auto-chained turns are refused until a real user- or tool-driven turn resets
 the count.
 
+### Session reset
+
+`HookOutput.reset_session` wipes the firing session's conversation and starts it over in
+place — same session id, same on-disk directory — seeded with `message` as its next turn, as if
+you'd run "Clear session" yourself except nothing is actually replaced. Config is reinitialized
+from the process config's template, any live subagents are closed first, and the persistent bash
+shell/scratchpad are torn down and recreated fresh. Only `onSessionEnd` and `onAgentTurnEnd` act
+on it; requires a non-empty `message`, or the request is dropped with a warning. Works the same
+way in the TUI, ACP, and headless — unlike the old session-replacement design, there's no host
+wiring required.
+
+When an `onAgentTurnEnd` handler triggers a reset, `onSessionEnd` is also dispatched first, with
+`event: "ResetSession"`, purely so an `onSessionEnd` handler (e.g. one that logs "conversation
+ended") sees it too — its own result is discarded, the same as `onSessionEnd` being non-cancelable
+in the ordinary suspend/destroy case.
+
+Give an `onAgentTurnEnd` reset handler a `filter`, same as a `chat` handler: the reset
+conversation's own first turn can end and trigger the hook again, and `max_chained_hook_turns`
+resets to `0` on every reset rather than carrying over, so an unfiltered handler can reset
+indefinitely.
+
 ## Available hooks
 
 | Hook | Fires | Scope |
 | --- | --- | --- |
 | `onProcessStart` | `bin/klorb` starting up | process |
-| `onSessionStart` | a session starting, resuming, or being cleared, once workspace trust is settled | root session |
+| `onSessionStart` | a session starting, resuming, or being cleared | root session |
 | `onSubmitUserPrompt` | a user prompt about to be sent to the agent | root session |
-| `onToolUse` | a tool about to run — can rewrite `tool_args` or veto the call | whole tree |
-| `onToolResult` | a tool's result, before it's returned to the agent | whole tree |
-| `onActivateSkill` | a skill about to be activated (via the `ActivateSkill` tool call, or a leading `/name` mention), after `skillRules` already allowed it — can veto the activation | whole tree |
-| `onSubagentStart` | a subagent's turn kicking off | that subagent |
+| `onToolUse` | a tool about to run | whole tree |
+| `onToolResult` | a tool result, before returning to the agent | whole tree |
+| `onActivateSkill` | a skill about to be activated | whole tree |
+| `onSubagentStart` | a subagent's turn starting | that subagent |
 | `onSubagentTurnEnd` | a subagent's turn ending | that subagent |
-| `onAgentTurnEnd` | the agent's turn ending, after its final message — can `clear_session` | root session |
-| `onSessionEnd` | a session suspending or being destroyed — can `clear_session` | root session |
+| `onAgentTurnEnd` | the agent's turn ending, after its final message — can `reset_session` | root session |
+| `onSessionEnd` | a session suspending, being destroyed, or resetting — can `reset_session` | root session |
 | `onProcessEnd` | `bin/klorb` exiting | process |
 
 `onToolUse`/`onToolResult`/`onActivateSkill` fire for every session in the tree — root or
