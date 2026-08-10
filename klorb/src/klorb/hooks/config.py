@@ -28,28 +28,29 @@ seconds" cadence."""
 
 HookHandlerType = Literal["bash", "classifier", "chat"]
 
-HookFilterSubjectField = Literal["event", "message", "tool_name", "skill_name"]
+HookFilterSubjectField = Literal["reason", "message", "tool_name", "tool_result", "skill_name"]
 
 HOOK_FILTER_SUBJECT_FIELDS: dict[str, HookFilterSubjectField] = {
-    "onProcessStart": "event",
-    "onSessionStart": "event",
+    "onProcessStart": "reason",
+    "onSessionStart": "reason",
     "onSubmitUserPrompt": "message",
-    "onRequestPermission": "event",
+    "onRequestPermission": "reason",
     "onToolUse": "tool_name",
-    "onToolResult": "message",
+    "onToolResult": "tool_result",
     "onActivateSkill": "skill_name",
     "onSubagentStart": "message",
     "onSubagentTurnEnd": "message",
     "onAgentTurnEnd": "message",
-    "onSessionEnd": "event",
-    "onProcessEnd": "event",
+    "onSessionEnd": "reason",
+    "onProcessEnd": "reason",
 }
-"""Which `HookInput` field a `HookConfig.filter` is evaluated against, per hook name: an
-`event`-name hook (process/session start/end) filters on `event`, a hook centered on a chunk of
-conversation text (a user prompt, an agent reply, a subagent's output) filters on `message`,
-`onToolUse` filters on `tool_name`, and `onActivateSkill` filters on `skill_name` (the skill's
-bare, canonical name). `onRequestPermission`'s own subject is left as `"event"` (a placeholder
-default): its `HookInput` shape is deferred future work, not yet documented."""
+"""Which `HookInput` field a `HookConfig.filter` is evaluated against, per hook name: a
+process/session start/end hook filters on `reason`, a hook centered on a chunk of conversation
+text (a user prompt, an agent reply, a subagent's output) filters on `message`, `onToolUse`
+filters on `tool_name`, `onToolResult` filters on `tool_result`, and `onActivateSkill` filters on
+`skill_name` (the skill's bare, canonical name). `onRequestPermission`'s own subject is left as
+`"reason"` (a placeholder default): its `HookInput` shape is deferred future work, not yet
+documented."""
 
 
 class HookConfigFilter(BaseModel):

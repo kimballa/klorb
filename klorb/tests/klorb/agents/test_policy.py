@@ -40,7 +40,7 @@ def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
     write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
     monkeypatch.setattr(
-        "klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
+        "klorb.tools.bash._BASH_ENV_FILES_DIR", tmp_path / "bash-env-files")
 
 
 def _operator_context(

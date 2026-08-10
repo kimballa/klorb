@@ -410,7 +410,7 @@ class SessionTurnsMixin(SessionBase):
         and starts a fresh one, per the `chat` handler type's documented behavior.
 
         A `reset_session` result (guaranteed by `HookDispatcher` to carry a non-empty `message`)
-        first dispatches `onSessionEnd` with `event="ResetSession"` -- purely for its side
+        first dispatches `onSessionEnd` with `reason="ResetSession"` -- purely for its side
         effects (e.g. a bash handler logging that this conversation ended); its own `HookOutput`
         is discarded, the same as every other `onSessionEnd` firing being non-cancelable -- then
         calls `Session.reset_session()` instead of continuing this conversation. `close()`'s own
@@ -419,7 +419,7 @@ class SessionTurnsMixin(SessionBase):
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
         if result.reset_session:
             assert result.message is not None
-            self._dispatch_lifecycle_hook("onSessionEnd", event="ResetSession")
+            self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
             cast("Session", self).reset_session(result.message)
             return
         if result.message is not None:
@@ -431,12 +431,14 @@ class SessionTurnsMixin(SessionBase):
         handler's message needs: `current_turn_handlers()` is this session's own turn-in-flight
         signal, the same one `enqueue_queued_message`/`drain_queued_messages` already key off.
 
-        Bounded by `config.max_chained_hook_turns`: `_chained_hook_turns` counts how many turns
-        in a row this method has started back-to-back; once it reaches the cap, a further
-        chained turn is refused (logged at `warning`) rather than started. `_dispatching_chained_turn`
-        marks the nested `send_turn()` call below as one this method itself made, so `send_turn`
-        doesn't reset the counter back to `0` the way it does for an ordinary, externally-driven
-        call -- only a real user- or tool-driven turn resets it.
+        Bounded by `config.max_chained_hook_turns`: `_chained_hook_turns` tracks how many
+        chained-turn frames are currently nested on the call stack -- this method's own
+        `send_turn()` call can, via `onAgentTurnEnd`/event dispatch, call back into this method
+        again before returning. Incremented before `send_turn()` and decremented after in the
+        same `finally`, so it's back to `0` once the whole synchronous chain has unwound (cap
+        reached, exception, or otherwise), with no separate reset needed for an ordinary,
+        externally-driven turn. Once it reaches the cap, a further chained turn is refused
+        (logged at `warning`) rather than started.
         """
         if self.current_turn_handlers() is not None:
             self.enqueue_queued_message(QueuedMessage(message_text=text))
@@ -447,11 +449,10 @@ class SessionTurnsMixin(SessionBase):
                 self.config.max_chained_hook_turns)
             return
         self._chained_hook_turns += 1
-        self._dispatching_chained_turn = True
         try:
             self.send_turn(text)
         finally:
-            self._dispatching_chained_turn = False
+            self._chained_hook_turns -= 1
 
     def deliver_event_message(self, text: str) -> None:
         """Deliver an event handler's aggregate `message` (`FileSystemModified`/
@@ -590,8 +591,6 @@ class SessionTurnsMixin(SessionBase):
         given, is invoked once with the result (or `None` on failure) so a caller can react --
         e.g. the TUI updates its status line and renames its session log file.
         """
-        if not self._dispatching_chained_turn:
-            self._chained_hook_turns = 0
         original_prompt = prompt
         active_model = self.active_model()
         mention_fragments = resolve_at_mentions(

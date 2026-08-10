@@ -1,10 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """`TimerScheduler`: the runtime counterpart to `klorb.hooks.config.TimerEventConfig` -- fires
-each configured entry's `action` on its own `interval_minutes`/`cron` schedule, best-effort only
-(see docs/plans/ready/022-hooks-and-events.md's "Timer event" section): a fire time that elapses
-while no klorb process for this workspace is running is simply missed, never queued or caught up
-on restart. Also home to `clamp_timer_intervals`, the config-load-time floor enforcement for
-`interval_minutes` (see `klorb.hooks.config.MIN_EVENT_DEBOUNCE_SECONDS`).
+each configured entry's `action` on its own `interval_minutes`/`cron` schedule, best-effort only:
+a fire time that elapses while no klorb process for this workspace is running is simply missed,
+never queued or caught up on restart. Also home to `clamp_timer_intervals`, the config-load-time
+floor enforcement for `interval_minutes` (see `klorb.hooks.config.MIN_EVENT_DEBOUNCE_SECONDS`).
 """
 
 import logging
@@ -16,7 +15,7 @@ from pathlib import Path
 from croniter import croniter
 
 from klorb.hooks.config import MIN_EVENT_DEBOUNCE_SECONDS, TimerEventConfig
-from klorb.hooks.wire import EventInput
+from klorb.hooks.hook_api import EventInput
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +48,8 @@ def compute_next_fire(entry: TimerEventConfig, after: datetime) -> datetime:
     interval_minutes` for an interval entry, or `cron`'s next scheduled moment (via `croniter`)
     for a cron entry. A pure function, deliberately kept apart from `TimerScheduler`'s own
     background-thread bookkeeping, so cron/interval math is unit-testable without waiting on a
-    real clock. Raises `ValueError` (a malformed `cron` string, via `croniter`, or an entry with
-    neither `cron` nor `interval_minutes` set) -- `TimerScheduler` catches this to skip
-    scheduling that one entry rather than let it crash the scheduler thread."""
+    real clock. Raises `ValueError` for a malformed `cron` string (via `croniter`), or an entry
+    with neither `cron` nor `interval_minutes` set."""
     if entry.cron is not None:
         return croniter(entry.cron, after).get_next(datetime)
     if entry.interval_minutes is not None:
@@ -64,7 +62,7 @@ class TimerScheduler:
     schedule, via one self-rescheduling `threading.Timer` per entry -- unlike
     `klorb.hooks.fs_events.FileSystemWatcher`, entries here have no shared debounce window to
     batch behind, so `dispatch` is called once per entry, each time it fires, as a single-entry
-    list. `start()`/`close()` are idempotent, mirroring `FileSystemWatcher`.
+    list. `start()`/`close()` are idempotent.
     """
 
     def __init__(
@@ -108,7 +106,7 @@ class TimerScheduler:
                 "TimerScheduler entry %r has an invalid schedule (%s); not scheduling.",
                 entry.action.name, exc)
             return
-        delay = max(0.0, (next_fire - now).total_seconds())
+        delay = max(MIN_EVENT_DEBOUNCE_SECONDS, (next_fire - now).total_seconds())
         timer = threading.Timer(delay, self._fire, args=(index, entry))
         timer.daemon = True
         self._timers[index] = timer

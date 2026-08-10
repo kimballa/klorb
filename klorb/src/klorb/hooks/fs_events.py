@@ -18,7 +18,7 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from klorb.hooks.config import MIN_EVENT_DEBOUNCE_SECONDS, FileSystemModifiedEventConfig
-from klorb.hooks.wire import EventInput, FileSystemUpdate
+from klorb.hooks.hook_api import EventInput, FileSystemUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +77,7 @@ class FileSystemWatcher:
     """Watches `entries`' configured paths under `workspace_root`. After each debounced burst
     of changes settles, `dispatch` is called once with whichever `entries` had at least one
     change fall under their own `watch` path, together with an `EventInput` batch of every
-    matched change -- an update outside every configured `watch` is dropped rather than
-    delivered to an uninterested entry. `start()`/`close()` are idempotent, mirroring
-    `klorb.tui.workspace_file_index.WorkspaceFileIndex`.
+    matched change.
     """
 
     def __init__(

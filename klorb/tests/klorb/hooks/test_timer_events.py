@@ -8,15 +8,25 @@ from pathlib import Path
 
 import pytest
 
-from klorb.hooks.config import HookConfig, TimerEventConfig
+from klorb.hooks.config import MIN_EVENT_DEBOUNCE_SECONDS, HookConfig, TimerEventConfig
+from klorb.hooks.hook_api import EventInput
 from klorb.hooks.timer_events import TimerScheduler, clamp_timer_intervals, compute_next_fire
-from klorb.hooks.wire import EventInput
 
 _SHORT_INTERVAL_MINUTES = 0.002
 """~120ms -- fast enough for a test. Deliberately below the production
 `MIN_EVENT_DEBOUNCE_SECONDS` floor: these tests construct `TimerEventConfig` instances
 directly, bypassing `clamp_timer_intervals` (a config-load-time concern exercised by
 `klorb.tests.klorb.test_process_config` instead)."""
+
+
+@pytest.fixture
+def _fast_debounce_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_schedule_next`'s own `MIN_EVENT_DEBOUNCE_SECONDS` delay floor (see
+    `test_schedule_next_clamps_delay_to_the_debounce_floor`) would otherwise force every
+    real-timer test below to wait a genuine 10 seconds per fire -- lowered here the same way
+    `_SHORT_INTERVAL_MINUTES` bypasses `clamp_timer_intervals`, for tests that exercise
+    scheduler mechanics rather than the floor itself."""
+    monkeypatch.setattr("klorb.hooks.timer_events.MIN_EVENT_DEBOUNCE_SECONDS", _SHORT_INTERVAL_MINUTES * 60)
 
 
 def _entry(*, interval_minutes: float | None = None, cron: str | None = None) -> TimerEventConfig:
@@ -119,6 +129,7 @@ async def recorder() -> _Recorder:
     return _Recorder()
 
 
+@pytest.mark.usefixtures("_fast_debounce_floor")
 async def test_timer_scheduler_fires_the_action_on_its_interval(
     tmp_path: Path, recorder: _Recorder,
 ) -> None:
@@ -137,6 +148,7 @@ async def test_timer_scheduler_fires_the_action_on_its_interval(
     assert event_input.workspace_root == str(tmp_path)
 
 
+@pytest.mark.usefixtures("_fast_debounce_floor")
 async def test_timer_scheduler_reschedules_and_fires_again(
     tmp_path: Path, recorder: _Recorder,
 ) -> None:
@@ -152,6 +164,7 @@ async def test_timer_scheduler_reschedules_and_fires_again(
     assert len(recorder.calls) == 2
 
 
+@pytest.mark.usefixtures("_fast_debounce_floor")
 async def test_timer_scheduler_dispatches_each_entry_independently(
     tmp_path: Path, recorder: _Recorder,
 ) -> None:
@@ -167,6 +180,21 @@ async def test_timer_scheduler_dispatches_each_entry_independently(
     assert len(recorder.calls) == 1
     entries, _ = recorder.calls[0]
     assert entries == [fast]
+
+
+def test_schedule_next_clamps_delay_to_the_debounce_floor(tmp_path: Path) -> None:
+    """`_schedule_next`'s own delay is clamped to `MIN_EVENT_DEBOUNCE_SECONDS`, not just
+    `clamp_timer_intervals`'s config-load-time floor on `interval_minutes` -- a fast cron
+    expression bypasses that floor entirely, so this is the backstop that still catches it.
+    Uses the real, unpatched floor and inspects the scheduled `threading.Timer` directly rather
+    than waiting for it to fire."""
+    entry = _entry(interval_minutes=_SHORT_INTERVAL_MINUTES)
+    scheduler = TimerScheduler(tmp_path, [entry], dispatch=_no_op_dispatch)
+    try:
+        scheduler.start()
+        assert scheduler._timers[0].interval == pytest.approx(MIN_EVENT_DEBOUNCE_SECONDS)
+    finally:
+        scheduler.close()
 
 
 def test_timer_scheduler_skips_an_entry_with_no_cron_or_interval(

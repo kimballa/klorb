@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""The JSON wire schema hook/event dispatch feeds to a `bash` subprocess's stdin (or hands to a
+"""The JSON schema hook/event dispatch feeds to a `bash` subprocess's stdin (or hands to a
 `classifier`/`chat` handler): `HookInput`/`EventInput` describe the lifecycle moment or
 occurrence that triggered the handler, `HookOutput` describes what the handler decided.
 """
@@ -20,10 +20,20 @@ class HookInput(BaseModel):
     name: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
     workspace_root: str = Field(alias="workspaceRoot")
-    event: str | None = None
+    reason: str | None = None
+    """Why `hook` fired, for a hook whose `HOOK_FILTER_SUBJECT_FIELDS` subject is `"reason"`
+    (`onProcessStart`/`onProcessEnd`/`onSessionStart`/`onSessionEnd`/`onRequestPermission`) --
+    e.g. `"NewSession"`/`"ResumeSession"` for `onSessionStart`, `"Startup"`/`"Shutdown"` for
+    `onProcessStart`/`onProcessEnd`. Distinct from an *Event* (`FileSystemModified`/`Timer`/
+    `WorkspaceTrustChanged`), whose own name is carried in `hook`, not here -- an event handler
+    never sets `reason`."""
     message: str | None = None
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
+    tool_result: str | None = None
+    """`onToolResult` only: the tool call's own substantive result content -- `response_body` if
+    set, else `error_message`, JSON-serialized if not already a plain string. Never includes
+    `system_interjections`/`user_interjections`; a hook can't see or override those."""
     skill_name: str | None = None
     skill_namespace: str | None = None
     is_user_mentioned: bool | None = None
@@ -39,6 +49,12 @@ class HookInput(BaseModel):
     can tell which session in the tree an `onToolUse`/`onToolResult` firing (or any other
     hook) belongs to. `None` only when no live session exists yet (`onProcessStart`/
     `onProcessEnd`)."""
+    root_session_id: str | None = None
+    """The root session's own `Session.root_id` -- identical to `session_id` for a root
+    session's own firing, the ancestor's id for a subagent's. `None` when no live session exists yet."""
+    exit_status: int | None = None
+    """The klorb process's own exit status, set only for `onProcessEnd`. Read-only: a handler's
+    `HookOutput` cannot change it."""
     workspace_trusted: bool | None = Field(default=None, alias="workspaceTrusted")
     """Whether the workspace is trusted, as of `onSessionStart` firing -- always set for that
     hook (`None` for every other hook), once trust is settled for this session's startup."""
@@ -59,6 +75,9 @@ class HookOutput(BaseModel):
     tool_args: dict[str, Any] | None = None
     permission: Verdict | None = None
     message: str | None = None
+    tool_result: str | None = None
+    """A rewrite of `onToolResult`'s `HookInput.tool_result`, replacing the tool call's own
+    result content in the envelope sent back to the model. Only `onToolResult` acts on this."""
     interrupt: bool = False
     reset_session: bool = False
     """Wipe the firing session's conversation and start it over in place (same `id`/on-disk

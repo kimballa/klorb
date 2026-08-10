@@ -309,7 +309,6 @@
 
 ### Plan 022: Hooks and Events
 
-* onToolResponse shouuld be able to manipulate the tool response json, not just the tool args
 * `onRequestPermission` hook: deferred entirely. A real design needs to reconcile
   `HookOutput.permission` (a bare `Verdict`) against the richer `PermissionDecision`
   (`action`+`scope`, `klorb/src/klorb/session/events.py`) a human/UI answer produces.
@@ -319,8 +318,8 @@
 * Hot-reloading hook/event config edited mid-process, without a full restart.
 * Surfacing hook activity in the UI — a TUI/VSCode view of which hooks fired, what they returned,
   and whether they errored, rather than only `logger.debug()`/`warning()` output.
-* Real content for `KLORB_HOOK_ENV_FILE`: a `bash` hook handler's subprocess is pointed at a
-  fresh, empty file per invocation (`klorb.hooks.bash_handler`); nothing writes session-scoped
+* Real content for `KLORB_ENV_FILE` (`klorb.tools.bash.session_env_file`): a `bash` hook
+  handler's subprocess is pointed at a session-scoped, otherwise-empty file; nothing writes
   values (e.g. `NO_COLOR`) into it yet, and ordinary `BashTool` commands don't share it.
 * `HookOutput.interrupt` is not respected / implemented.
 * An explicit turn-interrupt primitive hooks/events can call directly, rather than

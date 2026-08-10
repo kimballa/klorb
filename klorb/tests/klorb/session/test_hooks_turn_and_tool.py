@@ -36,7 +36,7 @@ def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
     write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
     monkeypatch.setattr(
-        "klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
+        "klorb.tools.bash._BASH_ENV_FILES_DIR", tmp_path / "bash-env-files")
 
 
 def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) -> ProcessConfig:
@@ -196,7 +196,7 @@ def test_onagentturnend_reset_session_also_fires_onsessionend_with_resetsession_
 
     data = json.loads(output_path.read_text())
     assert data["hook"] == "onSessionEnd"
-    assert data["event"] == "ResetSession"
+    assert data["reason"] == "ResetSession"
 
 
 def test_onagentturnend_reset_session_without_a_message_is_ignored(tmp_path: Path) -> None:
@@ -299,7 +299,7 @@ def test_ontooluse_deny_blocks_the_call(tmp_path: Path) -> None:
 
 def test_ontoolresult_rewrites_the_response_content(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
-        "onToolResult": [HookConfig(type="bash", shell='echo \'{"message": "rewritten result"}\'')],
+        "onToolResult": [HookConfig(type="bash", shell='echo \'{"tool_result": "rewritten result"}\'')],
     })
     provider = MagicMock()
     provider.send_prompt.side_effect = [
@@ -313,4 +313,5 @@ def test_ontoolresult_rewrites_the_response_content(tmp_path: Path) -> None:
     session.send_turn("please echo")
 
     tool_response = next(m for m in session.messages if m.role == "tool_response")
-    assert tool_response.content == "rewritten result"
+    envelope = json.loads(tool_response.content)
+    assert envelope["response_body"] == "rewritten result"

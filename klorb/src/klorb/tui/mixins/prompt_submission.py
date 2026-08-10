@@ -235,13 +235,11 @@ class PromptSubmissionMixin(ReplAppBase):
         (`_mount_mascot_greeting`) followed by a "Session cleared." notice, and roll over the
         per-session log file if session logging is enabled for this REPL invocation. If
         `initial_message` is given, it's submitted as the new session's first turn once it's
-        installed; `None` for the "Clear session" palette command (its only caller today),
-        which leaves the new session's first turn to the user.
+        installed; `None` to wait for a user prompt.
 
         Guarded by `_replacing_session` against a second request arriving while this one is
         already in progress, and marshaled onto this app's own thread if called from another
-        one -- defensive, since its only caller today (`clear_session()`) always runs on this
-        app's own thread already.
+        one.
 
         Tears down the outgoing `Session` first (`Session.close()`) so a live resource it
         registered a teardown for (e.g. `BashTool`'s persistent shell) doesn't leak past this

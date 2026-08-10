@@ -12,7 +12,7 @@ from klorb.hooks.bash_handler import run_bash_handler
 from klorb.hooks.classifier_handler import run_classifier_handler
 from klorb.hooks.config import HOOK_FILTER_SUBJECT_FIELDS, EventConfig, HookConfig
 from klorb.hooks.filters import evaluate_filter
-from klorb.hooks.wire import EventInput, HookInput, HookOutput
+from klorb.hooks.hook_api import EventInput, HookInput, HookOutput
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.table import Verdict, stricter_verdict
 from klorb.session.config import SessionConfig
@@ -61,6 +61,7 @@ def _fold(accumulated: HookOutput, latest: HookOutput) -> HookOutput:
         tool_args=latest.tool_args if latest.tool_args is not None else accumulated.tool_args,
         permission=_fold_permission(accumulated.permission, latest.permission),
         message=latest.message if latest.message is not None else accumulated.message,
+        tool_result=latest.tool_result if latest.tool_result is not None else accumulated.tool_result,
         interrupt=latest.interrupt or accumulated.interrupt,
         reset_session=latest.reset_session or accumulated.reset_session)
 
@@ -97,7 +98,7 @@ class HookDispatcher:
         `HookOutput` into the next handler's `HookInput` (its `message`/`tool_args`) and into
         the aggregate result returned here. A handler is skipped -- contributing nothing --
         when its `filter` doesn't match the subject `klorb.hooks.config.
-        HOOK_FILTER_SUBJECT_FIELDS` maps `hook_name` to (`hook_input.event`/`message`/
+        HOOK_FILTER_SUBJECT_FIELDS` maps `hook_name` to (`hook_input.reason`/`message`/
         `tool_name`), or it fails per its own handler function's "Error handling" contract;
         this method itself never raises. `session_config` sandboxes a `bash` handler with a
         live session's permission tables when one exists; otherwise falls back to
@@ -119,8 +120,7 @@ class HookDispatcher:
         filter/fold/error-handling contract `dispatch()` applies to a hook's handler list.
         `entries` is whatever subset of `ProcessConfig.events[event_name]` the caller has
         already decided is eligible for this occurrence (e.g. a `FileSystemModified` watcher's
-        own watch-path match) -- this method applies no further selection beyond each entry's
-        own `action.filter`."""
+        own watch-path match)."""
         logger.debug("Dispatching event %r (%d configured handler(s))", event_name, len(entries))
         if not entries:
             return HookOutput()
@@ -133,9 +133,8 @@ class HookDispatcher:
         session_config: SessionConfig,
     ) -> HookOutput:
         """Run `handlers` in order against `hook_input`, folding each valid `HookOutput` into
-        the next handler's input and into the aggregate result -- the shared chain-execution
-        loop `dispatch()`/`dispatch_event()` both build their handler list for."""
-        subject_field = HOOK_FILTER_SUBJECT_FIELDS.get(name, "event")
+        the next handler's input and into the aggregate result."""
+        subject_field = HOOK_FILTER_SUBJECT_FIELDS.get(name, "reason")
         subject = getattr(hook_input, subject_field, None) or ""
         aggregate = HookOutput()
         chained_input = hook_input
@@ -149,6 +148,8 @@ class HookDispatcher:
             chained_input = chained_input.model_copy(update={
                 "message": result.message if result.message is not None else chained_input.message,
                 "tool_args": result.tool_args if result.tool_args is not None else chained_input.tool_args,
+                "tool_result": (
+                    result.tool_result if result.tool_result is not None else chained_input.tool_result),
             })
         if aggregate.reset_session and not aggregate.message:
             logger.warning(
@@ -172,6 +173,7 @@ class HookDispatcher:
                 bash_command=self._process_config.bash_command, timeout_seconds=timeout)
         if handler.type == "classifier":
             return self._run_classifier_handler(handler, handler_input)
+        assert handler.type == "chat"
         if handler.prompt is None:
             logger.warning(
                 "Hook handler %r for %r has type=chat but no prompt set; skipping.",
@@ -202,8 +204,7 @@ class HookDispatcher:
         """The model a `type="classifier"` handler's request is sent to: `ProcessConfig.
         session_classifier_model` if set, else a registered model volunteering
         `NANO_CLASSIFIER_CAPABILITY` (if `self._model_registry` was given one), else
-        `DEFAULT_SESSION_CLASSIFIER_MODEL` -- the same fallback order `klorb.session_naming.
-        default_naming_model` uses for session naming's own use of this same classifier slot."""
+        `DEFAULT_SESSION_CLASSIFIER_MODEL`."""
         # Deferred: `klorb.process_config` imports from `klorb.hooks.config`/`klorb.hooks.merge`,
         # so a module-level import here would be circular.
         from klorb.process_config import DEFAULT_SESSION_CLASSIFIER_MODEL

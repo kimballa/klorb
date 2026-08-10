@@ -9,46 +9,26 @@ import dataclasses
 import logging
 import os
 import subprocess
-import uuid
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from klorb.config_macros import MacroExpansionError, expand_macros, resolve_macro_values
 from klorb.hooks.config import HookConfig
-from klorb.hooks.wire import HookInput, HookOutput
-from klorb.paths import KLORB_STATE_DIR
+from klorb.hooks.hook_api import HookInput, HookOutput
 from klorb.sandbox import build_bwrap_argv, bwrap_available, compute_sandbox_dirs, path_dirs_from_env
 from klorb.session.config import SessionConfig
+from klorb.tools.bash import KLORB_ENV_FILE_VAR, session_env_file
 
 logger = logging.getLogger(__name__)
 
-HOOK_ENV_FILE_VAR = "KLORB_HOOK_ENV_FILE"
-"""Env var a `bash` hook handler's subprocess can read to find its own env file, so it can
-read/customize values without them being visible to the model as tool call args. Points at an
-empty placeholder file for now -- wiring real, session-scoped contents is a separate concern,
-not yet built."""
 
-_HOOK_ENV_FILES_DIR = KLORB_STATE_DIR / "hooks"
-"""Where a `bash` hook handler's `KLORB_HOOK_ENV_FILE` placeholder is created -- see
-`_hook_env_file`."""
-
-
-def _hook_env_file() -> Path:
-    """Create and return a fresh, empty placeholder file for `KLORB_HOOK_ENV_FILE` -- one per
-    handler invocation, removed again by `run_bash_handler` once the subprocess exits."""
-    _HOOK_ENV_FILES_DIR.mkdir(parents=True, exist_ok=True)
-    path = _HOOK_ENV_FILES_DIR / f"{uuid.uuid4().hex}.env"
-    path.touch()
-    logger.debug("Created placeholder hook env file %s", path)
-    return path
-
-
-def _build_env(session_config: SessionConfig, hook_env_file: Path) -> dict[str, str]:
+def _build_env(session_config: SessionConfig, env_file: Path | None) -> dict[str, str]:
     """The environment a `bash` hook handler's subprocess runs with: `HOME`/`USER` shared from
     the klorb process's own environment, `WORKSPACE_ROOT` set to the resolved workspace root,
     followed by `session_config.share_env`/`set_env`'s passthrough (same precedence as
-    `klorb.tools.bash.build_bash_env`), plus `KLORB_HOOK_ENV_FILE`."""
+    `klorb.tools.bash.build_bash_env`), plus `KLORB_ENV_FILE_VAR` when `env_file` is known (no
+    live session yet, e.g. `onProcessStart`/`onProcessEnd`, leaves it unset)."""
     env: dict[str, str] = {}
     for name in ("HOME", "USER"):
         if name in os.environ:
@@ -58,7 +38,8 @@ def _build_env(session_config: SessionConfig, hook_env_file: Path) -> dict[str, 
         if name in os.environ:
             env[name] = os.environ[name]
     env.update(session_config.set_env)
-    env[HOOK_ENV_FILE_VAR] = str(hook_env_file)
+    if env_file is not None:
+        env[KLORB_ENV_FILE_VAR] = str(env_file)
     return env
 
 
@@ -98,8 +79,8 @@ def run_bash_handler(
             handler.name, hook_input.hook)
         return None
 
-    hook_env_file = _hook_env_file()
-    env = _build_env(session_config, hook_env_file)
+    env_file = session_env_file(hook_input.session_id) if hook_input.session_id is not None else None
+    env = _build_env(session_config, env_file)
     home = Path(env.get("HOME", str(Path.home())))
     sandboxed = bwrap_available()
     if sandboxed:
@@ -108,7 +89,8 @@ def run_bash_handler(
             read_dirs=session_config.read_dirs, write_dirs=session_config.write_dirs,
             read_files=session_config.read_files, write_files=session_config.write_files,
             approved_scopes=session_config.approved_scopes)
-        dirs = dataclasses.replace(dirs, write_files=(*dirs.write_files, hook_env_file))
+        if env_file is not None:
+            dirs = dataclasses.replace(dirs, write_files=(*dirs.write_files, env_file))
         full_argv = build_bwrap_argv(
             workspace_root=workspace_root, home=home, env=env, dirs=dirs,
             path_dirs=path_dirs_from_env()) + argv
@@ -135,8 +117,6 @@ def run_bash_handler(
             "Hook handler %r for %r failed to launch: %s; skipping.",
             handler.name, hook_input.hook, exc)
         return None
-    finally:
-        hook_env_file.unlink(missing_ok=True)
 
     if completed.returncode != 0:
         logger.warning(

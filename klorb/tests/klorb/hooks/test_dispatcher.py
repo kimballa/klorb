@@ -14,7 +14,7 @@ import pytest
 from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig, HookConfigFilter, WorkspaceTrustChangedEventConfig
 from klorb.hooks.dispatcher import HookDispatcher
-from klorb.hooks.wire import EventInput, HookInput
+from klorb.hooks.hook_api import EventInput, HookInput
 from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
@@ -32,7 +32,7 @@ def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
     write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
     monkeypatch.setattr(
-        "klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
+        "klorb.tools.bash._BASH_ENV_FILES_DIR", tmp_path / "bash-env-files")
 
 
 def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) -> ProcessConfig:
@@ -45,7 +45,7 @@ def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) ->
 
 def _hook_input(workspace_root: Path, **overrides: Any) -> HookInput:
     defaults: dict[str, Any] = {
-        "hook": "onProcessStart", "event": "Startup", "workspaceRoot": str(workspace_root),
+        "hook": "onProcessStart", "reason": "Startup", "workspaceRoot": str(workspace_root),
     }
     defaults.update(overrides)
     return HookInput(**defaults)
@@ -89,7 +89,8 @@ def test_dispatch_skips_a_handler_whose_filter_does_not_match(tmp_path: Path) ->
                 filter=HookConfigFilter(matches="SomethingElse")),
         ],
     })
-    result = HookDispatcher(process_config).dispatch("onProcessStart", _hook_input(tmp_path, event="Startup"))
+    result = HookDispatcher(process_config).dispatch(
+        "onProcessStart", _hook_input(tmp_path, reason="Startup"))
     assert result.message is None
 
 
@@ -101,7 +102,8 @@ def test_dispatch_runs_a_handler_whose_filter_matches(tmp_path: Path) -> None:
                 filter=HookConfigFilter(matches="Startup")),
         ],
     })
-    result = HookDispatcher(process_config).dispatch("onProcessStart", _hook_input(tmp_path, event="Startup"))
+    result = HookDispatcher(process_config).dispatch(
+        "onProcessStart", _hook_input(tmp_path, reason="Startup"))
     assert result.message == "ran"
 
 
@@ -282,7 +284,7 @@ def test_dispatch_uses_a_live_session_config_over_the_process_template(tmp_path:
         workspace=Workspace(path=other_root, trusted=True),
         read_dirs=DirRules(allow=[other_root]), write_dirs=DirRules(allow=[other_root]))
     result = HookDispatcher(process_config).dispatch(
-        "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", event="SuspendSession"),
+        "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", reason="SuspendSession"),
         session_config=live_session_config)
     assert result.message == str(other_root.resolve(strict=False))
 
@@ -291,7 +293,7 @@ def test_dispatch_event_with_no_entries_returns_default_success(tmp_path: Path) 
     process_config = _process_config(tmp_path, {})
     result = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", [],
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="TrustCommand"))
     assert result.success is True
     assert result.message is None
 
@@ -310,7 +312,7 @@ def test_dispatch_event_runs_each_entrys_own_action_as_a_chain(tmp_path: Path) -
     ]
     result = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="TrustCommand"))
     assert result.message == "first+second"
 
 
@@ -324,9 +326,9 @@ def test_dispatch_event_filters_on_the_event_field(tmp_path: Path) -> None:
     ]
     matching = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="TrustCommand"))
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), event="AcpTrustWorkspace"))
+        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="AcpTrustWorkspace"))
     assert non_matching.message is None

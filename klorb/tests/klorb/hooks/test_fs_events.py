@@ -10,7 +10,7 @@ import pytest
 
 from klorb.hooks.config import FileSystemModifiedEventConfig, HookConfig
 from klorb.hooks.fs_events import FileSystemWatcher
-from klorb.hooks.wire import EventInput, FileSystemUpdate
+from klorb.hooks.hook_api import EventInput, FileSystemUpdate
 
 _DEBOUNCE_SECONDS = 0.1
 

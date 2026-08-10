@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from klorb.api_provider import ProviderResponse
 from klorb.hooks.classifier_handler import run_classifier_handler
-from klorb.hooks.wire import HookInput, HookOutput
+from klorb.hooks.hook_api import HookInput, HookOutput
 from klorb.message import Message
 
 
@@ -25,7 +25,7 @@ def _valid_output_json(message: str = "classified") -> str:
 
 
 def _hook_input() -> HookInput:
-    return HookInput(hook="onAgentTurnEnd", event=None, workspaceRoot="/ws", message="agent said done")
+    return HookInput(hook="onAgentTurnEnd", reason=None, workspaceRoot="/ws", message="agent said done")
 
 
 def test_run_classifier_handler_returns_output_on_success() -> None:

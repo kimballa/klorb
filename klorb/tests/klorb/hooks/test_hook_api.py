@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-from klorb.hooks.wire import EventInput, FileSystemUpdate, HookInput, HookOutput
+from klorb.hooks.hook_api import EventInput, FileSystemUpdate, HookInput, HookOutput
 
 
 def test_hook_input_accepts_workspace_root_by_alias() -> None:

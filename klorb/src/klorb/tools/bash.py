@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Callable, Literal
 
+from klorb.paths import KLORB_STATE_DIR
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.domain_access import evaluate_domain, parse_domain
@@ -56,6 +57,28 @@ from klorb.tools.tool import truncate_lines
 logger = logging.getLogger(__name__)
 
 _TMP_DIR_PREFIX = "klorb-bash-"
+
+KLORB_ENV_FILE_VAR = "KLORB_ENV_FILE"
+"""Env var pointing a bash subprocess at its session's `session_env_file()` -- today only set
+for a `type="bash"` hook handler's subprocess (`klorb.hooks.bash_handler`), so a hook script can
+read/customize values without them being visible to the model as tool call args. An ordinary
+model-issued `Bash` command doesn't see this var yet."""
+
+_BASH_ENV_FILES_DIR = KLORB_STATE_DIR / "bash_env"
+"""Where `session_env_file` creates each session's `KLORB_ENV_FILE_VAR` target."""
+
+
+def session_env_file(session_id: str) -> Path:
+    """The `KLORB_ENV_FILE_VAR` target for `session_id`: `_BASH_ENV_FILES_DIR/<session_id>/
+    session.env`, created empty on first use and left in place for the rest of the session --
+    unlike a one-off temp file, nothing removes it once a subprocess that used it exits."""
+    path = _BASH_ENV_FILES_DIR / session_id / "session.env"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        logger.debug("Created session env file %s", path)
+    return path
+
 
 _TOOL_STATE_KEY = "Bash"
 _SANDBOX_WARNED_KEY = "sandbox_warned"

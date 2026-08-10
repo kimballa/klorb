@@ -57,6 +57,50 @@ An untrusted workspace's `.klorb/klorb-config.json` never contributes to `hooks`
 layer is skipped entirely whenever the workspace isn't trusted, the same as every other key it
 could declare.
 
+## Available hooks
+
+Hooks follow the agent through a (mostly-)sequential lifecycle of moments defined below:
+
+| Hook | Fires | Scope |
+| --- | --- | --- |
+| `onProcessStart` | `bin/klorb` starting up | process |
+| `onSessionStart` | a session starting, resuming, or being cleared | root session |
+| `onSubmitUserPrompt` | a user prompt about to be sent to the agent | root session |
+| `onRequestPermission` | planned but not yet implemented — see "Future work" | whole tree |
+| `onToolUse` | a tool about to run | whole tree |
+| `onToolResult` | a tool call's result content | whole tree |
+| `onActivateSkill` | a skill about to be activated | whole tree |
+| `onSubagentStart` | a subagent's turn starting | that subagent |
+| `onSubagentTurnEnd` | a subagent's turn ending | that subagent |
+| `onAgentTurnEnd` | the agent's turn ending, after its final message | root session |
+| `onSessionEnd` | a session suspending, being destroyed, or resetting | root session |
+| `onProcessEnd` | `bin/klorb` exiting | process |
+
+`onToolUse`/`onToolResult`/`onActivateSkill` fire for every session in the tree — root or
+subagent — tagged with which one fired it. Every other hook above is scoped to either the root
+session only, or (for the subagent pair) to the firing subagent only; it never fires for the
+other side.
+
+## Available events
+
+Events differ from Hooks in that they may occur at arbitrary times, like interrupts, but they
+interact with Handlers through the same input and output JSON interface.
+
+* **`FileSystemModified`** — watches a workspace-relative file or directory (`watch`; a directory
+  is watched recursively) and runs `action` after changes settle, batched over a debounce window.
+  Always targets the root session's conversation, regardless of which session (root or a
+  subagent) happens to be active when the change is noticed.
+* **`Timer`** — runs `action` on a schedule: either `"interval_minutes"` or a `"cron"` string.
+  **This is best-effort, not a real scheduler.** klorb has no persistent daemon mode — a `Timer`
+  only fires while some klorb process for the workspace is already running for other reasons. A
+  fire time that elapses while nothing is running is simply missed, not caught up later. Neither
+  an interval nor a cron schedule can fire more often than once every 10 seconds; a tighter
+  request is clamped to that floor with a warning.
+* **`WorkspaceTrustChanged`** — runs `action` whenever a workspace's trust decision changes
+  against an already-live session (the TUI's `>Trust workspace` command, or `_klorb/trustWorkspace`
+  over ACP). This is distinct from `onSessionStart`'s own trust fields, which report a session's
+  *initial* trust state as part of startup, not a later change.
+
 ## Handler types
 
 Every hook config entry, and every event's `action`, is one of three handler types:
@@ -66,7 +110,7 @@ Every hook config entry, and every event's `action`, is one of three handler typ
   `${home}` and `${workspaceRoot}` are expanded in `command` elements, not in `shell`. The
   handler receives the triggering event as JSON on stdin and must print a `HookOutput`-shaped
   JSON object to stdout; a non-zero exit, a timeout, or invalid output JSON all mean the handler
-  contributed nothing. The subprocess also gets a `$KLORB_HOOK_ENV_FILE` environment
+  contributed nothing. The subprocess also gets a `$KLORB_ENV_FILE` environment
   variable pointing at a file the script can read/write to pass values back and forth without
   putting them in a tool-call argument the model would see.
 * **`classifier`** — appeals to a small, fast model with `"prompt"` as its instructions, asking
@@ -89,10 +133,11 @@ A `filter` on a handler gates whether it runs at all. Each filter clause holds e
 ```
 
 The subject a filter is checked against depends on the hook: `onSubmitUserPrompt`/
-`onAgentTurnEnd`/`onToolResult`/`onSubagentStart`/`onSubagentTurnEnd` match against the message
-text, `onToolUse` matches against the tool name, `onActivateSkill` matches against the skill's
-bare name, and the process/session start/end hooks match against the `event` name (`Startup`,
-`NewSession`, `SuspendSession`, etc). A handler with no filter always runs.
+`onAgentTurnEnd`/`onSubagentStart`/`onSubagentTurnEnd` match against the message text, `onToolUse`
+matches against the tool name, `onToolResult` matches against the tool's own result content,
+`onActivateSkill` matches against the skill's bare name, and the process/session start/end hooks
+match against the `reason` (`Startup`, `NewSession`, `SuspendSession`, etc). A handler with no
+filter always runs.
 
 ## Input and output JSON
 
@@ -111,16 +156,19 @@ neither receives nor produces this JSON — it just contributes its configured `
   "args": { "shell": "..." },
   "workspaceRoot": "/path/to/workspace",
 
-  "event": "NewSession",
-  "message": "the user prompt, agent reply, or tool result text, depending on the hook",
+  "reason": "NewSession",
+  "message": "the user prompt, agent reply, or subagent output, depending on the hook",
   "tool_name": "Bash",
   "tool_args": { "command": "ls" },
+  "tool_result": "the tool's result content",
   "skill_name": "do-thing",
   "skill_namespace": "workspace",
   "is_user_mentioned": true,
   "is_user_activated": false,
   "role": "operator",
   "session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "root_session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "exit_status": 0,
   "workspaceTrusted": true,
   "workspaceJustBootstrapped": false,
 
@@ -139,19 +187,22 @@ depends on which hook/event fired:
 | `name` | string \| null | Always | The `name` you gave this handler in its config entry, or `null` if you didn't set one. |
 | `args` | object | Always | The firing handler's own configured payload: `{"shell": ...}`, `{"command": [...]}`, or `{"prompt": ...}`, whichever it declared. |
 | `workspaceRoot` | string | Always | The workspace's absolute path. |
-| `event` | string \| null | `onProcessStart`/`onProcessEnd`, `onSessionStart`/`onSessionEnd`, `WorkspaceTrustChanged` | The specific occurrence name: `Startup`/`Shutdown` (process start/end), `NewSession`/`ResumeSession`/`SuspendSession` (session start/end), `ResetSession` (`onSessionEnd` fired alongside an `onAgentTurnEnd`-triggered `reset_session` — see "Session reset" below), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`). |
-| `message` | string \| null | `onSubmitUserPrompt`, `onAgentTurnEnd`, `onSubagentStart`, `onSubagentTurnEnd`, `onToolResult` | The user prompt, the agent's reply, a subagent's prompt/output, or a tool's result content, depending on which hook fired. |
+| `reason` | string \| null | `onProcessStart`/`onProcessEnd`, `onSessionStart`/`onSessionEnd`, `WorkspaceTrustChanged` | Why the hook fired: `Startup`/`Shutdown` (process start/end), `NewSession`/`ResumeSession`/`SuspendSession` (session start/end), `ResetSession` (see "Session reset" below), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`). |
+| `message` | string \| null | `onSubmitUserPrompt`, `onAgentTurnEnd`, `onSubagentStart`, `onSubagentTurnEnd` | The user prompt, the agent's reply, or a subagent's prompt/output, depending on which hook fired. |
 | `tool_name` | string \| null | `onToolUse`, `onToolResult` | Which tool. |
 | `tool_args` | object \| null | `onToolUse`, `onToolResult` | The tool call's arguments. |
+| `tool_result` | string \| null | `onToolResult` | The tool call's result content. |
 | `skill_name` | string \| null | `onActivateSkill` | The skill about to be activated, by its canonical (directory-basename) identity. |
 | `skill_namespace` | string \| null | `onActivateSkill` | The skill's namespace. |
 | `is_user_mentioned` | bool \| null | `onActivateSkill` | Whether the current turn's raw prompt referenced this skill by `/<name>` anywhere in it. |
-| `is_user_activated` | bool \| null | `onActivateSkill` | Whether the current turn's raw prompt *led* with a `/<name>` reference to this skill — a strict subset of `is_user_mentioned`. Both this and `is_user_mentioned` are `false` for a skill the model activated on its own, with no matching `/<name>` in the prompt at all. |
-| `role` | string \| null | Every hook once a session exists | `"operator"` for the root session, or the relevant subagent role name. |
+| `is_user_activated` | bool \| null | `onActivateSkill` | Whether the current turn's raw prompt *led* with a `/<name>` reference to this skill. |
+| `role` | string \| null | Every hook once a session exists | The relevant (sub)agent role name. |
 | `session_id` | string \| null | Every hook once a session exists | The id of the session (root or subagent) that fired this hook; `null` for `onProcessStart`/`onProcessEnd`, since no session exists yet. |
+| `root_session_id` | string \| null | Every hook once a session exists | The id of the root session this firing's session descends from — identical to `session_id` for the root session itself. |
+| `exit_status` | int \| null | `onProcessEnd` only | The klorb process's own exit status. Read-only — a handler's `HookOutput` can't change it. |
 | `workspaceTrusted` | bool \| null | `onSessionStart` only | Whether the workspace is trusted. |
 | `workspaceJustBootstrapped` | bool \| null | `onSessionStart` only | Whether this firing is what triggered a first-time trust decision. |
-| `fs_updates` | array \| null | `FileSystemModified` event only | A debounced batch of `{"event": "created"\|"deleted"\|"modified", "path": "..."}` entries. Only `EventInput` (which extends `HookInput` with this one field) carries it. |
+| `fs_updates` | array \| null | `FileSystemModified` event only | A debounced batch of `{"event": "created"\|"deleted"\|"modified", "path": "..."}` entries. |
 
 ### `HookOutput`
 
@@ -161,6 +212,7 @@ depends on which hook/event fired:
   "tool_args": { "command": "ls -la" },
   "permission": "allow",
   "message": "text to inject into the conversation, or feedback on a denial",
+  "tool_result": "a rewrite of the tool's own result content",
   "interrupt": false,
   "reset_session": false
 }
@@ -168,20 +220,21 @@ depends on which hook/event fired:
 
 Every field is optional — omit anything you have no opinion on, and it won't affect the outcome:
 
-| Field | Type | Default | Used by | Notes |
+| Field | Type | Default | Valid in | Notes |
 | --- | --- | --- | --- | --- |
 | `success` | bool | `true` | `onSubmitUserPrompt`, `onToolUse`, `onActivateSkill`, `onSubagentStart` | Set `false` to veto the moment: block the turn, the tool call, the activation, or skip the subagent turn. |
 | `tool_args` | object \| null | `null` | `onToolUse` | Replaces the tool call's arguments before it runs. |
 | `permission` | `allow`\|`ask`\|`deny` \| null | `null` | `onToolUse`, `onActivateSkill` | |
-| `message` | string \| null | `null` | `onSubmitUserPrompt` / `onToolResult` (rewrite), `onAgentTurnEnd` / `onSubagentTurnEnd` / events (new/queued turn text), with any `success: false` (denial feedback) | Multi-purpose |
+| `message` | string \| null | `null` | `onSubmitUserPrompt` (rewrite); `onAgentTurnEnd` / `onSubagentTurnEnd` / events (next prompt); with any `success: false` (denial feedback) | Multi-purpose |
+| `tool_result` | string \| null | `null` | `onToolResult` | Replaces the tool call's result content . |
 | `interrupt` | bool | `false` | Any hook/event that also sets `message` | Breaks into an in-flight turn immediately rather than waiting for turn end. (Not yet implemented) |
 | `reset_session` | bool | `false` | `onSessionEnd`, `onAgentTurnEnd` | Wipes the conversation and starts it over in place (same session id/directory), seeded with `message`. See "Session reset" below. |
 
 If more than one handler runs in a chain for the same firing, each handler's `HookOutput` feeds
 into the next handler's input, and the final aggregate is the strictest/most-recent combination of
 every handler's opinion: `success` is `false` if any handler said so, `permission` is the
-strictest of any handler that gave one, and `message`/`tool_args` take the last handler's value
-that actually set one.
+strictest of any handler that gave one, and `message`/`tool_args`/`tool_result` take the last
+handler's value that actually set one.
 
 ### Chained turns
 
@@ -201,59 +254,14 @@ place — same session id, same on-disk directory — seeded with `message` as i
 you'd run "Clear session" yourself except nothing is actually replaced. Config is reinitialized
 from the process config's template, any live subagents are closed first, and the persistent bash
 shell/scratchpad are torn down and recreated fresh. Only `onSessionEnd` and `onAgentTurnEnd` act
-on it; requires a non-empty `message`, or the request is dropped with a warning. Works the same
-way in the TUI, ACP, and headless — unlike the old session-replacement design, there's no host
-wiring required.
+on it; requires a non-empty `message`, or the request is dropped with a warning.
 
 When an `onAgentTurnEnd` handler triggers a reset, `onSessionEnd` is also dispatched first, with
-`event: "ResetSession"`, purely so an `onSessionEnd` handler (e.g. one that logs "conversation
-ended") sees it too — its own result is discarded, the same as `onSessionEnd` being non-cancelable
-in the ordinary suspend/destroy case.
+`reason: "ResetSession"`. The `onSessionEnd` handler's result is discarded.
 
-Give an `onAgentTurnEnd` reset handler a `filter`, same as a `chat` handler: the reset
-conversation's own first turn can end and trigger the hook again, and `max_chained_hook_turns`
-resets to `0` on every reset rather than carrying over, so an unfiltered handler can reset
-indefinitely.
-
-## Available hooks
-
-| Hook | Fires | Scope |
-| --- | --- | --- |
-| `onProcessStart` | `bin/klorb` starting up | process |
-| `onSessionStart` | a session starting, resuming, or being cleared | root session |
-| `onSubmitUserPrompt` | a user prompt about to be sent to the agent | root session |
-| `onToolUse` | a tool about to run | whole tree |
-| `onToolResult` | a tool result, before returning to the agent | whole tree |
-| `onActivateSkill` | a skill about to be activated | whole tree |
-| `onSubagentStart` | a subagent's turn starting | that subagent |
-| `onSubagentTurnEnd` | a subagent's turn ending | that subagent |
-| `onAgentTurnEnd` | the agent's turn ending, after its final message — can `reset_session` | root session |
-| `onSessionEnd` | a session suspending, being destroyed, or resetting — can `reset_session` | root session |
-| `onProcessEnd` | `bin/klorb` exiting | process |
-
-`onToolUse`/`onToolResult`/`onActivateSkill` fire for every session in the tree — root or
-subagent — tagged with which one fired it. Every other hook above is scoped to either the root
-session only, or (for the subagent pair) to the firing subagent only; it never fires for the
-other side.
-
-`onRequestPermission` is planned but not yet implemented — see "Future work" below.
-
-## Available events
-
-* **`FileSystemModified`** — watches a workspace-relative file or directory (`watch`; a directory
-  is watched recursively) and runs `action` after changes settle, batched over a debounce window.
-  Always targets the root session's conversation, regardless of which session (root or a
-  subagent) happens to be active when the change is noticed.
-* **`Timer`** — runs `action` on a schedule: either `"interval_minutes"` or a `"cron"` string.
-  **This is best-effort, not a real scheduler.** klorb has no persistent daemon mode — a `Timer`
-  only fires while some klorb process for the workspace is already running for other reasons. A
-  fire time that elapses while nothing is running is simply missed, not caught up later. Neither
-  an interval nor a cron schedule can fire more often than once every 10 seconds; a tighter
-  request is clamped to that floor with a warning.
-* **`WorkspaceTrustChanged`** — runs `action` whenever a workspace's trust decision changes
-  against an already-live session (the TUI's `>Trust workspace` command, or `_klorb/trustWorkspace`
-  over ACP). This is distinct from `onSessionStart`'s own trust fields, which report a session's
-  *initial* trust state as part of startup, not a later change.
+An `onAgentTurnEnd` reset handler should have a `filter` or be conditional within the handler
+script. The reset conversation's own first turn can end and trigger the hook again, and
+`max_chained_hook_turns` resets to `0` every reset, so an unfiltered handler can reset indefinitely.
 
 ## Error handling
 
