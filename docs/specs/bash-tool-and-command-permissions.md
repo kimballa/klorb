@@ -355,11 +355,15 @@ explicit dict (never inherits the klorb process's full environment): `HOME`/`USE
 `WORKSPACE_ROOT` unconditionally set to the resolved workspace root (not gated on any config, so
 a command can always locate the workspace regardless of `shareEnv`), `SHELL`/`BASH` both
 unconditionally set to `bash_command` (`ProcessConfig.bash_command`, the actual bash binary the
-command runs under — not whatever `$SHELL`/`$BASH` happen to be in klorb's own environment), then
-every `SessionConfig.share_env` name (on-disk `shareEnv`, concatenated across layers) that's
-actually set in the klorb process's own environment, then `SessionConfig.set_env` (on-disk
-`setEnv`, merged key-by-key, later layers replacing earlier ones for the same key) as overrides
-applied last.
+command runs under — not whatever `$SHELL`/`$BASH` happen to be in klorb's own environment).
+
+`NO_COLOR`, every `SessionConfig.share_env` name (on-disk `shareEnv`, concatenated across
+layers) that's actually set in the klorb process's own environment, and `SessionConfig.set_env`
+(on-disk `setEnv`, merged key-by-key, later layers replacing earlier ones for the same key) are
+written to the session env file (`klorb.tools.bash.session_env_file`) and sourced inside the
+shell before the user command runs.  Values are single-quoted so they are never macro-expanded.
+For one-shot commands the env file is sourced in the `-c` argument; for persistent shells it is
+sourced once during bootstrap alongside the rcfile.
 
 **Timeout**: `ProcessConfig.bash_timeout_seconds` (`tools.bash.timeout`, default `120.0`) — always
 enforced (unlike the REPL's `!`-prefixed `shell_timeout_seconds`, which may be `None`). On
@@ -539,7 +543,8 @@ filesystem policy):
   docs/adrs/00111-pass-unshare-user-because-disable-userns-requires-it.md.
 * Hardening `--hostname klorb-host`, `--die-with-parent`, `--new-session`, `--cap-drop ALL`; a
   `--clearenv` + one `--setenv` per `build_bash_env()` entry so the sandbox starts from exactly
-  that dict.
+  that dict.  The session env file (under `KLORB_STATE_DIR`, already `--ro-bind`ed) is sourced
+  inside the shell to supply `NO_COLOR`, `share_env`, and `set_env` values.
 * Whole-tree read-only `/usr`+`/etc` binds and the host's own merged-`/usr` symlink layout; a
   read-write whole-tree `$HOME` bind (the mechanism by which toolchains under `$HOME` — nvm,
   pyenv, cargo, ... — reach the sandbox), with the sensitive subdirectories masked back out;

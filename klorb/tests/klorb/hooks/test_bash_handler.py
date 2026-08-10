@@ -29,14 +29,6 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
-@pytest.fixture(autouse=True)
-def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect the session env file directory into `tmp_path` so tests don't write to the real
-    KLORB_STATE_DIR (which may be read-only in CI)."""
-    monkeypatch.setattr(
-        "klorb.tools.bash._BASH_ENV_FILES_DIR", tmp_path / "bash-env-files")
-
-
 def _session_config(workspace_root: Path, **overrides: Any) -> SessionConfig:
     defaults: dict[str, Any] = {
         "workspace": Workspace(path=workspace_root, trusted=True),
@@ -149,10 +141,8 @@ def test_hook_env_file_var_is_unset_with_no_live_session(tmp_path: Path) -> None
 
 
 def test_session_env_file_persists_and_is_reused_across_handler_invocations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    env_files_dir = tmp_path / "bash-env-files"
-    monkeypatch.setattr("klorb.tools.bash._BASH_ENV_FILES_DIR", env_files_dir)
     handler = HookConfig(type="bash", shell="echo '{}'")
     hook_input = _hook_input(tmp_path, session_id="test-session")
     session_config = _session_config(tmp_path)
@@ -160,7 +150,9 @@ def test_session_env_file_persists_and_is_reused_across_handler_invocations(
         handler, hook_input, session_config=session_config, bash_command="/bin/bash",
         timeout_seconds=5.0)
     assert result is not None
-    env_file = env_files_dir / "test-session" / "session.env"
+    # The env file lives under the session's per-project data dir.
+    from klorb.tools.bash import session_env_file
+    env_file = session_env_file("test-session", session_config)
     assert env_file.exists()
 
     result = run_bash_handler(

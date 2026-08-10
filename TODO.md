@@ -318,9 +318,6 @@
 * Hot-reloading hook/event config edited mid-process, without a full restart.
 * Surfacing hook activity in the UI — a TUI/VSCode view of which hooks fired, what they returned,
   and whether they errored, rather than only `logger.debug()`/`warning()` output.
-* Real content for `KLORB_ENV_FILE` (`klorb.tools.bash.session_env_file`): a `bash` hook
-  handler's subprocess is pointed at a session-scoped, otherwise-empty file; nothing writes
-  values (e.g. `NO_COLOR`) into it yet, and ordinary `BashTool` commands don't share it.
 * `HookOutput.interrupt` is not respected / implemented.
 * An explicit turn-interrupt primitive hooks/events can call directly, rather than
   `HookOutput.interrupt` needing new wiring on top of a turn's own `cancel_event`

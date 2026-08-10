@@ -79,7 +79,9 @@ def run_bash_handler(
             handler.name, hook_input.hook)
         return None
 
-    env_file = session_env_file(hook_input.session_id) if hook_input.session_id is not None else None
+    env_file = (
+        session_env_file(hook_input.session_id, session_config)
+        if hook_input.session_id is not None else None)
     env = _build_env(session_config, env_file)
     home = Path(env.get("HOME", str(Path.home())))
     sandboxed = bwrap_available()

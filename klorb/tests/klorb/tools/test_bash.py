@@ -34,7 +34,14 @@ from klorb.permissions.shell_parse import parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
-from klorb.tools.bash import BashTool, _network_command_domains, build_bash_env
+from klorb.tools.bash import (
+    BashTool,
+    _env_export_lines,
+    _network_command_domains,
+    _shell_single_quote,
+    build_bash_env,
+    session_env_file,
+)
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -702,23 +709,12 @@ def test_build_bash_env_always_shares_home_and_user(
     env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert env == {
         "HOME": "/home/someone", "USER": "someone", "WORKSPACE_ROOT": str(tmp_path.resolve()),
-        "SHELL": _BASH_COMMAND, "BASH": _BASH_COMMAND, "NO_COLOR": "true"}
+        "SHELL": _BASH_COMMAND, "BASH": _BASH_COMMAND}
 
 
 def test_build_bash_env_always_sets_workspace_root(tmp_path: Path) -> None:
     env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
     assert env["WORKSPACE_ROOT"] == str(tmp_path.resolve())
-
-
-def test_build_bash_env_always_sets_no_color(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
-    assert env["NO_COLOR"] == "true"
-
-
-def test_build_bash_env_set_env_can_override_no_color(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"NO_COLOR": "0"}), _BASH_COMMAND)
-    assert env["NO_COLOR"] == "0"
 
 
 def test_build_bash_env_always_sets_shell_and_bash_to_bash_command(tmp_path: Path) -> None:
@@ -727,44 +723,121 @@ def test_build_bash_env_always_sets_shell_and_bash_to_bash_command(tmp_path: Pat
     assert env["BASH"] == _BASH_COMMAND
 
 
-def test_build_bash_env_set_env_can_override_workspace_root(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"WORKSPACE_ROOT": "/overridden"}), _BASH_COMMAND)
-    assert env["WORKSPACE_ROOT"] == "/overridden"
-
-
-def test_build_bash_env_set_env_can_override_shell_and_bash(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path),
-        set_env={"SHELL": "/overridden/shell", "BASH": "/overridden/bash"}), _BASH_COMMAND)
-    assert env["SHELL"] == "/overridden/shell"
-    assert env["BASH"] == "/overridden/bash"
-
-
-def test_build_bash_env_shares_configured_names(
+def test_build_bash_env_no_longer_includes_no_color_share_env_or_set_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MY_TOOLCHAIN_VAR", "abc")
-    env = build_bash_env(
-        SessionConfig(workspace=Workspace(path=tmp_path), share_env=["MY_TOOLCHAIN_VAR"]), _BASH_COMMAND)
-    assert env.get("MY_TOOLCHAIN_VAR") == "abc"
+    """NO_COLOR, share_env, and set_env now live in the session env file, not build_bash_env."""
+    monkeypatch.setenv("MY_VAR", "from-process")
+    env = build_bash_env(SessionConfig(
+        workspace=Workspace(path=tmp_path), share_env=["MY_VAR"],
+        set_env={"NO_COLOR": "0", "EXTRA": "val"}), _BASH_COMMAND)
+    assert "NO_COLOR" not in env
+    assert "MY_VAR" not in env
+    assert "EXTRA" not in env
 
 
-def test_build_bash_env_set_env_overrides_shared_value(
+# --- session env file ---
+
+
+def test_shell_single_quote_simple() -> None:
+    assert _shell_single_quote("hello") == "'hello'"
+
+
+def test_shell_single_quote_with_apostrophe() -> None:
+    assert _shell_single_quote("home's") == "'home'\\''s'"
+
+
+def test_shell_single_quote_with_multiple_apostrophes() -> None:
+    assert _shell_single_quote("it's a test'") == "'it'\\''s a test'\\'''"
+
+
+def test_session_env_file_populates_no_color(
+    tmp_path: Path,
+) -> None:
+    path = session_env_file("test-session", SessionConfig(workspace=Workspace(path=tmp_path)))
+    content = path.read_text()
+    assert "export NO_COLOR='true'" in content
+
+
+def test_session_env_file_populates_share_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KLORB_SHARED", "shared-val")
+    config = SessionConfig(workspace=Workspace(path=tmp_path), share_env=["KLORB_SHARED"])
+    path = session_env_file("test-session", config)
+    content = path.read_text()
+    assert "export KLORB_SHARED='shared-val'" in content
+
+
+def test_session_env_file_populates_set_env(
+    tmp_path: Path,
+) -> None:
+    config = SessionConfig(
+        workspace=Workspace(path=tmp_path), set_env={"MY_KEY": "my value"})
+    path = session_env_file("test-session", config)
+    content = path.read_text()
+    assert "export MY_KEY='my value'" in content
+
+
+def test_session_env_file_single_quotes_set_env_apostrophe(
+    tmp_path: Path,
+) -> None:
+    config = SessionConfig(
+        workspace=Workspace(path=tmp_path), set_env={"FOO": "home's"})
+    path = session_env_file("test-session", config)
+    content = path.read_text()
+    assert "export FOO='home'\\''s'" in content
+
+
+def test_session_env_file_not_repopulated_on_second_call(
+    tmp_path: Path,
+) -> None:
+    config = SessionConfig(
+        workspace=Workspace(path=tmp_path), set_env={"KEY": "first"})
+    path = session_env_file("test-session", config)
+    first_content = path.read_text()
+    # Second call should not overwrite
+    config2 = SessionConfig(
+        workspace=Workspace(path=tmp_path), set_env={"KEY": "second"})
+    path2 = session_env_file("test-session", config2)
+    assert path2 == path
+    assert path2.read_text() == first_content
+
+
+def test_env_export_lines_includes_no_color() -> None:
+    lines = _env_export_lines(None)
+    assert any("NO_COLOR" in line for line in lines)
+
+
+def test_env_export_lines_includes_share_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MY_SHARED", "abc")
+    config = SessionConfig(
+        workspace=Workspace(path=Path("/tmp")), share_env=["MY_SHARED"])
+    lines = _env_export_lines(config)
+    assert any("MY_SHARED" in line for line in lines)
+    assert any("'abc'" in line for line in lines)
+
+
+def test_env_export_lines_includes_set_env() -> None:
+    config = SessionConfig(
+        workspace=Workspace(path=Path("/tmp")), set_env={"X": "val"})
+    lines = _env_export_lines(config)
+    assert any("X" in line and "'val'" in line for line in lines)
+
+
+def test_env_export_lines_set_env_overrides_share_env(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FOO", "from-process")
-    env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path), share_env=["FOO"], set_env={"FOO": "overridden"}), _BASH_COMMAND)
-    assert env["FOO"] == "overridden"
-
-
-def test_build_bash_env_does_not_share_unlisted_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("SOME_OTHER_VAR", "value")
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
-    assert "SOME_OTHER_VAR" not in env
+    config = SessionConfig(
+        workspace=Workspace(path=Path("/tmp")), share_env=["FOO"],
+        set_env={"FOO": "overridden"})
+    lines = _env_export_lines(config)
+    foo_lines = [line for line in lines if "FOO" in line]
+    assert len(foo_lines) == 2  # one from share_env, one from set_env
+    assert "'overridden'" in foo_lines[-1]
 
 
 def test_share_env_variable_is_visible_to_the_command(

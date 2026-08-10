@@ -28,14 +28,6 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
-@pytest.fixture(autouse=True)
-def _hook_env_files_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect the bash handler's hook-env-file directory into `tmp_path` so tests don't
-    write to the real KLORB_STATE_DIR (which may be read-only in CI)."""
-    monkeypatch.setattr(
-        "klorb.tools.bash._BASH_ENV_FILES_DIR", tmp_path / "bash-env-files")
-
-
 def _write_skill(base: Path, name: str, description: str, *, body: str = "instructions") -> Path:
     skill_dir = base / name
     skill_dir.mkdir(parents=True, exist_ok=True)

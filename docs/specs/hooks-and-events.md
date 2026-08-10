@@ -153,11 +153,11 @@ unsandboxed (logged at `debug`) when `bwrap_available()` is `False`.
   `SessionConfig.share_env`/`set_env`'s passthrough (same precedence
   `klorb.tools.bash.build_bash_env` uses), then `KLORB_ENV_FILE`
   (`klorb.tools.bash.KLORB_ENV_FILE_VAR`) pointing at the firing session's `session_env_file()` --
-  created empty on first use, kept for the rest of the session (not per-invocation), granted
-  `writeFiles` access in the sandbox. Unset when no live session exists yet (`onProcessStart`/
-  `onProcessEnd`). It exists so a hook script has a place to read/write values without them
-  becoming a tool-call argument visible to the model; nothing populates it with content today,
-  and an ordinary model-issued `Bash` command doesn't see it yet.
+  populated on first use with `NO_COLOR`, `share_env`, and `set_env` exports (single-quoted),
+  kept for the rest of the session (not per-invocation), granted `writeFiles` access in the
+  sandbox. Unset when no live session exists yet (`onProcessStart`/`onProcessEnd`). It exists so
+  a hook script has a place to read/write values without them becoming a tool-call argument
+  visible to the model.
 * Bounded by `timeout_seconds` — `ProcessConfig.hook_bash_timeout_seconds`
   (`hooks.bash.timeoutSeconds`) if set, else `ProcessConfig.bash_timeout_seconds`
   (`tools.bash.timeout`)'s own value.
@@ -391,9 +391,6 @@ startup.
 * **Hot-reloading hook/event config** edited mid-process, without a full restart.
 * **Surfacing hook activity in the UI** — a TUI/VSCode view of which hooks fired, what they
   returned, and whether they errored, beyond `logger.debug()`/`warning()` output.
-* **Real content for `KLORB_ENV_FILE`.** A `bash` handler's subprocess is pointed at a
-  session-scoped, otherwise-empty file; nothing writes values into it yet, and ordinary
-  `BashTool` commands don't share it.
 * **An explicit turn-interrupt primitive** hooks/events can call directly, rather than
   `HookOutput.interrupt` needing new wiring on top of a turn's `cancel_event`
   (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.

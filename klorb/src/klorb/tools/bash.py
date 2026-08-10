@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Callable, Literal
 
-from klorb.paths import KLORB_STATE_DIR
 from klorb.permissions.command_access import CommandPermissionsTable
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.domain_access import evaluate_domain, parse_domain
@@ -53,6 +52,7 @@ from klorb.session import SessionConfig
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import truncate_lines
+from klorb.workspace.session_store import session_subdir_path
 
 logger = logging.getLogger(__name__)
 
@@ -62,22 +62,79 @@ KLORB_ENV_FILE_VAR = "KLORB_ENV_FILE"
 """Env var pointing a bash subprocess at its session's `session_env_file()` -- today only set
 for a `type="bash"` hook handler's subprocess (`klorb.hooks.bash_handler`), so a hook script can
 read/customize values without them being visible to the model as tool call args. An ordinary
-model-issued `Bash` command doesn't see this var yet."""
+model-issued `Bash` command sources the env file directly (see `_env_file_source_command`) and
+doesn't see this var."""
 
-_BASH_ENV_FILES_DIR = KLORB_STATE_DIR / "bash_env"
-"""Where `session_env_file` creates each session's `KLORB_ENV_FILE_VAR` target."""
+_ENV_FILE_BASENAME = "bash_env"
+"""Subdirectory name within a session's data directory holding the env file."""
 
 
-def session_env_file(session_id: str) -> Path:
-    """The `KLORB_ENV_FILE_VAR` target for `session_id`: `_BASH_ENV_FILES_DIR/<session_id>/
-    session.env`, created empty on first use and left in place for the rest of the session --
-    unlike a one-off temp file, nothing removes it once a subprocess that used it exits."""
-    path = _BASH_ENV_FILES_DIR / session_id / "session.env"
+def _shell_single_quote(value: str) -> str:
+    """Wrap `value` in single quotes for safe use in a shell `export` statement.
+
+    Interior literal single quotes are escaped via the standard bash idiom
+    ``'end'\''start'`` -- end the current single-quoted segment, emit a bare
+    escaped ``'``, then open a new single-quoted segment -- so a value like
+    ``home's`` becomes ``'home'\''s'``."""
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def session_env_file(
+    session_id: str, session_config: "SessionConfig | None" = None,
+) -> Path:
+    """The `KLORB_ENV_FILE_VAR` target for `session_id`:
+
+    ``<session_dir>/bash_env/session.env`` where ``<session_dir>`` is the session's own
+    per-project data directory (``session_subdir_path(workspace, session_id)``).
+    Created and populated on first use, then left in place for the rest of the
+    session -- unlike a one-off temp file, nothing removes it once a subprocess that used it
+    exits.
+
+    On first creation the file is populated with ``export`` statements for ``NO_COLOR``, every
+    ``session_config.share_env`` name present in the process environment, and every
+    ``session_config.set_env`` override.  Values are single-quoted so they are never
+    macro-expanded by the sourcing shell.
+    """
+    workspace = session_config.workspace if session_config is not None else None
+    if workspace is not None:
+        path = session_subdir_path(workspace, session_id) / _ENV_FILE_BASENAME / "session.env"
+    else:
+        # No workspace available (shouldn't happen in practice); fall back to a
+        # state-dir path so the file is still creatable.
+        from klorb.paths import KLORB_STATE_DIR
+        path = KLORB_STATE_DIR / _ENV_FILE_BASENAME / session_id / "session.env"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+        _populate_env_file(path, session_config)
         logger.debug("Created session env file %s", path)
     return path
+
+
+def _populate_env_file(path: Path, session_config: "SessionConfig | None") -> None:
+    """Write the initial contents of a session env file.
+
+    The file contains ``export VAR='value'`` lines for ``NO_COLOR``, the
+    ``session_config.share_env`` passthrough names, and ``session_config.set_env``
+    overrides (applied last so they shadow a shared value for the same name).
+    """
+    path.write_text(
+        "\n".join(_env_export_lines(session_config)) + "\n", encoding="utf-8")
+
+
+def _env_export_lines(session_config: "SessionConfig | None") -> list[str]:
+    """Shell ``export`` statements for ``NO_COLOR``, ``share_env``, and ``set_env``.
+
+    Used both to populate a session env file on disk and as an inline fallback when the
+    env file's directory is read-only."""
+    lines: list[str] = []
+    lines.append(f"export NO_COLOR={_shell_single_quote('true')}")
+    if session_config is not None:
+        for name in session_config.share_env:
+            if name in os.environ:
+                lines.append(f"export {name}={_shell_single_quote(os.environ[name])}")
+        for name, value in session_config.set_env.items():
+            lines.append(f"export {name}={_shell_single_quote(value)}")
+    return lines
 
 
 _TOOL_STATE_KEY = "Bash"
@@ -497,17 +554,18 @@ def _standing_interjection_provider(shell: PersistentShell) -> Callable[[], str 
 def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str, str]:
     """Build the environment `BashTool` runs a command with: `HOME`/`USER` are always shared
     from the klorb process's own environment, `WORKSPACE_ROOT` is always set to the resolved
-    workspace root, `SHELL`/`BASH` are always set to `bash_command` (unconditionally — not
+    workspace root, and `SHELL`/`BASH` are always set to `bash_command` (unconditionally — not
     gated on any config, and not the klorb process's own `$SHELL`/`$BASH` if any — this is the
-    actual bash binary the command runs under, per `ProcessConfig.bash_command`), and `NO_COLOR`
-    is always set to disable ANSI color codes in command output, followed by every
-    `session_config.share_env` name that's actually set in the klorb process's environment,
-    followed by `session_config.set_env`'s overrides (applied last, so they shadow a shared or
-    always-set value for the same name). Everything else in the klorb process's own environment
-    is left out. When a `bwrap` sandbox is in use this same dict is re-applied inside it via
-    `--clearenv` + `--setenv` (see `klorb.sandbox.build_bwrap_argv`); on the unsandboxed fallback
-    path there's no `--clearenv` to lean on, so `subprocess.Popen(..., env=...)` receives exactly
-    this dict, not `None` (which would inherit the entire parent environment), keeping the
+    actual bash binary the command runs under, per `ProcessConfig.bash_command`). Everything else
+    in the klorb process's own environment is left out.
+
+    ``NO_COLOR``, ``session_config.share_env`` passthrough, and ``session_config.set_env``
+    overrides are written to the session env file (see `session_env_file`) and sourced inside
+    the shell before the user command runs, rather than injected into this process-level dict.
+    When a `bwrap` sandbox is in use this same dict is re-applied inside it via ``--clearenv`` +
+    ``--setenv`` (see `klorb.sandbox.build_bwrap_argv`); on the unsandboxed fallback path there's
+    no ``--clearenv`` to lean on, so ``subprocess.Popen(..., env=...)`` receives exactly this
+    dict, not ``None`` (which would inherit the entire parent environment), keeping the
     least-privilege intent intact regardless of which path runs.
     """
     env: dict[str, str] = {}
@@ -517,11 +575,6 @@ def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str
     env["WORKSPACE_ROOT"] = str(session_config.workspace.path.resolve())
     env["SHELL"] = bash_command
     env["BASH"] = bash_command
-    env["NO_COLOR"] = "true"
-    for name in session_config.share_env:
-        if name in os.environ:
-            env[name] = os.environ[name]
-    env.update(session_config.set_env)
     return env
 
 
@@ -1050,6 +1103,23 @@ class BashTool(InterruptibleTool):
             self.context.session_config, sys.executable,
             self._network_socks_port, self._network_http_connect_port)
 
+    def _env_file_source_command(self) -> str:
+        """Return a shell snippet that sources this session's env file, or ``""`` when no
+        session is available.  The env file is created (and populated with ``NO_COLOR``,
+        ``share_env``, and ``set_env`` exports) on the first call for a given session.
+
+        If the env file's directory is read-only, the export statements are inlined directly
+        into the returned snippet instead of sourcing a file."""
+        session = self.context.session
+        if session is None:
+            return ""
+        try:
+            env_file = session_env_file(session.id, self.context.session_config)
+        except OSError:
+            logger.debug("Env file directory read-only; inlining env exports")
+            return "\n".join(_env_export_lines(self.context.session_config)) + "\n"
+        return f'source "{env_file}"\n'
+
     def _execute(self, command: str) -> dict[str, Any]:
         workspace_root = self.context.session_config.workspace.path.resolve()
         env = build_bash_env(self.context.session_config, self._bash_command)
@@ -1060,7 +1130,8 @@ class BashTool(InterruptibleTool):
         # unrestricted network access, so there is nothing for a proxy to gate there.
         networking = self._start_sandbox_networking() if sandboxed else None
         bootstrap_script = networking.bootstrap_script if networking is not None else ""
-        full_command = f"unset PS1; unset PS2; {bootstrap_script}{command}"
+        env_file_source = self._env_file_source_command()
+        full_command = f"unset PS1; unset PS2; {bootstrap_script}{env_file_source}{command}"
         inner_argv = [self._bash_command, "--rcfile", rcfile, "-i", "-c", full_command]
         # bwrap wraps the same inner invocation when a sandbox can actually be created here;
         # otherwise the command runs unsandboxed (with a one-time notice — see
@@ -1300,7 +1371,8 @@ class BashTool(InterruptibleTool):
         # Discarding the result: this is harness bootstrapping, not a model-visible command: a
         # missing/erroring rcfile shouldn't fail shell creation, just leave PATH/toolchain setup
         # up to whatever build_bash_env already put in the environment.
-        bootstrap = f'PS1=x\n[ -f "{rcfile}" ] && source "{rcfile}"\nunset PS1 PS2\n'
+        env_file_source = self._env_file_source_command()
+        bootstrap = f'{env_file_source}PS1=x\n[ -f "{rcfile}" ] && source "{rcfile}"\nunset PS1 PS2\n'
         shell.run_command(bootstrap, self._timeout_seconds)
         # On a reconcile-on-grow rebuild, replay the prior shell's exported environment and cwd
         # into the fresh one (after rc-file bootstrap, so accumulated values win) -- see
