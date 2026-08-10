@@ -23,6 +23,28 @@ from klorb.tools.bash import KLORB_ENV_FILE_VAR, session_env_file
 logger = logging.getLogger(__name__)
 
 
+def _handler_label(handler: HookConfig) -> str:
+    """A human-readable label for `handler` in a log message: its own `name` if set, else the
+    program name from `command`, else the whole `shell` string -- `name` is optional, so a
+    handler that omits it would otherwise log as `None`."""
+    if handler.name is not None:
+        return handler.name
+    if handler.command:
+        return handler.command[0]
+    if handler.shell is not None:
+        return handler.shell
+    return "<unnamed>"
+
+
+def _log_handler_stderr(handler: HookConfig, hook_input: HookInput, stderr: str) -> None:
+    """Logs `stderr` verbatim at `warning` level, preceded by which hook/handler produced it.
+    No-op if `stderr` is empty -- a handler that wrote nothing to it logs nothing."""
+    if not stderr:
+        return
+    logger.warning(
+        "Hook handler %r for %r wrote to stderr:\n%s", _handler_label(handler), hook_input.hook, stderr)
+
+
 def _build_env(session_config: SessionConfig, env_file: Path | None) -> dict[str, str]:
     """The environment a `bash` hook handler's subprocess runs with: `HOME`/`USER` shared from
     the klorb process's own environment, `WORKSPACE_ROOT` set to the resolved workspace root,
@@ -120,10 +142,11 @@ def run_bash_handler(
             handler.name, hook_input.hook, exc)
         return None
 
+    _log_handler_stderr(handler, hook_input, completed.stderr)
     if completed.returncode != 0:
         logger.warning(
-            "Hook handler %r for %r exited %d; skipping. stderr=%r",
-            handler.name, hook_input.hook, completed.returncode, completed.stderr[:500])
+            "Hook handler %r for %r exited %d; skipping.",
+            handler.name, hook_input.hook, completed.returncode)
         return None
     try:
         return HookOutput.model_validate_json(completed.stdout)

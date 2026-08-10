@@ -205,6 +205,47 @@ def test_invalid_json_output_returns_none(tmp_path: Path) -> None:
     assert result is None
 
 
+# --- stderr logging ---
+
+
+def test_stderr_is_logged_verbatim_on_success(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = HookConfig(type="bash", name="my-handler", shell="echo warn-text >&2; echo '{}'")
+    with caplog.at_level("WARNING", logger="klorb.hooks.bash_handler"):
+        result = run_bash_handler(
+            handler, _hook_input(tmp_path), session_config=_session_config(tmp_path),
+            bash_command="/bin/bash", timeout_seconds=5.0)
+    assert result is not None
+    assert "my-handler" in caplog.text
+    assert "onProcessStart" in caplog.text
+    assert "warn-text" in caplog.text
+
+
+def test_stderr_is_logged_on_nonzero_exit(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = HookConfig(type="bash", shell="echo boom >&2; exit 1")
+    with caplog.at_level("WARNING", logger="klorb.hooks.bash_handler"):
+        result = run_bash_handler(
+            handler, _hook_input(tmp_path), session_config=_session_config(tmp_path),
+            bash_command="/bin/bash", timeout_seconds=5.0)
+    assert result is None
+    assert "boom" in caplog.text
+
+
+def test_empty_stderr_is_not_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = HookConfig(type="bash", shell="echo '{}'")
+    with caplog.at_level("WARNING", logger="klorb.hooks.bash_handler"):
+        result = run_bash_handler(
+            handler, _hook_input(tmp_path), session_config=_session_config(tmp_path),
+            bash_command="/bin/bash", timeout_seconds=5.0)
+    assert result is not None
+    assert caplog.text == ""
+
+
 # --- sandboxed execution ---
 
 
