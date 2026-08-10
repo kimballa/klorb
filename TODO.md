@@ -309,6 +309,7 @@
 
 ### Plan 022: Hooks and Events
 
+* onToolResponse shouuld be able to manipulate the tool response json, not just the tool args
 * `onRequestPermission` hook: deferred entirely. A real design needs to reconcile
   `HookOutput.permission` (a bare `Verdict`) against the richer `PermissionDecision`
   (`action`+`scope`, `klorb/src/klorb/session/events.py`) a human/UI answer produces.

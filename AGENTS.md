@@ -142,9 +142,10 @@ The Klorb project is organized as a collection of subprojects:
   examples and stop. Some lists are already too long. Do not follow their example or make them
   longer.
 * Never repeat an explanation. If you have already stated *why* something is anywhere in the same
-  file, docstring, or commit, do not restate it at the next place it comes up. Before writing a
-  sentence that justifies something, Grep for whether that justification already exists; if it does,
-  just leave a pointer.
+  file, docstring, or commit, do not restate it at the next place it comes up.
+* In a docstring, when you put a long dash (" -- "), think about whether what follows would actually
+  meaningfully contribute to the understanding of the current method. If it says "mirroring Foo"
+  or otherwise restates existing information, just drop it.
 
 ### Json file format and style
 
