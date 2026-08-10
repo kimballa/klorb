@@ -4,15 +4,27 @@
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig
+from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.workspace import Workspace
+
+
+def _reply(content: str = "model reply") -> ProviderResponse:
+    return ProviderResponse(
+        message=Message(
+            content=content, role="assistant", num_tokens=3, processing_state="complete",
+            timestamp=datetime.now(), finish_reason="stop"),
+        prompt_tokens=5)
 
 
 @pytest.fixture(autouse=True)
@@ -91,35 +103,25 @@ def test_close_does_not_run_onsessionend_for_a_subagent(tmp_path: Path) -> None:
     assert marker.exists()
 
 
-def test_close_with_clear_session_invokes_the_callback(tmp_path: Path) -> None:
+def test_close_with_reset_session_resets_in_place_instead_of_closing(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onSessionEnd": [
-            HookConfig(type="bash", shell='echo \'{"message": "restart me", "clear_session": true}\''),
+            HookConfig(type="bash", shell='echo \'{"message": "restart me", "reset_session": true}\''),
         ],
     })
-    session = Session(process_config.session, process_config=process_config)
-    received: list[str] = []
-    session.on_clear_session_requested = received.append
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+    original_id = session.id
+    original_scratchpad_path = session.scratchpad.path
 
     session.close()
 
-    assert received == ["restart me"]
-
-
-def test_close_with_clear_session_logs_warning_without_a_handler(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    process_config = _process_config(tmp_path, {
-        "onSessionEnd": [
-            HookConfig(type="bash", shell='echo \'{"message": "restart me", "clear_session": true}\''),
-        ],
-    })
-    session = Session(process_config.session, process_config=process_config)
-
-    with caplog.at_level("WARNING"):
-        session.close()
-
-    assert "clear_session" in caplog.text
+    assert session.id == original_id
+    assert session.scratchpad.path != original_scratchpad_path
+    user_messages = [m.content for m in session.messages if m.role == "user"]
+    assert len(user_messages) == 1
+    assert user_messages[0].endswith("restart me")
 
 
 def test_fire_session_start_hook_carries_workspace_trust_fields(tmp_path: Path) -> None:

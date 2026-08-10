@@ -11,7 +11,7 @@ import subprocess
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.images.prepare import extension_for_mime_type
@@ -22,6 +22,12 @@ from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.mentions import resolve_at_mentions
 from klorb.token_estimate import estimate_message_tokens, estimate_tokens
 from klorb.workspace.session_store import write_session_image
+
+if TYPE_CHECKING:
+    # `klorb.session` (this package's own `__init__.py`) assembles `Session` from this mixin, so
+    # importing it for real here would be circular; needed only to `cast` `self` to `Session`
+    # below, matching `klorb.session.mixins.core`'s own use of this pattern.
+    from klorb.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -403,21 +409,18 @@ class SessionTurnsMixin(SessionBase):
         `chat` handler's chained follow-up (via `start_turn_or_enqueue`) sees no turn in flight
         and starts a fresh one, per the `chat` handler type's documented behavior.
 
-        A `clear_session` result (guaranteed by `HookDispatcher` to carry a non-empty `message`)
-        is handed to `on_clear_session_requested` instead -- discarding this session rather than
-        continuing its conversation. Falls back to an ordinary `start_turn_or_enqueue` delivery,
-        logged at `warning`, if no host has registered that callback."""
+        A `reset_session` result (guaranteed by `HookDispatcher` to carry a non-empty `message`)
+        first dispatches `onSessionEnd` with `event="ResetSession"` -- purely for its side
+        effects (e.g. a bash handler logging that this conversation ended); its own `HookOutput`
+        is discarded, the same as every other `onSessionEnd` firing being non-cancelable -- then
+        calls `Session.reset_session()` instead of continuing this conversation. `close()`'s own
+        `onSessionEnd` firing (a real session end, not one relayed from `onAgentTurnEnd`) doesn't
+        need this extra dispatch, since `onSessionEnd` is already what fired there."""
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
-        if result.clear_session:
+        if result.reset_session:
             assert result.message is not None
-            if self.on_clear_session_requested is not None:
-                self.on_clear_session_requested(result.message)
-            else:
-                logger.warning(
-                    "onAgentTurnEnd hook requested clear_session but this session has no "
-                    "on_clear_session_requested handler registered; delivering its message as "
-                    "an ordinary follow-up turn instead.")
-                self.start_turn_or_enqueue(result.message)
+            self._dispatch_lifecycle_hook("onSessionEnd", event="ResetSession")
+            cast("Session", self).reset_session(result.message)
             return
         if result.message is not None:
             self.start_turn_or_enqueue(result.message)

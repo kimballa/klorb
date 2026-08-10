@@ -137,30 +137,30 @@ def test_dispatch_folds_success_as_strictest_outcome(tmp_path: Path) -> None:
     assert result.success is False
 
 
-def test_dispatch_folds_clear_session_once_any_handler_sets_it(tmp_path: Path) -> None:
+def test_dispatch_folds_reset_session_once_any_handler_sets_it(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onAgentTurnEnd": [
             HookConfig(type="bash", shell='echo \'{"message": "first"}\''),
-            HookConfig(type="bash", shell='echo \'{"clear_session": true}\''),
+            HookConfig(type="bash", shell='echo \'{"reset_session": true}\''),
         ],
     })
     result = HookDispatcher(process_config).dispatch(
         "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
-    assert result.clear_session is True
+    assert result.reset_session is True
     assert result.message == "first"
 
 
-def test_dispatch_drops_clear_session_without_a_message(
+def test_dispatch_drops_reset_session_without_a_message(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     process_config = _process_config(tmp_path, {
-        "onAgentTurnEnd": [HookConfig(type="bash", shell='echo \'{"clear_session": true}\'')],
+        "onAgentTurnEnd": [HookConfig(type="bash", shell='echo \'{"reset_session": true}\'')],
     })
     with caplog.at_level("WARNING"):
         result = HookDispatcher(process_config).dispatch(
             "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
-    assert result.clear_session is False
-    assert "clear_session" in caplog.text
+    assert result.reset_session is False
+    assert "reset_session" in caplog.text
 
 
 def test_dispatch_a_failing_handler_contributes_nothing_to_the_chain(tmp_path: Path) -> None:

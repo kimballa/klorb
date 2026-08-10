@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 from tui.conftest import (
@@ -21,7 +20,6 @@ from tui.conftest import (
 
 from klorb.agents.runtime import SubagentHandle
 from klorb.api_provider import ResponseAborted
-from klorb.hooks.config import HookConfig, HookConfigFilter
 from klorb.logging_config import session_log_path
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
@@ -885,59 +883,6 @@ async def test_clear_closes_the_outgoing_session() -> None:
         assert calls == ["closed"]
         assert app._session is not outgoing_session
 
-
-async def test_onagentturnend_clear_session_replaces_the_session_and_submits_the_message(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An `onAgentTurnEnd` hook's `clear_session` result fires from `_send_prompt`'s worker
-    thread (deep inside `Session.send_turn()`), not this app's own thread the way a manual
-    `/clear` does -- this exercises `_replace_session`'s `call_from_thread` marshaling for
-    real, not just the same-thread path `_invoke_clear_session` covers."""
-    monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
-    monkeypatch.setattr("klorb.hooks.bash_handler._HOOK_ENV_FILES_DIR", tmp_path / "hook-env-files")
-
-    process_config = ProcessConfig(hooks={
-        "onAgentTurnEnd": [
-            HookConfig(
-                type="bash",
-                shell='echo \'{"message": "fresh start", "clear_session": true}\'',
-                # Filtered to the original turn's own reply so the replacement session's
-                # "fresh start" turn (whose own reply is "second") doesn't trigger another
-                # replacement -- an unfiltered config would cascade indefinitely, since each
-                # replacement session starts with its own fresh `max_chained_hook_turns`
-                # counter rather than inheriting the outgoing session's.
-                filter=HookConfigFilter(matches="first")),
-        ],
-    })
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
-    session = Session(
-        SessionConfig(model="some/model"), provider=mock_provider,
-        process_config=process_config, session_id=TEST_SESSION_ID)
-    app = ReplApp(session=session, process_config=process_config)
-
-    async with app.run_test() as pilot:
-        original_session_id = app._session.id
-
-        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-        prompt_input.text = "go"
-        await pilot.press("enter")
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        # The replacement session's auto-submitted `initial_message` starts a second
-        # `_send_prompt` worker from inside the first one's own `call_from_thread`-marshaled
-        # `_replace_session` call -- wait for it too rather than assuming one round of
-        # `wait_for_complete()` already caught it.
-        await _wait_until(pilot, lambda: any(m.role == "user" for m in app._session.messages))
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app._session.id != original_session_id
-        user_messages = [m.content for m in app._session.messages if m.role == "user"]
-        assert len(user_messages) == 1
-        assert user_messages[0].endswith("fresh start")
-        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        assert history.query_one(".notice", Static)
 
 
 async def test_clear_carries_over_thinking_settings_from_process_config(

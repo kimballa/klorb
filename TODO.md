@@ -321,13 +321,9 @@
 * Real content for `KLORB_HOOK_ENV_FILE`: a `bash` hook handler's subprocess is pointed at a
   fresh, empty file per invocation (`klorb.hooks.bash_handler`); nothing writes session-scoped
   values (e.g. `NO_COLOR`) into it yet, and ordinary `BashTool` commands don't share it.
+* `HookOutput.interrupt` is not respected / implemented.
 * An explicit turn-interrupt primitive hooks/events can call directly, rather than
   `HookOutput.interrupt` needing new wiring on top of a turn's own `cancel_event`
   (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.
 * Third-party domain blocklisting for `WebFetch` as an `onToolUse`/`onToolResult` hook consumer —
   see "Plan 013: WebFetch" above.
-* `clear_session` support outside the TUI: `KlorbAcpAgent`/headless `klorb.cli.main()` never
-  register `Session.on_clear_session_requested`. An ACP client addressing a stable `session_id`
-  would need a protocol-level way to learn its session was reset (e.g. a `session/update`); headless
-  has no host loop to hand a replacement session back to. See
-  docs/specs/hooks-and-events.md's "Session replacement" section.
