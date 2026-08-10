@@ -220,18 +220,20 @@ def test_stderr_is_logged_verbatim_on_success(
     assert "my-handler" in caplog.text
     assert "onProcessStart" in caplog.text
     assert "warn-text" in caplog.text
+    assert "exit with status" not in caplog.text
 
 
 def test_stderr_is_logged_on_nonzero_exit(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    handler = HookConfig(type="bash", shell="echo boom >&2; exit 1")
+    handler = HookConfig(type="bash", shell="echo boom >&2; exit 3")
     with caplog.at_level("WARNING", logger="klorb.hooks.bash_handler"):
         result = run_bash_handler(
             handler, _hook_input(tmp_path), session_config=_session_config(tmp_path),
             bash_command="/bin/bash", timeout_seconds=5.0)
     assert result is None
     assert "boom" in caplog.text
+    assert "(Script exit with status 3)" in caplog.text
 
 
 def test_empty_stderr_is_not_logged(

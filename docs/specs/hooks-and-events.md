@@ -164,9 +164,9 @@ unsandboxed (logged at `debug`) when `bwrap_available()` is `False`.
 * Returns `None` (never raises) for: neither `shell` nor `command` set, a malformed `command`
   macro reference, a launch `OSError`, a timeout, a non-zero exit, or stdout that doesn't parse as
   `HookOutput` JSON — each case logged at `warning`.
-* Whenever the subprocess writes anything to stderr — regardless of exit code — it's logged at
-  `warning` verbatim, prefixed with which hook and handler produced it. A handler that writes
-  nothing to stderr logs nothing for this.
+* Whenever the subprocess writes anything to stderr, it's logged at `warning` verbatim, prefixed
+  with which hook and handler produced it and, for a nonzero exit, suffixed with the exit status.
+  A handler that writes nothing to stderr logs nothing for this.
 
 ### `classifier` (`klorb.hooks.classifier_handler.run_classifier_handler`)
 
