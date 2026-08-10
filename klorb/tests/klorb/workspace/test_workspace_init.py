@@ -54,7 +54,7 @@ def test_write_initial_project_config_overwrites_existing_file(tmp_path: Path) -
 def test_write_session_defaults_dumps_scalar_fields(tmp_path: Path) -> None:
     config = SessionConfig(
         model="project/model", thinking_enabled=False, thinking_effort="low",
-        max_tool_calls_per_turn=3, max_tool_calls_per_session=15, workspace=Workspace(path=tmp_path))
+        max_tool_calls_per_turn=3, workspace=Workspace(path=tmp_path))
 
     write_session_defaults_to_project_config(tmp_path, config)
 
@@ -64,7 +64,6 @@ def test_write_session_defaults_dumps_scalar_fields(tmp_path: Path) -> None:
     assert session_defaults["thinking.enabled"] is False
     assert session_defaults["thinking.effort"] == "low"
     assert session_defaults["tools.maxCallsPerTurn"] == 3
-    assert session_defaults["tools.maxCallsPerSession"] == 15
 
 
 def test_write_session_defaults_dumps_dir_rules_built_up_this_session(tmp_path: Path) -> None:

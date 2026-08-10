@@ -11,7 +11,7 @@ klorb - interact with a coding agent through an interactive TUI or headless sess
 [`--quit-on-success` | `--no-quit-on-success`]
 [`--session-log` | `--no-session-log`]
 [`-y` | `--auto-approve`] [`--log-tool-calls` | `--no-log-tool-calls`]
-[`--max-tool-calls-per-turn` *N*] [`--max-tool-calls-per-session` *N*]
+[`--max-tool-calls-per-turn` *N*]
 [`-V` | `--version`]
 
 `klorb init` [`--system` | `--user`] [`--force`]
@@ -199,11 +199,6 @@ See the COMMANDS section for more details about these operating modes.
   Override the max tool calls allowed in a single turn before it fails.
   Defaults to the configured/process value (see
   `docs/specs/process-and-session-config.md`).
-
-* `--max-tool-calls-per-session` *N*
-
-  Override the max tool calls allowed across the whole session before a turn
-  fails. Defaults to the configured/process value.
 
 * `-V`, `--version`
 

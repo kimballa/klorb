@@ -1596,8 +1596,7 @@ def test_on_tool_call_fires_with_raw_arguments_for_malformed_json() -> None:
 def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(
-        model="some/model", max_tool_calls_per_turn=1_000, max_tool_calls_per_session=1_000)
+    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1610,14 +1609,14 @@ def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
     assert str(MAX_TOOL_CALL_ROUNDS) in (user_message.last_error or "")
 
 
-def test_per_turn_tool_call_limit_defaults_to_fifty() -> None:
+def test_per_turn_tool_call_limit_defaults() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
     config = SessionConfig(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
-    with pytest.raises(ToolCallLimitExceeded, match="50 tool call"):
+    with pytest.raises(ToolCallLimitExceeded, match="100 tool call"):
         session.send_turn("loop forever")
 
     tool_response_messages = [m for m in session.messages if m.role == "tool_response"]
@@ -1659,30 +1658,6 @@ def test_per_turn_tool_call_limit_resets_between_turns() -> None:
     assert response2 == "second done"
 
 
-def test_per_session_tool_call_limit_accumulates_across_turns() -> None:
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.side_effect = [
-        _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
-        _reply("first done"),
-        _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
-    ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000,
-                           max_tool_calls_per_session=1)
-    tool_registry = _sample_tool_registry(config)
-    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
-
-    response1 = session.send_turn("first")
-    assert response1 == "first done"
-
-    with pytest.raises(ToolCallLimitExceeded, match="1 tool call"):
-        session.send_turn("second")
-
-    second_user_message = next(
-        m for m in session.messages
-        if m.role == "user" and m.content.endswith("second"))
-    assert second_user_message.processing_state == "error"
-
-
 def test_approving_turn_limit_increase_doubles_it_and_continues() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
@@ -1720,30 +1695,6 @@ def test_declining_turn_limit_increase_raises() -> None:
 
     on_limit_reached.assert_called_once()
     assert config.max_tool_calls_per_turn == 1  # unchanged
-
-
-def test_approving_session_limit_increase_doubles_it_and_continues() -> None:
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.side_effect = [
-        _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
-        _reply("first done"),
-        _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
-        _reply("second done"),
-    ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000,
-                           max_tool_calls_per_session=1)
-    tool_registry = _sample_tool_registry(config)
-    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
-    on_limit_reached = MagicMock(return_value=True)
-
-    callbacks = TurnEventHandlers(on_tool_call_limit_reached=on_limit_reached)
-    response1 = session.send_turn("first", callbacks)
-    response2 = session.send_turn("second", callbacks)
-
-    assert response1 == "first done"
-    assert response2 == "second done"
-    on_limit_reached.assert_called_once()
-    assert config.max_tool_calls_per_session == 2  # 1 -> 2
 
 
 def test_no_callback_declines_without_asking() -> None:

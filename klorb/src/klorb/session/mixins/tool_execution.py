@@ -80,13 +80,11 @@ class SessionToolExecutionMixin(SessionBase):
         form is otherwise delivered — see `wrap_system_interjection`).
 
         Before executing each call, checks it against `config.max_tool_calls_per_turn`
-        (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`)
-        and `config.max_tool_calls_per_session` (`self._tool_calls_this_session`; never
-        reset, accumulates for the life of this `Session`). Reaching either asks
-        `_confirm_limit_increase()` whether to double it and keep going; if that returns
-        `False` (declined, or `callbacks.on_tool_call_limit_reached` wasn't given), raises
-        `ToolCallLimitExceeded` without executing this call (or any later call in
-        `tool_use_message.tool_calls`).
+        (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`).
+        Reaching it asks `_confirm_limit_increase()` whether to double it and keep going; if
+        that returns `False` (declined, or `callbacks.on_tool_call_limit_reached` wasn't
+        given), raises `ToolCallLimitExceeded` without executing this call (or any later call
+        in `tool_use_message.tool_calls`).
 
         If a call raises `PermissionAskRequired` with a `path` or `url`, how it's resolved
         depends on `config.permission_framework` (see `SessionConfig.permission_framework`):
@@ -155,26 +153,17 @@ class SessionToolExecutionMixin(SessionBase):
                 raise ResponseAborted()
             if self._tool_calls_this_turn >= self.config.max_tool_calls_per_turn:
                 if not self._confirm_limit_increase(
-                    "turn", self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
+                    self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
                     callbacks.on_tool_call_limit_reached,
                 ):
                     raise ToolCallLimitExceeded(
                         f"Exceeded {self.config.max_tool_calls_per_turn} tool call(s) in one turn.")
-            if self._tool_calls_this_session >= self.config.max_tool_calls_per_session:
-                if not self._confirm_limit_increase(
-                    "session", self._tool_calls_this_session, self.config.max_tool_calls_per_session,
-                    callbacks.on_tool_call_limit_reached,
-                ):
-                    raise ToolCallLimitExceeded(
-                        f"Exceeded {self.config.max_tool_calls_per_session} tool call(s) in this session.")
 
             self._tool_calls_this_turn += 1
-            self._tool_calls_this_session += 1
             self.statistics.tool_calls += 1
             logger.info(
-                "Tool call %d/%d this turn, %d/%d this session: %s(%s) [id=%s]",
+                "Tool call %d/%d this turn: %s(%s) [id=%s]",
                 self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
-                self._tool_calls_this_session, self.config.max_tool_calls_per_session,
                 call.name, call.arguments, call.id,
             )
             args: dict[str, Any] = {}
@@ -299,9 +288,8 @@ class SessionToolExecutionMixin(SessionBase):
                 tool_call_id=call.id,
             ))
         logger.info(
-            "Finished dispatching tool calls (%d/%d this turn, %d/%d this session).",
+            "Finished dispatching tool calls (%d/%d this turn).",
             self._tool_calls_this_turn, self.config.max_tool_calls_per_turn,
-            self._tool_calls_this_session, self.config.max_tool_calls_per_session,
         )
 
     def _apply_tool_use_hook(self, call_name: str, args: dict[str, Any]) -> dict[str, Any]:

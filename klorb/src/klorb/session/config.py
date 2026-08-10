@@ -14,7 +14,6 @@ from klorb.permissions.skill_access import SkillRules
 from klorb.role import OPERATOR_ROLE_NAME
 from klorb.session.constants import (
     DEFAULT_MAX_CHAINED_HOOK_TURNS,
-    DEFAULT_MAX_TOOL_CALLS_PER_SESSION,
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
     PermissionFramework,
     ThinkingEffort,
@@ -52,7 +51,6 @@ class SessionConfig(BaseModel):
     thinking_enabled: bool = True
     thinking_effort: ThinkingEffort = "high"
     max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
-    max_tool_calls_per_session: int = DEFAULT_MAX_TOOL_CALLS_PER_SESSION
     max_chained_hook_turns: int = DEFAULT_MAX_CHAINED_HOOK_TURNS
     """How many turns in a row `Session.start_turn_or_enqueue` may auto-chain on behalf of a
     `chat` hook/event handler before refusing further ones -- see
@@ -78,8 +76,8 @@ class SessionConfig(BaseModel):
     """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults — see
     `klorb.permissions.directory_access` and docs/specs/permissions.md. Lives on
     `SessionConfig`, not `ProcessConfig`, because a future "ask" flow will let a user approve a
-    rule for the rest of the session — the same reason
-    `max_tool_calls_per_turn`/`max_tool_calls_per_session` live here too."""
+    rule for the rest of the session — the same reason `max_tool_calls_per_turn` lives here
+    too."""
     write_dirs: DirRules = Field(default_factory=DirRules)
     """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard

@@ -8,7 +8,6 @@
     "thinking.enabled": true,
     "thinking.effort": "high",
     "tools.maxCallsPerTurn": 100,
-    "tools.maxCallsPerSession": 200,
     "readDirs": {
       "deny": [
         "${home}/.ssh",

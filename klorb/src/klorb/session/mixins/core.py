@@ -290,7 +290,6 @@ class SessionCoreMixin(SessionBase):
         self.cur_chainlink_task_id: int | None = None
         self.tool_state: dict[str, Any] = {}
         self.active_cancel_event = None
-        self._tool_calls_this_session = 0
         self._tool_calls_this_turn = 0
         self._skill_catalog_registry = SkillCatalogRegistry()
         self._messages: list[Message] = []

@@ -18,7 +18,7 @@ mirrors.
 import threading
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from klorb.api_provider import ApiProvider
 from klorb.images.prepare import ImagePipelineConfig
@@ -106,7 +106,6 @@ class SessionBase:
     _tool_registry: "ToolRegistry | None"
     tool_state: dict[str, Any]
     active_cancel_event: threading.Event | None
-    _tool_calls_this_session: int
     _tool_calls_this_turn: int
     _compatibility_claude_markdown: bool
     _compatibility_claude_skills: bool
@@ -198,7 +197,6 @@ class SessionBase:
 
     def _confirm_limit_increase(
         self,
-        scope: Literal["turn", "session"],
         current_count: int,
         current_limit: int,
         on_tool_call_limit_reached: Callable[[str], bool] | None,

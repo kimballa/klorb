@@ -206,8 +206,7 @@ Bounded by `SessionConfig.max_chained_hook_turns` (`tools.hooks.maxChainedTurns`
 counts consecutive turns `start_turn_or_enqueue` has itself started, and is reset to `0` by any
 ordinary user- or tool-driven turn. Once the cap is reached, `start_turn_or_enqueue` refuses to
 start (or queue) another turn, logged at `warning`, until the counter resets — the same fail-safe
-shape as `max_tool_calls_per_turn`/`max_tool_calls_per_session`
-(docs/specs/process-and-session-config.md).
+shape as `max_tool_calls_per_turn` (docs/specs/process-and-session-config.md).
 
 ## Session reset: `reset_session`
 
@@ -236,7 +235,7 @@ mechanism both call sites invoke:
 3. Calls `_reset_state()` — the same method `__init__` itself calls, so construction and reset can
    never drift apart. Resets every conversation-scoped field to a freshly constructed `Session`'s
    own value: `_messages`, the one-shot interjection-seeded flags, `_chained_hook_turns`,
-   `_tool_calls_this_session`/`_tool_calls_this_turn`, `_queued_messages`,
+   `_tool_calls_this_turn`, `_queued_messages`,
    `_standing_interjection_providers`, `statistics`, `subagent_tracker`, `tool_state`, and more.
    Tears down and recreates every conversation-scoped `register_teardown` resource (`Scratchpad`,
    `Bash`'s persistent shell if one is live) — everything except the workspace/process-level

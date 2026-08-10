@@ -309,7 +309,6 @@ SESSION_KEY_MAP: dict[str, str] = {
     "thinking.enabled": "thinking_enabled",
     "thinking.effort": "thinking_effort",
     "tools.maxCallsPerTurn": "max_tool_calls_per_turn",
-    "tools.maxCallsPerSession": "max_tool_calls_per_session",
     "tools.hooks.maxChainedTurns": "max_chained_hook_turns",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
@@ -616,7 +615,7 @@ class ProcessConfig(BaseModel):
     session_cli_flags: dict[str, Any] = Field(default_factory=dict)
     """Session-scoped overrides derived from the CLI flags `main()` parsed, keyed by
     `SessionConfig` attribute name (`"interactive"`, `"permission_framework"`,
-    `"max_tool_calls_per_turn"`, `"max_tool_calls_per_session"`). Populated by
+    `"max_tool_calls_per_turn"`). Populated by
     `klorb.cli.main()` and applied to `session` via `apply_cli_flags_to_session()`; a later
     `clear_session()` re-reads config layers from disk and re-applies these on top, so a CLI
     flag like `--max-tool-calls-per-turn` survives a `/clear` (which otherwise reverts to the

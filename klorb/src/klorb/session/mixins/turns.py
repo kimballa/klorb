@@ -292,11 +292,9 @@ class SessionTurnsMixin(SessionBase):
         dispatches them via `tool_registry` and appends their results as `tool_response`
         messages, then `_send_and_receive()` is called again with the updated history — this
         repeats until the model returns a plain `"assistant"` reply, or `ToolCallLimitExceeded`
-        is raised after `MAX_TOOL_CALL_ROUNDS` round trips, `max_tool_calls_per_turn`
-        individual tool calls in this turn, or `max_tool_calls_per_session` individual tool
-        calls across this `Session`'s lifetime (see `_run_tool_calls`).
-        `self._tool_calls_this_turn` is reset to `0` at the start of every call to
-        `_dispatch_turn` (including retries); `self._tool_calls_this_session` is never reset.
+        is raised after `MAX_TOOL_CALL_ROUNDS` round trips or `max_tool_calls_per_turn`
+        individual tool calls in this turn (see `_run_tool_calls`). `self._tool_calls_this_turn`
+        is reset to `0` at the start of every call to `_dispatch_turn` (including retries).
 
         `user_message.num_tokens` is already set (from `estimate_tokens(user_message.content)`
         at construction, see `send_turn`/`retry_last_turn`) and untouched here. On success,

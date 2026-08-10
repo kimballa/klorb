@@ -177,9 +177,8 @@ ACP's own extensibility rules. Later increments grow this section as they land.
 
 One *client*-advertised extension method exists, called server → client:
 
-* **`_klorb/raiseToolCallLimit`** — sent when a turn's `max_tool_calls_per_turn`/
-  `max_tool_calls_per_session` cap is reached (see docs/specs/session-and-turns.md's tool-call
-  cap section). Params: `{sessionId: string, message: string}` (`message` is the same
+* **`_klorb/raiseToolCallLimit`** — sent when a turn's `max_tool_calls_per_turn` cap is
+  reached (see docs/specs/session-and-turns.md's tool-call cap section). Params: `{sessionId: string, message: string}` (`message` is the same
   human-readable cap-reached prompt `Session._confirm_limit_increase` builds for the TUI's
   `ToolCallLimitScreen`). Result: `{approved: boolean}` — `true` doubles the reached cap and lets
   the call proceed, exactly as the TUI's confirmation does. `TurnBridge` calls this only when the
