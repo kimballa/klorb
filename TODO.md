@@ -16,9 +16,6 @@
   in two threads running `_dispatch_turn` simultaneously. Narrow race window in practice (timer
   events fire every 10s+, FS events debounce 10s), but it exists.
 
-* (#agent) KLORB_CONFIG_DIR/KLORB_STATE_DIR/KLORB_DATA_DIR are eager-computed from the environment
-  on module load, before load_dotenv() runs, so they cannot be shadowed in a `.env` file.
-
 * (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
@@ -84,15 +81,6 @@
   could start from the common symlink side when picking things to remove and also clean up dead
   symlinks.
 
-* (#agent) `klorb system-prompt` should have a `--export` option
-  that dumps the *resolved* system prompt files for the current role + model into the
-  user's editable tree (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same
-  relative path the resolver would read it back from), so the user has a real
-  `.md` file to start editing from instead of hunting down the packaged copy
-  inside site-packages. Should refuse to clobber an existing file without
-  `--force`, like `klorb init` (see docs/specs/klorb-init.md). See
-  docs/specs/roles-and-system-prompts.md.
-
 * (low priority): add a ProviderFactory, to support connections other than openrouter.ai?
   * Produces ApiProviders from a string
   * Currently only openrouter api provider is supported from "openrouter" string.
@@ -144,6 +132,15 @@
     many tool calls (vs total tool call budget / limit) it has performed. Parents should be able to
     set (more limited) tool use budgets for child sessions.
 
+* [harness/CLI feature] Add a `--export` option to the `klorb system-prompt` CLI command that
+  dumps the *resolved* system prompt files for the current role + model into the user's
+  editable tree (`$KLORB_CONFIG_DIR/system_prompts.d/...`, at the same relative path the
+  resolver would read it back from), so the user gets a real `.md` file to start editing
+  instead of hunting down the packaged copy inside site-packages. Refuse to clobber an
+  existing file without `--force`, mirroring `klorb init`'s clobber-protection (see
+  docs/specs/klorb-init.md). See docs/specs/roles-and-system-prompts.md for how the resolver
+  picks files per role/model.
+
 ## TUI
 
 ### Bugs
@@ -164,24 +161,18 @@
 
 ### Feature backlog
 
-* (#agent) Add a "Rename Session" cmd palette action to change the title.
-
-* (#agent) In the TUI, When the user types `/` at start or after whitespace, it should have a
-  fuzzy-finder pop-up to help find the skill they want. ESC dismisses fuzzy-finder, as does
-  continuing to type after ruling out any matches. This should use the same layout / style as the
-  file @mention fuzzy-finder panel that shows up over the prompt input area.
-
 * Add tips/suggestions:
   * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
-    compatibility.claudeSkills if it has a CLAUDE.md or .claude/skills.
-  * This can then send a msg / AskUserQuestion to the user, in either TUI or VSCode.
-* (#agent) Improve Workspace trust msg:
-  * When querying about workspace trust, list any workspace skills auto-allowed by config.
+    compatibility.claudeSkills if there is a CLAUDE.md file or .claude/skills dir.
+    We should include a built-in skill for `/claude-compatibility` that instructs an agent
+    to modify the repo's config file to include the requisite flags based on what Claude
+    stuff it finds.
 
-* (#agent) Merge `ThinkingCommandProvider`'s "Enable/Disable thinking" and "Set thinking effort"
-  command-palette entries into one Off/Low/Medium/High choice, mirroring the VS Code plugin's
-  merged thinking chip/`klorb.setThinking` QuickPick (see
-  docs/adrs/00162-merge-thinking-enabled-and-effort-into-one-picker.md).
+  * (Maybe this could be implemented with a onSessionStart hook, filtered on
+    `workspace_just_bootstrapped=true`? It could emit a msg to the user via stderr channel. The hook
+    could be defined in default-config.json; we would need to set up a means of unpacking hook
+    scripts from klorb.resources and putting them under `$KLORB_DATA_DIR/hooks` or something like
+    that.)
 
 ## VSCode plugin
 
@@ -296,22 +287,6 @@
   is server-authoritative today.
 
 ### Plan 021: Subagents
-
-* (#agent) Subagent `starting_task_id`: add a field to `CreateSubagent` that lets the parent start the
-  subagent off with a specific todo item pre-claimed, instead of the subagent having to call
-  `TodoCreate`/`TodoNext` itself once it starts. Per-agent task labels and `TodoCreate`'s
-  `assign_to` (see docs/specs/chainlink-task-tracking.md's "Task assignment" section) already let a
-  parent delegate a task to a specific subagent id; this would just fold that into `CreateSubagent`
-  itself as a convenience, and incorporate the task summary into the 1st subagent user prompt. If
-  the task was labeled `all`, claim it first by removing the `all` label so no other subagent
-  poaches it while the new subagent is starting up. Somewhere in there (the parent? the child?)
-  should explicitly put the `agent:(id)` label for the subagent onto the task in chainlink.
-
-* (#agent) Notify subagents in a group when a new subagent is created or one is removed from the group,
-  and broadcast active/idle state changes -- the `AgentGroup` interjection (see
-  docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section) is a one-shot
-  snapshot sent only on a subagent's first turn, so it goes stale the moment the group's
-  membership or activity changes afterward.
 
 * Adding a `VisionAssistant` agent role.
   * This is marked as 'phase 6' of the plan. This phase was left incomplete.
