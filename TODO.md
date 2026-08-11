@@ -29,6 +29,8 @@
 
 ### Feature backlog
 
+* (#agent) all the verb-subject tools ("EditFoo", "ReadBar") need aliases for Yoda-ordered grammar ("FooEdit").
+* (#agent) the various "Todo" tools should have aliases for s/Todo/Task/. 
 * (#agent) the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
 
 * use inotify to invalidate agent file reads?
