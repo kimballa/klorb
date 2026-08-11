@@ -31,9 +31,7 @@ logger = logging.getLogger(__name__)
 class TuiSessionWake(Message):
     """Posted by the active session's registered wake handler (see `Session.
     register_wake_handler`) when a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event
-    queues a message while no turn is in flight -- fires on that event's own background
-    thread, so `App.post_message()` is the thread-safe hand-off into the app's own event loop,
-    the same as `TuiHistoryNotice` (`klorb.logging_config`)."""
+    queues a message while no turn is in flight."""
 
 
 class PromptSubmissionMixin(ReplAppBase):
@@ -844,9 +842,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def on_tui_session_wake(self, message: TuiSessionWake) -> None:
         """Handles a `TuiSessionWake`: drains and resubmits whatever an idle-triggered event or
-        `reset_session` just queued (see `Session.deliver_event_message`), the same
-        "resubmit through the front door" step `_finish_turn` runs at the end of an ordinary
-        turn."""
+        `reset_session` just queued (see `Session.deliver_event_message`)."""
         if self._turn_in_flight:
             # A real user submission raced ahead of this wake; its own `_finish_turn` will
             # drain the same queued message once that turn ends.

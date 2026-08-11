@@ -604,10 +604,7 @@ class ReplApp(
 
     def _wire_session_wake_handler(self, session: Session) -> None:
         """Register this app as `session`'s wake handler (see `Session.register_wake_handler`):
-        posts a `TuiSessionWake`, the same thread-safe hand-off `_wire_session_notice_handler`
-        uses, so a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event queuing a message
-        while the app is idle gets drained and resubmitted on the app's own thread via
-        `on_tui_session_wake`, regardless of which thread queued it."""
+        posts a `TuiSessionWake`."""
         def wake() -> None:
             self.post_message(TuiSessionWake())
 

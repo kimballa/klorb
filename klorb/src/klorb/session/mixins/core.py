@@ -257,8 +257,7 @@ class SessionCoreMixin(SessionBase):
         self._wake_handler: Callable[[], None] | None = None
         """The callback `register_wake_handler()` sets, used by `deliver_wake()` to tell an idle
         host "something just got queued, come drain it" (see `SessionTurnsMixin.
-        deliver_event_message`). Identity-scoped like `_notice_handler`, not reset by
-        `reset_session()` -- a reset must not drop the host's registration."""
+        deliver_event_message`)."""
         self._reset_state(scratchpad_path=scratchpad_path)
         self._session_lock: Lockfile | None = None
         """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
@@ -818,16 +817,12 @@ class SessionCoreMixin(SessionBase):
 
     def register_wake_handler(self, handler: Callable[[], None]) -> None:
         """Register `handler` as this session's "come drain the queue" ping (see
-        `deliver_wake`) -- only one is supported at a time; a later call replaces the previous
-        one, the same single-slot contract as `register_notice_handler`. Each host registers
-        this once, at session-init time, before any prompt is submitted."""
+        `deliver_wake`)."""
         self._wake_handler = handler
 
     def deliver_wake(self) -> None:
         """Tell this session's registered wake handler, if any, that a message was just queued
-        while no turn was in flight -- e.g. `deliver_event_message` while idle. The handler
-        itself decides how to drain (`drain_next_turn_text()`) and resubmit through its own
-        front door; a no-op if none is registered, e.g. a `Session` built for a unit test."""
+        while no turn was in flight."""
         if self._wake_handler is not None:
             self._wake_handler()
 
@@ -910,10 +905,7 @@ class SessionCoreMixin(SessionBase):
     def _deliver_or_reset_event(self, output: "HookOutput") -> None:
         """Shared tail for `_dispatch_event_entries`/`fire_workspace_trust_changed_hook`: surface
         `output.log`, then either reset this session in place and deliver `output.message` as
-        the reset conversation's first turn (`output.reset_session`, mirroring
-        `SessionTurnsMixin._fire_agent_turn_end_hook`'s own reset branch), or deliver it as an
-        ordinary event message -- both via `deliver_event_message`, so an idle session enqueues
-        and wakes its registered host either way."""
+        the reset conversation's first turn, or deliver it as an ordinary event message."""
         if output.log is not None:
             self.deliver_notice(output.log)
         if output.reset_session:
@@ -1027,12 +1019,7 @@ class SessionCoreMixin(SessionBase):
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
 
         Before any of that, dispatches `onSessionEnd` (root session only -- see
-        `fire_session_start_hook`) with `reason="SuspendSession"`, for its handlers' side
-        effects (e.g. a bash handler logging that this conversation ended) and `log` only --
-        `HookDispatcher` drops any `reset_session` an `onSessionEnd` handler returns, since a
-        session that's ending never has a live host to deliver a continuation to (see
-        docs/specs/hooks-and-events.md's "Session reset" section), so this never aborts
-        shutdown.
+        `fire_session_start_hook`) with `reason="SuspendSession"`.
 
         Cascade-closes every subagent this session has directly or indirectly created (see
         `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered

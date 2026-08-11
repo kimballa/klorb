@@ -40,13 +40,13 @@
   wake.
 
   `close()`'s own `onSessionEnd`-triggered `reset_session` is not fixed by this mechanism — it's
-  made explicitly unsupported instead. `HookDispatcher._run_chain` now drops `reset_session`
-  from `onSessionEnd`'s aggregate result unconditionally (warned, the same shape as the existing
-  "reset_session without a message" invariant), for both firing reasons
-  (`SuspendSession`/`ResetSession`). `close()` simplifies to dispatching `onSessionEnd` for its
-  handlers' side effects and `log` only, never branching on `reset_session`, and
-  `ChainedHookMessageUndeliverableError`'s docstring narrows to describe only
-  `deliver_event_message`'s no-registered-handler case.
+  made explicitly unsupported instead. `HookDispatcher._run_chain` now only lets `reset_session`
+  survive folding for names in `klorb.hooks.config.RESET_SESSION_CAPABLE_HOOKS`
+  (`onAgentTurnEnd`, `Timer`, `FileSystemModified`, `WorkspaceTrustChanged`), silently dropping
+  it for every other name — `onSessionEnd` included, for both firing reasons — the same way
+  `tool_result` is already ignored outside `onToolResult`. `close()` simplifies to dispatching
+  `onSessionEnd` for its handlers' side effects and `log` only, never branching on
+  `reset_session`.
 * Reasoning: A registered callback mirroring `register_notice_handler` is exactly what TODO.md
   already named as the fix, and the shape generalizes cleanly: `Session` doesn't need to know
   *how* a host resubmits, only that it can be told to. Reusing `drain_next_turn_text()` means
@@ -58,7 +58,6 @@
   exact session is going away (real process/app exit, or `/clear`'s replacement) — waking it
   would mean that host aborting a shutdown it already committed to, a fundamentally different
   (and, for a mid-teardown host, often impossible) operation. No future wake mechanism changes
-  that, so rather than leave `close()` executing a real state wipe and then raising, dropping
-  `reset_session` centrally in the dispatcher means a hook author configuring `onSessionEnd` gets
-  a clear signal (a warning) that the field does nothing there, instead of an exception surfacing
-  from `close()` on every process exit.
+  that. An affirmative allowlist, rather than a special case for `onSessionEnd` alone, also
+  covers the other hooks `reset_session` was never meant for (`onToolUse`, `onSubmitUserPrompt`,
+  ...) with the same one check, instead of `close()` executing a real state wipe and then raising.

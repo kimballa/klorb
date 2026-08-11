@@ -321,10 +321,9 @@ class KlorbAcpAgent(acp.Agent):
     def _wire_session_wake_handler(self, session: Session, acp_session_id: str) -> None:
         """Register this agent as `session`'s wake handler (see `Session.register_wake_handler`):
         a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event that queues a message while
-        no turn is in flight wakes this agent to drain and resubmit it via `TurnBridge.run_turn`,
-        the same front door `prompt()` uses -- pushed to the client as ordinary `session_update`
-        notifications outside of any client-initiated request. `acp_session_id` is threaded
-        through the same way `_wire_session_notice_handler` is, for the same reason."""
+        no turn is in flight wakes this agent to drain and resubmit it via `TurnBridge.run_turn`.
+        `acp_session_id` is threaded through the same way `_wire_session_notice_handler` is, for
+        the same reason."""
         loop = asyncio.get_running_loop()
 
         def wake() -> None:
@@ -335,11 +334,7 @@ class KlorbAcpAgent(acp.Agent):
     async def _drain_and_submit_woken_turn(self, session_id: str) -> None:
         """Handles a wake ping (see `_wire_session_wake_handler`): drains whatever an
         idle-triggered event or `reset_session` just queued and resubmits it via `TurnBridge.
-        run_turn`, mirroring `prompt()`'s own dispatch and error handling. A no-op if a real
-        client prompt already won the race (`_turn_in_flight`), if this session has since been
-        replaced (`session_id` no longer matches `self._acp_session_id`), or if nothing was
-        actually queued by the time this runs -- `deliver_wake()`'s call and this coroutine
-        being scheduled onto the event loop are not atomic."""
+        run_turn`, mirroring `prompt()`'s own dispatch and error handling."""
         if self._turn_in_flight or self._session is None or self._acp_session_id != session_id:
             return
         text = self._session.drain_next_turn_text()

@@ -253,8 +253,8 @@ Three call sites read it — `SessionTurnsMixin._fire_agent_turn_end_hook`
 _dispatch_event_entries`/`fire_workspace_trust_changed_hook` (`klorb/src/klorb/session/mixins/
 core.py`, via the shared `_deliver_or_reset_event` helper) for `Timer`/`FileSystemModified`/
 `WorkspaceTrustChanged`. `onSessionEnd` never does: `HookDispatcher._run_chain` drops
-`reset_session` from that hook's aggregate result unconditionally (see "`onSessionEnd` never
-initiates a reset" below), so `close()` never sees it set.
+`reset_session` from that hook's aggregate result unconditionally (see "`reset_session` is
+opt-in per hook/event name" below), so `close()` never sees it set.
 
 `Session.reset_session()` (`klorb/src/klorb/session/mixins/core.py`) is the shared mechanism
 both call sites invoke. It does not deliver `message` itself — the two callers have different
@@ -304,22 +304,17 @@ Each caller delivers `message` the same way it delivers any other continuation:
 conversation ended); its own `HookOutput` is discarded, the same way every `onSessionEnd` firing
 is non-cancelable (see below).
 
-### `onSessionEnd` never initiates a reset
+### `reset_session` is opt-in per hook/event name
 
-`onSessionEnd` fires in two situations — `close()`'s real shutdown (`reason="SuspendSession"`)
-and the side-effect-only firing above (`reason="ResetSession"`) — and in neither does a
-`reset_session`/`message` in its own aggregate result do anything: `HookDispatcher._run_chain`
-drops `reset_session` unconditionally whenever `name == "onSessionEnd"`, logged at `warning`,
-the same shape as the existing "`reset_session` without a `message`" invariant. `close()` never
-branches on the result at all — it dispatches `onSessionEnd` for handler side effects and `log`
-only, and shutdown always proceeds.
-
-This is a deliberate limitation, not a gap pending a fix: unlike an idle `Timer`/
-`FileSystemModified` event (which has a host that's merely not currently running a turn, still
-reachable, able to start one), `onSessionEnd` fires because a host has already decided this
-exact session is going away — a real process/app exit, or `/clear`'s replacement. There is no
-"come drain the queue" wake-up that helps there; the host would have to abort a shutdown it
-already committed to. See docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md.
+`HookDispatcher._run_chain` only lets `reset_session` survive folding for names in
+`klorb.hooks.config.RESET_SESSION_CAPABLE_HOOKS` (`onAgentTurnEnd`, `Timer`,
+`FileSystemModified`, `WorkspaceTrustChanged`) — every other name's aggregate has it dropped
+silently, the same way `tool_result` is ignored outside `onToolResult`. `onSessionEnd` is
+notably not in that set: `close()` never branches on the result at all, dispatching
+`onSessionEnd` for handler side effects and `log` only, and shutdown always proceeds. This is
+deliberate, not a gap pending a fix — a host that's already decided this exact session is going
+away has no "come drain the queue" wake-up available to it. See
+docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md.
 
 ## Debugging: `HookOutput.log`
 
@@ -363,7 +358,7 @@ hooks are inert in that case rather than erroring.
 | `onProcessStart` | `klorb.cli.main()`, before workspace/session setup | process |
 | `onProcessEnd` | `klorb.cli.main()`, at exit | process |
 | `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | root session |
-| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); its result never initiates a reset -- `HookDispatcher` drops `reset_session`, and `close()` never branches on the result at all (see "`onSessionEnd` never initiates a reset" above) | root session |
+| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); its result never initiates a reset (see "`reset_session` is opt-in per hook/event name" above) | root session |
 | `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
 | `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `_deliver_chained_hook_message`, unless `reset_session` is also set (see "Session reset" above) | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |

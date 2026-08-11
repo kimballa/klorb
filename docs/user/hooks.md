@@ -253,11 +253,8 @@ the cap is hit, further auto-chained turns are refused until a real user-driven 
 count.
 
 An event's `message` (`FileSystemModified`/`Timer`/`WorkspaceTrustChanged`) is queued the same
-way if a turn happens to be running when it fires. If nothing is running, the TUI and the ACP
-server are each woken to drain and resubmit it as a fresh turn instead — so it appears the same
-way either way, just without a pending/italic phase since nothing was queued until it arrived.
-Headless has no such wake-up outside its own single run: a message that arrives once it's
-finished is dropped with an error rather than run invisibly.
+way if a turn happens to be running when it fires. If nothing is running, the client is woken up
+to resubmit it as a fresh turn instead.
 
 ### Session reset
 
@@ -266,13 +263,11 @@ place — same session id, same on-disk directory — seeded with `message` as i
 you'd run "Clear session" yourself except nothing is actually replaced. Config is reinitialized
 from the process config's template, any live subagents are closed first, and the persistent bash
 shell/scratchpad are torn down and recreated fresh. Only `onAgentTurnEnd` and the event hooks
-(`Timer`/`FileSystemModified`/`WorkspaceTrustChanged`) act on it — `onSessionEnd`'s own result
-never does, since a session that's ending never has a live surface to hand a continuation to.
-Requires a non-empty `message`, or the request is dropped with a warning.
+(`Timer`/`FileSystemModified`/`WorkspaceTrustChanged`) act on it. Requires a non-empty
+`message`, or the request is dropped with a warning.
 
 When an `onAgentTurnEnd` handler triggers a reset, `onSessionEnd` is also dispatched first, with
-`reason: "ResetSession"`, purely for side effects (e.g. a handler logging that the conversation
-ended) — the same as every other `onSessionEnd` firing, its own result is discarded.
+`reason: "ResetSession"`.
 
 An `onAgentTurnEnd` reset handler should have a `filter` or be conditional within the handler
 script. The reset conversation's own first turn can end and trigger the hook again, and
