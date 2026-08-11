@@ -6,7 +6,7 @@
 ### Bugs
 
 * the agent's memory topics should be injected into the first user prompt
-* the system prompt should explain the memory system and encourage the agent more forcefully to capture memories, any time it is corrected by the user or learns something important about the project. 
+* the system prompt should explain the memory system and encourage the agent more forcefully to capture memories, any time it is corrected by the user or learns something important about the project.
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
@@ -26,6 +26,26 @@
 ### Feature backlog
 
 * the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
+
+* Build the Wish Factory on top of hooks/events
+  * Hook onSkillActivate for /enable-wish-factory
+    * This puts a sentinel file in docs/plans/wishes/ to enable it (if not already there).
+    * The skill informs the agent to find a wish file in the wishes dir and do it on a branch.
+      When it's done, the agent should:
+      * Commit its work
+      * Push the branch
+      * Open a PR.
+      * The agent should 'git rm' the file on that branch as part of the work, when its done.
+      * The agent should also 'git rm' the wish file on the main branch and commit there.
+  * Hook onProcessEnd to remove the sentinel file.
+  * Hook onAgentTurnEnd
+    * If the sentinel file is missing, do nothing further.
+    * If the working copy is clean, then the agent has finished its work on the wish.
+      ... So find the next wish file and do a reset_session=True kickoff msg to tell it to do that file.
+  * Hook FileChanged event, subscribe to the wishes dir.
+    * If the sentinel file is missing, do nothing further.
+    * If the agent is active mid-turn, do nothing.
+    * Otherwise, pick up the newly-created file and send it as a msg to the agent to build.
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
@@ -324,15 +344,10 @@
 * `onRequestPermission` hook: deferred entirely. A real design needs to reconcile
   `HookOutput.permission` (a bare `Verdict`) against the richer `PermissionDecision`
   (`action`+`scope`, `klorb/src/klorb/session/events.py`) a human/UI answer produces.
-* A genuine persistent daemon mode, so `Timer` events can become real scheduling instead of
-  best-effort (see docs/adrs/00180-timer-events-are-best-effort-not-real-cron.md). A
-  process-lifecycle feature in its own right, not naturally scoped inside a hooks/events plan.
+* A genuine persistent daemon mode, so `Timer` events can run 24/7 (or catch up if
+  downtime skipped the moment)
 * Hot-reloading hook/event config edited mid-process, without a full restart.
 * Surfacing hook activity in the UI — a TUI/VSCode view of which hooks fired, what they returned,
   and whether they errored, rather than only `logger.debug()`/`warning()` output.
+  * Easier MVP might be to surface stderr from the hook script via logger.warning().
 * `HookOutput.interrupt` is not respected / implemented.
-* An explicit turn-interrupt primitive hooks/events can call directly, rather than
-  `HookOutput.interrupt` needing new wiring on top of a turn's own `cancel_event`
-  (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.
-* Third-party domain blocklisting for `WebFetch` as an `onToolUse`/`onToolResult` hook consumer —
-  see "Plan 013: WebFetch" above.
