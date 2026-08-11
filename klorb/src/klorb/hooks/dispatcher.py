@@ -52,10 +52,10 @@ def _fold_permission(accumulated: Verdict | None, latest: Verdict | None) -> Ver
 def _fold(accumulated: HookOutput, latest: HookOutput) -> HookOutput:
     """Layer `latest` (one handler's result) onto `accumulated` (the chain so far): a field
     `latest` explicitly set wins, one it left at its default carries `accumulated`'s value
-    forward. `success` is the strictest outcome seen so far (`False` once any valid handler
-    says `False`); `permission` is the strictest allow/ask/deny verdict any handler that opined
-    expressed (see `_fold_permission`); `interrupt`/`reset_session` are `True` once any valid
-    handler asks for them."""
+    forward -- `log` folds the same way as `message`. `success` is the strictest outcome seen so
+    far (`False` once any valid handler says `False`); `permission` is the strictest allow/ask/
+    deny verdict any handler that opined expressed (see `_fold_permission`); `interrupt`/
+    `reset_session` are `True` once any valid handler asks for them."""
     return HookOutput(
         success=accumulated.success and latest.success,
         tool_args=latest.tool_args if latest.tool_args is not None else accumulated.tool_args,
@@ -63,7 +63,8 @@ def _fold(accumulated: HookOutput, latest: HookOutput) -> HookOutput:
         message=latest.message if latest.message is not None else accumulated.message,
         tool_result=latest.tool_result if latest.tool_result is not None else accumulated.tool_result,
         interrupt=latest.interrupt or accumulated.interrupt,
-        reset_session=latest.reset_session or accumulated.reset_session)
+        reset_session=latest.reset_session or accumulated.reset_session,
+        log=latest.log if latest.log is not None else accumulated.log)
 
 
 class HookDispatcher:
@@ -144,6 +145,8 @@ class HookDispatcher:
             result = self._run_handler(handler, chained_input, session_config)
             if result is None:
                 continue
+            if result.log is not None:
+                logger.info("Hook %r handler %r: %s", name, handler.name, result.log)
             aggregate = _fold(aggregate, result)
             chained_input = chained_input.model_copy(update={
                 "message": result.message if result.message is not None else chained_input.message,

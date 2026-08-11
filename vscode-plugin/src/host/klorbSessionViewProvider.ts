@@ -204,6 +204,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this.postHostMessage({ type: 'queuedMessageSent', text });
   }
 
+  public onNotice(text: string): void {
+    this.postHostMessage({ type: 'notice', text });
+  }
+
   public onSessionReplay(entries: SessionReplayEntry[]): void {
     this.postHostMessage({ type: 'sessionReplay', entries });
   }

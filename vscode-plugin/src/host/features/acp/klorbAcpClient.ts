@@ -110,6 +110,10 @@ export interface SessionUpdateListener {
   /** A previously-queued message was actually delivered (`_klorb/queuedMessageSent`) -- flip
    * its rendering from queued to a regular delivered prompt. */
   onQueuedMessageSent(text: string): void;
+  /** A hook handler's debugging note (`_klorb/notice`, from `HookOutput.log`) -- render it as a
+   * neutral notice in the history scroll, distinct from a `HookOutput.message` (folded back into
+   * the conversation server-side, never reaching the webview as its own update). */
+  onNotice(text: string): void;
   /** A `session/load` just restored a previously saved session's conversation
    * (`_klorb/sessionReplay`) -- replace the history wholesale with `entries`. */
   onSessionReplay(entries: SessionReplayEntry[]): void;
@@ -659,6 +663,15 @@ export class KlorbAcpClient {
       } else {
         this._listener.onQueuedMessageSent(text);
       }
+      return;
+    }
+    if (method === '_klorb/notice') {
+      const text = params.text;
+      if (typeof text !== 'string') {
+        this._log(`klorb: malformed _klorb/notice params: ${JSON.stringify(params)}`);
+        return;
+      }
+      this._listener.onNotice(text);
       return;
     }
     if (method === '_klorb/sessionReplay') {

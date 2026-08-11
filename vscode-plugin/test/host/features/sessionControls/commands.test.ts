@@ -34,6 +34,7 @@ const NOOP_LISTENER: SessionUpdateListener = {
   onTaskListUpdate: () => undefined,
   onMessageQueued: () => undefined,
   onQueuedMessageSent: () => undefined,
+  onNotice: () => undefined,
   onSessionReplay: () => undefined,
   onSessionReset: () => undefined,
 };

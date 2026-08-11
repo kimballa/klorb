@@ -211,6 +211,7 @@ depends on which hook/event fired:
 ```json
 {
   "success": true,
+  "log": "notice just for the user",
   "tool_args": { "command": "ls -la" },
   "permission": "allow",
   "message": "text to inject into the conversation, or feedback on a denial",
@@ -225,6 +226,7 @@ Every field is optional — omit anything you have no opinion on, and it won't a
 | Field | Type | Default | Valid in | Notes |
 | --- | --- | --- | --- | --- |
 | `success` | bool | `true` | `onSubmitUserPrompt`, `onToolUse`, `onActivateSkill`, `onSubagentStart` | Set `false` to veto the moment: block the turn, the tool call, the activation, or skip the subagent turn. |
+| `log` | string \| null | `null` | all | Prints a message in the history |
 | `tool_args` | object \| null | `null` | `onToolUse` | Replaces the tool call's arguments before it runs. |
 | `permission` | `allow`\|`ask`\|`deny` \| null | `null` | `onToolUse`, `onActivateSkill` | |
 | `message` | string \| null | `null` | `onSubmitUserPrompt` (rewrite); `onAgentTurnEnd` / `onSubagentTurnEnd` / events (next prompt); with any `success: false` (denial feedback) | Multi-purpose |

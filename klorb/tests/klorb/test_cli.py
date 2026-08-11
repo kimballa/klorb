@@ -12,6 +12,7 @@ import pytest
 
 from klorb import cli
 from klorb import token_estimate as token_estimate_module
+from klorb.hooks.hook_api import HookOutput
 from klorb.klorb_init import InitError
 from klorb.logging_config import session_log_path
 from klorb.models.model import Model
@@ -77,9 +78,9 @@ def test_main_dispatches_onprocessstart_before_and_onprocessend_after_the_sessio
 
     mock_dispatcher = MagicMock()
 
-    def _dispatch_side_effect(hook_name: str, hook_input: Any, **kwargs: object) -> MagicMock:
+    def _dispatch_side_effect(hook_name: str, hook_input: Any, **kwargs: object) -> HookOutput:
         order.append(hook_name)
-        return MagicMock()
+        return HookOutput()
 
     mock_dispatcher.dispatch.side_effect = _dispatch_side_effect
 
@@ -103,6 +104,7 @@ def test_main_dispatches_onprocessend_even_when_the_turn_raises(
     mock_session = MagicMock()
     mock_session.run_one_shot.side_effect = RuntimeError("boom")
     mock_dispatcher = MagicMock()
+    mock_dispatcher.dispatch.return_value = HookOutput()
     with patch("klorb.cli.HookDispatcher", return_value=mock_dispatcher):
         with patch("klorb.cli.Session", return_value=mock_session):
             with patch("sys.argv", ["klorb", "-m", "hi"]):
@@ -113,6 +115,45 @@ def test_main_dispatches_onprocessend_even_when_the_turn_raises(
     assert hook_names == ["onProcessStart", "onProcessEnd"]
     _, onprocessend_call = mock_dispatcher.dispatch.call_args_list
     assert onprocessend_call.args[1].exit_status == 1
+
+
+def test_main_prints_onprocessstart_and_onprocessend_hook_log(
+    stub_process_config: MagicMock, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`onProcessStart`/`onProcessEnd` fire before/after any `Session` exists, so `main()`
+    prints their `HookOutput.log` directly rather than through `Session.deliver_notice`."""
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    mock_dispatcher = MagicMock()
+
+    def _dispatch_side_effect(hook_name: str, hook_input: Any, **kwargs: object) -> HookOutput:
+        return HookOutput(log=f"{hook_name} note")
+
+    mock_dispatcher.dispatch.side_effect = _dispatch_side_effect
+
+    with patch("klorb.cli.HookDispatcher", return_value=mock_dispatcher):
+        with patch("klorb.cli.Session", return_value=mock_session):
+            with patch("sys.argv", ["klorb", "-m", "hi"]):
+                cli.main()
+
+    out = capsys.readouterr().out
+    assert "onProcessStart note" in out
+    assert "onProcessEnd note" in out
+
+
+def test_main_one_shot_registers_print_as_the_sessions_notice_handler(
+    stub_process_config: MagicMock,
+) -> None:
+    """Headless execution has no TUI/webview to surface a hook's `HookOutput.log` in, so it
+    registers `print` directly on the one-shot `Session` -- see docs/specs/hooks-and-events.md's
+    "Debugging: `HookOutput.log`" section."""
+    mock_session = MagicMock()
+    mock_session.run_one_shot.return_value = "reply"
+    with patch("klorb.cli.Session", return_value=mock_session):
+        with patch("sys.argv", ["klorb", "-m", "hi"]):
+            cli.main()
+
+    mock_session.register_notice_handler.assert_called_once_with(print)
 
 
 def test_main_configures_minimal_logging_immediately_after_load_dotenv() -> None:

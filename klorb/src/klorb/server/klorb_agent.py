@@ -70,6 +70,13 @@ _PromptContentBlock = (
 )
 _McpServerSpec = HttpMcpServer | SseMcpServer | McpServerStdio
 
+_NOTICE_EXT_NOTIFICATION = "klorb/notice"
+"""The `_klorb/notice` extension notification name, with the leading `_` stripped -- see
+`klorb.server.turn_bridge._RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why. Sent
+unconditionally (no capability gate), same as every other `_klorb/*` extension notification.
+Carries one hook firing's `HookOutput.log` -- see `Session.register_notice_handler` and
+docs/specs/hooks-and-events.md's "Debugging: `HookOutput.log`" section."""
+
 
 class KlorbAcpAgent(acp.Agent):
     """Implements the ACP `Agent` protocol on top of a single live `Session`.
@@ -184,6 +191,7 @@ class KlorbAcpAgent(acp.Agent):
             session_config, provider=self._provider, model_registry=self._model_registry,
             process_config=self._process_config, tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles)
+        self._wire_session_notice_handler(session, session.id)
         session.fire_session_start_hook("NewSession")
         self._session = session
         self._acp_session_id = session.id
@@ -292,6 +300,33 @@ class KlorbAcpAgent(acp.Agent):
         if self._client is None:
             raise RuntimeError("KlorbAcpAgent.new_session called before on_connect")
         return self._client
+
+    def _wire_session_notice_handler(self, session: Session, acp_session_id: str) -> None:
+        """Register this agent's ACP client as `session`'s `HookOutput.log` notice sink (see
+        `Session.register_notice_handler`), sending a `_klorb/notice` extension notification.
+        `acp_session_id` is threaded through explicitly rather than read back from
+        `self._acp_session_id`, since both call sites (`new_session`/`load_session`) register
+        the handler before that field is actually assigned. The handler can fire from any
+        thread (a background `FileSystemModified`/`Timer` watcher, or this agent's own event
+        loop thread during a turn), so it hops onto the loop via `asyncio.run_coroutine_threadsafe`
+        rather than awaiting directly."""
+        loop = asyncio.get_running_loop()
+
+        def notify(text: str) -> None:
+            asyncio.run_coroutine_threadsafe(self._send_notice(acp_session_id, text), loop)
+
+        session.register_notice_handler(notify)
+
+    async def _send_notice(self, session_id: str, text: str) -> None:
+        """Send one `_klorb/notice` extension notification, best-effort -- a failure (e.g. the
+        client already disconnected) is logged at `debug` rather than raised, since nothing is
+        awaiting this fire-and-forget call's outcome."""
+        try:
+            await self._require_client().ext_notification(
+                _NOTICE_EXT_NOTIFICATION, {"sessionId": session_id, "text": text})
+        except Exception:
+            logger.debug(
+                "Failed to send _klorb/notice for ACP session %s", session_id, exc_info=True)
 
     async def set_session_mode(
         self, mode_id: str, session_id: str, **kwargs: Any,
@@ -564,6 +599,7 @@ class KlorbAcpAgent(acp.Agent):
         if self._session is not None:
             logger.debug("session/load replacing live ACP session %s", self._acp_session_id)
             self._session.close()
+        self._wire_session_notice_handler(restored, session_id)
         restored.fire_session_start_hook("ResumeSession")
         self._session = restored
         # Use the *client's* session_id (the parameter) as the stable ACP handle, not

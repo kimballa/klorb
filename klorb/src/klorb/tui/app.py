@@ -323,6 +323,7 @@ class ReplApp(
                 effective_subagent_roles=grants.effective_subagent_roles,
             )
         self._session = session
+        self._wire_session_notice_handler(session)
         self._replacing_session = False
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
@@ -589,6 +590,16 @@ class ReplApp(
         self._update_status_bar()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(f"Model set to {name}.", classes="notice"))
+
+    def _wire_session_notice_handler(self, session: Session) -> None:
+        """Register this app as `session`'s `HookOutput.log` notice sink (see
+        `Session.register_notice_handler`): posts a `TuiHistoryNotice`, the same thread-safe
+        hand-off `TuiHistoryLogHandler` uses, so a hook firing on any thread lands in the history
+        scroll via `on_tui_history_notice`/`show_notice`."""
+        def notify(text: str) -> None:
+            self.post_message(TuiHistoryNotice(text, error=False))
+
+        session.register_notice_handler(notify)
 
     def show_notice(self, message: str, *, error: bool = False) -> None:
         """Append `message` to the history scroll as a `.notice` (or `.error` if `error`)

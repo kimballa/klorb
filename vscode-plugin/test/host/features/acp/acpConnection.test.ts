@@ -39,6 +39,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onTaskListUpdate: () => undefined,
     onMessageQueued: (text) => messagesQueued.push(text),
     onQueuedMessageSent: (text) => queuedMessagesSent.push(text),
+    onNotice: (text) => events.push(`notice:${text}`),
     onSessionReplay: (entries) => events.push(`sessionReplay:${entries.length}`),
     onSessionReset: () => events.push('sessionReset'),
   };
@@ -358,6 +359,7 @@ describe('AcpConnection', () => {
       onTaskListUpdate: () => undefined,
       onMessageQueued: () => undefined,
       onQueuedMessageSent: () => undefined,
+      onNotice: () => undefined,
       onSessionReplay: () => undefined,
       onSessionReset: () => undefined,
     };

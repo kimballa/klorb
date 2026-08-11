@@ -160,8 +160,9 @@ extension specifically.
   dispatches `_klorb/usage` to `onUsageUpdate(usedTokens, maxTokens)` (logging and ignoring a
   malformed payload), `_klorb/messageQueued`/`_klorb/queuedMessageSent` to `onMessageQueued(text)`/
   `onQueuedMessageSent(text)` (same malformed-payload handling; see "Queued messages and
-  interrupt polish" above), and logs-and-ignores any other extension notification, per ACP's own
-  extensibility rules. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension
+  interrupt polish" above), `_klorb/notice` to `onNotice(text)` (a hook's `HookOutput.log`; see
+  docs/specs/klorb-server.md's "Extension methods" section), and logs-and-ignores any other
+  extension notification, per ACP's own extensibility rules. `requestPermission()` and the `_klorb/raiseToolCallLimit` extension
   method are covered in "Approval panel" below. `readTextFile()`/`writeTextFile()`/
   `createTerminal()` throw the SDK's
   `RequestError.methodNotFound()` synchronously, matching the client never advertising the
@@ -188,7 +189,9 @@ extension specifically.
   delegate straight to the matching `SessionControls.apply*()` method, set via
   `setSessionControls()` the same way `setConnection()` wires the connection.
   `onMessageQueued`/`onQueuedMessageSent` (see "Queued messages and interrupt polish" above)
-  post the matching `messageQueued`/`queuedMessageSent` host messages verbatim. `_runTurn(text)`
+  post the matching `messageQueued`/`queuedMessageSent` host messages verbatim. `onNotice` posts
+  a `notice` host message verbatim, rendered as a `'notice'`-kind history entry the same way an
+  interrupted/aborted-turn notice is. `_runTurn(text)`
   — invoked for a `submitPrompt` message — posts `turnStarted`, awaits `AcpConnection.prompt
   (text)`, and posts either `turnEnded {stopReason}` or, on rejection, `serverLost {message}`
   when `connection.isReady` is now `false` (the child process itself was lost mid-turn) or

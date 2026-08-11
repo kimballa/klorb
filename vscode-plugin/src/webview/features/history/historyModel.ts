@@ -361,6 +361,8 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
       return appendQueuedMessage(entries, message.text);
     case 'queuedMessageSent':
       return applyQueuedMessageSent(entries, message.text);
+    case 'notice':
+      return [...entries, { kind: 'notice', text: message.text, streaming: false }];
     case 'sessionReset':
       return [];
     case 'toolCallStarted':

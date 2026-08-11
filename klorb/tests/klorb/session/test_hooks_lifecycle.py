@@ -55,6 +55,22 @@ def test_fire_session_start_hook_runs_onsessionstart_for_a_root_session(tmp_path
         session.close()
 
 
+def test_fire_session_start_hook_delivers_a_handlers_log_via_the_notice_handler(
+    tmp_path: Path,
+) -> None:
+    process_config = _process_config(tmp_path, {
+        "onSessionStart": [HookConfig(type="bash", shell='echo \'{"log": "debug note"}\'')],
+    })
+    session = Session(process_config.session, process_config=process_config)
+    notices: list[str] = []
+    session.register_notice_handler(notices.append)
+    try:
+        session.fire_session_start_hook("NewSession")
+        assert notices == ["debug note"]
+    finally:
+        session.close()
+
+
 def test_fire_session_start_hook_is_a_noop_for_a_subagent(tmp_path: Path) -> None:
     marker = tmp_path / "marker"
     process_config = _process_config(tmp_path, {"onSessionStart": [_marker_handler(marker)]})

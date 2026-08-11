@@ -83,6 +83,12 @@ class HookOutput(BaseModel):
     docs/specs/hooks-and-events.md's "Session reset" section. Only `onSessionEnd`/
     `onAgentTurnEnd` act on this. Valid only alongside a non-empty `message`; `HookDispatcher`
     drops an aggregate result that sets this without one, logged at `warning`."""
+    log: str | None = None
+    """A debugging note, distinct from `message`: never sent to the model, only logged at `info`
+    (`HookDispatcher._run_chain`) and surfaced verbatim to whichever UI is attached to the firing
+    session (`Session.deliver_notice`) -- the TUI/webview history as a neutral notice, or stdout
+    in headless execution. See docs/specs/hooks-and-events.md's "Debugging: `HookOutput.log`"
+    section."""
 
 
 class FileSystemUpdate(BaseModel):

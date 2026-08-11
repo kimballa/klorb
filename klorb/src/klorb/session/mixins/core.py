@@ -250,6 +250,10 @@ class SessionCoreMixin(SessionBase):
         by `close()` -- except a conversation-scoped one (e.g. `Scratchpad`, `Bash`'s persistent
         shell), which `_reset_state()` also invokes and re-registers on a `reset_session()` call.
         See `register_teardown`/`close`/`_reset_state`."""
+        self._notice_handler: Callable[[str], None] | None = None
+        """The callback `register_notice_handler()` sets, used by `deliver_notice()` to surface a
+        hook's `HookOutput.log` to whichever UI is attached to this session. Identity-scoped like
+        `_teardown_callbacks`, not reset by `reset_session()`."""
         self._reset_state(scratchpad_path=scratchpad_path)
         self._session_lock: Lockfile | None = None
         """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
@@ -753,6 +757,21 @@ class SessionCoreMixin(SessionBase):
         instance per call can safely re-register every time)."""
         self._teardown_callbacks[subject] = teardown
 
+    def register_notice_handler(self, handler: Callable[[str], None]) -> None:
+        """Register `handler` as this session's sink for `HookOutput.log` (see
+        `deliver_notice`) -- only one is supported at a time; a later call replaces the
+        previous one, e.g. `klorb.tui.ReplApp` re-registering after replacing its own
+        `_session`."""
+        self._notice_handler = handler
+
+    def deliver_notice(self, text: str) -> None:
+        """Surface `text` (a hook's `HookOutput.log`) to this session's registered notice
+        handler, if any -- a no-op otherwise, e.g. a `Session` built for a unit test. Unlike
+        `deliver_event_message`, never touches the conversation: `text` is meant to be read, not
+        sent to the model."""
+        if self._notice_handler is not None:
+            self._notice_handler(text)
+
     def fire_session_start_hook(
         self, reason: str, *, workspace_just_bootstrapped: bool = False,
     ) -> None:
@@ -827,6 +846,8 @@ class SessionCoreMixin(SessionBase):
         output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,
         ).dispatch_event(event_name, entries, event_input, session_config=self.config)
+        if output.log is not None:
+            self.deliver_notice(output.log)
         if output.message is not None:
             cast("Session", self).deliver_event_message(output.message)
 
@@ -854,6 +875,8 @@ class SessionCoreMixin(SessionBase):
                 root_session_id=self.root_id,
                 is_agent_active=self.current_turn_handlers() is not None),
             session_config=self.config)
+        if output.log is not None:
+            self.deliver_notice(output.log)
         if output.message is not None:
             cast("Session", self).deliver_event_message(output.message)
 
@@ -882,7 +905,7 @@ class SessionCoreMixin(SessionBase):
         from klorb.hooks.hook_api import HookInput, HookOutput
         if self._process_config is None:
             return HookOutput()
-        return HookDispatcher(
+        output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,
         ).dispatch(
             hook_name,
@@ -891,6 +914,9 @@ class SessionCoreMixin(SessionBase):
                 role=self.config.role_name, session_id=self.id, root_session_id=self.root_id,
                 **hook_input_kwargs),
             session_config=self.config)
+        if output.log is not None:
+            self.deliver_notice(output.log)
+        return output
 
     def fire_subagent_start_hook(self, message: str) -> str | None:
         """Dispatch `onSubagentStart` for this subagent session, about to run its first (or

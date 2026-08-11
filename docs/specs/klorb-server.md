@@ -219,6 +219,14 @@ client that doesn't understand it):
   rendering from queued to delivered — correlated with its `_klorb/messageQueued` counterpart by
   order + text, matching the single-queue reality (`Session` never has more than one message
   queued ahead of another with a stable id to match against).
+* **`_klorb/notice`** — a hook handler's own debugging note (`HookOutput.log`, see
+  docs/specs/hooks-and-events.md's "Debugging: `HookOutput.log`" section), sent whenever one
+  fires, whether or not a turn is in flight. Params: `{sessionId: string, text: string}`. Unlike
+  every other extension notification, this one isn't sent through `TurnBridge`'s per-turn ordered
+  queue — `KlorbAcpAgent` registers a `Session.register_notice_handler()` callback once per
+  session (`new_session`/`load_session`) that sends it directly, since the firing hook may have
+  nothing to do with an in-flight turn (`onSessionStart`, a `FileSystemModified`/`Timer` event).
+  The client renders it as a neutral history notice.
 
 ## Session modes
 

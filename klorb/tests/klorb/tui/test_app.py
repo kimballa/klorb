@@ -21,6 +21,7 @@ from tui.conftest import (
     _session,
     _session_with_tools,
     _tool_call_reply,
+    _wait_until,
 )
 
 from klorb import logging_config
@@ -63,6 +64,19 @@ async def test_selection_safe_screen_drops_hit_on_detached_widget() -> None:
         with patch.object(
                 Screen, "get_widget_and_offset_at", return_value=(attached, Offset(1, 2))):
             assert screen.get_widget_and_offset_at(3, 4) == (attached, Offset(1, 2))
+
+
+async def test_session_notice_handler_mounts_a_history_notice() -> None:
+    """`ReplApp.__init__` registers `_wire_session_notice_handler` on its `Session` -- a hook's
+    `HookOutput.log`, delivered via `Session.deliver_notice`, should reach the history scroll as
+    a neutral notice, the same `TuiHistoryNotice` hand-off `TuiHistoryLogHandler` uses for a
+    `WARNING`+ log record."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider))
+
+    async with app.run_test() as pilot:
+        app._session.deliver_notice("debug note")
+        await _wait_until(pilot, lambda: "debug note" in _notice_texts(app))
 
 
 async def test_submitting_a_prompt_shows_it_and_the_response() -> None:

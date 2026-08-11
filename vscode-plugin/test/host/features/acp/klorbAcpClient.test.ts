@@ -28,6 +28,7 @@ function makeListener(): {
   taskListUpdates: TaskListUpdateMessage[];
   messagesQueued: string[];
   queuedMessagesSent: string[];
+  notices: string[];
   sessionReplays: SessionReplayEntry[][];
 } {
   const agentText: string[] = [];
@@ -43,6 +44,7 @@ function makeListener(): {
   const taskListUpdates: TaskListUpdateMessage[] = [];
   const messagesQueued: string[] = [];
   const queuedMessagesSent: string[] = [];
+  const notices: string[] = [];
   const sessionReplays: SessionReplayEntry[][] = [];
   return {
     agentText,
@@ -58,6 +60,7 @@ function makeListener(): {
     taskListUpdates,
     messagesQueued,
     queuedMessagesSent,
+    notices,
     sessionReplays,
     listener: {
       onAgentText: (text: string) => agentText.push(text),
@@ -75,6 +78,7 @@ function makeListener(): {
       onTaskListUpdate: (message: TaskListUpdateMessage) => taskListUpdates.push(message),
       onMessageQueued: (text: string) => messagesQueued.push(text),
       onQueuedMessageSent: (text: string) => queuedMessagesSent.push(text),
+      onNotice: (text: string) => notices.push(text),
       onSessionReplay: (entries: SessionReplayEntry[]) => sessionReplays.push(entries),
       onSessionReset: () => undefined,
     },
@@ -332,6 +336,26 @@ describe('KlorbAcpClient', () => {
       await client.extNotification('_klorb/queuedMessageSent', { sessionId: 's1', text: 'hi' });
 
       expect(queuedMessagesSent).toEqual(['hi']);
+    });
+
+    it('dispatches _klorb/notice to onNotice', async () => {
+      const { listener, notices } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, () => undefined);
+
+      await client.extNotification('_klorb/notice', { sessionId: 's1', text: 'hook fired' });
+
+      expect(notices).toEqual(['hook fired']);
+    });
+
+    it('logs and ignores malformed _klorb/notice params', async () => {
+      const logs: string[] = [];
+      const { listener, notices } = makeListener();
+      const client = new KlorbAcpClient(listener, RequestError, (msg: string) => logs.push(msg));
+
+      await client.extNotification('_klorb/notice', { sessionId: 's1', text: 42 });
+
+      expect(notices).toEqual([]);
+      expect(logs.some((line) => line.includes('malformed'))).toBe(true);
     });
 
     it('dispatches _klorb/sessionReplay to onSessionReplay', async () => {

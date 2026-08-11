@@ -26,6 +26,12 @@
 
 * the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
 
+* use inotify to invalidate agent file reads?
+  * We can use inotify to know when a file was edited outside an EditFile command. That can be used
+    to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
+    to either do a systeminterjection, or remove stale ReadFile tool results from context, or even
+    rewrite the context history so the next time it is magically updated...
+
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 
 * Allow a skill to grant permission to perform various commands that may not otherwise be available.

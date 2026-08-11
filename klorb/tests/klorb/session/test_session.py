@@ -2129,6 +2129,36 @@ def test_reregistering_teardown_overwrites_not_accumulates() -> None:
     assert calls == ["second"]
 
 
+def test_deliver_notice_calls_the_registered_handler() -> None:
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=MagicMock())
+    notices: list[str] = []
+
+    session.register_notice_handler(notices.append)
+    session.deliver_notice("hook fired")
+
+    assert notices == ["hook fired"]
+
+
+def test_deliver_notice_is_a_noop_without_a_registered_handler() -> None:
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=MagicMock())
+
+    session.deliver_notice("nobody listening")
+
+
+def test_reregistering_notice_handler_overwrites_not_accumulates() -> None:
+    config = SessionConfig(model="some/model")
+    session = Session(config, provider=MagicMock())
+    calls: list[str] = []
+
+    session.register_notice_handler(lambda text: calls.append(f"first:{text}"))
+    session.register_notice_handler(lambda text: calls.append(f"second:{text}"))
+    session.deliver_notice("hi")
+
+    assert calls == ["second:hi"]
+
+
 def test_close_cascades_into_a_live_subagent_and_relays_its_note() -> None:
     parent = Session(SessionConfig(), provider=MagicMock())
     child = Session(SessionConfig(role_name="explorer"), provider=MagicMock(), parent=parent)

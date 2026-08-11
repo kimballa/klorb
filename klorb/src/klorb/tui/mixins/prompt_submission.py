@@ -308,6 +308,7 @@ class PromptSubmissionMixin(ReplAppBase):
             tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles,
         )
+        self._wire_session_notice_handler(self._session)
 
         if self._session_log_enabled:
             log_path = session_log_path(self._session.id)

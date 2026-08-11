@@ -89,7 +89,8 @@ way, keyed by the event name.
   `workspace_trusted`/`workspace_just_bootstrapped` (set only for `onSessionStart`).
 * **`HookOutput`** — `success` (default `True`), `tool_args`, `permission` (a bare `Verdict`),
   `message`, `tool_result` (`onToolResult` only — replaces `response_body`/`error_message` in the
-  envelope), `interrupt` (default `False`), `reset_session` (default `False`).
+  envelope), `interrupt` (default `False`), `reset_session` (default `False`), `log` (a debugging
+  note — see "Debugging: `HookOutput.log`" below).
 * **`EventInput(HookInput)`** — adds `fs_updates: list[FileSystemUpdate] | None`, each a
   `{event: "created"|"deleted"|"modified", path}` pair, populated for a `FileSystemModified`
   firing, and `is_agent_active: bool | None`, whether the root session's agent is mid-turn at the
@@ -274,6 +275,35 @@ need this extra dispatch, since `onSessionEnd` is already what fired there.
 Works identically in the TUI, ACP, and headless — there is no host-specific wiring left to
 differ.
 
+## Debugging: `HookOutput.log`
+
+`HookOutput.log` is a handler's own debugging note — distinct from `message`, which the
+dispatcher chains into the conversation. `HookDispatcher._run_chain` logs each handler's
+non-`None` `log` at `info`, before folding: `Hook <hook-name> handler '<name>': <log-string>`.
+It's folded across a chain the same way `message` is (the latest handler to set it wins).
+
+Separately, `Session.deliver_notice(text)` surfaces the aggregate's `log` verbatim (no `Hook ...`
+prefix) to whichever UI is attached to the firing session, via a callback registered with
+`Session.register_notice_handler()` — a no-op if none is registered (most unit tests). Every
+call site that dispatches a hook/event (`_dispatch_hook`, `_dispatch_event_entries`,
+`fire_workspace_trust_changed_hook`, all in `klorb/src/klorb/session/mixins/core.py`) calls
+`deliver_notice()` when the result carries a `log`.
+
+Each host registers its own handler once a `Session` exists, replacing any previous
+registration on session replacement (`/clear`, `session/new`, `session/load`):
+
+* **TUI** (`klorb.tui.ReplApp._wire_session_notice_handler`) posts a `TuiHistoryNotice` — the
+  same thread-safe hand-off `TuiHistoryLogHandler` uses (see docs/specs/paths-and-logging.md) —
+  mounted into the history scroll as a neutral (non-error) notice.
+* **ACP** (`KlorbAcpAgent._wire_session_notice_handler`) sends a `_klorb/notice` extension
+  notification (see docs/specs/klorb-server.md's "Extension methods" section), hopping onto the
+  agent's event loop via `asyncio.run_coroutine_threadsafe` since the firing hook may run on a
+  background `FileSystemModified`/`Timer` watcher thread. The VS Code webview renders it as a
+  `'notice'`-kind history entry, the same rendering an interrupted/aborted-turn notice uses.
+* **Headless** (`klorb.cli.main()`) registers `print` directly on the one-shot `Session`.
+  `onProcessStart`/`onProcessEnd` fire before any `Session` exists, so `main()` prints their
+  `HookOutput.log` directly instead.
+
 ## Available hooks
 
 `Session._dispatch_hook` (`klorb/src/klorb/session/mixins/core.py`) is the shared building block
@@ -394,8 +424,9 @@ startup.
 * **A genuine persistent daemon mode**, so `Timer` can become real scheduling instead of
   best-effort.
 * **Hot-reloading hook/event config** edited mid-process, without a full restart.
-* **Surfacing hook activity in the UI** — a TUI/VSCode view of which hooks fired, what they
-  returned, and whether they errored, beyond `logger.debug()`/`warning()` output.
+* **An automatic audit view of hook activity** — a TUI/VSCode view of every hook firing, its
+  full `HookOutput`, and whether it errored, without a handler opting in via `HookOutput.log`
+  (see "Debugging: `HookOutput.log`" above) or `logger.debug()`/`warning()` output.
 * **An explicit turn-interrupt primitive** hooks/events can call directly, rather than
   `HookOutput.interrupt` needing new wiring on top of a turn's `cancel_event`
   (`klorb.session.events.TurnEventHandlers`) each time a caller wants it.

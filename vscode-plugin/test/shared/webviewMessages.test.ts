@@ -18,6 +18,7 @@ describe('parseHostMessage', () => {
       { type: 'thoughtChunk', text: 'hmm' },
       { type: 'turnEnded', stopReason: 'end_turn' },
       { type: 'turnError', message: 'boom' },
+      { type: 'notice', text: 'hook fired' },
       { type: 'sessionReset' },
       {
         type: 'toolCallStarted',
@@ -243,6 +244,7 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage({ type: 'reply', text: 'legacy shape' })).toBeUndefined();
     expect(parseHostMessage({ type: 'agentChunk' })).toBeUndefined();
     expect(parseHostMessage({ type: 'agentChunk', text: 42 })).toBeUndefined();
+    expect(parseHostMessage({ type: 'notice', text: 42 })).toBeUndefined();
     expect(parseHostMessage({ type: 'turnEnded' })).toBeUndefined();
     expect(parseHostMessage({ type: 'turnError', message: null })).toBeUndefined();
     expect(parseHostMessage({ type: 'submitPrompt', text: 'wrong direction' })).toBeUndefined();

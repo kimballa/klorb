@@ -71,6 +71,14 @@ export interface SessionResetMessage {
   type: 'sessionReset';
 }
 
+/** A hook handler's debugging note (`HookOutput.log`, `_klorb/notice`) -- neutral text to
+ * surface in the history scroll, distinct from a `HookOutput.message` (which the server folds
+ * back into the conversation itself, never reaching the webview as its own message). */
+export interface NoticeMessage {
+  type: 'notice';
+  text: string;
+}
+
 /** One file location a tool call names, e.g. the file a read/edit call touched. */
 export interface ToolCallLocation {
   path: string;
@@ -526,6 +534,7 @@ export type HostMessage =
   | ServerLostMessage
   | MessageQueuedMessage
   | QueuedMessageSentMessage
+  | NoticeMessage
   | SessionResetMessage
   | ToolCallStartedMessage
   | ToolCallUpdatedMessage
@@ -756,7 +765,10 @@ interface FieldSpec {
 }
 
 const HOST_FIELD_SPECS: readonly FieldSpec[] = [
-  { field: 'text', types: ['agentChunk', 'thoughtChunk', 'messageQueued', 'queuedMessageSent'] },
+  {
+    field: 'text',
+    types: ['agentChunk', 'thoughtChunk', 'messageQueued', 'queuedMessageSent', 'notice'],
+  },
   { field: 'stopReason', types: ['turnEnded'] },
   { field: 'message', types: ['turnError', 'serverLost'] },
 ];

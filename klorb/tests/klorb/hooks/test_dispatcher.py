@@ -118,6 +118,31 @@ def test_dispatch_runs_a_chat_handler_as_its_own_configured_prompt(tmp_path: Pat
     assert result.message == "keep going"
 
 
+def test_dispatch_logs_a_handlers_log_at_info(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    process_config = _process_config(tmp_path, {
+        "onProcessStart": [
+            HookConfig(name="my-handler", type="bash", shell='echo \'{"log": "debug note"}\''),
+        ],
+    })
+    with caplog.at_level("INFO"):
+        result = HookDispatcher(process_config).dispatch("onProcessStart", _hook_input(tmp_path))
+    assert result.log == "debug note"
+    assert "Hook 'onProcessStart' handler 'my-handler': debug note" in caplog.text
+
+
+def test_dispatch_folds_log_as_latest_handler_wins(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onProcessStart": [
+            HookConfig(type="bash", shell='echo \'{"log": "first"}\''),
+            HookConfig(type="bash", shell='echo \'{"message": "no opinion on log"}\''),
+        ],
+    })
+    result = HookDispatcher(process_config).dispatch("onProcessStart", _hook_input(tmp_path))
+    assert result.log == "first"
+
+
 def test_dispatch_folds_success_as_strictest_outcome(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onRequestPermission": [

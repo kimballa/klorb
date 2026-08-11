@@ -749,9 +749,11 @@ def main() -> None:
     provider = OpenRouterApiProvider(base_url=process_config.openrouter_base_url)
     model_registry = ModelRegistry()
     hook_dispatcher = HookDispatcher(process_config, api_provider=provider, model_registry=model_registry)
-    hook_dispatcher.dispatch(
+    process_start_output = hook_dispatcher.dispatch(
         "onProcessStart",
         HookInput(hook="onProcessStart", reason="Startup", workspace_root=str(workspace.path)))
+    if process_start_output.log is not None:
+        print(process_start_output.log)
 
     try:
         # Gather CLI flag outcomes that impact the SessionConfig into a dict. We save this
@@ -805,6 +807,7 @@ def main() -> None:
             )
         else:
             configure_tiktoken_cache_env()
+            session.register_notice_handler(print)
             logger.info("Sending prompt to model=%s", session.config.model)
             session.fire_session_start_hook("NewSession")
             streamed_any = False
@@ -823,11 +826,13 @@ def main() -> None:
                 print(response)
             session.close()
     finally:
-        hook_dispatcher.dispatch(
+        process_end_output = hook_dispatcher.dispatch(
             "onProcessEnd",
             HookInput(
                 hook="onProcessEnd", reason="Shutdown", workspace_root=str(workspace.path),
                 exit_status=_current_exit_status()))
+        if process_end_output.log is not None:
+            print(process_end_output.log)
 
 
 if __name__ == "__main__":

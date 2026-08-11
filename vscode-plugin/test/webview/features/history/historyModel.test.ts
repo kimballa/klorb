@@ -477,6 +477,11 @@ describe('queued messages', () => {
     entries = applyHostMessage(entries, { type: 'queuedMessageSent', text: 'hi' });
     expect(entries).toEqual([{ kind: 'prompt', text: 'hi', streaming: false }]);
   });
+
+  it('applyHostMessage appends a notice entry for a hook log notification', () => {
+    const entries = applyHostMessage([], { type: 'notice', text: 'hook fired' });
+    expect(entries).toEqual([{ kind: 'notice', text: 'hook fired', streaming: false }]);
+  });
 });
 
 describe('applyInterruptedMarker', () => {
