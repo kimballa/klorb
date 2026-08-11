@@ -14,6 +14,8 @@
 
 klorb is your friendly neighborhood agent.
 
+![Klorb TUI screenshot](docs/assets/klorb-tui.png)
+
 ## Setup
 
 This repository is organized as a collection of subprojects (see `AGENTS.md`); each has its
