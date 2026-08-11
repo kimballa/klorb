@@ -143,7 +143,7 @@ def test_dispatch_fs_modified_event_delivers_the_actions_message(tmp_path: Path)
     session = Session(process_config.session, provider=provider, process_config=process_config)
     try:
         session._dispatch_fs_modified_event(
-            [entry], EventInput(hook="FileSystemModified", workspaceRoot=str(tmp_path)))
+            [entry], EventInput(hook="FileSystemModified", workspace_root=str(tmp_path)))
     finally:
         session.close()
 

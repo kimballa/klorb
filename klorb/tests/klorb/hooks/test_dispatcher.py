@@ -37,7 +37,7 @@ def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) ->
 
 def _hook_input(workspace_root: Path, **overrides: Any) -> HookInput:
     defaults: dict[str, Any] = {
-        "hook": "onProcessStart", "reason": "Startup", "workspaceRoot": str(workspace_root),
+        "hook": "onProcessStart", "reason": "Startup", "workspace_root": str(workspace_root),
     }
     defaults.update(overrides)
     return HookInput(**defaults)
@@ -219,10 +219,10 @@ def test_dispatch_filters_ontooluse_on_tool_name_not_event(tmp_path: Path) -> No
         ],
     })
     matching = HookDispatcher(process_config).dispatch(
-        "onToolUse", HookInput(hook="onToolUse", workspaceRoot=str(tmp_path), tool_name="Bash"))
+        "onToolUse", HookInput(hook="onToolUse", workspace_root=str(tmp_path), tool_name="Bash"))
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch(
-        "onToolUse", HookInput(hook="onToolUse", workspaceRoot=str(tmp_path), tool_name="ReadFile"))
+        "onToolUse", HookInput(hook="onToolUse", workspace_root=str(tmp_path), tool_name="ReadFile"))
     assert non_matching.message is None
 
 
@@ -236,11 +236,11 @@ def test_dispatch_filters_onactivateskill_on_skill_name_not_event(tmp_path: Path
     })
     matching = HookDispatcher(process_config).dispatch(
         "onActivateSkill",
-        HookInput(hook="onActivateSkill", workspaceRoot=str(tmp_path), skill_name="do-thing"))
+        HookInput(hook="onActivateSkill", workspace_root=str(tmp_path), skill_name="do-thing"))
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch(
         "onActivateSkill",
-        HookInput(hook="onActivateSkill", workspaceRoot=str(tmp_path), skill_name="other-skill"))
+        HookInput(hook="onActivateSkill", workspace_root=str(tmp_path), skill_name="other-skill"))
     assert non_matching.message is None
 
 
@@ -254,11 +254,11 @@ def test_dispatch_filters_onsubmituserprompt_on_message_not_event(tmp_path: Path
     })
     matching = HookDispatcher(process_config).dispatch(
         "onSubmitUserPrompt",
-        HookInput(hook="onSubmitUserPrompt", workspaceRoot=str(tmp_path), message="please deploy this"))
+        HookInput(hook="onSubmitUserPrompt", workspace_root=str(tmp_path), message="please deploy this"))
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch(
         "onSubmitUserPrompt",
-        HookInput(hook="onSubmitUserPrompt", workspaceRoot=str(tmp_path), message="please build this"))
+        HookInput(hook="onSubmitUserPrompt", workspace_root=str(tmp_path), message="please build this"))
     assert non_matching.message is None
 
 
@@ -285,7 +285,7 @@ def test_dispatch_event_with_no_entries_returns_default_success(tmp_path: Path) 
     process_config = _process_config(tmp_path, {})
     result = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", [],
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
     assert result.success is True
     assert result.message is None
 
@@ -304,7 +304,7 @@ def test_dispatch_event_runs_each_entrys_own_action_as_a_chain(tmp_path: Path) -
     ]
     result = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
     assert result.message == "first+second"
 
 
@@ -318,9 +318,9 @@ def test_dispatch_event_filters_on_the_event_field(tmp_path: Path) -> None:
     ]
     matching = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspaceRoot=str(tmp_path), reason="AcpTrustWorkspace"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="AcpTrustWorkspace"))
     assert non_matching.message is None

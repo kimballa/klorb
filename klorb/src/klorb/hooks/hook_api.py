@@ -6,7 +6,7 @@ occurrence that triggered the handler, `HookOutput` describes what the handler d
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from klorb.permissions.table import Verdict
 
@@ -14,12 +14,10 @@ from klorb.permissions.table import Verdict
 class HookInput(BaseModel):
     """What a hook handler receives describing the lifecycle moment that triggered it."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
     hook: str
     name: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
-    workspace_root: str = Field(alias="workspaceRoot")
+    workspace_root: str
     reason: str | None = None
     """Why `hook` fired, for a hook whose `HOOK_FILTER_SUBJECT_FIELDS` subject is `"reason"`
     (`onProcessStart`/`onProcessEnd`/`onSessionStart`/`onSessionEnd`/`onRequestPermission`) --
@@ -55,10 +53,10 @@ class HookInput(BaseModel):
     exit_status: int | None = None
     """The klorb process's own exit status, set only for `onProcessEnd`. Read-only: a handler's
     `HookOutput` cannot change it."""
-    workspace_trusted: bool | None = Field(default=None, alias="workspaceTrusted")
+    workspace_trusted: bool | None = None
     """Whether the workspace is trusted, as of `onSessionStart` firing -- always set for that
     hook (`None` for every other hook), once trust is settled for this session's startup."""
-    workspace_just_bootstrapped: bool | None = Field(default=None, alias="workspaceJustBootstrapped")
+    workspace_just_bootstrapped: bool | None = None
     """Whether this `onSessionStart` firing is what triggered a first-time workspace trust
     decision -- `True` only for a brand-new, never-before-seen workspace; `False` for every
     subsequent `onSessionStart` against an already-registered workspace. `None` for every hook
@@ -96,6 +94,10 @@ class FileSystemUpdate(BaseModel):
 
 class EventInput(HookInput):
     """What an event handler receives — the same shape as `HookInput`, plus `fs_updates` for a
-    `FileSystemModified` event's debounced batch of changes."""
+    `FileSystemModified` event's debounced batch of changes and `is_agent_active` for every
+    event."""
 
     fs_updates: list[FileSystemUpdate] | None = None
+    is_agent_active: bool | None = None
+    """Whether the root session's agent is mid-turn at the moment this event fires -- set for
+    every event."""

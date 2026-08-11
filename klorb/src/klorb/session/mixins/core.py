@@ -823,6 +823,7 @@ class SessionCoreMixin(SessionBase):
         conversation."""
         from klorb.hooks.dispatcher import HookDispatcher
         assert self._process_config is not None
+        event_input.is_agent_active = self.current_turn_handlers() is not None
         output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,
         ).dispatch_event(event_name, entries, event_input, session_config=self.config)
@@ -848,9 +849,10 @@ class SessionCoreMixin(SessionBase):
         ).dispatch_event(
             "WorkspaceTrustChanged", entries,
             EventInput(
-                hook="WorkspaceTrustChanged", workspaceRoot=str(self.config.workspace.path),
+                hook="WorkspaceTrustChanged", workspace_root=str(self.config.workspace.path),
                 reason=reason, role=self.config.role_name, session_id=self.id,
-                root_session_id=self.root_id),
+                root_session_id=self.root_id,
+                is_agent_active=self.current_turn_handlers() is not None),
             session_config=self.config)
         if output.message is not None:
             cast("Session", self).deliver_event_message(output.message)
@@ -862,13 +864,13 @@ class SessionCoreMixin(SessionBase):
         `hook_name` -- `onSessionStart`/`onSessionEnd`'s own shape, on top of the shared
         `_dispatch_hook` every other lifecycle/turn/tool hook point uses."""
         return self._dispatch_hook(
-            hook_name, reason=reason, workspaceTrusted=self.config.workspace.trusted,
-            workspaceJustBootstrapped=workspace_just_bootstrapped)
+            hook_name, reason=reason, workspace_trusted=self.config.workspace.trusted,
+            workspace_just_bootstrapped=workspace_just_bootstrapped)
 
     def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
         """Dispatch `hook_name` against this session's own `ProcessConfig`/`SessionConfig`,
         tagging the built `HookInput` with this session's `workspace`/`role`/`id` and passing
-        through `hook_input_kwargs` (e.g. `reason=`, `message=`, `toolName=`) -- the shared
+        through `hook_input_kwargs` (e.g. `reason=`, `message=`, `tool_name=`) -- the shared
         building block every hook-firing call site in `klorb.session.mixins` (turn dispatch,
         tool execution, `_dispatch_lifecycle_hook` above) and `klorb.agents.policy` (subagent
         lifecycle) goes through. Returns a default (`success=True`, no message) `HookOutput` if
@@ -885,7 +887,7 @@ class SessionCoreMixin(SessionBase):
         ).dispatch(
             hook_name,
             HookInput(
-                hook=hook_name, workspaceRoot=str(self.config.workspace.path),
+                hook=hook_name, workspace_root=str(self.config.workspace.path),
                 role=self.config.role_name, session_id=self.id, root_session_id=self.root_id,
                 **hook_input_kwargs),
             session_config=self.config)

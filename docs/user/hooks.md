@@ -154,7 +154,7 @@ neither receives nor produces this JSON — it just contributes its configured `
   "hook": "onToolUse",
   "name": "my-handler-name",
   "args": { "shell": "..." },
-  "workspaceRoot": "/path/to/workspace",
+  "workspace_root": "/path/to/workspace",
 
   "reason": "NewSession",
   "message": "the user prompt, agent reply, or subagent output, depending on the hook",
@@ -169,16 +169,17 @@ neither receives nor produces this JSON — it just contributes its configured `
   "session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
   "root_session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
   "exit_status": 0,
-  "workspaceTrusted": true,
-  "workspaceJustBootstrapped": false,
+  "workspace_trusted": true,
+  "workspace_just_bootstrapped": false,
 
   "fs_updates": [
     { "event": "modified", "path": "/path/to/workspace/src/foo.py" }
-  ]
+  ],
+  "is_agent_active": false
 }
 ```
 
-Every field is optional except `hook` and `workspaceRoot` — which fields are actually populated
+Every field is optional except `hook` and `workspace_root` — which fields are actually populated
 depends on which hook/event fired:
 
 | Field | Type | Populated for | Notes |
@@ -186,7 +187,7 @@ depends on which hook/event fired:
 | `hook` | string | Always | The hook or event name that fired (`onToolUse`, `FileSystemModified`, ...). |
 | `name` | string \| null | Always | The `name` you gave this handler in its config entry, or `null` if you didn't set one. |
 | `args` | object | Always | The firing handler's own configured payload: `{"shell": ...}`, `{"command": [...]}`, or `{"prompt": ...}`, whichever it declared. |
-| `workspaceRoot` | string | Always | The workspace's absolute path. |
+| `workspace_root` | string | Always | The workspace's absolute path. |
 | `reason` | string \| null | `onProcessStart`/`onProcessEnd`, `onSessionStart`/`onSessionEnd`, `WorkspaceTrustChanged` | Why the hook fired: `Startup`/`Shutdown` (process start/end), `NewSession`/`ResumeSession`/`SuspendSession` (session start/end), `ResetSession` (see "Session reset" below), or `TrustCommand`/`AcpTrustWorkspace` (`WorkspaceTrustChanged`). |
 | `message` | string \| null | `onSubmitUserPrompt`, `onAgentTurnEnd`, `onSubagentStart`, `onSubagentTurnEnd` | The user prompt, the agent's reply, or a subagent's prompt/output, depending on which hook fired. |
 | `tool_name` | string \| null | `onToolUse`, `onToolResult` | Which tool. |
@@ -200,9 +201,10 @@ depends on which hook/event fired:
 | `session_id` | string \| null | Every hook once a session exists | The id of the session (root or subagent) that fired this hook; `null` for `onProcessStart`/`onProcessEnd`, since no session exists yet. |
 | `root_session_id` | string \| null | Every hook once a session exists | The id of the root session this firing's session descends from — identical to `session_id` for the root session itself. |
 | `exit_status` | int \| null | `onProcessEnd` only | The klorb process's own exit status. Read-only — a handler's `HookOutput` can't change it. |
-| `workspaceTrusted` | bool \| null | `onSessionStart` only | Whether the workspace is trusted. |
-| `workspaceJustBootstrapped` | bool \| null | `onSessionStart` only | Whether this firing is what triggered a first-time trust decision. |
+| `workspace_trusted` | bool \| null | `onSessionStart` only | Whether the workspace is trusted. |
+| `workspace_just_bootstrapped` | bool \| null | `onSessionStart` only | Whether this firing is what triggered a first-time trust decision. |
 | `fs_updates` | array \| null | `FileSystemModified` event only | A debounced batch of `{"event": "created"\|"deleted"\|"modified", "path": "..."}` entries. |
+| `is_agent_active` | bool \| null | Every event | Whether the root session's agent is mid-turn at the moment the event fired. |
 
 ### `HookOutput`
 

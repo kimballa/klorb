@@ -116,5 +116,5 @@ class TimerScheduler:
         if self._closing_event.is_set():
             return
         self._dispatch(
-            [entry], EventInput(hook="Timer", workspaceRoot=str(self._workspace_root)))
+            [entry], EventInput(hook="Timer", workspace_root=str(self._workspace_root)))
         self._schedule_next(index, entry)

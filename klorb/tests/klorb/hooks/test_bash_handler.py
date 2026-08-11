@@ -41,7 +41,7 @@ def _session_config(workspace_root: Path, **overrides: Any) -> SessionConfig:
 
 def _hook_input(workspace_root: Path, **overrides: Any) -> HookInput:
     defaults: dict[str, Any] = {
-        "hook": "onProcessStart", "reason": "Startup", "workspaceRoot": str(workspace_root),
+        "hook": "onProcessStart", "reason": "Startup", "workspace_root": str(workspace_root),
     }
     defaults.update(overrides)
     return HookInput(**defaults)

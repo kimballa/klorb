@@ -92,12 +92,13 @@ way, keyed by the event name.
   envelope), `interrupt` (default `False`), `reset_session` (default `False`).
 * **`EventInput(HookInput)`** — adds `fs_updates: list[FileSystemUpdate] | None`, each a
   `{event: "created"|"deleted"|"modified", path}` pair, populated for a `FileSystemModified`
-  firing.
+  firing, and `is_agent_active: bool | None`, whether the root session's agent is mid-turn at the
+  moment the event fires — set for every event.
 
-A `bash` handler receives `HookInput`/`EventInput` as JSON on stdin (`model_dump_json(by_alias=True)`)
-and must print `HookOutput` JSON to stdout. A `classifier` handler receives the same JSON
-prepended to its own configured `prompt`, as the first user message. A `chat` handler receives
-nothing — it contributes its `prompt` as `HookOutput.message` directly.
+A `bash` handler receives `HookInput`/`EventInput` as JSON on stdin (`model_dump_json()`) and must
+print `HookOutput` JSON to stdout. A `classifier` handler receives the same JSON prepended to its
+own configured `prompt`, as the first user message. A `chat` handler receives nothing — it
+contributes its `prompt` as `HookOutput.message` directly.
 
 ## Dispatch and chaining
 
@@ -320,7 +321,9 @@ verbatim through `start_turn_or_enqueue` as an interjection; otherwise a fresh t
 prefixed with `"An event has resumed this conversation:\n"` to make clear what woke the
 conversation back up on its own. Both `FileSystemModified` and `WorkspaceTrustChanged` always
 target the root session's conversation, never a subagent's, regardless of which session happens to
-be active when they fire.
+be active when they fire. Every event sets `EventInput.is_agent_active` to whether that root
+session's `current_turn_handlers()` is non-`None` at the moment the event fires — the same signal
+`start_turn_or_enqueue` uses to decide between starting a fresh turn and queuing an interjection.
 
 ### `FileSystemModified` (`klorb.hooks.fs_events.FileSystemWatcher`)
 

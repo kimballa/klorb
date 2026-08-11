@@ -173,5 +173,5 @@ class FileSystemWatcher:
             return
         matched_updates = [update for update in pending if update.path in matched_paths]
         self._dispatch(matched_entries, EventInput(
-            hook="FileSystemModified", workspaceRoot=str(self._workspace_root),
+            hook="FileSystemModified", workspace_root=str(self._workspace_root),
             fs_updates=matched_updates))

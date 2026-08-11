@@ -137,7 +137,7 @@ def _run_classifier(
     timeout: float,
     cancel_event: threading.Event,
 ) -> HookOutput | None:
-    prompt_text = f"{hook_input.model_dump_json(by_alias=True)}\n\n{handler_prompt}"
+    prompt_text = f"{hook_input.model_dump_json()}\n\n{handler_prompt}"
     messages = [_message("user", prompt_text)]
     response_format = _response_format()
 

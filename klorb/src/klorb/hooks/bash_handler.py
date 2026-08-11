@@ -129,7 +129,7 @@ def run_bash_handler(
         handler.name, hook_input.hook, sandboxed, argv)
     try:
         completed = subprocess.run(
-            full_argv, input=hook_input.model_dump_json(by_alias=True), capture_output=True,
+            full_argv, input=hook_input.model_dump_json(), capture_output=True,
             text=True, timeout=timeout_seconds, cwd=workspace_root, env=env)
     except subprocess.TimeoutExpired:
         logger.warning(

@@ -140,7 +140,7 @@ def test_dispatch_timer_event_delivers_the_actions_message(tmp_path: Path) -> No
     provider.send_prompt.return_value = _reply()
     session = Session(process_config.session, provider=provider, process_config=process_config)
     try:
-        session._dispatch_timer_event([entry], EventInput(hook="Timer", workspaceRoot=str(tmp_path)))
+        session._dispatch_timer_event([entry], EventInput(hook="Timer", workspace_root=str(tmp_path)))
     finally:
         session.close()
 

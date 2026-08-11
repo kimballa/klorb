@@ -27,25 +27,42 @@
 
 * the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
 
-* Build the Wish Factory on top of hooks/events
-  * Hook onSkillActivate for /enable-wish-factory
-    * This puts a sentinel file in docs/plans/wishes/ to enable it (if not already there).
-    * The skill informs the agent to find a wish file in the wishes dir and do it on a branch.
-      When it's done, the agent should:
+* Build the "Software Factory" concept on top of hooks/events
+  * Hook onSkillActivate for /enable-software-factory
+    * This puts a sentinel file (`.enable_software_factory.tmp`) in docs/plans/auto/ to
+       enable it (if not already there).
+    * (gitignore this file.)
+    * The enable-software-factory skill informs the agent to find work in the following places:
+      * Always be on the `main` branch when looking for new work.
+      * Look in the `docs/plans/auto/` dir.
+      * First, look at docs/plans/auto/queue.md. Individual top-level bullet points in this file represent
+        self-contained tasks that can be taken one-by-one.
+      * If no small tasks there, look for any other .md or .txt files in docs/plans/auto/. These
+        all constitute tasks that may be immediately consumed by an agent. These other files besides queue.md
+        are a whole-file task; read the whole file and treat it as a single unit to build.
+    * Check out a new local branch for the feature.
+      * The base of the branch should be `main` unless the feature explicitly builds on other WIP.
+    * Build the feature, fix the bug, do the thing.
+    * When it's done, the agent should:
+      * Remove the bullet from queue.md, or 'git rm' the feature file on that
+        branch as part of the work, when its done.
       * Commit its work
       * Push the branch
       * Open a PR.
-      * The agent should 'git rm' the file on that branch as part of the work, when its done.
-      * The agent should also 'git rm' the wish file on the main branch and commit there.
-  * Hook onProcessEnd to remove the sentinel file.
+      * The agent should also remove the bullet pt / 'git rm' the file on the main branch and commit there.
+  * Hook onProcessEnd to `rm -f` the sentinel file.
   * Hook onAgentTurnEnd
-    * If the sentinel file is missing, do nothing further.
-    * If the working copy is clean, then the agent has finished its work on the wish.
-      ... So find the next wish file and do a reset_session=True kickoff msg to tell it to do that file.
-  * Hook FileChanged event, subscribe to the wishes dir.
-    * If the sentinel file is missing, do nothing further.
-    * If the agent is active mid-turn, do nothing.
-    * Otherwise, pick up the newly-created file and send it as a msg to the agent to build.
+    * If the sentinel file is missing, the hook script does nothing further.
+    * If the working copy is clean, then the agent has finished its work on the auto feature.
+      ... So send it a prompt telling it to find the next auto feature using the process in
+      /enable-software-factory, using a reset_session=True kickoff msg.
+  * Hook FileChanged event, subscribe to the `auto` dir.
+    * If the sentinel file is missing, do nothing else.
+    * If the agent is active mid-turn, do nothing else.
+    * If the `queue.md` file was modified, send the agent a msg telling it there are new items to build
+      in the queue.md file with /enable-software-factory.
+    * Otherwise, if a file was added, pick it up and send it as a msg to the agent to build with the
+      /enable-software-factory skill.
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
 

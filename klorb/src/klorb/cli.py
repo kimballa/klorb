@@ -751,7 +751,7 @@ def main() -> None:
     hook_dispatcher = HookDispatcher(process_config, api_provider=provider, model_registry=model_registry)
     hook_dispatcher.dispatch(
         "onProcessStart",
-        HookInput(hook="onProcessStart", reason="Startup", workspaceRoot=str(workspace.path)))
+        HookInput(hook="onProcessStart", reason="Startup", workspace_root=str(workspace.path)))
 
     try:
         # Gather CLI flag outcomes that impact the SessionConfig into a dict. We save this
@@ -826,7 +826,7 @@ def main() -> None:
         hook_dispatcher.dispatch(
             "onProcessEnd",
             HookInput(
-                hook="onProcessEnd", reason="Shutdown", workspaceRoot=str(workspace.path),
+                hook="onProcessEnd", reason="Shutdown", workspace_root=str(workspace.path),
                 exit_status=_current_exit_status()))
 
 

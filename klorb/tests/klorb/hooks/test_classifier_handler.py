@@ -25,7 +25,7 @@ def _valid_output_json(message: str = "classified") -> str:
 
 
 def _hook_input() -> HookInput:
-    return HookInput(hook="onAgentTurnEnd", reason=None, workspaceRoot="/ws", message="agent said done")
+    return HookInput(hook="onAgentTurnEnd", reason=None, workspace_root="/ws", message="agent said done")
 
 
 def test_run_classifier_handler_returns_output_on_success() -> None:

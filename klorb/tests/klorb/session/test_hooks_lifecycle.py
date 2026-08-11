@@ -133,5 +133,5 @@ def test_fire_session_start_hook_carries_workspace_trust_fields(tmp_path: Path) 
     data = json.loads(output_path.read_text())
     assert data["hook"] == "onSessionStart"
     assert data["reason"] == "ResumeSession"
-    assert data["workspaceTrusted"] is True
-    assert data["workspaceJustBootstrapped"] is True
+    assert data["workspace_trusted"] is True
+    assert data["workspace_just_bootstrapped"] is True
