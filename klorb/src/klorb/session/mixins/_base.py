@@ -128,6 +128,7 @@ class SessionBase:
     _current_turn_mentioned_skill_ids: frozenset[tuple[str, str]]
     _current_turn_leading_skill_id: tuple[str, str] | None
     _chained_hook_turns: int
+    _chain_continuation_pending: bool
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"
     statistics: SessionStatistics
@@ -138,7 +139,7 @@ class SessionBase:
 
     def close(self) -> None: ...
 
-    def reset_session(self, message: str) -> None: ...
+    def reset_session(self) -> None: ...
 
     def claim_session_directory(self) -> None: ...
 
@@ -255,6 +256,13 @@ class SessionBase:
     ) -> list[QueuedMessage]:
         raise NotImplementedError
 
+    def mark_next_turn_continuation(self, drained: list[QueuedMessage]) -> None: ...
+
+    def drain_next_turn_text(self, callbacks: TurnEventHandlers | None = None) -> str | None:
+        raise NotImplementedError
+
+    def _deliver_chained_hook_message(self, message: str) -> None: ...
+
     def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
         raise NotImplementedError
 
@@ -262,8 +270,6 @@ class SessionBase:
         self, hook_name: str, *, reason: str, workspace_just_bootstrapped: bool = False,
     ) -> "HookOutput":
         raise NotImplementedError
-
-    def start_turn_or_enqueue(self, text: str) -> None: ...
 
     def fire_subagent_start_hook(self, message: str) -> str | None:
         raise NotImplementedError

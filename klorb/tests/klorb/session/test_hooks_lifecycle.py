@@ -16,6 +16,7 @@ from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.session.constants import ChainedHookMessageUndeliverableError
 from klorb.workspace import Workspace
 
 
@@ -111,7 +112,15 @@ def test_close_does_not_run_onsessionend_for_a_subagent(tmp_path: Path) -> None:
     assert marker.exists()
 
 
-def test_close_with_reset_session_resets_in_place_instead_of_closing(tmp_path: Path) -> None:
+def test_close_with_reset_session_resets_in_place_but_cannot_deliver_the_continuation(
+    tmp_path: Path,
+) -> None:
+    """`close()` has no live host (TUI/ACP) to deliver "restart me" to as the reset
+    conversation's next turn -- unlike an `onAgentTurnEnd`-triggered reset, which is still on
+    the same call stack as whatever host's `send_turn()` call is waiting on it (see
+    docs/adrs/00186-deliver-chained-turns-via-the-queued-message-drain-loop-not-a-bare-recursive-
+    send-turn.md). The reset itself still runs in place; only delivering the continuation
+    fails, loudly, rather than silently doing nothing."""
     process_config = _process_config(tmp_path, {
         "onSessionEnd": [
             HookConfig(type="bash", shell='echo \'{"message": "restart me", "reset_session": true}\''),
@@ -123,13 +132,13 @@ def test_close_with_reset_session_resets_in_place_instead_of_closing(tmp_path: P
     original_id = session.id
     original_scratchpad_path = session.scratchpad.path
 
-    session.close()
+    with pytest.raises(ChainedHookMessageUndeliverableError):
+        session.close()
 
     assert session.id == original_id
     assert session.scratchpad.path != original_scratchpad_path
-    user_messages = [m.content for m in session.messages if m.role == "user"]
-    assert len(user_messages) == 1
-    assert user_messages[0].endswith("restart me")
+    assert session.messages == []
+    provider.send_prompt.assert_not_called()
 
 
 def test_fire_session_start_hook_carries_workspace_trust_fields(tmp_path: Path) -> None:

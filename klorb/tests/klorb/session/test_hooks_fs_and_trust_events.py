@@ -2,9 +2,11 @@
 """Tests for the `FileSystemModified`/`WorkspaceTrustChanged` event wiring Phase 4 adds:
 `Session.fire_session_start_hook` starting (and `close()` stopping) a `FileSystemWatcher`,
 `Session._dispatch_fs_modified_event`/`fire_workspace_trust_changed_hook` dispatching an
-event's configured actions, and `Session.deliver_event_message`'s queue-vs-fresh-turn/prefix
-behavior -- see `klorb.tests.klorb.hooks.test_fs_events` for `FileSystemWatcher`'s own
-filesystem-level behavior."""
+event's configured actions, and `Session.deliver_event_message`'s queue-vs-raise behavior (a
+live turn to queue behind, or `ChainedHookMessageUndeliverableError` when idle -- see
+docs/adrs/00186-deliver-chained-turns-via-the-queued-message-drain-loop-not-a-bare-recursive-send-turn.md)
+-- see `klorb.tests.klorb.hooks.test_fs_events` for `FileSystemWatcher`'s own filesystem-level
+behavior."""
 
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,7 @@ from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig, TurnEventHandlers
+from klorb.session.constants import ChainedHookMessageUndeliverableError
 from klorb.session.events import QueuedMessage
 from klorb.workspace import Workspace
 
@@ -135,21 +138,26 @@ def test_fire_session_start_hook_does_not_start_a_watcher_for_a_subagent(
 
 
 def test_dispatch_fs_modified_event_delivers_the_actions_message(tmp_path: Path) -> None:
+    """Delivered via `deliver_event_message`'s "a turn is already in flight" branch -- the only
+    one that can render anywhere without a live host (see "Available events" in
+    docs/specs/hooks-and-events.md); the idle branch raises instead, covered separately by
+    `test_deliver_event_message_raises_when_idle`."""
     entry = FileSystemModifiedEventConfig(
         watch=".", action=HookConfig(type="bash", shell='echo \'{"message": "fs changed"}\''))
     process_config = _process_config(tmp_path, FileSystemModified=[entry])
     provider = MagicMock()
-    provider.send_prompt.return_value = _reply()
     session = Session(process_config.session, provider=provider, process_config=process_config)
+    session._current_turn_handlers = TurnEventHandlers()
     try:
         session._dispatch_fs_modified_event(
             [entry], EventInput(hook="FileSystemModified", workspace_root=str(tmp_path)))
     finally:
+        session._current_turn_handlers = None
         session.close()
 
-    provider.send_prompt.assert_called_once()
-    user_message = next(m for m in session.messages if m.role == "user")
-    assert user_message.content.endswith("An event has resumed this conversation:\nfs changed")
+    provider.send_prompt.assert_not_called()
+    drained = session.drain_queued_messages()
+    assert drained == [QueuedMessage(message_text="fs changed", origin="event")]
 
 
 # --- fire_workspace_trust_changed_hook ---
@@ -160,16 +168,17 @@ def test_fire_workspace_trust_changed_hook_delivers_the_actions_message(tmp_path
         WorkspaceTrustChangedEventConfig(action=HookConfig(type="chat", prompt="trust changed")),
     ])
     provider = MagicMock()
-    provider.send_prompt.return_value = _reply()
     session = Session(process_config.session, provider=provider, process_config=process_config)
+    session._current_turn_handlers = TurnEventHandlers()
     try:
         session.fire_workspace_trust_changed_hook("TrustCommand")
     finally:
+        session._current_turn_handlers = None
         session.close()
 
-    provider.send_prompt.assert_called_once()
-    user_message = next(m for m in session.messages if m.role == "user")
-    assert user_message.content.endswith("An event has resumed this conversation:\ntrust changed")
+    provider.send_prompt.assert_not_called()
+    drained = session.drain_queued_messages()
+    assert drained == [QueuedMessage(message_text="trust changed", origin="event")]
 
 
 def test_fire_workspace_trust_changed_hook_is_a_noop_with_no_entries_configured(tmp_path: Path) -> None:
@@ -203,15 +212,17 @@ def test_fire_workspace_trust_changed_hook_is_a_noop_for_a_subagent(tmp_path: Pa
 # --- deliver_event_message ---
 
 
-def test_deliver_event_message_starts_a_fresh_prefixed_turn_when_idle(tmp_path: Path) -> None:
+def test_deliver_event_message_raises_when_idle(tmp_path: Path) -> None:
+    """No turn in flight means no live host (TUI/ACP) is around to render the message anywhere
+    -- raises `ChainedHookMessageUndeliverableError` rather than dispatching it invisibly. See
+    TODO.md's "push-and-wake-up" item for the planned fix."""
     provider = MagicMock()
-    provider.send_prompt.return_value = _reply()
     session = Session(SessionConfig(workspace=Workspace(path=tmp_path, trusted=True)), provider=provider)
 
-    session.deliver_event_message("something happened")
+    with pytest.raises(ChainedHookMessageUndeliverableError):
+        session.deliver_event_message("something happened")
 
-    user_message = next(m for m in session.messages if m.role == "user")
-    assert user_message.content.endswith("An event has resumed this conversation:\nsomething happened")
+    provider.send_prompt.assert_not_called()
 
 
 def test_deliver_event_message_queues_verbatim_when_a_turn_is_in_flight(tmp_path: Path) -> None:
@@ -223,4 +234,4 @@ def test_deliver_event_message_queues_verbatim_when_a_turn_is_in_flight(tmp_path
 
     provider.send_prompt.assert_not_called()
     drained = session.drain_queued_messages()
-    assert drained == [QueuedMessage(message_text="something happened")]
+    assert drained == [QueuedMessage(message_text="something happened", origin="event")]

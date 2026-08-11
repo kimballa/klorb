@@ -182,6 +182,41 @@ async def test_timer_scheduler_dispatches_each_entry_independently(
     assert entries == [fast]
 
 
+@pytest.mark.usefixtures("_fast_debounce_floor")
+async def test_timer_scheduler_reschedules_after_dispatch_raises(
+    tmp_path: Path, recorder: _Recorder, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A dispatch failure (a hook handler error, or `Session.deliver_event_message` raising
+    `ChainedHookMessageUndeliverableError` while idle) must not silently stop this entry from
+    ever firing again -- unlike `FileSystemWatcher`, `TimerScheduler` reschedules itself
+    (`_schedule_next`, called right after `self._dispatch(...)`), so skipping that call on an
+    uncaught exception would kill the entry permanently. See docs/adrs/00186 (chained-turn
+    delivery)."""
+    call_count = 0
+
+    def _raise_once_then_record(
+        entries: list[TimerEventConfig], event_input: EventInput,
+    ) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("boom")
+        recorder(entries, event_input)
+
+    entry = _entry(interval_minutes=_SHORT_INTERVAL_MINUTES)
+    scheduler = TimerScheduler(tmp_path, [entry], dispatch=_raise_once_then_record)
+    with caplog.at_level(logging.ERROR, logger="klorb.hooks.timer_events"):
+        scheduler.start()
+        try:
+            await recorder.wait()
+        finally:
+            scheduler.close()
+
+    assert call_count == 2
+    assert len(recorder.calls) == 1
+    assert "raised while dispatching" in caplog.text
+
+
 def test_schedule_next_clamps_delay_to_the_debounce_floor(tmp_path: Path) -> None:
     """`_schedule_next`'s own delay is clamped to `MIN_EVENT_DEBOUNCE_SECONDS`, not just
     `clamp_timer_intervals`'s config-load-time floor on `interval_minutes` -- a fast cron

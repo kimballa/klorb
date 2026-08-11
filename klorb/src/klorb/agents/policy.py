@@ -357,36 +357,50 @@ def _assistant_authored_text(messages: list[Message]) -> str:
 
 
 def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers) -> str:
-    """Run one turn of `child`'s conversation to completion, returning the text to deliver to
-    the creating session: every assistant-authored message produced during the turn,
-    concatenated in order (see `_assistant_authored_text`), a placeholder if none of it said
-    anything, the same concatenation plus an abort note if `handlers.cancel_event` fired
-    mid-stream, or a failure note if the turn raised. Never raises -- this is the background
-    thread's own top-level call, and an unhandled exception here would silently strand the
-    subagent as "running" forever.
+    """Run `child`'s conversation to completion, returning the text to deliver to the creating
+    session: every assistant-authored message produced, concatenated in order (see
+    `_assistant_authored_text`), a placeholder if none of it said anything, the same
+    concatenation plus an abort note if `handlers.cancel_event` fired mid-stream, or a failure
+    note if a turn raised. Never raises -- this is the background thread's own top-level call,
+    and an unhandled exception here would silently strand the subagent as "running" forever.
 
     Dispatches `onSubagentStart`/`onSubagentTurnEnd` (`Session.fire_subagent_start_hook`/
-    `fire_subagent_turn_end_hook`) around the turn, covering every way a subagent's turn is
+    `fire_subagent_turn_end_hook`) around each turn, covering every way a subagent's turn is
     kicked off -- `CreateSubagent`, `MessageSubagent`, or `_klorb/subagentPrompt` -- since all
     three funnel through `dispatch_subagent_turn`, which always calls this function. A
     `onSubagentStart` veto (`fire_subagent_start_hook` returning `None`) skips the turn
     entirely, reporting a blocked note back to the creating session exactly like a failed turn
-    would."""
+    would.
+
+    Loops on an ordinary successful completion: `onSubagentTurnEnd`'s `chat`-handler
+    continuation is delivered via `Session._deliver_chained_hook_message`, same as the root
+    session's own `onAgentTurnEnd` chaining, and this is the "host" that drains and resubmits
+    it (`child.drain_next_turn_text`) -- nothing else runs a subagent session's own turns. An
+    abort or exception stops the chain immediately after firing the hook once, without
+    attempting to drain further."""
     effective_message = child.fire_subagent_start_hook(message)
     if effective_message is None:
         return "(Subagent blocked by onSubagentStart hook policy.)"
     start_index = len(child.messages)
-    try:
-        child.send_turn(effective_message, callbacks=handlers, resolve_mentions=False)
-        output = _assistant_authored_text(child.messages[start_index:])
-        result = output if output else "The subagent completed its work without saying anything."
-    except ResponseAborted:
-        output = _assistant_authored_text(child.messages[start_index:])
-        result = f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
-    except Exception as exc:
-        logger.exception("Subagent %s turn failed", child.id)
-        result = f"(Subagent turn failed: {exc})"
-    child.fire_subagent_turn_end_hook(result)
+    pending_message: str | None = effective_message
+    result = ""
+    while pending_message is not None:
+        try:
+            child.send_turn(pending_message, callbacks=handlers, resolve_mentions=False)
+            output = _assistant_authored_text(child.messages[start_index:])
+            result = output if output else "The subagent completed its work without saying anything."
+        except ResponseAborted:
+            output = _assistant_authored_text(child.messages[start_index:])
+            result = f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
+            child.fire_subagent_turn_end_hook(result)
+            return result
+        except Exception as exc:
+            logger.exception("Subagent %s turn failed", child.id)
+            result = f"(Subagent turn failed: {exc})"
+            child.fire_subagent_turn_end_hook(result)
+            return result
+        child.fire_subagent_turn_end_hook(result)
+        pending_message = child.drain_next_turn_text(handlers)
     return result
 
 

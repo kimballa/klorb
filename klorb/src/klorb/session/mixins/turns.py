@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any, cast
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.images.prepare import extension_for_mime_type
 from klorb.message import Message, MessageFragment
-from klorb.session.constants import MAX_TOOL_CALL_ROUNDS, ToolCallLimitExceeded
+from klorb.session.constants import (
+    MAX_TOOL_CALL_ROUNDS,
+    ChainedHookMessageUndeliverableError,
+    ToolCallLimitExceeded,
+)
 from klorb.session.events import QueuedMessage, TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.mentions import resolve_at_mentions
@@ -311,11 +315,23 @@ class SessionTurnsMixin(SessionBase):
         with `processing_state="aborted"` by `_send_and_receive` — are left in
         `self._messages` rather than erased. `user_message.processing_state` becomes
         `"aborted"` too. The exception is re-raised so the caller can report the interruption.
-        """
+
+        `_chained_hook_turns` resets to `0` here unconditionally, unless
+        `_chain_continuation_pending` says otherwise -- the one place every turn (root,
+        subagent, retry, or a hook-chained continuation) funnels through, so this is the single
+        rule governing when a `chat` handler's auto-chain budget starts over: an ordinary turn,
+        a retry, and whatever happens after an aborted or errored turn all reset it by default
+        (none of those reach `_fire_agent_turn_end_hook`, which only fires on a clean
+        completion), while only a turn resubmitted by `drain_next_turn_text()` from a purely
+        hook-originated queue leaves it alone."""
         callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
         self._ensure_tool_defs_message()
         self._tool_calls_this_turn = 0
+        if self._chain_continuation_pending:
+            self._chain_continuation_pending = False
+        else:
+            self._chained_hook_turns = 0
         model_name = self.active_model_name()
         system_prompt = self._resolve_system_prompt()
         reasoning = self._reasoning_params()
@@ -403,65 +419,45 @@ class SessionTurnsMixin(SessionBase):
 
     def _fire_agent_turn_end_hook(self, reply_text: str) -> None:
         """Dispatch `onAgentTurnEnd` once this root session's turn has fully ended -- called
-        after `_dispatch_turn`'s own `finally` already cleared `_current_turn_handlers`, so a
-        `chat` handler's chained follow-up (via `start_turn_or_enqueue`) sees no turn in flight
-        and starts a fresh one, per the `chat` handler type's documented behavior.
+        after `_dispatch_turn`'s own `finally` already cleared `_current_turn_handlers`, but
+        still on the same call stack as whichever host's `send_turn()` call is waiting on this
+        turn -- so a `chat` handler's chained follow-up is delivered via
+        `_deliver_chained_hook_message`, picked up once that host's own end-of-turn drain runs
+        (see `drain_next_turn_text`), rather than dispatched here with no live UI callbacks.
 
         A `reset_session` result (guaranteed by `HookDispatcher` to carry a non-empty `message`)
         first dispatches `onSessionEnd` with `reason="ResetSession"` -- purely for its side
         effects (e.g. a bash handler logging that this conversation ended); its own `HookOutput`
         is discarded, the same as every other `onSessionEnd` firing being non-cancelable -- then
-        calls `Session.reset_session()` instead of continuing this conversation. `close()`'s own
-        `onSessionEnd` firing (a real session end, not one relayed from `onAgentTurnEnd`) doesn't
-        need this extra dispatch, since `onSessionEnd` is already what fired there."""
+        calls `Session.reset_session()` and delivers `result.message` as the reset
+        conversation's first turn the same way, since this call stack still has a live host.
+        `close()`'s own `onSessionEnd`-triggered reset has no such host (see `SessionCoreMixin.
+        close()`)."""
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
         if result.reset_session:
             assert result.message is not None
             self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
-            cast("Session", self).reset_session(result.message)
+            cast("Session", self).reset_session()
+            self._deliver_chained_hook_message(result.message)
             return
         if result.message is not None:
-            self.start_turn_or_enqueue(result.message)
-
-    def start_turn_or_enqueue(self, text: str) -> None:
-        """Start a fresh turn with `text`, or queue it (`enqueue_queued_message`) if a turn is
-        already running on this session -- the single decision point a hook/event `chat`
-        handler's message needs: `current_turn_handlers()` is this session's own turn-in-flight
-        signal, the same one `enqueue_queued_message`/`drain_queued_messages` already key off.
-
-        Bounded by `config.max_chained_hook_turns`: `_chained_hook_turns` tracks how many
-        chained-turn frames are currently nested on the call stack -- this method's own
-        `send_turn()` call can, via `onAgentTurnEnd`/event dispatch, call back into this method
-        again before returning. Incremented before `send_turn()` and decremented after in the
-        same `finally`, so it's back to `0` once the whole synchronous chain has unwound (cap
-        reached, exception, or otherwise), with no separate reset needed for an ordinary,
-        externally-driven turn. Once it reaches the cap, a further chained turn is refused
-        (logged at `warning`) rather than started.
-        """
-        if self.current_turn_handlers() is not None:
-            self.enqueue_queued_message(QueuedMessage(message_text=text))
-            return
-        if self._chained_hook_turns >= self.config.max_chained_hook_turns:
-            logger.warning(
-                "Chained hook/event turn cap (%d) reached; refusing to start another turn.",
-                self.config.max_chained_hook_turns)
-            return
-        self._chained_hook_turns += 1
-        try:
-            self.send_turn(text)
-        finally:
-            self._chained_hook_turns -= 1
+            self._deliver_chained_hook_message(result.message)
 
     def deliver_event_message(self, text: str) -> None:
-        """Deliver an event handler's aggregate `message` (`FileSystemModified`/
-        `WorkspaceTrustChanged`) into this session's conversation. If a turn is already
-        running, `text` is queued verbatim via `start_turn_or_enqueue` as an interjection;
-        otherwise a fresh turn is started with `text` prefixed to make clear what woke the
-        conversation back up on its own."""
+        """Deliver an event handler's aggregate `message` (`FileSystemModified`/`Timer`/
+        `WorkspaceTrustChanged`) into this session's conversation.
+
+        If a turn is already running, `text` is queued (tagged `origin="event"`, so
+        `drain_next_turn_text` resets `_chained_hook_turns` for it like any non-hook message)
+        for that turn's own host to pick up once it ends -- the same live-host case ordinary
+        hook chaining relies on. Otherwise there is no turn in flight and so no host nearby to
+        deliver to at all: raises `ChainedHookMessageUndeliverableError` rather than
+        dispatching invisibly. See TODO.md's "push-and-wake-up" item."""
         if self.current_turn_handlers() is not None:
-            self.start_turn_or_enqueue(text)
+            self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             return
-        self.start_turn_or_enqueue(f"An event has resumed this conversation:\n{text}")
+        raise ChainedHookMessageUndeliverableError(
+            f"Event delivered to idle session {self.id} with no live host to show it to: {text!r}")
 
     def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
         """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` (see
@@ -792,6 +788,17 @@ class SessionTurnsMixin(SessionBase):
         model round trip. No `on_session_name_changed` is passed, so this call's `Session` still
         gets named (renaming `id`/`root_id`/`name`) on its first invocation like any other
         `send_turn()` caller, just with nothing reacting to the result.
+
+        Also drives this session's own drain-and-resubmit loop (mirroring the TUI's
+        `_finish_turn`/ACP's `TurnBridge.run_turn`), the "host" a headless caller otherwise
+        wouldn't have: once a turn ends, anything an `onAgentTurnEnd` `chat` handler queued via
+        `_deliver_chained_hook_message` is drained and resubmitted as the next turn, repeating
+        until nothing's left queued. Returns the *last* turn's response text.
         """
-        return self.send_turn(
-            prompt, TurnEventHandlers(on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk))
+        handlers = TurnEventHandlers(on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk)
+        response = self.send_turn(prompt, handlers)
+        next_turn_text = self.drain_next_turn_text(handlers)
+        while next_turn_text is not None:
+            response = self.send_turn(next_turn_text, handlers)
+            next_turn_text = self.drain_next_turn_text(handlers)
+        return response

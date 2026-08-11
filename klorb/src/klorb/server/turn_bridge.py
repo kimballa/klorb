@@ -160,11 +160,16 @@ class TurnBridge:
     to enqueue onto) and sends `_klorb/queuedMessageSent` for each directly, then folds them into
     one more `send_turn()` call for the same ACP `session/prompt` request -- mirroring the TUI's
     `_finish_turn()`, which redelivers a still-queued message as the next turn regardless of how
-    the current one ended. The loop repeats until a `send_turn()` call ends with nothing left
-    queued; the JSON-RPC response `KlorbAcpAgent.prompt()` builds reflects the *last* turn in the
-    chain, and an exception from that last turn propagates after the loop (not the exception, if
-    any, of an earlier turn in the chain whose queued message triggered a successful follow-on
-    turn).
+    the current one ended (this is also how a `chat` hook handler's `onAgentTurnEnd`/
+    `onSubagentTurnEnd` continuation reaches a client: `Session._deliver_chained_hook_message`
+    enqueues it, and it surfaces here the same as a user's typed-ahead message would).
+    `Session.mark_next_turn_continuation()` is called on the raw drained list (mirroring what
+    `Session.drain_next_turn_text()` does for a caller that doesn't also need per-message
+    notifications) so a purely hook-chained batch doesn't reset `Session._chained_hook_turns`.
+    The loop repeats until a `send_turn()` call ends with nothing left queued; the JSON-RPC
+    response `KlorbAcpAgent.prompt()` builds reflects the *last* turn in the chain, and an
+    exception from that last turn propagates after the loop (not the exception, if any, of an
+    earlier turn in the chain whose queued message triggered a successful follow-on turn).
     """
 
     def __init__(
@@ -425,6 +430,7 @@ class TurnBridge:
             drained = self._session.drain_queued_messages()
             if not drained:
                 break
+            self._session.mark_next_turn_continuation(drained)
             for queued_msg in drained:
                 await self._client.ext_notification(_QUEUED_MESSAGE_SENT_EXT_NOTIFICATION, {
                     "sessionId": self._session_id, "text": queued_msg.message_text})

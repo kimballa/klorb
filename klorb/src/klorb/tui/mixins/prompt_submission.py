@@ -766,14 +766,16 @@ class PromptSubmissionMixin(ReplAppBase):
         turn, but a turn can end without ever reaching one (e.g. `_show_error` before any content
         streamed), and this is idempotent for the ordinary case where it's already `None`.
 
-        If any messages were queued by the user during this turn, they're drained and folded
-        into a single new turn, submitted once via `_submit_prompt` -- not one `_submit_prompt`
-        call per queued message, which would only ever deliver the first (the second call would
-        find `_turn_in_flight` already `True`, set synchronously by the first, and get dropped
-        -- see `handle_send_queued_message`). Multiple queued messages are joined with a blank
-        line between each, in the order they were typed, so queueing "check the tests" then
-        "also check lint" while a turn is running reads to the model as one message covering
-        both, rather than as two separate turns or a lost second one.
+        Anything queued during this turn -- the user typing ahead, or a `chat` hook handler's
+        `onAgentTurnEnd`/`onSubagentTurnEnd`/event continuation (see `Session.
+        drain_next_turn_text`) -- is drained and folded into a single new turn, submitted once
+        via `_submit_prompt` -- not one `_submit_prompt` call per queued message, which would
+        only ever deliver the first (the second call would find `_turn_in_flight` already
+        `True`, set synchronously by the first, and get dropped -- see
+        `handle_send_queued_message`). Multiple queued messages are joined with a blank line
+        between each, in the order they were queued, so queueing "check the tests" then "also
+        check lint" while a turn is running reads to the model as one message covering both,
+        rather than as two separate turns or a lost second one.
 
         Also persists the session's current state (`Session.persist_state()` -- a no-op for an
         untrusted workspace, or if the session never successfully claimed a directory) at the
@@ -816,10 +818,10 @@ class PromptSubmissionMixin(ReplAppBase):
         # `Session._current_turn_handlers` is already `None` by now (the turn that owned it, if
         # any, has already returned), so the callbacks built for that turn -- stashed by
         # `_send_prompt` -- are passed explicitly instead.
-        drained = self._session.drain_queued_messages(self._active_turn_callbacks)
+        next_turn_text = self._session.drain_next_turn_text(self._active_turn_callbacks)
         self._active_turn_callbacks = None
-        if drained:
-            self._submit_prompt("\n\n".join(queued_msg.message_text for queued_msg in drained))
+        if next_turn_text is not None:
+            self._submit_prompt(next_turn_text)
             self._quit_on_success = False
         elif not agent_turn_succeeded:
             self._quit_on_success = False

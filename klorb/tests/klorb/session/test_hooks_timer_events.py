@@ -7,21 +7,19 @@ test_hooks_fs_and_trust_events` for the equivalent `FileSystemModified`/`Workspa
 coverage this mirrors.
 """
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from klorb.api_provider import ProviderResponse
 from klorb.hooks import timer_events
 from klorb.hooks.config import HookConfig, TimerEventConfig
 from klorb.hooks.hook_api import EventInput
-from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, TurnEventHandlers
+from klorb.session.events import QueuedMessage
 from klorb.workspace import Workspace
 
 
@@ -36,14 +34,6 @@ def _process_config(workspace_root: Path, **events: Any) -> ProcessConfig:
         read_dirs=DirRules(allow=[workspace_root]),
         write_dirs=DirRules(allow=[workspace_root]))
     return ProcessConfig(session=session, events=events)
-
-
-def _reply(content: str = "model reply") -> ProviderResponse:
-    return ProviderResponse(
-        message=Message(
-            content=content, role="assistant", num_tokens=3, processing_state="complete",
-            timestamp=datetime.now(), finish_reason="stop"),
-        prompt_tokens=5)
 
 
 class _FakeScheduler:
@@ -133,17 +123,23 @@ def test_fire_session_start_hook_does_not_start_a_scheduler_for_a_subagent(
 
 
 def test_dispatch_timer_event_delivers_the_actions_message(tmp_path: Path) -> None:
+    """Delivered via `deliver_event_message`'s "a turn is already in flight" branch -- the only
+    one that can render anywhere without a live host (see "Available events" in
+    docs/specs/hooks-and-events.md); the idle branch raises `ChainedHookMessageUndeliverableError`
+    instead, covered by `klorb.tests.klorb.session.test_hooks_fs_and_trust_events.
+    test_deliver_event_message_raises_when_idle`."""
     entry = TimerEventConfig(
         interval_minutes=10, action=HookConfig(type="bash", shell='echo \'{"message": "tick"}\''))
     process_config = _process_config(tmp_path, Timer=[entry])
     provider = MagicMock()
-    provider.send_prompt.return_value = _reply()
     session = Session(process_config.session, provider=provider, process_config=process_config)
+    session._current_turn_handlers = TurnEventHandlers()
     try:
         session._dispatch_timer_event([entry], EventInput(hook="Timer", workspace_root=str(tmp_path)))
     finally:
+        session._current_turn_handlers = None
         session.close()
 
-    provider.send_prompt.assert_called_once()
-    user_message = next(m for m in session.messages if m.role == "user")
-    assert user_message.content.endswith("An event has resumed this conversation:\ntick")
+    provider.send_prompt.assert_not_called()
+    drained = session.drain_queued_messages()
+    assert drained == [QueuedMessage(message_text="tick", origin="event")]

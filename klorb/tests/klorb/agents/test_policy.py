@@ -395,3 +395,25 @@ def test_dispatch_subagent_turn_fires_onsubagentturnend_after_the_turn_ends(tmp_
     handle.thread.join(timeout=5.0)
 
     assert marker.exists()
+
+
+def test_dispatch_subagent_turn_chains_via_onsubagentturnend_until_the_cap_trips(
+    tmp_path: Path,
+) -> None:
+    """A `chat` handler's `onSubagentTurnEnd` continuation is delivered via
+    `Session._deliver_chained_hook_message`, exactly like the root session's own `onAgentTurnEnd`
+    chaining -- `_run_subagent_turn`'s own loop (`klorb.agents.policy`) is the "host" that drains
+    and resubmits it, since nothing else runs a subagent session's turns."""
+    provider = _FakeProvider(reply_text="subagent reply")
+    parent, child = _subagent_session_pair(tmp_path, provider, {
+        "onSubagentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
+    })
+
+    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "task")
+    handle.thread.join(timeout=5.0)
+
+    # 1 original turn + child.config.max_chained_hook_turns (default 5) chained ones.
+    assert len(provider.calls) == 6
+    user_messages = [m.content for m in child.messages if m.role == "user"]
+    assert user_messages[0].endswith("task")
+    assert user_messages[1:] == ["keep going"] * 5

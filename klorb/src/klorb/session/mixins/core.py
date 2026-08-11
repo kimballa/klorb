@@ -21,6 +21,7 @@ from klorb.session.config import PermissionFrameworkState, SessionConfig
 from klorb.session.constants import (
     PERMISSION_FRAMEWORK_INTERJECTIONS,
     THINKING_EFFORT_TOKEN_BUDGETS,
+    ChainedHookMessageUndeliverableError,
     PermissionFramework,
     ThinkingEffort,
     generate_session_id,
@@ -310,6 +311,7 @@ class SessionCoreMixin(SessionBase):
         self._current_turn_mentioned_skill_ids: frozenset[tuple[str, str]] = frozenset()
         self._current_turn_leading_skill_id: tuple[str, str] | None = None
         self._chained_hook_turns = 0
+        self._chain_continuation_pending = False
         self.subagent_tracker = self._create_subagent_tracker()
         self.statistics = SessionStatistics()
         for subject, teardown in list(self._teardown_callbacks.items()):
@@ -655,6 +657,44 @@ class SessionCoreMixin(SessionBase):
                     handlers.on_send_queued_message(queued_msg)
         return messages
 
+    def mark_next_turn_continuation(self, drained: list[QueuedMessage]) -> None:
+        """Mark whether the upcoming `_dispatch_turn()` should be treated as a pure hook-chain
+        continuation -- leaving `_chained_hook_turns` alone instead of resetting it -- based on
+        `drained`'s origins: `True` only when every message came from a chat handler's own
+        chaining (`origin == "chained_hook"`). A real user or event message mixed into the
+        batch means something other than pure auto-chaining is driving the next turn, so the
+        counter resets like any ordinary turn (see `_dispatch_turn`). Exposed separately from
+        `drain_next_turn_text()` for a caller that needs `drain_queued_messages()`'s raw list
+        for its own purposes (ACP's `TurnBridge.run_turn`, which sends a per-message
+        notification `drain_next_turn_text()` has no way to)."""
+        self._chain_continuation_pending = bool(drained) and all(
+            queued_msg.origin == "chained_hook" for queued_msg in drained)
+
+    def drain_next_turn_text(self, callbacks: TurnEventHandlers | None = None) -> str | None:
+        """Drain every queued message (see `drain_queued_messages`) and join them into the text
+        for one new turn, or `None` if nothing was queued -- the shared "resubmit whatever's
+        queued through the front door" step every host's own turn loop ends with (TUI's
+        `_finish_turn`, `Session.run_one_shot`, `klorb.agents.policy._run_subagent_turn`)."""
+        drained = self.drain_queued_messages(callbacks)
+        if not drained:
+            return None
+        self.mark_next_turn_continuation(drained)
+        return "\n\n".join(queued_msg.message_text for queued_msg in drained)
+
+    def _deliver_chained_hook_message(self, message: str) -> None:
+        """Enqueue `message` (an `onAgentTurnEnd`/`onSubagentTurnEnd` `chat` handler's result)
+        as this session's next turn, to be picked up by whichever drain-and-resubmit loop is
+        already driving this session (see `drain_next_turn_text`) once the current turn ends --
+        rather than dispatching it here, which would run with no live UI callbacks. A negative
+        `config.max_chained_hook_turns` disables the cap."""
+        max_turns = self.config.max_chained_hook_turns
+        if max_turns >= 0 and self._chained_hook_turns >= max_turns:
+            logger.warning(
+                "Chained hook turn cap (%d) reached; refusing to chain another turn.", max_turns)
+            return
+        self._chained_hook_turns += 1
+        self.enqueue_queued_message(QueuedMessage(message_text=message, origin="chained_hook"))
+
     def load_messages(self, messages: list[Message]) -> None:
         """Replace this session's conversation history with `messages` — e.g. restoring a
         previous interactive session's history from `klorb.workspace.session_store`. Intended
@@ -934,11 +974,11 @@ class SessionCoreMixin(SessionBase):
         """Dispatch `onSubagentTurnEnd` for this subagent session once its turn ends -- called by
         `klorb.agents.policy._run_subagent_turn`, mirroring `onAgentTurnEnd`'s `chat`-handler
         chaining for the root session's own turns (see `SessionTurnsMixin._dispatch_turn`): a
-        `message` in the aggregate `HookOutput` starts (or queues) a follow-up turn on this same
-        subagent session via `start_turn_or_enqueue`, not on the parent that created it."""
+        `message` in the aggregate `HookOutput` is delivered via `_deliver_chained_hook_message`
+        as a follow-up turn on this same subagent session, not on the parent that created it."""
         result = self._dispatch_hook("onSubagentTurnEnd", message=output)
         if result.message is not None:
-            cast("Session", self).start_turn_or_enqueue(result.message)
+            self._deliver_chained_hook_message(result.message)
 
     def close(self) -> None:
         """Persist a final `session.json` and release `session.lock` (see
@@ -960,7 +1000,11 @@ class SessionCoreMixin(SessionBase):
         (guaranteed by `HookDispatcher` to carry a non-empty `message`) aborts the shutdown
         entirely -- this session isn't actually ending, so none of cascade-closing subagents,
         finalizing persistence, or running teardowns happens; `reset_session()` does its own,
-        narrower cleanup instead. See docs/specs/hooks-and-events.md's "Session reset" section.
+        narrower cleanup instead. There is no live host here to deliver the reset's
+        continuation message to (the session is closing), so this raises
+        `ChainedHookMessageUndeliverableError` after the reset itself completes, rather than
+        silently dropping it or dispatching it with nothing to render the result -- see
+        docs/specs/hooks-and-events.md's "Session reset" section.
 
         Otherwise, cascade-closes every subagent this session has directly or indirectly created
         (see `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
@@ -972,8 +1016,10 @@ class SessionCoreMixin(SessionBase):
             result = self._dispatch_lifecycle_hook("onSessionEnd", reason="SuspendSession")
             if result.reset_session:
                 assert result.message is not None
-                cast("Session", self).reset_session(result.message)
-                return
+                cast("Session", self).reset_session()
+                raise ChainedHookMessageUndeliverableError(
+                    "onSessionEnd requested a session reset with a continuation message from "
+                    "close(), which has no live host to deliver it to.")
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()
@@ -981,7 +1027,7 @@ class SessionCoreMixin(SessionBase):
             teardown()
         self._teardown_callbacks.clear()
 
-    def reset_session(self, message: str) -> None:
+    def reset_session(self) -> None:
         """Wipe this session's conversation and start it over in place, as if it were a freshly
         constructed `Session` reusing the same `id`/on-disk directory -- `HookOutput.
         reset_session`'s effect (see docs/specs/hooks-and-events.md's "Session reset" section).
@@ -994,9 +1040,11 @@ class SessionCoreMixin(SessionBase):
         no-op without a `ProcessConfig`, e.g. most unit tests) -- unlike `_reset_state()`, which
         leaves `config` and everything derived from it alone, since `__init__`'s own call to
         `_reset_state()` must not clobber a caller-supplied `config` (a restored session, a
-        subagent's inherited one). Finally starts `message` as the next turn via
-        `start_turn_or_enqueue`, exactly like an ordinary `chat` handler's message would.
-        """
+        subagent's inherited one).
+
+        Does not deliver the reset's continuation message itself -- the two callers have
+        different hosts (or none) available to deliver it to, so each does that separately
+        after calling this."""
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         if self._process_config is not None:
@@ -1011,7 +1059,6 @@ class SessionCoreMixin(SessionBase):
         self._session_name = None
         self._session_naming_pending = True
         logger.info("Session %s reset in place via a hook's reset_session request.", self.id)
-        cast("Session", self).start_turn_or_enqueue(message)
 
     def active_model(self) -> Model | None:
         """Return the registered `Model` for `config.model`, or `None` if it isn't registered

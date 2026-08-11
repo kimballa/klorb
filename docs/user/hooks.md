@@ -242,14 +242,20 @@ handler's value that actually set one.
 
 ### Chained turns
 
-A `chat` handler (or an event's `message`) that fires while no turn is running starts a new one;
-if a turn is already running, it's queued as an interjection instead — the same thing that
-happens when you queue a message and let the current turn finish. Because a `chat` handler
-attached to `onAgentTurnEnd` can trigger another `onAgentTurnEnd`, always give it a `filter` so it
-stops itself eventually. As a backstop even when a filter is missing or wrong, klorb caps how many
-turns in a row can be auto-started this way (`tools.hooks.maxChainedTurns`, default `5`); once the
-cap is hit, further auto-chained turns are refused until a real user- or tool-driven turn resets
-the count.
+A `chat` handler on `onAgentTurnEnd`/`onSubagentTurnEnd` queues its message to become the next
+turn once the current one ends — the same thing that happens when you queue a message and let the
+current turn finish, so it appears the same way: no special marker, just a new turn. Because a
+`chat` handler attached to `onAgentTurnEnd` can trigger another `onAgentTurnEnd`, always give it a
+`filter` so it stops itself eventually. As a backstop even when a filter is missing or wrong,
+klorb caps how many turns in a row can be auto-chained this way (`tools.hooks.maxChainedTurns`,
+default `5`; set it to `0` to disable chaining entirely, or a negative number for no cap); once
+the cap is hit, further auto-chained turns are refused until a real user-driven turn resets the
+count.
+
+An event's `message` (`FileSystemModified`/`Timer`/`WorkspaceTrustChanged`) is queued the same
+way if a turn happens to be running when it fires. If nothing is running, there's currently no
+client to show it to at all, so it's dropped with an error rather than run invisibly — this is a
+known gap, tracked in the project's TODO list.
 
 ### Session reset
 

@@ -2,8 +2,8 @@
 """Tests for the turn/tool hook points Phase 3 wires up: `onSubmitUserPrompt`/`onAgentTurnEnd`
 in `klorb.session.mixins.turns._dispatch_turn` (root session only), `onToolUse`/`onToolResult`
 in `klorb.session.mixins.tool_execution._run_tool_calls`, and the `Session.
-start_turn_or_enqueue`/`max_chained_hook_turns` chained-turn safety cap a `chat` handler relies
-on."""
+_deliver_chained_hook_message`/`max_chained_hook_turns` chained-turn safety cap a `chat`
+handler relies on."""
 
 import json
 from datetime import datetime
@@ -13,13 +13,12 @@ from unittest.mock import MagicMock
 import fixtures.sample_tools as sample_tools_package
 import pytest
 
-from klorb.api_provider import ProviderResponse
+from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.hooks.config import HookConfig, HookConfigFilter
 from klorb.message import Message, ToolCallRequest
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig, TurnEventHandlers
-from klorb.session.events import QueuedMessage
+from klorb.session import Session, SessionConfig
 from klorb.session.mixins.turns import HookDeniedTurnError
 from klorb.token_estimate import estimate_tokens
 from klorb.tools.registry import ToolRegistry
@@ -113,7 +112,7 @@ def test_onsubmituserprompt_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> Non
     assert user_message.content != "rewritten"
 
 
-# --- onAgentTurnEnd / start_turn_or_enqueue / max_chained_hook_turns ---
+# --- onAgentTurnEnd / _deliver_chained_hook_message / max_chained_hook_turns ---
 
 
 def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(tmp_path: Path) -> None:
@@ -125,12 +124,71 @@ def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(tmp_path: 
     provider.send_prompt.side_effect = [_reply(f"reply {i}") for i in range(6)]
     session = Session(process_config.session, provider=provider, process_config=process_config)
 
-    session.send_turn("go")
+    # A bare send_turn() only runs the one turn and leaves the rest queued -- run_one_shot()
+    # owns the drain-and-resubmit loop that actually chains them (see docs/adrs/00186).
+    session.run_one_shot("go")
 
     assert provider.send_prompt.call_count == 6
     user_messages = [m.content for m in session.messages if m.role == "user"]
     assert user_messages[0].endswith("go")
     assert user_messages[1:] == ["keep going"] * 5
+
+
+def test_max_chained_hook_turns_zero_disables_chaining(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
+    })
+    process_config.session.max_chained_hook_turns = 0
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+
+    session.run_one_shot("go")
+
+    assert provider.send_prompt.call_count == 1
+
+
+def test_max_chained_hook_turns_negative_means_unlimited(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [
+            HookConfig(
+                type="chat", prompt="keep going",
+                # Excludes the final "STOP" reply (negative lookahead) so the chain ends
+                # naturally instead of genuinely running forever.
+                filter=HookConfigFilter(pattern=r"^(?!STOP$).*")),
+        ],
+    })
+    process_config.session.max_chained_hook_turns = -1
+    provider = MagicMock()
+    # 1 original + 7 chained "cont" replies -- past the default cap of 5 -- then a "STOP" reply
+    # the filter excludes, ending the chain.
+    provider.send_prompt.side_effect = [_reply("cont") for _ in range(7)] + [_reply("STOP")]
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+
+    session.run_one_shot("go")
+
+    assert provider.send_prompt.call_count == 8
+
+
+def test_aborted_turn_resets_the_chained_hook_counter(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
+    })
+    provider = MagicMock()
+    # Two successful chained turns, then an abort on the third -- _fire_agent_turn_end_hook is
+    # never reached for an aborted turn, so nothing explicitly resets the counter; only
+    # _dispatch_turn's own generic entry-point reset can.
+    provider.send_prompt.side_effect = [_reply("r0"), _reply("r1"), ResponseAborted()]
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+
+    with pytest.raises(ResponseAborted):
+        session.run_one_shot("go")
+
+    # A later, independent chain gets the full cap again, not an already-part-spent budget.
+    provider.send_prompt.side_effect = [_reply(f"r{i}") for i in range(6)]
+    session.run_one_shot("resume")
+
+    assert provider.send_prompt.call_count == 3 + 6
 
 
 def test_onagentturnend_reset_session_resets_the_conversation_in_place(tmp_path: Path) -> None:
@@ -151,7 +209,10 @@ def test_onagentturnend_reset_session_resets_the_conversation_in_place(tmp_path:
     session = Session(process_config.session, provider=provider, process_config=process_config)
     original_id = session.id
 
-    session.send_turn("go")
+    # run_one_shot(), not send_turn(): the reset's "fresh start" continuation is delivered via
+    # _deliver_chained_hook_message like any other chained message, so it needs a drain loop to
+    # actually run.
+    session.run_one_shot("go")
 
     assert session.id == original_id
     assert provider.send_prompt.call_count == 2
@@ -184,7 +245,7 @@ def test_onagentturnend_reset_session_also_fires_onsessionend_with_resetsession_
     provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
     session = Session(process_config.session, provider=provider, process_config=process_config)
 
-    session.send_turn("go")
+    session.run_one_shot("go")
 
     data = json.loads(output_path.read_text())
     assert data["hook"] == "onSessionEnd"
@@ -224,18 +285,6 @@ def test_onagentturnend_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> None:
     child.send_turn("hi", resolve_mentions=False)
 
     assert provider.send_prompt.call_count == 1
-
-
-def test_start_turn_or_enqueue_queues_when_a_turn_is_already_in_flight(tmp_path: Path) -> None:
-    provider = MagicMock()
-    session = Session(SessionConfig(workspace=Workspace(path=tmp_path, trusted=True)), provider=provider)
-    session._current_turn_handlers = TurnEventHandlers()
-
-    session.start_turn_or_enqueue("interjected")
-
-    provider.send_prompt.assert_not_called()
-    drained = session.drain_queued_messages()
-    assert drained == [QueuedMessage(message_text="interjected")]
 
 
 # --- onToolUse / onToolResult ---

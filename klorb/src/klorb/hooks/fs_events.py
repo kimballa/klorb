@@ -172,6 +172,15 @@ class FileSystemWatcher:
         if not matched_entries:
             return
         matched_updates = [update for update in pending if update.path in matched_paths]
-        self._dispatch(matched_entries, EventInput(
-            hook="FileSystemModified", workspace_root=str(self._workspace_root),
-            fs_updates=matched_updates))
+        try:
+            self._dispatch(matched_entries, EventInput(
+                hook="FileSystemModified", workspace_root=str(self._workspace_root),
+                fs_updates=matched_updates))
+        except Exception:
+            # A new fs change independently re-arms the next debounce timer via `_record`, so
+            # this batch's own dispatch failing (a hook handler failure, or `Session.
+            # deliver_event_message` raising `ChainedHookMessageUndeliverableError` when the
+            # session is idle) doesn't stop future changes from being watched -- but leaving it
+            # uncaught would still surface as a bare, easy-to-miss thread-exception traceback.
+            logger.error("FileSystemModified dispatch failed for %d entr(y/ies).",
+                         len(matched_entries), exc_info=True)

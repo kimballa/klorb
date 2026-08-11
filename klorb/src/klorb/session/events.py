@@ -229,11 +229,16 @@ class ToolCallStartedEvent(BaseModel):
 
 
 class QueuedMessage(BaseModel):
-    """A user message queued during an active agent turn, awaiting delivery as the next
-    user turn when the current turn ends.
+    """A message queued for delivery as the next turn once the current one ends -- a user's
+    typed-ahead prompt, a `chat` hook handler's `onAgentTurnEnd`/`onSubagentTurnEnd`
+    continuation, or an event handler's (`FileSystemModified`/`Timer`/`WorkspaceTrustChanged`)
+    aggregate message.
 
-    `message_text` is the raw prompt text the user typed. `history_data` is an opaque
-    field the UI layer can use to store widget references or other state needed to
+    `message_text` is the raw text to send. `origin` records where it came from --
+    `Session.drain_next_turn_text()` reads it to decide whether the turn it's about to start
+    is a pure hook-chain continuation (see `Session._chain_continuation_pending`) or something
+    a real user/event caused, which resets `Session._chained_hook_turns`. `history_data` is an
+    opaque field the UI layer can use to store widget references or other state needed to
     transition the queued message's visual representation when it's eventually dispatched.
     The Session layer treats this field as a black box.
     """
@@ -241,6 +246,7 @@ class QueuedMessage(BaseModel):
     model_config = ConfigDict(frozen=False, arbitrary_types_allowed=True)
 
     message_text: str
+    origin: Literal["user", "chained_hook", "event"] = "user"
     history_data: Any = None
 
 

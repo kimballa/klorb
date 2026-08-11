@@ -2,6 +2,7 @@
 """Tests for klorb.hooks.fs_events.FileSystemWatcher."""
 
 import asyncio
+import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -194,6 +195,41 @@ async def test_watching_a_single_file_reports_changes_to_it(root: Path, recorder
     assert len(recorder.calls) == 1
     _, event_input = recorder.calls[0]
     assert event_input.fs_updates == [FileSystemUpdate(event="modified", path=str(target.resolve()))]
+
+
+async def test_dispatch_failure_does_not_stop_future_changes_from_being_watched(
+    root: Path, recorder: _Recorder, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A dispatch failure for one debounced batch (a hook handler error, or
+    `Session.deliver_event_message` raising `ChainedHookMessageUndeliverableError` while idle)
+    must not stop later filesystem changes from still being watched -- see
+    docs/adrs/00186 (chained-turn delivery)."""
+    call_count = 0
+
+    def _raise_once_then_record(
+        entries: list[FileSystemModifiedEventConfig], event_input: EventInput,
+    ) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("boom")
+        recorder(entries, event_input)
+
+    watcher = FileSystemWatcher(
+        root, [_entry(".")], dispatch=_raise_once_then_record, debounce_seconds=_DEBOUNCE_SECONDS)
+    watcher.start()
+    try:
+        with caplog.at_level(logging.ERROR, logger="klorb.hooks.fs_events"):
+            (root / "first.txt").write_text("x", encoding="utf-8")
+            await asyncio.sleep(_DEBOUNCE_SECONDS * 3)
+            (root / "second.txt").write_text("x", encoding="utf-8")
+            await recorder.wait()
+    finally:
+        watcher.close()
+
+    assert call_count == 2
+    assert len(recorder.calls) == 1
+    assert "dispatch failed" in caplog.text
 
 
 def test_start_is_a_no_op_with_no_entries(root: Path, recorder: _Recorder) -> None:

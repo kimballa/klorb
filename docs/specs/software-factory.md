@@ -68,7 +68,7 @@ or off, but no-ops immediately whenever the enable sentinel is absent. When pres
    since wiping the conversation would lose what it was mid-way through). This relies on
    `tools.hooks.maxChainedTurns` (default 5, `docs/specs/hooks-and-events.md`) as the backstop:
    once that many consecutive auto-continued turns have run without a real user/tool-driven turn
-   resetting the counter, `start_turn_or_enqueue` refuses to start another one, and the task
+   resetting the counter, the chained-turn cap refuses to queue another one, and the task
    simply stops making unattended progress until a human looks at it.
 2. **Dirty tree, `.factory_in_progress.tmp` absent** — dirt that isn't the factory's; no
    message. (The `enable-software-factory` skill's own clean-tree precondition, step 1, is what

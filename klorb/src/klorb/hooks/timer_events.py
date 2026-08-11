@@ -115,6 +115,15 @@ class TimerScheduler:
     def _fire(self, index: int, entry: TimerEventConfig) -> None:
         if self._closing_event.is_set():
             return
-        self._dispatch(
-            [entry], EventInput(hook="Timer", workspace_root=str(self._workspace_root)))
+        try:
+            self._dispatch(
+                [entry], EventInput(hook="Timer", workspace_root=str(self._workspace_root)))
+        except Exception:
+            # `_schedule_next` below is what re-arms this entry's next fire -- an uncaught
+            # exception here (a hook handler failure, or `Session.deliver_event_message` raising
+            # `ChainedHookMessageUndeliverableError` when the session is idle) would otherwise
+            # skip it and silently stop this entry from ever firing again.
+            logger.error(
+                "Timer entry %r raised while dispatching; still rescheduling.",
+                entry.action.name, exc_info=True)
         self._schedule_next(index, entry)

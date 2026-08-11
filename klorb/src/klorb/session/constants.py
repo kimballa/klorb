@@ -19,11 +19,13 @@ DEFAULT_MAX_TOOL_CALLS_PER_TURN = 100
 `Session._confirm_limit_increase`)."""
 
 DEFAULT_MAX_CHAINED_HOOK_TURNS = 5
-"""Default value of `SessionConfig.max_chained_hook_turns`: how many turns in a row a `chat`
-hook/event handler may auto-chain (via `Session.start_turn_or_enqueue`) before further
-auto-chained turns are refused, until a real user- or tool-driven turn resets the count -- the
-same fail-safe shape as `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, guarding against a misconfigured
-`onAgentTurnEnd`/event handler that keeps the agent talking to itself indefinitely."""
+"""Default value of `SessionConfig.max_chained_hook_turns`: how many turns in a row an
+`onAgentTurnEnd`/`onSubagentTurnEnd` `chat` handler may auto-chain (via
+`Session._deliver_chained_hook_message`) before further auto-chained turns are refused, until
+a real user-driven turn resets the count -- the same fail-safe shape as
+`DEFAULT_MAX_TOOL_CALLS_PER_TURN`, guarding against a misconfigured handler that keeps the
+agent talking to itself indefinitely. `0` disables chaining entirely; a negative value means
+no cap."""
 
 
 class ToolCallLimitExceeded(Exception):
@@ -31,6 +33,15 @@ class ToolCallLimitExceeded(Exception):
     returning a final answer: more than `MAX_TOOL_CALL_ROUNDS` model-to-tool round trips, or
     the user declined to raise `max_tool_calls_per_turn` past where it was exceeded (see
     `Session._confirm_limit_increase`)."""
+
+
+class ChainedHookMessageUndeliverableError(Exception):
+    """Raised when a `chat`-handler continuation has no live turn-driving host to deliver it
+    to: `Session.deliver_event_message` while the session is fully idle (no turn in flight),
+    or `close()`'s `onSessionEnd`-triggered `reset_session` call. Both fire with no host
+    (TUI/ACP) around to drain a queued message, so silently dispatching it -- running tool
+    calls with nothing rendering them -- would be worse than failing loudly. See TODO.md's
+    "push-and-wake-up" item for the real fix."""
 
 
 # Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids
