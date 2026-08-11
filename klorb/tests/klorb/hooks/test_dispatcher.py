@@ -182,6 +182,25 @@ def test_dispatch_drops_reset_session_without_a_message(
     assert "reset_session" in caplog.text
 
 
+def test_dispatch_drops_reset_session_from_onsessionend(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A session that's ending never has a live host to deliver a continuation to -- unlike
+    `onAgentTurnEnd`, `onSessionEnd`'s aggregate result never carries `reset_session` through,
+    even with a `message` set alongside it."""
+    process_config = _process_config(tmp_path, {
+        "onSessionEnd": [
+            HookConfig(type="bash", shell='echo \'{"message": "restart me", "reset_session": true}\''),
+        ],
+    })
+    with caplog.at_level("WARNING"):
+        result = HookDispatcher(process_config).dispatch(
+            "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", reason="SuspendSession"))
+    assert result.reset_session is False
+    assert result.message == "restart me"
+    assert "reset_session" in caplog.text
+
+
 def test_dispatch_a_failing_handler_contributes_nothing_to_the_chain(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onProcessStart": [

@@ -8,6 +8,7 @@ from typing import Any
 
 from textual import work
 from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.widgets import Markdown, Static
 
 from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message
@@ -25,6 +26,14 @@ from klorb.tui.shell import ShellCommandCancelled, ShellCommandTimedOut, UserShe
 from klorb.tui.widgets.prompt_input import PromptInput
 
 logger = logging.getLogger(__name__)
+
+
+class TuiSessionWake(Message):
+    """Posted by the active session's registered wake handler (see `Session.
+    register_wake_handler`) when a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event
+    queues a message while no turn is in flight -- fires on that event's own background
+    thread, so `App.post_message()` is the thread-safe hand-off into the app's own event loop,
+    the same as `TuiHistoryNotice` (`klorb.logging_config`)."""
 
 
 class PromptSubmissionMixin(ReplAppBase):
@@ -309,6 +318,7 @@ class PromptSubmissionMixin(ReplAppBase):
             effective_subagent_roles=grants.effective_subagent_roles,
         )
         self._wire_session_notice_handler(self._session)
+        self._wire_session_wake_handler(self._session)
 
         if self._session_log_enabled:
             log_path = session_log_path(self._session.id)
@@ -831,3 +841,16 @@ class PromptSubmissionMixin(ReplAppBase):
             self._begin_exit()
         if self._exit_requested:
             self.exit()
+
+    def on_tui_session_wake(self, message: TuiSessionWake) -> None:
+        """Handles a `TuiSessionWake`: drains and resubmits whatever an idle-triggered event or
+        `reset_session` just queued (see `Session.deliver_event_message`), the same
+        "resubmit through the front door" step `_finish_turn` runs at the end of an ordinary
+        turn."""
+        if self._turn_in_flight:
+            # A real user submission raced ahead of this wake; its own `_finish_turn` will
+            # drain the same queued message once that turn ends.
+            return
+        next_turn_text = self._session.drain_next_turn_text()
+        if next_turn_text is not None:
+            self._submit_prompt(next_turn_text)

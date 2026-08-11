@@ -136,8 +136,11 @@ class SessionBase:
     _session_subdir: str | None
     _session_claimed: bool
     aliases: list[str]
+    _wake_handler: Callable[[], None] | None
 
     def close(self) -> None: ...
+
+    def deliver_wake(self) -> None: ...
 
     def reset_session(self) -> None: ...
 

@@ -54,7 +54,7 @@ from klorb.tui.constants import (
 from klorb.tui.formatting import format_workspace_path
 from klorb.tui.mixins.interactions import InteractionsMixin
 from klorb.tui.mixins.key_actions import KeyActionsMixin
-from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin
+from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin, TuiSessionWake
 from klorb.tui.mixins.rendering import RenderingMixin
 from klorb.tui.mixins.status_bar import StatusBarMixin
 from klorb.tui.mixins.subagents_panel import SubagentsPanelMixin
@@ -324,6 +324,7 @@ class ReplApp(
             )
         self._session = session
         self._wire_session_notice_handler(session)
+        self._wire_session_wake_handler(session)
         self._replacing_session = False
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
@@ -600,6 +601,17 @@ class ReplApp(
             self.post_message(TuiHistoryNotice(text, error=False))
 
         session.register_notice_handler(notify)
+
+    def _wire_session_wake_handler(self, session: Session) -> None:
+        """Register this app as `session`'s wake handler (see `Session.register_wake_handler`):
+        posts a `TuiSessionWake`, the same thread-safe hand-off `_wire_session_notice_handler`
+        uses, so a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event queuing a message
+        while the app is idle gets drained and resubmitted on the app's own thread via
+        `on_tui_session_wake`, regardless of which thread queued it."""
+        def wake() -> None:
+            self.post_message(TuiSessionWake())
+
+        session.register_wake_handler(wake)
 
     def show_notice(self, message: str, *, error: bool = False) -> None:
         """Append `message` to the history scroll as a `.notice` (or `.error` if `error`)

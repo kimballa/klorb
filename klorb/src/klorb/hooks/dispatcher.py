@@ -159,6 +159,12 @@ class HookDispatcher:
                 "Hook %r's aggregate result set reset_session without a message; ignoring "
                 "reset_session.", name)
             aggregate = aggregate.model_copy(update={"reset_session": False})
+        if aggregate.reset_session and name == "onSessionEnd":
+            logger.warning(
+                "onSessionEnd's aggregate result set reset_session, but a session that's "
+                "ending never has a live host to deliver a continuation to; ignoring "
+                "reset_session.")
+            aggregate = aggregate.model_copy(update={"reset_session": False})
         return aggregate
 
     def _run_handler(

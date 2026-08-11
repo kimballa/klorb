@@ -143,3 +143,34 @@ def test_dispatch_timer_event_delivers_the_actions_message(tmp_path: Path) -> No
     provider.send_prompt.assert_not_called()
     drained = session.drain_queued_messages()
     assert drained == [QueuedMessage(message_text="tick", origin="event")]
+
+
+def test_dispatch_timer_event_reset_session_resets_and_wakes_the_host(tmp_path: Path) -> None:
+    """A `reset_session` result wipes the conversation in place (same `id`) and delivers its
+    `message` via `deliver_event_message` like an ordinary event message -- which, while idle,
+    means enqueuing and pinging the registered wake handler (see `Session._deliver_or_reset_event`,
+    shared with `klorb.tests.klorb.session.test_hooks_fs_and_trust_events`'s
+    `WorkspaceTrustChanged` coverage of the same branch)."""
+    entry = TimerEventConfig(
+        interval_minutes=10,
+        action=HookConfig(
+            type="bash", shell='echo \'{"message": "fresh start", "reset_session": true}\''))
+    process_config = _process_config(tmp_path, Timer=[entry])
+    provider = MagicMock()
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+    session.append_system_note("stale conversation")
+    original_id = session.id
+    woken: list[bool] = []
+    session.register_wake_handler(lambda: woken.append(True))
+
+    try:
+        session._dispatch_timer_event([entry], EventInput(hook="Timer", workspace_root=str(tmp_path)))
+    finally:
+        session.close()
+
+    assert session.id == original_id
+    assert session.messages == []
+    assert woken == [True]
+    provider.send_prompt.assert_not_called()
+    drained = session.drain_queued_messages()
+    assert drained == [QueuedMessage(message_text="fresh start", origin="event")]

@@ -248,11 +248,13 @@ docs/adrs/00182-reset-session-mutates-the-session-in-place-instead-of-replacing-
 (TUI/ACP/headless) needs to participate: `Session` mutates its own fields and never needs to hand
 a new object back to whatever holds it.
 
-Only two call sites read it — `SessionTurnsMixin._fire_agent_turn_end_hook`
-(`klorb/src/klorb/session/mixins/turns.py`) for `onAgentTurnEnd`, and `SessionCoreMixin.close()`
-(`klorb/src/klorb/session/mixins/core.py`) for `onSessionEnd` — every other hook/event can set the
-field (`HookDispatcher` doesn't know which hook fired when it folds/validates the aggregate), but
-nothing consumes it there.
+Three call sites read it — `SessionTurnsMixin._fire_agent_turn_end_hook`
+(`klorb/src/klorb/session/mixins/turns.py`) for `onAgentTurnEnd`, and `SessionCoreMixin.
+_dispatch_event_entries`/`fire_workspace_trust_changed_hook` (`klorb/src/klorb/session/mixins/
+core.py`, via the shared `_deliver_or_reset_event` helper) for `Timer`/`FileSystemModified`/
+`WorkspaceTrustChanged`. `onSessionEnd` never does: `HookDispatcher._run_chain` drops
+`reset_session` from that hook's aggregate result unconditionally (see "`onSessionEnd` never
+initiates a reset" below), so `close()` never sees it set.
 
 `Session.reset_session()` (`klorb/src/klorb/session/mixins/core.py`) is the shared mechanism
 both call sites invoke. It does not deliver `message` itself — the two callers have different
@@ -285,27 +287,39 @@ own local variables (the completed turn's `result_text`) have already been captu
 that call stack still depends on `self._messages` reflecting the just-finished turn once the reset
 runs. `send_turn()` itself does nothing with `self._messages` after `_dispatch_turn()` returns.
 
-The two callers deliver `message` differently, because only one of them has a live host:
+Each caller delivers `message` the same way it delivers any other continuation:
 
 * **`_fire_agent_turn_end_hook`'s reset branch** is still on the same call stack as whichever
   host's `send_turn()` call is waiting on this turn (see "Chained turns" above) — it calls
   `reset_session()` then `_deliver_chained_hook_message(message)` directly, exactly like an
   ordinary chained continuation, so the reset conversation's first turn renders normally.
-* **`close()`'s reset branch** has no live host — the session is shutting down. It aborts the
-  shutdown entirely (returns immediately after calling `reset_session()`, running none of
-  cascade-closing subagents, `_finalize_session_persistence()`, or its own outer
-  teardown-callback loop — this session isn't actually ending, so none of that applies;
-  `reset_session()`'s own, narrower cleanup (step 3 above) runs instead), then raises
-  `ChainedHookMessageUndeliverableError` rather than dispatching `message` with nothing to
-  render it. See "Available events" below for the same limitation on the event-delivery side,
-  and TODO.md's "push-and-wake-up" item for the planned fix.
+* **`_dispatch_event_entries`/`fire_workspace_trust_changed_hook`'s reset branch**
+  (`_deliver_or_reset_event`) calls `reset_session()` then `deliver_event_message(message)` —
+  the same idle-or-turn-in-flight delivery an ordinary event message uses (see "Available
+  events" below), including waking a registered host when idle.
 
 **`onSessionEnd` also fires for an `onAgentTurnEnd`-triggered reset.** Before calling
 `reset_session()`, `_fire_agent_turn_end_hook` dispatches `onSessionEnd` with
 `reason="ResetSession"` — purely for side effects (e.g. a bash handler logging that this
-conversation ended); its own `HookOutput` is discarded, the same way every other `onSessionEnd`
-firing is non-cancelable. `close()`'s own `onSessionEnd` firing (a real `SuspendSession`) doesn't
-need this extra dispatch, since `onSessionEnd` is already what fired there.
+conversation ended); its own `HookOutput` is discarded, the same way every `onSessionEnd` firing
+is non-cancelable (see below).
+
+### `onSessionEnd` never initiates a reset
+
+`onSessionEnd` fires in two situations — `close()`'s real shutdown (`reason="SuspendSession"`)
+and the side-effect-only firing above (`reason="ResetSession"`) — and in neither does a
+`reset_session`/`message` in its own aggregate result do anything: `HookDispatcher._run_chain`
+drops `reset_session` unconditionally whenever `name == "onSessionEnd"`, logged at `warning`,
+the same shape as the existing "`reset_session` without a `message`" invariant. `close()` never
+branches on the result at all — it dispatches `onSessionEnd` for handler side effects and `log`
+only, and shutdown always proceeds.
+
+This is a deliberate limitation, not a gap pending a fix: unlike an idle `Timer`/
+`FileSystemModified` event (which has a host that's merely not currently running a turn, still
+reachable, able to start one), `onSessionEnd` fires because a host has already decided this
+exact session is going away — a real process/app exit, or `/clear`'s replacement. There is no
+"come drain the queue" wake-up that helps there; the host would have to abort a shutdown it
+already committed to. See docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md.
 
 ## Debugging: `HookOutput.log`
 
@@ -349,7 +363,7 @@ hooks are inert in that case rather than erroring.
 | `onProcessStart` | `klorb.cli.main()`, before workspace/session setup | process |
 | `onProcessEnd` | `klorb.cli.main()`, at exit | process |
 | `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | root session |
-| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); a `reset_session` result calls `Session.reset_session()` and raises `ChainedHookMessageUndeliverableError` instead of continuing shutdown (see "Session reset" above) | root session |
+| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); its result never initiates a reset -- `HookDispatcher` drops `reset_session`, and `close()` never branches on the result at all (see "`onSessionEnd` never initiates a reset" above) | root session |
 | `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
 | `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `_deliver_chained_hook_message`, unless `reset_session` is also set (see "Session reset" above) | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |
@@ -377,19 +391,22 @@ subagent activity. Every other hook above is scoped to exactly one side: `onSess
 
 ## Available events
 
-An event's aggregate `HookOutput.message` is delivered via `Session.deliver_event_message`
-(`klorb/src/klorb/session/mixins/turns.py`): if a turn is already running, `text` is queued
-(`QueuedMessage(origin="event")`, so `drain_next_turn_text` resets `_chained_hook_turns` for it
-like any non-chained message) for that turn's own host to pick up once it ends, the same live-host
-mechanism ordinary hook chaining relies on (see "Chained turns" above). Otherwise there is no
-turn in flight and so no host nearby to deliver to at all: raises
-`ChainedHookMessageUndeliverableError` rather than dispatching invisibly — an idle-triggered
-event still needs the "push-and-wake-up" mechanism tracked in TODO.md before it can render
-anywhere. Both `FileSystemModified` and `WorkspaceTrustChanged` always target the root session's
-conversation, never a subagent's, regardless of which session happens to be active when they
-fire. Every event sets `EventInput.is_agent_active` to whether that root session's
-`current_turn_handlers()` is non-`None` at the moment the event fires — the same signal
-`deliver_event_message` uses to decide between queuing and raising.
+An event's aggregate `HookOutput.message`/`reset_session` is delivered via
+`_deliver_or_reset_event` → `Session.deliver_event_message` (`klorb/src/klorb/session/mixins/
+turns.py`): if a turn is already running, `text` is queued (`QueuedMessage(origin="event")`, so
+`drain_next_turn_text` resets `_chained_hook_turns` for it like any non-chained message) for
+that turn's own host to pick up once it ends, the same live-host mechanism ordinary hook
+chaining relies on (see "Chained turns" above). Otherwise there is no turn in flight: `text` is
+still queued, then whichever host registered a wake handler (`Session.register_wake_handler`,
+see docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md)
+is pinged to drain and resubmit it through its own front door. Only with no registered handler
+at all (a subagent, a `Session` built for a unit test, or headless outside its own
+`run_one_shot()` loop) does it raise `ChainedHookMessageUndeliverableError` rather than
+dispatching invisibly. Both `FileSystemModified` and `WorkspaceTrustChanged` always target the
+root session's conversation, never a subagent's, regardless of which session happens to be
+active when they fire. Every event sets `EventInput.is_agent_active` to whether that root
+session's `current_turn_handlers()` is non-`None` at the moment the event fires — the same
+signal `deliver_event_message` uses to decide between queuing and waking.
 
 ### `FileSystemModified` (`klorb.hooks.fs_events.FileSystemWatcher`)
 

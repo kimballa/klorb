@@ -450,11 +450,18 @@ class SessionTurnsMixin(SessionBase):
         If a turn is already running, `text` is queued (tagged `origin="event"`, so
         `drain_next_turn_text` resets `_chained_hook_turns` for it like any non-hook message)
         for that turn's own host to pick up once it ends -- the same live-host case ordinary
-        hook chaining relies on. Otherwise there is no turn in flight and so no host nearby to
-        deliver to at all: raises `ChainedHookMessageUndeliverableError` rather than
-        dispatching invisibly. See TODO.md's "push-and-wake-up" item."""
+        hook chaining relies on. Otherwise there is no turn in flight: `text` is still queued,
+        then `deliver_wake()` pings whichever host registered a wake handler (see
+        `register_wake_handler`) to come drain it and resubmit through its own front door. If no
+        host ever registered one (headless outside its own `run_one_shot()` loop, a subagent, a
+        `Session` built for a unit test), raises `ChainedHookMessageUndeliverableError` rather
+        than dispatching invisibly."""
         if self.current_turn_handlers() is not None:
             self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
+            return
+        if self._wake_handler is not None:
+            self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
+            self.deliver_wake()
             return
         raise ChainedHookMessageUndeliverableError(
             f"Event delivered to idle session {self.id} with no live host to show it to: {text!r}")
