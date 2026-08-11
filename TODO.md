@@ -5,6 +5,8 @@
 
 ### Bugs
 
+* `git push` failed with a 403 from the CONNECT tunnel (network/proxy issue) ?
+
 * the agent's memory topics should be injected into the first user prompt
 * the system prompt should explain the memory system and encourage the agent more forcefully to capture memories, any time it is corrected by the user or learns something important about the project.
 
