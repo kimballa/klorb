@@ -27,44 +27,11 @@
 
 * the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
 
-* Build the "Software Factory" concept on top of hooks/events
-  * Hook onSkillActivate for /enable-software-factory
-    * This puts a sentinel file (`.enable_software_factory.tmp`) in docs/plans/auto/ to
-       enable it (if not already there).
-    * (gitignore this file.)
-    * The enable-software-factory skill informs the agent to find work in the following places:
-      * Always be on the `main` branch when looking for new work.
-      * Look in the `docs/plans/auto/` dir.
-      * First, look at docs/plans/auto/queue.md. Individual top-level bullet points in this file represent
-        self-contained tasks that can be taken one-by-one.
-      * If no small tasks there, look for any other .md or .txt files in docs/plans/auto/. These
-        all constitute tasks that may be immediately consumed by an agent. These other files besides queue.md
-        are a whole-file task; read the whole file and treat it as a single unit to build.
-    * Check out a new local branch for the feature.
-      * The base of the branch should be `main` unless the feature explicitly builds on other WIP.
-    * Build the feature, fix the bug, do the thing.
-    * When it's done, the agent should:
-      * Remove the bullet from queue.md, or 'git rm' the feature file on that
-        branch as part of the work, when its done.
-      * Commit its work
-      * Push the branch
-      * Open a PR.
-      * The agent should also remove the bullet pt / 'git rm' the file on the main branch and commit there.
-  * Hook onProcessEnd to `rm -f` the sentinel file.
-  * Hook onAgentTurnEnd
-    * If the sentinel file is missing, the hook script does nothing further.
-    * If the working copy is clean, then the agent has finished its work on the auto feature.
-      ... So send it a prompt telling it to find the next auto feature using the process in
-      /enable-software-factory, using a reset_session=True kickoff msg.
-  * Hook FileChanged event, subscribe to the `auto` dir.
-    * If the sentinel file is missing, do nothing else.
-    * If the agent is active mid-turn, do nothing else.
-    * If the `queue.md` file was modified, send the agent a msg telling it there are new items to build
-      in the queue.md file with /enable-software-factory.
-    * Otherwise, if a file was added, pick it up and send it as a msg to the agent to build with the
-      /enable-software-factory skill.
-
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
+
+* Allow a skill to grant permission to perform various commands that may not otherwise be available.
+  e.g. `/do-something-needing-a-push` could include a session-duration grant to `["git", "push", "**"]`
+  even if `git push` was not ordinarily part of the permission set for the repo.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
   masks out a secret, put the file on a list of sensitive files. This file list should be fed to
