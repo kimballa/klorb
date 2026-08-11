@@ -7,14 +7,6 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
 
-* [harness bug] In the klorb Python harness, `KLORB_CONFIG_DIR`/`KLORB_STATE_DIR`/
-  `KLORB_DATA_DIR` (defined in `klorb/src/klorb/paths.py`) are resolved from `os.environ`
-  eagerly at module import time. `klorb.cli.main()` calls `load_dotenv()` afterward
-  (`klorb/src/klorb/cli.py`), so a `.env` file can never override these three paths — only a
-  real shell/process env var can. Fix so these three paths are resolved after dotenv loading
-  (e.g. lazily, or by having `cli.main()` re-resolve them once `load_dotenv()` has run), so
-  `.env`-based overrides work the same way they do for other config.
-
 * [TUI feature] Add a "Rename Session" command-palette action to the klorb TUI (see
   `klorb/src/klorb/tui/commands/session_commands.py`, which already has a
   `SessionCommandProvider` and a modal for picking among sessions) that lets the user change
