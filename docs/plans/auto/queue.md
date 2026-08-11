@@ -7,6 +7,9 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
 
+* [documentation] The top-level README.md should do a markdown img embed of
+  docs/assets/klorb-tui.png so users can see a screenshot of the Klorb session.
+
 * [harness bug] In the klorb Python harness, `KLORB_CONFIG_DIR`/`KLORB_STATE_DIR`/
   `KLORB_DATA_DIR` (defined in `klorb/src/klorb/paths.py`) are resolved from `os.environ`
   eagerly at module import time. `klorb.cli.main()` calls `load_dotenv()` afterward
