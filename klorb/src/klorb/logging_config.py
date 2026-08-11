@@ -21,7 +21,7 @@ from textual._context import active_app
 from textual.logging import TextualHandler
 from textual.message import Message
 
-from klorb.paths import SESSION_LOGS_DIR
+from klorb.paths import get_session_logs_dir
 from klorb.tools.util.secret_redaction import SECRET_DETECTION_PLUGINS, SECRET_DETECTION_SCAN_LOCK
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ def _resolve_klorb_log_level() -> int:
 
 def session_log_path(session_id: str) -> Path:
     """Build the session log file path for the given session id: SESSION_LOGS_DIR/<id>.log."""
-    return SESSION_LOGS_DIR / f"{session_id}.log"
+    return get_session_logs_dir() / f"{session_id}.log"
 
 
 def prune_session_logs(

@@ -19,18 +19,29 @@ def _dir_from_env(env_var: str, default: Path) -> Path:
     """Resolve a klorb directory from an env var override, falling back to the given default.
 
     A leading `~`/`~user` in the override is expanded to the invoking user's home directory
-    (`Path.expanduser()`) here, at the single source of `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/
-    `KLORB_STATE_DIR`, so every consumer of those constants (e.g.
-    `klorb.permissions.directory_access.privileged_dirs`, `klorb.process_config.
-    user_config_path`) gets a correctly expanded, usable path without having to expand it
-    again itself.
+    (`Path.expanduser()`) here, at the single source of `get_klorb_config_dir()`/
+    `get_klorb_data_dir()`/`get_klorb_state_dir()`, so every consumer gets a correctly
+    expanded, usable path without having to expand it again itself.
     """
     override = os.environ.get(env_var)
     return Path(override).expanduser() if override else default
 
 
-KLORB_CONFIG_DIR: Path = _dir_from_env(KLORB_CONFIG_DIR_ENV_VAR, DEFAULT_KLORB_CONFIG_DIR)
-KLORB_DATA_DIR: Path = _dir_from_env(KLORB_DATA_DIR_ENV_VAR, DEFAULT_KLORB_DATA_DIR)
-KLORB_STATE_DIR: Path = _dir_from_env(KLORB_STATE_DIR_ENV_VAR, DEFAULT_KLORB_STATE_DIR)
+def get_klorb_config_dir() -> Path:
+    """Return the klorb config directory, respecting KLORB_CONFIG_DIR env var."""
+    return _dir_from_env(KLORB_CONFIG_DIR_ENV_VAR, DEFAULT_KLORB_CONFIG_DIR)
 
-SESSION_LOGS_DIR: Path = KLORB_STATE_DIR / SESSION_LOGS_DIR_NAME
+
+def get_klorb_data_dir() -> Path:
+    """Return the klorb data directory, respecting KLORB_DATA_DIR env var."""
+    return _dir_from_env(KLORB_DATA_DIR_ENV_VAR, DEFAULT_KLORB_DATA_DIR)
+
+
+def get_klorb_state_dir() -> Path:
+    """Return the klorb state directory, respecting KLORB_STATE_DIR env var."""
+    return _dir_from_env(KLORB_STATE_DIR_ENV_VAR, DEFAULT_KLORB_STATE_DIR)
+
+
+def get_session_logs_dir() -> Path:
+    """Return the session logs directory under the state directory."""
+    return get_klorb_state_dir() / SESSION_LOGS_DIR_NAME

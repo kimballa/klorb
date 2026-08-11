@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from klorb.message import ToolCallRequest
-from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
+from klorb.paths import get_klorb_config_dir, get_klorb_data_dir, get_klorb_state_dir
 from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, PermissionAskRequired
 from klorb.session.events import (
@@ -317,8 +317,8 @@ class SessionPermissionsMixin(SessionBase):
             f"Grant Klorb read/write access to the workspace's .klorb/ directory "
             f"({self.config.workspace.path}/.klorb/) for the rest of this session."
         ) if scope == "workspace" else (
-            f"Grant Klorb read/write access to {KLORB_DATA_DIR}, {KLORB_STATE_DIR}, "
-            f"and {KLORB_CONFIG_DIR} for the rest of this session."
+            f"Grant Klorb read/write access to {get_klorb_data_dir()}, {get_klorb_state_dir()}, "
+            f"and {get_klorb_config_dir()} for the rest of this session."
         ) if scope == "homedir" else str(escalate_exc)
         decision = callbacks.on_escalate_privileges(EscalatePrivilegesContext(
             scope=scope, description=description, reason=escalate_exc.reason))

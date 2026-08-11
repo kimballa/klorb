@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
-from klorb.paths import KLORB_CONFIG_DIR, KLORB_DATA_DIR, KLORB_STATE_DIR
+from klorb.paths import get_klorb_config_dir, get_klorb_data_dir, get_klorb_state_dir
 from klorb.permissions.table import PermissionsTable
 
 if TYPE_CHECKING:
@@ -110,8 +110,8 @@ def privileged_dirs(
 ) -> list[Path]:
     """Canonicalized list of every directory klorb's file tools must never read from or write to:
     the workspace's own `${workspace_root}/.klorb/` project dir, plus the process-wide
-    `KLORB_CONFIG_DIR`/`KLORB_DATA_DIR`/`KLORB_STATE_DIR` from `klorb.paths` (resolved here,
-    not cached at import time, so an env-var override picked up by `klorb.paths` is honored).
+    `get_klorb_config_dir()`/`get_klorb_data_dir()`/`get_klorb_state_dir()` from `klorb.paths`
+    (resolved at call time, so an env-var override picked up by `klorb.paths` is honored).
     When `claude_skills_compat` is true, `${workspace_root}/.claude/skills/` joins the workspace
     `.klorb/` dir — writing skill content into a directory klorb auto-discovers and trusts (see
     `klorb.tools.skill.common`) deserves the same protection as `.klorb/skills/`.
@@ -135,9 +135,9 @@ def privileged_dirs(
     root = workspace_root.resolve(strict=False)
     dirs: list[Path] = []
     if not (approved_scopes and "homedir" in approved_scopes):
-        dirs.append(KLORB_DATA_DIR.resolve(strict=False))
-        dirs.append(KLORB_STATE_DIR.resolve(strict=False))
-        dirs.append(KLORB_CONFIG_DIR.resolve(strict=False))
+        dirs.append(get_klorb_data_dir().resolve(strict=False))
+        dirs.append(get_klorb_state_dir().resolve(strict=False))
+        dirs.append(get_klorb_config_dir().resolve(strict=False))
     if not (approved_scopes and "workspace" in approved_scopes):
         dirs.append(root / KLORB_PROJECT_DIR_NAME)
         if claude_skills_compat:
@@ -190,16 +190,16 @@ def is_under_workspace_claude_skills_dir(path: Path, workspace_root: Path) -> bo
 
 
 def is_under_homedir_klorb_dir(path: Path) -> bool:
-    """Return whether `path` (already canonicalized) is KLORB_DATA_DIR, KLORB_STATE_DIR,
-    or KLORB_CONFIG_DIR (or beneath them) — the subset of `is_privileged_path` an
+    """Return whether `path` (already canonicalized) is get_klorb_data_dir(), get_klorb_state_dir(),
+    or get_klorb_config_dir() (or beneath them) — the subset of `is_privileged_path` an
     `EscalatePrivileges` \"homedir\" scope grant lifts."""
     return (
-        path == KLORB_DATA_DIR.resolve(strict=False)
-        or path.is_relative_to(KLORB_DATA_DIR.resolve(strict=False))
-        or path == KLORB_STATE_DIR.resolve(strict=False)
-        or path.is_relative_to(KLORB_STATE_DIR.resolve(strict=False))
-        or path == KLORB_CONFIG_DIR.resolve(strict=False)
-        or path.is_relative_to(KLORB_CONFIG_DIR.resolve(strict=False))
+        path == get_klorb_data_dir().resolve(strict=False)
+        or path.is_relative_to(get_klorb_data_dir().resolve(strict=False))
+        or path == get_klorb_state_dir().resolve(strict=False)
+        or path.is_relative_to(get_klorb_state_dir().resolve(strict=False))
+        or path == get_klorb_config_dir().resolve(strict=False)
+        or path.is_relative_to(get_klorb_config_dir().resolve(strict=False))
     )
 
 

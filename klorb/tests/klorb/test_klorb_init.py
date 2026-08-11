@@ -37,7 +37,7 @@ def test_default_scope_is_system_when_root(monkeypatch: pytest.MonkeyPatch) -> N
 def test_config_target_path_user_scope_uses_user_config_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(process_config_module, "get_klorb_config_dir", lambda: tmp_path)
     assert config_target_path("user") == tmp_path / "klorb-config.json"
 
 

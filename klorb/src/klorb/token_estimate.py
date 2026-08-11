@@ -25,7 +25,7 @@ import tiktoken
 
 from klorb.message import Message
 from klorb.models.model import Model
-from klorb.paths import KLORB_DATA_DIR
+from klorb.paths import get_klorb_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ TIKTOKEN_CACHE_DIR_ENV_VAR = "TIKTOKEN_CACHE_DIR"
 def tiktoken_cache_target_dir() -> Path:
     """Where `install_tiktoken_cache()` copies the packaged cache tree to, and where
     `configure_tiktoken_cache_env()` looks for it: `$KLORB_DATA_DIR/tiktoken-cache`."""
-    return KLORB_DATA_DIR / TIKTOKEN_CACHE_RESOURCE_NAME
+    return get_klorb_data_dir() / TIKTOKEN_CACHE_RESOURCE_NAME
 
 
 def tiktoken_cache_encoding_dir() -> Path:

@@ -25,7 +25,7 @@ import logging
 import os
 from pathlib import Path
 
-from klorb.paths import KLORB_DATA_DIR
+from klorb.paths import get_klorb_data_dir
 from klorb.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def project_history_dir(workspace: Workspace) -> Path:
     an unregistered workspace) — e.g. a workspace at `/home/aaron/src/foobar` registered
     with uuid `abcd-1234` maps to `…/projects/foobar-abcd-1234`."""
     basename = workspace.path.name or "workspace"
-    return KLORB_DATA_DIR / PROJECTS_DIR_NAME / f"{basename}-{_project_token(workspace)}"
+    return get_klorb_data_dir() / PROJECTS_DIR_NAME / f"{basename}-{_project_token(workspace)}"
 
 
 def project_history_path(workspace: Workspace) -> Path:

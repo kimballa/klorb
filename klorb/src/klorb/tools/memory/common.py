@@ -8,15 +8,15 @@ file-format rule, and the untrusted-workspace access gate. See docs/specs/memori
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from klorb.paths import KLORB_DATA_DIR
+from klorb.paths import get_klorb_data_dir
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, canonicalize_dir
 
 if TYPE_CHECKING:
     from klorb.tools.setup_context import ToolSetupContext
 
 MEMORIES_DIRNAME = "memories"
-"""Directory name holding memory files within either namespace's parent (`KLORB_DATA_DIR` for
-`global`, `${workspace_root}/.klorb` for `workspace`) — see `memory_namespace_dir()`."""
+"""Directory name holding memory files within either namespace's parent (`get_klorb_data_dir()`
+for `global`, `${workspace_root}/.klorb` for `workspace`) — see `memory_namespace_dir()`."""
 
 Namespace = Literal["global", "workspace"]
 
@@ -37,7 +37,7 @@ def memory_namespace_dir(context: "ToolSetupContext", namespace: Namespace) -> P
     directories are created on demand, at first write, by `CreateFileCore.apply()`'s own
     `path.parent.mkdir(parents=True, exist_ok=True)`, not eagerly here."""
     if namespace == "global":
-        return KLORB_DATA_DIR / MEMORIES_DIRNAME
+        return get_klorb_data_dir() / MEMORIES_DIRNAME
     return context.session_config.workspace.path / KLORB_PROJECT_DIR_NAME / MEMORIES_DIRNAME
 
 

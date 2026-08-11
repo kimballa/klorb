@@ -21,7 +21,7 @@ from klorb.hooks.merge import concatenate_named_handler_lists, parse_handler_lis
 from klorb.hooks.timer_events import clamp_timer_intervals
 from klorb.json_error_display import format_json_error_context
 from klorb.openrouter import OPENROUTER_BASE_URL
-from klorb.paths import KLORB_CONFIG_DIR
+from klorb.paths import get_klorb_config_dir
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules, find_workspace_root
 from klorb.permissions.domain_access import DomainRules
@@ -800,7 +800,7 @@ def etc_config_path() -> Path:
 def user_config_path() -> Path:
     """Per-user config file path, honoring the `KLORB_CONFIG_DIR` env var override. Also used
     by `klorb.permissions.grant` to persist an interactive "always for me" permission grant."""
-    return KLORB_CONFIG_DIR / CONFIG_FILENAME
+    return get_klorb_config_dir() / CONFIG_FILENAME
 
 
 def project_config_path(cwd: Path) -> Path:

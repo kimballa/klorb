@@ -3,7 +3,7 @@
 
 Distinct from klorb's ordinary `logging`-based instrumentation (see `klorb.logging_config`):
 when active, this always appends directly to a fixed file, `tool-calls.log` under
-`KLORB_STATE_DIR` (default `~/.local/state/klorb/tool-calls.log`), regardless of the active
+`get_klorb_state_dir()` (default `~/.local/state/klorb/tool-calls.log`), regardless of the active
 logging configuration, handlers, or level.
 """
 
@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from typing import Any
 
-from klorb.paths import KLORB_STATE_DIR
+from klorb.paths import get_klorb_state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def tool_call_logging_enabled(config_enabled: bool | None) -> bool:
 
 def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | None) -> None:
     """Append one entry recording a finished tool call to `tool-calls.log` under
-    `KLORB_STATE_DIR`, creating the file and its parent directory if needed.
+    `get_klorb_state_dir()`, creating the file and its parent directory if needed.
 
     Each entry is separated from the file's existing contents (if any) by a blank line,
     followed by a `---` divider line, an ISO-8601 timestamp line, `"Request:"` and the call's
@@ -77,7 +77,7 @@ def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | Non
     """
     global _io_error_already_logged
     try:
-        path = KLORB_STATE_DIR / TOOL_CALLS_LOG_FILENAME
+        path = get_klorb_state_dir() / TOOL_CALLS_LOG_FILENAME
         path.parent.mkdir(parents=True, exist_ok=True)
         file_has_contents = path.is_file() and path.stat().st_size > 0
 

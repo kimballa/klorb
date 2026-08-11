@@ -17,13 +17,13 @@ from klorb.tools.skill import common as skill_common
 @pytest.fixture(autouse=True)
 def _redirect_session_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests from writing session log files into the real KLORB_STATE_DIR."""
-    monkeypatch.setattr(logging_config, "SESSION_LOGS_DIR", tmp_path / "session-logs")
+    monkeypatch.setattr(logging_config, "get_session_logs_dir", lambda: tmp_path / "session-logs")
 
 
 @pytest.fixture(autouse=True)
 def _redirect_tool_calls_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests from writing tool-calls.log into the real KLORB_STATE_DIR."""
-    monkeypatch.setattr("klorb.tool_call_log.KLORB_STATE_DIR", tmp_path)
+    monkeypatch.setattr("klorb.tool_call_log.get_klorb_state_dir", lambda: tmp_path)
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     """
     monkeypatch.setenv(
         process_config_module.KLORB_ETC_CONFIG_ENV_VAR, str(tmp_path / "etc" / "klorb-config.json"))
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "user-config")
+    monkeypatch.setattr(process_config_module, "get_klorb_config_dir", lambda: tmp_path / "user-config")
     monkeypatch.setattr(
         process_config_module, "_default_config_layer",
         lambda warnings: process_config_module.LoadedConfigLayer(
@@ -47,11 +47,11 @@ def _isolate_config_layers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
 @pytest.fixture(autouse=True)
 def _isolate_user_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point `ModelRegistry`'s user-override tier (`klorb.models.registry.KLORB_DATA_DIR`) at
+    """Point `ModelRegistry`'s user-override tier (`klorb.models.registry.get_klorb_data_dir()`) at
     an empty temp dir, so no test anywhere in the suite can accidentally pick up a real
     `~/.local/share/klorb/models` file from the machine running the suite.
     """
-    monkeypatch.setattr("klorb.models.registry.KLORB_DATA_DIR", tmp_path / "klorb-data-dir")
+    monkeypatch.setattr("klorb.models.registry.get_klorb_data_dir", lambda: tmp_path / "klorb-data-dir")
 
 
 @pytest.fixture(autouse=True)
@@ -65,12 +65,12 @@ def _isolate_session_persistence_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     (`SessionPersistenceMixin.claim_session_directory`). Tests that specifically exercise
     persistence against a real (if temporary) directory layout construct their own
     `TrustManager(path=...)` and additionally patch `klorb.workspace.input_history.
-    KLORB_DATA_DIR` themselves (see `tui.conftest._isolated_data_dir`), which simply overrides
+    get_klorb_data_dir` themselves (see `tui.conftest._isolated_data_dir`), which simply overrides
     this default with a different `tmp_path`-rooted location.
     """
     isolated = tmp_path / "klorb-session-data-dir"
-    monkeypatch.setattr("klorb.workspace.input_history.KLORB_DATA_DIR", isolated)
-    monkeypatch.setattr("klorb.workspace.trust_manager.KLORB_DATA_DIR", isolated)
+    monkeypatch.setattr("klorb.workspace.input_history.get_klorb_data_dir", lambda: isolated)
+    monkeypatch.setattr("klorb.workspace.trust_manager.get_klorb_data_dir", lambda: isolated)
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +83,7 @@ def _reset_skill_catalog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     Mirrors `_isolate_config_layers`'s blanking of the packaged config layer.
     """
     monkeypatch.setattr(skill_common, "internal_skills_dir", lambda: tmp_path / "empty-internal-skills")
-    monkeypatch.setattr(skill_common, "KLORB_DATA_DIR", tmp_path / "empty-user-skills-data")
+    monkeypatch.setattr(skill_common, "get_klorb_data_dir", lambda: tmp_path / "empty-user-skills-data")
 
 
 @pytest.fixture(scope="session", autouse=True)

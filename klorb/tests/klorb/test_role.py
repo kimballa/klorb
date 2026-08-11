@@ -20,7 +20,7 @@ def _alpha_model() -> ConfiguredModel:
 def user_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the user override tier at an empty temp dir, so a developer's real
     `~/.config/klorb/system_prompts.d/` files can't leak into these tests."""
-    monkeypatch.setattr("klorb.system_prompt.KLORB_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("klorb.system_prompt.get_klorb_config_dir", lambda: tmp_path)
     return tmp_path
 
 

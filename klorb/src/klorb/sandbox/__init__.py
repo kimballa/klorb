@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from klorb.paths import KLORB_DATA_DIR, KLORB_STATE_DIR
+from klorb.paths import get_klorb_data_dir, get_klorb_state_dir
 from klorb.permissions.directory_access import (
     DirRules,
     canonicalize_dir,
@@ -474,7 +474,10 @@ def build_bwrap_argv(
     # mask so the cache/logs are visible without giving the sandboxed command write access (or
     # exposing anything beyond what klorb itself put there). Applied after dirs.mask's --tmpfs and
     # before the individual-file masks below.
-    for klorb_dir in (KLORB_DATA_DIR.resolve(strict=False), KLORB_STATE_DIR.resolve(strict=False)):
+    for klorb_dir in (
+        get_klorb_data_dir().resolve(strict=False),
+        get_klorb_state_dir().resolve(strict=False),
+    ):
         if klorb_dir.exists():
             args += ["--ro-bind", str(klorb_dir), str(klorb_dir)]
 

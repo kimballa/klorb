@@ -21,7 +21,7 @@ from klorb.workspace.session_store import RecentSession, write_session_image, wr
 
 @pytest.fixture(autouse=True)
 def _isolate_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(input_history_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(input_history_module, "get_klorb_data_dir", lambda: tmp_path / "data")
 
 
 def _workspace(tmp_path: Path) -> Workspace:

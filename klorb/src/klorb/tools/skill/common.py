@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 import yaml
 
-from klorb.paths import KLORB_DATA_DIR
+from klorb.paths import get_klorb_data_dir
 from klorb.permissions.directory_access import (
     CLAUDE_PROJECT_DIR_NAME,
     KLORB_PROJECT_DIR_NAME,
@@ -183,7 +183,7 @@ def _namespace_source_dirs(
             dirs.append(workspace_root / CLAUDE_PROJECT_DIR_NAME / SKILLS_DIRNAME)
         return dirs
     if namespace == "user":
-        return [KLORB_DATA_DIR / SKILLS_DIRNAME]
+        return [get_klorb_data_dir() / SKILLS_DIRNAME]
     return [internal_skills_dir()]
 
 

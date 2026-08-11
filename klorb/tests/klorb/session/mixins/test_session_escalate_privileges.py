@@ -11,7 +11,7 @@ import pytest
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message, ToolCallRequest
-from klorb.paths import KLORB_DATA_DIR, KLORB_STATE_DIR
+from klorb.paths import get_klorb_data_dir, get_klorb_state_dir
 from klorb.process_config import ProcessConfig
 from klorb.session import (
     EscalatePrivilegesContext,
@@ -168,8 +168,8 @@ def test_homedir_approved_records_scope_into_session_config() -> None:
     (ctx,), _ = on_escalate.call_args
     assert isinstance(ctx, EscalatePrivilegesContext)
     assert ctx.scope == "homedir"
-    assert str(KLORB_DATA_DIR) in ctx.description
-    assert str(KLORB_STATE_DIR) in ctx.description
+    assert str(get_klorb_data_dir()) in ctx.description
+    assert str(get_klorb_state_dir()) in ctx.description
 
 
 def test_denied_does_not_record_scope() -> None:

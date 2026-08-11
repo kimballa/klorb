@@ -44,7 +44,7 @@ def _empty_internal_tier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     internal = tmp_path / "internal-skills"
     internal.mkdir()
     monkeypatch.setattr(skill_common, "internal_skills_dir", lambda: internal)
-    monkeypatch.setattr(skill_common, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(skill_common, "get_klorb_data_dir", lambda: tmp_path / "data")
 
 
 def _workspace(tmp_path: Path) -> Path:

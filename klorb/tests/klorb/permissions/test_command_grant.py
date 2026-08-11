@@ -24,7 +24,7 @@ from klorb.workspace import Workspace
 
 @pytest.fixture(autouse=True)
 def _isolate_homedir_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "homedir")
+    monkeypatch.setattr(process_config_module, "get_klorb_config_dir", lambda: tmp_path / "homedir")
 
 
 def _read_session_defaults(path: Path) -> dict[str, Any]:

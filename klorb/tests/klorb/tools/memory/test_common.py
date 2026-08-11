@@ -30,7 +30,7 @@ def test_global_namespace_resolves_under_klorb_data_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_dir = tmp_path / "data"
-    monkeypatch.setattr(memory_common_module, "KLORB_DATA_DIR", data_dir)
+    monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: data_dir)
 
     assert memory_namespace_dir(_context(tmp_path), "global") == data_dir / "memories"
 
@@ -44,7 +44,7 @@ def test_workspace_namespace_resolves_under_dot_klorb(tmp_path: Path) -> None:
 def test_namespace_directories_are_not_created_eagerly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(memory_common_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
 
     memory_namespace_dir(_context(tmp_path), "global")
     memory_namespace_dir(_context(tmp_path), "workspace")

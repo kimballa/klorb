@@ -10,17 +10,17 @@ paths or calling `logging.basicConfig` itself.
 
 ## How it works
 
-* `klorb.paths` (`klorb/src/klorb/paths.py`) defines three directory constants, computed once
-  at import time:
-  * `KLORB_CONFIG_DIR` — defaults to `~/.config/klorb`, overridable via the `KLORB_CONFIG_DIR`
+* `klorb.paths` (`klorb/src/klorb/paths.py`) defines four directory functions, resolved lazily
+  on each call so `.env` overrides loaded by `load_dotenv()` are always honored:
+  * `get_klorb_config_dir()` — defaults to `~/.config/klorb`, overridable via the `KLORB_CONFIG_DIR`
     environment variable.
-  * `KLORB_DATA_DIR` — defaults to `~/.local/share/klorb`, overridable via `KLORB_DATA_DIR`.
-  * `KLORB_STATE_DIR` — defaults to `~/.local/state/klorb`, overridable via `KLORB_STATE_DIR`.
-  * `SESSION_LOGS_DIR` — always `KLORB_STATE_DIR / "session-logs"`.
+  * `get_klorb_data_dir()` — defaults to `~/.local/share/klorb`, overridable via `KLORB_DATA_DIR`.
+  * `get_klorb_state_dir()` — defaults to `~/.local/state/klorb`, overridable via `KLORB_STATE_DIR`.
+  * `get_session_logs_dir()` — always `get_klorb_state_dir() / "session-logs"`.
   * Each env var, where set, is interpreted as a filesystem path and takes precedence over
     the default. A leading `~`/`~user` in the override is expanded to the invoking user's
     home directory (`Path.expanduser()`, in `_dir_from_env()`), so `KLORB_CONFIG_DIR=~/elsewhere`
-    behaves the same as supplying an absolute path — every reader of these constants gets the
+    behaves the same as supplying an absolute path — every caller of these functions gets the
     expansion for free rather than needing to repeat it. See [the XDG-style directories ADR](
     ../adrs/use-xdg-style-dirs-overridable-by-klorb-env-vars.md) for why these are
     klorb-specific env vars rather than the shared `XDG_*` ones.
@@ -158,7 +158,7 @@ paths or calling `logging.basicConfig` itself.
 ## Configuration
 
 * `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR`, `KLORB_STATE_DIR` — override the corresponding
-  default directory. Read once, at process start (when `klorb.paths` is first imported).
+  default directory. Resolved lazily on each function call, so `.env` overrides work.
 * `KLORB_LOG_LEVEL` — overrides `klorb_log_level` (default `logging.DEBUG`), the root logger
   level `configure_logging()` sets on each call. Read lazily at each `configure_logging()` call
   (not at import time), so a value loaded from `.env` partway through startup is honored. An
@@ -171,8 +171,8 @@ paths or calling `logging.basicConfig` itself.
   so today the caps are always the 12-file / 32-MiB defaults. Wiring them through
   `ProcessConfig`/`PROCESS_KEY_MAP` (the way other tool limits are, per
   [[process-and-session-config]]) is a straightforward future extension.
-* `KLORB_CONFIG_DIR` is read from by `klorb.process_config` — see
-  [[process-and-session-config]]. `KLORB_DATA_DIR` is written to by `klorb.klorb_init`'s
+* `get_klorb_config_dir()` is read from by `klorb.process_config` — see
+  [[process-and-session-config]]. `get_klorb_data_dir()` is written to by `klorb.klorb_init`'s
   `copy_tiktoken_cache()` step and read back by `klorb.token_estimate`'s
   `configure_tiktoken_cache_env()` — see [[klorb-init]] — the first feature to build on it as
   a conventional location for cached data.

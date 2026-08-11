@@ -29,7 +29,7 @@ from klorb.workspace import Workspace
 def _isolate_homedir_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point `user_config_path()` at an empty location under `tmp_path`, so tests never touch
     the developer's own `~/.config/klorb/klorb-config.json`."""
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "homedir")
+    monkeypatch.setattr(process_config_module, "get_klorb_config_dir", lambda: tmp_path / "homedir")
 
 
 def _write_config(path: Path, session_defaults: dict[str, Any]) -> None:

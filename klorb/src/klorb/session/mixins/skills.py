@@ -7,7 +7,7 @@
 import json
 import logging
 
-from klorb.paths import KLORB_CONFIG_DIR
+from klorb.paths import get_klorb_config_dir
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME
 from klorb.permissions.skill_access import evaluate_skill
 from klorb.session.events import UserSkillActivation
@@ -50,7 +50,7 @@ class SessionSkillsMixin(SessionBase):
         context_files: list[tuple[str, str]] = []
 
         # Check for INSTRUCTIONS.md in KLORB_CONFIG_DIR (highest priority)
-        config_instructions_path = KLORB_CONFIG_DIR / "INSTRUCTIONS.md"
+        config_instructions_path = get_klorb_config_dir() / "INSTRUCTIONS.md"
         if config_instructions_path.is_file():
             context_files.append(("KLORB_CONFIG_DIR/INSTRUCTIONS.md", config_instructions_path.read_text()))
 

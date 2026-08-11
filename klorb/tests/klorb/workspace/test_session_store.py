@@ -39,7 +39,7 @@ def _isolate_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the shared per-project directory helper at an empty `$KLORB_DATA_DIR` under
     `tmp_path`, so no test in this module reads or writes the developer's own
     `~/.local/share/klorb/projects/`."""
-    monkeypatch.setattr(input_history_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(input_history_module, "get_klorb_data_dir", lambda: tmp_path / "data")
 
 
 def _workspace(tmp_path: Path) -> Workspace:

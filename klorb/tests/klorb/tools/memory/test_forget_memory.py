@@ -19,7 +19,7 @@ def _context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     trusted: bool = True, delete_permission: Verdict = "allow",
 ) -> ToolSetupContext:
-    monkeypatch.setattr(memory_common_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(

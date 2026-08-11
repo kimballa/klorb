@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from klorb.paths import KLORB_CONFIG_DIR
+from klorb.paths import get_klorb_config_dir
 
 if TYPE_CHECKING:
     # isort: off
@@ -80,7 +80,7 @@ def resolve_prompt_file(relative_path: str) -> str | None:
     `$KLORB_CONFIG_DIR/system_prompts.d/<relative_path>`, then the built-in default packaged
     at `klorb.resources/system_prompts.d/<relative_path>`.
     """
-    user_path = KLORB_CONFIG_DIR / SYSTEM_PROMPTS_SUBDIR / relative_path
+    user_path = get_klorb_config_dir() / SYSTEM_PROMPTS_SUBDIR / relative_path
     if user_path.is_file():
         return user_path.read_text()
 

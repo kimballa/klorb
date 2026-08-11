@@ -21,7 +21,7 @@ from klorb.workspace.input_history import (
 def _isolate_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point `input_history` at an empty `$KLORB_DATA_DIR` under `tmp_path`, so no test in
     this module reads or writes the developer's own `~/.local/share/klorb/projects/`."""
-    monkeypatch.setattr(input_history_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(input_history_module, "get_klorb_data_dir", lambda: tmp_path / "data")
 
 
 # --- escape / unescape round-trip ---
@@ -68,13 +68,13 @@ def test_unescape_keeps_unrecognized_escape_verbatim() -> None:
 def test_project_history_dir_uses_registered_uuid_and_basename(tmp_path: Path) -> None:
     workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
     assert project_history_dir(workspace) == (
-        input_history_module.KLORB_DATA_DIR / "projects" / "foobar-abcd-1234")
+        input_history_module.get_klorb_data_dir() / "projects" / "foobar-abcd-1234")
 
 
 def test_project_history_path_appends_history_filename(tmp_path: Path) -> None:
     workspace = Workspace(id="abcd-1234", path=tmp_path / "foobar", is_project=True, trusted=True)
     assert project_history_path(workspace) == (
-        input_history_module.KLORB_DATA_DIR / "projects" / "foobar-abcd-1234" / "history")
+        input_history_module.get_klorb_data_dir() / "projects" / "foobar-abcd-1234" / "history")
 
 
 def test_project_history_dir_uses_stable_hash_for_unregistered_workspace(tmp_path: Path) -> None:

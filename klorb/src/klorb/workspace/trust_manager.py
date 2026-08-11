@@ -24,7 +24,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from klorb.lockfile import acquire_lockfile_with_backoff
-from klorb.paths import KLORB_DATA_DIR
+from klorb.paths import get_klorb_data_dir
 from klorb.permissions.directory_access import find_workspace_root
 from klorb.schema_envelope import read_versioned_json, write_versioned_json
 
@@ -56,7 +56,7 @@ def projects_path() -> Path:
     function, not a module-level constant) so a `KLORB_DATA_DIR` override applied via
     `monkeypatch`/`.env` after `klorb.paths` import time is still honored by a fresh
     `TrustManager()`, mirroring `klorb.process_config.user_config_path()`."""
-    return KLORB_DATA_DIR / PROJECTS_FILENAME
+    return get_klorb_data_dir() / PROJECTS_FILENAME
 
 
 class TrustManager:

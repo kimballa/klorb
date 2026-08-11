@@ -30,8 +30,8 @@ def _isolate_projects_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     `cli.main()`'s `configure_tiktoken_cache_env()` call) at an empty location under
     `tmp_path`, so no test in this module reads or writes the developer's own
     `$KLORB_DATA_DIR/projects.json` or `$KLORB_DATA_DIR/tiktoken-cache/`."""
-    monkeypatch.setattr(trust_manager_module, "KLORB_DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr(token_estimate_module, "KLORB_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(trust_manager_module, "get_klorb_data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(token_estimate_module, "get_klorb_data_dir", lambda: tmp_path / "data")
 
 
 @pytest.fixture(autouse=True)

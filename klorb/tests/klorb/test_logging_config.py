@@ -26,7 +26,7 @@ def _make_log(logs_dir: Path, name: str, *, size: int = 0, mtime: float | None =
 def test_session_log_path_builds_path_under_session_logs_dir() -> None:
     log_path = logging_config.session_log_path("2026-06-30-10-00-happy-otter")
 
-    assert log_path == logging_config.SESSION_LOGS_DIR / "2026-06-30-10-00-happy-otter.log"
+    assert log_path == logging_config.get_session_logs_dir() / "2026-06-30-10-00-happy-otter.log"
 
 
 def test_configure_minimal_logging_attaches_a_text_stream_handler() -> None:

@@ -101,8 +101,8 @@ def session_env_file(
     else:
         # No workspace available (shouldn't happen in practice); fall back to a
         # state-dir path so the file is still creatable.
-        from klorb.paths import KLORB_STATE_DIR
-        path = KLORB_STATE_DIR / _ENV_FILE_BASENAME / session_id / "session.env"
+        from klorb.paths import get_klorb_state_dir
+        path = get_klorb_state_dir() / _ENV_FILE_BASENAME / session_id / "session.env"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         _populate_env_file(path, session_config)

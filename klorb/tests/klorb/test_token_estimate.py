@@ -106,21 +106,21 @@ def test_estimate_tokens_does_not_raise_on_special_token_like_substrings() -> No
 def test_tiktoken_cache_target_dir_is_under_klorb_data_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
     assert tiktoken_cache_target_dir() == tmp_path / "tiktoken-cache"
 
 
 def test_tiktoken_cache_encoding_dir_is_encoding_name_subdir_of_target(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
     assert tiktoken_cache_encoding_dir() == tmp_path / "tiktoken-cache" / ENCODING_NAME
 
 
 def test_install_tiktoken_cache_copies_packaged_tree(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
 
     messages = install_tiktoken_cache()
 
@@ -135,7 +135,7 @@ def test_install_tiktoken_cache_copies_packaged_tree(
 def test_install_tiktoken_cache_is_safe_to_call_more_than_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
 
     install_tiktoken_cache()
     install_tiktoken_cache()
@@ -147,7 +147,7 @@ def test_install_tiktoken_cache_is_safe_to_call_more_than_once(
 def test_configure_tiktoken_cache_env_noop_when_cache_not_installed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
     monkeypatch.delenv(TIKTOKEN_CACHE_DIR_ENV_VAR, raising=False)
 
     configure_tiktoken_cache_env()
@@ -158,7 +158,7 @@ def test_configure_tiktoken_cache_env_noop_when_cache_not_installed(
 def test_configure_tiktoken_cache_env_sets_env_var_when_cache_installed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
     monkeypatch.delenv(TIKTOKEN_CACHE_DIR_ENV_VAR, raising=False)
     install_tiktoken_cache()
 
@@ -171,7 +171,7 @@ def test_configure_tiktoken_cache_env_sets_env_var_when_cache_installed(
 def test_configure_tiktoken_cache_env_logs_when_cache_installed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setattr(token_estimate, "KLORB_DATA_DIR", tmp_path)
+    monkeypatch.setattr(token_estimate, "get_klorb_data_dir", lambda: tmp_path)
     monkeypatch.delenv(TIKTOKEN_CACHE_DIR_ENV_VAR, raising=False)
     install_tiktoken_cache()
 

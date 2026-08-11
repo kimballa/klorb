@@ -236,7 +236,7 @@ def test_instructions_md_in_config_dir(
     (config_dir / "INSTRUCTIONS.md").write_text("config dir instructions")
     (tmp_path / "AGENTS.md").write_text("agents content")
 
-    monkeypatch.setattr(skills, "KLORB_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(skills, "get_klorb_config_dir", lambda: config_dir)
 
     session = _session(tmp_path)
     body = session._build_context_files_interjection()
@@ -262,7 +262,7 @@ def test_instructions_md_priority_ordering(
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / "CLAUDE.md").write_text("claude content")
 
-    monkeypatch.setattr(skills, "KLORB_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(skills, "get_klorb_config_dir", lambda: config_dir)
 
     session = _session(tmp_path, compatibility_claude_markdown=True)
     body = session._build_context_files_interjection()
@@ -292,7 +292,7 @@ def test_instructions_md_only_when_untrusted(
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / "CLAUDE.md").write_text("claude content")
 
-    monkeypatch.setattr(skills, "KLORB_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(skills, "get_klorb_config_dir", lambda: config_dir)
 
     session = _session(tmp_path, compatibility_claude_markdown=True, trusted=False)
     interjection = session._build_context_files_interjection()

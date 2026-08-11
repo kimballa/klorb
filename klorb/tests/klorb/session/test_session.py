@@ -2325,7 +2325,7 @@ def test_permission_ask_workspace_and_homedir_scope_persist_the_grant(
     as "session" scope -- this only pins that `Session` actually calls
     `apply_permission_grant()` and the retry succeeds; the grant's own computation and
     file-persistence semantics are covered directly in test_permission_grant.py."""
-    monkeypatch.setattr(process_config_module, "KLORB_CONFIG_DIR", tmp_path / "homedir")
+    monkeypatch.setattr(process_config_module, "get_klorb_config_dir", lambda: tmp_path / "homedir")
     target = tmp_path / "f.txt"
     scopes_and_files: list[tuple[Literal["workspace", "homedir"], Path]] = [
         ("workspace", tmp_path / ".klorb" / "klorb-config.json"),

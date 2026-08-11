@@ -236,7 +236,7 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     `$KLORB_DATA_DIR` under `tmp_path` and return it, so persistence tests never touch the
     developer's own `~/.local/share/klorb/`."""
     data_dir = tmp_path / "data"
-    monkeypatch.setattr(input_history_module, "KLORB_DATA_DIR", data_dir)
+    monkeypatch.setattr(input_history_module, "get_klorb_data_dir", lambda: data_dir)
     return data_dir
 
 

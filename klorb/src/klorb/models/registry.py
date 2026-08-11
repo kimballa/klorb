@@ -9,7 +9,7 @@ from pathlib import Path
 
 from klorb.models.configured_model import MODEL_SCHEMA_NAME, ConfiguredModel
 from klorb.models.model import Model
-from klorb.paths import KLORB_DATA_DIR
+from klorb.paths import get_klorb_data_dir
 from klorb.schema_envelope import parse_versioned_json
 
 MODELS_RESOURCE_PACKAGE = "klorb.resources"
@@ -65,7 +65,7 @@ class ModelRegistry:
         packaged_dir = packaged_models_dir or (
             importlib.resources.files(MODELS_RESOURCE_PACKAGE).joinpath(MODELS_SUBDIR)
         )
-        user_dir = user_models_dir if user_models_dir is not None else (KLORB_DATA_DIR / MODELS_SUBDIR)
+        user_dir = user_models_dir if user_models_dir is not None else (get_klorb_data_dir() / MODELS_SUBDIR)
         self._discover_models(packaged_dir, source=_ModelSource.PACKAGED)
         self._discover_models(user_dir, source=_ModelSource.USER)
 
