@@ -29,7 +29,7 @@
 
 ### Feature backlog
 
-* the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
+* (#agent) the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
 
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
@@ -182,10 +182,10 @@
     stuff it finds.
 
   * (Maybe this could be implemented with a onSessionStart hook, filtered on
-    `workspace_just_bootstrapped=true`? It could emit a msg to the user via stderr channel. The hook
+    `workspace_just_bootstrapped=true`? It could emit a msg to the user via hook_output.log. The hook
     could be defined in default-config.json; we would need to set up a means of unpacking hook
     scripts from klorb.resources and putting them under `$KLORB_DATA_DIR/hooks` or something like
-    that.)
+    that.); and we need to macro-expand `${klorbDataDir}` in config. 
 
 ## VSCode plugin
 
@@ -323,3 +323,9 @@
   and whether they errored, rather than only `logger.debug()`/`warning()` output.
   * Easier MVP might be to surface stderr from the hook script via logger.warning().
 * `HookOutput.interrupt` is not respected / implemented.
+
+## Meta / dev environment
+
+* Add a repo-level skill to move "#agent" items from TODO.md to the auto/ dir.
+* Ability to "install" some scripts in klorb.resources into KLORB_DATA_DIR. Should be triggered by "make install" within the klorb/ dir.
+
