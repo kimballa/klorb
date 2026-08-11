@@ -75,7 +75,8 @@
         ["git", "push", "**"],
         ["git", "rm", "**"],
         ["git", "mv", "**"],
-        ["gh", "pr", "create", "**"]
+        ["gh", "pr", "create", "**"],
+        ["touch", "docs/plans/auto/.factory_in_progress.tmp"]
       ]
     },
     "shareEnv": [
@@ -106,22 +107,33 @@
       {
         "type": "bash",
         "name": "software-factory-enable-sentinel",
-        "command": ["bash", "${workspaceRoot}/.klorb/hooks/software-factory/enable_sentinel.sh"],
-        "filter": { "matches": "enable-software-factory" }
+        "command": [
+          "bash",
+          "${workspaceRoot}/.klorb/hooks/software-factory/enable_sentinel.sh"
+        ],
+        "filter": {
+          "matches": "enable-software-factory"
+        }
       }
     ],
     "onProcessEnd": [
       {
         "type": "bash",
         "name": "software-factory-disable-sentinel",
-        "command": ["bash", "${workspaceRoot}/.klorb/hooks/software-factory/disable_sentinel.sh"]
+        "command": [
+          "bash",
+          "${workspaceRoot}/.klorb/hooks/software-factory/disable_sentinel.sh"
+        ]
       }
     ],
     "onAgentTurnEnd": [
       {
         "type": "bash",
         "name": "software-factory-turn-end",
-        "command": ["python3", "${workspaceRoot}/.klorb/hooks/software-factory/on_turn_end.py"]
+        "command": [
+          "python3",
+          "${workspaceRoot}/.klorb/hooks/software-factory/on_turn_end.py"
+        ]
       }
     ]
   },
@@ -132,7 +144,10 @@
         "action": {
           "type": "bash",
           "name": "software-factory-file-changed",
-          "command": ["python3", "${workspaceRoot}/.klorb/hooks/software-factory/on_file_changed.py"]
+          "command": [
+            "python3",
+            "${workspaceRoot}/.klorb/hooks/software-factory/on_file_changed.py"
+          ]
         }
       }
     ]
