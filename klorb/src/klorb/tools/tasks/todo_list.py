@@ -2,6 +2,7 @@
 """A Tool that lists the todo items chainlink is tracking for this session."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.agents.registry import get_agent_capabilities
@@ -26,6 +27,8 @@ class TodoListTool(Tool):
     `ToolCallError` (category `"validation"`) unless this session's role has the
     `see_group_tasks` capability (`klorb.agents.registry.get_agent_capabilities`).
 
+    Aliased as `TaskList`.
+
     `ids`, if given, narrows the result to just those issues -- `chainlink issue show` directly
     when exactly one id is given (not itself subject to `scope`, since a caller already knows
     the specific id it wants), otherwise the full fetch-enrich-sort pipeline
@@ -33,6 +36,9 @@ class TodoListTool(Tool):
     requested ids. `include_closed` additionally returns closed issues (still sorted after every
     open one).
     """
+
+    def aliases(self) -> Sequence[str] | None:
+        return ["TaskList"]
 
     def name(self) -> str:
         return "TodoList"

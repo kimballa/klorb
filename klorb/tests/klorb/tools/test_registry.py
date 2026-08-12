@@ -202,6 +202,38 @@ def test_instantiate_tool_resolves_memory_singular_plural_aliases(
     assert tool.name() == canonical
 
 
+def test_instantiate_tool_resolves_task_create_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry_module, "chainlink_available", lambda: True)
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("TaskCreate")
+    assert tool.name() == "TodoCreate"
+
+
+def test_instantiate_tool_resolves_task_list_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry_module, "chainlink_available", lambda: True)
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("TaskList")
+    assert tool.name() == "TodoList"
+
+
+def test_instantiate_tool_resolves_task_next_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry_module, "chainlink_available", lambda: True)
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("TaskNext")
+    assert tool.name() == "TodoNext"
+
+
+def test_instantiate_tool_resolves_task_update_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(registry_module, "chainlink_available", lambda: True)
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("TaskUpdate")
+    assert tool.name() == "TodoUpdate"
+
+
 def test_instantiate_tool_still_raises_for_unknown_name() -> None:
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 

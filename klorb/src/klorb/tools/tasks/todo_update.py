@@ -2,6 +2,7 @@
 """A Tool that updates a todo item tracked in chainlink for this session."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.tools.tasks._util import maybe_activate_task
@@ -64,6 +65,9 @@ class TodoUpdateTool(Tool):
     "next" task in that case -- it's the issue just updated). See
     docs/specs/chainlink-task-tracking.md.
     """
+
+    def aliases(self) -> Sequence[str] | None:
+        return ["TaskUpdate"]
 
     def name(self) -> str:
         return "TodoUpdate"
