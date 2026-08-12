@@ -1,15 +1,18 @@
 # © Copyright 2026 Aaron Kimball
 """`${...}` macro expansion for config-file string values — `${home}` (the invoking user's home
-directory) and `${workspaceRoot}` (the current workspace root). Used by
-`klorb.process_config.load_process_config` to expand `readDirs`/`writeDirs`/`readFiles`/
-`writeFiles` rule paths and `setEnv` values before those layers are merged. See
-docs/specs/process-and-session-config.md.
+directory), `${workspaceRoot}` (the current workspace root), and `${klorbDataDir}` (the klorb
+data directory). Used by `klorb.process_config.load_process_config` to expand `readDirs`/
+`writeDirs`/`readFiles`/`writeFiles` rule paths and `setEnv` values before those layers are
+merged. See docs/specs/process-and-session-config.md.
 """
 
 from pathlib import Path
 
+from klorb.paths import get_klorb_data_dir
+
 HOME_MACRO_NAME = "home"
 WORKSPACE_ROOT_MACRO_NAME = "workspaceRoot"
+KLORB_DATA_DIR_MACRO_NAME = "klorbDataDir"
 
 
 class MacroExpansionError(Exception):
@@ -29,11 +32,13 @@ class MacroExpansionError(Exception):
 def resolve_macro_values(workspace_root: Path) -> dict[str, str]:
     """The current, fixed value of every recognized macro: `${home}` is the invoking user's
     home directory (`Path.home()`, consistent with every other home-directory lookup in this
-    codebase — see `klorb.paths`), and `${workspaceRoot}` is `workspace_root`, resolved.
+    codebase — see `klorb.paths`), `${workspaceRoot}` is `workspace_root`, resolved, and
+    `${klorbDataDir}` is `klorb.paths.get_klorb_data_dir()`.
     """
     return {
         HOME_MACRO_NAME: str(Path.home()),
         WORKSPACE_ROOT_MACRO_NAME: str(workspace_root.resolve(strict=False)),
+        KLORB_DATA_DIR_MACRO_NAME: str(get_klorb_data_dir()),
     }
 
 

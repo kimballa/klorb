@@ -8,7 +8,7 @@
 #   * `make sync_deps` to resolve and update dependency locks from the pkg manager.
 
 COMMANDS=help lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test evals venv init all
+	install_deps install_dev_deps install test evals venv init all
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
@@ -132,6 +132,17 @@ install_dev_deps: venv install_chainlink
 # for this venv's own klorb (see docs/specs/klorb-init.md).
 init: venv
 	$(LOAD_VENV); "$(KLORB_BIN)" init || true
+
+# Copy klorb's bundled resource data (hooks, scripts, ...) into the user's klorb data dir
+# (`klorb.paths.DEFAULT_KLORB_DATA_DIR`), so `${klorbDataDir}`-referencing config can rely on it.
+install: install_deps
+	@echo "Installing klorb resource data..."
+	$(LOAD_VENV); \
+	KLORB_DATA_DIR_PATH=`"$(VENV_PYTHON)" -c "from klorb.paths import DEFAULT_KLORB_DATA_DIR; print(DEFAULT_KLORB_DATA_DIR)"`; \
+	mkdir -p "$$KLORB_DATA_DIR_PATH"; \
+	cp -R src/klorb/resources/data/. "$$KLORB_DATA_DIR_PATH"
+	@echo ""
+	@echo "klorb resource data installed."
 
 clean:
 	find src -name "*.pyo" -delete

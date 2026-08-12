@@ -266,10 +266,11 @@ shouldn't assume there are only the first two:
    concatenate_named_handler_lists`).
 
 Every string entry in `readDirs`/`writeDirs`/`readFiles`/`writeFiles`'s `deny`/`ask`/`allow`
-lists, and every value (not key) in `setEnv`, is expanded for `${home}`/`${workspaceRoot}`
-macro references (`klorb.config_macros.expand_macros`) before that layer is merged — `${home}`
-is the invoking user's home directory, `${workspaceRoot}` the current workspace root
-(`Workspace.path`, resolved). Expansion is a single left-to-right pass per string: a macro's
+lists, and every value (not key) in `setEnv`, is expanded for `${home}`/`${workspaceRoot}`/
+`${klorbDataDir}` macro references (`klorb.config_macros.expand_macros`) before that layer is
+merged — `${home}` is the invoking user's home directory, `${workspaceRoot}` the current
+workspace root (`Workspace.path`, resolved), and `${klorbDataDir}` the klorb data directory
+(`klorb.paths.get_klorb_data_dir()`). Expansion is a single left-to-right pass per string: a macro's
 substituted value is never itself re-scanned for further `${...}` references, so a value that
 happens to contain the literal text `${...}` is not expanded a second time. A layer containing
 an unrecognized macro name, an unterminated `${`, or an empty `${}` is dropped in its entirety —

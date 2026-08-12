@@ -185,9 +185,8 @@
 
   * (Maybe this could be implemented with a onSessionStart hook, filtered on
     `workspace_just_bootstrapped=true`? It could emit a msg to the user via hook_output.log. The hook
-    could be defined in default-config.json; we would need to set up a means of unpacking hook
-    scripts from klorb.resources and putting them under `$KLORB_DATA_DIR/hooks` or something like
-    that.); and we need to macro-expand `${klorbDataDir}` in config.
+    could be defined in default-config.json, referencing a script under `${klorbDataDir}/hooks`
+    installed via `make install`.)
 
 ## VSCode plugin
 
@@ -329,4 +328,3 @@
 ## Meta / dev environment
 
 * Add a repo-level skill to move "#agent" items from TODO.md to the auto/ dir.
-* Ability to "install" some scripts in klorb.resources into KLORB_DATA_DIR. Should be triggered by "make install" within the klorb/ dir.
