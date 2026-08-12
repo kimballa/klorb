@@ -5,10 +5,6 @@
 
 ### Bugs
 
-* sw-factory on_turn_end.py hook insists on a perfectly clean tree but it should
-  disregard updates to .klorb/klorb-config.py, lest a command approval made midway
-  through the sw factory loop cause the git tree to be dirty and then abort the loop.
-
 * `git push` failed with a 403 from the CONNECT tunnel (network/proxy issue) ?
   "The `blocked_domains` field confirms `github.com` is in the blocked list."
   From the agent: "Still blocked — the harness reports github.com is in the blocked domains list, so outbound HTTPS to GitHub is denied regardless of sandbox tweaks. The domain-level block is on the harness side, not the OS/network side."

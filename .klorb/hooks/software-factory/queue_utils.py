@@ -18,6 +18,7 @@ QUEUE_FILENAME = "queue.md"
 ENABLE_SENTINEL_NAME = ".enable_software_factory.tmp"
 IN_PROGRESS_SENTINEL_NAME = ".factory_in_progress.tmp"
 SENTINEL_NAMES = (ENABLE_SENTINEL_NAME, IN_PROGRESS_SENTINEL_NAME)
+CONFIG_RELATIVE_PATH = ".klorb/klorb-config.json"
 
 # A task is a top-level (unindented) "- " or "* " bullet. Headings, prose, HTML comments, and
 # blank lines are not tasks, so queue.md can carry an explanatory header with no false positive.
