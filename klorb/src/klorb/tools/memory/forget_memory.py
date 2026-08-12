@@ -2,6 +2,7 @@
 """A Tool that deletes an existing memory file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -29,6 +30,9 @@ class ForgetMemoryTool(Tool):
 
     def name(self) -> str:
         return "ForgetMemory"
+
+    def aliases(self) -> Sequence[str]:
+        return ("ForgetMemories",)
 
     def category(self) -> str:
         return "MEMORY"

@@ -2,6 +2,7 @@
 """A Tool that reads a range of lines from a memory file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -46,6 +47,9 @@ class ReadMemoryTool(Tool):
 
     def name(self) -> str:
         return "ReadMemory"
+
+    def aliases(self) -> Sequence[str]:
+        return ("ReadMemories",)
 
     def category(self) -> str:
         return "MEMORY"

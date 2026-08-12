@@ -2,6 +2,7 @@
 """A Tool that replaces a verified, inclusive line range in a memory file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -50,6 +51,9 @@ class EditMemoryTool(Tool):
 
     def name(self) -> str:
         return "EditMemory"
+
+    def aliases(self) -> Sequence[str]:
+        return ("EditMemories",)
 
     def category(self) -> str:
         return "MEMORY"

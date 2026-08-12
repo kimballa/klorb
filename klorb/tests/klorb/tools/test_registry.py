@@ -185,6 +185,23 @@ def test_instantiate_tool_resolves_write_memory_alias() -> None:
     assert tool.name() == "CreateMemory"
 
 
+@pytest.mark.parametrize(("alias", "canonical"), [
+    ("SearchMemory", "SearchMemories"),
+    ("ListMemory", "ListMemories"),
+    ("ReadMemories", "ReadMemory"),
+    ("EditMemories", "EditMemory"),
+    ("CreateMemories", "CreateMemory"),
+    ("ForgetMemories", "ForgetMemory"),
+])
+def test_instantiate_tool_resolves_memory_singular_plural_aliases(
+    alias: str, canonical: str,
+) -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool(alias)
+    assert tool.name() == canonical
+
+
 def test_instantiate_tool_still_raises_for_unknown_name() -> None:
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 

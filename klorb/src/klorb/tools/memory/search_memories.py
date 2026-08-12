@@ -4,6 +4,7 @@ literal search strings, also treating each file's own filename as a search subje
 
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any, cast
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -49,6 +50,9 @@ class SearchMemoriesTool(Tool):
 
     def name(self) -> str:
         return "SearchMemories"
+
+    def aliases(self) -> Sequence[str]:
+        return ("SearchMemory",)
 
     def category(self) -> str:
         return "MEMORY"
