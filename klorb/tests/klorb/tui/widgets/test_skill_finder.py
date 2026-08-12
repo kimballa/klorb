@@ -1,12 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.widgets.skill_finder."""
 
-from klorb.tui.widgets.skill_finder import (
-    SkillMatch,
-    SkillQuery,
-    detect_skill_query,
-    filter_skills,
-)
+from klorb.tui.widgets.skill_finder import SkillMatch, SkillQuery, detect_skill_query, filter_skills
 
 
 class TestDetectSkillQuery:

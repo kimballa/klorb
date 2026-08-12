@@ -64,7 +64,7 @@ def _skill_match_content(match: SkillMatch, available_width: int) -> Content:
     ns_part = f" ({match.namespace})"
     desc_part = ""
     if match.description:
-        desc_budget = available_width - len(name_part) - len(ns_part) - 3
+        desc_budget = available_width - len(name_part) - len(ns_part) - 2
         if desc_budget > 3:
             desc = match.description
             if len(desc) > desc_budget:
@@ -119,8 +119,7 @@ def filter_skills(
     """Return up to `limit` skills from `skills` that match `query`.
 
     An empty query returns all skills (up to `limit`); a non-empty query ranks by
-    descending `textual.fuzzy.Matcher` score against `name` and `description`, with
-    name matches weighted higher by matching against the name first.
+    the higher of `textual.fuzzy.Matcher` scores against `name` and `description`.
     """
     if not query:
         return list(skills[:limit])
