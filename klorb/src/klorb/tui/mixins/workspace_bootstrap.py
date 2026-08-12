@@ -10,7 +10,14 @@ from textual.widgets import Static
 
 from klorb.agents.policy import compute_root_session_grants
 from klorb.permissions.directory_access import concat_dir_rules
-from klorb.process_config import ProcessConfig, load_process_config, project_config_path
+from klorb.process_config import (
+    CONFIG_SCHEMA_NAME,
+    SESSION_DEFAULTS_KEY,
+    ProcessConfig,
+    load_process_config,
+    project_config_path,
+)
+from klorb.schema_envelope import read_versioned_json
 from klorb.session import Session
 from klorb.session.restore import try_restore_session
 from klorb.tools.util.secret_redaction import clear_cached_redactor
@@ -107,6 +114,31 @@ class WorkspaceBootstrapMixin(ReplAppBase):
     def is_workspace_trusted(self) -> bool:
         """Whether the current workspace is currently trusted — see `TrustWorkspaceCommandProvider`."""
         return self._session.config.workspace.trusted
+
+    @staticmethod
+    def _workspace_auto_allowed_skills(workspace: Workspace) -> list[str]:
+        """Workspace skill names from the workspace's own `.klorb/klorb-config.json`
+        `skillRules.allow`. Reads the config directly (the workspace may not be trusted yet)
+        and returns names whose fully-qualified entry starts with `workspace:`."""
+        config_path = project_config_path(workspace.path)
+        raw = read_versioned_json(config_path, expected_schema_name=CONFIG_SCHEMA_NAME)
+        session_defaults = raw.get(SESSION_DEFAULTS_KEY, {})
+        skill_rules = session_defaults.get("skillRules", {})
+        results: list[str] = list(filter(
+            lambda name: bool(name),
+            (entry[len("workspace:"):] for entry in skill_rules.get("allow", [])
+             if isinstance(entry, str) and entry.startswith("workspace:")),
+        ))
+        return sorted(results)
+
+    def _trust_prompt_message(self, workspace: Workspace) -> str:
+        """Build the trust confirmation prompt, listing auto-allowed workspace skills if any."""
+        base = f"Do you trust the workspace at {workspace.path}?"
+        skills = self._workspace_auto_allowed_skills(workspace)
+        if not skills:
+            return base
+        skill_list = "\n".join(f"  - {name}" for name in skills)
+        return f"{base}\n\nWorkspace skills auto-allowed by config:\n{skill_list}"
 
     async def _resolve_workspace_trust(self) -> None:
         """A no-op unless this app was given a `TrustManager` (see `__init__`). Otherwise:
@@ -218,7 +250,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             "Projects have persistent settings files and permissions.",
             yes_label="Open as project", no_label="Not now"))
         trusted = await self.push_screen_wait(
-            ConfirmScreen(f"Do you trust the workspace at {workspace.path}?"))
+            ConfirmScreen(self._trust_prompt_message(workspace)))
         if open_as_project:
             new_workspace = self._trust_manager.register_project(workspace.path, trusted)
             if project_config_path(workspace.path).is_file():
@@ -342,7 +374,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             return
         workspace = self._session.config.workspace
         confirmed = await self.push_screen_wait(
-            ConfirmScreen(f"Do you trust the workspace at {workspace.path}?"))
+            ConfirmScreen(self._trust_prompt_message(workspace)))
         if not confirmed:
             return
 
