@@ -236,6 +236,20 @@ class PromptSubmissionMixin(ReplAppBase):
         command's action. See `_replace_session`."""
         self._replace_session(None)
 
+    def rename_session(self, title: str) -> None:
+        """Set the active session's display title and persist the change. Cancels the one-shot
+        naming classifier (if still pending) so it doesn't overwrite the user's choice, matching
+        `klorb.server.klorb_agent._ext_set_session_title`'s own handling."""
+        logger.debug("Renaming session title to %r", title)
+        self._session.name = title
+        self._session.session_naming_pending = False
+        self._session.persist_state()
+        self._update_session_name_line(title)
+
+    def get_current_session_title(self) -> str:
+        """Return the active session's current title, or an empty string if unnamed."""
+        return self._session.name or ""
+
     def _replace_session(self, initial_message: str | None) -> None:
         """Replace the active `Session` with a fresh one (new id, config re-read from disk
         with CLI flags re-applied on top), reset the visible history to the mascot greeting

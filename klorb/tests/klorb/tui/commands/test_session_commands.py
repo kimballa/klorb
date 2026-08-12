@@ -49,3 +49,31 @@ async def test_search_does_not_match_unrelated_query() -> None:
     hits = [hit async for hit in provider.search("not-a-real-command-xyz")]
 
     assert hits == []
+
+
+async def test_discover_yields_rename_session_hit() -> None:
+    provider = SessionCommandProvider(MagicMock())
+
+    hits = [hit async for hit in provider.discover()]
+
+    assert any(hit.text == "Rename session" for hit in hits)
+
+
+async def test_search_matches_rename_query() -> None:
+    provider = SessionCommandProvider(MagicMock())
+
+    hits = [hit async for hit in provider.search("rename")]
+
+    assert any("Rename session" in str(hit.text) for hit in hits)
+
+
+def test_rename_session_opens_modal_with_current_title() -> None:
+    mock_screen = MagicMock()
+    mock_screen.app.get_current_session_title.return_value = "Old title"
+    provider = SessionCommandProvider(mock_screen)
+
+    provider._rename_session()
+
+    mock_screen.app.push_screen.assert_called_once()
+    screen_arg = mock_screen.app.push_screen.call_args[0][0]
+    assert screen_arg._current_title == "Old title"

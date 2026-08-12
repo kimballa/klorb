@@ -115,7 +115,8 @@ what points the user at palette-from-prompt as the primary way in.
 `CLEAR_SESSION_LABEL` (`"Clear session"`) alone. There's no special-cased `prompt_text ==
 "/clear"` check anywhere in `ReplApp.on_prompt_input_submitted` — a bare `/clear` typed as a
 prompt is sent to the model like any other text now, since the palette (`>clear`) is the only
-way to reach `clear_session()`.
+way to reach `clear_session()`. The same provider also offers `"Rename session"` (opens a
+modal to set a custom session title) and `"Load session"` / `"Show session stats"`.
 
 ## Usage
 

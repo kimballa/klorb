@@ -1401,4 +1401,43 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
         assert not any(was_pinned_values[was_pinned_values.index(False):])
 
 
+# --- rename session ---
+
+
+async def test_rename_session_sets_title_and_persists() -> None:
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    session.session_naming_pending = True
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.rename_session("My Custom Title")
+
+        assert session.name == "My Custom Title"
+        assert session.session_naming_pending is False
+        assert str(app.query_one(f"#{SESSION_NAME_ID}", Static).content) == "Session: My Custom Title"
+
+
+async def test_get_current_session_title_returns_empty_when_unnamed() -> None:
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.get_current_session_title() == ""
+
+
+async def test_get_current_session_title_returns_name_when_set() -> None:
+    mock_provider = MagicMock()
+    session = _session(mock_provider)
+    session.name = "Existing Title"
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.get_current_session_title() == "Existing Title"
+
+
 # --- workspace trust: bootstrap at startup and the "Trust workspace" command ---
