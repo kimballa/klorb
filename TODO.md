@@ -323,4 +323,3 @@
 
 * Add a repo-level skill to move "#agent" items from TODO.md to the auto/ dir.
 * Ability to "install" some scripts in klorb.resources into KLORB_DATA_DIR. Should be triggered by "make install" within the klorb/ dir.
-
