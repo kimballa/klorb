@@ -71,7 +71,9 @@
     },
     "writeFiles": {
       "deny": [],
-      "ask": [],
+      "ask": [
+        "${workspaceRoot}/.git/config"
+      ],
       "allow": [
         "/dev/null",
         "/dev/zero",
