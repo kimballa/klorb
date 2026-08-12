@@ -76,7 +76,8 @@
         ["git", "rm", "**"],
         ["git", "mv", "**"],
         ["gh", "pr", "create", "**"],
-        ["touch", "docs/plans/auto/.factory_in_progress.tmp"]
+        ["touch", "docs/plans/auto/.factory_in_progress.tmp"],
+        ["gh", "auth", "status"]
       ]
     },
     "shareEnv": [
@@ -101,7 +102,9 @@
       ]
     },
     "bashDomains": {
-      "allow": ["github.com"]
+      "allow": [
+        "github.com"
+      ]
     }
   },
   "tools.logCalls": true,
