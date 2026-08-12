@@ -50,12 +50,16 @@ def main() -> None:
         if queue_utils.in_progress_sentinel_path(workspace_root).is_file():
             queue_utils.emit_hook_output(success=True, message=_CONTINUE_MESSAGE)
         else:
+            print("Tree is not clean and patch is not in progress; terminating loop.",
+                  file=sys.stderr)
             queue_utils.emit_hook_output(success=True)
         return
 
     if queue_utils.has_pending_work(queue_utils.auto_dir(workspace_root)):
         queue_utils.emit_hook_output(success=True, reset_session=True, message=_NEXT_TASK_MESSAGE)
     else:
+        print("No automatable work remains; terminating loop.",
+              file=sys.stderr)
         queue_utils.emit_hook_output(success=True)
 
 
