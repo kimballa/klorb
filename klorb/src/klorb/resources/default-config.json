@@ -87,7 +87,8 @@
       "allow": [
         "internal:create-edit-skill",
         "internal:launch-explorer-subagent",
-        "internal:debug-with-evidence"
+        "internal:debug-with-evidence",
+        "internal:claude-compatibility"
       ]
     },
     "commandRules": {
@@ -316,6 +317,14 @@
   "compatibility.claudeSkills": false,
   "ui.sidebar": null,
   "ui.theme": null,
-  "hooks": {},
+  "hooks": {
+    "onSessionStart": [
+      {
+        "type": "bash",
+        "name": "claude-compat",
+        "command": ["python3", "${klorbDataDir}/hooks/claude-compat/check.py"]
+      }
+    ]
+  },
   "events": {}
 }

@@ -48,7 +48,13 @@ command reuses.
     cheap and safe to re-copy on every `klorb init` run. See [[paths-and-logging]] for
     `$KLORB_DATA_DIR` and `configure_tiktoken_cache_env()`'s call below for how this copy gets
     used.
-  * `run_init(scope, force=...)` runs all three steps in that order and returns their
+  * `copy_resource_data()` recursively copies the packaged `klorb.resources/data/` resource
+    tree (hook scripts, ...) into `klorb.paths.get_klorb_data_dir()` itself — not a same-named
+    subdirectory — creating it as needed. Same shape as `copy_tiktoken_cache()`: not scoped,
+    no `force` gate, safe to re-run. This is the same copy `klorb/Makefile`'s `install` target
+    performs (`make install`, for a machine that never runs `klorb init`), so
+    `klorb.config_macros`'s `${klorbDataDir}` macro resolves to real files either way.
+  * `run_init(scope, force=...)` runs all four steps in that order and returns their
     combined, ordered progress messages. It refuses a `"system"` scope outright, before any
     step runs, unless the process's effective uid is `0` (raises `InitError`). Any step's own
     `InitError` (e.g. a permission-denied `mkdir`) also propagates immediately out of

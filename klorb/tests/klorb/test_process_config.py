@@ -97,6 +97,16 @@ def test_default_config_layer_pre_allows_create_edit_skill() -> None:
     assert "internal:create-edit-skill" in layer["sessionDefaults"]["skillRules"]["allow"]
 
 
+def test_default_config_layer_pre_allows_claude_compatibility_skill() -> None:
+    layer = _real_default_config_layer([]).contents
+    assert "internal:claude-compatibility" in layer["sessionDefaults"]["skillRules"]["allow"]
+
+
+def test_default_config_layer_wires_up_claude_compat_hook() -> None:
+    handler = _real_default_config_layer([]).contents["hooks"]["onSessionStart"][0]
+    assert handler["command"] == ["python3", "${klorbDataDir}/hooks/claude-compat/check.py"]
+
+
 def test_default_config_layer_is_merged_when_no_other_config_files_exist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

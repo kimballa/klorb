@@ -1,7 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Library logic behind `klorb init`: copies the packaged, spartan `template-config.json` into
-place, points a `klorb` executable symlink at the running process's own launcher script, and
-copies the packaged tiktoken cache tree into `$KLORB_DATA_DIR` (see `klorb.token_estimate`).
+place, points a `klorb` executable symlink at the running process's own launcher script, copies
+the packaged tiktoken cache tree into `$KLORB_DATA_DIR` (see `klorb.token_estimate`), and copies
+the packaged `klorb.resources/data/` resource tree (hook scripts, ...) into `$KLORB_DATA_DIR`.
 Shared by the CLI subcommand (`klorb.cli`) and the "Init local klorb config" command palette
 action (`klorb.tui.commands.init_commands`) — see docs/specs/klorb-init.md.
 
@@ -18,13 +19,20 @@ however fits its own surface (stderr lines for the CLI, a notification for the T
 
 import importlib.resources
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from klorb.paths import get_klorb_data_dir
 from klorb.process_config import etc_config_path, user_config_path
 from klorb.token_estimate import install_tiktoken_cache
+
+RESOURCE_DATA_RESOURCE_NAME = "data"
+"""Directory name of the packaged, installable resource-data tree within the `klorb.resources`
+package (`klorb.resources/data/`). Copied flat into `$KLORB_DATA_DIR` itself, not into a
+same-named subdirectory."""
 
 InitScope = Literal["system", "user"]
 
@@ -175,11 +183,30 @@ def copy_tiktoken_cache() -> StepResult:
     return StepResult(messages)
 
 
+def copy_resource_data() -> StepResult:
+    """Recursively copies the packaged `klorb.resources/data/` resource tree into
+    `get_klorb_data_dir()` itself, creating it as needed. No `force` gate, unlike
+    `write_config_file`/`create_symlink` — this is package data, not something a user
+    hand-edits, so it's safe to always re-copy. Raises `InitError` if the target can't be
+    created or written.
+    """
+    target = get_klorb_data_dir()
+    try:
+        with importlib.resources.as_file(
+            importlib.resources.files("klorb.resources").joinpath(RESOURCE_DATA_RESOURCE_NAME)
+        ) as source:
+            shutil.copytree(source, target, dirs_exist_ok=True)
+    except OSError as exc:
+        raise InitError(f"Failed to copy resource data to {target}: {exc}") from exc
+    return StepResult([f"Copied resource data to {target}."])
+
+
 def run_init(scope: InitScope, *, force: bool) -> list[str]:
     """Run every `klorb init` step for `scope` — write the starter config file, create the
-    executable symlink, then copy the packaged tiktoken cache tree — stopping at the first one
-    that raises `InitError` rather than attempting the next. Refuses a `"system"` scope
-    outright, before any step, unless running as root (effective uid 0).
+    executable symlink, copy the packaged tiktoken cache tree, then copy the packaged resource
+    data tree — stopping at the first one that raises `InitError` rather than attempting the
+    next. Refuses a `"system"` scope outright, before any step, unless running as root
+    (effective uid 0).
 
     Returns the combined, ordered progress messages from every step that ran. Neither
     scoped step's own "already exists; not overwriting" outcome is an error: each is
@@ -192,4 +219,5 @@ def run_init(scope: InitScope, *, force: bool) -> list[str]:
     messages = list(write_config_file(scope, force=force).messages)
     messages.extend(create_symlink(scope, force=force).messages)
     messages.extend(copy_tiktoken_cache().messages)
+    messages.extend(copy_resource_data().messages)
     return messages

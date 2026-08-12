@@ -174,20 +174,6 @@
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
-### Feature backlog
-
-* Add tips/suggestions:
-  * When opening a workspace for the first time, suggest compatibility.claudeMarkdown and
-    compatibility.claudeSkills if there is a CLAUDE.md file or .claude/skills dir.
-    We should include a built-in skill for `/claude-compatibility` that instructs an agent
-    to modify the repo's config file to include the requisite flags based on what Claude
-    stuff it finds.
-
-  * (Maybe this could be implemented with a onSessionStart hook, filtered on
-    `workspace_just_bootstrapped=true`? It could emit a msg to the user via hook_output.log. The hook
-    could be defined in default-config.json, referencing a script under `${klorbDataDir}/hooks`
-    installed via `make install`.)
-
 ## VSCode plugin
 
 ### Bugs

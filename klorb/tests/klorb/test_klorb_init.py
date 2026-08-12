@@ -13,6 +13,7 @@ from klorb.klorb_init import (
     InitError,
     StepResult,
     config_target_path,
+    copy_resource_data,
     copy_tiktoken_cache,
     create_symlink,
     default_scope,
@@ -187,7 +188,7 @@ def test_run_init_refuses_system_scope_when_not_root(monkeypatch: pytest.MonkeyP
         run_init("system", force=False)
 
 
-def test_run_init_runs_config_then_symlink_then_tiktoken_cache_and_combines_messages(
+def test_run_init_runs_config_then_symlink_then_tiktoken_cache_then_resource_data_and_combines_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_order: list[str] = []
@@ -204,14 +205,19 @@ def test_run_init_runs_config_then_symlink_then_tiktoken_cache_and_combines_mess
         call_order.append("tiktoken-cache")
         return StepResult(["tiktoken-cache-msg"])
 
+    def _fake_copy_resource_data() -> StepResult:
+        call_order.append("resource-data")
+        return StepResult(["resource-data-msg"])
+
     monkeypatch.setattr(klorb_init, "write_config_file", _fake_write_config_file)
     monkeypatch.setattr(klorb_init, "create_symlink", _fake_create_symlink)
     monkeypatch.setattr(klorb_init, "copy_tiktoken_cache", _fake_copy_tiktoken_cache)
+    monkeypatch.setattr(klorb_init, "copy_resource_data", _fake_copy_resource_data)
 
     messages = run_init("user", force=False)
 
-    assert call_order == ["config", "symlink", "tiktoken-cache"]
-    assert messages == ["config-msg", "symlink-msg", "tiktoken-cache-msg"]
+    assert call_order == ["config", "symlink", "tiktoken-cache", "resource-data"]
+    assert messages == ["config-msg", "symlink-msg", "tiktoken-cache-msg", "resource-data-msg"]
 
 
 def test_run_init_stops_at_first_error_without_attempting_later_steps(
@@ -230,9 +236,14 @@ def test_run_init_stops_at_first_error_without_attempting_later_steps(
         later_steps_called.append("tiktoken-cache")
         return StepResult([])
 
+    def _fake_copy_resource_data() -> StepResult:
+        later_steps_called.append("resource-data")
+        return StepResult([])
+
     monkeypatch.setattr(klorb_init, "write_config_file", _fail)
     monkeypatch.setattr(klorb_init, "create_symlink", _fake_create_symlink)
     monkeypatch.setattr(klorb_init, "copy_tiktoken_cache", _fake_copy_tiktoken_cache)
+    monkeypatch.setattr(klorb_init, "copy_resource_data", _fake_copy_resource_data)
 
     with pytest.raises(InitError, match="boom"):
         run_init("user", force=False)
@@ -256,6 +267,43 @@ def test_copy_tiktoken_cache_wraps_os_error_as_init_error(monkeypatch: pytest.Mo
 
     with pytest.raises(InitError, match="disk full"):
         copy_tiktoken_cache()
+
+
+def test_copy_resource_data_copies_packaged_tree_into_klorb_data_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    target = tmp_path / "klorb-data"
+    monkeypatch.setattr(klorb_init, "get_klorb_data_dir", lambda: target)
+
+    result = copy_resource_data()
+
+    assert (target / "hooks" / "claude-compat" / "check.py").is_file()
+    assert result.messages == [f"Copied resource data to {target}."]
+
+
+def test_copy_resource_data_merges_into_an_existing_target_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    target = tmp_path / "klorb-data"
+    target.mkdir()
+    (target / "skills").mkdir()
+    monkeypatch.setattr(klorb_init, "get_klorb_data_dir", lambda: target)
+
+    copy_resource_data()
+
+    assert (target / "hooks" / "claude-compat" / "check.py").is_file()
+    assert (target / "skills").is_dir()
+
+
+def test_copy_resource_data_wraps_os_error_as_init_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(klorb_init, "get_klorb_data_dir", lambda: blocker / "klorb-data")
+
+    with pytest.raises(InitError, match="Failed to copy resource data"):
+        copy_resource_data()
 
 
 def test_is_user_scope_initialized_false_when_neither_target_exists(

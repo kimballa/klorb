@@ -134,13 +134,11 @@ init: venv
 	$(LOAD_VENV); "$(KLORB_BIN)" init || true
 
 # Copy klorb's bundled resource data (hooks, scripts, ...) into the user's klorb data dir
-# (`klorb.paths.DEFAULT_KLORB_DATA_DIR`), so `${klorbDataDir}`-referencing config can rely on it.
+# (`klorb.klorb_init.copy_resource_data`, the same step `klorb init` runs), so
+# `${klorbDataDir}`-referencing config can rely on it.
 install: install_deps
 	@echo "Installing klorb resource data..."
-	$(LOAD_VENV); \
-	KLORB_DATA_DIR_PATH=`"$(VENV_PYTHON)" -c "from klorb.paths import DEFAULT_KLORB_DATA_DIR; print(DEFAULT_KLORB_DATA_DIR)"`; \
-	mkdir -p "$$KLORB_DATA_DIR_PATH"; \
-	cp -R src/klorb/resources/data/. "$$KLORB_DATA_DIR_PATH"
+	$(LOAD_VENV); "$(VENV_PYTHON)" -c "from klorb.klorb_init import copy_resource_data; copy_resource_data()"
 	@echo ""
 	@echo "klorb resource data installed."
 
