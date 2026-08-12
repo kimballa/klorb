@@ -32,7 +32,7 @@ class ForgetMemoryTool(Tool):
         return "ForgetMemory"
 
     def aliases(self) -> Sequence[str]:
-        return ("ForgetMemories",)
+        return ("ForgetMemories", "MemoryForget")
 
     def category(self) -> str:
         return "MEMORY"

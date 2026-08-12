@@ -311,6 +311,12 @@ def test_yoda_alias_memories_list() -> None:
     assert tool.name() == "ListMemories"
 
 
+def test_yoda_alias_memory_forget() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoryForget")
+    assert tool.name() == "ForgetMemory"
+
+
 def test_canonical_name_still_works_when_aliases_exist() -> None:
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 
