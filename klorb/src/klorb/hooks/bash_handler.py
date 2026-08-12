@@ -124,12 +124,13 @@ def run_bash_handler(
             handler.name, hook_input.hook)
         full_argv = argv
 
+    input_json = hook_input.model_dump_json()
     logger.debug(
-        "Spawning bash hook handler %r for %r (sandboxed=%s): %s",
-        handler.name, hook_input.hook, sandboxed, argv)
+        "Spawning bash hook handler %r for %r (sandboxed=%s): %s; HookInput=%s",
+        handler.name, hook_input.hook, sandboxed, argv, input_json)
     try:
         completed = subprocess.run(
-            full_argv, input=hook_input.model_dump_json(), capture_output=True,
+            full_argv, input=input_json, capture_output=True,
             text=True, timeout=timeout_seconds, cwd=workspace_root, env=env)
     except subprocess.TimeoutExpired:
         logger.warning(
@@ -139,9 +140,11 @@ def run_bash_handler(
     except OSError as exc:
         logger.warning(
             "Hook handler %r for %r failed to launch: %s; skipping.",
-            handler.name, hook_input.hook, exc)
+            handler.name, hook_input.hook, exc, exc_info=True)
         return None
 
+    logger.debug(
+        "Bash hook handler %r for %r exited %d.", handler.name, hook_input.hook, completed.returncode)
     _log_handler_stderr(handler, hook_input, completed.stderr)
     if completed.returncode != 0:
         logger.warning(
@@ -149,9 +152,13 @@ def run_bash_handler(
             handler.name, hook_input.hook, completed.returncode)
         return None
     try:
-        return HookOutput.model_validate_json(completed.stdout)
+        output = HookOutput.model_validate_json(completed.stdout)
     except ValidationError as exc:
         logger.warning(
             "Hook handler %r for %r produced invalid HookOutput json: %s; skipping.",
             handler.name, hook_input.hook, exc)
         return None
+    logger.debug(
+        "Bash hook handler %r for %r returned HookOutput=%s",
+        handler.name, hook_input.hook, output.model_dump_json())
+    return output
