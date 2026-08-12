@@ -2,6 +2,7 @@
 """A Tool that replaces a verified, inclusive line range in a text file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -42,6 +43,9 @@ class EditFileTool(Tool):
 
     def name(self) -> str:
         return "EditFile"
+
+    def aliases(self) -> Sequence[str]:
+        return ("FileEdit",)
 
     def category(self) -> str:
         return "FILES"

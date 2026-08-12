@@ -52,7 +52,7 @@ class SearchMemoriesTool(Tool):
         return "SearchMemories"
 
     def aliases(self) -> Sequence[str]:
-        return ("SearchMemory",)
+        return ("SearchMemory", "MemoriesSearch")
 
     def category(self) -> str:
         return "MEMORY"

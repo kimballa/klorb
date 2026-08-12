@@ -3,6 +3,7 @@
 file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.tools.scratchpad.common import scratchpad_path
@@ -29,6 +30,9 @@ class EditScratchpadTool(Tool):
 
     def name(self) -> str:
         return "EditScratchpad"
+
+    def aliases(self) -> Sequence[str]:
+        return ("ScratchpadEdit",)
 
     def category(self) -> str:
         return "SCRATCHPAD"

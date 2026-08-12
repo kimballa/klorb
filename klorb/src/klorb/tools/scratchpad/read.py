@@ -2,6 +2,7 @@
 """A Tool that reads a range of lines from the active session's scratchpad file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.tools.scratchpad.common import scratchpad_path
@@ -36,6 +37,9 @@ class ReadScratchpadTool(Tool):
 
     def name(self) -> str:
         return "ReadScratchpad"
+
+    def aliases(self) -> Sequence[str]:
+        return ("ScratchpadRead",)
 
     def category(self) -> str:
         return "SCRATCHPAD"

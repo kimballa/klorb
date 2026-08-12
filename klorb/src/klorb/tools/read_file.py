@@ -2,6 +2,7 @@
 """A Tool that reads a range of lines from a text file for a model."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -45,6 +46,9 @@ class ReadFileTool(Tool):
 
     def name(self) -> str:
         return "ReadFile"
+
+    def aliases(self) -> Sequence[str]:
+        return ("FileRead",)
 
     def category(self) -> str:
         return "FILES"

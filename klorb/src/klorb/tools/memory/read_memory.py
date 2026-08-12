@@ -49,7 +49,7 @@ class ReadMemoryTool(Tool):
         return "ReadMemory"
 
     def aliases(self) -> Sequence[str]:
-        return ("ReadMemories",)
+        return ("ReadMemories", "MemoryRead")
 
     def category(self) -> str:
         return "MEMORY"

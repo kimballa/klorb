@@ -3,6 +3,7 @@
 several literal search strings, returning each match plus surrounding context lines."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.tools.scratchpad.common import scratchpad_path
@@ -42,6 +43,9 @@ class SearchScratchpadTool(Tool):
 
     def name(self) -> str:
         return "SearchScratchpad"
+
+    def aliases(self) -> Sequence[str]:
+        return ("ScratchpadSearch",)
 
     def category(self) -> str:
         return "SCRATCHPAD"
