@@ -2,6 +2,7 @@
 """A Tool that enumerates the memory files available in the global and workspace namespaces."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
@@ -29,6 +30,9 @@ class ListMemoriesTool(Tool):
 
     def name(self) -> str:
         return "ListMemories"
+
+    def aliases(self) -> Sequence[str]:
+        return ("ListMemory",)
 
     def category(self) -> str:
         return "MEMORY"
