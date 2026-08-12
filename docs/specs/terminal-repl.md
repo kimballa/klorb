@@ -314,23 +314,16 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   type. `.thinking-body` and `.tool-call` (the *body* widgets, not their labels) carry no
   margin of their own, since the preceding label already opened the gap.
 * `Ctrl+P`'s command palette also includes `ThinkingCommandProvider`
-  (`klorb/src/klorb/tui/commands/thinking_commands.py`), listing `"Enable thinking"`, `"Disable
-  thinking"`, and a single `"Set thinking effort"` command (rather than one palette entry
-  per `ThinkingEffort` level, which cluttered the palette). Selecting `"Enable
-  thinking"`/`"Disable thinking"` calls `ReplApp.set_thinking_enabled(bool)` directly, which
-  mutates `Session.config.thinking_enabled` (same pattern as `select_model()`) and appends a
-  `.notice` item to the history scroll confirming the change (see
-  [[avoid-toasts-prefer-history-notices]]). Selecting `"Set thinking effort"` instead reads
-  the current level via the new `ReplApp.get_thinking_effort()` getter and pushes
-  `ThinkingEffortScreen`, a `ModalScreen` with a `"Thinking effort level:"` header `Static`
-  above the three `ThinkingEffort` levels (`"low"`/`"medium"`/`"high"`) listed vertically in
-  an `OptionList`,
-  with the currently-active level's entry suffixed with `" *"`; the up/down arrow keys move
-  the selection and Enter confirms it (`OptionList`'s built-in bindings), calling
-  `ReplApp.set_thinking_effort(level)` and dismissing the modal, while Escape dismisses
-  without changing anything. `"Enable thinking"`/`"Disable thinking"` remain an always-on/off
-  pair, mirroring how `ModelCommandProvider` always lists every model rather than showing
-  dynamic toggle-state labels.
+  (`klorb/src/klorb/tui/commands/thinking_commands.py`), offering a single `"Set thinking"`
+  command whose label shows the current state in parentheses (e.g. `"Set thinking (Medium)"`,
+  `"Set thinking (Off)"`). Selecting it pushes `ThinkingStateScreen`, a `ModalScreen` with a
+  `"Thinking state:"` header `Static` above four options (`"off"`/`"low"`/`"medium"`/`"high"`)
+  listed vertically in an `OptionList`, with the currently-active state's entry suffixed with
+  `" *"`; the up/down arrow keys move the selection and Enter confirms it, calling
+  `ReplApp.set_thinking_enabled(False)` for `"off"` or `set_thinking_enabled(True)` plus
+  `set_thinking_effort(level)` for the other three, then dismissing the modal. Escape dismisses
+  without changing anything. The canonical `text` recorded for command-palette-from-prompt recall
+  is always the undecorated `"Set thinking"` label.
 * `ReplApp.clear_session()` — reached by typing `>clear` and pressing enter to select
   `Clear session` from the inline palette (see [[command-palette-from-prompt]]), or the
   equivalent `Ctrl+P` → `Clear session` — replaces the active `Session` with a new one: same

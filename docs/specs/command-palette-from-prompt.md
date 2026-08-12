@@ -62,7 +62,7 @@ are the underlying palette primitives.
 * `PromptInput._execute_palette_hit(hit)` clears the box, hides the popup, and defers running
   `hit.command` via `self.app.call_later(...)` (mirroring Textual's own
   `CommandPalette._select_or_command`, so a command that itself pushes a modal — e.g. `Set
-  thinking effort`'s `ThinkingEffortScreen` — doesn't do so mid-keystroke).
+  thinking`'s `ThinkingStateScreen` — doesn't do so mid-keystroke).
   `_run_palette_command` is what actually runs there: it calls `command()`, awaits the result
   if it's awaitable, and only *afterward* appends `>` + the hit's canonical `text` to the
   input history. See
@@ -79,12 +79,12 @@ to `str(display)` when a provider doesn't set it explicitly. Two provider behavi
 here:
 
 * A command whose displayed label already varies with live state but should still always
-  recall the same way — `ThinkingCommandProvider`'s `Set thinking effort (High)` — sets `text`
-  explicitly to the undecorated root (`"Set thinking effort"`), since the parenthetical
+  recall the same way — `ThinkingCommandProvider`'s `Set thinking (High)` — sets `text`
+  explicitly to the undecorated root (`"Set thinking"`), since the parenthetical
   current-value suffix wouldn't itself match this same command again on a later recall.
-* A toggle pair that displays exactly what was invoked — `Enable thinking`/`Disable
-  thinking`, or `SessionCommandProvider`'s `Clear session` — leaves `text` at its default (the
-  display string itself), so recalling it later shows exactly what was selected.
+* A toggle pair that displays exactly what was invoked — `SessionCommandProvider`'s `Clear
+  session` — leaves `text` at its default (the display string itself), so recalling it later
+  shows exactly what was selected.
 
 ### History browsing
 
