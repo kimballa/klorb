@@ -53,7 +53,7 @@ class EditMemoryTool(Tool):
         return "EditMemory"
 
     def aliases(self) -> Sequence[str]:
-        return ("EditMemories",)
+        return ("EditMemories", "MemoryEdit")
 
     def category(self) -> str:
         return "MEMORY"

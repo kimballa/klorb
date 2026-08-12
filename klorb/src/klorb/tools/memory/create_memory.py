@@ -46,7 +46,7 @@ class CreateMemoryTool(Tool):
         return "CreateMemory"
 
     def aliases(self) -> Sequence[str]:
-        return ("WriteMemory", "CreateMemories")
+        return ("WriteMemory", "CreateMemories", "MemoryCreate")
 
     def category(self) -> str:
         return "MEMORY"

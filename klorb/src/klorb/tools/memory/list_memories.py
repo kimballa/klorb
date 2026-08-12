@@ -32,7 +32,7 @@ class ListMemoriesTool(Tool):
         return "ListMemories"
 
     def aliases(self) -> Sequence[str]:
-        return ("ListMemory",)
+        return ("ListMemory", "MemoriesList")
 
     def category(self) -> str:
         return "MEMORY"

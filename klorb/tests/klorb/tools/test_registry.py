@@ -245,6 +245,78 @@ def test_instantiate_tool_still_raises_for_unknown_name() -> None:
         raise AssertionError("expected NoSuchToolException for unknown tool name")
 
 
+def test_yoda_alias_file_edit() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("FileEdit")
+    assert tool.name() == "EditFile"
+
+
+def test_yoda_alias_file_read() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("FileRead")
+    assert tool.name() == "ReadFile"
+
+
+def test_yoda_alias_file_create() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("FileCreate")
+    assert tool.name() == "CreateFile"
+
+
+def test_yoda_alias_memory_edit() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoryEdit")
+    assert tool.name() == "EditMemory"
+
+
+def test_yoda_alias_memory_read() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoryRead")
+    assert tool.name() == "ReadMemory"
+
+
+def test_yoda_alias_memory_create() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoryCreate")
+    assert tool.name() == "CreateMemory"
+
+
+def test_yoda_alias_scratchpad_edit() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("ScratchpadEdit")
+    assert tool.name() == "EditScratchpad"
+
+
+def test_yoda_alias_scratchpad_read() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("ScratchpadRead")
+    assert tool.name() == "ReadScratchpad"
+
+
+def test_yoda_alias_scratchpad_search() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("ScratchpadSearch")
+    assert tool.name() == "SearchScratchpad"
+
+
+def test_yoda_alias_memories_search() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoriesSearch")
+    assert tool.name() == "SearchMemories"
+
+
+def test_yoda_alias_memories_list() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoriesList")
+    assert tool.name() == "ListMemories"
+
+
+def test_yoda_alias_memory_forget() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("MemoryForget")
+    assert tool.name() == "ForgetMemory"
+
+
 def test_canonical_name_still_works_when_aliases_exist() -> None:
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 

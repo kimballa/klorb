@@ -40,7 +40,7 @@ class CreateFileTool(Tool):
         return "CreateFile"
 
     def aliases(self) -> Sequence[str]:
-        return ("WriteFile",)
+        return ("WriteFile", "FileCreate")
 
     def category(self) -> str:
         return "FILES"
