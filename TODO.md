@@ -21,7 +21,17 @@
   over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
   function *doesn't* do, is overly-specific specific and brittle, etc.
 
+* I was able to [ESC] to cancel a running agent turn and submit a correction and get into the state
+  where there were two agent threads running simultaneously, both appending into the history view
+  and trying to run different commands. (Same thing I had happen much earlier where there is an
+  approval panel waiting for permission to run a bash cmd, but also there's a different bash command
+  also just running right above it in the historyview.)
+
 ### Feature backlog
+
+* In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
+  either runaway threads or memory overrun.
+  * Definitely need to start pruning the rendered history in the DOM at a certain point.
 
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
