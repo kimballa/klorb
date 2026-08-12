@@ -11,10 +11,11 @@ from pydantic import BaseModel, Field
 
 from klorb.agents.policy import dispatch_subagent_turn, plan_subagent_creation
 from klorb.session import Session
+from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.common import SUBAGENT_TOOL_CATEGORY
-from klorb.tools.tasks.common import TASK_TOOL_NAMES
+from klorb.tools.tasks.common import ALL_LABEL, TASK_TOOL_NAMES, ChainlinkClient, agent_label
 from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,11 @@ class CreateSubagentParameters(BaseModel):
     max_output_tokens: int | None = Field(default=None, description=(
         "Output token budget (includes thinking tokens) to give this subagent. Omit for no "
         "particular limit."))
+    starting_task_id: int | None = Field(default=None, description=(
+        "Pre-claim this chainlink task for the new subagent instead of requiring it to call "
+        "TodoCreate/TodoNext itself. The task's summary is incorporated into the subagent's "
+        "first user prompt. If the task carries the \"all\" (unclaimed) label, it is claimed "
+        "for the new subagent before the subagent starts."))
 
 
 class CreateSubagentTool(Tool):
@@ -87,6 +93,7 @@ class CreateSubagentTool(Tool):
     def apply(self, args: dict[str, Any]) -> Any:
         context: ToolSetupContext = self.context
         assert context.session is not None
+        starting_task_id: int | None = args.get("starting_task_id")
         plan = plan_subagent_creation(
             context, args.get("role", ""), args.get("allowed_tools"), args.get("allowed_skills"))
         model = args.get("model") or plan.role_definition.default_model
@@ -110,13 +117,13 @@ class CreateSubagentTool(Tool):
             "Created subagent %s (role=%s, model=%s) under %s",
             child.id, args["role"], model, context.session.id)
         if not TASK_TOOL_NAMES.isdisjoint(plan.tool_classes.keys()):
-            # The new subagent's own tool set includes a TASKS tool, so it could plausibly
-            # create/track chainlink issues -- ensure the creating session has a ChainlinkClient
-            # of its own, so the group's close-time cleanup gets registered even if the creator
-            # never calls a Todo* tool itself. See Session.ensure_chainlink_client().
             context.session.ensure_chainlink_client()
+        initial_message = args["initial_message"]
+        if starting_task_id is not None:
+            initial_message = self._claim_and_annotate_starting_task(
+                context, child, starting_task_id, initial_message)
         dispatch_subagent_turn(
-            context.session, child, args["role"], args["session_title"], args["initial_message"])
+            context.session, child, args["role"], args["session_title"], initial_message)
         return {
             "subagent_id": child.id,
             "note": (
@@ -129,6 +136,49 @@ class CreateSubagentTool(Tool):
                 """
             ),
         }
+
+    def _claim_and_annotate_starting_task(
+        self, context: ToolSetupContext, child: Session, task_id: int, initial_message: str,
+    ) -> str:
+        """Look up `task_id` in chainlink, claim it for `child` if it's unclaimed, and prepend
+        the task's summary to `initial_message`. Raises `ToolCallError` (category `"validation"`)
+        if the task doesn't exist, is closed, or is already claimed by a different agent."""
+        client = ChainlinkClient(context)
+        try:
+            issue = client.show_issue(task_id)
+        except Exception as exc:
+            raise ToolCallError(
+                f"starting_task_id {task_id} could not be resolved: {exc}",
+                category="validation") from exc
+        if issue.get("status") != "open":
+            raise ToolCallError(
+                f"starting_task_id {task_id} is not open (status={issue.get('status')!r}).",
+                category="validation")
+        labels: list[str] = issue.get("labels", [])
+        child_label = agent_label(child.id)
+        if ALL_LABEL in labels:
+            if not client.remove_label(task_id, ALL_LABEL):
+                raise ToolCallError(
+                    f"starting_task_id {task_id} was claimed by another agent before the "
+                    "subagent could start.",
+                    category="validation")
+            client.add_label(task_id, child_label)
+            logger.debug(
+                "Claimed task #%d for subagent %s (removed %r, added %r).",
+                task_id, child.id, ALL_LABEL, child_label)
+        elif child_label not in labels:
+            # Task is already owned by some other agent.
+            other_agents = list(filter(lambda lb: lb.startswith("agent:"), labels))
+            owner = other_agents[0] if other_agents else "another agent"
+            raise ToolCallError(
+                f"starting_task_id {task_id} is already claimed by {owner}.",
+                category="validation")
+        title = issue.get("title", "(untitled)")
+        description = issue.get("description")
+        task_summary = f'Your assigned task is #{task_id}: "{title}".'
+        if description:
+            task_summary += f"\n\n{description}"
+        return f"{task_summary}\n\n{initial_message}"
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         title = args.get("session_title", "?")
