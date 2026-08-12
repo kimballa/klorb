@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from klorb.agents.runtime import (
     SubagentHandle,
     SubagentTracker,
+    build_agent_group_interjection_provider,
     build_subagent_interjection_provider,
     cascade_close_subagents,
     find_session_in_group,
@@ -384,3 +385,83 @@ def test_cascade_close_subagents_recurses_into_grandchildren_first() -> None:
     assert any("grandchild output" in m.content for m in child.messages)
     assert child_handle.delivered is True
     assert any("child output" in m.content for m in parent.messages)
+
+
+def test_agent_group_provider_emits_table_on_first_call() -> None:
+    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+    provider = build_agent_group_interjection_provider(root)
+
+    result = provider()
+
+    assert result is not None
+    assert "| Role | Id | Title | State |" in result
+    assert "| operator |" in result
+    assert "| running |" in result
+
+
+def test_agent_group_provider_returns_none_when_group_unchanged() -> None:
+    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+    provider = build_agent_group_interjection_provider(root)
+    provider()  # first call emits
+
+    result = provider()  # second call, no change
+
+    assert result is None
+
+
+def test_agent_group_provider_emits_update_when_subagent_added() -> None:
+    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+    child = _child_session(root)
+    provider = build_agent_group_interjection_provider(root)
+    provider()  # baseline
+
+    root.subagent_tracker.register(_handle(child))
+    result = provider()
+
+    assert result is not None
+    assert child.id in result
+    assert "| explorer |" in result
+
+
+def test_agent_group_provider_emits_update_when_subagent_state_changes() -> None:
+    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+    child = _child_session(root)
+    handle = _handle(child)
+    root.subagent_tracker.register(handle)
+    provider = build_agent_group_interjection_provider(root)
+    provider()  # baseline with running child
+
+    root.subagent_tracker.mark_finished(child.id, "done")
+    result = provider()
+
+    assert result is not None
+    assert "| finished |" in result
+
+
+def test_agent_group_provider_works_for_subagent_session() -> None:
+    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+    child = _child_session(root)
+    root.subagent_tracker.register(_handle(child))
+    provider = build_agent_group_interjection_provider(child)
+
+    result = provider()
+
+    assert result is not None
+    assert root.id in result
+    assert child.id in result
+
+
+def test_agent_group_provider_tracks_nested_subagents() -> None:
+    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+    child = _child_session(root)
+    grandchild = _child_session(child)
+    root.subagent_tracker.register(_handle(child))
+    child.subagent_tracker.register(_handle(grandchild))
+    provider = build_agent_group_interjection_provider(root)
+
+    result = provider()
+
+    assert result is not None
+    assert grandchild.id in result
+    # root + child + grandchild = 3 rows + header + separator = 5 lines
+    assert len(result.split("\n")) == 5

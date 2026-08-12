@@ -323,16 +323,20 @@ filters `fetch_and_sort_issues()`'s result to just `agent_label(own_id)`-labeled
 
 ## AgentGroup interjection
 
-The very first turn a subagent's own `Session.send_turn()` runs (`self.parent is not None`,
-`self._agent_group_seeded` still `False`), `SessionCoreMixin._build_agent_group_interjection()`
-is prepended as a `<SystemInterjection subject="AgentGroup">` (see "Turn interjection", below, for
-the wrapping mechanism `ChainlinkCurrentTask` also uses): a markdown table of every agent in the
-same session tree the *creating* session can currently see (`klorb.agents.runtime.
-walk_session_tree`, rooted at the tree's top-level session), with columns Role/Id/Title/
-Relationship — the last blank except for this subagent's own row (`"(This is you)"`) and its
-parent's (`"(Your parent)"`). `None` (nothing prepended) for a root session, which has no group
-to report about itself. This is how a subagent learns the session ids it would need to pass as
-`TodoCreate`'s `assign_to`, or a target for `MessageSubagent`, without a separate tool call.
+`klorb.agents.runtime.build_agent_group_interjection_provider()` returns a standing interjection
+closure registered by `SessionCoreMixin._register_agent_group_standing_interjection()` (called
+from `_reset_state`, so it's active for both root sessions and subagents). On every
+`send_turn()` call, the provider walks the full session tree (`walk_session_tree`, rooted at
+the tree's top-level session), builds a markdown table with columns Role/Id/Title/State,
+and compares it against a cached frozenset of ``(session_id, role_name, state)`` tuples. The
+table is emitted (as a `<SystemInterjection subject="AgentGroup">`, see "Turn interjection",
+below) on the first call (establishing the baseline) and again whenever the group's composition
+or subagent activity changes; `None` (no interjection) is returned when the group is unchanged.
+
+This is how a subagent learns the session ids it would need to pass as `TodoCreate`'s
+`assign_to`, or a target for `MessageSubagent`, without a separate tool call. The `State`
+column (`running`/`finished`) lets every agent in the tree see which peers are actively
+processing and which are dormant.
 
 ## Session state
 

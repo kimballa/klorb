@@ -34,6 +34,10 @@ turn is cancelled mid-stream -- also the signal `klorb.tui.mixins.subagents_pane
 SubagentsPanelMixin` checks (`marker in handle.output`) to show "Subagent interrupted." in place
 of the ordinary "Subagent task complete." notice once a cancelled subagent's handle finishes."""
 
+AGENT_GROUP_INTERJECTION_SUBJECT = "AgentGroup"
+"""`SystemInterjection subject=` value the AgentGroup standing interjection uses to notify
+subagents of group membership and activity changes."""
+
 _SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
 """How long `cascade_close_subagents` waits for a still-running subagent's background thread to
 notice `cancel_event` and finish, before giving up and relaying a termination note without it --
@@ -218,6 +222,57 @@ def build_subagent_interjection_provider(tracker: "SubagentTracker") -> Callable
         if handle is None:
             return None
         return _format_relay_body(handle)
+    return provider
+
+
+def build_agent_group_interjection_provider(
+    session: "Session",
+) -> Callable[[], str | None]:
+    """Build a standing interjection provider that emits an `AgentGroup` table whenever the
+    session tree's composition or subagent activity changes. Each call walks the full tree
+    rooted at `session`'s top-level session, builds a markdown table of every agent (role, id,
+    title, state), and compares it against the last-emitted snapshot. Returns the table on the
+    first call (establishing the baseline) and again whenever the frozenset of
+    ``(session_id, role_name, state)`` tuples differs from the cached snapshot; returns `None`
+    (no interjection) when the group is unchanged."""
+    last_snapshot: frozenset[tuple[str, str, str]] = frozenset()
+
+    def _build_group_table(
+        session: "Session", root: "Session", nodes: list[SessionTreeNode],
+    ) -> str:
+        rows = [
+            "| Role | Id | Title | State |",
+            "| --- | --- | --- | --- |",
+        ]
+        for node in nodes:
+            s = node.session
+            state = (
+                node.handle.state if node.handle is not None
+                else "running"
+            )
+            title = s.name or ""
+            rows.append(f"| {s.config.role_name} | {s.id} | {title} | {state} |")
+        return "\n".join(rows)
+
+    def provider() -> str | None:
+        nonlocal last_snapshot
+        root = session
+        while root.parent is not None:
+            root = root.parent
+        nodes = walk_session_tree(root)
+        snapshot = frozenset(
+            (node.session.id, node.session.config.role_name,
+             node.handle.state if node.handle is not None else "running")
+            for node in nodes
+        )
+        if snapshot == last_snapshot:
+            return None
+        last_snapshot = snapshot
+        logger.debug(
+            "AgentGroup interjection: group changed (%d agents), emitting table.",
+            len(nodes))
+        return _build_group_table(session, root, nodes)
+
     return provider
 
 

@@ -92,11 +92,12 @@ only; no tool takes an address as an argument.
 
 ## AgentGroup interjection
 
-A subagent's very first turn is prepended with a one-shot `<SystemInterjection
-subject="AgentGroup">` naming every agent in its session tree (role, id, title) — see
-docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section for the full mechanism.
-This is how a subagent learns the session ids it needs for `TodoCreate`'s `assign_to` or a
-`MessageSubagent` target, without a dedicated lookup tool.
+A standing `<SystemInterjection subject="AgentGroup">` (registered via
+`klorb.agents.runtime.build_agent_group_interjection_provider`, polled on every `send_turn()`)
+emits a markdown table of every agent in the session tree whenever group composition or subagent
+activity changes — see docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section
+for the full mechanism. This is how a subagent learns the session ids it needs for `TodoCreate`'s
+`assign_to` or a `MessageSubagent` target, without a dedicated lookup tool.
 
 ## Security model
 
