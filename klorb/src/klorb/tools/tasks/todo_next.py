@@ -3,6 +3,7 @@
 current task."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from klorb.agents.registry import get_agent_capabilities
@@ -40,6 +41,9 @@ class TodoNextTool(Tool):
     (`ChainlinkClient.add_label`/`remove_label`), unlike picking one already labeled for this
     agent or re-returning the current one, which only reads.
     """
+
+    def aliases(self) -> Sequence[str] | None:
+        return ["TaskNext"]
 
     def name(self) -> str:
         return "TodoNext"

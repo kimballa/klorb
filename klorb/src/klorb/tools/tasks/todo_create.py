@@ -50,11 +50,11 @@ class TodoCreateTool(Tool):
     permitted for either agent's role capabilities. See docs/specs/chainlink-task-tracking.md's
     "Task assignment" section.
 
-    Aliased as `TodoWrite`.
+    Aliased as `TodoWrite` and `TaskCreate`.
     """
 
     def aliases(self) -> Sequence[str] | None:
-        return ["TodoWrite"]
+        return ["TodoWrite", "TaskCreate"]
 
     def name(self) -> str:
         return "TodoCreate"
