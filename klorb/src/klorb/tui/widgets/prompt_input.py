@@ -22,6 +22,14 @@ from klorb.tui.widgets.file_finder import (
     filter_workspace_files,
 )
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PromptPalette, gather_palette_hits
+from klorb.tui.widgets.skill_finder import (
+    SKILL_FINDER_ID,
+    SkillFinderPanel,
+    SkillMatch,
+    SkillQuery,
+    detect_skill_query,
+    filter_skills,
+)
 from klorb.workspace.input_history import append_history, load_history
 
 
@@ -126,6 +134,15 @@ class PromptInput(TextArea):
         """The `(row, start_column)` of the `@mention` Escape last dismissed the finder popup
         for -- while `refresh_finder` keeps seeing that same position, the popup stays closed
         even though matches would otherwise reopen it."""
+        self._skill_query: SkillQuery | None = None
+        """The `/skill` query (if any) the cursor currently sits inside of, recomputed on every
+        text/selection change by `refresh_skill_finder`."""
+        self._skill_matches: list[SkillMatch] = []
+        """Skills currently matching `_skill_query`'s query -- empty whenever there's no active
+        skill query, or its start position is `_skill_dismissed_at`."""
+        self._skill_dismissed_at: tuple[int, int] | None = None
+        """The `(row, start_column)` of the `/skill` query Escape last dismissed the skill
+        finder popup for."""
         # Reverse-incremental-search state (Ctrl+R). When `_isearch_active` is True, typed
         # printable characters extend `_isearch_query` and each extension re-runs a
         # newest-first, case-insensitive substring search of `self._history`, loading the
@@ -176,6 +193,10 @@ class PromptInput(TextArea):
         self._finder_matches = []
         self._finder_dismissed_at = None
         self._finder_widget().hide()
+        self._skill_query = None
+        self._skill_matches = []
+        self._skill_dismissed_at = None
+        self._skill_finder_widget().hide()
 
     @property
     def _palette_mode(self) -> bool:
@@ -258,6 +279,81 @@ class PromptInput(TextArea):
             return []
         return self.app.workspace_files()
 
+    @property
+    def _skill_finder_mode(self) -> bool:
+        """Whether up/down/enter/tab/escape should drive the `SkillFinderPanel` popup rather
+        than file finder mode, palette mode, history recall, or submission: the cursor sits
+        inside a `/skill` query that currently has at least one matching skill."""
+        return self._skill_query is not None and bool(self._skill_matches)
+
+    def _skill_finder_widget(self) -> SkillFinderPanel:
+        """The sibling `SkillFinderPanel` popup mounted just above this widget."""
+        return self.screen.query_one(f"#{SKILL_FINDER_ID}", SkillFinderPanel)
+
+    def _current_skill_query(self) -> SkillQuery | None:
+        """The `/skill` query (if any) the cursor currently sits inside of, on its own line --
+        see `klorb.tui.widgets.skill_finder.detect_skill_query`."""
+        row, column = self.cursor_location
+        return detect_skill_query(self.document[row], column)
+
+    def refresh_skill_finder(self) -> None:
+        """Recompute the active `/skill` query at the cursor and update the finder popup."""
+        query = self._current_skill_query()
+        self._skill_query = query
+        if query is None:
+            self._skill_matches = []
+            self._skill_dismissed_at = None
+            self._skill_finder_widget().hide()
+            return
+        row, _ = self.cursor_location
+        if (row, query.start_column) == self._skill_dismissed_at:
+            self._skill_matches = []
+            self._skill_finder_widget().hide()
+            return
+        self._skill_dismissed_at = None
+        self._skill_matches = filter_skills(self._discoverable_skills(), query.query)
+        finder = self._skill_finder_widget()
+        if self._skill_matches:
+            finder.show_matches(self._skill_matches)
+        else:
+            finder.hide()
+
+    def _discoverable_skills(self) -> list[SkillMatch]:
+        """The active `ReplApp`'s discoverable skills as `SkillMatch` objects, or `[]` if
+        this widget isn't mounted under one or no session is active."""
+        from klorb.tui.app import ReplApp  # breaks a circular import
+
+        if not isinstance(self.app, ReplApp):
+            return []
+        return self.app.discoverable_skill_matches()
+
+    def _dismiss_skill_finder(self) -> None:
+        """Leave skill finder mode without changing the prompt's text."""
+        if self._skill_query is None:
+            return
+        row, _ = self.cursor_location
+        self._skill_dismissed_at = (row, self._skill_query.start_column)
+        self._skill_matches = []
+        self._skill_finder_widget().hide()
+
+    def select_skill_match(self) -> None:
+        """Apply the skill finder's currently-highlighted match: replace the `/query` span
+        with `/<skill_name> ` and close the popup. A no-op if there's no active query or no
+        highlighted row. Public -- called by `_on_key` and `SkillFinderPanel._select_match`."""
+        query = self._skill_query
+        widget = self._skill_finder_widget()
+        match = widget.current_match
+        if query is None or match is None:
+            return
+        row, column = self.cursor_location
+        assert isinstance(match, SkillMatch)
+        insertion = f"/{match.name} "
+        self.replace(insertion, (row, query.start_column), (row, column))
+        self._skill_query = None
+        self._skill_matches = []
+        self._skill_dismissed_at = None
+        widget.hide()
+
     def _dismiss_finder(self) -> None:
         """Leave finder mode for the mention at the cursor without changing the prompt's text,
         so the user can keep typing it as plain text (Escape's behavior). Recorded by mention
@@ -284,6 +380,7 @@ class PromptInput(TextArea):
         match = self._finder_widget().current_match
         if mention is None or match is None:
             return
+        assert isinstance(match, FinderMatch)
         row, column = self.cursor_location
         if match.is_dir:
             insertion = f"@{escape_mention_path(match.path)}/"
@@ -393,6 +490,27 @@ class PromptInput(TextArea):
                 event.prevent_default()
                 self.select_finder_match()
                 return
+        if self._skill_finder_mode:
+            if key == "escape":
+                event.stop()
+                event.prevent_default()
+                self._dismiss_skill_finder()
+                return
+            if key == "up":
+                event.stop()
+                event.prevent_default()
+                self._skill_finder_widget().move_highlight(-1)
+                return
+            if key == "down":
+                event.stop()
+                event.prevent_default()
+                self._skill_finder_widget().move_highlight(1)
+                return
+            if key in ("enter", "tab"):
+                event.stop()
+                event.prevent_default()
+                self.select_skill_match()
+                return
         if self._palette_mode:
             if key == "escape":
                 event.stop()
@@ -486,6 +604,7 @@ class PromptInput(TextArea):
             return
         self.call_later(self._refresh_palette, self._last_key)
         self.call_later(self.refresh_finder)
+        self.call_later(self.refresh_skill_finder)
 
     def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
         """Refresh finder state whenever the cursor moves without the text itself changing --
@@ -496,6 +615,7 @@ class PromptInput(TextArea):
         if self._suppress_palette_during_recall:
             return
         self.call_later(self.refresh_finder)
+        self.call_later(self.refresh_skill_finder)
 
     async def _refresh_palette(self, key: str | None) -> None:
         """Recompute palette mode from the current text and update the popup to match.
