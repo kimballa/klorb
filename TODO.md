@@ -6,6 +6,10 @@
 ### Bugs
 
 * `git push` failed with a 403 from the CONNECT tunnel (network/proxy issue) ?
+  "The `blocked_domains` field confirms `github.com` is in the blocked list."
+  From the agent: "Still blocked — the harness reports github.com is in the blocked domains list, so outbound HTTPS to GitHub is denied regardless of sandbox tweaks. The domain-level block is on the harness side, not the OS/network side."
+  * The above happened even though I specifically had `"bashDomains": { "allow": [ "github.com" ] }`
+    in the klorb-config.json file.
 
 * the agent's memory topics should be injected into the first user prompt
 * the system prompt should explain the memory system and encourage the agent more forcefully to capture memories, any time it is corrected by the user or learns something important about the project.
@@ -19,7 +23,7 @@
 ### Feature backlog
 
 * (#agent) all the verb-subject tools ("EditFoo", "ReadBar") need aliases for Yoda-ordered grammar ("FooEdit").
-* (#agent) the various "Todo" tools should have aliases for s/Todo/Task/. 
+* (#agent) the various "Todo" tools should have aliases for s/Todo/Task/.
 * (#agent) the various memory tools like SearchMemories should have aliases for both singular and plural memory/memories so that it can guess the tool name more easily.
 
 * use inotify to invalidate agent file reads?
@@ -176,7 +180,7 @@
     `workspace_just_bootstrapped=true`? It could emit a msg to the user via hook_output.log. The hook
     could be defined in default-config.json; we would need to set up a means of unpacking hook
     scripts from klorb.resources and putting them under `$KLORB_DATA_DIR/hooks` or something like
-    that.); and we need to macro-expand `${klorbDataDir}` in config. 
+    that.); and we need to macro-expand `${klorbDataDir}` in config.
 
 ## VSCode plugin
 

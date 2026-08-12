@@ -99,6 +99,9 @@
       "allow": [
         "openrouter.ai"
       ]
+    },
+    "bashDomains": {
+      "allow": ["github.com"]
     }
   },
   "tools.logCalls": true,
