@@ -7,12 +7,6 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
 
-* [TUI feature] In the klorb TUI's workspace trust prompt (see
-  `klorb/src/klorb/tui/commands/trust_commands.py` and
-  `klorb/src/klorb/workspace/trust_manager.py`), when querying the user about workspace trust,
-  list any workspace skills that are already auto-allowed by config, so the user can see what
-  they'd be trusting before confirming.
-
 * [harness/subagents feature] In klorb's subagent group mechanism, notify all subagents in a
   group when a new subagent is created or removed from the group, and broadcast active/idle
   state changes to the group. Today the `AgentGroup` interjection (see
