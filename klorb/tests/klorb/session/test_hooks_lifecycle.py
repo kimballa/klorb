@@ -16,7 +16,6 @@ from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
-from klorb.session.constants import ChainedHookMessageUndeliverableError
 from klorb.workspace import Workspace
 
 
@@ -112,15 +111,15 @@ def test_close_does_not_run_onsessionend_for_a_subagent(tmp_path: Path) -> None:
     assert marker.exists()
 
 
-def test_close_with_reset_session_resets_in_place_but_cannot_deliver_the_continuation(
+def test_close_ignores_reset_session_from_onsessionend_and_shuts_down_normally(
     tmp_path: Path,
 ) -> None:
-    """`close()` has no live host (TUI/ACP) to deliver "restart me" to as the reset
-    conversation's next turn -- unlike an `onAgentTurnEnd`-triggered reset, which is still on
-    the same call stack as whatever host's `send_turn()` call is waiting on it (see
-    docs/adrs/00186-deliver-chained-turns-via-the-queued-message-drain-loop-not-a-bare-recursive-
-    send-turn.md). The reset itself still runs in place; only delivering the continuation
-    fails, loudly, rather than silently doing nothing."""
+    """`onSessionEnd`'s result never triggers a reset: a session that's ending never has a live
+    host to deliver a continuation to, unlike an `onAgentTurnEnd`-triggered reset, which is
+    still on the same call stack as whatever host's `send_turn()` call is waiting on it (see
+    docs/specs/hooks-and-events.md's "Session reset" section). `HookDispatcher` drops
+    `reset_session` from `onSessionEnd`'s aggregate result before `close()` ever sees it, so
+    `reset_session()` never runs and shutdown proceeds as if the hook had returned nothing."""
     process_config = _process_config(tmp_path, {
         "onSessionEnd": [
             HookConfig(type="bash", shell='echo \'{"message": "restart me", "reset_session": true}\''),
@@ -132,12 +131,10 @@ def test_close_with_reset_session_resets_in_place_but_cannot_deliver_the_continu
     original_id = session.id
     original_scratchpad_path = session.scratchpad.path
 
-    with pytest.raises(ChainedHookMessageUndeliverableError):
-        session.close()
+    session.close()
 
     assert session.id == original_id
-    assert session.scratchpad.path != original_scratchpad_path
-    assert session.messages == []
+    assert session.scratchpad.path == original_scratchpad_path
     provider.send_prompt.assert_not_called()
 
 

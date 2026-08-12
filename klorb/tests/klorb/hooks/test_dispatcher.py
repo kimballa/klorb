@@ -182,6 +182,24 @@ def test_dispatch_drops_reset_session_without_a_message(
     assert "reset_session" in caplog.text
 
 
+@pytest.mark.parametrize("hook_name", ["onSessionEnd", "onSubmitUserPrompt", "onToolUse"])
+def test_dispatch_drops_reset_session_for_hooks_outside_the_allowlist(
+    tmp_path: Path, hook_name: str,
+) -> None:
+    """`RESET_SESSION_CAPABLE_HOOKS` (`klorb.hooks.config`) is the only hook/event set
+    `reset_session` survives folding for -- every other name's aggregate drops it silently, the
+    same way `tool_result` is ignored outside `onToolResult`."""
+    process_config = _process_config(tmp_path, {
+        hook_name: [
+            HookConfig(type="bash", shell='echo \'{"message": "restart me", "reset_session": true}\''),
+        ],
+    })
+    result = HookDispatcher(process_config).dispatch(
+        hook_name, _hook_input(tmp_path, hook=hook_name, reason="x"))
+    assert result.reset_session is False
+    assert result.message == "restart me"
+
+
 def test_dispatch_a_failing_handler_contributes_nothing_to_the_chain(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {
         "onProcessStart": [

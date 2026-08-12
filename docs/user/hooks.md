@@ -232,7 +232,7 @@ Every field is optional — omit anything you have no opinion on, and it won't a
 | `message` | string \| null | `null` | `onSubmitUserPrompt` (rewrite); `onAgentTurnEnd` / `onSubagentTurnEnd` / events (next prompt); with any `success: false` (denial feedback) | Multi-purpose |
 | `tool_result` | string \| null | `null` | `onToolResult` | Replaces the tool call's result content . |
 | `interrupt` | bool | `false` | Any hook/event that also sets `message` | Breaks into an in-flight turn immediately rather than waiting for turn end. (Not yet implemented) |
-| `reset_session` | bool | `false` | `onSessionEnd`, `onAgentTurnEnd` | Wipes the conversation and starts it over in place (same session id/directory), seeded with `message`. See "Session reset" below. |
+| `reset_session` | bool | `false` | `onAgentTurnEnd`, `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` events | Wipes the conversation and starts it over in place (same session id/directory), seeded with `message`. See "Session reset" below. |
 
 If more than one handler runs in a chain for the same firing, each handler's `HookOutput` feeds
 into the next handler's input, and the final aggregate is the strictest/most-recent combination of
@@ -253,9 +253,8 @@ the cap is hit, further auto-chained turns are refused until a real user-driven 
 count.
 
 An event's `message` (`FileSystemModified`/`Timer`/`WorkspaceTrustChanged`) is queued the same
-way if a turn happens to be running when it fires. If nothing is running, there's currently no
-client to show it to at all, so it's dropped with an error rather than run invisibly — this is a
-known gap, tracked in the project's TODO list.
+way if a turn happens to be running when it fires. If nothing is running, the client is woken up
+to resubmit it as a fresh turn instead.
 
 ### Session reset
 
@@ -263,11 +262,12 @@ known gap, tracked in the project's TODO list.
 place — same session id, same on-disk directory — seeded with `message` as its next turn, as if
 you'd run "Clear session" yourself except nothing is actually replaced. Config is reinitialized
 from the process config's template, any live subagents are closed first, and the persistent bash
-shell/scratchpad are torn down and recreated fresh. Only `onSessionEnd` and `onAgentTurnEnd` act
-on it; requires a non-empty `message`, or the request is dropped with a warning.
+shell/scratchpad are torn down and recreated fresh. Only `onAgentTurnEnd` and the event hooks
+(`Timer`/`FileSystemModified`/`WorkspaceTrustChanged`) act on it. Requires a non-empty
+`message`, or the request is dropped with a warning.
 
 When an `onAgentTurnEnd` handler triggers a reset, `onSessionEnd` is also dispatched first, with
-`reason: "ResetSession"`. The `onSessionEnd` handler's result is discarded.
+`reason: "ResetSession"`.
 
 An `onAgentTurnEnd` reset handler should have a `filter` or be conditional within the handler
 script. The reset conversation's own first turn can end and trigger the hook again, and

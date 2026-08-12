@@ -80,9 +80,10 @@ class HookOutput(BaseModel):
     reset_session: bool = False
     """Wipe the firing session's conversation and start it over in place (same `id`/on-disk
     directory), seeded with `message` as its next turn -- see `Session.reset_session()` and
-    docs/specs/hooks-and-events.md's "Session reset" section. Only `onSessionEnd`/
-    `onAgentTurnEnd` act on this. Valid only alongside a non-empty `message`; `HookDispatcher`
-    drops an aggregate result that sets this without one, logged at `warning`."""
+    docs/specs/hooks-and-events.md's "Session reset" section. Only `onAgentTurnEnd` and the
+    event hooks (`Timer`/`FileSystemModified`/`WorkspaceTrustChanged`) act on this.
+    Valid only alongside a non-empty `message`; `HookDispatcher` drops an aggregate result that
+    sets this without one, logged at `warning`."""
     log: str | None = None
     """A debugging note, distinct from `message`: never sent to the model, only logged at `info`
     (`HookDispatcher._run_chain`) and surfaced verbatim to whichever UI is attached to the firing

@@ -21,7 +21,6 @@ from klorb.session.config import PermissionFrameworkState, SessionConfig
 from klorb.session.constants import (
     PERMISSION_FRAMEWORK_INTERJECTIONS,
     THINKING_EFFORT_TOKEN_BUDGETS,
-    ChainedHookMessageUndeliverableError,
     PermissionFramework,
     ThinkingEffort,
     generate_session_id,
@@ -255,6 +254,10 @@ class SessionCoreMixin(SessionBase):
         """The callback `register_notice_handler()` sets, used by `deliver_notice()` to surface a
         hook's `HookOutput.log` to whichever UI is attached to this session. Identity-scoped like
         `_teardown_callbacks`, not reset by `reset_session()`."""
+        self._wake_handler: Callable[[], None] | None = None
+        """The callback `register_wake_handler()` sets, used by `deliver_wake()` to tell an idle
+        host "something just got queued, come drain it" (see `SessionTurnsMixin.
+        deliver_event_message`)."""
         self._reset_state(scratchpad_path=scratchpad_path)
         self._session_lock: Lockfile | None = None
         """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
@@ -812,6 +815,17 @@ class SessionCoreMixin(SessionBase):
         if self._notice_handler is not None:
             self._notice_handler(text)
 
+    def register_wake_handler(self, handler: Callable[[], None]) -> None:
+        """Register `handler` as this session's "come drain the queue" ping (see
+        `deliver_wake`)."""
+        self._wake_handler = handler
+
+    def deliver_wake(self) -> None:
+        """Tell this session's registered wake handler, if any, that a message was just queued
+        while no turn was in flight."""
+        if self._wake_handler is not None:
+            self._wake_handler()
+
     def fire_session_start_hook(
         self, reason: str, *, workspace_just_bootstrapped: bool = False,
     ) -> None:
@@ -878,16 +892,28 @@ class SessionCoreMixin(SessionBase):
         self, event_name: str, entries: "Sequence[EventConfig]", event_input: "EventInput",
     ) -> None:
         """Shared body for `_dispatch_fs_modified_event`/`_dispatch_timer_event`: run `entries`'
-        actions as one chain and deliver any resulting `message` into this session's
-        conversation."""
+        actions as one chain and deliver any resulting `message`/`reset_session` into this
+        session's conversation (see `_deliver_or_reset_event`)."""
         from klorb.hooks.dispatcher import HookDispatcher
         assert self._process_config is not None
         event_input.is_agent_active = self.current_turn_handlers() is not None
         output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,
         ).dispatch_event(event_name, entries, event_input, session_config=self.config)
+        self._deliver_or_reset_event(output)
+
+    def _deliver_or_reset_event(self, output: "HookOutput") -> None:
+        """Shared tail for `_dispatch_event_entries`/`fire_workspace_trust_changed_hook`: surface
+        `output.log`, then either reset this session in place and deliver `output.message` as
+        the reset conversation's first turn, or deliver it as an ordinary event message."""
         if output.log is not None:
             self.deliver_notice(output.log)
+        if output.reset_session:
+            assert output.message is not None
+            self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
+            cast("Session", self).reset_session()
+            cast("Session", self).deliver_event_message(output.message)
+            return
         if output.message is not None:
             cast("Session", self).deliver_event_message(output.message)
 
@@ -915,10 +941,7 @@ class SessionCoreMixin(SessionBase):
                 root_session_id=self.root_id,
                 is_agent_active=self.current_turn_handlers() is not None),
             session_config=self.config)
-        if output.log is not None:
-            self.deliver_notice(output.log)
-        if output.message is not None:
-            cast("Session", self).deliver_event_message(output.message)
+        self._deliver_or_reset_event(output)
 
     def _dispatch_lifecycle_hook(
         self, hook_name: str, *, reason: str, workspace_just_bootstrapped: bool = False,
@@ -996,30 +1019,16 @@ class SessionCoreMixin(SessionBase):
         lifetime. See docs/plans/archive/005-session-scoped-bash-terminals.md.
 
         Before any of that, dispatches `onSessionEnd` (root session only -- see
-        `fire_session_start_hook`) with `reason="SuspendSession"`. A `reset_session` result
-        (guaranteed by `HookDispatcher` to carry a non-empty `message`) aborts the shutdown
-        entirely -- this session isn't actually ending, so none of cascade-closing subagents,
-        finalizing persistence, or running teardowns happens; `reset_session()` does its own,
-        narrower cleanup instead. There is no live host here to deliver the reset's
-        continuation message to (the session is closing), so this raises
-        `ChainedHookMessageUndeliverableError` after the reset itself completes, rather than
-        silently dropping it or dispatching it with nothing to render the result -- see
-        docs/specs/hooks-and-events.md's "Session reset" section.
+        `fire_session_start_hook`) with `reason="SuspendSession"`.
 
-        Otherwise, cascade-closes every subagent this session has directly or indirectly created
-        (see `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
+        Cascade-closes every subagent this session has directly or indirectly created (see
+        `klorb.agents.runtime.cascade_close_subagents`), relaying each one's not-yet-delivered
         output (or a termination note, for one still running) into this session's own `messages`
         first -- so `_finalize_session_persistence()` below captures it in `session.json`, per
         docs/specs/subagents.md's "Persistence" section.
         """
         if self.parent is None and self._process_config is not None:
-            result = self._dispatch_lifecycle_hook("onSessionEnd", reason="SuspendSession")
-            if result.reset_session:
-                assert result.message is not None
-                cast("Session", self).reset_session()
-                raise ChainedHookMessageUndeliverableError(
-                    "onSessionEnd requested a session reset with a continuation message from "
-                    "close(), which has no live host to deliver it to.")
+            self._dispatch_lifecycle_hook("onSessionEnd", reason="SuspendSession")
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
         self._finalize_session_persistence()

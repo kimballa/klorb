@@ -36,12 +36,9 @@ class ToolCallLimitExceeded(Exception):
 
 
 class ChainedHookMessageUndeliverableError(Exception):
-    """Raised when a `chat`-handler continuation has no live turn-driving host to deliver it
-    to: `Session.deliver_event_message` while the session is fully idle (no turn in flight),
-    or `close()`'s `onSessionEnd`-triggered `reset_session` call. Both fire with no host
-    (TUI/ACP) around to drain a queued message, so silently dispatching it -- running tool
-    calls with nothing rendering them -- would be worse than failing loudly. See TODO.md's
-    "push-and-wake-up" item for the real fix."""
+    """Raised by `Session.deliver_event_message` when an event handler's message arrives while
+    the session is fully idle (no turn in flight) and no host has registered a wake handler
+    (see `Session.register_wake_handler`)."""
 
 
 # Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids

@@ -20,6 +20,13 @@ HOOK_NAMES: frozenset[str] = frozenset({
 EVENT_NAMES: frozenset[str] = frozenset({"FileSystemModified", "Timer", "WorkspaceTrustChanged"})
 """Every event kind an `events` config key may name."""
 
+RESET_SESSION_CAPABLE_HOOKS: frozenset[str] = frozenset({
+    "onAgentTurnEnd", "FileSystemModified", "Timer", "WorkspaceTrustChanged",
+})
+"""Every hook/event name whose `HookOutput.reset_session` `HookDispatcher` honors -- dropped
+from every other name's aggregate result, the same way `tool_result` is ignored outside
+`onToolResult`."""
+
 MIN_EVENT_DEBOUNCE_SECONDS: float = 10.0
 """The default debounce window `FileSystemModified`'s watcher waits after the most recent
 change before delivering a batch, and the floor `Timer`'s own interval/cron scheduling may not

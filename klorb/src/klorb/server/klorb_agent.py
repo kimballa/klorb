@@ -192,6 +192,7 @@ class KlorbAcpAgent(acp.Agent):
             process_config=self._process_config, tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles)
         self._wire_session_notice_handler(session, session.id)
+        self._wire_session_wake_handler(session, session.id)
         session.fire_session_start_hook("NewSession")
         self._session = session
         self._acp_session_id = session.id
@@ -316,6 +317,49 @@ class KlorbAcpAgent(acp.Agent):
             asyncio.run_coroutine_threadsafe(self._send_notice(acp_session_id, text), loop)
 
         session.register_notice_handler(notify)
+
+    def _wire_session_wake_handler(self, session: Session, acp_session_id: str) -> None:
+        """Register this agent as `session`'s wake handler (see `Session.register_wake_handler`):
+        a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event that queues a message while
+        no turn is in flight wakes this agent to drain and resubmit it via `TurnBridge.run_turn`.
+        `acp_session_id` is threaded through the same way `_wire_session_notice_handler` is, for
+        the same reason."""
+        loop = asyncio.get_running_loop()
+
+        def wake() -> None:
+            asyncio.run_coroutine_threadsafe(self._drain_and_submit_woken_turn(acp_session_id), loop)
+
+        session.register_wake_handler(wake)
+
+    async def _drain_and_submit_woken_turn(self, session_id: str) -> None:
+        """Handles a wake ping (see `_wire_session_wake_handler`): drains whatever an
+        idle-triggered event or `reset_session` just queued and resubmits it via `TurnBridge.
+        run_turn`, mirroring `prompt()`'s own dispatch and error handling."""
+        if self._turn_in_flight or self._session is None or self._acp_session_id != session_id:
+            return
+        text = self._session.drain_next_turn_text()
+        if text is None:
+            return
+        assert self._turn_bridge is not None
+        self._turn_in_flight = True
+        try:
+            await self._turn_bridge.run_turn(text)
+        except ResponseAborted:
+            logger.debug("Woken turn cancelled for ACP session %s", session_id)
+        except Exception as exc:
+            logger.error(
+                "Woken turn failed for ACP session %s: %s", session_id, exc, exc_info=True)
+            try:
+                await self._require_client().session_update(
+                    session_id=session_id,
+                    update=acp.update_agent_message_text(f"\n\n[Provider error: {exc}]"))
+            except Exception:
+                logger.debug(
+                    "Failed to send provider-error update to ACP client for session %s",
+                    session_id, exc_info=True)
+        finally:
+            self._turn_in_flight = False
+        self._session.persist_state()
 
     async def _send_notice(self, session_id: str, text: str) -> None:
         """Send one `_klorb/notice` extension notification, best-effort -- a failure (e.g. the
@@ -600,6 +644,7 @@ class KlorbAcpAgent(acp.Agent):
             logger.debug("session/load replacing live ACP session %s", self._acp_session_id)
             self._session.close()
         self._wire_session_notice_handler(restored, session_id)
+        self._wire_session_wake_handler(restored, session_id)
         restored.fire_session_start_hook("ResumeSession")
         self._session = restored
         # Use the *client's* session_id (the parameter) as the stable ACP handle, not

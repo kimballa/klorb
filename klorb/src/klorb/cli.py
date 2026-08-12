@@ -808,6 +808,17 @@ def main() -> None:
         else:
             configure_tiktoken_cache_env()
             session.register_notice_handler(print)
+
+            def _headless_wake_handler() -> None:
+                """No-op: `run_one_shot()`'s own loop (`Session.turns`) already re-checks the
+                queue after every turn on this same thread, so nothing needs to be pushed here.
+                Registering only tells `deliver_event_message` a host is present, so it enqueues
+                the message instead of raising -- there is nothing to actively wake up."""
+                logger.debug(
+                    "Session %s woken by an idle event; run_one_shot's own loop will drain it.",
+                    session.id)
+
+            session.register_wake_handler(_headless_wake_handler)
             logger.info("Sending prompt to model=%s", session.config.model)
             session.fire_session_start_hook("NewSession")
             streamed_any = False

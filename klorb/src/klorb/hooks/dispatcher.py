@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING, Any
 from klorb.api_provider import ApiProvider
 from klorb.hooks.bash_handler import run_bash_handler
 from klorb.hooks.classifier_handler import run_classifier_handler
-from klorb.hooks.config import HOOK_FILTER_SUBJECT_FIELDS, EventConfig, HookConfig
+from klorb.hooks.config import (
+    HOOK_FILTER_SUBJECT_FIELDS,
+    RESET_SESSION_CAPABLE_HOOKS,
+    EventConfig,
+    HookConfig,
+)
 from klorb.hooks.filters import evaluate_filter
 from klorb.hooks.hook_api import EventInput, HookInput, HookOutput
 from klorb.models.registry import ModelRegistry
@@ -158,6 +163,8 @@ class HookDispatcher:
             logger.warning(
                 "Hook %r's aggregate result set reset_session without a message; ignoring "
                 "reset_session.", name)
+            aggregate = aggregate.model_copy(update={"reset_session": False})
+        if aggregate.reset_session and name not in RESET_SESSION_CAPABLE_HOOKS:
             aggregate = aggregate.model_copy(update={"reset_session": False})
         return aggregate
 

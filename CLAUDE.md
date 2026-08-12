@@ -6,6 +6,20 @@ The content in AGENTS.md (inlined above) is equally important as the content in 
 do not treat it as lower-priority background. This file only adds Claude-specific advice /
 overrides that are particular to Claude Code, on top of everything AGENTS.md already says.
 
+## Mandatory comment/docstring trim pass
+
+AGENTS.md's comment-brevity rules ("Comments and docstrings" section) are known but still get
+violated in practice: each trailing " -- " clause, "e.g." aside, or second sentence feels
+individually justified while drafting, even though the rule is being actively recalled.
+Knowing the rule is insufficient; treat it as a required pass, not a style to keep in mind.
+
+Before treating any task that added or edited a docstring/comment as done — after lint/
+typecheck/tests pass, before committing — re-read every new or changed docstring/comment one at
+a time. For each one with more than one sentence, or with a trailing " -- " clause, delete
+everything past the first sentence unless removing it would leave a genuine open question a
+reader would otherwise hit — not "less complete," not "less helpful context," an actual
+question. Default to cutting.
+
 ## Cloud / Remote Agent Behavior
 
 * The environment variable `CLAUDE_CODE_REMOTE` is set to the literal string `"true"` when

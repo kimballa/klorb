@@ -28,7 +28,7 @@ Klorb Code is an experimental coding agent system with:
   * [Hooks and events](docs/user/hooks.md)
   * Composable configuration system
   * Customizable system prompts
-* Client / server architecture supporting multiple user interfaces: 
+* Client / server architecture supporting multiple user interfaces:
   * A native TUI
   * VSCode plugin
   * A headless "one shot prompt" mode for scripting
