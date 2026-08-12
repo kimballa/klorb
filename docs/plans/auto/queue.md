@@ -7,11 +7,6 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
 
-* [TUI feature] Add a "Rename Session" command-palette action to the klorb TUI (see
-  `klorb/src/klorb/tui/commands/session_commands.py`, which already has a
-  `SessionCommandProvider` and a modal for picking among sessions) that lets the user change
-  the current session's title.
-
 * [TUI feature] In the klorb TUI's workspace trust prompt (see
   `klorb/src/klorb/tui/commands/trust_commands.py` and
   `klorb/src/klorb/workspace/trust_manager.py`), when querying the user about workspace trust,
