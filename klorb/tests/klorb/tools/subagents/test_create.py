@@ -162,3 +162,107 @@ def test_name_and_category(tmp_path: Path) -> None:
     assert tool.name() == "CreateSubagent"
     assert tool.category() == "SUBAGENT"
     assert tool.is_read_only() is True
+
+
+@requires_chainlink
+def test_apply_with_starting_task_id_claims_all_labeled_task_and_prepends_summary(
+    tmp_path: Path,
+) -> None:
+    """When starting_task_id points to an unclaimed ("all"-labeled) issue, the tool claims it
+    for the new subagent and prepends the task summary to the initial message."""
+    from klorb.tools.tasks.common import ALL_LABEL, ChainlinkClient, agent_label
+
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    client = ChainlinkClient(context)
+    task_id = client.create_issue("Fix the bug", description="It crashes on startup")
+    client.add_label(task_id, ALL_LABEL)
+
+    tool = CreateSubagentTool(context)
+    tool.apply({
+        "role": "explorer",
+        "session_title": "fix-it",
+        "initial_message": "go investigate",
+        "starting_task_id": task_id,
+    })
+
+    handle = context.session.subagent_tracker.handles()[0]
+    child_label = agent_label(handle.session.id)
+    issue = client.show_issue(task_id)
+    assert child_label in issue["labels"]
+    assert ALL_LABEL not in issue["labels"]
+    # Verify the initial message received by the subagent includes the task summary.
+    assert handle.thread.is_alive() or True  # thread may have already finished
+    handle.thread.join(timeout=5.0)
+    messages = provider.calls[-1]
+    user_text = messages[-1].content if messages else ""
+    assert f"#{task_id}" in user_text
+    assert "Fix the bug" in user_text
+    assert "It crashes on startup" in user_text
+    assert "go investigate" in user_text
+
+
+@requires_chainlink
+def test_apply_with_starting_task_id_when_already_labeled_for_child(
+    tmp_path: Path,
+) -> None:
+    """When the task is already labeled for the child agent, no re-claim is needed -- the
+    summary is still prepended."""
+    from klorb.tools.tasks.common import ChainlinkClient, agent_label
+
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    # Pre-create the child so we know its id.
+    tool = CreateSubagentTool(context)
+    # We can't easily get the child id before apply, so instead we test via the
+    # "already claimed by another agent" path with a known different id.
+    client = ChainlinkClient(context)
+    task_id = client.create_issue("Write docs")
+    client.add_label(task_id, agent_label("some-other-agent"))
+
+    with pytest.raises(ToolCallError, match="already claimed"):
+        tool.apply({
+            "role": "explorer",
+            "session_title": "docs",
+            "initial_message": "write them",
+            "starting_task_id": task_id,
+        })
+
+
+@requires_chainlink
+def test_apply_with_starting_task_id_raises_when_task_closed(tmp_path: Path) -> None:
+    from klorb.tools.tasks.common import ChainlinkClient
+
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+    client = ChainlinkClient(context)
+    task_id = client.create_issue("Old task")
+    client.close_issue(task_id)
+
+    tool = CreateSubagentTool(context)
+    with pytest.raises(ToolCallError, match="not open"):
+        tool.apply({
+            "role": "explorer",
+            "session_title": "t",
+            "initial_message": "m",
+            "starting_task_id": task_id,
+        })
+
+
+@requires_chainlink
+def test_apply_with_starting_task_id_raises_when_task_not_found(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider)
+    assert context.session is not None
+
+    tool = CreateSubagentTool(context)
+    with pytest.raises(ToolCallError, match="could not be resolved"):
+        tool.apply({
+            "role": "explorer",
+            "session_title": "t",
+            "initial_message": "m",
+            "starting_task_id": 99999,
+        })

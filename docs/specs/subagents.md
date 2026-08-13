@@ -264,8 +264,8 @@ outside the caller's own `effective_subagent_roles`.
 
 Args: `role`, `session_title`, `initial_message`, `model` (optional override), `allowed_tools`/
 `allowed_skills` (optional per-call overrides of the role's own `restrict_to.tools`/`.skills` —
-still intersected against the caller's own effective sets, never widening them), and
-`max_output_tokens` (optional).
+still intersected against the caller's own effective sets, never widening them),
+`max_output_tokens` (optional), and `starting_task_id` (optional).
 
 Runs every check in "Subagent lifecycle"/"Security model" above; if all pass, constructs the
 child `Session`, calls `Session.ensure_chainlink_client()` on the *creating* session if the new
@@ -275,6 +275,16 @@ subagent's own tool set includes a `TASKS` tool (see docs/specs/chainlink-task-t
 returns immediately with the subagent's id and a note explaining how its output will be
 delivered. The caller is expected to keep working; it must not expose the returned id to the
 user, since it has no meaning to them — only to a later `WaitForSubagent`/`MessageSubagent` call.
+
+`starting_task_id`, if given, pre-claims a chainlink task for the new subagent and incorporates
+the task's summary (title and description) into the subagent's first user prompt, so the
+subagent knows what it's working on without a separate `TodoCreate`/`TodoNext` call. If the
+task carries the `ALL_LABEL` ("all", unclaimed) label, it is claimed for the child by removing
+`ALL_LABEL` and adding `agent_label(child.id)` before the subagent starts. Raises
+`ToolCallError` (category `"validation"`) if the task doesn't exist, is closed, or is already
+claimed by a different agent. The parent performs the claim synchronously so no other agent can
+poach the task during subagent startup. See docs/specs/chainlink-task-tracking.md's "Task
+assignment" section.
 
 ### WaitForSubagent
 
@@ -543,6 +553,3 @@ problem, and a reload/restore of the same session renders correctly either way.)
 * **`@mention` filtering by the creator's `readDirs`.** Today a `@mention` in a message sent to
   a subagent is left entirely unresolved (see "Security model"); actually resolving it while
   still applying the creator's own `readDirs` rules is unbuilt.
-* **Starting a subagent pre-assigned to a specific task-tracker item.** `CreateSubagent` always
-  starts from a freeform `initial_message`; there's no argument to hand it a specific tracked
-  task instead.
