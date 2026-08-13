@@ -122,7 +122,8 @@ def test_thinking_state_screen_lists_all_states_in_order() -> None:
     _, option_list = container._pending_children
 
     assert isinstance(option_list, OptionList)
-    states = tuple(str(option.prompt).removesuffix(" *") for option in option_list._options)  # type: ignore[attr-defined]
+    states = tuple(str(option.prompt).removesuffix(" *")
+                   for option in option_list._options)  # type: ignore[attr-defined]
     assert states == THINKING_STATE_OPTIONS
 
 

@@ -56,7 +56,7 @@ install_dev_deps:
 	$(MAKE) -C vscode-plugin install_dev_deps
 
 install:
-	$(MAKE) -C klorb install
+	$(MAKE) -C klorb PYTHON=$(PYTHON) install
 	$(MAKE) -C vscode-plugin install
 
 test:
