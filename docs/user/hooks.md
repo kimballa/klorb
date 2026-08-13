@@ -171,6 +171,7 @@ neither receives nor produces this JSON — it just contributes its configured `
   "exit_status": 0,
   "workspace_trusted": true,
   "workspace_just_bootstrapped": false,
+  "config": { "prompt_input_max_lines": 20 },
 
   "fs_updates": [
     { "event": "modified", "path": "/path/to/workspace/src/foo.py" }
@@ -203,6 +204,7 @@ depends on which hook/event fired:
 | `exit_status` | int \| null | `onProcessEnd` only | The klorb process's own exit status. Read-only — a handler's `HookOutput` can't change it. |
 | `workspace_trusted` | bool \| null | `onSessionStart` only | Whether the workspace is trusted. |
 | `workspace_just_bootstrapped` | bool \| null | `onSessionStart` only | Whether this firing is what triggered a first-time trust decision. |
+| `config` | object \| null | `onProcessStart`, `onSessionStart` | The entire resolved config, as a JSON-dumped `ProcessConfig`. |
 | `fs_updates` | array \| null | `FileSystemModified` event only | A debounced batch of `{"event": "created"\|"deleted"\|"modified", "path": "..."}` entries. |
 | `is_agent_active` | bool \| null | Every event | Whether the root session's agent is mid-turn at the moment the event fired. |
 

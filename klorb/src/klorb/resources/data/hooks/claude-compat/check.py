@@ -16,8 +16,13 @@ def main() -> int:
         return 0
 
     workspace_root = Path(hook_input["workspace_root"])
-    has_claude_markdown = (workspace_root / "CLAUDE.md").is_file()
-    has_claude_skills = (workspace_root / ".claude" / "skills").is_dir()
+    config = hook_input.get("config") or {}
+    has_claude_markdown = (
+        (workspace_root / "CLAUDE.md").is_file()
+        and not config.get("compatibility_claude_markdown"))
+    has_claude_skills = (
+        (workspace_root / ".claude" / "skills").is_dir()
+        and not config.get("compatibility_claude_skills"))
     if not has_claude_markdown and not has_claude_skills:
         print(json.dumps({}))
         return 0

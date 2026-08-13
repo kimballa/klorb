@@ -843,7 +843,8 @@ class SessionCoreMixin(SessionBase):
         if self.parent is not None or self._process_config is None:
             return
         self._dispatch_lifecycle_hook(
-            "onSessionStart", reason=reason, workspace_just_bootstrapped=workspace_just_bootstrapped)
+            "onSessionStart", reason=reason, workspace_just_bootstrapped=workspace_just_bootstrapped,
+            include_config=True)
         self._start_workspace_event_watchers()
 
     def _start_workspace_event_watchers(self) -> None:
@@ -947,13 +948,17 @@ class SessionCoreMixin(SessionBase):
 
     def _dispatch_lifecycle_hook(
         self, hook_name: str, *, reason: str, workspace_just_bootstrapped: bool = False,
+        include_config: bool = False,
     ) -> "HookOutput":
         """Build a `HookInput` describing this session's `workspace`/`reason` and dispatch
         `hook_name` -- `onSessionStart`/`onSessionEnd`'s own shape, on top of the shared
-        `_dispatch_hook` every other lifecycle/turn/tool hook point uses."""
+        `_dispatch_hook` every other lifecycle/turn/tool hook point uses. `include_config` attaches
+        the entire resolved `ProcessConfig` to the built `HookInput`, for `onSessionStart` only."""
+        assert self._process_config is not None
+        config = self._process_config.model_dump(mode="json") if include_config else None
         return self._dispatch_hook(
             hook_name, reason=reason, workspace_trusted=self.config.workspace.trusted,
-            workspace_just_bootstrapped=workspace_just_bootstrapped)
+            workspace_just_bootstrapped=workspace_just_bootstrapped, config=config)
 
     def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
         """Dispatch `hook_name` against this session's own `ProcessConfig`/`SessionConfig`,

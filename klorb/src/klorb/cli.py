@@ -751,7 +751,9 @@ def main() -> None:
     hook_dispatcher = HookDispatcher(process_config, api_provider=provider, model_registry=model_registry)
     process_start_output = hook_dispatcher.dispatch(
         "onProcessStart",
-        HookInput(hook="onProcessStart", reason="Startup", workspace_root=str(workspace.path)))
+        HookInput(
+            hook="onProcessStart", reason="Startup", workspace_root=str(workspace.path),
+            config=process_config.model_dump(mode="json")))
     if process_start_output.log is not None:
         print(process_start_output.log)
 
