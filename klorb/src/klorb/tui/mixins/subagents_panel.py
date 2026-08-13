@@ -40,7 +40,7 @@ from klorb.tui.widgets.subagents_panel import (
     SubagentsPanel,
 )
 from klorb.tui.widgets.task_sidebar import TaskSidebar
-from klorb.tui.widgets.tool_call_widgets import ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import CrawlAnimatedStatic, ToolCallStatic
 
 _PANEL_TICK_INTERVAL_SECONDS = 0.6
 """How often `_tick_subagents_panel` fires: blinks the `(!)` attention marker and refreshes the
@@ -197,9 +197,7 @@ class SubagentsPanelMixin(ReplAppBase):
             return
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         was_pinned = self._subagent_history_pinned_to_bottom
-        if self._subagent_transcript_notice is not None:
-            self._subagent_transcript_notice.remove()
-            self._subagent_transcript_notice = None
+        self._remove_subagent_transcript_notice()
         if new_message_count > 0:
             self._mount_subagent_messages(
                 container, session.messages, start_index=self._subagent_history_rendered_count)
@@ -292,9 +290,29 @@ class SubagentsPanelMixin(ReplAppBase):
                 self._subagent_interrupt_pending = None
             aborted = handle.output is not None and SUBAGENT_ABORTED_MARKER in handle.output
             text = _SUBAGENT_INTERRUPTED_NOTICE if aborted else _SUBAGENT_TASK_COMPLETE_NOTICE
-        notice = Static(text, classes="notice")
+        notice = self._build_subagent_notice(text)
         container.mount(notice)
         self._subagent_transcript_notice = notice
+
+    def _build_subagent_notice(self, text: str) -> Static:
+        """Build the trailing status notice widget for `text`: a `CrawlAnimatedStatic` with a
+        left-to-right crawl highlight for the "still working" notice, so the user can see the
+        subagent hasn't frozen, else a plain `Static`."""
+        if text == _SUBAGENT_STILL_RUNNING_NOTICE:
+            return CrawlAnimatedStatic(text, classes="notice")
+        return Static(text, classes="notice")
+
+    def _remove_subagent_transcript_notice(self) -> None:
+        """Unmount `_subagent_transcript_notice`, stopping its crawl-animation timer first if
+        it's a `CrawlAnimatedStatic` -- a no-op if nothing is currently mounted."""
+        notice = self._subagent_transcript_notice
+        if notice is None:
+            return
+        if isinstance(notice, CrawlAnimatedStatic):
+            notice.remove_self()
+        else:
+            notice.remove()
+        self._subagent_transcript_notice = None
 
     def _note_subagent_interrupt_requested(self, handle: SubagentHandle) -> None:
         """Immediately show "Sending interrupt…" in `#subagent-history` when Escape/Ctrl+C aborts
@@ -306,9 +324,7 @@ class SubagentsPanelMixin(ReplAppBase):
         rather than reverting to "still working"."""
         self._subagent_interrupt_pending = handle.session.id
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
-        if self._subagent_transcript_notice is not None:
-            self._subagent_transcript_notice.remove()
-            self._subagent_transcript_notice = None
+        self._remove_subagent_transcript_notice()
         was_pinned = self._subagent_history_pinned_to_bottom
         notice = Static(_SUBAGENT_SENDING_INTERRUPT_NOTICE, classes="notice")
         container.mount(notice)

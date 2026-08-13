@@ -221,17 +221,17 @@ class RunningToolCallStatic(ToolCallStatic):
             self._apply_content()
 
 
-class _CrawlAnimatedStatic(Static):
-    """Base for a `Static` that shows a fixed line of `text` under `crawl_animation_text`'s
-    pulse animation for as long as it stays mounted, advancing one tick every
-    `ANIMATION_TICK_SECONDS`. Constructed with `markup=False`: every subclass's text is a fixed
-    literal, but rendering it the same way as the other animated statics here keeps their
-    behavior consistent. A subclass is responsible for calling `remove_self()` once whatever
-    it's standing in for resolves.
+class CrawlAnimatedStatic(Static):
+    """A `Static` that shows a fixed line of `text` under `crawl_animation_text`'s pulse
+    animation for as long as it stays mounted, advancing one tick every
+    `ANIMATION_TICK_SECONDS`. Constructed with `markup=False`: callers' text is a fixed literal,
+    but rendering it the same way as the other animated statics here keeps their behavior
+    consistent. A caller is responsible for calling `remove_self()` once whatever it's standing
+    in for resolves.
     """
 
-    def __init__(self, text: str) -> None:
-        super().__init__("", markup=False)
+    def __init__(self, text: str, *, classes: str | None = None) -> None:
+        super().__init__("", markup=False, classes=classes)
         self._text = text
         self._animation_pos = 0
         self._timer: Any = None
@@ -245,7 +245,7 @@ class _CrawlAnimatedStatic(Static):
         self.update(crawl_animation_text(self._text, self._animation_pos))
 
     def remove_self(self) -> None:
-        """Stop the crawl-animation timer, then unmount this widget from the history scroll."""
+        """Stop the crawl-animation timer, then unmount this widget."""
         if self._timer is not None:
             self._timer.stop()
         self.remove()
@@ -262,7 +262,7 @@ _TURN_WAITING_TEXTS = (
 which one shows for a given turn."""
 
 
-class TurnWaitingStatic(_CrawlAnimatedStatic):
+class TurnWaitingStatic(CrawlAnimatedStatic):
     """Animated notice mounted into history as soon as a submitted turn is dispatched, showing
     one of `_TURN_WAITING_TEXTS` (chosen at random) under `crawl_animation_text`'s pulse
     animation until the turn's own content starts arriving.
