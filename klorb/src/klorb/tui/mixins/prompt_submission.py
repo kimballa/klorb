@@ -375,11 +375,8 @@ class PromptSubmissionMixin(ReplAppBase):
         is *not* disabled here — the user can keep typing and queue messages for delivery as
         `UserInterjectionPayload`s on the next tool-response envelope (see `_queue_prompt`).
 
-        `_send_prompt` mounts a `TurnWaitingStatic` on its worker thread once it's actually
-        about to start the turn -- immediately, unless this is the session's first submitted
-        prompt, in which case it waits for the session-naming classifier's own
-        `GettingReadyStatic` to clear first, so the two "still working" notices never show at
-        once.
+        `_send_prompt` mounts a `TurnWaitingStatic` on its worker thread as soon as it starts
+        the turn.
         """
         if self._turn_in_flight:
             return
@@ -432,33 +429,22 @@ class PromptSubmissionMixin(ReplAppBase):
         streaming when Escape fired, matching the single round's worth of content `Session`
         keeps for it.
 
-        Before any of that, if `self._session.session_naming_pending` is still `True`, this is
-        the session's first submitted prompt: a `GettingReadyStatic` is mounted, and
-        `Session.send_turn()` itself runs the naming classifier (synchronously, on this same
-        worker thread) before dispatching the turn -- see `SessionCoreMixin._run_session_naming`
-        -- so the first turn's own request never races the classifier's. `handle_session_name_changed`
-        fires exactly once from inside that call, reacting via `_handle_session_name_changed`
-        and clearing `GettingReadyStatic` before `TurnWaitingStatic` is mounted, so the two
-        "still working" notices never overlap. When naming isn't pending, `TurnWaitingStatic` is
-        mounted immediately instead, exactly as before.
+        Before any of that, if this is the session's first submitted prompt
+        (`self._session.session_naming_pending`), `Session.send_turn()` claims the session
+        directory and kicks off the naming classifier on its own background thread (see
+        `SessionCoreMixin._start_session_naming`) without waiting for it -- this turn's own
+        dispatch below starts immediately either way. `handle_session_name_changed` fires once,
+        whenever that background thread eventually resolves (possibly well after this turn has
+        already finished), reacting via `_handle_session_name_changed` to update the status line.
         """
-        naming_pending = self._session.session_naming_pending
-        original_id = self._session.id
-        getting_ready = (
-            self.call_from_thread(self._mount_getting_ready_widget) if naming_pending else None)
+        self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
         def handle_session_name_changed(result: SessionName | None) -> None:
-            if getting_ready is not None:
-                self.call_from_thread(getting_ready.remove_self)
-            self._handle_session_name_changed(original_id, result)
-            self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
+            self._handle_session_name_changed(result)
 
         def handle_skill_activated(skill_id: tuple[str, str]) -> None:
             namespace, name = skill_id
             self.call_from_thread(self.show_notice, f"Activated skill: {namespace}/{name}")
-
-        if not naming_pending:
-            self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
         response_widget: Markdown | None = None
         accumulated = ""
@@ -629,23 +615,20 @@ class PromptSubmissionMixin(ReplAppBase):
             except Exception:
                 pass
 
-    def _handle_session_name_changed(self, original_id: str, result: SessionName | None) -> None:
+    def _handle_session_name_changed(self, result: SessionName | None) -> None:
         """React to `Session`'s `on_session_name_changed` callback firing (see `_send_prompt`):
-        on success, renames the session log file to match the (already-applied) new
-        `self._session.id` when session logging is enabled, and updates the `SESSION_NAME_ID`
-        status line to the derived title. If naming failed (timeout, unavailable classifier,
-        malformed reply -- see `generate_session_name`'s own "never raises, returns `None` on
-        failure" contract), `Session._run_session_naming` has already set `self._session.name`
-        to `klorb.session_naming.fallback_session_title`'s word/character-capped derivation from
-        the prompt instead, so the status line always shows *some* title now -- never the raw
-        random nonce slug a naming failure used to leave it showing.
+        update the `SESSION_NAME_ID` status line to the derived title. If naming failed (timeout,
+        unavailable classifier, malformed reply -- see `generate_session_name`'s own "never
+        raises, returns `None` on failure" contract), `Session._run_session_naming` has already
+        set `self._session.name` to `klorb.session_naming.fallback_session_title`'s word/
+        character-capped derivation from the prompt instead, so the status line always shows
+        *some* title now.
 
-        `original_id` is `self._session.id` as captured by `_send_prompt` before
-        `Session.send_turn()` ran -- by the time this fires, `Session` has already applied the
-        rename via `set_id()`, so the pre-rename id can no longer be read off `self._session`
-        itself. Runs synchronously on `_send_prompt`'s worker thread, so every widget/status-line
-        touch below hops back onto the UI thread via `call_from_thread`, same as every other
-        handler in this file.
+        `self._session.id` never changes, so there is no session log file to rename here.  Fires
+        from `Session`'s own background naming thread (see `SessionCoreMixin.
+        _start_session_naming`), not necessarily `_send_prompt`'s worker thread -- every
+        widget/status-line touch below hops back onto the UI thread via `call_from_thread`
+        regardless, same as every other handler in this file.
 
         This always fires for the *root* session's own naming classifier (a subagent's `name` is
         pre-set from `CreateSubagent`'s `session_title` and never goes through this classifier at
@@ -655,21 +638,10 @@ class PromptSubmissionMixin(ReplAppBase):
         time `SubagentsPanelMixin._select_session` re-selects the root, which reads `self._session.
         name` fresh at that point regardless of when it actually resolved.
         """
-        if result is None:
-            if self._selected_session is self._session:
-                self.call_from_thread(self._update_session_name_line, self._session.name or "")
+        if self._selected_session is not self._session:
             return
-
-        if self._session_log_enabled:
-            new_id = self._session.id
-            old_log_path = session_log_path(original_id)
-            new_log_path = session_log_path(new_id)
-            configure_logging(repl_mode=True, log_path=None)  # release the file handle
-            if old_log_path.exists():
-                old_log_path.rename(new_log_path)
-            configure_logging(repl_mode=True, log_path=new_log_path)
-        if self._selected_session is self._session:
-            self.call_from_thread(self._update_session_name_line, result.title)
+        title = result.title if result is not None else (self._session.name or "")
+        self.call_from_thread(self._update_session_name_line, title)
 
     def _finalize_streamed_response(self, widget: Markdown, response_text: str) -> None:
         """Reconcile a streamed `Markdown` widget with the final response and finish the turn."""

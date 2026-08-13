@@ -46,17 +46,14 @@ written for an untrusted or unresolved workspace.
 
 * `SessionsIndexState` (`sessions.json`, schema `"klorb-session-list"`) — `recent_sessions:
   list[RecentSession]`, most-recently-touched first.
-* `RecentSession` — `session_id`, `subdir`, `title`, `aliases`. `subdir` is set once, to the
-  session's *original* `Session.id`, when its directory is first created, and never renamed
-  afterward; it's a saved session's stable identity, independent of `session_id`. `session_id`
-  mirrors the live `Session.id`, which the naming classifier may rename in place (see "Session
-  naming" below) — when that happens, the existing `sessions.json` entry is updated to the new
-  `session_id` rather than duplicated, keyed by matching `subdir`, not the (possibly stale) old
-  `session_id`. `aliases` lists every prior `session_id` this entry was renamed *from* (oldest
-  first) — so a caller holding a pre-rename id (e.g. a client that recorded the id `session/new`
-  returned before the classifier renamed it) can still resolve the same session via
-  `find_recent_session`. `title`
-  mirrors `Session.name`. `last_modified_timestamp` mirrors `Session.last_modified_at` — an
+* `RecentSession` — `session_id`, `subdir`, `title`. `session_id` mirrors the live `Session.id`,
+  fixed for the session's entire lifetime (see "Session naming" below). `subdir` is set once, to
+  that same id, when its directory is first created — kept as an independent field only so a
+  session restored from a `session.json` written by an older klorb version (whose id had since
+  been renamed by the since-removed session-naming rename) still resolves to the correct on-disk
+  directory; `touch_recent_session()` re-keys an entry by `subdir` rather than `session_id` for
+  that reason. `title` mirrors `Session.name`. `last_modified_timestamp` mirrors `Session.
+  last_modified_at` — an
   ISO-8601 datetime stamped every time `_write_session_state_and_touch()` saves, or `None` for a
   session that hasn't been saved yet (or was saved by an older klorb version that predates this
   field). Drives the relative-age display ("2 hours ago") in the VS Code "Load session" picker
@@ -117,22 +114,20 @@ placeholder — by the time it's ever saved to disk.
 ### Claiming a session directory (`SessionPersistenceMixin.claim_session_directory`)
 
 A `Session` claims its `sessions/<subdir>/` directory — acquiring `session.lock`, writing the
-first `session.json`, and adding the `sessions.json` recency entry — from
-`SessionCoreMixin._run_session_naming`'s caller in `SessionTurnsMixin.send_turn()`, right after
-session naming has resolved on the first turn (whether the classifier renamed `self.id`, fell
-back to `fallback_session_title`, or was already skipped because this is a restored session).
-Data must never land in a session-id-specific directory before the id's final form is decided —
-`subdir` defaults to `self.id` at claim time, so claiming before naming resolves would key the
-directory off a since-discarded random-nonce id. A no-op if already claimed, or if
-`config.workspace.trusted` is `False` (the same trust gate the input-history store always
-applied); losing the one-shot lock race (vanishingly unlikely, given `Session.id`'s
+first `session.json`, and adding the `sessions.json` recency entry — from `SessionTurnsMixin.
+send_turn()`, on the first turn, right before it kicks off the background session-naming
+classifier (`SessionCoreMixin._start_session_naming`; see "Session naming" below). `subdir`
+defaults to `self.id` at claim time, which is already final — `Session.id` is fixed from
+construction, so claiming never has to wait on naming to resolve first. A no-op if already
+claimed, or if `config.workspace.trusted` is `False` (the same trust gate the input-history
+store always applied); losing the one-shot lock race (vanishingly unlikely, given `Session.id`'s
 timestamp+nonce uniqueness) logs a warning and leaves the session unclaimed for the rest of its
 life — every later `persist_state()` call becomes a no-op.
 
 A *restored* session (see "Restoring" below) skips this claim path entirely:
 `adopt_claimed_session_directory(subdir, lock)` hands it an already-acquired `session.lock` and
-`subdir` directly, since a restored session's on-disk `subdir` can differ from its (possibly
-since-renamed) `self.id`.
+`subdir` directly, since a session restored from a save file written by an older klorb version
+can have a `subdir` that differs from its `self.id` (see `RecentSession`'s own docstring above).
 
 ### Persisting (`SessionPersistenceMixin.persist_state()` / `close()`)
 
@@ -338,14 +333,12 @@ SDK's own request router gates any method marked `unstable=True` (including `ses
 behind that flag independently of what the agent itself advertises.
 
 * **`session/load`** (`load_session(cwd, mcp_servers, session_id)`) — looks up `session_id` in
-  `sessions.json` via `find_recent_session`, which matches either the entry's current
-  `session_id` or any of its `aliases` (the prior ids it was renamed from — see `Session.aliases`),
-  so a caller holding a pre-rename id still resolves the same session. On failure,
-  `cwd`'s workspace `sessions.json`, raising `invalid_params` if it isn't present at all. On a
-  hit, calls `try_restore_session`; raising `invalid_params` (`"session is locked or no longer
-  exists"`) if that returns `None` — per this method's design, it's the *client*'s job to fall
-  back to `session/new` on a failed load, not this server's. On success, closes any existing live
-  session, adopts the restored one, sends a `_klorb/sessionReplay` ext notification (see below)
+  `cwd`'s workspace `sessions.json` via `find_recent_session` (an exact `session_id` match),
+  raising `invalid_params` if it isn't present at all. On a hit, calls `try_restore_session`;
+  raising `invalid_params` (`"session is locked or no longer exists"`) if that returns `None` —
+  per this method's design, it's the *client*'s job to fall back to `session/new` on a failed
+  load, not this server's. On success, closes any existing live session, adopts the restored
+  one, sends a `_klorb/sessionReplay` ext notification (see below)
   reconstructing the conversation for the client, and returns a `LoadSessionResponse` carrying the
   restored session's mode state and (`field_meta.klorb`) workspace/title info, mirroring
   `session/new`'s reply shape. `mcp_servers` is accepted but never acted on, same as `session/new`.

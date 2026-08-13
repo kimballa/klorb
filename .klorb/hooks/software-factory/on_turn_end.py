@@ -3,7 +3,8 @@
 """onAgentTurnEnd handler for software-factory mode.
 
 Reads HookInput JSON on stdin, prints HookOutput JSON on stdout. No-ops whenever the enable
-sentinel (docs/plans/auto/.enable_software_factory.tmp) is absent.
+sentinel (docs/plans/auto/.enable_software_factory.tmp) is absent, or present but owned by a
+different session's `root_session_id` (see `queue_utils.read_latch_owner`).
 """
 
 from __future__ import annotations
@@ -68,7 +69,10 @@ def main() -> None:
     hook_input = queue_utils.read_hook_input()
     workspace_root = Path(hook_input["workspace_root"])
 
-    if not queue_utils.enable_sentinel_path(workspace_root).is_file():
+    owner = queue_utils.read_latch_owner(queue_utils.enable_sentinel_path(workspace_root))
+    if owner is None or owner != hook_input["root_session_id"]:
+        # No enable sentinel, or one owned by a different session -- not this firing's factory
+        # loop to manage (see queue_utils.read_latch_owner).
         queue_utils.emit_hook_output(success=True)
         return
 

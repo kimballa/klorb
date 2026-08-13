@@ -35,7 +35,6 @@ from klorb.tui.formatting import (
 )
 from klorb.tui.panels.preview_screens import DiffDetailScreen, ReadDetailScreen
 from klorb.tui.widgets.tool_call_widgets import (
-    GettingReadyStatic,
     RenderedToolCall,
     RunningToolCallStatic,
     ToolCallStatic,
@@ -315,28 +314,11 @@ class RenderingMixin(ReplAppBase):
         self._update_status_bar()
         return widget
 
-    def _mount_getting_ready_widget(self) -> GettingReadyStatic:
-        """Mount a `GettingReadyStatic` into history, showing an animated "Getting ready..."
-        notice while `PromptSubmissionMixin._run_session_naming`'s classifier call is in
-        flight -- the naming-step analog of `_mount_running_tool_call_widget`, but with no
-        `_running_tool_call_widgets`/`_tool_call_widgets` tracking, since this widget is
-        always removed outright (`GettingReadyStatic.remove_self`) rather than finalized in
-        place once naming resolves.
-        """
-        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = self._history_pinned_to_bottom
-        widget = GettingReadyStatic()
-        history.mount(widget)
-        self._scroll_if_pinned(history, was_pinned)
-        return widget
-
     def _mount_turn_waiting_widget(self) -> TurnWaitingStatic:
-        """Mount a `TurnWaitingStatic` into history, showing an animated "still working" notice
-        -- the per-turn analog of `_mount_getting_ready_widget`, but for every turn rather than
-        only the first, and cleared by `_clear_turn_waiting_widget` rather than removed directly
-        by its caller. Called by `_send_prompt` once it's actually about to start the turn (after
-        `_run_session_naming`, if that ran for this turn), not by `_submit_prompt` at echo time,
-        so it never overlaps the first turn's own `GettingReadyStatic`.
+        """Mount a `TurnWaitingStatic` into history, showing an animated "still working" notice,
+        cleared by `_clear_turn_waiting_widget` rather than removed directly by its caller.
+        Called by `_send_prompt` as soon as it starts the turn, not by `_submit_prompt` at echo
+        time.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom

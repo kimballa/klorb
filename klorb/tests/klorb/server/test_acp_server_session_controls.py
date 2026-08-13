@@ -4,6 +4,7 @@ add over ACP: session modes (permission framework), model/thinking session confi
 naming, token-usage notifications, and the `_klorb/sessionStats`/`_klorb/trustWorkspace`/
 `_klorb/reloadSkills`/`_klorb/setSessionTitle` ext requests. See docs/specs/klorb-server.md."""
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -255,21 +256,39 @@ async def test_set_session_title_with_non_string_title_is_a_json_rpc_error(
             "klorb/setSessionTitle", {"sessionId": session_id, "title": 7})
 
 
+def _title_updates(harness: AcpHarness) -> list[Any]:
+    return [
+        update.update for update in harness.harness_client.session_updates
+        if update.update.session_update == "session_info_update"
+    ]
+
+
+async def _wait_for_title_update(harness: AcpHarness) -> None:
+    """Poll for a `session_info_update` to arrive: the session-naming classifier now runs on
+    `Session`'s own background thread (`SessionCoreMixin._start_session_naming`) and delivers its
+    result directly onto the event loop (`TurnBridge._send_session_name_update`, via `asyncio.
+    run_coroutine_threadsafe`) rather than through the per-turn update queue `prompt()` itself
+    already awaited -- so it can still be pending after `prompt()` has returned."""
+    for _ in range(500):
+        if _title_updates(harness):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("session_info_update never arrived")
+
+
 async def test_session_naming_fires_title_update_once_on_success(
     make_harness: Callable[..., Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name",
-        lambda *args, **kwargs: SessionName(title="Fixing the bug", slug="fixing-the-bug"))
+        lambda *args, **kwargs: SessionName(title="Fixing the bug"))
     harness = await make_harness(provider=_plain_provider())
     session_id = await _new_session(harness, tmp_path)
 
     await harness.client.prompt(session_id=session_id, prompt=[acp.text_block("hi")])
+    await _wait_for_title_update(harness)
 
-    title_updates = [
-        update.update for update in harness.harness_client.session_updates
-        if update.update.session_update == "session_info_update"
-    ]
+    title_updates = _title_updates(harness)
     assert len(title_updates) == 1
     assert title_updates[0].title == "Fixing the bug"
 
@@ -283,11 +302,9 @@ async def test_session_naming_fires_title_update_with_none_on_failure(
     session_id = await _new_session(harness, tmp_path)
 
     await harness.client.prompt(session_id=session_id, prompt=[acp.text_block("hi")])
+    await _wait_for_title_update(harness)
 
-    title_updates = [
-        update.update for update in harness.harness_client.session_updates
-        if update.update.session_update == "session_info_update"
-    ]
+    title_updates = _title_updates(harness)
     assert len(title_updates) == 1
     assert title_updates[0].title is None
 

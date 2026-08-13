@@ -120,10 +120,10 @@ class SessionPersistenceMixin(SessionBase):
             self.config.workspace, self._session_subdir, self.config, self._messages,
             statistics=self.statistics, session_id=self.id, root_id=self.root_id,
             session_name=self._session_name, cur_chainlink_task_id=self.cur_chainlink_task_id,
-            aliases=self.aliases, last_modified_timestamp=self._last_modified_at)
+            last_modified_timestamp=self._last_modified_at)
         touch_recent_session(
             self.config.workspace, self.id, self._session_subdir, self._session_name,
-            aliases=self.aliases, last_modified_timestamp=self._last_modified_at)
+            last_modified_timestamp=self._last_modified_at)
 
     def _finalize_session_persistence(self) -> None:
         """Write a final `session.json` and release `session.lock` -- called from

@@ -65,3 +65,20 @@ def read_hook_input() -> dict:
 
 def emit_hook_output(**fields: object) -> None:
     json.dump(fields, sys.stdout)
+
+
+def read_latch_owner(path: Path) -> str | None:
+    """The `root_session_id` recorded in `path` (the enable sentinel), stripped -- `None` if
+    the file is missing or empty. "Holding the latch" means this matches the current hook
+    firing's own `root_session_id`; every factory hook that reads or writes either sentinel
+    checks this before acting, so a firing from a session that didn't turn the mode on never
+    touches state that belongs to a different, still-live session in the same workspace."""
+    if not path.is_file():
+        return None
+    owner = path.read_text().strip()
+    return owner or None
+
+
+def write_latch_owner(path: Path, root_session_id: str) -> None:
+    """Record `root_session_id` as the owner of the latch at `path` -- see `read_latch_owner`."""
+    path.write_text(root_session_id)

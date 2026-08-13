@@ -41,7 +41,6 @@ from klorb.session import (
     TurnEventHandlers,
 )
 from klorb.tui.widgets.tool_call_widgets import (
-    GettingReadyStatic,
     RenderedToolCall,
     RunningToolCallStatic,
     ToolCallStatic,
@@ -110,9 +109,6 @@ class ReplAppBase(App[None]):
     def _update_status_bar(self) -> None: ...
 
     def _update_session_name_line(self, text: str) -> None: ...
-
-    def _mount_getting_ready_widget(self) -> GettingReadyStatic:
-        raise NotImplementedError
 
     def _mount_turn_waiting_widget(self) -> TurnWaitingStatic:
         raise NotImplementedError

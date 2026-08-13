@@ -136,7 +136,7 @@ def format_workspace_path(
 
 ANIMATION_TICK_SECONDS = 0.09
 """Interval between "still working" pulse-animation frames (seconds) -- see
-`crawl_animation_text`. Shared by `RunningToolCallStatic` and `GettingReadyStatic`, which each
+`crawl_animation_text`. Shared by `RunningToolCallStatic` and `TurnWaitingStatic`, which each
 drive their own `Widget.set_interval` timer at this rate."""
 
 _SWEEP_IDLE_SECONDS = 0.75
@@ -163,8 +163,8 @@ def crawl_animation_text(word: str, position: int) -> Text:
     right edge; `word` then sits at default style, unhighlighted, for `_idle_ticks()` ticks
     before the sweep restarts. `position` is the caller's tick counter, incremented once per
     `ANIMATION_TICK_SECONDS` interval -- e.g. `RunningToolCallStatic`'s "Running..." while a
-    tool call executes, or `GettingReadyStatic`'s "Getting ready..." while the first-turn
-    session-naming classifier call is in flight.
+    tool call executes, or `TurnWaitingStatic`'s "still working" text while a submitted turn is
+    under way.
     """
     sweep_ticks = _sweep_ticks(word)
     tick = position % (sweep_ticks + _idle_ticks())

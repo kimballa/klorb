@@ -264,10 +264,25 @@ class TurnBridge:
             def on_thinking_chunk(delta_text: str) -> None:
                 enqueue(acp.update_agent_thought_text(delta_text))
 
-            def on_session_name_changed(session_name: SessionName | None) -> None:
-                enqueue(SessionInfoUpdate(
+            async def _send_session_name_update(session_name: SessionName | None) -> None:
+                update = SessionInfoUpdate(
                     session_update="session_info_update",
-                    title=session_name.title if session_name is not None else None))
+                    title=session_name.title if session_name is not None else None)
+                try:
+                    await self._client.session_update(session_id=self._session_id, update=update)
+                except Exception:
+                    logger.warning(
+                        "Failed to deliver a late session-naming update for ACP session %s.",
+                        self._session_id, exc_info=True)
+
+            def on_session_name_changed(session_name: SessionName | None) -> None:
+                # The session-naming classifier now runs on `Session`'s own background thread
+                # (see `SessionCoreMixin._start_session_naming`) and can resolve well after this
+                # iteration's `pump_task` has already stopped draining `queue` -- so, unlike
+                # every other handler here, this can't go through `enqueue()`. Scheduled directly
+                # onto `loop` instead, the same way the queued-message drain below already has to
+                # once its own iteration's pump has stopped.
+                asyncio.run_coroutine_threadsafe(_send_session_name_update(session_name), loop)
 
             def on_enqueue_message(queued_msg: QueuedMessage) -> None:
                 enqueue(_ExtNotificationItem(_MESSAGE_QUEUED_EXT_NOTIFICATION, {
