@@ -26,11 +26,14 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
-def _run(workspace_root: Path, *, just_bootstrapped: bool, trusted: bool) -> str | None:
+def _run(
+    workspace_root: Path, *, just_bootstrapped: bool, trusted: bool,
+    config: dict[str, object] | None = None,
+) -> str | None:
     handler = HookConfig(type="bash", name="claude-compat", command=["python3", _SCRIPT_PATH])
     hook_input = HookInput(
         hook="onSessionStart", reason="NewSession", workspace_root=str(workspace_root),
-        workspace_just_bootstrapped=just_bootstrapped, workspace_trusted=trusted)
+        workspace_just_bootstrapped=just_bootstrapped, workspace_trusted=trusted, config=config)
     session_config = SessionConfig(
         workspace=Workspace(path=workspace_root, trusted=trusted),
         read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]))
@@ -78,3 +81,23 @@ def test_silent_when_not_just_bootstrapped(tmp_path: Path) -> None:
 def test_silent_when_workspace_not_trusted(tmp_path: Path) -> None:
     (tmp_path / "CLAUDE.md").write_text("# hi")
     assert _run(tmp_path, just_bootstrapped=True, trusted=False) is None
+
+
+def test_omits_markdown_flag_already_enabled(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.md").write_text("# hi")
+    (tmp_path / ".claude" / "skills").mkdir(parents=True)
+    log = _run(
+        tmp_path, just_bootstrapped=True, trusted=True,
+        config={"compatibility_claude_markdown": True})
+    assert log is not None
+    assert "compatibility.claudeMarkdown" not in log
+    assert "compatibility.claudeSkills" in log
+
+
+def test_silent_when_both_flags_already_enabled(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.md").write_text("# hi")
+    (tmp_path / ".claude" / "skills").mkdir(parents=True)
+    log = _run(
+        tmp_path, just_bootstrapped=True, trusted=True,
+        config={"compatibility_claude_markdown": True, "compatibility_claude_skills": True})
+    assert log is None

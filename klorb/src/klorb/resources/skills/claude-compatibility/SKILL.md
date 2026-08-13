@@ -26,8 +26,10 @@ before touching `${workspaceRoot}/.klorb/klorb-config.json`.
 
 `ReadFile` `${workspaceRoot}/.klorb/klorb-config.json` if it exists. It's a top-level JSON object
 (see docs/specs/process-and-session-config.md's "On-disk key naming") — `compatibility.claudeMarkdown`/
-`compatibility.claudeSkills` are flat top-level keys, not nested under `sessionDefaults`. Add or
-update only the keys from step 1, preserving every other key already in the file untouched.
+`compatibility.claudeSkills` are flat top-level keys, not nested under `sessionDefaults`. Drop any
+flag from step 1 that's already `true` in this file. If none remain, tell the user there's nothing
+to change and stop. Add or update only the remaining keys, preserving every other key already in
+the file untouched.
 
 If the file doesn't exist yet, create it with just the schema envelope and the applicable flags:
 

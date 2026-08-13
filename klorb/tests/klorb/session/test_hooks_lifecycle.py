@@ -157,3 +157,20 @@ def test_fire_session_start_hook_carries_workspace_trust_fields(tmp_path: Path) 
     assert data["reason"] == "ResumeSession"
     assert data["workspace_trusted"] is True
     assert data["workspace_just_bootstrapped"] is True
+    assert data["config"]["prompt_input_max_lines"] == process_config.prompt_input_max_lines
+
+
+def test_close_does_not_carry_the_resolved_config(tmp_path: Path) -> None:
+    output_path = tmp_path / "output.json"
+    handler = HookConfig(
+        type="bash",
+        shell=(
+            'python3 -c \'import sys, json; data = json.load(sys.stdin); '
+            f'open("{output_path}", "w").write(json.dumps(data))\'; '
+            'echo \'{}\''))
+    process_config = _process_config(tmp_path, {"onSessionEnd": [handler]})
+    session = Session(process_config.session, process_config=process_config)
+    session.close()
+    data = json.loads(output_path.read_text())
+    assert data["hook"] == "onSessionEnd"
+    assert data["config"] is None

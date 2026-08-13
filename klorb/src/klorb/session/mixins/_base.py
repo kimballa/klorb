@@ -273,6 +273,7 @@ class SessionBase:
 
     def _dispatch_lifecycle_hook(
         self, hook_name: str, *, reason: str, workspace_just_bootstrapped: bool = False,
+        include_config: bool = False,
     ) -> "HookOutput":
         raise NotImplementedError
 

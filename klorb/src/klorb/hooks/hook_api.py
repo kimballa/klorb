@@ -61,6 +61,9 @@ class HookInput(BaseModel):
     decision -- `True` only for a brand-new, never-before-seen workspace; `False` for every
     subsequent `onSessionStart` against an already-registered workspace. `None` for every hook
     other than `onSessionStart`."""
+    config: dict[str, Any] | None = None
+    """The entire resolved `ProcessConfig`, JSON-dumped -- set only for `onProcessStart` and
+    `onSessionStart`, `None` for every other hook."""
 
 
 class HookOutput(BaseModel):

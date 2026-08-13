@@ -86,7 +86,8 @@ way, keyed by the event name.
   `onActivateSkill`), `role`, `session_id`/`root_session_id` (the firing session's own id and the
   root session it descends from; `None` only for `onProcessStart`/`onProcessEnd`, before any
   session exists), `exit_status` (set only for `onProcessEnd`, read-only),
-  `workspace_trusted`/`workspace_just_bootstrapped` (set only for `onSessionStart`).
+  `workspace_trusted`/`workspace_just_bootstrapped` (set only for `onSessionStart`), `config` (the
+  entire resolved `ProcessConfig`, JSON-dumped -- set only for `onProcessStart`/`onSessionStart`).
 * **`HookOutput`** — `success` (default `True`), `tool_args`, `permission` (a bare `Verdict`),
   `message`, `tool_result` (`onToolResult` only — replaces `response_body`/`error_message` in the
   envelope), `interrupt` (default `False`), `reset_session` (default `False`), `log` (a debugging
@@ -354,7 +355,8 @@ file once `klorb.klorb_init.copy_resource_data()` has run — either via `klorb 
 `klorb/Makefile`'s `install` target — see docs/specs/klorb-init.md). It reads
 `workspace_just_bootstrapped`/`workspace_trusted` off its own `HookInput` (there is no declarative
 `filter` for either, since `HOOK_FILTER_SUBJECT_FIELDS["onSessionStart"]` is `reason`) and, on a
-newly-bootstrapped trusted workspace that has a `CLAUDE.md` file or a `.claude/skills/` directory,
+newly-bootstrapped trusted workspace that has a `CLAUDE.md` file or a `.claude/skills/` directory
+whose matching flag isn't already `true` in `HookInput.config`,
 sets `HookOutput.log` suggesting the `/claude-compatibility` skill (`klorb.resources/skills/
 claude-compatibility/`, pre-allowed in `default-config.json`'s `skillRules.allow`) to turn on the
 matching `compatibility.claudeMarkdown`/`compatibility.claudeSkills` flag. Every other firing
