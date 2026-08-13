@@ -25,9 +25,7 @@ def build_subagent_tree_snapshot(root: Session) -> dict[str, Any]:
     `klorb.tui.mixins.status_bar.StatusBarMixin._update_status_bar`/`ReplApp.format_title` read
     off `_selected_session` today.
 
-    Every node's `"id"` is its own `Session.id`, including `root`'s -- `Session.id` is fixed for
-    a session's entire lifetime, so it's always the same id the ACP client already addresses this
-    session by (the one `session/new`/`session/load` handed back).
+    Every node's `"id"` is its own `Session.id`, including `root`'s.
     """
     nodes: list[dict[str, Any]] = []
     for tree_node in walk_session_tree(root):

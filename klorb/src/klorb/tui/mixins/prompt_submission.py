@@ -431,11 +431,8 @@ class PromptSubmissionMixin(ReplAppBase):
 
         Before any of that, if this is the session's first submitted prompt
         (`self._session.session_naming_pending`), `Session.send_turn()` claims the session
-        directory and kicks off the naming classifier on its own background thread (see
-        `SessionCoreMixin._start_session_naming`) without waiting for it -- this turn's own
-        dispatch below starts immediately either way. `handle_session_name_changed` fires once,
-        whenever that background thread eventually resolves (possibly well after this turn has
-        already finished), reacting via `_handle_session_name_changed` to update the status line.
+        directory and kicks off the naming classifier on its own background thread without
+        waiting for it.
         """
         self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
@@ -616,19 +613,12 @@ class PromptSubmissionMixin(ReplAppBase):
                 pass
 
     def _handle_session_name_changed(self, result: SessionName | None) -> None:
-        """React to `Session`'s `on_session_name_changed` callback firing (see `_send_prompt`):
-        update the `SESSION_NAME_ID` status line to the derived title. If naming failed (timeout,
-        unavailable classifier, malformed reply -- see `generate_session_name`'s own "never
-        raises, returns `None` on failure" contract), `Session._run_session_naming` has already
+        """React to `Session`'s `on_session_name_changed` callback firing: update the
+        `SESSION_NAME_ID` status line to the derived title. If naming failed (timeout,
+        unavailable classifier, malformed reply), `Session._run_session_naming` has already
         set `self._session.name` to `klorb.session_naming.fallback_session_title`'s word/
         character-capped derivation from the prompt instead, so the status line always shows
         *some* title now.
-
-        `self._session.id` never changes, so there is no session log file to rename here.  Fires
-        from `Session`'s own background naming thread (see `SessionCoreMixin.
-        _start_session_naming`), not necessarily `_send_prompt`'s worker thread -- every
-        widget/status-line touch below hops back onto the UI thread via `call_from_thread`
-        regardless, same as every other handler in this file.
 
         This always fires for the *root* session's own naming classifier (a subagent's `name` is
         pre-set from `CreateSubagent`'s `session_title` and never goes through this classifier at

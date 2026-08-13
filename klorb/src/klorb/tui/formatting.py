@@ -135,9 +135,7 @@ def format_workspace_path(
 
 
 ANIMATION_TICK_SECONDS = 0.09
-"""Interval between "still working" pulse-animation frames (seconds) -- see
-`crawl_animation_text`. Shared by `RunningToolCallStatic` and `TurnWaitingStatic`, which each
-drive their own `Widget.set_interval` timer at this rate."""
+"""Interval between "still working" pulse-animation frames (seconds)."""
 
 _SWEEP_IDLE_SECONDS = 0.75
 """How long `crawl_animation_text` holds at default (unhighlighted) style between one

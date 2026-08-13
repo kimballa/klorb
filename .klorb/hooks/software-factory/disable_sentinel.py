@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 # © Copyright 2026 Aaron Kimball
-"""onSessionEnd handler. Removes both software-factory sentinel files, but only if the ending
-session's own `root_session_id` is the one recorded as the latch's owner (see
-`queue_utils.read_latch_owner`) -- otherwise leaves both alone, since some other still-live
-session in the same workspace may hold them. Wired to `onSessionEnd` rather than `onProcessEnd`
-so a klorb server process that serves several sessions in sequence (`session/new`/`session/load`
-each replacing the prior one) cleans up per session, not only (never, for the server) at process
-exit -- see docs/specs/software-factory.md.
+"""onSessionEnd handler that removes both software-factory sentinel files, but only if the
+ending session's own `root_session_id` is the one recorded as the latch's owner.
 
-`.klorb/klorb-config.json`'s own entry for this handler filters on `reason: "SuspendSession"`
-(a real `Session.close()`), so this never runs for `reason: "ResetSession"` -- the software
-factory's own turn-end hook restarts the loop by resetting the session in place, which also
-fires `onSessionEnd`, but that firing must never tear down the very mode that just triggered it.
+See docs/specs/software-factory.md.
 """
 
 from __future__ import annotations

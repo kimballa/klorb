@@ -580,13 +580,7 @@ class SessionTurnsMixin(SessionBase):
         changes -- polled by every `send_turn()` call.
 
         Also on the first turn only (`self._session_naming_pending`), the session directory is
-        claimed and the session-naming classifier is kicked off against `prompt` on a background
-        thread (`_start_session_naming`) -- this turn's own dispatch never waits on it. `id`
-        never changes; the classifier only ever sets `name`, once it eventually resolves.
-        `callbacks.on_session_name_changed`, if given, is invoked once, from that background
-        thread, with the result (or `None` on failure) so a caller can react -- e.g. the TUI
-        updates its status line. Runs identically whether `send_turn()` is driven by the
-        interactive TUI or a headless one-shot call (see `run_one_shot`).
+        claimed and the session-naming classifier is kicked off.
         """
         original_prompt = prompt
         active_model = self.active_model()
@@ -687,13 +681,11 @@ class SessionTurnsMixin(SessionBase):
             prompt = f"{wrap_system_interjection('Metadata', metadata_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
-            # `self.id` is fixed for the session's lifetime (unlike the classifier, which only
-            # ever derives `name`), so claiming can happen right away rather than waiting on the
-            # classifier's round trip -- and must happen *before* `_start_session_naming` spawns
-            # its background thread, since that thread's own end-of-run `persist_state()` call
-            # assumes claiming has already settled (`SessionPersistenceMixin.
-            # claim_session_directory`'s "already claimed" guard isn't thread-safe against a
-            # concurrent first attempt). A no-op if already claimed (a restored session that
+            # `self.id` is fixed for the session's lifetime, so claiming can happen right away
+            # rather than waiting on the classifier's round trip -- and must happen *before*
+            # `_start_session_naming` spawns its background thread, since that thread's own
+            # end-of-run `persist_state()` call assumes claiming has already settled. A no-op if
+            # already claimed (a restored session that
             # adopted its directory before this call) or the workspace is untrusted.
             self.claim_session_directory()
             self._start_session_naming(original_prompt, callbacks)

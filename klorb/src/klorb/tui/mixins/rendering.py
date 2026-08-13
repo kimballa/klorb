@@ -317,8 +317,6 @@ class RenderingMixin(ReplAppBase):
     def _mount_turn_waiting_widget(self) -> TurnWaitingStatic:
         """Mount a `TurnWaitingStatic` into history, showing an animated "still working" notice,
         cleared by `_clear_turn_waiting_widget` rather than removed directly by its caller.
-        Called by `_send_prompt` as soon as it starts the turn, not by `_submit_prompt` at echo
-        time.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom

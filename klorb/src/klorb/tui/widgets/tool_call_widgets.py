@@ -263,10 +263,9 @@ which one shows for a given turn."""
 
 
 class TurnWaitingStatic(_CrawlAnimatedStatic):
-    """Animated notice mounted into history as soon as a submitted turn is dispatched (see
-    `PromptSubmissionMixin._send_prompt`), showing one of `_TURN_WAITING_TEXTS` (chosen at
-    random) under `crawl_animation_text`'s pulse animation until the turn's own content starts
-    arriving.
+    """Animated notice mounted into history as soon as a submitted turn is dispatched, showing
+    one of `_TURN_WAITING_TEXTS` (chosen at random) under `crawl_animation_text`'s pulse
+    animation until the turn's own content starts arriving.
     `PromptSubmissionMixin._clear_turn_waiting_widget` removes it as soon as the first
     response/thinking chunk or the first actually-running tool call widget is mounted for the
     turn, whichever comes first -- a tool call only counts once it's far enough along to mount
