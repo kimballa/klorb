@@ -134,7 +134,9 @@ from an active worker context — see
   resolved it via an exact or ancestor `projects.json` match), skips straight to announcing it.
 * Otherwise (`id is None` — never resolved before), runs `_bootstrap_new_workspace()`: pushes
   "You are working in `<path>`. Open as a project?" (Yes: "Open as project", No: "Not now"),
-  then always pushes "Do you trust the workspace at `<path>`?", regardless of the first answer.
+  then always pushes "Do you trust the workspace at `<path>`?" (listing any workspace skills
+  already auto-allowed by the workspace's own `skillRules.allow` config, if present),
+  regardless of the first answer.
   If opened as a project, registers it (`TrustManager.register_project`) and writes its starter
   config (`write_initial_project_config`, burning in the *current* session's model) using the
   trust answer — unless the workspace already has a `.klorb/klorb-config.json` of its own
@@ -170,7 +172,9 @@ session.
 disabled, app yields no hits, so the command simply doesn't show up.
 
 `ReplApp.trust_workspace()` (`@work()`, for the same `push_screen_wait` reason as above):
-confirms "Do you trust the workspace at `<path>`?"; on Yes, persists the decision
+confirms "Do you trust the workspace at `<path>`?" (listing any workspace skills already
+auto-allowed by the workspace's own `skillRules.allow` config, if present); on Yes, persists the
+decision
 (`TrustManager.set_trusted`, if it's a registered project) and calls `_apply_workspace_config()`,
 then mounts `"Trusted workspace <path>."`. If the workspace is a registered project with no
 `.klorb/klorb-config.json` of its own yet, additionally asks "Initialize the project config file

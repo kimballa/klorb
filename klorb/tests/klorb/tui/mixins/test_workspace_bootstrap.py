@@ -23,7 +23,7 @@ from klorb.lockfile import create_lockfile
 from klorb.message import Message, ToolCallRequest
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, project_config_path
-from klorb.schema_envelope import read_versioned_json
+from klorb.schema_envelope import read_versioned_json, write_versioned_json
 from klorb.session import Session, SessionConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.commands.trust_commands import TRUST_WORKSPACE_LABEL
@@ -680,3 +680,95 @@ async def test_restore_without_name_keeps_naming_pending(
 
         session_name_widget = app.query_one(f"#{SESSION_NAME_ID}", Static)
         assert str(session_name_widget.content) == NEW_SESSION_LABEL
+
+
+def test_workspace_auto_allowed_skills_returns_workspace_skills_from_config(
+    tmp_path: Path,
+) -> None:
+    config_path = project_config_path(tmp_path)
+    config_path.parent.mkdir(parents=True)
+
+    write_versioned_json(config_path, {
+        SESSION_DEFAULTS_KEY: {
+            "skillRules": {
+                "allow": ["workspace:my-skill", "workspace:other-skill", "internal:builtin"],
+            },
+        },
+    }, schema_name=CONFIG_SCHEMA_NAME, schema_version="1.0.0")
+    workspace = Workspace(path=tmp_path, trusted=False)
+    skills = ReplApp._workspace_auto_allowed_skills(workspace)
+    assert skills == ["my-skill", "other-skill"]
+
+
+def test_workspace_auto_allowed_skills_returns_empty_when_no_config(tmp_path: Path) -> None:
+    workspace = Workspace(path=tmp_path, trusted=False)
+    assert ReplApp._workspace_auto_allowed_skills(workspace) == []
+
+
+async def test_bootstrap_trust_prompt_lists_auto_allowed_workspace_skills(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config_path = project_config_path(project_root)
+    config_path.parent.mkdir(parents=True)
+
+    write_versioned_json(config_path, {
+        SESSION_DEFAULTS_KEY: {
+            "skillRules": {"allow": ["workspace:deploy-skill", "workspace:test-skill"]},
+        },
+    }, schema_name=CONFIG_SCHEMA_NAME, schema_version="1.0.0")
+
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = Workspace(path=project_root)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        # First screen: "Open as a project?"
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # "Not now"
+        await pilot.pause()
+
+        # Second screen: "Do you trust...?" — should list auto-allowed skills
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        message = app.screen._message
+        assert "deploy-skill" in message
+        assert "test-skill" in message
+        assert "auto-allowed" in message
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # dismiss
+        await pilot.pause()
+
+
+async def test_trust_workspace_command_prompt_lists_auto_allowed_workspace_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolated_data_dir(tmp_path, monkeypatch)
+    config_path = project_config_path(tmp_path)
+    config_path.parent.mkdir(parents=True)
+
+    write_versioned_json(config_path, {
+        SESSION_DEFAULTS_KEY: {
+            "skillRules": {"allow": ["workspace:my-skill"]},
+        },
+    }, schema_name=CONFIG_SCHEMA_NAME, schema_version="1.0.0")
+
+    trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=False)
+    app = _repl_app_for_workspace(workspace, trust_manager)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = f"{PALETTE_PREFIX}trust"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
+        assert isinstance(app.screen, ConfirmScreen)
+        message = app.screen._message
+        assert "my-skill" in message
+        assert "auto-allowed" in message
+        await pilot.click(f"#{CONFIRM_NO_ID}")  # dismiss
+        await pilot.pause()
