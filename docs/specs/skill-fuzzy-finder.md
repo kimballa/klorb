@@ -29,8 +29,9 @@ kept.
 ## Row display
 
 Each match shows the skill name in the normal foreground, namespace in muted color
-(`(namespace)`), and description (truncated with `...` if it doesn't fit the available width)
-also muted.
+(`(namespace)`), and description (truncated with `...` if it doesn't fit the available width) in
+a more severely muted color, so the three fields stay visually distinct on one line instead of
+blending into a single run-on string.
 
 ## Insertion
 

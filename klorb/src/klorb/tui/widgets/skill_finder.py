@@ -59,7 +59,9 @@ class SkillMatch:
 
 def _skill_match_content(match: SkillMatch, available_width: int) -> Content:
     """Build the styled row label for `match`: the skill name (normal foreground),
-    namespace in a muted color, and description (muted) if present."""
+    namespace in a muted color, and description (more severely muted) if present, so
+    the two trailing fields read as visually distinct rather than blending into one
+    run-on string."""
     name_part = match.name
     ns_part = f" ({match.namespace})"
     desc_part = ""
@@ -73,7 +75,7 @@ def _skill_match_content(match: SkillMatch, available_width: int) -> Content:
     return Content.assemble(
         name_part,
         (ns_part, "$text-muted"),
-        (desc_part, "$text-muted"),
+        (desc_part, "$text-disabled"),
     )
 
 

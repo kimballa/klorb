@@ -1,7 +1,13 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.widgets.skill_finder."""
 
-from klorb.tui.widgets.skill_finder import SkillMatch, SkillQuery, detect_skill_query, filter_skills
+from klorb.tui.widgets.skill_finder import (
+    SkillMatch,
+    SkillQuery,
+    _skill_match_content,
+    detect_skill_query,
+    filter_skills,
+)
 
 
 class TestDetectSkillQuery:
@@ -93,3 +99,13 @@ class TestFilterSkills:
         ]
         result = filter_skills(skills, "review")
         assert result[0].name == "review"
+
+
+class TestSkillMatchContent:
+    def test_namespace_and_description_use_different_muted_styles(self) -> None:
+        match = SkillMatch(name="code-review", namespace="internal", description="Review code")
+        content = _skill_match_content(match, available_width=80)
+        styles = {str(span.style) for span in content.spans}
+        assert "$text-muted" in styles
+        assert "$text-disabled" in styles
+        assert styles == {"$text-muted", "$text-disabled"}
